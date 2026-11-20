@@ -578,3 +578,91 @@ async fn owner_verification_uses_same_tool_budget_as_model_actions(){
     assert_eq!(*tools.called.lock().unwrap(),vec!["read_1"]);
     assert!(!result.receipts.iter().any(|receipt|receipt.tool=="shell_exec"));
 }
+
+#[derive(Clone, Copy)]
+enum InterruptFence { Model, Tool, Verification }
+
+struct InterruptAtPersistedFence {
+    fence: InterruptFence,
+    cancelled: std::sync::atomic::AtomicBool,
+    snapshots: Mutex<Vec<Snapshot>>,
+}
+impl InterruptAtPersistedFence {
+    fn new(fence: InterruptFence) -> Self {
+        Self {fence,cancelled:std::sync::atomic::AtomicBool::new(false),
+            snapshots:Mutex::new(Vec::new())}
+    }
+}
+impl Journal for InterruptAtPersistedFence {
+    fn save(&self,snapshot:&Snapshot)->Result<(),String> {
+        self.snapshots.lock().unwrap().push(snapshot.clone());
+        let reached=match self.fence {
+            InterruptFence::Model => snapshot.model_in_flight,
+            InterruptFence::Tool => snapshot.in_flight.iter().any(|a|a.tool=="read"),
+            InterruptFence::Verification => snapshot.in_flight.iter()
+                .any(|a|a.id.starts_with("kernel-verify-")),
+        };
+        if reached {
+            self.cancelled.store(true,std::sync::atomic::Ordering::SeqCst);
+        }
+        Ok(())
+    }
+    fn cancelled(&self,_id:&str)->bool {
+        self.cancelled.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[tokio::test]
+async fn cancellation_at_model_write_ahead_fence_never_calls_provider() {
+    let model=ScriptedModel::new(vec![]);
+    let tools=RecordingTools::new(&[]);
+    let journal=InterruptAtPersistedFence::new(InterruptFence::Model);
+    let kernel=Kernel{model:&model,tools:&tools,evidence:&AlwaysTrueEvidence,journal:&journal};
+    let result=kernel.run(request("model-fence-cancel")).await.unwrap();
+    assert!(matches!(result.status,Status::Cancelled));
+    assert_eq!(result.model_calls,0);
+    assert!(!result.model_in_flight);
+    assert!(model.prompts.lock().unwrap().is_empty(),
+        "No paid provider generation after owner cancellation");
+    assert!(tools.called.lock().unwrap().is_empty());
+    assert!(!journal.snapshots.lock().unwrap().last().unwrap().model_in_flight);
+}
+
+#[tokio::test]
+async fn cancellation_at_tool_write_ahead_fence_never_executes_action() {
+    let model=ScriptedModel::new(vec![
+        decide(json!([op("read_once","read",&[])]),None)
+    ]);
+    let tools=RecordingTools::new(&[]);
+    let journal=InterruptAtPersistedFence::new(InterruptFence::Tool);
+    let kernel=Kernel{model:&model,tools:&tools,evidence:&AlwaysTrueEvidence,journal:&journal};
+    let result=kernel.run(request("tool-fence-cancel")).await.unwrap();
+    assert!(matches!(result.status,Status::Cancelled));
+    assert_eq!(result.model_calls,1);
+    assert!(result.receipts.is_empty());
+    assert!(result.in_flight.is_empty());
+    assert!(tools.called.lock().unwrap().is_empty(),
+        "Persisting an intent must not authorize a stale tool call");
+    assert!(journal.snapshots.lock().unwrap().last().unwrap().in_flight.is_empty());
+}
+
+#[tokio::test]
+async fn cancellation_at_owner_check_write_ahead_fence_skips_command() {
+    let model=ScriptedModel::new(vec![decide(json!([]),Some("Inspected"))]);
+    let tools=RecordingTools::new(&[]);
+    let journal=InterruptAtPersistedFence::new(InterruptFence::Verification);
+    let kernel=Kernel{model:&model,tools:&tools,evidence:&AlwaysTrueEvidence,journal:&journal};
+    let mut req=request("verification-fence-cancel");
+    req.allowed_tools.push("shell_exec".into());
+    req.checks.push(dominion_agent_sdk::Criterion {
+        kind:dominion_agent_sdk::CriterionKind::ToolSucceeded,
+        path:None,contains:Some("cargo test".into()),tool:Some("shell_exec".into()),
+    });
+    let result=kernel.run(req).await.unwrap();
+    assert!(matches!(result.status,Status::Cancelled));
+    assert!(result.receipts.is_empty());
+    assert!(result.in_flight.is_empty());
+    assert!(tools.called.lock().unwrap().is_empty(),
+        "Owner checks cannot run after cancellation at durable checkpoint");
+    assert!(journal.snapshots.lock().unwrap().last().unwrap().in_flight.is_empty());
+}

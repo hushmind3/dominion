@@ -261,6 +261,26 @@ impl Kernel<'_> {
             }
             run.model_in_flight = true;
             self.journal.save(&run)?;
+            // A cancellation or owner correction may arrive while the
+            // write-ahead intent is being saved. No provider call has begun.
+            let cancelled_after_fence=self.journal.cancelled(&request.id);
+            let redirected_after_fence=self.journal.directive(&request.id)? != current_directive;
+            if cancelled_after_fence || redirected_after_fence {
+                run.model_in_flight=false;
+                if cancelled_after_fence {
+                    run.stop(Status::Cancelled, "Owner cancelled before model dispatch");
+                    self.journal.save(&run)?;
+                    return Ok(run);
+                }
+                run.checks.push(CheckResult {
+                    criterion:Criterion {kind:CriterionKind::ToolSucceeded,
+                        path:None,contains:None,tool:Some("owner_directive".into())},
+                    satisfied:false,
+                    explanation:"Owner changed the instruction before model dispatch".into(),
+                });
+                self.journal.save(&run)?;
+                continue 'steps;
+            }
             let turn = match self.model.complete_with_tools(
                 &active_system, &prompt, &visible_tools, &run.receipts,
             ).await {
@@ -543,6 +563,26 @@ impl Kernel<'_> {
                     run.in_flight = ready.clone();
                     // Durable write-ahead marker: fail closed if storage fails.
                     self.journal.save(&run)?;
+                    // A save can overlap a cancellation or instruction edit.
+                    // Release only an intent that never began execution.
+                    let cancelled_after_fence=self.journal.cancelled(&request.id);
+                    let redirected_after_fence=self.journal.directive(&request.id)? != current_directive;
+                    if cancelled_after_fence || redirected_after_fence {
+                        run.in_flight.clear();
+                        if cancelled_after_fence {
+                            run.stop(Status::Cancelled,"Owner cancelled before tool dispatch");
+                            self.journal.save(&run)?;
+                            return Ok(run);
+                        }
+                        run.checks.push(CheckResult {
+                            criterion:Criterion {kind:CriterionKind::ToolSucceeded,
+                                path:None,contains:None,tool:Some("owner_directive".into())},
+                            satisfied:false,
+                            explanation:"Owner changed the task before tool dispatch".into(),
+                        });
+                        self.journal.save(&run)?;
+                        continue 'steps;
+                    }
                     // Kernel-local observability never reaches the host. Every
                     // external effect still passes through normal permissions.
                     let history=&run.receipts;
@@ -638,6 +678,19 @@ impl Kernel<'_> {
                 arguments:json!({"command":command}),depends_on:Vec::new()};
             run.in_flight = vec![action.clone()];
             self.journal.save(run)?;
+            // Owner-required commands are still effects: enforce the same
+            // post-write-ahead fence as model-proposed tool operations.
+            let cancelled_after_fence=self.journal.cancelled(&request.id);
+            let redirected_after_fence=self.journal.directive(&request.id)?.as_deref()!=directive;
+            if cancelled_after_fence || redirected_after_fence {
+                run.in_flight.clear();
+                self.journal.save(run)?;
+                return Ok(if cancelled_after_fence {
+                    AcceptanceRun::Cancelled
+                } else {
+                    AcceptanceRun::OwnerChanged
+                });
+            }
             let result=self.tools.execute(&action).await;
             let (success, result) = match result {
                 Ok(output) => (true,output),
