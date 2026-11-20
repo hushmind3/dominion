@@ -619,24 +619,29 @@ async fn run_job(state: AppState, job: Value) {
     // pool. Dropping this owned permit releases capacity after settlement.
     let team_slot=reserve_team_slot(&team_worker_slots(),&job);
     let team_at_capacity=team_slot.is_err();
-    // Durable writer ownership is held by the ACTUAL child worker, not a
-    // supervisor that can crash and leave this job still running. Competing
-    // workspace writers defer without starting their model or any tool effect.
-    let is_team_writer=kind=="prompt"&&job["input"]["teamMode"]=="write";
-    let writer_lease=if is_team_writer&&!team_at_capacity {
-        crate::host::execution::lease::LeaseGuard::acquire(
-            &state,&format!("task-team-writer:{}",
-                state.config.workspace.to_string_lossy()))
+    // The ACTUAL worker owns the durable workspace access lease. All Task
+    // Team readers coexist; every writer excludes readers/writers across all
+    // teams and SQLite connections, including after a supervisor restart.
+    let is_team_worker=job["id"].as_str()
+        .is_some_and(|id|id.starts_with("team-child:"))
+        ||job["input"]["teamTaskId"].is_string();
+    let child_gate=team_child_gate(&state,&job);
+    let workspace_lease=if is_team_worker&&!team_at_capacity
+        &&child_gate==TeamChildGate::Ready {
+        crate::host::execution::lease::LeaseGuard::acquire_workspace(
+            &state,job["input"]["teamMode"].as_str().unwrap_or(""))
     }else{None};
     // Only the language-to-action executor runs in the core job worker.
     // Optional job families attach through the host composition boundary.
-    let result=match team_child_gate(&state,&job){
+    let result=match child_gate{
         TeamChildGate::Ready if team_at_capacity=>
             Err("deferred: Task Team worker concurrency budget exhausted".into()),
         TeamChildGate::WaitingForLead=>Err("deferred: Task Team lead has not resumed".into()),
         TeamChildGate::Halt{status,reason}=>Err(format!("{status}: {reason}")),
-        TeamChildGate::Ready if is_team_writer&&writer_lease.is_none()=>
-            Err("deferred: workspace writer lease is held by another worker".into()),
+        TeamChildGate::Ready if is_team_worker&&!state.config.workspace.is_dir()=>
+            Err("needs_review: Task Team workspace does not exist".into()),
+        TeamChildGate::Ready if is_team_worker&&workspace_lease.is_none()=>
+            Err("deferred: Task Team workspace access held by other workers".into()),
         TeamChildGate::Ready=>match kind.as_str() {
         "prompt" => run_prompt(&context, &job).await,
         "resume" => run_resume(&context, &job).await,
