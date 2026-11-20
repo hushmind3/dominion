@@ -1215,13 +1215,21 @@ fn context_block_from_records(store: &Store, memories: Vec<Value>)
     let rows = memories
         .iter()
         .map(|memory| {
-            json!({
-                "id": memory["id"], "type": memory["type"],
-                "text": memory["text"].as_str().unwrap_or("").chars().take(600).collect::<String>(),
-                "source": memory["source"], "sourceMessageIds": memory["sourceMessageIds"],"sourceAuthors":memory["sourceAuthors"],
-                "sourceSessionId": memory["sessionId"], "sourcePartitionKey": memory["partitionKey"],
-        "sourceRole": memory["sourceRole"], "verification": memory["verification"],
-            })
+            // Provenance stays in SQLite and the host-side revision manifest.
+            // Do not bill the model for internal session IDs, partitions,
+            // source message arrays or verification envelopes every turn.
+            let mut row=json!({
+                "id":memory["id"],"type":memory["type"],
+                "text":memory["text"].as_str().unwrap_or("")
+                    .chars().take(600).collect::<String>(),
+            });
+            if let Some(role)=memory["sourceRole"].as_str() {
+                row["sourceRole"]=json!(role);
+            }
+            if let Some(source)=memory["source"].as_str() {
+                row["source"]=json!(source);
+            }
+            row
         })
         .collect::<Vec<_>>();
     let manifest = memories
