@@ -3,6 +3,7 @@
 //! history. Only this driver admits model rounds and provider-visible calls.
 use serde_json::Value;
 use std::future::Future;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
@@ -16,11 +17,12 @@ pub struct Driver {
     max_tools: usize,
     rounds: usize,
     proposals: usize,
+    seen_call_ids: HashSet<String>,
 }
 
 impl Driver {
     pub fn new(max_rounds: usize, max_tools: usize) -> Self {
-        Self { max_rounds, max_tools, rounds: 0, proposals: 0 }
+        Self { max_rounds, max_tools, rounds: 0, proposals: 0, seen_call_ids: HashSet::new() }
     }
 
     pub fn begin_model_round(&mut self, cancelled: bool) -> Result<(), &'static str> {
@@ -64,6 +66,33 @@ impl Driver {
         names: impl IntoIterator<Item = &'a str>, visible: &[Value],
     ) -> bool {
         names.into_iter().all(|name|Self::advertised(name,visible))
+    }
+
+    /// Atomically reserve every tool call in one model response before any host
+    /// side effect. Duplicate provider IDs are rejected across the entire
+    /// turn; names must be visible in the current model round.
+    pub fn admit_batch<'a>(
+        &mut self, calls: impl IntoIterator<Item = (&'a str, &'a str)>,
+        visible: &[Value], enabled: bool,
+    ) -> Result<(), &'static str> {
+        if !enabled { return Err("tool execution disabled"); }
+        let pending: Vec<_> = calls.into_iter().collect();
+        if pending.len() > self.max_tools.saturating_mul(2).saturating_sub(self.proposals) {
+            return Err("tool proposal limit exceeded");
+        }
+        let mut ids = HashSet::new();
+        for (id, name) in &pending {
+            if id.trim().is_empty() || !ids.insert(*id) || self.seen_call_ids.contains(*id) {
+                return Err("duplicate or missing tool call id");
+            }
+            if !Self::advertised(name, visible) {
+                return Err("tool was not advertised");
+            }
+        }
+        let count = pending.len();
+        for (id, _) in pending { self.seen_call_ids.insert(id.to_owned()); }
+        self.proposals += count;
+        Ok(())
     }
 
     pub fn admit_tool(&mut self, name: &str, visible: &[Value], enabled: bool)
@@ -145,4 +174,22 @@ mod tests {
         assert_eq!(gate.admit_tool("workspace_read",&visible,true),
             Err("tool proposal limit exceeded"));
     }
+    #[test]
+    fn atomic_batch_rejects_hidden_duplicate_and_over_budget_calls_without_reserving_any() {
+        let visible=vec![json!({"name":"file_read"})];
+        let mut gate=Driver::new(3,2);
+        assert_eq!(gate.admit_batch([("x","file_read"),("x","file_read")],
+            &visible,true),Err("duplicate or missing tool call id"));
+        assert_eq!(gate.admit_batch([("x","file_read"),("y","mcp__hidden")],
+            &visible,true),Err("tool was not advertised"));
+        assert!(gate.admit_batch([("x","file_read"),("y","file_read")],
+            &visible,true).is_ok());
+        assert_eq!(gate.admit_batch([("x","file_read")],
+            &visible,true),Err("duplicate or missing tool call id"));
+        assert_eq!(gate.admit_batch([("z","file_read"),("w","file_read"),
+            ("v","file_read")],&visible,true),Err("tool proposal limit exceeded"));
+        assert!(gate.admit_batch([("z","file_read"),("w","file_read")],
+            &visible,true).is_ok());
+    }
+
 }

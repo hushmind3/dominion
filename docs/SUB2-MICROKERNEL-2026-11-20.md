@@ -109,3 +109,21 @@ ProgramIR 실행, 대안 후보 실험, 작업 검토, 정책 스냅샷과 세�
 ## 공통 실행 상태와 작업 재실행 정합성
 
 독립 코어에 RunState/RunEvent 버전 1 계약을 추가하고, 그룹 작업 할당과 완료/건너뜀 전이에 연결했습니다. 작업 ID는 주인 원문, 에이전트, 작업 순서에서 결정적으로 유도되어 작업 재개에서 중복 할당을 만들지 않습니다. Chat/SDK 전체 이벤트의 전환까지 완료한 것은 아닙니다.
+
+## 2026-11-20: 도구 배치 원자적 승인과 실패 영수증
+
+독립 Driver::admit_batch는 모델이 실제로 제안한 도구 호출 **전체**를 실행 전에 확인합니다.
+광고되지 않은 이름, 같은 턴에서 재사용된 호출 ID, 중복/빈 ID, 남은 예산 초과를
+배치 단위로 거부합니다. 거부된 배치에서 도구가 일부라도 먼저 실행되는 일을 막습니다.
+
+독립 dominion-agent-loop::run은 이 원자적 승인을 사용합니다.
+도구 호출이 시작된 뒤 전송 오류가 나면 호스트 효과를 확정할 수 없으므로
+해당 영수증에는 outcomeUnknown=true를 기록하고 자동 재실행 없이 종료합니다.
+남은 호출은 not_dispatched로 기록하며 assistant tool_calls와 tool result의
+프로토콜 짝을 보존합니다. 취소된 후속 호출도 not_dispatched로 보존합니다.
+실제 제품의 기존 복합 채팅 루프/영속 저장소는 이번 단계에서 변경하지 않았습니다.
+
+비교한 2026 공개 구현:
+- Qwen Code (2026-07-20): https://github.com/QwenLM/qwen-code/blob/main/docs/design/2026-07-20-plan-mode-mid-turn-guidance.md
+- OpenClaw agent loop: https://docs.openclaw.ai/agent-loop
+- Qwen Code tool telemetry: https://github.com/QwenLM/qwen-code/blob/main/docs/developers/development/telemetry.md

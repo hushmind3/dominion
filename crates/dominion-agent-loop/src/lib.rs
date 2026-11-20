@@ -94,31 +94,50 @@ pub async fn run<A:AgentLoop,M:ModelPort,T:ToolPort>(
                 });
             }
             Step::Execute{..}=>{
-                // Reject the entire proposal before ANY host effect. A batch
-                // with a visible read followed by a hidden mutation must not
-                // partially execute, regardless of which strategy selected it.
-                if !Driver::batch_advertised(
-                    response.calls.iter().map(|call|call.name.as_str()),
-                    visible_tools,
-                ){
-                    return Err("tool was not advertised to this model round".into());
-                }
+                // Reserve the full batch before any external effect. A
+                // hidden tool, duplicate call ID or exhausted budget denies
+                // every call in the proposal, not just the later ones.
+                driver.admit_batch(
+                    response.calls.iter().map(|c|(c.id.as_str(),c.name.as_str())),
+                    visible_tools,tools_enabled,
+                ).map_err(str::to_string)?;
                 let calls=response.calls.iter().map(|c|json!({
                     "id":c.id,"type":"function",
                     "function":{"name":c.name,"arguments":c.arguments.to_string()}
                 })).collect::<Vec<_>>();
                 history.push(json!({"role":"assistant","content":response.content,
                     "tool_calls":calls}));
-                for call in &response.calls {
+                for (index,call) in response.calls.iter().enumerate() {
                     if model.cancelled()||tools.cancelled(){
+                        // Complete transcript pairing without claiming that any
+                        // remaining call reached the host.
+                        for skipped in &response.calls[index..] {
+                            history.push(json!({"role":"tool","tool_call_id":skipped.id,
+                                "content":json!({"status":"not_dispatched",
+                                    "reason":"execution cancelled"}).to_string()}));
+                        }
                         return Err("execution cancelled".into());
                     }
-                    driver.admit_tool(&call.name,visible_tools,tools_enabled)
-                        .map_err(str::to_string)?;
-                    let output=tools.dispatch(call).await?;
-                    history.push(json!({"role":"tool","tool_call_id":call.id,
-                        "content":output.to_string()}));
-                    dispatched+=1;
+                    match tools.dispatch(call).await {
+                        Ok(output)=>{
+                            history.push(json!({"role":"tool","tool_call_id":call.id,
+                                "content":output.to_string()}));
+                            dispatched+=1;
+                        }
+                        Err(error)=>{
+                            // A transport error cannot establish whether an
+                            // external effect happened: never auto-replay it.
+                            history.push(json!({"role":"tool","tool_call_id":call.id,
+                                "content":json!({"status":"outcome_unknown",
+                                    "outcomeUnknown":true,"error":error.clone()}).to_string()}));
+                            for skipped in &response.calls[index+1..] {
+                                history.push(json!({"role":"tool","tool_call_id":skipped.id,
+                                    "content":json!({"status":"not_dispatched",
+                                        "reason":"prior tool failure"}).to_string()}));
+                            }
+                            return Err(error);
+                        }
+                    }
                 }
             }
         }
@@ -234,4 +253,56 @@ mod tests{
         assert_eq!(model.called,1);
         assert_eq!(tools.executed,vec!["file_read"]);
     }
+    #[tokio::test]
+    async fn duplicate_call_ids_are_denied_before_first_effect() {
+        let mut algorithm=select(false);
+        let mut driver=Driver::new(3,3);
+        let mut model=Model{replies:VecDeque::from(vec![ModelResponse{
+            content:String::new(),calls:vec![
+                ToolRequest{id:"same".into(),name:"file_read".into(),arguments:json!({})},
+                ToolRequest{id:"same".into(),name:"file_read".into(),arguments:json!({})},
+            ],
+        }]),called:0,cancelled:false};
+        let mut tools=Tools::default();
+        let mut history=vec![];
+        let result=run(&mut algorithm,&mut driver,&mut model,&mut tools,
+            &mut history,&catalog(),true,false).await;
+        assert!(result.unwrap_err().contains("duplicate"));
+        assert!(tools.executed.is_empty());
+        assert!(history.is_empty());
+    }
+    #[tokio::test]
+    async fn failed_effect_is_unknown_and_remaining_calls_get_not_dispatched_receipts() {
+        struct FailingTools{executed:Vec<String>}
+        impl ToolPort for FailingTools{
+            async fn dispatch(&mut self,call:&ToolRequest)->Result<Value,String>{
+                self.executed.push(call.id.clone());
+                if call.id=="second"{Err("ambiguous network result".into())}
+                else{Ok(json!({"ok":true}))}
+            }
+        }
+        let mut model=Model{replies:VecDeque::from(vec![ModelResponse{
+            content:String::new(),calls:vec![
+                ToolRequest{id:"first".into(),name:"file_read".into(),arguments:json!({})},
+                ToolRequest{id:"second".into(),name:"file_read".into(),arguments:json!({})},
+                ToolRequest{id:"third".into(),name:"file_read".into(),arguments:json!({})},
+            ]
+        }]),called:0,cancelled:false};
+        let mut tools=FailingTools{executed:vec![]};
+        let mut algorithm=select(false);
+        let mut driver=Driver::new(3,3);
+        let mut history=vec![];
+        let error=run(&mut algorithm,&mut driver,&mut model,&mut tools,
+            &mut history,&catalog(),true,false).await.unwrap_err();
+        assert_eq!(error,"ambiguous network result");
+        assert_eq!(tools.executed,vec!["first","second"]);
+        assert_eq!(model.called,1);
+        assert_eq!(history.len(),4); // assistant + one tool receipt per call
+        let unknown:Value=serde_json::from_str(history[2]["content"].as_str().unwrap()).unwrap();
+        let skipped:Value=serde_json::from_str(history[3]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(unknown["outcomeUnknown"],true);
+        assert_eq!(skipped["status"],"not_dispatched");
+        assert_eq!(history[3]["tool_call_id"],"third");
+    }
+
 }
