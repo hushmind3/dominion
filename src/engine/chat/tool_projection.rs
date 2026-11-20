@@ -402,7 +402,7 @@ mod tests {
         let search=make("dominion_tool_search","Search tools");
         let persona=make("prompt_source_read","Recover owner/persona original");
         let evidence=make("history_evidence_read","Recover archived exact event");
-        let bulky=make("optional_heavy","OVERLONG_SCHEMA_DESCRIPTION".repeat(1000));
+        let bulky=make("optional_heavy",&"OVERLONG_SCHEMA_DESCRIPTION".repeat(1000));
         let ordered=canonical_tool_definitions(vec![
             bulky,persona.clone(),evidence.clone(),search.clone()]);
         let budget=search.to_string().len()+persona.to_string().len()+evidence.to_string().len()+4;
