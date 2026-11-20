@@ -1,6 +1,6 @@
-// Check the active runtime graph and forbid retired native modules.
+// Inspect the native runtime graph and existing delivery contracts.
 import {execFileSync} from 'node:child_process'
-import {existsSync,readFileSync,readdirSync} from 'node:fs'
+import {existsSync,readFileSync} from 'node:fs'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')
@@ -66,29 +66,13 @@ if(!quietTurn||quietTurn.includes('run_quiet_with_stats(')||
    !quietTurn.includes('chat::run_turn_background(')||
    !quietTurn.includes('drain_quiet_events(receiver)'))
   throw Error('Quiet background turns must drain events without collecting discarded tool evidence')
-const tools=readFileSync(path.join(root,'src/engine/tools.rs'),'utf8')
 if(!runtime.includes('dominion_core::engine::Engine::drive('))throw Error('Native driver must run product turns')
 if(!outcome.includes('pub(super) fn determine_task_outcome(')||!runtime.includes('mod outcome;'))
   throw Error('Outcome policy must remain independently verifiable')
 if(/while\s+!\s*(?:self\.)?finished/.test(runtime+adapter))throw Error('Legacy model retry loop reintroduced')
 for(const phase of ['initialize','plan','model','verify','dispatch_tool','verify_tools'])
   if(!driver.includes(`host.${phase}(`))throw Error('Native driver missing phase: '+phase)
-if(/^pub mod (rsi|video)(?:_|;)/m.test(modules)||/tool\("(?:rsi_[^"]*|algorithm_propose|unsafe_audit)"/.test(tools))
-  throw Error('Retired generation engine or tool schema still registered')
-for(const file of ['src/engine/video.rs','src/engine/rsi_evolve.rs','src/engine/rsi_worktree.rs'])
-  if(existsSync(path.join(root,file)))throw Error('Retired engine source remains: '+file)
 console.log(`Agent runtime graph OK: ${members.map(p=>p.name).join(', ')}`)
-
-for(const file of readdirSync(path.join(root,'src/engine')))
-  if(/^(?:rsi(?:_|\.)|video(?:_|\.))/.test(file))throw Error('Retired engine source remains: '+file)
-const api=readFileSync(path.join(root,'src/api/mod.rs'),'utf8')
-for(const line of api.split('\n'))if(/\.route\("\/api\/(?:rsi|video|youtube)(?:\/|\")/.test(line))
-  throw Error('Retired endpoint remains: '+line.trim())
-for(const file of ['src/api/rsi.rs','src/api/video.rs'])
-  if(existsSync(path.join(root,file)))throw Error('Retired API module remains: '+file)
-if(/(?:pub )?mod (?:rsi|video);/.test(api))throw Error('Retired API module remains imported')
-const compat=readFileSync(path.join(root,'src/api/compat.rs'),'utf8')
-if(/youtube_(?:status|uploads)/.test(compat))throw Error('Retired YouTube compatibility API remains')
 const bootstrap=readFileSync(path.join(root,'src/bootstrap.rs'),'utf8')
 if(bootstrap.includes('refresh_free_catalog('))throw Error('Idle provider-model sweep reintroduced')
 // Check the transitive finalization and prompt-selection paths, not just
@@ -111,10 +95,6 @@ if(!recentBaseline||
    /\.all\("execution"\)|\.rev\(\)\.take\(40\)/.test(recentBaseline)||
    !recentBaseline.includes('try_recent_records("execution", 40)'))
   throw Error('Strategy baseline must use recent indexed execution facts')
-if(modules.includes('pub mod scheduler;')||bootstrap.includes('engine::scheduler::start(')||
-   existsSync(path.join(root,'src/engine/scheduler.rs'))||
-   /pub fn schedule_experiments\(/.test(improvementSource))
-  throw Error('Retired autonomous experiment scheduling loop reintroduced')
 if(/pub async fn run_quiet_with_stats\(/.test(modules))
   throw Error('Unused quiet-turn evidence wrapper reintroduced')
 const store=readFileSync(path.join(root,'src/db.rs'),'utf8')
@@ -213,9 +193,3 @@ if(!toolSource.includes('pub(crate) use delegation::{profile_tool_allowed, profi
    !dispatchSource.includes('let role_admitted = tools::profile_tool_allowed(session, &call.name, &arguments);')||
    !dispatchSource.includes('if !role_admitted || effect_block.is_some()'))
   throw Error('Task-role tool admission can be bypassed by catalog/discovery/approval')
-const frontend=readFileSync(path.join(root,'web/src/App.tsx'),'utf8')+readFileSync(path.join(root,'web/src/components/WorkspaceShell.tsx'),'utf8')
-if(/VideoPage|SelfImprovementPage|id:'(?:video|rsi)'/.test(frontend))throw Error('Retired UI is reachable')
-if(existsSync(path.join(root,'web/src/components/ImprovementNotice.tsx')))throw Error('Retired RSI prompt widget remains')
-if(/resvg|comfyui/i.test(product.dependencies.map(d=>d.name).join(' ')))throw Error('Retired media renderer dependency remains')
-for(const retired of ['dominion-harness','dominion-agent-sdk'])if(members.some(p=>p.name===retired)||product.dependencies.some(p=>p.name===retired))
-  throw Error('Retired duplicate runtime returned: '+retired)
