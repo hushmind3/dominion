@@ -391,3 +391,11 @@ test('dependency aware team execution cannot parallelize delegated writers',()=>
  assert.match(runtime,/ordered_children/);
  assert.match(ir,/dominion_agent_loop::task_team::schedule/);
 });
+
+test('DAG ready read waves stay concurrent while writer and delegate steps remain fenced',()=>{
+ const s=source('src/engine/services/decision/runtime_program.rs');
+ assert.match(s,/for wave in &schedule\.waves/);
+ assert.match(s,/parallel_mode!="sequential" && wave\.len\(\)>1/);
+ assert.match(s,/dependency_waves/);
+ assert.match(s,/budget\.parallel_shares\(wave\.len\(\)\)/);
+});

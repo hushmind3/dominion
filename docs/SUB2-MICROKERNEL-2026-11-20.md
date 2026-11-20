@@ -243,3 +243,7 @@ ProgramIR의 기존 `parallel` 노드에 `dependsOn` 형제 ID를 정식 지원�
 ## 2026-11-21: External Agent Bridge 세션·재개·승인 경계
 
 운영자 설정 `DOMINION_EXTERNAL_HARNESSES`에 `resumeArgs`가 지정된 외부 Codex·Claude·Qwen 실행기에 한해 새 작업의 원격 세션 ID를 추출해 `external_agent_session`에 저장합니다. 모델이 보는 것은 사용자 소유권·작업 공간·어댑터 버전으로 격리된 `bridgeSessionId` UUID뿐입니다. 재개는 DB의 준비 상태를 CAS로 선점하고 운영자가 제공한 argv 템플릿의 `{session_id}`에만 실제 원격 ID를 넣으며 shell 실행은 사용하지 않습니다. 중단·실패·크래시는 `needs_review` 또는 `running`을 유지해 자동 중복 실행을 차단합니다. 기존 외부 위임은 변함없이 주인 승인 및 DOMINION 효과 저널 안에서만 실행됩니다. 외부 내부 권한을 통제한다고 가정하지 않습니다.
+
+## 2026-11-21: Task Team DAG 읽기 병렬 파동 실행
+
+의존성이 포함된 ProgramIR 병렬 팀도 모든 노드를 무조건 직렬화하지 않습니다. 위상 정렬된 각 **ready wave의 순수 읽기 작업**은 기존 도구 예산 분할/유일한 operation seq 예약/join_all 경로로 동시에 실행하고, 파일 쓰기·외부 위임·불명확한 도구 효과는 단독 파동으로 실행합니다. 각 파동의 관찰을 합친 뒤 다음 파동을 시작해 `dependsOn` 선행 완료를 보장하고, 중간 pause 시 미완료 노드 ID를 체크포인트에 보존합니다.

@@ -1066,35 +1066,86 @@ pub(super) fn execute_nodes<'a>(
                     .unwrap_or_else(|| "concurrent".into());
                     if parallel_mode == "sequential" || schedule.requires_serial() {
                         let mut paused = false;
-                        for child in &ordered_children {
-                            let frame = execute_nodes(
-                                ctx,
-                                vec![child.clone()],
-                                resolved,
-                                checkpoint,
-                                budget,
-                                op_seq,
-                                depth + 1,
-                                false,
-                                true,
-                            )
-                            .await?;
-                            resolved = frame.resolved;
-                            checkpoint = frame.checkpoint;
-                            budget = frame.budget;
-                            op_seq = frame.op_seq;
-                            messages.extend(frame.messages);
-                            if frame.paused {
-                                paused = true;
-                                break;
+                        let mut used_parallel_waves=false;
+                        for wave in &schedule.waves {
+                            // Topologically ready independent reads can run
+                            // together, even when later writer/delegate waves
+                            // require a barrier. Every opaque effect is alone.
+                            if parallel_mode!="sequential" && wave.len()>1 {
+                                used_parallel_waves=true;
+                                let shares=budget.parallel_shares(wave.len());
+                                let mut reserved_until=op_seq;
+                                let mut futures=Vec::new();
+                                for (index,share) in wave.iter().copied().zip(shares) {
+                                    let start=reserved_until;
+                                    reserved_until=reserved_until
+                                        .saturating_add(share.tool_capacity() as u64);
+                                    futures.push(execute_nodes(
+                                        ctx,vec![children[index].clone()],
+                                        resolved.clone(),checkpoint.clone(),
+                                        share,start,depth+1,false,true,
+                                    ));
+                                }
+                                let outcomes=futures_util::future::join_all(futures).await;
+                                let mut wave_last=serde_json::Map::new();
+                                for (&index,outcome) in wave.iter().zip(outcomes){
+                                    let frame=outcome?;
+                                    let child_id=children[index]["id"].as_str()
+                                        .unwrap_or("");
+                                    if let Some(map)=frame.resolved.as_object(){
+                                        for (key,value) in map {
+                                            if key!="last"{resolved[key]=value.clone();}
+                                        }
+                                    }
+                                    if !child_id.is_empty(){
+                                        wave_last.insert(child_id.to_string(),
+                                            frame.resolved["last"].clone());
+                                    }
+                                    if let Some(done)=frame.checkpoint["completedOperationIds"].as_array(){
+                                        for id in done{
+                                            mark_program_completed(&mut checkpoint,
+                                                id.as_str().unwrap_or(""));
+                                        }
+                                    }
+                                    mark_program_completed(&mut checkpoint,child_id);
+                                    budget.merge_usage(&frame.budget);
+                                    op_seq=op_seq.max(frame.op_seq);
+                                    messages.extend(frame.messages);
+                                    paused|=frame.paused;
+                                }
+                                op_seq=op_seq.max(reserved_until);
+                                resolved["last"]=Value::Object(wave_last);
+                            }else{
+                                for &index in wave {
+                                    let frame=execute_nodes(
+                                        ctx,vec![children[index].clone()],
+                                        resolved,checkpoint,budget,op_seq,
+                                        depth+1,false,true,
+                                    ).await?;
+                                    resolved=frame.resolved;
+                                    checkpoint=frame.checkpoint;
+                                    budget=frame.budget;
+                                    op_seq=frame.op_seq;
+                                    messages.extend(frame.messages);
+                                    paused|=frame.paused;
+                                    if paused{break;}
+                                }
                             }
+                            if paused{break;}
                         }
-                        checkpoint["pendingOperationIds"] = json!([]);
-                        checkpoint["parallelMode"] = json!(
+                        checkpoint["pendingOperationIds"]=json!(
+                            children.iter().filter(|child|child["id"].as_str()
+                                .is_some_and(|id|!crate::engine::program::checkpoint_skip_completed(
+                                    &checkpoint,id)))
+                                .map(|child|child["id"].clone()).collect::<Vec<_>>());
+                        if used_parallel_waves{
+                            checkpoint["parallelMode"]=json!("dependency_waves");
+                        }
+                        if !used_parallel_waves{checkpoint["parallelMode"] = json!(
                             if schedule.has_dependencies{"dependency_ordered"}
                             else if schedule.has_writers{"exclusive_writers"}
                             else{"sequential"}
-                        );
+                        );}
                         checkpoint["resolvedInputs"] = resolved.clone();
                         if paused {
                             checkpoint["status"] = json!("paused");
