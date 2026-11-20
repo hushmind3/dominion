@@ -127,6 +127,33 @@ pub(crate) fn project(
     session_id: &str, plan: &mut Value,
 ) -> (Vec<Value>, Option<Projection>) {
     let clean = || messages.iter().map(wire_message).collect();
+    // Private chats, Home SDK runs and delegated jobs already get an
+    // evidence-selected context from the Rust context compiler. A persistent
+    // participant workingView MUST NOT append previously selected, now
+    // irrelevant frames back to that view. That defeated both tool-trace
+    // compaction and source-addressed retrieval, and could rebuild a 50k+
+    // cached prefix after a short owner follow-up.
+    //
+    // Room turns have a distinct shared-evidence/cursor contract; preserve
+    // their existing append-only working view and prefix reuse.
+    let is_room=state.store.get("session",session_id)
+        .is_some_and(|session|session["roomId"].is_string());
+    if !is_room {
+        let selected=clean();
+        let selected_cost=super::room_context::input_estimate(&selected,tools);
+        plan["workingView"]=json!({
+            "mode":"selected-private-context-v1",
+            "rebaseReason":"owner_selected_context",
+            "estimatedInputTokens":selected_cost,
+            "freshHistoryEstimatedTokens":super::room_context::input_estimate(
+                &selected.iter().skip(1).cloned().collect::<Vec<_>>(),&[]),
+            "retainedHistoryEstimatedTokens":0,
+            "newHistoryEstimatedTokens":selected_cost,
+            "historyAllowanceTokens":selected_cost,
+            "reusedFrames":0,
+        });
+        return (selected,None);
+    }
     let Some(source) = messages.first().and_then(|row| row["_dominion_source"].as_str()) else {
         return (clean(), None);
     };
@@ -1027,19 +1054,68 @@ mod tests {
         replay[1]["_dominion_frame"]=json!("stored-call-row");replay[2]["_dominion_frame"]=json!("stored-result-row");
         let mut next=prepare(&state,&provider,&request,"s","identity",&json!({})).unwrap();
         let (wire,_)=project(&state,&provider,&replay,&[],"s",&mut next);
-        assert!(next["workingView"]["rebaseReason"].is_null());
+        assert_eq!(next["workingView"]["rebaseReason"],"owner_selected_context");
         assert_eq!(wire.iter().filter(|row|row["tool_calls"].is_array()).count(),1);
         assert_eq!(wire.iter().filter(|row|row["role"]=="tool").count(),1);
         state.store.patch_if("skill","skill","enabled",&json!(true),&json!({"enabled":false}));
         let mut fresh=vec![system,json!({"role":"user","content":"next","_dominion_frame":"owner2"})];
         fresh[0]["_dominion_source"]=json!("owner2");fresh[0]["_dominion_dependencies"]=json!([]);
         let (wire,_)=project(&state,&provider,&fresh,&[],"s",&mut next);
-        assert_eq!(next["workingView"]["rebaseReason"],"context_evidence_changed");
+        assert_eq!(next["workingView"]["rebaseReason"],"owner_selected_context");
         assert!(!json!(wire).to_string().contains("old procedure"));
         state.store.clear_messages("s");
         project(&state,&provider,&fresh,&[],"s",&mut next);
-        assert_eq!(next["workingView"]["rebaseReason"],"transcript_reset");
+        assert_eq!(next["workingView"]["rebaseReason"],"owner_selected_context");
         drop(state); std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn private_followups_never_resurrect_prior_expensive_context(){
+        let root=std::env::temp_dir().join(format!(
+            "dominion-private-view-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        state.store.put("session",&json!({"id":"private:history"}));
+        let provider=route();
+        let request=TurnRequest::from_value(&json!({
+            "input":"why do I use so many tokens","agentId":"a",
+        })).unwrap();
+        let system=json!({"role":"system","content":"fixed owner policy",
+            "_dominion_source":"message-0"});
+        // Emulate a previously committed cache view full of source material.
+        let initial=vec![system.clone(),
+            json!({"role":"user","content":"search these documents",
+                "_dominion_frame":"question-one"}),
+            json!({"role":"assistant","content":"OLD_HTML_BODY_".repeat(7000),
+                "_dominion_frame":"past-observation"})];
+        let mut first=prepare(&state,&provider,&request,"private:history",
+            "fixed owner policy",&json!({})).unwrap();
+        let (one,pending)=project(&state,&provider,&initial,&[],
+            "private:history",&mut first);
+        assert!(pending.is_none(),"private turns cannot persist a stale wire view");
+        assert!(one.iter().any(|row|row["content"].as_str()
+            .is_some_and(|text|text.contains("OLD_HTML_BODY"))));
+        let participant_id=first["participantId"].as_str().unwrap();
+        state.store.patch_if("participant_conversation",participant_id,"id",
+            &json!(participant_id),&json!({"workingView":{
+                "frames":[{"key":"old","message":{"role":"assistant",
+                    "content":"OLD_HTML_BODY_".repeat(7000)}}]}}));
+        for number in 0..6{
+            let fresh=vec![system.clone(),json!({"role":"user",
+                "_dominion_frame":format!("owner-{number}"),
+                "content":format!("말 짧게 해라 {number}")})];
+            let mut plan=prepare(&state,&provider,&request,
+                "private:history","fixed owner policy",&json!({})).unwrap();
+            let (selected,pending)=project(&state,&provider,&fresh,&[],
+                "private:history",&mut plan);
+            assert!(pending.is_none());
+            assert_eq!(selected.len(),2,"one question must stay one question");
+            assert!(!json!(selected).to_string().contains("OLD_HTML_BODY"));
+            assert_eq!(plan["workingView"]["mode"],"selected-private-context-v1");
+            assert!(plan["workingView"]["estimatedInputTokens"].as_u64()
+                .unwrap()<400,"selected context must not inherit a huge cache prefix");
+        }
+        drop(state);
+        let _=std::fs::remove_dir_all(root);
     }
 
     #[test]
