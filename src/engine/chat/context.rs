@@ -367,7 +367,10 @@ pub(super) fn history(
     // every participant make each turn slower and more expensive without
     // making the reply better.
     let limit = if is_room { 16 } else { HISTORY_LIMIT };
-    let byte_budget = byte_budget.unwrap_or(if is_room { 16_000 } else { 160_000 });
+    // Long-lived transcript rows live in SQLite. Only the latest bounded
+    // conversation window crosses the model wire; previous task facts can
+    // still be retrieved from scoped memory and explicit history tools.
+    let byte_budget = byte_budget.unwrap_or(if is_room { 16_000 } else { 48_000 });
     let mut start = all.len().saturating_sub(limit);
     let mut bytes = 0;
     for index in (start..all.len()).rev() {
@@ -630,6 +633,31 @@ mod tests {
         assert!(!unrelated.as_ref().is_some_and(|(block, _, _)|
             block.contains("CHECK_CLAUSE_CONTEXT_SPECIAL")));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ordinary_history_retains_newest_owner_text_without_replaying_all_old_dumps() {
+        let (state,dir)=state();
+        state.store.put("session",&json!({"id":"long-session"}));
+        for index in 0..12 {
+            state.store.write_message(&json!({
+                "session_id":"long-session","role":"user",
+                "content":format!("OLD_{index}_{}", "A".repeat(8_000)),
+            })).unwrap();
+        }
+        state.store.write_message(&json!({
+            "session_id":"long-session","role":"user",
+            "content":"LATEST_OWNER_REQUIREMENT_DO_NOT_DROP",
+        })).unwrap();
+        let retained=history(&state,"long-session",None,None).unwrap();
+        let full=state.store.messages("long-session");
+        assert_eq!(full.len(),13,"history editing must not erase SQLite data");
+        assert!(retained.len()<full.len(),"the huge old payloads must not all be resent");
+        assert!(retained.iter().any(|row|
+            row["content"]=="LATEST_OWNER_REQUIREMENT_DO_NOT_DROP"));
+        assert!(!retained.iter().any(|row|row["content"].as_str()
+            .is_some_and(|text|text.starts_with("OLD_0_"))));
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]

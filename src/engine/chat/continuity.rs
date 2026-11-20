@@ -180,10 +180,14 @@ fn append_owner_fact_deltas(fresh: &[Value], prior: &[Value]) -> Vec<Value> {
 /// context capacity demands a rotation. Enforcing the 2k *selector* budget
 /// against the cumulative cached prefix rebased almost every owner turn.
 fn working_view_allowance(room: Option<&Value>, provider: &ProviderRef, fixed: usize, server_kv_cache:bool) -> usize {
-    // Non-room chats keep their historical 40k history allowance.
-    // This larger cache epoch is only an optimization for room speakers.
+    // Ordinary conversations are not infinitely growing prompt-cache
+    // transcripts. Their full history and tool observations remain durable
+    // in SQLite; the model receives a bounded, recent, relevant working view.
+    // Large cached prefixes still consume context/latency and are reread when
+    // the provider evicts them. Cacheless local routes therefore use a
+    // shorter epoch than services with a verified prefix cache.
     if room.is_none() {
-        let epoch=40_000usize;
+        let epoch=if provider.local && !server_kv_cache {6_000usize} else {12_000usize};
         return provider.context_tokens.map(|capacity|
             epoch.min((capacity as usize).saturating_sub(
                 provider.max_output_tokens.unwrap_or(4096) as usize).saturating_sub(fixed)))
@@ -1182,6 +1186,23 @@ mod tests {
             "8k local context minus 4k identity and 1k output must retain 3168 tokens of cacheable history");
         assert_eq!(working_view_allowance(Some(&room),&provider,4000,false),2000,
             "local backend without server KV reuse must keep the short epoch");
+    }
+
+    #[test]
+    fn ordinary_chat_does_not_accumulate_a_forty_thousand_token_cached_epoch() {
+        let mut provider=route();
+        provider.context_tokens=Some(128_000);
+        provider.max_output_tokens=Some(4_096);
+        assert_eq!(working_view_allowance(None,&provider,2_000,true),12_000);
+        assert_eq!(working_view_allowance(None,&provider,2_000,false),12_000);
+        provider.local=true;
+        assert_eq!(working_view_allowance(None,&provider,2_000,false),6_000,
+            "a cacheless local backend cannot amortize a 40k historical prefix");
+        assert_eq!(working_view_allowance(None,&provider,2_000,true),12_000);
+        provider.context_tokens=Some(8_000);
+        provider.max_output_tokens=Some(1_000);
+        assert_eq!(working_view_allowance(None,&provider,2_000,true),5_000,
+            "real model context and output headroom remain authoritative");
     }
 
     #[test]

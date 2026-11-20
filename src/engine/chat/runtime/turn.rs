@@ -304,7 +304,7 @@ pub(super) async fn run_turn_body(
             session_id,
             request.agent_id.as_deref(),
             provider.context_tokens.map(|tokens| {
-                ((tokens as usize).saturating_mul(3)).clamp(8_000, 400_000)
+                ((tokens as usize).saturating_mul(3)).clamp(8_000, 48_000)
             }),
         )?;
         (prompt_context, history_messages)
