@@ -1,6 +1,6 @@
 use crate::engine::chat::TurnRequest;
 use crate::engine::run_quiet;
-use crate::engine::{learning, reflect, rooms};
+use crate::engine::rooms;
 use crate::state::AppState;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -492,9 +492,8 @@ async fn run_job(state: AppState, job: Value) {
         "room" | "meeting" => rooms::run(&context, &job).await,
         "prompt" => run_prompt(&context, &job).await,
         "resume" => run_resume(&context, &job).await,
-        "learn" => learning::run(&context, &job).await,
-        "reflect" => reflect::run(&context, &job).await,
-        "discord" => crate::engine::discord::run(&context, &job).await,
+        "learn"|"reflect"|"discord" =>
+            crate::engine::extensions::jobs::run(&context,&job).await,
         other => Err(format!("지원하지 않는 작업 종류입니다: {other}")),
     };
 
