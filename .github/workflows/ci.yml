@@ -69,6 +69,7 @@ jobs:
           # continuation horizon, with HTTP/provider context limits unchanged.
           cargo test --lib engine::chat::context::tests::skill_manifest_is_compact_sorted_and_never_embeds_full_instructions
           cargo test --lib engine::chat::context::tests::skill_previews_avoid_repeating_unrelated_descriptions_but_retain_ids
+          cargo test --lib engine::models::tests::model_scanner_shares_one_bounded_walk_for_files_and_dirs
           cargo test --lib engine::chat::context::tests::tool_reliability_context_is_bounded_deterministic_and_skipped_without_tools
           cargo test --lib engine::tools::tests::skill_read_requires_enabled_visible_skill_and_returns_original_body
           cargo test --lib engine::chat::continuity::tests::only_persistent_ws_enlarges_bounded_history_not_http_replay
@@ -162,6 +163,7 @@ jobs:
           npm --prefix web run build
           node --experimental-strip-types --test web/tests/*.test.mjs
           node scripts/check-sub2-contract.mjs
+          node scripts/sub2-source-audit.mjs
           node --test scripts/sub2-compare.test.mjs
           ./web/node_modules/.bin/tsc -p sdk/typescript/tsconfig.json
           node --test sdk/typescript/tests/sdk.test.mjs
