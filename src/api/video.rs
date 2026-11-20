@@ -26,13 +26,16 @@ pub fn public_job(job:&Value)->Value{
 }
 /// One read-only archive projection shared by video and YouTube compatibility
 /// APIs. Never queues generation, modifies jobs or drops historical records.
+fn is_archived_job(job:&Value,kind:Option<&str>,completed_only:bool)->bool{
+ matches!(job["kind"].as_str(),Some("video"|"youtube_upload"))
+  &&kind.is_none_or(|kind|job["kind"]==kind)
+  &&(!completed_only||job["status"]=="completed")
+}
 pub(crate) fn archived_jobs(
  state:&AppState,kind:Option<&str>,completed_only:bool,
 )->Vec<Value>{
  state.store.all("job").into_iter()
-  .filter(|job|matches!(job["kind"].as_str(),Some("video"|"youtube_upload")))
-  .filter(|job|kind.is_none_or(|kind|job["kind"]==kind))
-  .filter(|job|!completed_only||job["status"]=="completed")
+  .filter(|job|is_archived_job(job,kind,completed_only))
   .map(|job|public_job(&job)).collect()
 }
 fn legacy_job(state:&AppState,id:&str)->Option<Value>{
@@ -99,13 +102,8 @@ mod tests{
    json!({"kind":"youtube_upload","status":"completed"}),
    json!({"kind":"model_job","status":"completed"}),
   ];
-  let matches=|kind:Option<&str>,completed_only:bool|{
-   examples.iter().filter(|job|
-    matches!(job["kind"].as_str(),Some("video"|"youtube_upload"))
-    &&kind.is_none_or(|kind|job["kind"]==kind)
-    &&(!completed_only||job["status"]=="completed")
-   ).count()
-  };
+  let matches=|kind:Option<&str>,completed_only:bool|
+   examples.iter().filter(|job|is_archived_job(job,kind,completed_only)).count();
   assert_eq!(matches(None,false),3);
   assert_eq!(matches(Some("video"),true),1);
   assert_eq!(matches(Some("youtube_upload"),false),1);
