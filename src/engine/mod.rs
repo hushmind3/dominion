@@ -58,6 +58,7 @@ pub mod telegram;
 pub mod tools;
 pub mod vault_rotation;
 pub mod wake;
+pub mod web_document;
 
 use crate::state::AppState;
 use serde_json::Value;
