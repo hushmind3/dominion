@@ -374,7 +374,9 @@ pub(super) async fn dispatch_tool_call(
 
     // Profile admission happens before approval or mutation-history queries.
     // A child may discover a tool but cannot use that to expand its role.
-    let role_admitted = tools::profile_tool_allowed(session, &call.name, &arguments);
+    let role_admitted = tools::profile_tool_allowed(session, &call.name, &arguments)
+        && crate::engine::extensions::tool_allowed(
+            state,session_id,request.agent_id.as_deref(),&call.name);
     // Only admitted mutating calls need the session history scan.
     let mut effect_operations = if role_admitted
         && crate::engine::effect::is_effectful(&call.name, &arguments) {
@@ -395,7 +397,7 @@ pub(super) async fn dispatch_tool_call(
     let _ = tx.send(json!({ "type": "tool_start", "name": call.name, "id": call.id }));
 
     let needs_approval = if call.name.starts_with("mcp__") {
-        mcp::requires_approval(state, &call.name)
+        crate::engine::extensions::tools::mcp_requires_approval(state, &call.name)
     } else {
         tools::requires_approval(&call.name)
     };
@@ -508,7 +510,8 @@ pub(super) async fn dispatch_tool_call(
         } else if session["readOnly"]==true&&!tools::observational(&call.name){
             Err("읽기 전용 위임 작업에는 이 도구를 실행할 권한이 없습니다.".into())
         } else if call.name.starts_with("mcp__") {
-            mcp::call(state, &call.name, &arguments).await
+            crate::engine::extensions::tools::invoke_mcp(
+                state,session_id,request.agent_id.as_deref(),&call.name,&arguments).await
         } else {
             tools::execute(&context, &call.name, &arguments, execution_id).await
         };
