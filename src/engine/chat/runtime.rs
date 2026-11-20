@@ -9,7 +9,7 @@ mod program;
 mod tool_dispatch;
 #[path = "runtime/finalization.rs"]
 mod finalization;
-#[path = "runtime/tool_catalog.rs"]
+#[path = "../../addons/strategies/chat_tool_catalog.rs"]
 mod tool_catalog;
 #[path = "../../addons/strategies/chat_adaptation.rs"]
 mod adaptation;
@@ -20,7 +20,7 @@ use recovery::{restore_program_state,load_native_checkpoint};
 use tool_catalog::{parallel_read_admitted, tool_is_read_only, normalize_tool_arguments, mark_tool_argument_signal,
     tool_name, recent_room_tools, select_room_tools, select_tool_definitions, trim_tool_definitions};
 pub(super) use finalization::{finalize_execution, tool_succeeded};
-use finalization::{simple_file_creation, needs_plan, action_plan, review_action,
+use finalization::{simple_file_creation, action_plan, review_action,
     acceptance_repair, AcceptanceRepair, record_success_experience, record_selection_snapshot,
     finish_attempt, mark_budget_exhausted, retitle_if_placeholder, ensure_session, record_tool_stat};
 use tool_dispatch::{frozen_replacements, run_frozen_replacements, dispatch_tool_call, record_soft_tool_error};
@@ -45,6 +45,9 @@ use crate::{
     state::AppState,
 };
 use serde_json::{json, Value};
+use dominion_core::strategy::TurnStrategyPort;
+#[cfg(test)]
+use crate::addons::turn_policy::needs_plan;
 use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
@@ -508,28 +511,18 @@ async fn run_turn_body(
 
     let provider = select_provider(state, request, &session)?;
     let allow_provider_fallback = true;
-    let budget_algorithm = crate::addons::runtime_hooks::choose_for_agent(
-        state,
-        "execution.budget",
-        request.agent_id.as_deref(),
-        Some(execution_id),
+    let intelligence=crate::addons::turn_policy::ScopedAlgorithms::new(
+        state,session_id,request.agent_id.as_deref(),execution_id,
     );
-    let mut max_rounds = budget_algorithm
-        .as_ref()
-        .and_then(|algorithm| algorithm["parameters"]["maxRounds"].as_u64())
-        .unwrap_or(MAX_ROUNDS as u64)
-        .clamp(2, 24) as usize;
+    let decision_limits=intelligence.execution_limits(MAX_ROUNDS,MAX_TOOL_CALLS);
+    let mut max_rounds=decision_limits.max_rounds;
     if let Some(limit)=session["nativeSdkMaxRounds"].as_u64(){
         let used=state.store.sdk_used_model_calls(session_id,execution_id)?;
         let remaining=limit.clamp(1,80).saturating_sub(used);
         if remaining==0{return Err("SDK의 누적 모델 호출 한도에 도달했습니다.".into());}
         max_rounds=remaining as usize;
     }
-    let mut max_tools = budget_algorithm
-        .as_ref()
-        .and_then(|algorithm| algorithm["parameters"]["maxTools"].as_u64())
-        .unwrap_or(MAX_TOOL_CALLS as u64)
-        .clamp(4, 120) as usize;
+    let mut max_tools=decision_limits.max_tools;
     let elapsed_limit=MAX_ELAPSED;
     let simple_creation_target = if !session["roomId"].is_string() {
         simple_file_creation(state,&request.input,&acceptance)
@@ -563,13 +556,7 @@ async fn run_turn_body(
                 select_room_tools(tool_definitions, &request.input, &recent, acceptance.is_some());
         }
     }
-    let discovery = if is_room {
-        Value::Null
-    } else {
-        crate::addons::runtime_hooks::choose_for_agent(
-            state, "tool.discovery", request.agent_id.as_deref(), Some(execution_id),
-        ).unwrap_or(Value::Null)
-    };
+    let discovery=intelligence.tool_discovery(is_room);
     if !is_room {
         tool_definitions = select_tool_definitions(tool_definitions, &request.input, &discovery);
     }
@@ -812,7 +799,7 @@ async fn run_turn_body(
     // Action requests get an explicit plan before tools. A versioned policy in
     // the planning slot can override the built-in heuristic; no active policy
     // means the existing behaviour is unchanged.
-    let planning_policy = crate::engine::policy::active(state, "planning");
+    let planning_policy=intelligence.planning_policy();
     if let Some(policy) = &planning_policy {
         context_items.push(json!({
             "kind": "planning_policy",
@@ -837,26 +824,10 @@ async fn run_turn_body(
             "programRevision": policy["parameters"]["program"]["revision"],
         }));
     }
-    // Deterministic decomposition runs before any model call. It gives the
-    // turn an engine-owned ordered sub-goal list and an independently graded
-    // signal that does not depend on whole-task success.
-    let decomposition_algorithm = crate::addons::runtime_hooks::choose_decomposition_for_agent(
-        state,
-        request.agent_id.as_deref(),
-        Some(execution_id),
-        task_input(&session,&request.input),
-    )
-    .unwrap_or(Value::Null);
-    let frozen_checks = acceptance.as_ref().map(|(_,checks)| checks).unwrap_or(&Value::Null);
-    let decomposition = crate::engine::decompose::decompose_with_acceptance(
-        task_input(&session,&request.input), &decomposition_algorithm, frozen_checks,
-    );
-    if decomposition["qualityScore"].is_null() {
-        crate::addons::runtime_hooks::mark_unrated(
-            state, execution_id,"task.decomposition",
-            "postcondition graph pending real native verification receipts",
-        );
-    }
+    // An optional algorithm supplies decomposition. Native verification still
+    // owns every acceptance check even when strategies are disabled.
+    let frozen_checks=acceptance.as_ref().map(|(_,checks)|checks).unwrap_or(&Value::Null);
+    let decomposition=intelligence.decompose(task_input(&session,&request.input),frozen_checks);
     let subtask_count = decomposition["subtasks"]
         .as_array()
         .map(Vec::len)
@@ -875,15 +846,9 @@ async fn run_turn_body(
             decomposition["kernel"].as_str().unwrap_or(""),
         ]),
     }));
-    let plan_requested = match planning_policy.as_ref().and_then(|policy| {
-        crate::engine::policy::outline_decision(
-            &policy["parameters"],
-            request.input.chars().count(),
-        )
-    }) {
-        Some(decision) => decision,
-        None => needs_plan(&request.input, &acceptance) || subtask_count > 1,
-    };
+    let plan_requested=intelligence.needs_plan(
+        planning_policy.as_ref(),&request.input,&acceptance,subtask_count,
+    );
 
     if subtask_count > 1 && acceptance.is_some() && request.tools_enabled && request.tools_execution_enabled {
         let subtasks = decomposition["subtasks"]
@@ -962,25 +927,7 @@ async fn run_turn_body(
         "digest": crate::engine::memory::stable_id(&[&final_system]),
         "chars": final_system.chars().count(),
     }));
-    let harness_plan = strategy_candidates
-        .iter()
-        .filter(|strategy| {
-            strategy["assistanceMode"].as_str() == Some("harness_assisted")
-                && crate::engine::procedure::applies(strategy, &request.input, None, None)
-        })
-        .map(|strategy| {
-            json!({
-                "strategyId": strategy["id"],
-                "revision": strategy["revision"],
-                "nodes": strategy["verification"]["nodes"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|node| node["id"].as_str())
-                    .collect::<Vec<_>>(),
-            })
-        })
-        .collect::<Vec<_>>();
+    let harness_plan=intelligence.harness_plan(&strategy_candidates,&request.input);
     context_items.push(json!({
         "kind": "harness_plan",
         "strategies": harness_plan,

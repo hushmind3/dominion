@@ -3,6 +3,8 @@
 //! `crate::engine` re-exports are compatibility paths, not ownership.
 
 pub mod runtime_hooks;
+#[path = "strategies/turn_policy.rs"]
+pub mod turn_policy;
 
 // knowledge
 #[path = "knowledge/agent_growth.rs"]

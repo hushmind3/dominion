@@ -59,28 +59,6 @@ pub(super) fn simple_file_creation(
     crate::engine::verification::resolve_path(state, check["path"].as_str()?).ok()
 }
 
-/// Deterministic single-step file work should not pay for an extra planner
-/// call. Multi-step, long or unverified requests still get one.
-pub(super) fn needs_plan(input: &str, acceptance: &Option<(String, Value)>) -> bool {
-    let text = input.trim();
-    if text.chars().count() > 240 || text.contains('\n') {
-        return true;
-    }
-    if ["그리고", "그 다음", "다음으로", "한 뒤", "후에", "then", "after", ";"]
-        .iter()
-        .any(|marker| text.contains(marker))
-    {
-        return true;
-    }
-    match acceptance {
-        Some((_, checks)) => checks
-            .as_array()
-            .map(|items| items.is_empty())
-            .unwrap_or(true),
-        None => true,
-    }
-}
-
 pub(super) async fn action_plan(state: &AppState, request: &TurnRequest, text: &str, execution_id: &str) -> Option<String> {
     let plan = llm::complete_for_execution(
         state,

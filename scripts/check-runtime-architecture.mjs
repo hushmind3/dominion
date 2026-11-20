@@ -50,7 +50,7 @@ const chatPaths=[
  ['src/addons/strategies/chat_program.rs',1200],
  ['src/engine/chat/runtime/tool_dispatch.rs',900],
  ['src/engine/chat/runtime/finalization.rs',1100],
- ['src/engine/chat/runtime/tool_catalog.rs',600],
+ ['src/addons/strategies/chat_tool_catalog.rs',600],
  ['src/addons/strategies/chat_adaptation.rs',600],
  ['src/engine/chat/runtime/recovery.rs',350],
  ['src/engine/chat/runtime/tests.rs',1000],
@@ -78,6 +78,20 @@ if(declaredExecutionModules.length!==allowedExecutionModules.size||
    declaredExecutionModules.some(m=>!allowedExecutionModules.has(m)))
   throw Error('Optional module added to native execution core; register it under src/addons instead')
 const addonIndex=readFileSync(path.join(root,'src/addons/mod.rs'),'utf8')
+const strategyPort=readFileSync(path.join(root,'crates/dominion-core/src/strategy.rs'),'utf8')
+const strategyOwner=readFileSync(path.join(root,'src/addons/strategies/turn_policy.rs'),'utf8')
+if(!strategyPort.includes('pub trait TurnStrategyPort')||
+   !strategyOwner.includes('impl TurnStrategyPort for ScopedAlgorithms')||
+   !runtime.includes('intelligence.execution_limits(')||
+   !runtime.includes('intelligence.decompose(')||
+   !runtime.includes('intelligence.tool_discovery(')||
+   !runtime.includes('intelligence.needs_plan(')||
+   runtime.includes('crate::engine::decompose::')||
+   runtime.includes('"execution.budget"')||
+   runtime.includes('"tool.discovery"')||
+   runtime.includes('"task.decomposition"')||
+   !runtime.includes('../../addons/strategies/chat_tool_catalog.rs'))
+  throw Error('Algorithm implementation or selector leaked into native turn loop')
 const runtimeHooks=readFileSync(path.join(root,'src/addons/runtime_hooks.rs'),'utf8')
 if(!addonIndex.includes('pub mod runtime_hooks;')||
    !runtimeHooks.includes('pub fn prepare_turn(')||
