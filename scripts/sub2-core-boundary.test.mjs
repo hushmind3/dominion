@@ -380,3 +380,14 @@ test('owner source binding is durable across Chat Room and SDK run state feeds',
  assert.match(lifecycle,/"sourceMessageId":source_message_id/);
  assert.match(source('src/events.rs'),/RunEvent::from_record\(kind,record\)/);
 });
+
+test('dependency aware team execution cannot parallelize delegated writers',()=>{
+ const p=source('crates/dominion-agent-loop/src/task_team.rs');
+ const runtime=source('src/engine/services/decision/runtime_program.rs');
+ const ir=source('src/engine/services/decision/program.rs');
+ assert.match(p,/pub fn schedule\(/);
+ assert.match(p,/cyclic team dependencies/);
+ assert.match(runtime,/schedule\.requires_serial\(\)/);
+ assert.match(runtime,/ordered_children/);
+ assert.match(ir,/dominion_agent_loop::task_team::schedule/);
+});

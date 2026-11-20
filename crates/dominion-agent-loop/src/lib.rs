@@ -1,5 +1,6 @@
 //! Replaceable model/tool workflows. ReAct and plan-and-execute run through
 //! the same core driver, tool gates, cancellation and host authority.
+pub mod task_team;
 use dominion_turn_core::agent_loop::{
     AgentLoop,Harness,ModelPort,ModelResponse,RoundObservation,ToolFeedback,ToolPort,
 };

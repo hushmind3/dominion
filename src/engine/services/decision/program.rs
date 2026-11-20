@@ -91,6 +91,10 @@ fn validate_node(node: &Value) -> Result<(), String> {
             for child in node["nodes"].as_array().into_iter().flatten() {
                 validate_node(child)?;
             }
+            if node["type"]=="parallel" {
+                dominion_agent_loop::task_team::schedule(
+                    node["nodes"].as_array().expect("validated nodes"))?;
+            }
             Ok(())
         }
         "verify" => {
@@ -469,6 +473,19 @@ mod tests {
                  "else":[{"type":"call_tool","id":"fallback","tool":"workspace_write","inputs":{"path":"fallback.txt","content":"FALLBACK"}}]}
             ]
         })
+    }
+
+    #[test]
+    fn task_team_cyclic_dependency_is_rejected_before_program_runs(){
+        let mut p=json!({"revision":"t1","nodes":[{"id":"team",
+            "type":"parallel","nodes":[
+                {"type":"call_tool","id":"read","tool":"file_read","inputs":{"path":"a"}},
+                {"type":"delegate","id":"write","agentId":"worker","prompt":"write",
+                    "dependsOn":["read"]}
+            ]}]});
+        assert!(validate(&p).is_ok());
+        p["nodes"][0]["nodes"][0]["dependsOn"]=json!(["write"]);
+        assert!(validate(&p).unwrap_err().contains("cyclic"));
     }
 
     #[test]

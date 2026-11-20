@@ -1039,6 +1039,11 @@ pub(super) fn execute_nodes<'a>(
                 }
                 "parallel" => {
                     let children = node["nodes"].as_array().cloned().unwrap_or_default();
+                    // Resolve every dependency and writer conflict before ANY
+                    // branch touches the host tool gateway or workspace.
+                    let schedule=dominion_agent_loop::task_team::schedule(&children)?;
+                    let ordered_children=schedule.ordered().into_iter()
+                        .map(|i|children[i].clone()).collect::<Vec<_>>();
                     let child_ids = children
                         .iter()
                         .map(|child| json!(child["id"]))
@@ -1059,9 +1064,9 @@ pub(super) fn execute_nodes<'a>(
                         algorithm["implementation"].as_str().map(str::to_string)
                     })
                     .unwrap_or_else(|| "concurrent".into());
-                    if parallel_mode == "sequential" {
+                    if parallel_mode == "sequential" || schedule.requires_serial() {
                         let mut paused = false;
-                        for child in &children {
+                        for child in &ordered_children {
                             let frame = execute_nodes(
                                 ctx,
                                 vec![child.clone()],
@@ -1085,7 +1090,11 @@ pub(super) fn execute_nodes<'a>(
                             }
                         }
                         checkpoint["pendingOperationIds"] = json!([]);
-                        checkpoint["parallelMode"] = json!("sequential");
+                        checkpoint["parallelMode"] = json!(
+                            if schedule.has_dependencies{"dependency_ordered"}
+                            else if schedule.has_writers{"exclusive_writers"}
+                            else{"sequential"}
+                        );
                         checkpoint["resolvedInputs"] = resolved.clone();
                         if paused {
                             checkpoint["status"] = json!("paused");

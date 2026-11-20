@@ -231,3 +231,7 @@ https://openai.com/index/unrolling-the-codex-agent-loop/
 - `room_state::unread_for`가 에이전트별 `room_agent_cursor` 레코드에서 이전 읽기 위치를 조회하고, **모델 입력 직전의 전역 SQLite 이벤트 저널 seq**를 고정합니다. 최신 24개의 신규 메시지 ID·작성 주체·답글 출처만 제한된 데이터로 전달하며 해당 메시지의 텍스트를 새 소유자 명령으로 승격하지 않습니다.
 - 직렬 Room과 병렬 읽기 Room 모두 실제 에이전트 응답이 저장된 뒤 `acknowledge_read`를 호출합니다. **모델 처리 중 도착한 이벤트는 읽은 것으로 처리하지 않습니다.** CAS로 단조 증가하고, 다른 에이전트의 응답/다른 세션을 전진 근거로 쓰지 못합니다. 커서 누락·저널 간격은 조용히 넘기지 않고 명시합니다.
 - React의 기존 SSE 갱신 분류기에 버전 1 `run_state`를 연결해 작업·실행·그룹 화면이 같은 공통 상태 이벤트로 갱신됩니다. 탐색 탭·메뉴·HTTP 경로는 추가하지 않았습니다.
+
+## 2026-11-21: Task Team 의존성 그래프
+
+ProgramIR의 기존 `parallel` 노드에 `dependsOn` 형제 ID를 정식 지원하고, `dominion-agent-loop::task_team::schedule`로 실행 전 위상 정렬·중복·불명확 참조·순환을 검증합니다. 읽기 전용의 독립 작업만 실제 병렬로 호출되며 파일 쓰기·외부 위임·알 수 없는 MCP 작업은 독립적으로 직렬화해 기존 호스트의 잠금·승인·효과 저널을 사용합니다. 별도 Task Team 프로세스는 추가하지 않고 기존 ProgramIR을 실사용 DAG 실행기로 강화했습니다.
