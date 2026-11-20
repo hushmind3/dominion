@@ -25,6 +25,40 @@ pub(super) fn input_estimate(messages: &[Value], tools: &[Value]) -> usize {
     estimate(&json!({"messages":messages,"tools":tools}).to_string())
 }
 
+/// A provenance-aware *estimate* of the provider-visible model input.
+/// Persist it separately from exact provider usage: cache-hit tokens and the
+/// real tokenizer cannot be reconstructed by counting JSON characters.
+pub(super) fn input_composition(messages: &[Value], tools: &[Value]) -> Value {
+    let mut system=0usize;
+    let mut conversation=0usize;
+    let mut tool_results=0usize;
+    let mut retrieval=0usize;
+    let mut tool_calls=0usize;
+    for message in messages {
+        let tokens=estimate(&message.to_string());
+        match message["role"].as_str() {
+            Some("system") => system+=tokens,
+            Some("tool") => tool_results+=tokens,
+            Some("user") if message["content"].as_str().is_some_and(|content|
+                content.starts_with("[Retrieved memory and experience:")) => retrieval+=tokens,
+            Some("assistant") if message["tool_calls"].is_array() => tool_calls+=tokens,
+            _ => conversation+=tokens,
+        }
+    }
+    json!({
+        "estimateKind":"pre-provider-character-estimate-not-billed-tokens",
+        "totalTokensEstimate":input_estimate(messages,tools),
+        "systemTokensEstimate":system,
+        "conversationTokensEstimate":conversation,
+        "toolResultTokensEstimate":tool_results,
+        "assistantToolCallTokensEstimate":tool_calls,
+        "retrievalTokensEstimate":retrieval,
+        "toolSchemaTokensEstimate":estimate(&json!(tools).to_string()),
+        "messageCount":messages.len(),
+        "toolSchemaCount":tools.len(),
+    })
+}
+
 struct Candidate {
     history: Vec<Value>,
     evidence: Option<Value>,
