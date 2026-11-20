@@ -7,12 +7,12 @@ use crate::{failure_guidance,Action,Receipt,ToolSpec};
 use serde_json::{json,Value};
 use std::collections::{BTreeSet,HashMap};
 
-pub(crate) const SEARCH: &str="dominion_tool_search";
-pub(crate) const CALL: &str="dominion_tool_call";
+pub const SEARCH: &str="dominion_tool_search";
+pub const CALL: &str="dominion_tool_call";
 const THRESHOLD:usize=18;
 const VISIBLE:usize=13;
 
-pub(crate) fn spec()->ToolSpec {
+pub fn spec()->ToolSpec {
  ToolSpec{
   name:SEARCH.into(),
   description:"Discover owner-authorized capabilities by intent. Search before assuming an unavailable tool; full JSON schemas are returned in the search evidence for use with dominion_tool_call. Internal and read-only.".into(),
@@ -27,7 +27,7 @@ pub(crate) fn spec()->ToolSpec {
 /// Fixed provider-visible bridge. Hidden tools are never added to the native
 /// function declarations: search returns their schemas as tool evidence,
 /// then the bridge resolves their invocation through ordinary host approval.
-pub(crate) fn call_spec()->ToolSpec {
+pub fn call_spec()->ToolSpec {
  ToolSpec{
   name:CALL.into(),
   description:"Invoke a previously discovered owner-approved tool by exact name, using its retrieved JSON parameters. Rust verifies the discovery receipt and dispatches through the normal approval and durable tool worker.".into(),
@@ -38,13 +38,13 @@ pub(crate) fn call_spec()->ToolSpec {
   read_only:false,
  }
 }
-pub(crate) fn needed(catalog:&HashMap<String,ToolSpec>)->bool {
+pub fn needed(catalog:&HashMap<String,ToolSpec>)->bool {
  catalog.len()>THRESHOLD
 }
 // Relevance/ranking lives in the replaceable intelligence crate; the Rust
 // dispatcher still owns the allowed catalog and the discovery permission fence.
-pub use dominion_agent_algorithms::{tool_relevance,tool_relevance_with_schema};
-#[cfg(test)] use dominion_agent_algorithms::ranking::schema_relevance;
+use crate::ranking::{tool_relevance,tool_relevance_with_schema};
+#[cfg(test)] use crate::ranking::schema_relevance;
 fn score(spec:&ToolSpec, query:&str)->i32{
  tool_relevance_with_schema(&spec.name,&spec.description,&spec.schema,query)
 }
@@ -60,7 +60,7 @@ fn ranked(catalog:&HashMap<String,ToolSpec>,query:&str)->Vec<String>{
 }
 /// Deterministic stable shortlist. Internal discovery receives no permissions
 /// beyond the already-authorized catalog, and the original host owns dispatch.
-pub(crate) fn select(catalog:&HashMap<String,ToolSpec>,task:&str,owner:&str,
+pub fn select(catalog:&HashMap<String,ToolSpec>,task:&str,owner:&str,
  directive:Option<&str>,plan:&[String],receipts:&[Receipt])->Vec<ToolSpec>{
  if !needed(catalog){
   let mut all=catalog.values().cloned().collect::<Vec<_>>();
@@ -109,7 +109,7 @@ pub(crate) fn select(catalog:&HashMap<String,ToolSpec>,task:&str,owner:&str,
  }
  displayed.into_iter().filter_map(|name|catalog.get(&name).cloned()).collect()
 }
-pub(crate) fn execute_local(action:&Action,catalog:&HashMap<String,ToolSpec>)
+pub fn execute_local(action:&Action,catalog:&HashMap<String,ToolSpec>)
  -> Option<Result<Value,String>> {
  if action.tool!=SEARCH{return None}
  Some(search(&action.arguments,catalog))
@@ -137,7 +137,7 @@ fn search(args:&Value,catalog:&HashMap<String,ToolSpec>)->Result<Value,String>{
 /// Resolve a discovered call without changing the host permissions or
 /// persisting a fictitious wrapper effect. The original action ID is retained
 /// so crash recovery and dependency edges continue to refer to one operation.
-pub(crate) fn resolve_bridge(action:&Action,catalog:&HashMap<String,ToolSpec>,
+pub fn resolve_bridge(action:&Action,catalog:&HashMap<String,ToolSpec>,
  receipts:&[Receipt])->Result<Option<Action>,String>{
  if action.tool!=CALL{return Ok(None)}
  let name=action.arguments["name"].as_str()

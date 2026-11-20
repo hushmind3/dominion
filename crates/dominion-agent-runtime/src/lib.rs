@@ -4,6 +4,40 @@
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use serde::{Serialize,Deserialize};
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Strategy { #[default] Balanced, VerifyFirst, LowCost }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolSpec {
+    pub name: String,
+    pub description: String,
+    pub schema: Value,
+    /// Declared by the host, not the LLM. Only truly read-only operations may parallelize.
+    pub read_only: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Action {
+    pub id: String,
+    pub tool: String,
+    #[serde(default)] pub arguments: Value,
+    #[serde(default)] pub depends_on: Vec<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Receipt {
+    pub id: String,
+    pub tool: String,
+    pub arguments: Value,
+    pub success: bool,
+    pub result: Value,
+    pub step: usize,
+}
+
 
 #[derive(Debug, Default)]
 struct Usage {

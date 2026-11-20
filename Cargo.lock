@@ -338,6 +338,7 @@ dependencies = [
 name = "dominion-agent-algorithms"
 version = "0.1.0"
 dependencies = [
+ "dominion-agent-runtime",
  "serde_json",
 ]
 
@@ -345,6 +346,7 @@ dependencies = [
 name = "dominion-agent-runtime"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "serde_json",
 ]
 

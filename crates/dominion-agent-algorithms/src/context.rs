@@ -8,10 +8,10 @@ use crate::{Action, Receipt, Strategy, ToolSpec};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(crate) const RECEIPT_READ: &str = "dominion_receipt_read";
-pub(crate) const RECEIPT_SEARCH: &str = "dominion_receipt_search";
+pub const RECEIPT_READ: &str = "dominion_receipt_read";
+pub const RECEIPT_SEARCH: &str = "dominion_receipt_search";
 
-pub(crate) fn internal_specs() -> [ToolSpec; 2] {
+pub fn internal_specs() -> [ToolSpec; 2] {
     [
         ToolSpec {
             name: RECEIPT_READ.into(),
@@ -39,7 +39,7 @@ pub(crate) fn internal_specs() -> [ToolSpec; 2] {
 
 /// Old observations remain available via a bounded query, not a re-run of
 /// the original external tool. These tools never consult outside a run.
-pub(crate) fn execute_local(action: &Action, receipts: &[Receipt])
+pub fn execute_local(action: &Action, receipts: &[Receipt])
     -> Option<Result<Value, String>> {
     match action.tool.as_str() {
         RECEIPT_READ => Some(read_receipt(&action.arguments, receipts)),
@@ -177,7 +177,7 @@ fn json_contains(matcher:&LiteralMatcher,value:&Value)->bool {
 
 /// Keep beginning *and* end. Diagnostics commonly appear at the end of
 /// compiler output; retaining only the head hides the actionable error.
-pub(crate) fn clip(source:&str,head:usize,tail:usize)->String {
+pub fn clip(source:&str,head:usize,tail:usize)->String {
     let count=source.chars().count();
     if count<=head+tail+48 {return source.into();}
     let prefix=source.chars().take(head).collect::<String>();
@@ -186,7 +186,7 @@ pub(crate) fn clip(source:&str,head:usize,tail:usize)->String {
         count-head-tail)
 }
 #[derive(Debug)]
-pub(crate) struct Projection {
+pub struct Projection {
     pub recent: Vec<Value>,
     pub important_failures: Vec<Value>,
     pub history_index: Vec<Value>,
@@ -195,7 +195,7 @@ pub(crate) struct Projection {
 /// A bounded model-view of a complete, immutable receipt log. No operation
 /// is deleted or merged in durable storage. A newer failure cannot disappear
 /// merely because a dozen successful reads followed it.
-pub(crate) fn project(receipts:&[Receipt], strategy:Strategy, max_result_chars:usize)
+pub fn project(receipts:&[Receipt], strategy:Strategy, max_result_chars:usize)
     -> Projection {
     let (count,cap)=match strategy {
         Strategy::LowCost=>(5usize,4500usize),

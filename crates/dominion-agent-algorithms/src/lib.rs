@@ -1,7 +1,11 @@
 //! Swappable agent intelligence/policies. No DB, network, authority or runtime loop.
 //! The host can select policies; the Rust runtime remains authoritative for
 //! tool permissions, effect admission, budgets, receipts and verification.
+pub use dominion_agent_runtime::{Action,Receipt,Strategy,ToolSpec};
 pub mod ranking;
+pub mod context;
+pub mod failure_guidance;
+pub mod tool_discovery;
 pub use ranking::{tool_relevance,tool_relevance_with_schema};
 
 #[derive(Clone,Copy,Debug,Default,PartialEq,Eq)]

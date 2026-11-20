@@ -5,6 +5,7 @@
 //! The host supplies providers, tools, and storage; there is no imported harness.
 
 pub use dominion_agent_runtime as runtime;
+pub use dominion_agent_runtime::{Action,Receipt,Strategy,ToolSpec};
 mod dispatch;
 pub use dispatch::dispatch_batch;
 
@@ -14,21 +15,14 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, future::Future, pin::Pin};
 mod scheduler;
 mod acceptance;
-mod context;
-mod tool_discovery;
 pub use dominion_agent_algorithms::{AgentAlgorithm,StandardAlgorithm,Intent};
-pub use tool_discovery::tool_relevance;
-pub use tool_discovery::tool_relevance_with_schema;
-mod failure_guidance;
+pub use dominion_agent_algorithms::{tool_relevance,tool_relevance_with_schema};
+use dominion_agent_algorithms::{context,tool_discovery,failure_guidance};
 mod schema;
 pub use schema::validate_arguments;
 pub mod replay;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
-
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Strategy { #[default] Balanced, VerifyFirst, LowCost }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -126,23 +120,6 @@ impl RunRequest {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ToolSpec {
-    pub name: String,
-    pub description: String,
-    pub schema: Value,
-    /// Declared by the host, not the LLM. Only truly read-only operations may parallelize.
-    pub read_only: bool,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Action {
-    pub id: String,
-    pub tool: String,
-    #[serde(default)] pub arguments: Value,
-    #[serde(default)] pub depends_on: Vec<String>,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Decision {
     #[serde(default)] pub plan: Vec<String>,
     #[serde(default)] pub actions: Vec<Action>,
@@ -233,16 +210,6 @@ pub trait Dispatcher: Send + Sync {
 #[serde(rename_all = "snake_case")]
 pub enum Status { Running, Completed, NeedsReview, Failed, Cancelled }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Receipt {
-    pub id: String,
-    pub tool: String,
-    pub arguments: Value,
-    pub success: bool,
-    pub result: Value,
-    pub step: usize,
-}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckResult {

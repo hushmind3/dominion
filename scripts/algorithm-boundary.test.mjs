@@ -7,6 +7,9 @@ test('runtime is standalone and never imports the planning policies',()=>{
  assert.doesNotMatch(manifest,/dominion-agent-sdk|dominion-agent-algorithms|rusqlite|reqwest/);
  const src=read('crates/dominion-agent-runtime/src/lib.rs');
  assert.match(src,/pub struct BudgetLedger/);
+ assert.match(src,/pub struct Action/);
+ assert.match(src,/pub struct ToolSpec/);
+ assert.match(src,/pub struct Receipt/);
  assert.match(src,/pub struct ModelTokenBudget/);
  assert.doesNotMatch(src,/AgentAlgorithm|StandardAlgorithm|crate::state|crate::db/);
  assert.equal(existsSync(new URL('../crates/dominion-agent-sdk/src/runtime.rs',import.meta.url)),false);
@@ -25,6 +28,11 @@ test('intelligence owns policy and tool scoring; SDK receives it by injection',(
  assert.match(sdk,/algorithm\.validate_plan/);
  assert.match(sdk,/StandardAlgorithm\.classify\(&request\.instruction\)/);
  assert.match(sdk,/\.union\(algorithm\.classify\(&request\.instruction\)\)/);
- assert.match(tools,/pub use dominion_agent_algorithms::\{tool_relevance,tool_relevance_with_schema\}/);
+ assert.match(tools,/use crate::ranking::\{tool_relevance,tool_relevance_with_schema\}/);
  assert.doesNotMatch(sdk,/fn words\(s:&str\)/);
+ for(const name of ['context','tool_discovery','failure_guidance']){
+  assert.equal(existsSync(new URL('../crates/dominion-agent-sdk/src/'+name+'.rs',import.meta.url)),false);
+  assert.equal(existsSync(new URL('../crates/dominion-agent-algorithms/src/'+name+'.rs',import.meta.url)),true);
+ }
+ assert.match(sdk,/use dominion_agent_algorithms::\{context,tool_discovery,failure_guidance\}/);
 });

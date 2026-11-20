@@ -5,7 +5,7 @@ use crate::Receipt;
 use serde_json::{json,Value};
 
 #[derive(Debug)]
-pub(crate) struct FailureGuidance {
+pub struct FailureGuidance {
     pub receipt_id:String,
     pub tool:String,
     pub category:&'static str,
@@ -90,7 +90,7 @@ fn classify(tool:&str,content:&str)
 /// The most recent actionable failure, suppressed when a subsequent observed
 /// source mutation has already repaired the diagnostic context. Every original
 /// result stays in the complete journal for evidence replay.
-pub(crate) fn latest(receipts:&[Receipt])->Option<FailureGuidance>{
+pub fn latest(receipts:&[Receipt])->Option<FailureGuidance>{
     for (index,receipt) in receipts.iter().enumerate().rev(){
         if receipt.success||receipt.result["skipped"]==true{continue;}
         let later=&receipts[index+1..];
