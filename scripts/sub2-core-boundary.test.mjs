@@ -225,3 +225,13 @@ test('group coordination persists indexed owner-scoped workboard and injects onl
  assert.match(engine,/services\/conversation\/room_workboard.rs/);
  assert.doesNotMatch(source('crates/dominion-turn-core/src/lib.rs'),/room_workboard/);
 });
+
+test('final answer persistence and continuity commit are isolated from the inference loop',()=>{
+ const turn=source('src/engine/services/conversation/chat/runtime/turn_body.rs');
+ const finish=source('src/engine/services/conversation/chat/runtime/finalize.rs');
+ assert.match(turn,/super::finalize::finish\(/);
+ assert.match(finish,/pub\(super\) fn finish\(/);
+ assert.match(finish,/super::continuity::commit\(/);
+ assert.match(finish,/super::continuity::commit_projection\(/);
+ assert.match(finish,/cancellation_generation\(session_id\)/);
+});

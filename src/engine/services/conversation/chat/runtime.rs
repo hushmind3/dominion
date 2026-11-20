@@ -38,6 +38,7 @@ use tokio::sync::mpsc::UnboundedSender;
 // They use the parent's imports; this coordinator owns the public entrypoints.
 use super::{budget,capability,context,continuity,protocol,room_context,tool_schedule,trace_budget};
 mod turn_body;
+mod finalize;
 #[path = "../../decision/runtime_program.rs"]
 mod program;
 mod observations;
