@@ -1357,8 +1357,10 @@ fn web_search_test_endpoint()->Option<String>{
 fn parse_ddg_search_results(html:&str)->Vec<Value>{
     let mut results=Vec::new();
     for chunk in html.split("result__a").skip(1).take(12) {
-        let Some(href_start)=chunk.find("href=\\\"") else{continue;};
-        let rest=&chunk[href_start+6..];
+        let Some(href_start)=chunk.find("href=") else{continue;};
+        let raw=&chunk[href_start+5..];
+        if !raw.starts_with('"') {continue;}
+        let rest=&raw[1..];
         let Some(href_end)=rest.find('"') else{continue;};
         let href=decode_ddg(&rest[..href_end]);
         let title=rest[href_end..].find('>').map(|start|{
