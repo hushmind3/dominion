@@ -1,6 +1,79 @@
 //! Shared semantic state contract across model turns and room jobs.
 //! Approval and persistence remain the responsibility of the host.
 use serde_json::{json,Value};
+
+// One provider-independent lifecycle reducer for Chat, Room and SDK hosts.
+// Storage CAS and actual approvals remain in the product adapter.
+pub const QUEUED: &str = "queued";
+pub const RUNNING: &str = "running";
+pub const WAITING_APPROVAL: &str = "waiting_approval";
+pub const VERIFYING: &str = "verifying";
+pub const FINALIZING: &str = "finalizing";
+pub const SUCCEEDED: &str = "succeeded";
+pub const FAILED: &str = "failed";
+pub const CANCELLED: &str = "cancelled";
+pub const INTERRUPTED: &str = "interrupted";
+
+pub fn is_terminal(phase: &str) -> bool {
+    matches!(phase, SUCCEEDED | FAILED | CANCELLED | INTERRUPTED)
+}
+
+/// Returns the next phase, or None for an illegal transition. Repeating the
+/// current phase is treated as idempotent.
+pub fn transition(current: &str, event: &str) -> Option<&'static str> {
+    let next = match event {
+        "start" => match current {
+            QUEUED | RUNNING => RUNNING,
+            _ => return None,
+        },
+        "approval_requested" => match current {
+            RUNNING | WAITING_APPROVAL => WAITING_APPROVAL,
+            _ => return None,
+        },
+        "approval_resolved" => match current {
+            WAITING_APPROVAL | RUNNING => RUNNING,
+            _ => return None,
+        },
+        "verify" => match current {
+            RUNNING | VERIFYING => VERIFYING,
+            _ => return None,
+        },
+        "finalize" => match current {
+            RUNNING | VERIFYING | WAITING_APPROVAL | FINALIZING => FINALIZING,
+            _ => return None,
+        },
+        "succeed" => match current {
+            FINALIZING | RUNNING | VERIFYING | SUCCEEDED => SUCCEEDED,
+            _ => return None,
+        },
+        "fail" => match current {
+            _ if is_terminal(current) => return None,
+            _ => FAILED,
+        },
+        "cancel" => match current {
+            _ if current == CANCELLED => CANCELLED,
+            _ if is_terminal(current) => return None,
+            _ => CANCELLED,
+        },
+        "interrupt" => match current {
+            _ if current == INTERRUPTED => INTERRUPTED,
+            _ if is_terminal(current) => return None,
+            _ => INTERRUPTED,
+        },
+        _ => return None,
+    };
+    Some(next)
+}
+
+pub fn phase_for_status(status: &str) -> &'static str {
+    match status {
+        "completed" => SUCCEEDED,
+        "cancelled" => CANCELLED,
+        "interrupted" => INTERRUPTED,
+        _ => FAILED,
+    }
+}
+
 #[derive(Debug,Clone,Copy,PartialEq,Eq)]
 pub enum RunState{Queued,Running,Completed,Failed,Cancelled,Interrupted,NeedsReview,Skipped}
 impl RunState{

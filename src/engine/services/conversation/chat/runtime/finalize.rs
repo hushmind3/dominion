@@ -74,9 +74,9 @@ pub(super) fn finish(
         "providerId": provider_id,
         "model": model,
     });
-    let saved = state
+    let (saved,linked) = state
         .store
-        .write_message(&json!({
+        .write_final_message_and_link(execution_id,&json!({
             "session_id": session_id,
             "role": "assistant",
             "content": final_content,
@@ -84,15 +84,12 @@ pub(super) fn finish(
             "agent_id": request.agent_id,
             "metadata": metadata,
         }))
-        .ok_or("최종 응답을 저장할 수 없습니다.")?;
+        .ok_or("실행이 종료되었거나 최종 응답이 이미 저장되었습니다.")?;
     state.bus.message(&saved);
+    state.bus.record("execution",&linked);
     super::continuity::commit(state, &metadata["continuity"], &saved);
     if let Some(projection) = continuation_projection {
         super::continuity::commit_projection(state, &metadata["continuity"], &saved, projection);
-    }
-    if let Some(mut execution) = state.store.get("execution", execution_id) {
-        execution["finalMessageId"] = saved["id"].clone();
-        state.store.put("execution", &execution);
     }
     Ok(Some(saved))
 }

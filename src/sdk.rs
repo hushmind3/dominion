@@ -184,6 +184,16 @@ impl Dominion {
     pub fn events_after(&self,seq:u64,limit:usize)->Vec<Value>{
         self.state.bus.replay(seq,limit.clamp(1,1000))
     }
+    /// Identical versioned run_state observations consumed by the
+    /// TypeScript SDK's runEvents. The cursor remains the global journal seq;
+    /// clients should retain the last scanned seq, not renumber this subset.
+    pub fn run_events_after(&self,seq:u64,limit:usize)->Vec<Value>{
+        self.events_after(seq,limit).into_iter()
+            .filter(|event|event["type"]=="run_state"
+                && event["schemaVersion"]==1
+                && event["eventSeq"]==event["seq"])
+            .collect()
+    }
     pub fn subscribe(&self)->broadcast::Receiver<Value>{self.state.bus.subscribe()}
     pub fn cancel_session(&self,id:&str){self.state.cancel_session(id)}
     pub fn preview_decomposition(&self,instruction:&str)->Value{
@@ -261,6 +271,21 @@ mod tests {
         assert_eq!(reopened.job(id).unwrap()["status"],"queued");
         drop(reopened);let _=std::fs::remove_dir_all(dir);
     }
+    #[test]
+    fn native_sdk_consumes_the_same_typed_journal_as_typescript(){
+        let (sdk,dir)=sdk();
+        let job=sdk.submit(Prompt::new("Inspect the repository")).unwrap();
+        let id=job["id"].as_str().unwrap();
+        let typed=sdk.run_events_after(0,50);
+        assert!(typed.iter().any(|event|event["runId"]==id
+            &&event["runKind"]=="job"&&event["state"]=="queued"
+            &&event["eventSeq"]==event["seq"]));
+        assert!(typed.iter().all(|event|event["type"]=="run_state"));
+        let last=typed.last().unwrap()["seq"].as_u64().unwrap();
+        assert!(sdk.run_events_after(last,50).is_empty());
+        drop(sdk);let _=std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn native_sdk_exposes_same_frozen_verification_command_as_gui(){
         let (sdk,dir)=sdk();

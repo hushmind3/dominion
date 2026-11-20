@@ -193,6 +193,17 @@ pub(super) async fn run(
     // Each final message is the original model output (no invented summary).
     let mut outputs=Vec::new();
     for agent_id in initial{
+        // A stop or superseding owner instruction may arrive while results
+        // are being published. Never publish the remaining older workers as
+        // replies to a request that is no longer current.
+        if stopped(context,room_session,generation){
+            return Ok(finish(context,room_id,room_session,"cancelled",&outputs,
+                stop_reason(context,room_session,generation).unwrap_or("session_cancelled"),None));
+        }
+        if let Some(new_owner)=newer_owner_message(state,room_session,source_id){
+            return Ok(finish(context,room_id,room_session,"completed",&outputs,
+                "new_owner_message",Some(&new_owner)));
+        }
         let result=completed.remove(agent_id)
             .ok_or("병렬 워커 결과가 누락되었습니다.")?;
         let member=state.store.get("agent",agent_id)

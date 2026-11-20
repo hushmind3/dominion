@@ -970,6 +970,38 @@ impl Store {
         query_message(&conn, &id)
     }
 
+    /// Commit the final assistant message and its execution link in ONE
+    /// SQLite transaction. A crashed writer cannot leave a visible final
+    /// answer with a missing finalMessageId (or the reverse).
+    /// Only a live run with no prior final answer can claim this boundary.
+    pub fn write_final_message_and_link(
+        &self,execution_id:&str,message:&Value,
+    )->Option<(Value,Value)>{
+        if execution_id.is_empty() || message["role"]!="assistant" {
+            return None;
+        }
+        let mut conn=self.conn.lock().ok()?;
+        let tx=conn.transaction_with_behavior(
+            rusqlite::TransactionBehavior::Immediate).ok()?;
+        let mut execution=tx.query_row(
+            "SELECT data,id,created_at,updated_at FROM records WHERE kind='execution' AND id=?1",
+            [execution_id],record_from_row,
+        ).ok()?;
+        if execution["status"]!="running"
+            || execution["finalMessageId"].as_str().is_some_and(|id|!id.is_empty()){
+            return None;
+        }
+        if execution["sessionId"].as_str()!=message["session_id"].as_str(){
+            return None;
+        }
+        let message_id=insert_message(&tx,message)?;
+        execution["finalMessageId"]=json!(message_id);
+        upsert_tx(&tx,"execution",&execution).ok()?;
+        let saved_message=query_message(&tx,&message_id)?;
+        tx.commit().ok()?;
+        Some((saved_message,execution))
+    }
+
     pub fn message(&self, id: &str) -> Option<Value> {
         query_message(&self.conn.lock().unwrap(), id)
     }
@@ -2555,6 +2587,29 @@ mod tests {
             .collect::<Result<Vec<_>,_>>().unwrap().join("\\n");
         assert!(details.contains("idx_operation_session_resource"),"{details}");
         assert!(details.contains("idx_operation_session_effect"),"{details}");
+    }
+
+    #[test]
+    fn final_answer_and_execution_link_are_atomic_and_exactly_once(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.put("execution",&json!({
+            "id":"run-final","sessionId":"chat-1",
+            "status":"running","phase":"finalizing",
+        })).unwrap();
+        let message=json!({"session_id":"chat-1","role":"assistant","content":"finished",
+            "metadata":{"executionId":"run-final"}});
+        assert!(store.write_final_message_and_link("run-final",&json!({
+            "session_id":"other","role":"assistant","content":"forged",
+        })).is_none());
+        let (saved,linked)=store.write_final_message_and_link("run-final",&message).unwrap();
+        assert_eq!(linked["finalMessageId"],saved["id"]);
+        assert_eq!(store.get("execution","run-final").unwrap()["finalMessageId"],saved["id"]);
+        assert!(store.write_final_message_and_link("run-final",&message).is_none());
+        assert_eq!(store.messages("chat-1").len(),1);
+        store.put("execution",&json!({"id":"run-closed","sessionId":"chat-1",
+            "status":"cancelled"})).unwrap();
+        assert!(store.write_final_message_and_link("run-closed",&message).is_none());
+        assert_eq!(store.messages("chat-1").len(),1);
     }
 
     #[test]

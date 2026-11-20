@@ -63,6 +63,25 @@ pub fn complete(state:&AppState,assignment:&Value,work:&Value)->Result<Value,Str
         || assignment["taskId"]!=work["taskId"]{
         return Err("workboard completion: provenance mismatch".into());
     }
+    // A model-supplied JSON claim must never satisfy the workboard. Resolve
+    // the actual committed observation by ID and ensure every provenance
+    // field agrees before marking an assignment completed.
+    let work_id=work["id"].as_str().filter(|s|!s.is_empty())
+        .ok_or("workboard completion: missing committed work id")?;
+    let persisted=state.store.get("room_work_item",work_id)
+        .ok_or("workboard completion: missing durable observation")?;
+    if persisted["kind"]!="agent_observation"
+        || persisted["roomId"]!=assignment["roomId"]
+        || persisted["sessionId"]!=assignment["sessionId"]
+        || persisted["sourceMessageId"]!=assignment["sourceMessageId"]
+        || persisted["taskId"]!=assignment["taskId"]
+        || persisted["agentId"]!=assignment["agentId"]
+        || persisted["messageId"]!=work["messageId"]
+        || persisted["evidenceStatus"]!=work["evidenceStatus"]
+        || persisted["completedToolCount"]!=work["completedToolCount"]
+        || persisted["id"]!=work["id"] {
+        return Err("workboard completion: untrusted or mismatched observation".into());
+    }
     let id=assignment["id"].as_str().ok_or("workboard completion: missing id")?;
     if !RunState::parse(assignment["status"].as_str().unwrap_or(""))
         .is_some_and(|current|current.permits(RunState::Completed)){
@@ -348,6 +367,27 @@ mod tests{
         skip(&state,&other,"pass").unwrap();
         assert_eq!(state.store.get("room_work_assignment",other["id"].as_str().unwrap())
             .unwrap()["status"],"skipped");
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn forged_completion_with_matching_scope_cannot_skip_the_durable_workboard(){
+        let (state,dir)=state();
+        seed(&state,"owner-a","reply-a","a","exec-a");
+        let msg=state.store.message("reply-a").unwrap();
+        let assignment=assign(&state,"r","room:r","owner-a","task-a","a",1).unwrap();
+        let forged=json!({"id":"fake","roomId":"r","sessionId":"room:r",
+            "sourceMessageId":"owner-a","taskId":"task-a","agentId":"a",
+            "messageId":"reply-a","kind":"agent_observation",
+            "evidenceStatus":"completed_tool_observed","completedToolCount":12});
+        assert!(complete(&state,&assignment,&forged).is_err());
+        let work=record(&state,"r","room:r","owner-a","task-a","a",1,&msg).unwrap();
+        let mut tampered=work.clone();
+        tampered["completedToolCount"]=json!(99);
+        assert!(complete(&state,&assignment,&tampered).is_err());
+        assert_eq!(state.store.get("room_work_assignment",
+            assignment["id"].as_str().unwrap()).unwrap()["status"],"assigned");
+        assert_eq!(complete(&state,&assignment,&work).unwrap()["status"],"completed");
         let _=std::fs::remove_dir_all(dir);
     }
 

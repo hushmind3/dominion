@@ -184,3 +184,12 @@ https://openai.com/index/unrolling-the-codex-agent-loop/
 외부 도구 승인 및 사용자 데이터 위치는 변경하지 않았습니다.
 단일 공통 Harness 통합은 **도구 결과 프레임 계층**까지 진전됐고,
 모든 복합 프로그램의 독립 AgentLoop 이관은 아직 남아 있습니다.
+
+## 2026-11-20: Harness 실행 단계/완료/그룹/SDK 경계 강화
+
+- `run_state`의 순수 phase reducer를 `dominion-turn-core`로 통합했습니다. 제품 실행 단계 어댑터의 `apply`는 더 이상 `get + put`으로 중간 상태를 덮어쓰지 않고 SQLite IMMEDIATE CAS(`patch_if`)로 전이합니다. 상태 경쟁 시 최신 phase를 다시 읽고 검증하며 terminal run은 되살리지 않습니다.
+- 최종 assistant 응답과 `execution.finalMessageId`를 **단일 SQLite 트랜잭션**에서 커밋하는 `Store::write_final_message_and_link`를 실제 `chat/runtime/finalize.rs`에 연결했습니다. 다른 세션의 응답, 이미 완료된 응답, 종료된 실행에 새로운 최종 메시지가 남지 않습니다.
+- 그룹 작업 완료에서 모델이 보낸 근거 JSON을 곧바로 신뢰하지 않고, `room_work_item`에 이미 저장된 관측 메시지의 실제 소유·세션·태스크·메시지·증거 수를 검증합니다. 같은 범위로 위조한 결과도 거부합니다. 병렬 그룹 응답 공개 중 새 owner/중단 이벤트가 도착하면 남은 과거 답변을 더 공개하지 않습니다.
+- Rust SDK `run_events_after`가 TypeScript `runEvents`와 같은 버전 1 `run_state` 이벤트를 원래 저널의 전역 cursor와 함께 제공합니다. HTTP/UI에 새 메뉴나 새 엔드포인트를 추가하지 않았습니다.
+- 회귀 테스트는 CAS terminal monotonicity, SQLite final reply exactly-once, forged group observation rejection, Rust SDK journal parity를 포함합니다. 한 프로세스가 종료되는 전체 E2E와 100턴 end-to-end 모델 비용 실험은 별도 필요합니다.
+- 참고: <https://openai.com/index/unlocking-the-codex-harness/> (thread/turn/item lifecycle), <https://github.com/QwenLM/qwen-code/blob/main/docs/design/2026-09-27-hosted-workspace-tool-turn.md> (원자적 도구 결과 지속과 재개).
