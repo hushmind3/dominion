@@ -864,11 +864,8 @@ pub fn recover_finalizations(state: &AppState) {
     }
 }
 
-/// Minimum independent paired trials before an experiment can change a
-/// strategy's evidence grade. Observation counters never reach this gate.
-pub const MIN_EXPERIMENT_UNITS: u64 = 8;
-/// Newly promoted policies are exposed to a deterministic 20% of sessions
-/// until they collect enough clean production observations.
+/// Retained for previously recorded canary-rollout strategies only.
+/// No new experiment promotion or automatic rollout is created.
 pub const CANARY_PERCENT: u64 = 20;
 pub const CANARY_SUCCESSES: u64 = 3;
 
@@ -877,110 +874,6 @@ fn in_canary_bucket(session_id: &str, strategy_id: &str) -> bool {
     let bucket = u64::from_str_radix(&digest[..8], 16).unwrap_or(0) % 100;
     bucket < CANARY_PERCENT
 }
-
-/// Applies an isolated paired experiment result to a strategy. This is the
-/// only path that can stamp E2 / `validatedBy=isolated_experiment` or roll back
-/// on measured regression; production observation can only produce E1.
-pub fn experiment_result_record(
-    state: &AppState,
-    strategy_id: &str,
-    experiment: &Value,
-) -> Result<Value, String> {
-    let Some(mut record) = state.store.get("improvement", strategy_id) else {
-        return Err("전략을 찾을 수 없습니다.".into());
-    };
-    if record["kind"].as_str() != Some("strategy") {
-        return Err("실험 대상은 strategy 여야 합니다.".into());
-    }
-    if !matches!(record["status"].as_str(), Some("adopted" | "validated")) {
-        return Err("활성 상태의 전략만 실험 결과를 적용할 수 있습니다.".into());
-    }
-    let units = experiment["independentUnits"].as_u64().unwrap_or(0);
-    if units == 0 {
-        return Err("독립 실험 표본이 없습니다.".into());
-    }
-    let verdict = experiment["verdict"].as_str().unwrap_or("inconclusive");
-    let delta = experiment["delta"].as_f64().unwrap_or(0.0);
-    let experiment_id = experiment["experimentId"].as_str().unwrap_or("");
-    let revision = crate::engine::memory::stable_id(&[
-        experiment_id,
-        experiment["oracleVersion"].as_str().unwrap_or(""),
-        &units.to_string(),
-        &format!("{delta:.6}"),
-    ]);
-    record["lastExperiment"] = json!({
-        "experimentId": experiment_id,
-        "verdict": verdict,
-        "delta": delta,
-        "independentUnits": units,
-        "oracleVersion": experiment["oracleVersion"],
-        "evaluatedAt": chrono::Utc::now().to_rfc3339(),
-    });
-
-    if units >= MIN_EXPERIMENT_UNITS && verdict == "regressed" {
-        record["status"] = json!("rolled_back");
-        record["evidenceGrade"] = json!("E2");
-        record["rolledBackAt"] = json!(chrono::Utc::now().to_rfc3339());
-        record["reason"] = json!(format!(
-            "격리 실험에서 성공률 변화 {delta:+.2} 로 악화되어 롤백했습니다."
-        ));
-        record["experimentRevision"] = json!(revision);
-    } else if units >= MIN_EXPERIMENT_UNITS
-        && matches!(verdict, "improved" | "preliminary_support")
-        && delta > 0.0
-    {
-        record["status"] = json!("validated");
-        record["evidenceGrade"] = json!("E2");
-        record["validatedBy"] = json!("isolated_experiment");
-        record["requiresExperiment"] = json!(false);
-        record["experimentRevision"] = json!(revision);
-        record["rollout"] = json!("canary");
-        record["canaryTurns"] = json!(0);
-        record["validatedAt"] = json!(chrono::Utc::now().to_rfc3339());
-    } else {
-        // Inconclusive or underpowered experiments are recorded but never
-        // promote a policy.
-        record["requiresExperiment"] = json!(true);
-    }
-    Ok(record)
-}
-pub fn apply_experiment_result(
-    state: &AppState,
-    strategy_id: &str,
-    experiment: &Value,
-) -> Result<Value, String> {
-    let record = experiment_result_record(state, strategy_id, experiment)?;
-    let mut records = vec![("improvement".to_string(), record.clone())];
-    for mut request in state.store.all("experiment_request") {
-        if request["strategyId"].as_str() == Some(strategy_id)
-            && request["status"].as_str() == Some("queued")
-        {
-            request["status"] = json!("completed");
-            request["experimentId"] = experiment["experimentId"].clone();
-            request["verdict"] = experiment["verdict"].clone();
-            request["units"] = experiment["independentUnits"].clone();
-            request["completedAt"] = json!(chrono::Utc::now().to_rfc3339());
-            records.push(("experiment_request".to_string(), request));
-        }
-    }
-    let saved = state.store.transaction(&records)?;
-    for item in &saved {
-        state.bus.record("improvement", item);
-    }
-    state.store.audit(
-        "improvement.experiment_result",
-        json!({
-            "id": strategy_id,
-            "experimentId": experiment["experimentId"],
-            "verdict": experiment["verdict"],
-            "units": experiment["independentUnits"],
-            "status": record["status"],
-        }),
-    );
-    Ok(record)
-}
-
-
 
 pub fn list(state: &AppState) -> Vec<Value> {
     state.store.all("improvement")
@@ -1024,59 +917,6 @@ mod tests {
     }
 
     #[test]
-    fn only_real_experiments_promote_or_roll_back_a_strategy() {
-        let (state, dir) = state();
-        let scope = MemoryScope::for_session(&state.store, "s", Some("a"));
-        let base = json!({
-            "id":"strategy-x","kind":"strategy","scope":"agent","agentId":"a",
-            "partitionKey":scope.partition_key,"status":"adopted","scoreVersion":2,
-            "evidenceGrade":"E1_observed","text":"run audit before report",
-            "uses":5,"successes":5,"failures":0,"appliedExecutionIds":[]
-        });
-        state.store.put("improvement", &base);
-
-        // Underpowered or inconclusive samples never promote.
-        let small = json!({"experimentId":"exp-1","verdict":"improved","delta":0.4,"independentUnits":3,"oracleVersion":"v1"});
-        let record = apply_experiment_result(&state, "strategy-x", &small).unwrap();
-        assert_eq!(record["status"], "adopted");
-        assert_eq!(record["evidenceGrade"], "E1_observed");
-        assert_eq!(record["requiresExperiment"], true);
-        assert_eq!(record["lastExperiment"]["experimentId"], "exp-1");
-
-        let improved = json!({"experimentId":"exp-2","verdict":"improved","delta":0.3,"independentUnits":8,"oracleVersion":"v1"});
-        let record = apply_experiment_result(&state, "strategy-x", &improved).unwrap();
-        assert_eq!(record["status"], "validated");
-        assert_eq!(record["evidenceGrade"], "E2");
-        assert_eq!(record["validatedBy"], "isolated_experiment");
-        assert_eq!(record["requiresExperiment"], false);
-        assert!(record["experimentRevision"].as_str().is_some_and(|value| !value.is_empty()));
-
-        let regressed = json!({"experimentId":"exp-3","verdict":"regressed","delta":-0.2,"independentUnits":8,"oracleVersion":"v1"});
-        let record = apply_experiment_result(&state, "strategy-x", &regressed).unwrap();
-        assert_eq!(record["status"], "rolled_back");
-        assert_eq!(record["evidenceGrade"], "E2");
-        assert!(record["rolledBackAt"].is_string());
-
-        // The runner's conservative bound names a supported effect
-        // `preliminary_support`; it is still an experiment promotion.
-        state.store.put(
-            "improvement",
-            &json!({
-                "id":"strategy-y","kind":"strategy","scope":"agent","agentId":"a",
-                "partitionKey":scope.partition_key,"status":"adopted","scoreVersion":2,
-                "evidenceGrade":"E1_observed","text":"verify output","uses":5,"successes":5,
-                "failures":0,"appliedExecutionIds":[]
-            }),
-        );
-        let supported = json!({"experimentId":"exp-4","verdict":"preliminary_support","delta":0.9,"independentUnits":10,"oracleVersion":"v1"});
-        let record = apply_experiment_result(&state, "strategy-y", &supported).unwrap();
-        assert_eq!(record["status"], "validated");
-        assert_eq!(record["evidenceGrade"], "E2");
-        assert_eq!(record["validatedBy"], "isolated_experiment");
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
     fn canary_exposure_is_deterministic_and_partial() {
         let mut included = None;
         let mut excluded = None;
@@ -1108,14 +948,11 @@ mod tests {
             &json!({
                 "id":"canary-1","kind":"strategy","scope":"agent","agentId":"a",
                 "partitionKey":scope.partition_key,"status":"adopted","scoreVersion":2,
-                "evidenceGrade":"E1_observed","text":"verify every output","uses":5,
-                "successes":5,"failures":0,"appliedExecutionIds":[]
+                "evidenceGrade":"E2","text":"verify every output","uses":5,
+                "successes":5,"failures":0,"appliedExecutionIds":[],
+                "rollout":"canary","canaryTurns":0
             }),
         );
-        let experiment = json!({"experimentId":"exp-canary","verdict":"preliminary_support","delta":0.5,"independentUnits":10,"oracleVersion":"v1"});
-        let record = apply_experiment_result(&state, "canary-1", &experiment).unwrap();
-        assert_eq!(record["rollout"], "canary");
-        assert_eq!(record["canaryTurns"], 0);
 
         for index in 0..CANARY_SUCCESSES {
             let execution = json!({

@@ -85,6 +85,15 @@ const algorithms=read('src/engine/algorithms.rs');
 assert.ok(!algorithms.includes('"selfimprove.search" =>'),'Retired algorithm dispatch returned');
 assert.ok(!algorithms.includes('state.store.all("algorithm_eval")'),
  'Retired evaluator promotion remains');
+const principle=read('src/engine/principle.rs');
+const improvement=read('src/engine/improve.rs');
+for(const code of [principle,improvement]) {
+ for(const retired of ['experiment_result_record(', 'apply_experiment_result(', 'strategy_composition", &composition',
+  'enqueue_policy_request('])
+  assert.ok(!code.includes(retired),'Retired experiment record creation returned: '+retired);
+}
+assert.ok(!algorithms.includes('pub fn generate('),
+ 'Retired automatic algorithm candidate generator returned');
 const runtimePolicy=read('src/engine/policy.rs');
 for(const name of ['propose_candidates','enqueue_policy_request','select_best',
  'apply_experiment_result','register_optimizer','meta_improve','experiment_request',

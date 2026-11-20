@@ -1671,103 +1671,6 @@ pub fn disable(state: &AppState, id: &str) -> Option<Value> {
     Some(saved)
 }
 
-/// Generates new algorithm candidates from failure evidence. The candidates
-/// are real parameterizations of existing harness interfaces; anything that
-/// would require a new engine primitive stays a typed proposal.
-pub fn generate(state: &AppState, body: &Value) -> Value {
-    let kind = body["kind"].as_str().unwrap_or("adaptation.selection");
-    let evidence = body["evidence"].as_array().cloned().unwrap_or_default();
-    let evidence_text = evidence
-        .iter()
-        .map(|item| item.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    let base = format!(
-        "generated-{}",
-        crate::engine::memory::stable_id(&[kind, &evidence_text])
-    );
-    let lower = evidence_text.to_lowercase();
-    let timeout_heavy = lower.matches("timeout").count() + lower.matches("시간").count();
-    let permission_heavy =
-        lower.matches("permission").count() + lower.matches("권한").count();
-    let not_found_heavy = lower.matches("not_found").count() + lower.matches("not found").count();
-    let templates: Vec<Value> = match kind {
-        "adaptation.selection" => {
-            // Evidence changes the starting kernel: repeated timeouts/unknown
-            // causes favour a cheap probe; permission failures favour a
-            // discrimination-focused search; otherwise progress wins.
-            let (kernel, description, discrimination, progress) = if timeout_heavy
-                > permission_heavy.max(not_found_heavy)
-            {
-                ("probe-first", "시간 초과/불명확 원인 증거가 많아 저비용 probe를 먼저 둔다.", 2.8, 0.4)
-            } else if permission_heavy > not_found_heavy {
-                (
-                    "discrimination-first",
-                    "권한 실패 증거가 많아 원인을 구별하는 개입을 우선한다.",
-                    3.0,
-                    0.5,
-                )
-            } else {
-                (
-                    "progress-first",
-                    "파일/경로 실패 증거가 많아 실제 해결 개입을 우선한다.",
-                    0.4,
-                    2.5,
-                )
-            };
-            vec![
-                json!({"name": format!("{base}-{kernel}"), "variant": kernel, "implementation": kernel,
-                    "description": description,
-                    "parameters": {"discriminationWeight": discrimination, "progressWeight": progress, "costWeight": 1.2}}),
-                json!({"name": format!("{base}-{kernel}-explore"), "variant": kernel, "implementation": kernel,
-                    "description": "증거 기반 후보의 탐색 비중을 높인 변형",
-                    "parameters": {"discriminationWeight": discrimination, "progressWeight": progress, "costWeight": 1.8}}),
-            ]
-        }
-        "strategy.selection" => vec![
-            json!({"name": format!("{base}-exploit-only"), "variant": "exploit-only", "implementation": "exploit-only",
-                "description": "관측 표본이 충분한 전략만 선택한다.",
-                "parameters": {"uncertaintyPenalty": 0.4, "costWeight": 1.5, "exploration": 0}}),
-            json!({"name": format!("{base}-estimated"), "variant": "estimated-softmax", "implementation": "estimated-softmax",
-                "description": "불확실성을 반영해 탐색과 활용을 함께 사용한다.",
-                "parameters": {"uncertaintyPenalty": 0.6, "costWeight": 0.8, "exploration": 1}}),
-        ],
-        _ => {
-            let kernel = executable_kernels(kind)
-                .first()
-                .copied()
-                .unwrap_or("");
-            if kernel.is_empty() {
-                Vec::new()
-            } else {
-                vec![json!({
-                    "name": format!("{base}-{kernel}"),
-                    "variant": kernel,
-                    "implementation": kernel,
-                    "description": "실패 증거에서 생성된 실행 커널 후보",
-                    "parameters": {},
-                })]
-            }
-        }
-    };
-    let mut created = Vec::new();
-    for template in templates {
-        let body = json!({
-            "kind": kind,
-            "name": template["name"],
-            "variant": template["variant"],
-            "implementation": template["implementation"].as_str().unwrap_or(template["variant"].as_str().unwrap_or("")),
-            "description": template["description"],
-            "parameters": template["parameters"],
-            "source": "generated",
-        });
-        if let Ok(record) = register(state, &body) {
-            created.push(record);
-        }
-    }
-    json!({"kind": kind, "created": created, "evidence": evidence})
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1970,29 +1873,6 @@ mod tests {
         assert_eq!(choose_for_agent(
             &state, "memory.importance", Some("agent-a"), None
         ).unwrap()["id"], activated["id"]);
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn generation_uses_evidence_and_returns_executable_kernels() {
-        let (state, dir) = state();
-        let generated = generate(
-            &state,
-            &json!({
-                "kind":"adaptation.selection",
-                "evidence":["timeout timeout permission denied"]
-            }),
-        );
-        let created = generated["created"].as_array().unwrap();
-        assert!(!created.is_empty());
-        for algorithm in created {
-            let kind = algorithm["kind"].as_str().unwrap();
-            let implementation = algorithm["implementation"].as_str().unwrap();
-            assert!(kernel_exists(kind, implementation), "{algorithm}");
-        }
-        assert!(created
-            .iter()
-            .any(|algorithm| algorithm["implementation"] == "probe-first"));
         let _ = std::fs::remove_dir_all(dir);
     }
 

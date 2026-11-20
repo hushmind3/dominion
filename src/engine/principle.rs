@@ -278,96 +278,6 @@ fn synthesize(kind: &str, class: &str, failed_tool: &str, selected_tool: &str) -
     })
 }
 
-/// Composes an executable strategy candidate from a principle only when the
-/// evidence is independent and the domain exposes observe/mutate/verify. It
-/// never marks the candidate promotable: a paired holdout must run first.
-pub fn compose(principle: &Value) -> Option<Value> {
-    let principle_id = principle["id"].as_str()?;
-    let evidence = principle["evidenceExecutionIds"]
-        .as_array()
-        .map(Vec::len)
-        .unwrap_or(0);
-    let cases = principle["supportingCases"]
-        .as_array()
-        .map(Vec::len)
-        .unwrap_or(0);
-    let counterexamples = principle["counterexamples"]
-        .as_array()
-        .map(Vec::len)
-        .unwrap_or(0);
-    if evidence < 2 || cases < 2 || counterexamples >= cases + 1 {
-        return None;
-    }
-    let mut supported = Vec::new();
-    let mut unavailable = Vec::new();
-    for domain in DOMAINS {
-        let bindings = capability_bindings(domain);
-        let executable = bindings["mutate"]
-            .as_array()
-            .is_some_and(|items| !items.is_empty())
-            && bindings["verify"]["available"].as_bool() == Some(true);
-        if executable {
-            supported.push(json!({
-                "domain": domain,
-                "observe": bindings["observe"],
-                "mutate": bindings["mutate"],
-                "verify": bindings["verify"],
-                "versionSource": bindings["version_source"],
-            }));
-        } else {
-            unavailable.push(json!({
-                "domain": domain,
-                "reason": "관찰·변경·독립 검증 중 하나 이상이 도구 카탈로그에 없다.",
-            }));
-        }
-    }
-    if supported.is_empty() {
-        return None;
-    }
-    let revision = crate::engine::memory::stable_id(&[
-        principle_id,
-        principle["updatedAt"].as_str().unwrap_or(""),
-    ]);
-    let id = format!("strategy-composition-{revision}");
-    Some(json!({
-        "id": id,
-        "schemaVersion": 2,
-        "kind": "strategy_composition",
-        "status": "candidate",
-        "promotionEligible": false,
-        "promotionReason": "paired holdout evidence가 없으므로 운영 정책으로 승격하지 않는다.",
-        "principleId": principle_id,
-        "parentRevision": revision,
-        "procedure": principle["procedure"],
-        "conditions": principle["conditions"],
-        "exclusions": principle["exclusions"],
-        "expectedEvidence": principle["expectedEvidence"],
-        "supportedDomains": supported,
-        "unavailableDomains": unavailable,
-        "evidence": {
-            "executionIds": principle["evidenceExecutionIds"],
-            "supportingCases": principle["supportingCases"],
-            "supportingModels": principle["supportingModels"],
-            "supportingAgents": principle["supportingAgents"],
-            "counterexamples": principle["counterexamples"],
-            "evidenceGrade": principle["evidenceGrade"],
-        },
-        "costBound": {"extraToolCalls": 1, "modelCalls": 0},
-        "experiment": {
-            "status": "not_run",
-            "baseline": "existing path",
-            "treatment": ["observe_version", "compare", "conditional_mutate", "independent_readback"],
-            "gates": {
-                "minSuccessGain": 0.10,
-                "tokenRatioMax": 1.25,
-                "forbidDuplicateEffect": true,
-                "forbidAuthorityWidening": true,
-            },
-        },
-        "createdAt": chrono::Utc::now().to_rfc3339(),
-    }))
-}
-
 fn union_strings(record: &mut Value, key: &str, value: &str, limit: usize) {
     if value.is_empty() {
         return;
@@ -442,31 +352,6 @@ fn observed_recoveries(state: &AppState, execution_id: &str) -> Vec<Value> {
         }
     }
     recoveries
-}
-
-/// Stores a structured composition once the principle has independent cases.
-/// The composition is never activated here; it only becomes an experiment
-/// candidate that the existing promotion path may later evaluate.
-fn ensure_composition(state: &AppState, principle: &mut Value) -> bool {
-    if principle["strategyCompositionId"].as_str().is_some() {
-        return false;
-    }
-    let Some(composition) = compose(principle) else {
-        return false;
-    };
-    let Some(saved) = state.store.put("strategy_composition", &composition) else {
-        return false;
-    };
-    principle["strategyCompositionId"] = saved["id"].clone();
-    principle["strategyComposedAt"] = json!(chrono::Utc::now().to_rfc3339());
-    if let Some(candidate_id) = principle["strategyCandidateId"].as_str() {
-        if let Some(mut candidate) = state.store.get("improvement", candidate_id) {
-            candidate["compositionId"] = saved["id"].clone();
-            candidate["compositionRevision"] = saved["parentRevision"].clone();
-            state.store.put("improvement", &candidate);
-        }
-    }
-    true
 }
 
 /// Learns principles only from a verified successful adaptation. The source
@@ -569,41 +454,6 @@ pub fn learn_from_execution(state: &AppState, execution: &Value) -> usize {
             .unwrap_or(0);
         principle["confidence"] = json!((0.5 + 0.1 * cases as f64).min(0.95));
         principle["updatedAt"] = json!(chrono::Utc::now().to_rfc3339());
-        // The growth cycle does not stop at memory. Once the same principle is
-        // backed by two verified executions it becomes a strategy candidate in
-        // the existing experiment/promotion pipeline.
-        if cases >= 2 && principle["strategyCandidateId"].is_null() {
-            let evidence = principle["evidenceExecutionIds"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|value| value.as_str().map(str::to_string))
-                .collect::<Vec<_>>();
-            let scope = crate::engine::memory::MemoryScope::for_session(
-                &state.store,
-                execution["sessionId"].as_str().unwrap_or(""),
-                execution["agentId"].as_str(),
-            );
-            let text = format!(
-                "{} 적용: 변경/외부 작업 전에 현재 상태와 버전을 관찰하고 기대 조건과 비교한다.",
-                principle["principle"].as_str().unwrap_or("")
-            );
-            if let Some(candidate) = crate::engine::improve::propose(
-                state,
-                &scope,
-                "strategy",
-                &text,
-                "검증된 실행에서 추출한 일반 원리를 실행 전 검증 전략 후보로 승격",
-                &evidence,
-                None,
-                "global",
-            ) {
-                principle["strategyCandidateId"] = candidate["id"].clone();
-                principle["strategyCandidateAt"] = json!(chrono::Utc::now().to_rfc3339());
-            }
-            ensure_composition(state, &mut principle);
-        }
         if state.store.put("experience_principle", &principle).is_some() {
             learned += 1;
         }
@@ -770,7 +620,6 @@ pub fn finalize_usage(state: &AppState, execution: &Value, succeeded: bool) -> u
             usage["status"] = json!("counterexample");
         }
         principle["lastUsedAt"] = json!(chrono::Utc::now().to_rfc3339());
-        ensure_composition(state, &mut principle);
         state.store.put("experience_principle", &principle);
         usage["finalizedAt"] = json!(chrono::Utc::now().to_rfc3339());
         state.store.put("principle_usage", &usage);
@@ -905,8 +754,8 @@ mod tests {
             assert_eq!(finalize_usage(&state, &execution, true), 1);
             assert_eq!(state.store.all("principle_usage").len(), index + 1);
         }
-        // A second verified source run promotes the principle into the
-        // existing strategy-candidate pipeline.
+        // Additional independent evidence enriches the shared principle.
+        // It must not revive an automatic strategy/experiment campaign.
         learn_from_execution(
             &state,
             &json!({
@@ -922,13 +771,9 @@ mod tests {
                 }]
             }),
         );
-        let candidate = state.store.all("improvement").into_iter()
-            .find(|record| record["kind"].as_str() == Some("strategy"))
-            .expect("principle strategy candidate");
-        assert_eq!(candidate["scope"], "global", "{candidate}");
-        assert!(candidate["text"].as_str().unwrap_or("").contains("현재 상태와 버전"), "{candidate}");
+        assert!(state.store.all("improvement").is_empty());
         let principle = &state.store.all("experience_principle")[0];
-        assert_eq!(principle["strategyCandidateId"], candidate["id"], "{principle}");
+        assert!(principle["strategyCandidateId"].is_null());
         for model in ["model-b", "model-c", "model-d"] {
             assert!(principle["supportingModels"]
                 .as_array()
@@ -968,79 +813,29 @@ mod tests {
     }
 
     #[test]
-    fn composition_requires_independent_cases_and_stays_unpromoted() {
-        let (state, dir) = state();
-        learn_from_execution(
-            &state,
-            &execution(
-                "model-a",
-                "agent-a",
-                "github_api_update",
-                "github_api_get",
-                "409 conflict: sha mismatch",
-            ),
-        );
-        assert!(context_block(
-            &state,
-            Some("agent-b"),
-            "model-b",
-            "workspace_write",
-            &json!({}),
-            "409 conflict",
-            Some("run-b"),
-        )
-        .is_some());
-        finalize_usage(&state, &json!({"id":"run-b"}), true);
-        assert!(
-            state.store.all("strategy_composition").is_empty(),
-            "one source and one supporting case are not enough"
-        );
-
-        learn_from_execution(
-            &state,
-            &json!({
-                "id":"run-source-2","taskOutcome":"succeeded","model":"model-a2",
-                "agentId":"agent-a2","sessionId":"s-2",
-                "adaptations":[{
-                    "observation":{"tool":"github_api_update","actual":"409 conflict"},
-                    "selected":{"tool":"github_api_get","inputs":{}},
-                    "result":{"success":true}
-                }]
-            }),
-        );
-        assert!(context_block(
-            &state,
-            Some("agent-c"),
-            "model-c",
-            "file_write",
-            &json!({}),
-            "409 conflict: stale state",
-            Some("run-c"),
-        )
-        .is_some());
-        finalize_usage(&state, &json!({"id":"run-c"}), true);
-
-        let composition = state
-            .store
-            .all("strategy_composition")
-            .into_iter()
-            .next()
-            .expect("composition from independent evidence");
-        assert_eq!(composition["promotionEligible"], false);
-        assert_eq!(composition["experiment"]["status"], "not_run");
-        assert_eq!(composition["experiment"]["gates"]["tokenRatioMax"], 1.25);
-        let domains = composition["supportedDomains"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|value| value["domain"].as_str())
-            .collect::<Vec<_>>();
-        assert!(domains.contains(&"filesystem"));
-        assert!(domains.contains(&"source_control"));
-        assert!(domains.contains(&"system") == false);
-        let principle = state.store.all("experience_principle")[0].clone();
-        assert_eq!(principle["strategyCompositionId"], composition["id"]);
-        let _ = std::fs::remove_dir_all(dir);
+    fn verified_principles_remain_memory_without_standalone_strategy_creation() {
+        let (state,dir)=state();
+        learn_from_execution(&state,&execution(
+            "model-a","agent-a","github_api_update","github_api_get",
+            "409 conflict: sha mismatch"
+        ));
+        learn_from_execution(&state,&json!({
+            "id":"second-proof","taskOutcome":"succeeded","model":"model-b",
+            "agentId":"agent-b","sessionId":"s2",
+            "adaptations":[{
+                "observation":{"tool":"github_api_update","actual":"409 conflict"},
+                "selected":{"tool":"github_api_get","inputs":{}},
+                "result":{"success":true}
+            }]
+        }));
+        let memory=state.store.all("experience_principle");
+        assert_eq!(memory.len(),1);
+        assert_eq!(memory[0]["evidenceExecutionIds"].as_array().unwrap().len(),2);
+        assert!(state.store.all("strategy_composition").is_empty(),
+            "retired experiment composition must not be generated");
+        assert!(state.store.all("improvement").is_empty(),
+            "verified memory must not silently queue a strategy candidate");
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]
