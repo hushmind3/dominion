@@ -343,3 +343,18 @@ test('chat, SDK jobs and room assignments share a durable typed run state projec
  assert.match(board,/state\.bus\.record\("room_work_assignment",&saved\)/);
  assert.doesNotMatch(board,/RunEvent\{/);
 });
+
+test('both agent loops share one tool transcript protocol and persisted feedback',()=>{
+ const core=source('crates/dominion-turn-core/src/agent_loop.rs');
+ const independent=source('crates/dominion-agent-loop/src/lib.rs');
+ const chat=source('src/engine/services/conversation/chat/runtime/turn_body.rs');
+ const dispatch=source('src/engine/services/conversation/chat/runtime/tool_calls.rs');
+ assert.match(core,/pub struct ToolFeedback/);
+ assert.match(core,/pub fn provider_message/);
+ assert.match(independent,/ToolFeedback::outcome_unknown/);
+ assert.match(independent,/ToolFeedback::not_dispatched/);
+ assert.match(chat,/ToolFeedback::from_content/);
+ assert.match(dispatch,/ToolFeedback::from_value/);
+ assert.match(dispatch,/"content":feedback\.content/);
+ assert.match(dispatch,/soft_denial_replay_is_byte_identical_to_provider_transcript/);
+});

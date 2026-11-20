@@ -1403,15 +1403,11 @@ pub(super) async fn run_turn_body(
             // can correct its tool names instead of leaving broken history.
             for call in &round_calls{
                 let error=format!("도구 배치가 실행 전에 거부되었습니다: {reason}. 현재 제공된 도구만 사용하거나 dominion_tool_search로 탐색하세요.");
-                record_soft_tool_error(
+                messages.push(record_soft_tool_error(
                     state,tx,session_id,request,execution_id,
                     &call.name,&call.id,&error,metrics,
-                );
-                messages.push(json!({
-                    "role":"tool","tool_call_id":call.id,
-                    "content":json!({"error":error,"batchRejected":true,
-                        "dispatched":false}).to_string(),
-                }));
+                    json!({"error":error,"batchRejected":true,"dispatched":false}),
+                ));
             }
             decision_policy.signal("tool.selection",false);
             continue;
@@ -1481,11 +1477,13 @@ pub(super) async fn run_turn_body(
                                 let error=format!(
                                     "invalid tool arguments: {} 도구 인수는 JSON 객체여야 합니다.",
                                     read_call.name);
-                                record_soft_tool_error(
+                                let feedback=record_soft_tool_error(
                                     state,tx,session_id,request,execution_id,
                                     &read_call.name,&read_call.id,&error,metrics,
+                                    json!({"error":error,"dispatched":false}),
                                 );
-                                ordered[offset]=Some((json!({"error":error}).to_string(),false));
+                                ordered[offset]=Some((feedback["content"].as_str()
+                                    .unwrap_or_default().to_string(),false));
                             }
                         }
                     }
@@ -1551,9 +1549,11 @@ pub(super) async fn run_turn_body(
                     for (read_call,item) in batch.iter().zip(ordered.into_iter()){
                         let (text,ok)=item.expect("every read call has a result");
                         all_ok &= ok;
-                        messages.push(json!({
-                            "role":"tool","tool_call_id":read_call.id,"content":text,
-                        }));
+                        messages.push(
+                            crate::engine::core::agent_loop::ToolFeedback::from_content(
+                                &read_call.id,text,
+                            ).provider_message()
+                        );
                         decision_policy.signal("tool.selection",ok);
                         decision_policy.signal("recovery.strategy",ok);
                     }
@@ -1571,14 +1571,10 @@ pub(super) async fn run_turn_body(
                         "invalid tool arguments: {} 도구 인수는 JSON 객체여야 합니다. 인자를 고쳐 다시 호출하세요.",
                         call.name
                     );
-                    record_soft_tool_error(
-                        state, tx, session_id, request, execution_id, &call.name, &call.id,
-                        &error, metrics,
-                    );
-                    messages.push(json!({
-                        "role":"tool","tool_call_id":call.id,
-                        "content": json!({"error":error}).to_string()
-                    }));
+                    messages.push(record_soft_tool_error(
+                        state,tx,session_id,request,execution_id,&call.name,&call.id,
+                        &error,metrics,json!({"error":error,"dispatched":false}),
+                    ));
                     continue;
                 }
             };
@@ -1614,14 +1610,11 @@ pub(super) async fn run_turn_body(
                         || strategy["verification"]["enforce"].as_bool() == Some(true))
                 });
                 if enforced {
-                    record_soft_tool_error(
-                        state, tx, session_id, request, execution_id, &call.name, &call.id,
-                        &error, metrics,
-                    );
-                    messages.push(json!({
-                        "role":"tool","tool_call_id":call.id,
-                        "content": json!({"error":error,"procedureViolation":true}).to_string()
-                    }));
+                    messages.push(record_soft_tool_error(
+                        state,tx,session_id,request,execution_id,&call.name,&call.id,
+                        &error,metrics,json!({"error":error,
+                            "procedureViolation":true,"dispatched":false}),
+                    ));
                     continue;
                 }
                 messages.push(json!({
@@ -1647,15 +1640,12 @@ pub(super) async fn run_turn_body(
                 let tool_selection=decision_policy.write_choice();
                 if tool_selection.blocks_without_read() {
                     let error = "도구 선택 알고리즘(block-write-without-read)이 읽기/목록 확인 없는 쓰기를 차단했습니다. workspace_list 또는 workspace_read를 먼저 실행하세요.";
-                    record_soft_tool_error(
-                        state, tx, session_id, request, execution_id, &call.name, &call.id,
-                        error, metrics,
-                    );
+                    messages.push(record_soft_tool_error(
+                        state,tx,session_id,request,execution_id,&call.name,&call.id,
+                        error,metrics,json!({"error":error,
+                            "toolSelectionBlocked":true,"dispatched":false}),
+                    ));
                     decision_policy.signal("tool.selection",false);
-                    messages.push(json!({
-                        "role":"tool","tool_call_id":call.id,
-                        "content": json!({"error":error,"toolSelectionBlocked":true}).to_string()
-                    }));
                     continue;
                 } else if tool_selection.recommends_read() {
                     messages.push(json!({
@@ -1691,18 +1681,12 @@ pub(super) async fn run_turn_body(
                 // A retry is allowed once the environment/state actually changed.
                 let previous_error = previous_error.clone();
                 let error = crate::engine::adaptation_loop::repeated_failure_message(&call.name);
-                record_soft_tool_error(
-                    state, tx, session_id, request, execution_id, &call.name, &call.id,
-                    &error, metrics,
-                );
-                messages.push(json!({
-                    "role":"tool","tool_call_id":call.id,
-                    "content": json!({
-                        "error": error,
-                        "previousError": previous_error,
-                        "repeatedFailedCall": true,
-                    }).to_string()
-                }));
+                messages.push(record_soft_tool_error(
+                    state,tx,session_id,request,execution_id,&call.name,&call.id,
+                    &error,metrics,json!({"error":error,
+                        "previousError":previous_error,
+                        "repeatedFailedCall":true,"dispatched":false}),
+                ));
                 messages.push(json!({
                     "role":"system",
                     "content":"직전 실패와 동일한 호출이 차단되었습니다. 다른 도구/인자로 실행하거나, 원인을 확인하는 probe를 선택하거나, 실제로 막혔다면 그 이유를 최종 답변에 쓰세요."
@@ -1850,9 +1834,11 @@ pub(super) async fn run_turn_body(
             // Keep full evidence in the in-memory turn. Per-provider
             // request assembly clips only when *that model's* configured
             // context is too small, so switching local -> API can recover it.
-            messages.push(json!({
-                "role":"tool","tool_call_id":call.id,"content":tool_content,
-            }));
+            messages.push(
+                crate::engine::core::agent_loop::ToolFeedback::from_content(
+                    &call.id,tool_content,
+                ).provider_message()
+            );
         }
 
         if ordering_used {

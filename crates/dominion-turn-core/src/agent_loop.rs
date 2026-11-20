@@ -1,7 +1,7 @@
 //! Contracts for swappable agent algorithms. Runtime admission remains in
 //! Driver: plugins can suggest a transition but cannot invent tool authority.
 use crate::driver::{Driver,Step};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq)]
 pub struct RoundObservation {
@@ -13,6 +13,36 @@ pub trait AgentLoop:Send {
     fn name(&self)->&'static str;
     fn after_model(&mut self,observation:RoundObservation)->Step;
 }
+/// The provider transcript representation of a tool observation. The host
+/// may persist this exact content; the core owns only its protocol shape, not
+/// the truth of a tool effect or the authority to perform it.
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub struct ToolFeedback {
+    pub call_id:String,
+    pub content:String,
+}
+impl ToolFeedback {
+    pub fn from_content(call_id:&str,content:impl Into<String>)->Self{
+        Self{call_id:call_id.into(),content:content.into()}
+    }
+    pub fn from_value(call_id:&str,result:&Value)->Self{
+        Self::from_content(call_id,result.to_string())
+    }
+    pub fn not_dispatched(call_id:&str,reason:&str)->Self{
+        Self::from_value(call_id,&json!({"status":"not_dispatched",
+            "dispatched":false,"reason":reason}))
+    }
+    /// Transport ambiguity is NOT a confirmed failure or a completed effect.
+    /// The host's durable effect ledger is responsible for reconciliation.
+    pub fn outcome_unknown(call_id:&str,error:&str)->Self{
+        Self::from_value(call_id,&json!({"status":"outcome_unknown",
+            "outcomeUnknown":true,"error":error}))
+    }
+    pub fn provider_message(&self)->Value{
+        json!({"role":"tool","tool_call_id":self.call_id,"content":self.content})
+    }
+}
+
 #[derive(Clone,Debug,PartialEq)]
 pub struct ToolRequest {
     pub id:String,
@@ -66,4 +96,20 @@ mod tests{
             proposed_calls:1,has_plan:true},false),
             Err("tool execution disabled"));
     }
+    #[test]
+    fn shared_tool_feedback_preserves_host_content_and_marks_unexecuted_effects(){
+        let actual=json!({"content":"tool output","success":true});
+        let observed=ToolFeedback::from_value("call-1",&actual);
+        assert_eq!(observed.provider_message()["content"],actual.to_string());
+        assert_eq!(observed.provider_message()["tool_call_id"],"call-1");
+        let skipped=ToolFeedback::not_dispatched("call-2","cancelled");
+        let payload:Value=serde_json::from_str(&skipped.content).unwrap();
+        assert_eq!(payload["status"],"not_dispatched");
+        assert_eq!(payload["dispatched"],false);
+        let unknown=ToolFeedback::outcome_unknown("call-3","timeout");
+        let payload:Value=serde_json::from_str(&unknown.content).unwrap();
+        assert_eq!(payload["outcomeUnknown"],true);
+        assert_ne!(payload["status"],"completed");
+    }
+
 }

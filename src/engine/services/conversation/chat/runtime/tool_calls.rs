@@ -1,5 +1,6 @@
 //! Tool dispatch, effect receipts, errors and result persistence.
 use super::*;
+use crate::engine::core::agent_loop::ToolFeedback;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn dispatch_tool_call(
@@ -336,17 +337,64 @@ pub(super) fn record_soft_tool_error(
     call_id: &str,
     error: &str,
     metrics: &std::sync::Mutex<Metrics>,
-) {
+    result: Value,
+) -> Value {
+    // The same exact observation is sent to the model AND durably persisted.
+    // Otherwise replaying a stopped run loses e.g. batchRejected and
+    // procedureViolation, and the next model round misreads its own failure.
+    let feedback=ToolFeedback::from_value(call_id,&result);
     let _ = tx.send(json!({"type":"tool_error","name":name,"id":call_id,
-        "dispatched":false,"error":error}));
+        "dispatched":false,"error":error,"result":result}));
     metrics.lock().unwrap().tool_calls += 1;
-    state.store.audit("tool.soft_error", json!({"tool":name,"error":error,"executionId":execution_id}));
+    state.store.audit("tool.soft_error", json!({
+        "tool":name,"error":error,"executionId":execution_id,
+    }));
     if let Some(saved) = state.store.write_message(&json!({
-        "session_id":session_id,"role":"tool","content":json!({"error":error}).to_string(),
+        "session_id":session_id,"role":"tool","content":feedback.content,
         "tool_call_id":call_id,"agent_id":request.agent_id,
         "metadata":{"authorKind":"tool","executionId":execution_id},
     })) {
         state.bus.message(&saved);
     }
+    feedback.provider_message()
 }
 
+#[cfg(test)]
+mod soft_receipt_tests {
+    use super::*;
+    use crate::{config::Config, db::Store, vault::Vault};
+
+    #[test]
+    fn soft_denial_replay_is_byte_identical_to_provider_transcript(){
+        let directory=std::env::temp_dir().join(format!(
+            "dominion-soft-receipt-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let config=Config{port:0,data_dir:directory.clone(),
+            web_dir:directory.join("web"),workspace:directory.clone()};
+        let store=Store::open(&config.db_path()).unwrap();
+        let state=AppState::new(config,store,Vault::open(&directory.join("key")));
+        let request=TurnRequest::from_value(&json!({
+            "input":"test denied batch","sessionId":"soft-session",
+            "toolsEnabled":true,"toolsExecutionEnabled":true
+        })).unwrap();
+        let (tx,mut rx)=tokio::sync::mpsc::unbounded_channel();
+        let metrics=std::sync::Mutex::new(Metrics::default());
+        let payload=json!({"error":"not advertised","dispatched":false,
+            "batchRejected":true,"reason":"hidden sibling"});
+        let provider=record_soft_tool_error(&state,&tx,"soft-session",
+            &request,"exec-1","workspace_read","call-1",
+            "not advertised",&metrics,payload.clone());
+        let persisted=state.store.messages("soft-session");
+        assert_eq!(persisted.len(),1);
+        assert_eq!(persisted[0]["content"],provider["content"]);
+        assert_eq!(persisted[0]["tool_call_id"],provider["tool_call_id"]);
+        let saved:Value=serde_json::from_str(
+            provider["content"].as_str().unwrap()).unwrap();
+        assert_eq!(saved,payload);
+        let event=rx.try_recv().unwrap();
+        assert_eq!(event["dispatched"],false);
+        assert_eq!(event["result"],payload);
+        assert_eq!(metrics.lock().unwrap().tool_calls,1);
+        let _=std::fs::remove_dir_all(directory);
+    }
+}

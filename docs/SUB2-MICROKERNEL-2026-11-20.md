@@ -161,3 +161,26 @@ ProgramIR 실행, 대안 후보 실험, 작업 검토, 정책 스냅샷과 세�
 https://github.com/QwenLM/qwen-code/blob/main/docs/design/2026-09-30-managed-agent-actions.md
 OpenAI Codex Agent Loop (2026-01-23)
 https://openai.com/index/unrolling-the-codex-agent-loop/
+
+## 2026-11-20: 도구 결과 메시지 공통화 및 재개 정합성
+
+`dominion-turn-core::agent_loop::ToolFeedback`가 독립 AgentLoop와 실제
+제품 채팅 실행기의 도구 결과 메시지 형식을 공통 소유합니다. 호스트 도구
+결과 문자열은 변경하지 않고, 실패·취소로 실행하지 못한 호출은
+`status=not_dispatched,dispatched=false`, 외부 효과를 확정할 수 없는
+경우는 `outcomeUnknown=true`로 표시합니다.
+
+기존 Chat의 소프트 거절(`batchRejected`, `procedureViolation`,
+`toolSelectionBlocked`, 반복 실패, 잘못된 JSON 인수)은 **실제 모델에
+전달한 동일한 JSON 결과를 SQLite tool 메시지에도 저장**합니다.
+이전에는 모델에게 보이는 상세 사유가 저장 과정에서 `{"error":...}`로
+축약되어 재개 뒤 인과관계가 바뀌는 문제가 있었습니다. 이벤트 수집기에
+전달하는 `tool_error.result`도 동일하며 `dispatched=false`를
+함께 보존합니다.
+
+`soft_denial_replay_is_byte_identical_to_provider_transcript` 테스트는
+일시적 모델 문맥과 재개용 SQLite 문맥이 바이트 단위로 같은
+`content`를 갖는지 검증합니다. 기존 화면·엔드포인트·DB 스키마,
+외부 도구 승인 및 사용자 데이터 위치는 변경하지 않았습니다.
+단일 공통 Harness 통합은 **도구 결과 프레임 계층**까지 진전됐고,
+모든 복합 프로그램의 독립 AgentLoop 이관은 아직 남아 있습니다.

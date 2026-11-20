@@ -1,7 +1,7 @@
 //! Replaceable model/tool workflows. ReAct and plan-and-execute run through
 //! the same core driver, tool gates, cancellation and host authority.
 use dominion_turn_core::agent_loop::{
-    AgentLoop,ModelPort,ModelResponse,RoundObservation,ToolPort,
+    AgentLoop,ModelPort,ModelResponse,RoundObservation,ToolFeedback,ToolPort,
 };
 use dominion_turn_core::driver::{Driver,Step};
 use serde_json::{json,Value};
@@ -112,28 +112,25 @@ pub async fn run<A:AgentLoop,M:ModelPort,T:ToolPort>(
                         // Complete transcript pairing without claiming that any
                         // remaining call reached the host.
                         for skipped in &response.calls[index..] {
-                            history.push(json!({"role":"tool","tool_call_id":skipped.id,
-                                "content":json!({"status":"not_dispatched",
-                                    "reason":"execution cancelled"}).to_string()}));
+                            history.push(ToolFeedback::not_dispatched(&skipped.id,
+                                "execution cancelled").provider_message());
                         }
                         return Err("execution cancelled".into());
                     }
                     match tools.dispatch(call).await {
                         Ok(output)=>{
-                            history.push(json!({"role":"tool","tool_call_id":call.id,
-                                "content":output.to_string()}));
+                            history.push(ToolFeedback::from_value(&call.id,&output)
+                                .provider_message());
                             dispatched+=1;
                         }
                         Err(error)=>{
                             // A transport error cannot establish whether an
                             // external effect happened: never auto-replay it.
-                            history.push(json!({"role":"tool","tool_call_id":call.id,
-                                "content":json!({"status":"outcome_unknown",
-                                    "outcomeUnknown":true,"error":error.clone()}).to_string()}));
+                            history.push(ToolFeedback::outcome_unknown(&call.id,&error)
+                                .provider_message());
                             for skipped in &response.calls[index+1..] {
-                                history.push(json!({"role":"tool","tool_call_id":skipped.id,
-                                    "content":json!({"status":"not_dispatched",
-                                        "reason":"prior tool failure"}).to_string()}));
+                                history.push(ToolFeedback::not_dispatched(&skipped.id,
+                                    "prior tool failure").provider_message());
                             }
                             return Err(error);
                         }
