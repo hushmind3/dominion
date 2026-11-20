@@ -22,10 +22,11 @@ test('portable agent kernel is the only core, with no SQLite or product AppState
   assert.doesNotMatch(read('crates/dominion-agent-sdk/src/'+name),
     /\brusqlite\b|crate::db\b|crate::storage\b|crate::state\b|\bAppState\b/,name+' must stay portable');
  }
- const entry=read('crates/dominion-agent-sdk/src/lib.rs');
+ const entry=read('crates/dominion-agent-runtime/src/contracts.rs');
  assert.match(entry,/pub trait Model/);
  assert.match(entry,/pub trait Tools/);
  assert.match(entry,/pub trait Journal/);
+ assert.match(read('crates/dominion-agent-sdk/src/lib.rs'),/pub use dominion_agent_algorithms/);
 });
 test('DB, migrations, vault and shared host state cannot reappear in core',()=>{
  assert.equal(existsSync(file('src/engine')),false);

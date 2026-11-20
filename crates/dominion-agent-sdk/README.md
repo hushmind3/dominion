@@ -17,3 +17,7 @@ For large allowed MCP registries, `dominion_tool_search` and fixed `dominion_too
 This SDK does not implement generation-level campaigns, autonomous core mutation, video/audio production, or unattended optimizer policies. User-requested coding/refactoring/testing tasks run through the normal Rust harness and acceptance criteria.
 
 Run `cargo test -p dominion-agent-sdk`. See [lean product architecture](../../../docs/SUB3-LEAN-COMPLEXITY-2026-11-16.md).
+
+## Execution ownership (2026-11-20)
+
+The SDK crate is now **a compatibility facade only**. `dominion-agent-runtime` owns the secure execution contracts, tool call dispatch, budgets, checkpoints and acceptance. `dominion-agent-algorithms` owns the actual versioned model/agent run loop, plus planning, tool ranking, context projection, failure guidance, and offline replay. The product host supplies Model/Tools/Evidence/Journal ports. Existing `dominion_agent_sdk::{Kernel,RunRequest,Snapshot,...}` imports and `run_with_algorithm()` continue unchanged. No UI or database is linked to the portable crates.

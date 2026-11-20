@@ -339,6 +339,7 @@ name = "dominion-agent-algorithms"
 version = "0.1.0"
 dependencies = [
  "dominion-agent-runtime",
+ "futures-util",
  "serde_json",
 ]
 

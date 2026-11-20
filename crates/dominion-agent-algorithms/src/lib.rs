@@ -6,6 +6,12 @@ pub mod ranking;
 pub mod context;
 pub mod failure_guidance;
 pub mod tool_discovery;
+pub mod agent_loop;
+pub use agent_loop::Kernel;
+pub mod replay;
+pub use dominion_agent_runtime::{BoxFuture,Limits,CriterionKind,Criterion,RunRequest,
+    Decision,ModelReply,ModelTurn,Model,Tools,Evidence,Journal,DispatchResult,
+    Dispatcher,Status,CheckResult,Snapshot};
 pub use ranking::{tool_relevance,tool_relevance_with_schema};
 
 #[derive(Clone,Copy,Debug,Default,PartialEq,Eq)]
