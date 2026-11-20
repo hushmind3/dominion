@@ -104,7 +104,7 @@ pub(super) async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Valu
                 ||previous["input"]["parentSessionId"]!=ctx.session_id
                 ||previous["input"]["agentId"]!=agent_id
                 ||previous["input"]["delegationProfile"]!="inspection"
-                ||previous["input"]["externalRuntime"]!=external
+                ||previous["input"]["externalRuntime"].as_str()!=external
                 ||previous["result"]["externalRunId"].as_str().is_none(){
                 return Err("소유권과 완료 증거가 일치하는 외부 조사 작업만 이어갈 수 있습니다.".into());
             }
