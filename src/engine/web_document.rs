@@ -119,6 +119,7 @@ mod tests {
         let first=save(&store,"s","https://a.test","https://a.test","readable",200,"text/plain",false,0).unwrap();
         let second=save(&store,"s","https://a.test","https://a.test","readable",200,"text/plain",false,0).unwrap();
         assert_eq!(first["documentId"],second["documentId"]);
+        drop(store);
         let _=std::fs::remove_dir_all(dir);
     }
 }
