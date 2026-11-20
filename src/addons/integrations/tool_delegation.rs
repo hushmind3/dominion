@@ -36,6 +36,15 @@ pub(super) async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Valu
     }
     let prompt = required_arg(args, "prompt")?;
     let profile = args["profile"].as_str().unwrap_or("general");
+    let external=args["externalRuntime"].as_str();
+    if external.is_some() && (profile!="inspection"||args["isolatedWorktree"]!=true){
+        return Err("외부 Agent Bridge는 inspection 역할과 isolatedWorktree=true에서만 실행할 수 있습니다.".into());
+    }
+    if let Some(kind)=external {
+        if !matches!(kind,"codex"|"claude"|"qwen"){
+            return Err("지원하지 않는 외부 Agent 실행기입니다.".into());
+        }
+    }
     if !matches!(profile, "general" | "inspection" | "implementation" | "verification") {
         return Err("지원하지 않는 위임 프로필입니다.".into());
     }
@@ -91,7 +100,8 @@ pub(super) async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Valu
             "toolsExecutionEnabled":ctx.tools_execution_enabled,"parentSessionId":ctx.session_id,
             "parentAgentId":ctx.agent_id,"delegation":true,
             "parentGeneration":ctx.state.cancellation_generation(ctx.session_id),
-            "dependsOnJobIds":deps,"delegationProfile":profile}});
+            "dependsOnJobIds":deps,"delegationProfile":profile,
+            "externalRuntime":external}});
     let prepared=session["delegationWorkspace"].clone();
     if let Err(error)=crate::engine::execution_budget::enqueue_child(ctx.state,ctx.session_id,session,job,args["budget"].as_u64()){
         if prepared.is_object(){let _=crate::engine::delegation_worktree::discard_prepared(&prepared).await;}
@@ -185,6 +195,8 @@ pub(super) fn task_payload(ctx: &ToolContext<'_>, args: &Value, with_result: boo
         "patchSha256":job["delegationPatchSha256"],
         "budget":job["input"]["delegationBudget"],
         "dependsOnJobIds":job["input"]["dependsOnJobIds"],
+        "externalRuntime":job["input"]["externalRuntime"],
+        "externalRunId":job["result"]["externalRunId"],
     });
     // The child may inspect its own job receipt; only the Lead session may
     // enumerate sibling workers and their failure metadata.

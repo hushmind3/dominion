@@ -76,6 +76,8 @@ pub mod reasoning;
 pub mod attachments;
 #[path = "integrations/bridge.rs"]
 pub mod bridge;
+#[path = "integrations/agent_bridge.rs"]
+pub mod agent_bridge;
 #[path = "integrations/browser.rs"]
 pub mod browser;
 #[path = "integrations/channel_adapter.rs"]

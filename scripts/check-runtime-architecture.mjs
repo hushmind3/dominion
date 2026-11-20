@@ -48,6 +48,11 @@ for(const [owner,original,replacement] of [["src/engine/chat/runtime.rs","src/en
     throw Error('Chat product extension leaked into engine: '+original)
 }
 const boardAddonIndex=readFileSync(path.join(root,'src/addons/mod.rs'),'utf8')
+const externalBridge=readFileSync(path.join(root,'src/addons/integrations/agent_bridge.rs'),'utf8')
+if(!externalBridge.includes('pub async fn inspect(')||
+   !externalBridge.includes('session["delegationProfile"]!="inspection"')||
+   !readFileSync(path.join(root,'src/addons/integrations/tool_delegation.rs'),'utf8').includes('"externalRuntime":external'))
+  throw Error('External agent bridge lost its isolated inspection boundary')
 const taskDag=readFileSync(path.join(root,'src/addons/operations/team_dag.rs'),'utf8')
 const tasks=readFileSync(path.join(root,'src/addons/operations/jobs.rs'),'utf8')
 const delegated=readFileSync(path.join(root,'src/addons/integrations/tool_delegation.rs'),'utf8')

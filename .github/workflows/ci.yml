@@ -54,6 +54,8 @@ jobs:
         run: cargo test --locked -p dominion-algorithms --lib
       - name: Durable participant room cursors and anti-regression (dev profile)
         run: cargo test --locked --bin dominion-rust db::room_cursor::tests
+      - name: External read-only Codex Claude Qwen Agent Bridge contracts (dev profile)
+        run: cargo test --locked --bin dominion-rust addons::agent_bridge::tests
       - name: Lead/Worker DAG dependency admission, isolation and persistence (dev profile)
         run: |
           cargo test --locked --bin dominion-rust addons::team_dag::tests

@@ -83,6 +83,8 @@ pub fn definitions() -> Vec<Value> {
             "budget": json!({"type":"integer","minimum":1,"description":"Child allowance in the parent budget unit (tokens or USD micros)"}),
             "readOnly":json!({"type":"boolean","description":"Constrain the worker to observational tools"}),
             "isolatedWorktree":json!({"type":"boolean","description":"Use an independent Git worktree and enforced shell sandbox; integrate explicitly with task_integrate"}),
+            "externalRuntime":json!({"type":"string","enum":["codex","claude","qwen"],
+                "description":"Optional external agent inspector (not a model provider). Requires inspection profile and isolatedWorktree. Runs with read-only CLI permissions; its internal actions are not native tool receipts."}),
             "dependsOnJobIds":json!({"type":"array","maxItems":16,
                 "items":{"type":"string"},"description":"Earlier sibling delegated job IDs from the same parent session. Queued child starts only after all prerequisites are durably completed and any isolated patches are frozen."}),
             "profile": json!({"type":"string","enum":["general","inspection","implementation","verification"],

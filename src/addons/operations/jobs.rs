@@ -611,10 +611,26 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
             scoped.config.workspace=crate::engine::workspace_scope::resolve(&context.state,raw)?;
         }
     }
-    let message = run_quiet(&scoped, &request).await?;
+    let (message,external_run)=if let Some(runtime)=input["externalRuntime"].as_str(){
+        let (run_id,answer)=crate::addons::agent_bridge::inspect(
+            context,&session_id,&scoped.config.workspace,&request.input,runtime
+        ).await?;
+        let saved=context.state.store.write_message(&json!({
+            "session_id":session_id,"role":"assistant",
+            "agent_id":request.agent_id,"content":answer,
+            "metadata":{"authorKind":"agent","externalRuntime":runtime,
+                "externalRunId":run_id,
+                "nativeToolReceipts":false,"verification":"external_read_only_report"}
+        })).ok_or("외부 Agent 최종 응답을 저장하지 못했습니다.")?;
+        context.state.bus.message(&saved);
+        (Some(saved),Some(run_id))
+    }else{
+        (run_quiet(&scoped,&request).await?,None)
+    };
     let result=json!({
         "sessionId":message.as_ref().and_then(|item|item.get("session_id")),
-        "messageId":message.as_ref().and_then(|item|item.get("id"))
+        "messageId":message.as_ref().and_then(|item|item.get("id")),
+        "externalRunId":external_run
     });
     context.checkpoint(json!({"promptState":{"inFlight":false,"result":result}}))?;
     Ok(result)
