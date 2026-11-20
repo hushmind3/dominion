@@ -80,7 +80,7 @@ pub(super) async fn run_turn_body(
         None => Some(task_input(&session,&request.input).to_string()),
     };
     let mut acceptance = if request.verification_owner.as_deref() == Some("parent") {
-        // RSI's independent patch verifier (or the parent goal) owns review;
+        // A parent verifier owns review for delegated child operations;
         // investigating and declining a change must not trigger forced writes.
         // The child still
         // records operations, deterministic evidence and cancellation; it must
@@ -312,8 +312,8 @@ pub(super) async fn run_turn_body(
         tool_definitions.retain(|definition|
             tools::ui_tool_allowed(&session["sdkUiPolicy"],tool_name(definition)));
         if simple_creation_target.is_none() {
-            // Home NativeAgentPanel is an ordinary task interface, not an RSI
-            // playground. Keep task-critical capabilities but do not spend
+            // Home NativeAgentPanel is an ordinary task interface.
+            // Keep task-critical capabilities but do not spend
             // the first provider call listing every unrelated native tool.
             tool_definitions=select_panel_tool_definitions(tool_definitions,&request.input);
         }
@@ -421,7 +421,6 @@ pub(super) async fn run_turn_body(
             // Main Chat stores the full transcript in SQLite. Sending 40
             // past messages at a possible 400 kB each turn mostly repeats
             // old tool output; retrieval and /compact remain available.
-            // Do not apply this work-chat bound to RSI source research.
             Some(provider_history_budget.unwrap_or(96_000).min(96_000))
         }else{provider_history_budget};
         let history_messages = history(
@@ -1616,7 +1615,6 @@ pub(super) async fn run_turn_body(
             // mutation is an exclusive barrier. Each read group is bounded to
             // four concurrent calls, with matching results emitted in the
             // model's original call order, irrespective of completion order.
-            // RSI runs retain their own strict tool/patch ordering.
             if parallel_reads {
                 // Inspect the live call suffix only *after* every preceding
                 // exclusive barrier has settled; fail closed on invalid args.
