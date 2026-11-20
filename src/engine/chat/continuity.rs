@@ -1178,8 +1178,8 @@ mod tests {
         provider.context_tokens=Some(8000);
         provider.max_output_tokens=Some(1000);
         assert_eq!(working_view_allowance(Some(&customized),&provider,500,false),6500);
-        assert_eq!(working_view_allowance(None,&provider,500,false),6500,
-            "non-room context still honors model capacity and output reservation");
+        assert_eq!(working_view_allowance(None,&provider,500,false),6000,
+            "ordinary local chat uses its shorter default even when the model has spare capacity");
         provider.context_tokens=Some(8192);
         provider.max_output_tokens=None;
         assert_eq!(working_view_allowance(Some(&room),&provider,4000,true),3168,

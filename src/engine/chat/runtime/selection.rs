@@ -224,6 +224,26 @@ pub(super) fn select_room_tools(
     scored.into_iter().filter_map(|(_,index)|available[index].take()).collect()
 }
 
+/// The historical default advertised the *entire* connected catalog on
+/// every ordinary chat turn. For a large catalog, show a small task-relevant
+/// set and retain SAME-RUN discover/call access to the remaining authorized
+/// tools. This is a provider schema optimization, never a host permission
+/// removal. An owner-activated full catalog remains an explicit choice.
+pub(super) fn select_chat_tools(
+    definitions: Vec<Value>, query: &str, algorithm: &Value,
+) -> Vec<Value> {
+    let legacy_full_default=(algorithm.is_null() || (
+        algorithm["source"]=="builtin"
+        && algorithm["implementation"].as_str()
+            .or_else(||algorithm["variant"].as_str())==Some("all")
+        && algorithm["ownerActivated"]!=true));
+    if legacy_full_default && definitions.len()>18 {
+        return select_room_tools(definitions,query,
+            &std::collections::HashSet::new(),false);
+    }
+    select_tool_definitions(definitions,query,algorithm)
+}
+
 pub(super) fn select_tool_definitions(
     definitions: Vec<Value>,
     query: &str,
@@ -313,6 +333,32 @@ pub(super) fn trim_tool_definitions(definitions: Vec<Value>, budget: usize) -> V
 mod room_catalog_cache_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn ordinary_chat_progressively_discloses_tools_without_dropping_host_access() {
+        let mut tools=(0..30).map(|index| {
+            let name=format!("mcp__unrelated_{index}");
+            json!({"type":"function","function":{"name":name,
+                "description":"Unrelated service endpoint","parameters":{"type":"object"}}})
+        }).collect::<Vec<_>>();
+        for name in ["workspace_read","web_search","shell_exec"] {
+            tools.push(json!({"type":"function","function":{"name":name,
+                "description":name,"parameters":{"type":"object"}}}));
+        }
+        let default=json!({"source":"builtin","implementation":"all"});
+        let casual=select_chat_tools(tools.clone(),"안녕하세요",&default);
+        assert!(casual.is_empty(),"casual questions should not receive 33 full schemas");
+        let searching=select_chat_tools(tools.clone(),"웹 검색해 주세요",&default);
+        assert!(searching.len()<=8);
+        assert!(searching.iter().any(|row|tool_name(row)=="web_search"));
+        assert!(super::capability::should_expose(
+            tools.len(),searching.len(),true,true,false),
+            "the search/call bridge keeps the complete authorized catalog reachable");
+        let explicit=json!({"source":"builtin","implementation":"all",
+            "ownerActivated":true});
+        assert_eq!(select_chat_tools(tools.clone(),"안녕하세요",&explicit),tools,
+            "the owner can explicitly restore the full catalog");
+    }
 
     #[test]
     fn room_tool_catalog_order_stays_stable_across_relevance_changes() {

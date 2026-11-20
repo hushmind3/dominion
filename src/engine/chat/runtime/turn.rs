@@ -218,7 +218,15 @@ pub(super) async fn run_turn_body(
         ).unwrap_or(Value::Null)
     };
     if !is_room {
-        tool_definitions = select_tool_definitions(tool_definitions, &request.input, &discovery);
+        let legacy_full_default=(discovery.is_null() ||
+            (discovery["source"]=="builtin" && discovery["implementation"]=="all"
+                && discovery["ownerActivated"]!=true));
+        if legacy_full_default && full_catalog_size>18 {
+            crate::engine::algorithms::mark_unrated(
+                state,execution_id,"tool.discovery",
+                "legacy full-catalog default replaced by progressive host discovery");
+        }
+        tool_definitions = select_chat_tools(tool_definitions, &request.input, &discovery);
     }
     if simple_creation_target.is_some() {
         // A concrete file creation has no use for web, memory, delegation or

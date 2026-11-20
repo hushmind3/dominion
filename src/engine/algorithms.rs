@@ -1625,6 +1625,9 @@ pub fn activate(state: &AppState, id: &str) -> Result<Value, String> {
     let mut activated = algorithm;
     activated["status"] = json!("active");
     activated["activatedAt"] = json!(chrono::Utc::now().to_rfc3339());
+    // Distinguish intentional full-catalog selection from historical seeded
+    // defaults. Progressive disclosure must not override an owner choice.
+    activated["ownerActivated"] = json!(true);
     records.push((id.to_string(), activated.clone()));
     let mut transaction = Vec::new();
     for (rid, value) in records {
