@@ -17,16 +17,12 @@ pub const COLLECTIONS: &[&str] = &[
     "knowledge",
 ];
 
-/// URL segments are plural (`/api/jobs`) while the store groups records by a
-/// singular kind (`job`), matching the Node data model.
+/// Only the four routes in COLLECTIONS use this mapper. Other domain routes
+/// have dedicated API handlers and should not leak aliases into this layer.
 pub fn store_kind(route_kind: &str) -> &str {
     match route_kind {
         "memories" => "memory",
         "skills" => "skill",
-        "rooms" => "room",
-        "channels" => "channel",
-        "jobs" => "job",
-        "executions" => "execution",
         other => other,
     }
 }
@@ -158,8 +154,8 @@ pub async fn remove(State(state): State<AppState>, OriginalUri(uri): OriginalUri
     Json(json!({ "ok": true }))
 }
 
-/// `POST /api/{kind}/{id}/{action}` for room execution and channel
-/// diagnostics. Unknown actions return a clear JSON error instead of HTML.
+/// Legacy collection actions. Room execution and channel diagnostics have
+/// dedicated API routes; do not duplicate dispatch inside generic storage.
 pub async fn action(
     State(state): State<AppState>,
     OriginalUri(uri): OriginalUri,
@@ -176,14 +172,6 @@ pub async fn action(
         .to_string();
 
     match (kind.as_str(), action.as_str()) {
-        ("room", "run") => enqueue_job(
-            &state,
-            "room",
-            json!({
-                "roomId": id,
-                "goal": body.get("goal").or_else(|| body.get("input")).cloned().unwrap_or(json!("")),
-            }),
-        ),
         ("skill", "export") => match state.store.get("skill", &id) {
             Some(skill) => Json(skill).into_response(),
             None => (
@@ -200,13 +188,3 @@ pub async fn action(
     }
 }
 
-fn enqueue_job(state: &AppState, kind: &str, input: Value) -> Response {
-    match crate::engine::jobs::enqueue(state, kind, input) {
-        Some(job) => Json(job).into_response(),
-        None => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "작업을 만들 수 없습니다." })),
-        )
-            .into_response(),
-    }
-}
