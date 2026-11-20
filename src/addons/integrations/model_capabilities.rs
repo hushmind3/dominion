@@ -42,6 +42,12 @@ impl ModelCapabilities {
     /// need an explicit opt-in when native calls were explicitly denied.
     /// An unknown capability does not silently change existing routes.
     pub fn tool_mode(&self,configured:&str,requires_tools:bool)->Result<String,String>{
+        // The selected route must actually be able to answer text turns.
+        // An explicit negative capability cannot be bypassed by picking an
+        // alternate tool protocol or by removing the tool catalog.
+        if self.text==Some(false){
+            return Err("선택 모델 엔드포인트는 텍스트 응답을 지원하지 않습니다.".into());
+        }
         if !requires_tools{return Ok(configured.to_owned());}
         if matches!(configured,"native"|"auto") && self.native_tools==Some(false){
             return if self.text_tools==Some(true){
@@ -50,7 +56,11 @@ impl ModelCapabilities {
                 Err("선택 모델은 네이티브 도구 호출을 지원하지 않으며 텍스트 도구 호환도 선언되지 않았습니다.".into())
             };
         }
-        if configured=="compat"&&self.text_tools==Some(false){
+        // A manually configured compat route is not proof that text-tool
+        // decoding is supported. Honor both explicit denials and the absence
+        // of an opt-in when native calls have already been denied.
+        if configured=="compat" && (self.text_tools==Some(false)
+            || (self.native_tools==Some(false)&&self.text_tools!=Some(true))) {
             return Err("선택 모델은 텍스트 방식 도구 호출을 지원하지 않습니다.".into());
         }
         Ok(configured.to_owned())
@@ -101,6 +111,28 @@ mod tests{
             "modelCapabilities":{"text-only":{"vision":false}}});
         assert!(require_vision(&images,"vision-enabled",true).is_ok());
         assert!(require_vision(&images,"text-only",true).is_err());
+    }
+    #[test]
+    fn explicit_text_or_native_denials_survive_manual_route_and_failover(){
+        // Two endpoints may expose one model with different decoding support.
+        let native_denied=json!({"capabilities":{"text":true,"toolCall":false}});
+        assert!(negotiate_tool_mode(&native_denied,"same-model","compat",true).is_err());
+        assert!(negotiate_tool_mode(&native_denied,"same-model","auto",true).is_err());
+        assert!(negotiate_tool_mode(&native_denied,"same-model","compat",false).is_ok());
+        let approved=json!({"capabilities":{"text":true,"toolCall":false,
+            "textToolCalls":true}});
+        assert_eq!(negotiate_tool_mode(&approved,"same-model","compat",true).unwrap(),"compat");
+        assert_eq!(negotiate_tool_mode(&approved,"same-model","auto",true).unwrap(),"compat");
+        let no_text=json!({"capabilities":{"text":false,"toolCall":true,
+            "textToolCalls":true}});
+        for (mode,tools) in [("native",true),("compat",true),("auto",false)] {
+            assert!(negotiate_tool_mode(&no_text,"same-model",mode,tools).is_err());
+        }
+        // A model override is authoritative for only that endpoint's route.
+        let per_model=json!({"capabilities":{"text":true,"toolCall":true},
+            "modelCapabilities":{"same-model":{"text":false}}});
+        assert!(negotiate_tool_mode(&per_model,"same-model","native",true).is_err());
+        assert!(negotiate_tool_mode(&per_model,"other-model","native",true).is_ok());
     }
     #[test]
     fn disabled_compat_mode_cannot_be_used_to_hide_unsupported_tools(){
