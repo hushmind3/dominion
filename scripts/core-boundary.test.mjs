@@ -48,7 +48,7 @@ test('DB, migrations, vault and shared host state cannot reappear in core',()=>{
  assert.match(read('src/compat/engine.rs'),/pub\(crate\) use crate::host::execution::\*/);
  const declared=[...host.matchAll(/^pub(?:\(crate\))? mod ([a-z_]+);$/gm)].map(x=>x[1]).sort();
  assert.deepEqual(declared,['goal_control','native_agent','native_evidence','effect','program',
- 'verification','recovery','jobs','lease','run_state'].sort());
+ 'verification','recovery','jobs','lease','run_state','run_view'].sort());
 });
 test('product capabilities register outside the host execution adapter',()=>{
  for(const [group,names] of Object.entries(groups))for(const name of names){
