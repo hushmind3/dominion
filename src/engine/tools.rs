@@ -1884,7 +1884,7 @@ mod tests {
             workspace:dir.clone()};
         let state=crate::state::AppState::new(config.clone(),
             Store::open(&config.db_path()).unwrap(),Vault::open(&config.key_path()));
-        let own="PERSONA_SOURCE_".repeat(1_200);
+        let own="PERSONA_SOURCE_".repeat(700);
         let other="PRIVATE_PEER_PERSONA_".repeat(700);
         state.store.put("session",&json!({"id":"s"})).unwrap();
         state.store.put("agent",&json!({"id":"a","name":"a","systemPrompt":own})).unwrap();
