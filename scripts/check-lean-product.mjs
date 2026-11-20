@@ -4,6 +4,7 @@
 // older main intentionally exposes features this product no longer carries.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 const read=p=>fs.readFileSync(p,'utf8');
 const exists=p=>fs.existsSync(p);
@@ -45,6 +46,16 @@ for(const p of ["docs/DOMINION-DEEPSEEK-HANDOFF-2026-11-05.md","docs/DOMINION-HA
  assert.ok(!exists(p),'Outdated retired-feature handoff returned: '+p);
 }
 const currentDocs=read('docs/INDEX.md')+'\n'+read('docs/GETTING-STARTED.md');
+for(const entry of ['docs/INDEX.md','docs/GETTING-STARTED.md']){
+ const source=read(entry);
+ for(const match of source.matchAll(/\]\(([^)]+)\)/g)){
+  const dest=match[1].split('#')[0];
+  if(!dest || /^(?:https?:\/\/|mailto:)/.test(dest))continue;
+  const resolved=path.resolve(path.dirname(entry),dest);
+  assert.ok(exists(resolved),'Broken current documentation link: '+entry+' -> '+dest);
+ }
+}
+
 for(const old of ['RSI-MAIN-INTEGRATION','rsi/evaluations','SELF-IMPROVEMENT-BENCHMARK','자기개선 화면','자동 RSI 평가기']) {
  assert.ok(!currentDocs.includes(old),'Old nonfunctional feature instructions returned: '+old);
 }

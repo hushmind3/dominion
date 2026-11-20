@@ -947,7 +947,8 @@ mod tests {
             "improvement",
             &json!({
                 "id":"canary-1","kind":"strategy","scope":"agent","agentId":"a",
-                "partitionKey":scope.partition_key,"status":"adopted","scoreVersion":2,
+                "partitionKey":scope.partition_key,"status":"validated","scoreVersion":2,
+                "requiresExperiment":false,
                 "evidenceGrade":"E2","text":"verify every output","uses":5,
                 "successes":5,"failures":0,"appliedExecutionIds":[],
                 "rollout":"canary","canaryTurns":0
