@@ -19,7 +19,7 @@ import {useJob,jobFinished,type JobState} from '../hooks/useJob'
 import {t,useLocale,type LocaleKey} from '../i18n'
 import {translateError} from '../i18n/errors'
 
-type SessionUsageBreakdown={byPurpose?:{purpose:string;calls:number;totalTokens:number;tokensSinceClear:number}[];hasClearMarker?:boolean}
+type SessionUsageBreakdown={byPurpose?:{purpose:string;calls:number;promptTokens:number;completionTokens:number;totalTokens:number;observedCachedTokens:number;cacheObservedCalls:number;estimatedCalls:number;tokensSinceClear:number}[];recentPromptProfiles?:{profile?:{totalEstimatedTokens?:number;components?:Record<string,number>}}[];hasClearMarker?:boolean}
 type LearningResult={memories:number;skill:boolean}
 type LearningJob=JobState & {result?:LearningResult}
 type ModelOverride={scope?:string;providerId:string;model:string}
@@ -86,6 +86,22 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const slashItems=slashOpen?slashCandidates(input,agents.value,models):[];
  const transcriptRevision=JSON.stringify([messages.at(-1)?.id,messages.length,viewingTurn?live.length:0,viewingTurn?thought.length:0,viewingTurn?toolStatus:'',approval?.id]);
  const usageRevision=JSON.stringify([messages.at(-1)?.id,messages.length]);
+ const tokenUsageTip=useMemo(()=>{
+  if(!usageBreakdown)return undefined
+  const lines=["세션 전체 누적 · 삭제된 대화의 사용량도 포함"]
+  for(const row of usageBreakdown.byPurpose||[]){
+   lines.push(`${row.purpose==="chat"?"채팅":"보조 "+row.purpose}: ${row.totalTokens.toLocaleString()}토큰 (${row.calls}회)`)
+   lines.push(`  입력 ${row.promptTokens.toLocaleString()} · 출력 ${row.completionTokens.toLocaleString()} · 캐시 확인 ${row.observedCachedTokens.toLocaleString()}${row.estimatedCalls?" · 추정치 포함":""}`)
+  }
+  if(usageBreakdown.hasClearMarker)lines.push(`대화 기록 삭제 이후: ${(usageBreakdown.byPurpose||[]).reduce((sum,row)=>sum+(row.tokensSinceClear||0),0).toLocaleString()}토큰`)
+  const latest=usageBreakdown.recentPromptProfiles?.[0]?.profile
+  if(latest?.components){
+   const largest=Object.entries(latest.components).filter(([_,v])=>v>0).sort((a,b)=>b[1]-a[1]).slice(0,4)
+   lines.push(`최근 요청 구성 추정 ${(latest.totalEstimatedTokens||0).toLocaleString()}토큰: ${largest.map(([name,value])=>`${name} ${value.toLocaleString()}`).join(" · ")}`)
+  }
+  lines.push("캐시 입력은 총 입력에 포함되며, 캐시 수치는 제공자가 보고한 경우만 표시")
+  return lines.join("\n")
+ },[usageBreakdown]);
  useEffect(()=>{if(!current){setServerUsage(0);setUsageBreakdown(undefined);return}let alive=true;get<{totalTokens?:number;breakdown?:SessionUsageBreakdown}>('/api/sessions/'+encodeURIComponent(current)+'/usage').then(usage=>{if(alive){setServerUsage(Number(usage.totalTokens)||0);setUsageBreakdown(usage.breakdown)}}).catch(()=>{});return()=>{alive=false}},[current,usageRevision])
  const {scrollRef,onScroll,jumpDown}=useTranscriptScroll(current,transcriptRevision);
  const modelPanel=useAnchoredPanel(modelMenu,()=>setModelMenu(false),380);
@@ -398,7 +414,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      </div>
     </div>
     <div className="flex shrink-0 items-center gap-1">
-     {(serverUsage||messageUsage)>0&&<span title={usageBreakdown?["세션 전체 누적 (지운 대화 이전 사용량 포함)",...(usageBreakdown.byPurpose||[]).map(row=>`${row.purpose==="chat"?"채팅":"보조·"+row.purpose}: ${row.totalTokens.toLocaleString()}토큰 · ${row.calls}회`),usageBreakdown.hasClearMarker?`대화 삭제 후: ${(usageBreakdown.byPurpose||[]).reduce((sum,row)=>sum+(row.tokensSinceClear||0),0).toLocaleString()}토큰`:""].filter(Boolean).join("\n"):undefined} className="hidden rounded-lg border border-[#E7DDCC] bg-[#F7F1E6] px-2 py-1 text-[10px] font-semibold text-[#8A775F] sm:inline-flex">{t('usage.sessionTotal',{count:(serverUsage||messageUsage).toLocaleString()})}</span>}
+     {(serverUsage||messageUsage)>0&&<span title={tokenUsageTip} className="hidden rounded-lg border border-[#E7DDCC] bg-[#F7F1E6] px-2 py-1 text-[10px] font-semibold text-[#8A775F] sm:inline-flex">{t('usage.sessionTotal',{count:(serverUsage||messageUsage).toLocaleString()})}</span>}
 
      
      <Button size="icon" variant="ghost" title={t('chat.modelManage')} aria-label={t('chat.modelManage')} onClick={openModels}><Cpu size={18}/></Button>
