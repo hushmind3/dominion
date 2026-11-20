@@ -61,7 +61,6 @@ npm run dev --prefix web
 
 ```bash
 node scripts/check-release-contract.mjs
-node scripts/check-retired-domains.mjs
 node scripts/build-desktop.mjs
 ```
 
@@ -117,7 +116,6 @@ GitHub CI에서 회귀 검사합니다.
 - [네이티브 릴리즈](.github/workflows/release.yml):
   macOS ARM64·x64 및 Windows x64 테스트·빌드·배포
 - [구조 검사](scripts/check-runtime-architecture.mjs),
-  [폐기 기능 검사](scripts/check-retired-domains.mjs),
   [버전·사이드카 검사](scripts/check-release-contract.mjs)
 
 추가 문서: [시작 안내](docs/GETTING-STARTED.md),
