@@ -52,6 +52,7 @@ jobs:
           cargo test --lib engine::chat::context::tests::full_sqlite_transcript_replays_as_small_current_context_without_data_loss
           cargo test --lib engine::tools::tests::historical_evidence_reader_paginates_exact_results_and_enforces_agent_scope
           cargo test --lib db::tests::session_usage_breakdown_keeps_lifetime_and_since_clear_separate
+          cargo test --lib db::tests::indexed_recent_history_skips_archived_tool_dumps_and_preserves_order
           cargo test --lib engine::chat::tool_schedule::tests
           # Evidence-delta completion gate is used by ordinary chat, not only SDK jobs.
           cargo test --lib engine::chat::runtime::action_review::tests
