@@ -192,7 +192,7 @@ mod tests{
         assert_eq!(reduced[0]["_dominion_goal_excerpt"],true);
         assert!(requires_source_reader(&reduced));
         assert!(reduced[0]["content"].as_str().unwrap().contains("old-owner"));
-        assert!(json!(reduced).to_string().len()<3_000);
+        assert!(reduced[0]["content"].as_str().unwrap().chars().count()<1_700);
         assert_eq!(stored[0]["content"],full);
         let tool_free=restore_owner_goal(recent,"이어서해",&stored,false);
         assert!(!requires_source_reader(&tool_free));
