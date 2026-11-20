@@ -68,11 +68,14 @@ impl<'a,A:AgentLoop+?Sized> Harness<'a,A>{
         Self{driver,algorithm}
     }
     pub fn workflow(&self)->&'static str{self.algorithm.name()}
-    pub async fn request_model<T,F>(
+    /// Return the driver's future directly; no extra async state machine.
+    /// Native streaming completions are large futures and nested wrappers
+    /// can overflow the small macOS test-thread stack on room replays.
+    pub fn request_model<T,F>(
         &mut self,cancelled:bool,request:F,
-    )->Result<T,String>
+    )->impl Future<Output=Result<T,String>> + '_
     where F:Future<Output=Result<T,String>>{
-        self.driver.request_model(cancelled,request).await
+        self.driver.request_model(cancelled,request)
     }
     pub fn authorize_step(
         &mut self,observation:RoundObservation,tools_enabled:bool,
