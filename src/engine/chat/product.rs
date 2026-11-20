@@ -116,6 +116,16 @@ impl Host for MainTurn<'_> {
         Box::pin(async move {
             self.apply_owner_directives().await?;
             let metrics = self.metrics;
+            // Explicit research is an owner instruction with an observable
+            // postcondition. The model must not bypass it by writing fluent
+            // unsourced prose. Keep ordinary chats on the zero-search path.
+            if !self.is_room {
+                let observations=tool_dispatch::run_required_web_search(
+                    self.state,&self.request,self.tx,self.session_id,
+                    self.execution_id,&mut self.op_seq,metrics,
+                ).await?;
+                self.messages.extend(observations);
+            }
             if let Some(path) = self.simple_creation_target.as_ref().filter(|path| {
                 std::fs::metadata(path).is_ok_and(|file_metadata| file_metadata.is_file())
                     && !self.strategy_candidates.iter().any(|strategy| {
