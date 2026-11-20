@@ -230,7 +230,7 @@ async fn review_data(state:&AppState,parent:&str,task_id:&str)
         return Err("Worktree merge is no longer pending; manual review required".into());
     }
     validate_existing(&isolated,&record).await?;
-    let base=record["baseCommit"].as_str().ok_or("Base commit missing")?;
+    let base=record["baseCommit"].as_str().ok_or("Base commit missing")?.to_string();
     if git(&src,&["rev-parse","HEAD"]).await?!=base{
         return Err("Source branch moved after worktree creation; manual rebase required".into());
     }
@@ -242,15 +242,16 @@ async fn review_data(state:&AppState,parent:&str,task_id:&str)
     if !git(&isolated,&["ls-files","--others","--exclude-standard"]).await?.is_empty(){
         return Err("Worktree contains untracked files; add/commit them before promotion".into());
     }
-    let data=patch(&isolated,base).await?;
+    let data=patch(&isolated,&base).await?;
     if data.is_empty(){return Err("Worktree produced no tracked source changes".into());}
     let hash=format!("{:x}",Sha256::digest(&data));
-    let names=git(&isolated,&["diff","--name-only","--no-ext-diff",base,"--"]).await?
+    let names=git(&isolated,&["diff","--name-only","--no-ext-diff",&base,"--"]).await?
         .lines().take(80).map(str::to_owned).collect::<Vec<_>>();
+    let patch_bytes=data.len();
     Ok((record,src,isolated,data,json!({
         "teamId":parent,"taskId":task_id,
         "worktreeId":id,"baseCommit":base,
-        "diffSha256":hash,"patchBytes":data.len(),
+        "diffSha256":hash,"patchBytes":patch_bytes,
         "fileCount":names.len(),"files":names,
         "requiresExplicitPromotion":true
     })))
