@@ -126,6 +126,39 @@ pub(super) fn append_context(
 mod tests {
     use super::*;
     #[test]
+    fn context_compiler_reserves_output_and_scales_with_local_model_capacity() {
+        use crate::{config::Config,db::Store,vault::Vault};
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-private-compiler-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=Config{port:0,data_dir:dir.clone(),web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(config.clone(),
+            Store::open(&config.db_path()).unwrap(),Vault::open(&config.key_path()));
+        state.store.put("session",&json!({"id":"private:compile"})).unwrap();
+        for i in 0..14 {
+            state.store.write_message(&json!({
+                "session_id":"private:compile","role":"user",
+                "content":format!("owner-{i}:{}", "x".repeat(2_000))
+            })).unwrap();
+        }
+        let request=TurnRequest::from_value(&json!({"input":"continue",
+            "toolsEnabled":false,"toolsExecutionEnabled":false})).unwrap();
+        let small=compile_private(&state,&request,"private:compile",
+            "continue",None,None,Some(4_096),Some(1_024),&[]).unwrap();
+        let large=compile_private(&state,&request,"private:compile",
+            "continue",None,None,Some(65_536),Some(4_096),&[]).unwrap();
+        assert!(small.accounting["historyByteBudget"].as_u64().unwrap()
+            <large.accounting["historyByteBudget"].as_u64().unwrap(),
+            "small local models must not be billed for a large-model history");
+        assert_eq!(small.accounting["policy"],"private-context-engine-v1");
+        assert!(small.history.last().unwrap()["content"].as_str().unwrap().contains("owner-13:"),
+            "the latest owner message is mandatory even when old history is pruned");
+        assert_eq!(large.accounting["contextModelCalls"],0);
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn private_snapshot_precedes_owners_latest_message() {
         let system=PromptContext{
             prompt:"static instructions".into(),dynamic_context:"remember A".into(),
