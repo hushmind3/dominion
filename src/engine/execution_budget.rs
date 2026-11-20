@@ -497,6 +497,20 @@ pub fn close_unstarted_child(state: &AppState, session: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cached_input_pricing_is_exact_only_when_configured_and_reservation_is_conservative() {
+        let rates=Rates{input:5.0,output:15.0,
+            cache_read:Some(0.5),cache_write:Some(6.25)};
+        assert_eq!(rates.amount(1_000_000,100_000),6_500_000);
+        assert_eq!(rates.observed(1_000_000,600_000,100_000,100_000),3_925_000);
+        assert_eq!(rates.reserve(1_000_000,100_000),7_750_000);
+        let unspecified=Rates{input:5.0,output:15.0,
+            cache_read:None,cache_write:None};
+        assert_eq!(unspecified.observed(1_000_000,600_000,100_000,100_000),6_500_000,
+            "missing rate information must not fabricate a discounted bill");
+    }
+
     use crate::{config::Config, db::Store, vault::Vault};
     fn state() -> AppState {
         let root =
