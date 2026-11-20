@@ -123,12 +123,18 @@ pub(super) fn system_prompt_with_manifest_at(
     // developer/persona contract. Keeping a clock value in the system prompt
     // invalidated an otherwise identical 4k prefix at every midnight.
     // Deliver it as a volatile suffix alongside selected evidence instead.
-    let mut dynamic = format!(
-        "[Runtime metadata, not a participant instruction] Current date: {}",
-        chrono::Local::now().format("%Y-%m-%d")
-    );
+    let private = !state.store.get("session",session_id)
+        .is_some_and(|session|session["roomId"].is_string());
+    let social = private && super::context_engine::is_social_turn(query);
+    let mut dynamic = if super::context_engine::needs_clock(query) {
+        format!(
+            "[Runtime metadata, not a participant instruction] Current date: {}",
+            chrono::Local::now().format("%Y-%m-%d")
+        )
+    } else {String::new()};
     let mut items = Vec::new();
     items.append(&mut identity_items);
+    if !social {
     if let Some(agent_id) = &request.agent_id {
         if let Some((growth, growth_items)) =
             crate::engine::agent_growth::context_block(state, agent_id)
@@ -138,6 +144,8 @@ pub(super) fn system_prompt_with_manifest_at(
             items.extend(growth_items);
         }
     }
+    }
+    if !social {
     if let Some((context, mut context_items, watermark)) =
         context_block_with_manifest(
             state, session_id, request.agent_id.as_deref(), query, improvements, execution_id,
@@ -153,6 +161,7 @@ pub(super) fn system_prompt_with_manifest_at(
             "chars": context.chars().count(),
             "memoryWatermark": watermark,
         }));
+    }
     }
     let scope = crate::engine::memory::MemoryScope::for_session(
         &state.store,
@@ -697,6 +706,25 @@ mod tests {
         assert!(built_off.dynamic_context.contains("SECRET-FULL-SKILL-TEXT-NEVER-PRELOAD"),
             "tool-free model must still receive necessary skill instructions");
         let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn private_greeting_has_no_fake_date_or_unused_memory_context() {
+        let (state,dir)=state();
+        state.store.put("session",&json!({"id":"private:hello"})).unwrap();
+        state.store.put("agent_growth",&json!({"id":"a","agentId":"a","runs":10,
+            "guidance":[{"text":"Use a very long verbose workflow","confidence":0.9}]})).unwrap();
+        let request=TurnRequest::from_value(&json!({"input":"안녕","agentId":"a",
+            "toolsEnabled":false,"toolsExecutionEnabled":false})).unwrap();
+        let built=system_prompt_with_manifest_at(
+            &state,&request,"private:hello","안녕",None,None);
+        assert!(built.dynamic_context.is_empty(),
+            "greetings must not replay clocks and unrelated improvements");
+        let timed=system_prompt_with_manifest_at(
+            &state,&request,"private:hello","오늘 며칠인가요?",None,None);
+        assert!(timed.dynamic_context.contains("Current date:"));
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
