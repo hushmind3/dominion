@@ -262,6 +262,117 @@ pub fn enqueue_child(
     state.bus.record("job", &job);
     Ok(job)
 }
+/// Atomically publish a Lead team and every reserved worker. An invalid
+/// child, exhausted budget or duplicate account leaves NO partially queued
+/// tasks behind. All child sessions use the existing native budget tree.
+pub fn enqueue_team(
+    state: &AppState,
+    parent_session: &str,
+    team: Value,
+    children: Vec<(Value, Value)>,
+    per_worker: Option<u64>,
+) -> Result<(), String> {
+    if children.is_empty() || children.len() > 8 {
+        return Err("팀 Worker는 1~8개여야 합니다.".into());
+    }
+    let binding = binding(state, parent_session).ok_or("팀을 생성할 부모 실행 예산이 없습니다.")?;
+    let tree_id = binding["treeId"].as_str().ok_or("팀 예산 트리가 없습니다.")?.to_string();
+    let parent = binding["accountId"].as_str().ok_or("부모 예산 계정이 없습니다.")?.to_string();
+    if team["kind"] != "team" || team["input"]["sessionId"] != parent_session {
+        return Err("팀 작업은 실제 부모 실행 세션에만 속할 수 있습니다.".into());
+    }
+    let child_ids = children.iter().map(|(session, job)| {
+        let id = session["id"].as_str().ok_or("하위 세션 ID가 없습니다.")?;
+        if job["kind"] != "prompt" || job["input"]["sessionId"] != id
+            || job["input"]["parentSessionId"] != parent_session
+            || job["input"]["teamJobId"] != team["id"] {
+            return Err("팀 Worker의 세션, 소유권 또는 작업 종류가 잘못되었습니다.".into());
+        }
+        Ok(id.to_string())
+    }).collect::<Result<Vec<_>, String>>()?;
+    if child_ids.iter().collect::<std::collections::HashSet<_>>().len() != child_ids.len() {
+        return Err("팀 Worker 세션 ID가 중복되었습니다.".into());
+    }
+    mutate(state, &tree_id, |tree, _| {
+        let free = tree.account(&parent)?.remaining();
+        let allowance = per_worker.unwrap_or_else(|| {
+            free.saturating_mul(90) / 100 / children.len() as u64
+        });
+        if allowance == 0 || allowance > free / children.len() as u64 {
+            return Err("팀 Worker 전체 예산이 부모 잔액보다 큽니다.".into());
+        }
+        let mut records = vec![("job".to_string(), team.clone())];
+        for (mut session, mut job) in children {
+            let id = session["id"].as_str().ok_or("하위 세션 ID가 없습니다.")?.to_string();
+            tree.reserve_child(&parent, &id, allowance)?;
+            session["delegationBudget"] = json!({
+                "treeId":tree_id,"accountId":id,"unit":tree.unit,"limit":allowance
+            });
+            job["input"]["delegationBudget"] = session["delegationBudget"].clone();
+            let inherited = json!({"id":id,"treeId":tree_id,"accountId":id,
+                "parentAccountId":parent,"status":"reserved"});
+            records.push(("session".into(), session));
+            records.push(("job".into(), job));
+            records.push(("budget_binding".into(), inherited));
+        }
+        Ok(records)
+    })?;
+    if let Some(id) = team["id"].as_str() {
+        if let Some(saved) = state.store.get("job", id) {
+            state.bus.record("job", &saved);
+        }
+    }
+    for id in child_ids {
+        if let Some(session) = state.store.get("session", &id) {
+            let job_id = session["teamChildJobId"].as_str().unwrap_or("");
+            if let Some(job) = state.store.get("job", job_id) {
+                state.bus.record("job", &job);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod team_admission_tests {
+    use super::*;
+    use crate::{config::Config, db::Store, vault::Vault};
+    fn fixture() -> AppState {
+        let root = std::env::temp_dir().join(format!("dominion-budget-team-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=Config{port:0,data_dir:root.clone(),
+            web_dir:root.join("web"),workspace:root};
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        state.store.put("budget_tree",&json!({"id":"tree","ownerId":"owner",
+            "tree":Tree::new("root",100,Unit::Tokens)})).unwrap();
+        state.store.put("budget_binding",&json!({"id":"parent","treeId":"tree",
+            "accountId":"root","status":"active"})).unwrap();
+        state
+    }
+    fn workers() -> Vec<(Value,Value)> {
+        (0..2).map(|i| {
+            let session=format!("s{i}");
+            (json!({"id":session,"teamChildJobId":format!("w{i}")}),
+             json!({"id":format!("w{i}"),"kind":"prompt",
+                "input":{"sessionId":session,"parentSessionId":"parent","teamJobId":"team"}}))
+        }).collect()
+    }
+    #[test]
+    fn team_budget_reservation_is_atomic_across_all_children() {
+        let state=fixture();
+        let team=json!({"id":"team","kind":"team","input":{"sessionId":"parent"}});
+        assert!(enqueue_team(&state,"parent",team.clone(),workers(),Some(60)).is_err());
+        assert!(state.store.get("job","team").is_none());
+        assert!(state.store.get("session","s0").is_none());
+        assert!(state.store.get("budget_binding","s0").is_none());
+        assert!(enqueue_team(&state,"parent",team,workers(),Some(25)).is_ok());
+        assert_eq!(state.store.get("job","team").unwrap()["kind"],"team");
+        assert_eq!(state.store.get("budget_binding","s1").unwrap()["status"],"reserved");
+        assert_eq!(state.store.get("budget_tree","tree").unwrap()["tree"]["accounts"]["root"]["children"]["s0"],25);
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Rates {
     input: f64,
