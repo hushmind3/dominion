@@ -224,7 +224,7 @@ pub fn configure(
         })?;
     let workspace = input["workspaceDir"]
         .as_str()
-        .map(|raw| super::workspace_scope::resolve(state, raw))
+        .map(|raw| crate::engine::workspace_scope::resolve(state, raw))
         .transpose()?;
     state
         .store
@@ -288,7 +288,7 @@ pub fn options(state: &AppState, body: &Value) -> Result<Value, String> {
         let raw = body["workspaceDir"]
             .as_str()
             .ok_or("작업 폴더는 절대경로 문자열이어야 합니다.")?;
-        out["workspaceDir"] = json!(super::workspace_scope::resolve(state, raw)?);
+        out["workspaceDir"] = json!(crate::engine::workspace_scope::resolve(state, raw)?);
     }
     if !body["shellSandbox"].is_null() {
         let mode = body["shellSandbox"]
