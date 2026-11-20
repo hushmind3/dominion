@@ -160,7 +160,7 @@ test('typed runEvents includes persisted Chat Room and SDK states on one ordered
       runId:'room-1',sourceMessageId:'owner-1',agentId:'worker',state:'completed'}
   ];
   const d=new Dominion({fetch:async()=>sse(
-    reply.map(x=>'id: '+x.seq+'\\ndata: '+JSON.stringify(x)+'\\n\\n')
+    reply.map(x=>'id: '+x.seq+'\ndata: '+JSON.stringify(x)+'\n\n')
   )});
   const received=[];
   for await(const event of d.runEvents({reconnectDelayMs:1})){
