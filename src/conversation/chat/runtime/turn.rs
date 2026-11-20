@@ -287,6 +287,9 @@ pub(super) async fn run_turn_body(
     } else {
         None
     };
+    let room_read_through=compiled.as_ref()
+        .and_then(|view|view.accounting["readThroughMessageId"].as_str())
+        .map(str::to_string);
     let (prompt_context, mut history_messages) = if let Some(compiled) = compiled {
         let delivered_memories = compiled.system.items.iter()
             .filter(|item| item["kind"] == "memory")
@@ -1703,17 +1706,29 @@ pub(super) async fn run_turn_body(
         "providerId": provider.id,
         "model": provider.model,
     });
-    let saved = state
-        .store
-        .write_message(&json!({
-            "session_id": session_id,
-            "role": "assistant",
-            "content": final_content,
-            "reasoning": final_reasoning,
-            "agent_id": request.agent_id,
-            "metadata": metadata,
-        }))
-        .ok_or("최종 응답을 저장할 수 없습니다.")?;
+    let answer=json!({
+        "session_id": session_id,
+        "role": "assistant",
+        "content": final_content,
+        "reasoning": final_reasoning,
+        "agent_id": request.agent_id,
+        "metadata": metadata,
+    });
+    let saved=if is_room {
+        let agent=request.agent_id.as_deref().ok_or("Room answer has no agent")?;
+        let source=source_message_id.ok_or("Room answer has no owner source")?;
+        let through=room_read_through.as_deref()
+            .ok_or("Room read cursor has no committed delivery")?;
+        let receipt=crate::features::collaboration::room_cursor::checkpoint(
+            session_id,agent,source,through,
+        );
+        // Commit the answer and read cursor in one transaction. A failed or
+        // cancelled provider turn must not consume another agent's inbox.
+        state.store.write_room_answer_with_cursor(&answer,&receipt)?
+    }else{
+        state.store.write_message(&answer)
+            .ok_or("최종 응답을 저장할 수 없습니다.")?
+    };
     state.bus.message(&saved);
     super::super::continuity::commit(state, &metadata["continuity"], &saved);
     if let Some(projection) = continuation_projection {

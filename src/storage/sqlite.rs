@@ -1010,6 +1010,69 @@ impl Store {
         Ok(stored)
     }
 
+    /// Atomically acknowledge the transcript records delivered to ONE room
+    /// agent while committing that agent's final answer. A crashed turn may
+    /// leave an unresolved execution, never an advanced delivery cursor.
+    pub fn write_room_answer_with_cursor(
+        &self,message:&Value,cursor:&Value
+    )->Result<Value,String>{
+        let session=cursor["sessionId"].as_str().filter(|v|!v.is_empty())
+            .ok_or("Room cursor session missing")?;
+        let agent=cursor["agentId"].as_str().filter(|v|!v.is_empty())
+            .ok_or("Room cursor agent missing")?;
+        let source=cursor["sourceMessageId"].as_str().filter(|v|!v.is_empty())
+            .ok_or("Room cursor source missing")?;
+        let through=cursor["throughMessageId"].as_str().filter(|v|!v.is_empty())
+            .ok_or("Room cursor delivery anchor missing")?;
+        if message["session_id"].as_str()!=Some(session)
+            || message["agent_id"].as_str()!=Some(agent)
+            || message["role"]!="assistant"
+            || message["metadata"]["authorKind"]!="agent"
+            || message["metadata"]["replyToMessageId"].as_str()!=Some(source) {
+            return Err("Room reply and cursor binding mismatch".into());
+        }
+        let mut conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e|e.to_string())?;
+        let source_valid:Option<i64>=tx.query_row(
+            "SELECT rowid FROM messages WHERE session_id=?1 AND id=?2
+             AND role='user' AND json_extract(metadata,'$.authorKind')='owner'",
+            params![session,source],|row|row.get(0),
+        ).optional().map_err(|e|e.to_string())?;
+        if source_valid.is_none() {return Err("Room cursor owner source absent".into());}
+        let current_index:Option<i64>=tx.query_row(
+            "SELECT rowid FROM messages WHERE session_id=?1 AND id=?2",
+            params![session,through],|row|row.get(0),
+        ).optional().map_err(|e|e.to_string())?;
+        let index=current_index.ok_or("Room cursor points to missing committed message")?;
+        let record_id=cursor["id"].as_str().filter(|v|!v.is_empty())
+            .ok_or("Room cursor record ID missing")?;
+        let previous:Option<String>=tx.query_row(
+            "SELECT data FROM records WHERE kind='room_read_cursor' AND id=?1",
+            [record_id],|row|row.get(0),
+        ).optional().map_err(|e|e.to_string())?;
+        if let Some(previous)=previous {
+            let old:Value=serde_json::from_str(&previous).map_err(|e|e.to_string())?;
+            if old["sessionId"].as_str()!=Some(session)||old["agentId"].as_str()!=Some(agent){
+                return Err("Room cursor record belongs to another binding".into());
+            }
+            let prior=old["throughMessageId"].as_str().ok_or("Previous cursor lacks anchor")?;
+            let prior_index:Option<i64>=tx.query_row(
+                "SELECT rowid FROM messages WHERE session_id=?1 AND id=?2",
+                params![session,prior],|row|row.get(0),
+            ).optional().map_err(|e|e.to_string())?;
+            if prior_index.ok_or("Previous room cursor anchor was deleted")?>index {
+                return Err("Room cursor cannot rewind after another committed turn".into());
+            }
+        }
+        let inserted=insert_message(&tx,message)
+            .ok_or("Room answer could not be persisted")?;
+        upsert_tx(&tx,"room_read_cursor",cursor)?;
+        let saved=query_message(&tx,&inserted).ok_or("Persisted room answer unavailable")?;
+        tx.commit().map_err(|e|e.to_string())?;
+        Ok(saved)
+    }
+
     pub fn write_message(&self, message: &Value) -> Option<Value> {
         let conn = self.conn.lock().unwrap();
         let id = insert_message(&conn, message)?;

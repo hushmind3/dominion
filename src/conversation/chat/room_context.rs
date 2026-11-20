@@ -405,6 +405,13 @@ pub(crate) fn compile(
         all.truncate(source + 1 + next_owner);
     }
     let query = all[source]["content"].as_str().unwrap_or("");
+    let read_window=if let Some(agent_id)=request.agent_id.as_deref() {
+        let cursor_id=crate::features::collaboration::room_cursor::binding_id(session_id,agent_id);
+        let previous=state.store.get("room_read_cursor",&cursor_id);
+        Some(crate::features::collaboration::room_cursor::plan(
+            &all,session_id,agent_id,previous.as_ref(),
+        )?)
+    }else{None};
     let (prompt, persona_tokens, mut items) = core(state, request, &room, query);
     // A group handoff is a bounded projection of committed host operations,
     // not unverified chat prose. Every execution is bound to this room session
@@ -524,6 +531,8 @@ pub(crate) fn compile(
         let mut history = vec![row.clone()];
         let order = index;
         let required = index == source
+            || read_window.as_ref().is_some_and(|window|
+                window.required_indices.contains(&index))
             || current_contributions.contains(&index)
             || Some(index) == previous_owner
             || Some(index) == previous_self
@@ -712,6 +721,16 @@ pub(crate) fn compile(
     let mut messages = vec![json!({"role":"system","content":prompt})];
     messages.extend(history.clone());
     let accounting = json!({"estimated":true,"estimator":"ascii-four-unicode-one-v1","contextModelCalls":0,
+        "readThroughMessageId":read_window.as_ref()
+            .and_then(|window|window.through_message_id.as_deref()),
+        "readCursorPreviousMessageId":read_window.as_ref()
+            .and_then(|window|window.previous_message_id.as_deref()),
+        "roomUnreadRemaining":read_window.as_ref()
+            .map(|window|window.unread_remaining).unwrap_or(0),
+        "roomUnreadOversized":read_window.as_ref()
+            .is_some_and(|window|window.oversized_first_unread),
+        "roomUnreadPinned":read_window.as_ref()
+            .map(|window|window.required_indices.len()).unwrap_or(0),
         "targetInputTokens":target,"requiredInputTokens":required_tokens,"requiredOverBudget":required_tokens>target,
         "personaTokens":persona_tokens,"memoryTokens":memory_tokens,"ownerStateTokens":owner_state_tokens,
         "sharedStateTokens":shared_tokens,"sharedStateDigest":shared["digest"],
