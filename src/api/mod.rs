@@ -357,10 +357,6 @@ pub fn router(state: AppState) -> Router {
                 get(collections::one)
                     .delete(collections::remove)
                     .post(collections::save),
-            )
-            .route(
-                &format!("/api/{kind}/:id/:action"),
-                post(collections::action),
             );
     }
 
