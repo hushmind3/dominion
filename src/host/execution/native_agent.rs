@@ -7,7 +7,7 @@ use crate::host::journal::DurableJournal;
 use crate::{engine::{chat, gateway, jobs::JobContext, llm, tools, verification}, state::AppState};
 use crate::integrations::registry as external;
 use dominion_sdk::harness::{
-    Action, BoxFuture, Criterion, CriterionKind, Evidence, Kernel,
+    Action, BoxFuture, Criterion, CriterionKind, Evidence, Journal, Kernel,
     Limits, Model, ModelReply, ModelTurn, Receipt, RunRequest, Snapshot, Strategy, ToolSpec, Tools,
 };
 use serde_json::{json, Value};
