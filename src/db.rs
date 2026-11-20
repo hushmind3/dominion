@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 mod sdk_sources;
+mod room_cursor;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FinalizeOutcome {
@@ -144,6 +145,22 @@ impl Store {
                  created_at TEXT NOT NULL DEFAULT (datetime('now'))
              );
              CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, created_at);
+             -- Per-room participant progress is independent of the shared
+             -- transcript and cannot be inferred from model output.
+             CREATE TABLE IF NOT EXISTS room_agent_read_cursors(
+                 room_id TEXT NOT NULL,
+                 session_id TEXT NOT NULL,
+                 agent_id TEXT NOT NULL,
+                 source_message_id TEXT NOT NULL,
+                 reply_message_id TEXT NOT NULL,
+                 source_rowid INTEGER NOT NULL,
+                 reply_rowid INTEGER NOT NULL,
+                 selected_message_ids TEXT NOT NULL DEFAULT '[]',
+                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                 PRIMARY KEY(room_id,session_id,agent_id)
+             );
+             CREATE INDEX IF NOT EXISTS idx_room_agent_cursor_session
+                 ON room_agent_read_cursors(room_id,session_id,source_rowid);
              -- Structured, receipt-derived room collaboration. Not a chat copy.
              CREATE TABLE IF NOT EXISTS room_work_receipts(
                  message_id TEXT PRIMARY KEY,
