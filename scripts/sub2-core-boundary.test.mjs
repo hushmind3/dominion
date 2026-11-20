@@ -135,7 +135,7 @@ test('provider and tool authority are exposed as host ports, not implemented in 
 
 test('product core is a one-file facade; standalone core has a stable source boundary',()=>{
  assert.deepEqual(readdirSync(new URL('../src/engine/core/',import.meta.url)).sort(),['mod.rs']);
- assert.deepEqual(readdirSync(new URL('../crates/dominion-turn-core/src/',import.meta.url)).sort(),['agent_loop.rs','driver.rs','lib.rs','port_tests.rs']);
+ assert.deepEqual(readdirSync(new URL('../crates/dominion-turn-core/src/',import.meta.url)).sort(),['agent_loop.rs','driver.rs','lib.rs','port_tests.rs','run_state.rs']);
 });
 
 
