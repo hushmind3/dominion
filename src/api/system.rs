@@ -252,17 +252,6 @@ pub async fn policy_patches(State(state): State<AppState>) -> Json<Value> {
     Json(json!(crate::engine::policy_patch::list(&state)))
 }
 
-pub async fn scheduler_runs(State(state): State<AppState>) -> Json<Value> {
-    let mut runs = state.store.all("scheduler_run");
-    runs.sort_by(|a, b| {
-        b["startedAt"]
-            .as_str()
-            .unwrap_or("")
-            .cmp(a["startedAt"].as_str().unwrap_or(""))
-    });
-    Json(json!(runs))
-}
-
 /// Creates a consistent snapshot inside the data directory for a restore drill.
 pub async fn create_backup(State(state): State<AppState>) -> axum::response::Response {
     use axum::response::IntoResponse;
