@@ -210,6 +210,15 @@ fn context_block_with_manifest(
     let (memories, mut items) =
         crate::engine::memory::context_block_with_manifest_at(state, &scope, query, execution_id);
 
+    // Private chat used to preload twelve enabled skills on *every* message,
+    // including "hello". Advertise relevant skills only. A direct request
+    // for the skill catalog still lists the catalog, and skill_view remains
+    // available to load instructions on demand.
+    let lower_query = query.to_lowercase();
+    let skill_catalog_requested = lower_query.contains("스킬") || lower_query.contains("skill");
+    let query_terms = lower_query.split(|ch: char| !ch.is_alphanumeric())
+        .filter(|term|term.chars().count()>=2)
+        .collect::<Vec<_>>();
     let mut skills = state
         .store
         .all("skill")
@@ -220,6 +229,13 @@ fn context_block_with_manifest(
         .filter_map(|skill| {
             let id = skill.get("id").and_then(|v| v.as_str())?.to_string();
             let name = skill.get("name").and_then(|v| v.as_str())?.to_string();
+            let searchable=format!("{} {} {}",name,
+                skill["description"].as_str().unwrap_or(""),
+                skill["instructions"].as_str().unwrap_or("")).to_lowercase();
+            if !skill_catalog_requested
+                && !query_terms.iter().any(|term|searchable.contains(term)) {
+                return None;
+            }
             // Only the catalog is loaded into the prompt when a read tool
             // is available. The complete SKILL.md stays in SQLite and can be
             // paged by skill_view without rebuilding this context every turn.
@@ -718,6 +734,28 @@ mod tests {
         assert_eq!(selected.len(),1);
         assert_eq!(selected[0]["content"],full,
             "an explicitly provided large current message must be preserved");
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn private_chat_does_not_preload_unrelated_skills_on_short_messages() {
+        let (state,dir)=state();
+        state.store.put("skill",&json!({"id":"video-skill","scope":"global",
+            "name":"Video editor","description":"Render a video clip",
+            "instructions":"Complex video generation workflow",
+            "enabled":true,"status":"active"})).unwrap();
+        let request=TurnRequest::from_value(&json!({"input":"안녕",
+            "toolsEnabled":true,"toolsExecutionEnabled":true})).unwrap();
+        let greeting=system_prompt_with_manifest_at(
+            &state,&request,"private:test","안녕",None,None);
+        assert!(!greeting.dynamic_context.contains("video-skill"));
+        let relevant=system_prompt_with_manifest_at(
+            &state,&request,"private:test","Render a video clip",None,None);
+        assert!(relevant.dynamic_context.contains("video-skill"));
+        let catalog=system_prompt_with_manifest_at(
+            &state,&request,"private:test","설치된 스킬 보여줘",None,None);
+        assert!(catalog.dynamic_context.contains("video-skill"));
         drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
