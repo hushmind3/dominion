@@ -507,12 +507,13 @@ mod tests{
         state.store.put("job",&json!({"id":"team","kind":"team","status":"needs_review",
             "input":{"sessionId":"owner"},
             "result":{"gaps":[],"pendingIntegrationJobs":[]}})).unwrap();
-        let make_context=|tools_enabled|ToolContext{workspace:&cfg.workspace,
+        let disabled=ToolContext{workspace:&cfg.workspace,
             store:&state.store,state:&state,session_id:"owner",agent_id:None,
-            tools_enabled,tools_execution_enabled:true};
-        assert!(integrate(&make_context(false),&json!({"jobId":"team"})).await.is_err());
+            tools_enabled:false,tools_execution_enabled:true};
+        assert!(integrate(&disabled,&json!({"jobId":"team"})).await.is_err());
         state.cancel_session("owner");
-        assert!(integrate(&make_context(true),&json!({"jobId":"team"})).await.is_err());
+        let enabled=ToolContext{tools_enabled:true,..disabled};
+        assert!(integrate(&enabled,&json!({"jobId":"team"})).await.is_err());
         assert_eq!(state.store.get("job","team").unwrap()["status"],"needs_review");
         let _=std::fs::remove_dir_all(dir);
     }
