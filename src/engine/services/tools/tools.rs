@@ -162,6 +162,7 @@ pub fn definitions() -> Vec<Value> {
             object(json!({
                 "harnessId":{"type":"string","enum":enabled_harnesses},
                 "prompt":text("Self-contained delegated task with expected result"),
+                "bridgeSessionId":text("Optional DOMINION-issued owner-scoped session UUID for a configured external resume"),
                 "timeoutSeconds":{"type":"integer","minimum":5,"maximum":600},
             }),vec!["harnessId","prompt"])));
     }

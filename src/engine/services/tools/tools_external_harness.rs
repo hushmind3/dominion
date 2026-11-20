@@ -7,6 +7,7 @@
 //! The external process is a delegated worker, NEVER a second DOMINION core.
 use super::*;
 use std::time::{Duration,Instant};
+use sha2::{Digest,Sha256};
 
 const ENV_KEY:&str="DOMINION_EXTERNAL_HARNESSES";
 const MAX_ADAPTERS:usize=8;
@@ -18,6 +19,7 @@ struct Adapter {
     id:String,
     command:String,
     argv:Vec<String>,
+    resume_argv:Option<Vec<String>>,
 }
 
 fn safe_id(id:&str)->bool{
@@ -50,7 +52,18 @@ fn parse_adapters(raw:&str)->Vec<Adapter>{
                 _=>{valid=false;break;}
             }
         }
-        if valid {accepted.push(Adapter{id:id.clone(),command:command.to_string(),argv:args});}
+        let resume_argv=record["resumeArgs"].as_array().and_then(|raw|{
+            if raw.len()>MAX_ARGS{return None;}
+            let args=raw.iter().map(|v|v.as_str().filter(|s|
+                s.len()<=2048 && !s.contains('\0') && !s.contains('\n')
+                && !s.contains('\r')).map(str::to_string))
+                .collect::<Option<Vec<_>>>()?;
+            (args.iter().filter(|a|a.contains("{session_id}")).count()==1)
+                .then_some(args)
+        });
+        if record.get("resumeArgs").is_some() && resume_argv.is_none(){continue;}
+        if valid {accepted.push(Adapter{id:id.clone(),command:command.to_string(),
+            argv:args,resume_argv});}
     }
     accepted
 }
@@ -61,6 +74,33 @@ pub(super) fn configured_ids()->Vec<String>{
     adapters().into_iter().map(|entry|entry.id).collect()
 }
 
+fn safe_remote_id(id:&str)->bool{
+    !id.is_empty() && id.len()<=160 && id.bytes().all(|b|
+        b.is_ascii_alphanumeric()||matches!(b,b'-'|b'_'|b':'|b'.'))
+}
+fn remote_session_id(stdout:&str)->Option<String>{
+    let candidate=|value:Value|->Option<String>{
+        let id=value["thread_id"].as_str()
+            .or_else(||value["session_id"].as_str())
+            .or_else(||value["sessionId"].as_str())?;
+        safe_remote_id(id).then(||id.to_string())
+    };
+    serde_json::from_str::<Value>(stdout).ok().and_then(&candidate)
+        .or_else(||stdout.lines().find_map(|line|
+            serde_json::from_str::<Value>(line).ok().and_then(&candidate)))
+}
+fn adapter_version(spec:&Adapter)->String{
+    format!("{:x}",Sha256::digest(
+        json!([spec.id,spec.command,spec.argv,spec.resume_argv])
+            .to_string().as_bytes()))
+}
+fn same_owner(row:&Value,ctx:&ToolContext<'_>,spec:&Adapter)->bool{
+    row["harnessId"]==spec.id
+        && row["adapterVersion"]==adapter_version(spec)
+        && row["sessionId"]==ctx.session_id
+        && row["agentId"].as_str()==ctx.agent_id
+        && row["workspace"]==ctx.workspace.to_string_lossy().as_ref()
+}
 fn has_failed_turn(stdout:&str)->bool{
     stdout.lines().any(|line|serde_json::from_str::<Value>(line)
         .ok().is_some_and(|value|value["type"]=="turn.failed"))
@@ -91,6 +131,7 @@ async fn execute_adapter(
     spec:&Adapter,
     prompt:&str,
     timeout_seconds:u64,
+    resume_remote:Option<&str>,
 )->Result<Value,String>{
     if !ctx.tools_enabled || !ctx.tools_execution_enabled {
         return Err("external harness delegation is disabled by the owner".into());
@@ -100,7 +141,13 @@ async fn execute_adapter(
     }
     let started=Instant::now();
     let mut cmd=tokio::process::Command::new(&spec.command);
-    cmd.args(&spec.argv).current_dir(ctx.workspace);
+    if let Some(remote)=resume_remote{
+        if !safe_remote_id(remote){return Err("unsafe remote session ID".into());}
+        let args=spec.resume_argv.as_ref()
+            .ok_or("owner has not configured external session resume")?;
+        cmd.args(args.iter().map(|item|item.replace("{session_id}",remote)));
+    }else{cmd.args(&spec.argv);}
+    cmd.current_dir(ctx.workspace);
     // One native process supervisor serves terminal_exec, shell_exec and
     // this optional adapter. No child lifecycle, pipe reader or timeout
     // implementation is duplicated in the harness integration.
@@ -141,6 +188,8 @@ async fn execute_adapter(
     Ok(json!({
         "harnessId":spec.id,
         "runtime":"external_process",
+        "remoteSessionId":if verified_exit{remote_session_id(&stdout)}
+            else{None},
         "exitCode":output.status.code(),
         "completed":verified_exit,
         "answer":answer,
@@ -165,7 +214,76 @@ pub(super) async fn run(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
         .filter(|s|!s.trim().is_empty() && s.len()<=MAX_PROMPT)
         .ok_or("external harness task must be between 1 and 24000 bytes")?;
     let timeout=args["timeoutSeconds"].as_u64().unwrap_or(180).clamp(5,600);
-    execute_adapter(ctx,&spec,prompt,timeout).await
+    let requested=args["bridgeSessionId"].as_str();
+    let resume=requested.filter(|id|uuid::Uuid::parse_str(id).is_ok());
+    if requested.is_some() && resume.is_none(){
+        return Err("bridgeSessionId must be a DOMINION-issued UUID".into());
+    }
+    if resume.is_some() && spec.resume_argv.is_none(){
+        return Err("this external harness has no configured resume adapter".into());
+    }
+    // Reserve a session BEFORE launching any external process. A crash
+    // leaves status=running, which cannot be replayed automatically.
+    let bridge=if let Some(id)=resume{
+        let old=ctx.store.get("external_agent_session",id)
+            .ok_or("external session not found")?;
+        if !same_owner(&old,ctx,&spec){
+            return Err("external session has a different owner or adapter revision".into());
+        }
+        if old["status"]!="ready"{
+            return Err("external session is unresolved or already executing".into());
+        }
+        ctx.store.patch_if("external_agent_session",id,"status",&json!("ready"),
+            &json!({"status":"running"}))
+            .ok_or("external session concurrently claimed")?
+    }else if spec.resume_argv.is_some(){
+        ctx.store.put_if_absent("external_agent_session",&json!({
+            "id":uuid::Uuid::new_v4().to_string(),"harnessId":spec.id,
+            "adapterVersion":adapter_version(&spec),
+            "sessionId":ctx.session_id,"agentId":ctx.agent_id,
+            "workspace":ctx.workspace.to_string_lossy(),
+            "status":"running","remoteSessionId":null,
+        })).ok_or("failed to record external session reservation")?
+    }else{Value::Null};
+    if !bridge.is_null(){ctx.state.bus.record("external_agent_session",&bridge);}
+    let remote=bridge["remoteSessionId"].as_str().map(str::to_string);
+    let outcome=execute_adapter(ctx,&spec,prompt,timeout,remote.as_deref()).await;
+    let mut result=match outcome{
+        Ok(value)=>value,
+        Err(error)=>{
+            if let Some(id)=bridge["id"].as_str(){
+                if let Some(row)=ctx.store.patch_if("external_agent_session",
+                    id,"status",&json!("running"),&json!({
+                        "status":"needs_review","lastError":error,
+                    })){
+                    ctx.state.bus.record("external_agent_session",&row);
+                }
+            }
+            return Err(error);
+        }
+    };
+    if let Some(id)=bridge["id"].as_str(){
+        let remote_id=result["remoteSessionId"].as_str()
+            .filter(|id|safe_remote_id(id))
+            .or_else(||remote.as_deref());
+        let ready=result["completed"]==true && result["outcomeUnknown"]!=true
+            && remote_id.is_some();
+        let updated=ctx.store.patch_if("external_agent_session",
+            id,"status",&json!("running"),&json!({
+                "status":if ready{"ready"}else{"needs_review"},
+                "remoteSessionId":remote_id,
+                "lastCompleted":result["completed"],
+                "lastOutcomeUnknown":result["outcomeUnknown"],
+                "lastUsedAt":chrono::Utc::now().to_rfc3339(),
+            })).ok_or("external session changed while executing; inspect before retry")?;
+        ctx.state.bus.record("external_agent_session",&updated);
+        result["bridgeSessionId"]=json!(id);
+        result["sessionResumable"]=json!(ready);
+        if !ready{result["requiresInspection"]=json!(true);}
+    }
+    // Never expose the raw remote thread id as a resume credential.
+    if let Some(map)=result.as_object_mut(){map.remove("remoteSessionId");}
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -187,6 +305,24 @@ mod tests {
         assert!(parse_adapters(r#"{"x":{"enabled":true,"command":"bad\u0000",
             "args":[]}}"#).is_empty());
     }
+    #[test]
+    fn only_owner_configured_resume_templates_can_issue_bridge_session_tokens(){
+        let list=parse_adapters(r#"{
+            "codex":{"enabled":true,"command":"codex","args":["exec","-"],
+                "resumeArgs":["exec","resume","{session_id}","-"]},
+            "bad":{"enabled":true,"command":"tool","args":[],
+                "resumeArgs":["resume","missing"]}}"#);
+        assert_eq!(list.len(),1);
+        assert_eq!(list[0].resume_argv.as_ref().unwrap()[2],"{session_id}");
+        assert_eq!(remote_session_id(
+            "{\"type\":\"thread.started\",\"thread_id\":\"thread-123\"}\n"
+        ).as_deref(),Some("thread-123"));
+        assert_eq!(remote_session_id(
+            r#"{"session_id":"claude-456","result":"ok"}"#
+        ).as_deref(),Some("claude-456"));
+        assert!(remote_session_id(r#"{"session_id":"bad;rm -rf /"}"#).is_none());
+    }
+
     #[test]
     fn codex_jsonl_and_claude_json_are_reduced_to_answer_without_new_state(){
         let jsonl=concat!(
@@ -212,8 +348,9 @@ mod tests {
         let ctx=ToolContext{workspace:&path,store:&state.store,state:&state,
             session_id:"adapter-test",agent_id:None,
             tools_enabled:true,tools_execution_enabled:true};
-        let spec=Adapter{id:"echo".into(),command:"/bin/cat".into(),argv:Vec::new()};
-        let result=execute_adapter(&ctx,&spec,"read task",15).await.unwrap();
+        let spec=Adapter{id:"echo".into(),command:"/bin/cat".into(),
+            argv:Vec::new(),resume_argv:None};
+        let result=execute_adapter(&ctx,&spec,"read task",15,None).await.unwrap();
         assert_eq!(result["completed"],true);
         assert_eq!(result["answer"],"read task");
         assert!(state.store.all("execution_operation").is_empty(),
