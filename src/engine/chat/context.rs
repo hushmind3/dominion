@@ -288,7 +288,9 @@ fn context_block_with_manifest(
         let failures = stat.get("failures").and_then(|v| v.as_u64()).unwrap_or(0);
         if attempts >= 3 && failures * 2 >= attempts {
             let name = stat.get("id").and_then(|v| v.as_str()).unwrap_or("tool");
-            reliability.push(format!("{name}: {successes}/{attempts} 성공"));
+            // Counts fluctuate with each operation; keep semantic reliability
+            // guidance stable while exact counters remain in the host store.
+            reliability.push(format!("{name}: repeated failures observed"));
             items.push(json!({
                 "kind": "tool_stat",
                 "id": name,
