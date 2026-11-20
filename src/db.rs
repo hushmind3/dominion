@@ -1029,6 +1029,36 @@ impl Store {
         Ok(selected)
     }
 
+    /// Resume from a known /compact checkpoint without decoding a lifetime
+    /// of discarded tool blobs. Returns None if the checkpoint is not in the
+    /// current session (e.g. transcript was cleared); never trusts stale
+    /// summaries or a foreign session's message ID.
+    pub fn try_recent_messages_after(
+        &self, session_id:&str, checkpoint_id:&str, limit:usize
+    )->Result<Option<Vec<Value>>,String>{
+        let conn=self.conn.lock().unwrap();
+        let checkpoint=conn.query_row(
+            "SELECT rowid FROM messages WHERE session_id=?1 AND id=?2 LIMIT 1",
+            rusqlite::params![session_id,checkpoint_id],
+            |row|row.get::<_,i64>(0),
+        ).optional().map_err(|error|error.to_string())?;
+        let Some(last_row)=checkpoint else{return Ok(None)};
+        let mut stmt=conn.prepare(
+            "SELECT id,session_id,role,content,reasoning,agent_id,tool_calls,tool_call_id,created_at,metadata
+             FROM messages WHERE session_id=?1 AND rowid>?2
+               AND (NOT json_valid(metadata) OR
+                    COALESCE(json_extract(metadata,'$.kind'),'')!='learning_report')
+             ORDER BY created_at DESC,rowid DESC LIMIT ?3"
+        ).map_err(|error|error.to_string())?;
+        let rows=stmt.query_map(
+            rusqlite::params![session_id,last_row,limit.min(256) as i64],
+            message_from_row).map_err(|error|error.to_string())?;
+        let mut result=Vec::new();
+        for row in rows{result.push(row.map_err(|error|error.to_string())?);}
+        result.reverse();
+        Ok(Some(result))
+    }
+
     /// Restore owner-authored task goals without ever decoding old HTML,
     /// model reasoning or tool arguments from the full session archive.
     pub fn try_recent_user_messages(&self, session_id: &str, limit: usize) -> Result<Vec<Value>, String> {
@@ -2177,6 +2207,34 @@ mod tests {
         store.put("memory", &json!({"id":"m2","text":"b"}));
         let records = store.try_all("memory").unwrap();
         assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn checkpointed_history_resumes_without_loading_archived_html(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for i in 0..90{
+            store.write_message(&json!({"session_id":"s","role":"tool",
+                "tool_call_id":format!("old-{i}"),
+                "content":"OLD_BLOB_".repeat(2_000)})).unwrap();
+        }
+        let marker=store.write_message(&json!({"session_id":"s",
+            "role":"assistant","content":"checkpoint"})).unwrap();
+        store.write_message(&json!({"session_id":"s","role":"user",
+            "content":"최신 작업 계속"})).unwrap();
+        store.write_message(&json!({"session_id":"s","role":"assistant",
+            "content":"current answer"})).unwrap();
+        let id=marker["id"].as_str().unwrap();
+        let after=store.try_recent_messages_after("s",id,40).unwrap().unwrap();
+        assert_eq!(after.len(),2);
+        assert_eq!(after[0]["content"],"최신 작업 계속");
+        assert_eq!(after[1]["content"],"current answer");
+        assert!(!json!(after).to_string().contains("OLD_BLOB_"));
+        assert!(store.try_recent_messages_after("other",id,40).unwrap().is_none());
+        assert!(store.try_recent_messages_after("s","no-longer-here",40).unwrap().is_none());
+        assert_eq!(store.messages("s").len(),93,
+            "checkpoint reads cannot mutate archived events");
+        store.clear_messages("s");
+        assert!(store.try_recent_messages_after("s",id,40).unwrap().is_none());
     }
 
     #[test]
