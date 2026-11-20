@@ -15,9 +15,12 @@ const groups={
  forensics:['native_replay','native_adjudication']
 };
 test('only the language-to-action execution spine is declared by engine',()=>{
- assert.deepEqual(coreNames.sort(),['goal_control','native_agent','native_evidence','effect','chat','program','verification','recovery','jobs','lease','run_state','tools'].sort());
+ assert.deepEqual(coreNames.sort(),['goal_control','native_agent','native_evidence','effect','program','verification','recovery','jobs','lease','run_state','tools'].sort());
  assert.ok(existsSync(path.join(root,'crates/dominion-agent-sdk/src/lib.rs')));
  assert.match(read('src/main.rs'),/mod features;/);
+ assert.match(read('src/main.rs'),/mod conversation;/);
+ assert.equal(existsSync(path.join(root,'src/engine/chat/mod.rs')),false);
+ assert.ok(existsSync(path.join(root,'src/conversation/chat/mod.rs')));
 });
 test('optional module implementations cannot be reintroduced under engine',()=>{
  for(const [group,names] of Object.entries(groups)){

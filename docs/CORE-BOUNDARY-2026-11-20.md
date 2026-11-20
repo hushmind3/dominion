@@ -4,7 +4,7 @@
 
 Owner utterance → model inference → authorized action selection → effect execution → observed result → next model turn/final answer. A minimal engine **still must** retain approval/effect identity, cancellation, durable journal and verification to avoid replaying unknown writes.
 
-The independent `crates/dominion-agent-sdk/` contains typed model/tool/evidence/journal ports and the native agent loop. The Rust product host `src/engine/` is now a reduced composition adapter with 12 top-level module declarations. Its 12 modules contain the chat/agent runner, local filesystem/shell execution, goal/run state, job execution, evidence/verification and recovery.
+The independent `crates/dominion-agent-sdk/` contains typed model/tool/evidence/journal ports and the native agent loop. The Rust product host `src/engine/` is now a reduced composition adapter with 11 top-level module declarations. Its 11 modules contain the native agent execution adapter, local filesystem/shell execution, goal/run state, job execution, evidence/verification and recovery. The conversation service's streaming, per-room context and chat provider adapters are separately owned by `src/conversation/chat/`.
 
 | Ownership | Path | Former engine modules |
 | --- | --- | ---: |
@@ -16,6 +16,10 @@ The independent `crates/dominion-agent-sdk/` contains typed model/tool/evidence/
 | External MCP, channels, accounts, browser, Skills, public HTTP | `src/integrations` | previously separated |
 
 Total: **45 relocated top-level modules** (46 files including adaptation types).
+
+## Conversation is a host surface, not the kernel
+
+The former `src/engine/chat/` implementation (27 Rust files) now lives in `src/conversation/chat/`. The engine retains a source compatibility re-export so existing API/SDK entry points do not change. It is **not** removed: multi-agent rooms, streaming chat and session history still use this product service around the same executable kernel.
 
 ## Composition
 
@@ -34,4 +38,4 @@ Total: **45 relocated top-level modules** (46 files including adaptation types).
 
 ## Regression protection
 
-`scripts/core-boundary.test.mjs` is part of the sub3 product CI and asserts the 12 core declarations, 45 relocated optional modules, and registry-based dispatch and execution. `scripts/integration-boundary.test.mjs` continues to police external connector ownership. Focused Rust CI filters were changed to follow the relocated test modules; avoiding 0-test false positives is part of the refactor.
+`scripts/core-boundary.test.mjs` is part of the sub3 product CI and asserts the 11 core declarations, 45 relocated optional modules, and registry-based dispatch and execution. `scripts/integration-boundary.test.mjs` continues to police external connector ownership. Focused Rust CI filters were changed to follow the relocated test modules; avoiding 0-test false positives is part of the refactor.

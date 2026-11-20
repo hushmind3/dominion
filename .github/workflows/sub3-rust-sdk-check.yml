@@ -22,7 +22,7 @@ on:
       - 'src/engine/native_routing.rs'
       - 'src/engine/native_stream.rs'
       - 'src/engine/native_codex_ws.rs'
-      - 'src/engine/chat/**'
+      - 'src/conversation/chat/**'
       - 'src/engine/mcp.rs'
       - 'src/engine/github_files.rs'
       - 'src/engine/github_workflow.rs'
@@ -55,7 +55,7 @@ jobs:
           cargo test -p dominion-agent-sdk --lib
           cargo test -p dominion-sdk --lib
           cargo test -p dominion-agent-sdk --test kernel_replanning
-          cargo test --bin dominion-rust engine::chat::kernel_bridge::tests
+          cargo test --bin dominion-rust conversation::chat::kernel_bridge::tests
           cargo test --bin dominion-rust api::sdk_runs::tests
           cargo test --bin dominion-rust engine::native_stream::tests
           cargo test --bin dominion-rust native_stream_chat_http_fragmented_calls_are_durable_and_unexecuted

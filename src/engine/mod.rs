@@ -10,7 +10,8 @@ pub mod goal_control;
 pub mod native_agent;
 pub(crate) mod native_evidence;
 pub mod effect;
-pub mod chat;
+// Conversational interaction is a surface adapter, not part of the execution core.
+pub use crate::conversation::chat;
 pub mod program;
 pub mod verification;
 pub mod recovery;

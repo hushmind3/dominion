@@ -32,12 +32,12 @@ jobs:
       - name: Product and SDK contract tests (dev profile only)
         run: |
           grep -Fq 'pub use tool_discovery::tool_relevance;' crates/dominion-agent-sdk/src/lib.rs
-          grep -Fq 'dominion_agent_sdk::tool_relevance(' src/engine/chat/runtime/selection.rs
+          grep -Fq 'dominion_agent_sdk::tool_relevance(' src/conversation/chat/runtime/selection.rs
           cargo test --bin dominion-rust integrations::skills::discovery::tests
-          cargo test --bin dominion-rust engine::chat::runtime::capability::tests
+          cargo test --bin dominion-rust conversation::chat::runtime::capability::tests
           cargo test --bin dominion-rust planning_cost_tests
           cargo test --bin dominion-rust shared_sdk_relevance_ignores_tool_parameter_payload
-          cargo test --bin dominion-rust engine::chat::tests
+          cargo test --bin dominion-rust conversation::chat::tests
           # Keep native nine-participant routing, examples and @mentions honest.
           cargo test --bin dominion-rust features::collaboration::rooms::tests
           # Latest main provider UI depends on public, keyless model browsing.
@@ -45,21 +45,21 @@ jobs:
           cargo test --bin dominion-rust api::channels::tests
           cargo test --bin dominion-rust api::cli_oauth::tests
           # Chained developer persona must appear exactly once on the WS wire.
-          cargo test --bin dominion-rust engine::chat::codex_ws::tests
+          cargo test --bin dominion-rust conversation::chat::codex_ws::tests
           cargo test --bin dominion-rust room_catalog_cache_tests
           # Real local mock SSE wire: no repeated prefill for known KV backends,
           # with full owner/persona context preserved on the stateless wire.
           cargo test --bin dominion-rust local_kv_cache_is_vendor_scoped_never_general_openai_compat
           cargo test --bin dominion-rust managed_llama_server_uses_real_chat_wire_prefix_kv_cache
           cargo test --bin dominion-rust cancel_api_interrupts_silent_http_generation_and_allows_same_session_retry
-          cargo test --bin dominion-rust engine::chat::runtime::cancellation_watch_tests
-          cargo test --bin dominion-rust engine::chat::room_context::tests
-          cargo test --bin dominion-rust engine::chat::continuity::tests
+          cargo test --bin dominion-rust conversation::chat::runtime::cancellation_watch_tests
+          cargo test --bin dominion-rust conversation::chat::room_context::tests
+          cargo test --bin dominion-rust conversation::chat::continuity::tests
           cargo test --bin dominion-rust features::collaboration::room_state::tests
           cargo test --bin dominion-rust engine::verification
           # Audit-relevant regressions: canonical provider route, source index,
           # and bounded conversation checkpoints now get their own test filters.
-          cargo test --bin dominion-rust engine::chat::provider::tests
+          cargo test --bin dominion-rust conversation::chat::provider::tests
           cargo test --bin dominion-rust features::platform::code_index::tests
           cargo test --bin dominion-rust features::cognition::compact::token_budget_tests
           cargo test --bin dominion-rust db::tests
@@ -69,8 +69,8 @@ jobs:
           cargo test --bin dominion-rust engine::program::tests
           cargo test --bin dominion-rust features::cognition::algorithms::tests
           cargo test --bin dominion-rust features::cognition::adaptation_loop::tests
-          cargo test --bin dominion-rust engine::chat::runtime::program::evidence_join_tests
-          cargo test --bin dominion-rust engine::chat::runtime::program::recovery_tests
+          cargo test --bin dominion-rust conversation::chat::runtime::program::evidence_join_tests
+          cargo test --bin dominion-rust conversation::chat::runtime::program::recovery_tests
           cargo test --bin dominion-rust features::forensics::native_adjudication::tests
           cargo test --bin dominion-rust engine::native_agent::tests
           cargo test --bin dominion-rust api::sdk::tests

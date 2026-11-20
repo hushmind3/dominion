@@ -4,6 +4,7 @@ mod bootstrap;
 mod config;
 mod db;
 mod engine;
+mod conversation;
 mod events;
 mod features;
 mod integrations;
