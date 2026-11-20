@@ -1,4 +1,6 @@
     use super::*;
+    use crate::state::AppState;
+    use serde_json::Value;
     use serde_json::json;
     #[test]
     fn error_evidence_survives_into_kernel_replay_gate() {
