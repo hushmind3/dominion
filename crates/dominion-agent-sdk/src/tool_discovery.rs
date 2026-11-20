@@ -93,8 +93,45 @@ pub fn tool_relevance(name:&str,description:&str,query:&str)->i32{
  }
  s
 }
+/// A second, bounded retrieval view over JSON parameter *field names*.
+/// Domain-specific parameters often identify MCP capabilities more precisely
+/// than generic connector names (e.g. "execute" with "issue_number").
+/// The schema is only ranking evidence, never a new dispatch permission.
+/// Bounded depth and vocabulary prevent large or recursive schemas from
+/// consuming unbounded matching work.
+fn schema_vocabulary(schema:&Value,depth:usize,fields:&mut BTreeSet<String>){
+ if depth>=5||fields.len()>=96{return}
+ let Some(object)=schema.as_object() else{return};
+ if let Some(properties)=object.get("properties").and_then(Value::as_object){
+  for (key,subschema) in properties {
+   for word in words(key){if fields.len()<96{fields.insert(word);}}
+   schema_vocabulary(subschema,depth+1,fields);
+   if fields.len()>=96{break}
+  }
+ }
+ if let Some(items)=object.get("items"){schema_vocabulary(items,depth+1,fields);}
+}
+fn schema_relevance(schema:&Value,query:&str)->i32{
+ let mut fields=BTreeSet::new();
+ schema_vocabulary(schema,0,&mut fields);
+ let query=words(&enrich(query));
+ // Generic transport parameters do not distinguish one MCP capability
+ // from another. Ignore them as schema-only ranking signals.
+ query.into_iter().filter(|token|
+  !matches!(token.as_str(),"id"|"name"|"value"|"data"|"args"|"payload"|
+   "input"|"output"|"limit"|"count"|"query"|"text"|"type"|"page")
+  &&fields.contains(token)).take(6).count() as i32*4
+}
+/// Two-view lexical fusion: stable tool name/description relevance plus
+/// bounded parameter-name relevance. Shared by native job and chat discovery.
+/// Unlike a remote embedding call, this is deterministic and has no token cost.
+pub fn tool_relevance_with_schema(
+ name:&str,description:&str,schema:&Value,query:&str
+)->i32{
+ tool_relevance(name,description,query).saturating_add(schema_relevance(schema,query))
+}
 fn score(spec:&ToolSpec, query:&str)->i32{
- tool_relevance(&spec.name,&spec.description,query)
+ tool_relevance_with_schema(&spec.name,&spec.description,&spec.schema,query)
 }
 fn ranked(catalog:&HashMap<String,ToolSpec>,query:&str)->Vec<String>{
  let mut candidates=catalog.values()
@@ -319,6 +356,51 @@ mod tests{
   assert!(tool_relevance("workspace_read_range","Read workspace code",
    "Inspect code")>tool_relevance("unrelated_end","Movie upload","Inspect code"));
   assert_eq!(tool_relevance("","", "Inspect code"),0);
+ }
+ #[test]
+ fn schema_fields_recover_generic_mcp_capabilities_without_granting_others(){
+  let mut c=catalog();
+  let name="mcp__connector__execute_issues";
+  c.insert(name.into(),ToolSpec{
+   name:name.into(),description:"Execute selected connector operation".into(),
+   schema:json!({"type":"object","properties":{
+    "repository_name":{"type":"string"},
+    "issue_number":{"type":"integer"},
+    "options":{"type":"object","properties":{"issue_state":{"type":"string"}}}
+   }}),read_only:true,
+  });
+  let irrelevant="mcp__connector__execute_video";
+  c.insert(irrelevant.into(),ToolSpec{
+   name:irrelevant.into(),description:"Execute selected connector operation".into(),
+   schema:json!({"type":"object","properties":{"video_frames":{"type":"array"}}}),
+   read_only:false,
+  });
+  let q="repository issue";
+  assert!(score(&c[name],q)>score(&c[irrelevant],q));
+  let found=search(&json!({"query":q,"limit":5}),&c).unwrap();
+  let names=found["matches"].as_array().unwrap();
+  assert!(names.iter().any(|item|item["name"]==name));
+  assert!(!names.iter().any(|item|item["name"]==irrelevant));
+  let shortlist=select(&c,q,"",None,&[],&[]);
+  assert!(shortlist.iter().any(|item|item.name==name));
+  assert!(shortlist.iter().all(|item|c.contains_key(&item.name)));
+  // Querying a hidden or unapproved name cannot create an execution grant.
+  let forged=Action{id:"forged".into(),tool:CALL.into(),
+   arguments:json!({"name":"mcp__unapproved","arguments":{}}),
+   depends_on:vec![]};
+  assert!(resolve_bridge(&forged,&c,&[]).is_err());
+ }
+ #[test]
+ fn schema_ranking_is_depth_and_common_parameter_bounded(){
+  let deep=json!({"properties":{"a":{"properties":{"b":{"properties":{
+   "c":{"properties":{"d":{"properties":{"deep_secret":{"type":"string"}}}}}
+  }}}}}});
+  assert_eq!(schema_relevance(&deep,"deep secret"),0);
+  let generic=json!({"properties":{"payload":{"type":"string"},
+   "id":{"type":"string"},"name":{"type":"string"}}});
+  assert_eq!(schema_relevance(&generic,"payload id name"),0);
+  assert!(schema_relevance(&json!({"properties":{"issue_number":{"type":"integer"}}}),
+   "issue number")>0);
  }
  #[test]
  fn small_catalog_stays_fully_visible_without_new_discovery_rounds(){
