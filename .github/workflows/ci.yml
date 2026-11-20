@@ -11,12 +11,9 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
-      - 'scripts/check-runtime-architecture.mjs'
-      - 'web/**'
       - 'web/**'
       - 'src-tauri/**'
       - 'scripts/**'
-      - 'web/package*.json'
   pull_request:
     branches: [main]
     paths:
@@ -25,11 +22,9 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
-      - 'scripts/check-runtime-architecture.mjs'
       - 'web/**'
       - 'src-tauri/**'
       - 'scripts/**'
-      - 'web/package*.json'
 
 permissions:
   contents: read
