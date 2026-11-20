@@ -316,6 +316,14 @@ pub(crate) fn project(
     let volatile_suffix = messages.iter().skip(1)
         .filter(|row|row["_dominion_volatile"]==true)
         .map(wire_message).collect::<Vec<_>>();
+    // A tool round can append assistant/tool-result pairs after the retrieval
+    // snapshot. Keep that snapshot in its original position on the wire so
+    // the next provider call retains the same prefix as the previous call.
+    let first_volatile = messages.iter().position(|row|row["_dominion_volatile"]==true);
+    let volatile_before = first_volatile.and_then(|index|messages.iter().enumerate()
+        .skip(index + 1)
+        .find(|(_,row)|row["_dominion_volatile"]!=true)
+        .map(|(index,row)|frame_key(row,source,index)));
     let fresh = messages.iter().enumerate().skip(1)
         .filter(|(_,message)|message["_dominion_volatile"]!=true)
         .map(|(index, message)| {
@@ -481,10 +489,17 @@ pub(crate) fn project(
     let reused_estimate = if reused == 0 { 0 } else { estimate_frames(&frames[..reused]) };
     let new_estimate = if reused == frames.len() { 0 } else { estimate_frames(&frames[reused..]) };
     let mut projected = vec![wire_message(&messages[0])];
-    projected.extend(frames.iter().map(|frame|frame["message"].clone()));
-    // Placing volatile data after the cacheable prefix prevents previous
-    // retrieval/date blocks from accumulating across turns or restarts.
-    projected.extend(volatile_suffix);
+    let mut volatile_sent = false;
+    for frame in &frames {
+        if !volatile_sent && volatile_before.as_deref()==frame["key"].as_str() {
+            projected.extend(volatile_suffix.iter().cloned());
+            volatile_sent=true;
+        }
+        projected.push(frame["message"].clone());
+    }
+    // At the first model call of a turn the retrieval is the last input;
+    // later tool rounds preserve its position before new tool observations.
+    if !volatile_sent { projected.extend(volatile_suffix); }
     plan["workingView"] = json!({
         "epoch":epoch,"reusedFrames":reused,"appendedFrames":frames.len().saturating_sub(reused),
         "rebaseReason":reason,"sourceMessageId":source,
@@ -1279,6 +1294,17 @@ mod tests {
         assert_eq!(wire.matches("CORRECTED_MEMORY").count(),1);
         assert!(wire.contains("answer one"));
         assert_eq!(second["workingView"]["rebaseReason"],Value::Null);
+        let mut with_tools=messages("owner-3","LATEST_MEMORY");
+        with_tools.push(json!({"role":"assistant","content":"",
+            "tool_calls":[{"id":"read-3","type":"function",
+                "function":{"name":"workspace_read","arguments":"{}"}}]}));
+        with_tools.push(json!({"role":"tool","tool_call_id":"read-3","content":"verified result"}));
+        let (tool_wire,_)=project(&state,&provider,&with_tools,&[],"private:volatile",&mut second);
+        let dynamic_index=tool_wire.iter().position(|r|r["content"].as_str().is_some_and(|x|x.contains("LATEST_MEMORY"))).unwrap();
+        let tool_index=tool_wire.iter().position(|r|r["role"]=="assistant"&&r["tool_calls"].is_array()).unwrap();
+        assert_eq!(tool_index,dynamic_index+1,
+            "retrieval must remain before the newest tool call, not break its cached prefix");
+        assert_eq!(tool_wire[tool_index+1]["tool_call_id"],"read-3");
         drop(state);
         std::fs::remove_dir_all(root).unwrap();
     }
