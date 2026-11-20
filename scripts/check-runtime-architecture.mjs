@@ -190,6 +190,45 @@ if(!toolSource.includes('pub(crate) use delegation::{profile_tool_allowed, profi
    !delegateSource.includes('pub(crate) fn profile_tool_allowed(')||
    !runtime.includes('profile_tool_visible(&session,tool_name(tool))')||
    !capabilitySource.includes('profile_tool_allowed(&session,name,&arguments)')||
-   !dispatchSource.includes('let role_admitted = tools::profile_tool_allowed(session, &call.name, &arguments);')||
+   !dispatchSource.includes('let role_admitted = tools::profile_tool_allowed(session, &call.name, &arguments)')||
+   !dispatchSource.includes('extensions::tool_allowed(')||
    !dispatchSource.includes('if !role_admitted || effect_block.is_some()'))
   throw Error('Task-role tool admission can be bypassed by catalog/discovery/approval')
+
+// Backend extension boundary: provider discovery, optional knowledge and
+// channel drivers must not regain direct dependencies from the Rust chat loop.
+const extensionHost=readFileSync(path.join(root,'src/engine/extensions/mod.rs'),'utf8')
+const extensionTools=readFileSync(path.join(root,'src/engine/extensions/tools.rs'),'utf8')
+const extensionKnowledge=readFileSync(path.join(root,'src/engine/extensions/knowledge.rs'),'utf8')
+const extensionChannels=readFileSync(path.join(root,'src/engine/extensions/channels.rs'),'utf8')
+const extensionJobs=readFileSync(path.join(root,'src/engine/extensions/jobs.rs'),'utf8')
+const privateContext=readFileSync(path.join(root,'src/engine/chat/context.rs'),'utf8')
+const roomContext=readFileSync(path.join(root,'src/engine/chat/room_context.rs'),'utf8')
+const apiRoutes=readFileSync(path.join(root,'src/api/mod.rs'),'utf8')
+if(!modules.includes('pub mod extensions;')||
+   !extensionHost.includes('pub enum Extension')||
+   !extensionHost.includes('pub fn enabled(')||
+   !extensionHost.includes('pub fn tool_allowed(')||
+   !extensionTools.includes('pub async fn external(')||
+   !extensionTools.includes('pub async fn invoke_mcp(')||
+   !extensionKnowledge.includes('pub fn memory_context(')||
+   !extensionChannels.includes('pub fn start_inbound(')||
+   !extensionJobs.includes('pub async fn run('))
+  throw Error('Backend optional-extension host or its typed providers are missing')
+if(/mcp::definitions\(|mcp::call\(/.test(runtime+adapter+dispatchSource)||
+   !runtime.includes('extensions::tools::external(')||
+   !adapter.includes('extensions::tools::catalog(')||
+   !dispatchSource.includes('extensions::tools::invoke_mcp(')||
+   !capabilitySource.includes('extensions::tools::catalog('))
+  throw Error('Core chat/discovery regained a direct MCP server dependency')
+if(!privateContext.includes('extensions::knowledge::memory_context(')||
+   !roomContext.includes('extensions::knowledge::memories_for_room(')||
+   !roomContext.includes('extensions::knowledge::visible_skills(')||
+   !toolSource.includes('extensions::tool_allowed('))
+  throw Error('Optional memory/skills bypass the extension gate')
+if(!bootstrap.includes('extensions::channels::start_inbound(')||
+   !jobs.includes('extensions::channels::start_outbound(')||
+   !jobs.includes('extensions::jobs::run(')||
+   !apiRoutes.includes('/api/extensions/runtime')||
+   !apiRoutes.includes('/api/sessions/:id/extensions'))
+  throw Error('Messenger or extension policy is no longer owned by the backend extension host')
