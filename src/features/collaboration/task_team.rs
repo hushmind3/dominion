@@ -323,6 +323,17 @@ pub(crate) fn cancel_children(state:&AppState,parent:&str,tasks:&[Task]){
         }
     }
 }
+/// Recovery can leave a child in the durable queue after its Lead is
+/// requeued. A Lead must wake that child directly: with one ordinary worker
+/// the parent would otherwise occupy the only slot while waiting forever.
+/// Respect the host's retry backoff and don't spin on deferred children.
+fn child_due_for_launch(child:&Value)->bool {
+    child["status"]=="queued"
+        &&child["cancelRequested"]!=true
+        &&child["availableAt"].as_str()
+            .and_then(|s|chrono::DateTime::parse_from_rfc3339(s).ok())
+            .is_none_or(|time|time<=chrono::Utc::now())
+}
 /// A durable parent job, not an extra model session. Worker status comes only
 /// from the existing native job journal; claims of success in worker text do
 /// not satisfy dependencies.
@@ -371,6 +382,15 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
             return Ok(json!({"status":"needs_review",
                 "reason":"Worker outcome requires owner review",
                 "blockedTasks":errors,"tasks":project(&ctx.state,job)["tasks"]}));
+        }
+        // After a supervisor restart a queued child already exists, so the
+        // enqueue branch below intentionally skips it. Wake it through the
+        // same CAS-protected start_now path; never wait for a free regular
+        // worker slot that may be occupied by this very Team Lead.
+        for (task,row) in &rows {
+            if row.as_ref().is_some_and(child_due_for_launch) {
+                jobs::start_now(ctx.state.clone(),child_id(parent,&task.id));
+            }
         }
         if completed.len()==team.tasks.len() {
             ctx.checkpoint(json!({"teamState":{"contractVersion":1,
@@ -557,6 +577,49 @@ mod tests {
         job["input"]["parentRunId"]=json!("lead");
         job["input"]["bridgeRuntime"]=json!("codex");
         assert!(!belongs_to_team("lead",read,&job));
+    }
+
+    #[tokio::test]
+    async fn recovered_queued_child_does_not_deadlock_with_one_supervisor_worker(){
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-team-single-worker-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=crate::config::Config{
+            port:0,data_dir:dir.clone(),web_dir:dir.join("web"),workspace:dir.clone(),
+        };
+        let state=AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        let task=Task{id:"inspect".into(),prompt:"Read source".into(),
+            mode:Mode::Read,runtime:WorkerRuntime::Native,depends_on:vec![],
+            agent_id:None,provider_id:Some("missing-provider".into()),
+            model:None,allowed_tools:vec![],checks:vec![]};
+        let team=Team{goal:"Recover task".into(),tasks:vec![task.clone()],
+            max_parallel:1};
+        state.store.put("job",&json!({"id":"team-lead","kind":"team",
+            "status":"running","attempts":1,"input":team})).unwrap();
+        state.store.put("job",&json!({"id":child_id("team-lead","inspect"),
+            "kind":"prompt","status":"queued","attempts":0,
+            "input":input(&task,"team-lead")})).unwrap();
+        let lead=state.store.get("job","team-lead").unwrap();
+        let ctx=JobContext::new(state.clone(),"team-lead".into());
+        // No general job worker is started: only the Team Lead is running.
+        // A queued child must still be claimed, fail its bad route and settle.
+        let outcome=tokio::time::timeout(std::time::Duration::from_secs(8),
+            run(&ctx,&lead)).await.expect("Recovered child must be woken");
+        let outcome=outcome.expect("Team Lead itself remains operational");
+        assert_eq!(outcome["status"],"needs_review");
+        let child=state.store.get("job",&child_id("team-lead","inspect")).unwrap();
+        assert_ne!(child["status"],"queued");
+        assert_eq!(child["status"],"failed");
+        crate::test_support::cleanup_dir(dir);
+    }
+    #[test]
+    fn recovered_child_obeys_retry_backoff_and_parent_cancellation(){
+        let future=(chrono::Utc::now()+chrono::Duration::minutes(5)).to_rfc3339();
+        assert!(!child_due_for_launch(&json!({"status":"queued","availableAt":future})));
+        assert!(!child_due_for_launch(&json!({"status":"queued","cancelRequested":true})));
+        assert!(child_due_for_launch(&json!({"status":"queued"})));
     }
     #[test] fn immutable_child_id_is_scoped_to_parent(){
         assert_ne!(child_id("lead-a","research"),child_id("lead-b","research"));
