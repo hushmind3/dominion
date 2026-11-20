@@ -1,4 +1,4 @@
-# DOMINION sub2 — active Rust architecture (2026-11-19)
+# DOMINION sub2 — active Rust architecture (2026-11-20)
 
 This document describes **dominion-sub2 source**, not the current main backend.
 The React frontend was synced from main at `f86a36e`; backend-specific
@@ -11,8 +11,8 @@ differences remain intentional and are checked in CI.
   model iteration, tool admission, provider messages and terminal outcomes.
 - `crates/dominion-agent-kernel/` defines the sub2-native budget, scheduling
   and verification contracts. External tool adapters are not independent agents.
-- `src/engine/jobs.rs` owns the durable job queue; retired Money wake-up
-  loops, domain-specific jobs and HTTP routers are no longer registered.
+- `src/engine/jobs.rs` owns the durable job queue and executes only supported
+  native job kinds; unsupported historical kinds have no specialized handler.
 - `src/engine/effect.rs`, `src/engine/verification.rs` and `src/db.rs`
   preserve permissions, verification receipts and durable SQLite state.
 
@@ -47,8 +47,9 @@ rather than an inert browser-only button.
 
 ## Source review and gates
 
-- `scripts/check-sub2-contract.mjs` scans active Rust/TypeScript source for
-  removed Money calls, checks duplicate HTTP routes and critical UI endpoints.
+- `scripts/check-sub2-contract.mjs` scans executable source for removed
+  legacy modules, routes and retired SDK capabilities; it also checks critical UI/API contracts.
+- `scripts/sub2-source-audit.mjs` detects duplicate API routes, executable files and long identical source windows.
 - `web/tests/*.test.mjs` covers model selection, free-model labeling,
   refresh targeting and chat stop behavior.
 - `.github/workflows/ci.yml` runs Rust regression contracts and Node tests.
