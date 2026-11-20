@@ -679,17 +679,6 @@ pub fn builtins() -> Vec<Value> {
 }
 
 pub fn seed(state: &AppState) -> Vec<Value> {
-    // Previously seeded standalone self-improvement algorithms may survive in
-    // SQLite. Retire their execution authority; retain records as history.
-    for mut old in state.store.all("algorithm") {
-        if old["kind"] == "selfimprove.search" && old["status"] != "disabled" {
-            old["status"] = json!("disabled");
-            old["retiredReason"] = json!("standalone improvement campaign removed");
-            if let Some(saved) = state.store.put("algorithm", &old) {
-                state.bus.record("algorithm", &saved);
-            }
-        }
-    }
     let mut saved = Vec::new();
     let mut active_kinds = state
         .store
@@ -1798,6 +1787,7 @@ mod tests {
         state.store.put("algorithm",&json!({"id":"legacy-search",
             "kind":"selfimprove.search","name":"old-loop",
             "implementation":"failure-clusters","status":"active"})).unwrap();
+        crate::migrations::run(&state).unwrap();
         seed(&state);
         let old=state.store.get("algorithm","legacy-search").unwrap();
         assert_eq!(old["status"],"disabled");

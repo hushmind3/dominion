@@ -7,6 +7,7 @@ pub fn run(state: &AppState) -> Result<(), String> {
     provider_secrets(state)?;
     stale_leases(state)?;
     collection_names(state)?;
+    retire_standalone_rsi(state)?;
     legacy_improvements(state)?;
     algorithm_statistics(state)?;
     interrupted_executions(state)?;
@@ -49,8 +50,9 @@ fn interrupted_executions(state: &AppState) -> Result<(), String> {
     Ok(())
 }
 
-/// This process owns the database, so leases from another owner or already
-/// expired cannot represent live work. Release them before any job resumes.
+/// Only expired leases may be reclaimed. Another process can hold a valid
+/// active read/write lease against this shared SQLite database, so its owner
+/// must not be revoked during our startup.
 fn stale_leases(state: &AppState) -> Result<(), String> {
     let released = state.store.release_stale_leases(&state.instance_id);
     if released > 0 {
@@ -58,6 +60,34 @@ fn stale_leases(state: &AppState) -> Result<(), String> {
             "run_lease.recovered",
             json!({"released": released, "instance": state.instance_id}),
         );
+    }
+    Ok(())
+}
+
+/// One-time tombstone for the retired standalone RSI policy. This belongs
+/// in migrations, not the live algorithm catalog's every-boot seed path.
+/// Keep archived records for review without allowing execution or activation.
+fn retire_standalone_rsi(state:&AppState)->Result<(),String>{
+    let marker="retire-standalone-rsi-algorithms-v1";
+    if state.store.get("migration",marker).is_some(){return Ok(());}
+    let mut disabled=0usize;
+    for mut old in state.store.try_all("algorithm")? {
+        if old["kind"]!="selfimprove.search"||old["status"]=="disabled"{
+            continue;
+        }
+        old["status"]=json!("disabled");
+        old["retiredReason"]=json!("standalone improvement campaign removed");
+        state.store.put("algorithm",&old)
+            .ok_or("Could not disable obsolete RSI algorithm")?;
+        disabled+=1;
+    }
+    state.store.put("migration",&json!({
+        "id":marker,"kind":"retire_standalone_rsi","version":1,
+        "disabled":disabled,"appliedAt":chrono::Utc::now().to_rfc3339()
+    })).ok_or("Could not persist standalone RSI retirement marker")?;
+    if disabled>0 {
+        state.store.audit("migration.retire_standalone_rsi",
+            json!({"disabled":disabled}));
     }
     Ok(())
 }
@@ -285,6 +315,27 @@ mod tests {
             state.store.get("approval", "a").unwrap()["status"],
             "interrupted"
         );
+        crate::test_support::cleanup_dir(dir);
+    }
+
+    #[test]
+    fn obsolete_rsi_algorithms_are_tombstoned_once_without_erasing_history(){
+        let (state,dir)=state();
+        state.store.put("algorithm",&json!({
+            "id":"old-rsi","kind":"selfimprove.search",
+            "status":"active","name":"old-autonomous-optimizer"
+        })).unwrap();
+        run(&state).unwrap();
+        run(&state).unwrap();
+        let historic=state.store.get("algorithm","old-rsi").unwrap();
+        assert_eq!(historic["status"],"disabled");
+        assert_eq!(historic["retiredReason"],
+            "standalone improvement campaign removed");
+        let marker=state.store.get("migration",
+            "retire-standalone-rsi-algorithms-v1").unwrap();
+        assert_eq!(marker["disabled"],1);
+        assert!(crate::engine::algorithms::activate_checked(
+            &state,"old-rsi",true).is_err());
         crate::test_support::cleanup_dir(dir);
     }
 
