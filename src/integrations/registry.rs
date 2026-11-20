@@ -19,6 +19,16 @@ pub fn filter_available(state:&AppState,definitions:Vec<Value>)->Vec<Value>{
  accounts::tools::filter_available(state,definitions)
 }
 
+/// Channel delivery is an adapter task, not a core engine job type.
+pub async fn dispatch_job(
+ ctx:&crate::engine::jobs::JobContext,job:&Value,kind:&str
+)->Option<Result<Value,String>>{
+ match kind {
+  "discord" => Some(crate::integrations::channels::discord::run(ctx,job).await),
+  _=>None,
+ }
+}
+
 pub fn requires_approval(name:&str)->bool{
  browser::requires_approval(name)||accounts::tools::requires_approval(name)
 }

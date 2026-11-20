@@ -1,7 +1,7 @@
 //! Runtime composition. The process claims its port before touching durable
 //! state, so opening an already-running app cannot interrupt its approvals.
 use crate::{
-    api, config::Config, db::Store, engine, integrations, migrations, platform, state::AppState, vault::Vault,
+    api, config::Config, db::Store, engine, features, integrations, migrations, platform, state::AppState, vault::Vault,
 };
 use std::future::IntoFuture;
 
@@ -64,10 +64,9 @@ async fn serve(mut config: Config, open_browser: bool, parent_bound: bool) -> Re
         }
     }
     engine::jobs::recover(&state);
-    engine::wake::recover(&state);
-    engine::algorithms::seed(&state);
+    features::recover(&state);
     engine::jobs::start(state.clone());
-    engine::maintenance::start(state.clone());
+    features::start(state.clone());
     {
         let refresh_state = state.clone();
         tokio::spawn(async move {

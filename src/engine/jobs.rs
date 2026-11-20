@@ -1,6 +1,5 @@
 use crate::engine::chat::TurnRequest;
 use crate::engine::run_quiet;
-use crate::engine::{learning, reflect, rooms};
 use crate::state::AppState;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -490,14 +489,18 @@ async fn run_job(state: AppState, job: Value) {
             "finishedAt":chrono::Utc::now().to_rfc3339()}));
         return;
     }
+    // Only the language-to-action executor runs in the core job worker.
+    // Optional job families attach through the host composition boundary.
     let result = match kind.as_str() {
-        "room" | "meeting" => rooms::run(&context, &job).await,
         "prompt" => run_prompt(&context, &job).await,
         "resume" => run_resume(&context, &job).await,
-        "learn" => learning::run(&context, &job).await,
-        "reflect" => reflect::run(&context, &job).await,
-        "discord" => crate::integrations::channels::discord::run(&context, &job).await,
-        other => Err(format!("지원하지 않는 작업 종류입니다: {other}")),
+        other => match crate::features::dispatch_job(&context,&job,other).await {
+            Some(result) => result,
+            None => match crate::integrations::registry::dispatch_job(&context,&job,other).await {
+                Some(result) => result,
+                None => Err(format!("지원하지 않는 작업 종류입니다: {other}")),
+            }
+        },
     };
 
     match result {
