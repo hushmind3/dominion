@@ -129,6 +129,39 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[tokio::test]
+    async fn disabled_provider_never_discovers_or_dispatches_remote_mcp_tools(){
+        let root=std::env::temp_dir().join(format!("dominion-extension-catalog-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=Config{port:0,data_dir:root.clone(),web_dir:root.join("web"),workspace:root.clone()};
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),Vault::open(&config.key_path()));
+        state.store.put("session",&json!({"id":"s","extensions":{
+            "mcp":false,"memory":false,"skills":false}})).unwrap();
+        state.store.put("mcp",&json!({"id":"remote-unavailable",
+            "name":"Remote unavailable","enabled":true,"transport":"http",
+            "url":"http://127.0.0.1:1/mcp"})).unwrap();
+        state.store.put("skill",&json!({"id":"allowed-skill","name":"Skill",
+            "instructions":"This content is optional","scope":"global","enabled":true,
+            "status":"active"})).unwrap();
+        assert!(knowledge::visible_skills(&state,"s",None).is_empty());
+        assert!(tools::external(&state,"s",None).await.is_empty());
+        assert!(tools::invoke_mcp(&state,"s",None,"mcp__remote_unavailable__call",
+            &json!({})).await.is_err());
+        let catalog=tools::catalog(&state,"s",None).await;
+        let names=catalog.iter().filter_map(|tool|
+            tool.pointer("/function/name").and_then(Value::as_str)
+        ).collect::<Vec<_>>();
+        assert!(names.contains(&"workspace_read"));
+        assert!(names.contains(&"web_search"));
+        assert!(!names.contains(&"memory_search"));
+        assert!(!names.contains(&"memory_store"));
+        assert!(!names.contains(&"skill_view"));
+        assert!(!names.contains(&"skill_propose"));
+        assert!(!names.iter().any(|name|name.starts_with("mcp__")));
+        drop(state);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn policy_rejects_unknown_or_untyped_capability_keys(){
         assert_eq!(validate_policy(&json!({"mcp":false,"memory":false})).unwrap(),
