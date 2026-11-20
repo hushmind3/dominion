@@ -92,7 +92,7 @@ const current = await api.nativeRuns.get(run.id)
 // 승인 대기·중단·실패 상태를 확인한 뒤 계속 진행합니다.
 ```
 
-`sdk/typescript`는 REST/SSE 클라이언트이며 별도 에이전트 루프를 실행하지 않습니다. `packages/sdk-typescript`는 이전 `/api/harness/runs` 클라이언트를 유지합니다. Rust 개발자는 `sdk/rust`에서 재노출하는 `dominion_sdk::harness::{Kernel, RunRequest, Model, Tools, Evidence, Journal}`를 사용합니다.
+`sdk/typescript`가 유일한 TypeScript REST/SSE SDK입니다. 기존 `/api/harness/runs` 호출은 Rust의 호환 API에서 계속 받아 동일한 실행 커널로 연결하며 중복 클라이언트 패키지는 제거했습니다. Rust 개발자는 `sdk/rust`에서 재노출하는 `dominion_sdk::harness::{Kernel, RunRequest, Model, Tools, Evidence, Journal}`를 사용합니다.
 
 ## 💾 컨텍스트·스킬·토큰 최적화
 

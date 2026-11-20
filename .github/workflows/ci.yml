@@ -40,11 +40,8 @@ jobs:
           cargo test -p dominion-agent-sdk --lib one_unrepresentable_error_does_not_hide_smaller_old_failure
           cargo test -p dominion-agent-sdk --lib empty_query_lists_a_bounded_recent_page_without_full_log_projection
       - run: cargo test --release
-      - name: Validate both TypeScript SDK public clients (macOS)
+      - name: Validate canonical TypeScript SDK public client (macOS)
         if: matrix.os == 'macos-latest'
         run: |
           npm install --prefix sdk/typescript --no-package-lock --ignore-scripts --no-audit
           npm test --prefix sdk/typescript
-          npm install --prefix packages/sdk-typescript --no-package-lock --ignore-scripts --no-audit
-          npm run typecheck --prefix packages/sdk-typescript
-          npm run build --prefix packages/sdk-typescript

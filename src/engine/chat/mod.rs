@@ -182,7 +182,7 @@ impl TurnRequest {
             },
             reasoning_language: string("reasoningLanguage"),
             // Experience recording and strategy improvement require an
-            // explicit owner opt-in; normal chat never starts RSI/learning.
+            // Explicit owner opt-in; ordinary chat does not start unattended learning.
             auto_learning: value
                 .get("autoLearning")
                 .and_then(|item| item.as_bool())

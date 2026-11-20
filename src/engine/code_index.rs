@@ -1,11 +1,8 @@
 //! Durable, deterministic repository inspection.
 //!
-//! The expensive part of self-improvement was not reading code once; it was
-//! making a model rediscover the same repository on every attempt. This module
-//! reads every source file once, stores a content hash, symbols, tests and
-//! static findings, and reuses unchanged files on later inspections. RSI then
-//! receives a compact file map and the full context of the likely targets
-//! instead of spending hundreds of thousands of input tokens listing the tree.
+//! Index each source file by content hash, symbols, tests and static findings.
+//! Reuse unchanged records for repository inspection instead of repeatedly
+//! sending the same source tree and file bodies to the model.
 use crate::{engine::memory, state::AppState};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -38,10 +35,9 @@ fn is_source(path: &Path) -> bool {
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("");
-    // The coordinator's evaluation corpus is not source-edit context. Keep
-    // it out of discovery, target selection and automatically inlined excerpts.
-    if name == "rsi_oracle_fixture.rs" || name == "rsi_meta.rs"
-        || name.ends_with(".min.js") || name.ends_with(".lock") || name.starts_with('.') {
+    // Exclude generated/minified, lock and hidden files, not historic names
+    // tied to a removed internal campaign.
+    if name.ends_with(".min.js") || name.ends_with(".lock") || name.starts_with('.') {
         return false;
     }
     matches!(

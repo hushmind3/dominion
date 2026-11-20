@@ -15,7 +15,7 @@ const absent=[
  'web/src/components/VideoModelInstall.tsx','web/scripts/video-studio-smoke.mjs',
  'src/api/benchmark.rs','src/api/experiments.rs','src/engine/scheduler.rs',
  'scripts/rsi-lab.mjs','scripts/rsi-measure.mjs',
- 'crates/harness'
+ 'crates/harness', 'packages/sdk-typescript'
 ];
 // Prevent retired-domain code, clients and docs from silently returning.
 // Assemble the forbidden identifiers, rather than introducing them into
@@ -37,7 +37,13 @@ for(const file of tracked){
  assert.ok(!retiredTerms.some(term=>content.includes(term)),
   'Retired domain reference reintroduced: '+file);
 }
-for(const p of absent)assert.ok(!exists(p),'Retired built-in product feature still exists: '+p);
+for(const p of absent)assert.ok(!exists(p),'Retired or duplicate product path still exists: '+p);
+// The old campaign provider policy must not silently return to the live chat
+// routing path. Historical job records are handled by a separate archive guard.
+const liveProvider=read('src/engine/chat/provider.rs');
+for(const stale of ['rsiRun','rsiLocalOnly','rsiApprovedProviderId',
+ 'rsiApprovedModel','rsiExplicitFocus','rsiAutoFocus','rsi_edit_requires_tool'])
+ assert.ok(!liveProvider.includes(stale),'Retired model-policy branch returned: '+stale);
 for(const p of fs.readdirSync('src/engine').filter(p=>/^rsi.*\.rs$/.test(p))){
  assert.fail('Live Rust RSI engine module survived retirement: '+p);
 }

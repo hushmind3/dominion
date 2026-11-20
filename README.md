@@ -43,7 +43,7 @@ The full `main/cloud/` Cloudflare Worker implementation, D1 identity/usage/payme
 | Providers and costs | Configurable local/remote model routes, native function calls where supported, usage records, selected provider cache hints, and Codex WebSocket incremental history where its connection/prefix survives. |
 | Tools | Workspace/file/shell actions, selected browser/web and connected-service tools, MCP manifests, scoped Skills and progressively discovered tool schemas. Tools do not receive authority just because a model mentions their names. |
 | Memory and recovery | SQLite-backed sessions, correction/learning records, bounded retrieval of past job receipts, cancellation and review of uncertain prior effects. |
-| Client integrations | `sdk/rust` re-exports the kernel and provides an HTTP client; `sdk/typescript` is the primary typed HTTP/SSE client; `packages/sdk-typescript` supports the older `/api/harness/runs` contract. |
+| Client integrations | `sdk/rust` re-exports the kernel and provides an HTTP client; `sdk/typescript` is the single supported TypeScript HTTP/SSE client. The older `/api/harness/runs` endpoint remains a narrow compatibility adapter to the same native Rust jobs; no second client package is maintained. |
 
 ### One native job kernel, two product entry paths
 
