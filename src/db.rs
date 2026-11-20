@@ -1640,7 +1640,7 @@ impl Store {
                     COALESCE(SUM(CAST(json_extract(detail,'$.cacheCreationTokens') AS INTEGER)),0),
                     COALESCE(SUM(CASE WHEN json_type(detail,'$.cachedPromptTokens')='integer' THEN 1 ELSE 0 END),0),
                     COALESCE(SUM(CASE WHEN json_extract(detail,'$.promptTokens') IS NOT NULL
-                        AND json_type(detail,'$.cachedPromptTokens')!='integer' THEN 1 ELSE 0 END),0),
+                        AND COALESCE(json_type(detail,'$.cachedPromptTokens'),'null')!='integer' THEN 1 ELSE 0 END),0),
                     COALESCE(SUM(CASE WHEN json_type(detail,'$.cacheCreationTokens')='integer' THEN 1 ELSE 0 END),0)
              FROM audit
              WHERE event='model.usage' AND json_extract(detail,'$.sessionId')=?1",
@@ -1904,6 +1904,36 @@ mod tests {
         assert!(released >= 2, "released {released}");
         assert!(store.active_lease("session:s").is_none());
         assert!(store.acquire_lease("session:s", "owner-c", 60_000).is_some());
+    }
+
+    #[test]
+    fn session_cache_ledger_never_turns_unknown_hits_into_zero() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.audit("model.usage",json!({
+            "sessionId":"cache-session","providerId":"p","model":"m","purpose":"chat",
+            "promptTokens":1000,"completionTokens":50,"totalTokens":1050,
+            "cachedPromptTokens":600,"cacheCreationTokens":300,"estimated":false
+        }));
+        let known=store.session_usage("cache-session");
+        assert_eq!(known["calls"],1);
+        assert_eq!(known["cachedPromptTokens"],600);
+        assert_eq!(known["uncachedPromptTokens"],400);
+        assert_eq!(known["cacheCreationTokens"],300);
+        assert_eq!(known["cacheReportedCalls"],1);
+        assert_eq!(known["cacheUnknownCalls"],0);
+        store.audit("model.usage",json!({
+            "sessionId":"cache-session","providerId":"p","model":"m","purpose":"chat",
+            "promptTokens":500,"completionTokens":20,"totalTokens":520,
+            "estimated":false
+        }));
+        let partial=store.session_usage("cache-session");
+        assert_eq!(partial["calls"],2);
+        assert_eq!(partial["promptTokens"],1500);
+        assert_eq!(partial["cacheUnknownCalls"],1);
+        assert_eq!(partial["cachedPromptTokens"],Value::Null,
+            "missing provider cache telemetry must never appear as zero");
+        let empty=store.session_usage("other-session");
+        assert_eq!(empty["cachedPromptTokens"],Value::Null);
     }
 
     #[test]
