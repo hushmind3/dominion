@@ -37,6 +37,10 @@ pub(super) async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Valu
     let prompt = required_arg(args, "prompt")?;
     let profile = args["profile"].as_str().unwrap_or("general");
     let external=args["externalRuntime"].as_str();
+    let resume_from=args["resumeFromJobId"].as_str();
+    if resume_from.is_some()&&external.is_none(){
+        return Err("외부 CLI 작업에만 resumeFromJobId를 사용할 수 있습니다.".into());
+    }
     if external.is_some() && (profile!="inspection"||args["isolatedWorktree"]!=true){
         return Err("외부 Agent Bridge는 inspection 역할과 isolatedWorktree=true에서만 실행할 수 있습니다.".into());
     }
@@ -90,7 +94,38 @@ pub(super) async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Valu
         "readOnly":args["readOnly"]==true || profile=="inspection"});
     if crate::engine::sandbox::required(ctx.state,ctx.session_id){session["shellSandbox"]=json!("required");}
     if args["isolatedWorktree"]==true {
-        session["delegationWorkspace"]=crate::engine::delegation_worktree::prepare(ctx.state,ctx.workspace,&job_id).await?;
+        session["delegationWorkspace"]=if let Some(previous_id)=resume_from{
+            // Explicit follow-up only. The prior worker, successful CLI
+            // terminal receipt and immutable read-only checkout must all
+            // belong to this same owner and model agent.
+            let previous=ctx.store.get("job",previous_id)
+                .ok_or("이어갈 외부 Agent 작업이 없습니다.")?;
+            if previous["status"]!="completed"
+                ||previous["input"]["parentSessionId"]!=ctx.session_id
+                ||previous["input"]["agentId"]!=agent_id
+                ||previous["input"]["delegationProfile"]!="inspection"
+                ||previous["input"]["externalRuntime"]!=external
+                ||previous["result"]["externalRunId"].as_str().is_none(){
+                return Err("소유권과 완료 증거가 일치하는 외부 조사 작업만 이어갈 수 있습니다.".into());
+            }
+            let prior_run=ctx.store.get("external_agent_run",
+                previous["result"]["externalRunId"].as_str().unwrap())
+                .ok_or("기존 외부 실행 기록이 없습니다.")?;
+            if prior_run["status"]!="completed"
+                ||prior_run["jobId"]!=previous["id"]
+                ||prior_run["externalSessionId"].as_str()
+                    .is_none_or(|id|uuid::Uuid::parse_str(id).is_err()){
+                return Err("정상 완료된 외부 CLI 세션 ID가 없습니다.".into());
+            }
+            let old_session=previous["input"]["sessionId"].as_str()
+                .and_then(|id|ctx.store.get("session",id))
+                .ok_or("기존 외부 조사 세션이 없습니다.")?;
+            crate::engine::delegation_worktree::reuse_inspection_workspace(
+                ctx.state,&old_session,ctx.workspace).await?
+        }else{
+            crate::engine::delegation_worktree::prepare(
+                ctx.state,ctx.workspace,&job_id).await?
+        };
         session["shellSandbox"]=json!("required");
     }
     let job=json!({"id":job_id,"kind":"prompt","status":"queued","queuedAt":chrono::Utc::now().to_rfc3339(),
@@ -101,10 +136,14 @@ pub(super) async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Valu
             "parentAgentId":ctx.agent_id,"delegation":true,
             "parentGeneration":ctx.state.cancellation_generation(ctx.session_id),
             "dependsOnJobIds":deps,"delegationProfile":profile,
-            "externalRuntime":external}});
+            "externalRuntime":external,"resumeFromJobId":resume_from}});
     let prepared=session["delegationWorkspace"].clone();
     if let Err(error)=crate::engine::execution_budget::enqueue_child(ctx.state,ctx.session_id,session,job,args["budget"].as_u64()){
-        if prepared.is_object(){let _=crate::engine::delegation_worktree::discard_prepared(&prepared).await;}
+        // A resumed inspector points at an existing, completed worker's
+        // checkout: never discard that original worktree on enqueue failure.
+        if resume_from.is_none()&&prepared.is_object(){
+            let _=crate::engine::delegation_worktree::discard_prepared(&prepared).await;
+        }
         return Err(error);
     }
     // Subscribe before scheduling: a very fast child can finish before the
