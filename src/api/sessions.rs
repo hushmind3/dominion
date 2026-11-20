@@ -9,13 +9,46 @@ pub async fn list_sessions(State(state): State<AppState>) -> Json<Value> {
 }
 
 pub async fn create_session(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    // Extension policy is an optional capability attenuation, never an
+    // unvalidated arbitrary record copied into session state.
+    let extensions=if let Some(policy)=body.get("extensions"){
+        match engine::extensions::validate_policy(policy){
+            Ok(policy)=>Some(policy),
+            Err(message)=>return error(StatusCode::BAD_REQUEST,&message),
+        }
+    }else{None};
     // New private chats cannot overwrite a bound room/external transcript.
-    let record = json!({"id":uuid::Uuid::new_v4().to_string(),"title":body["title"].as_str().filter(|title|!title.trim().is_empty()).unwrap_or("새 대화").chars().take(200).collect::<String>(),
+    let mut record = json!({"id":uuid::Uuid::new_v4().to_string(),"title":body["title"].as_str().filter(|title|!title.trim().is_empty()).unwrap_or("새 대화").chars().take(200).collect::<String>(),
         "agentId":body["agentId"].as_str(),"providerId":body["providerId"].as_str(),"model":body["model"].as_str(),"archived":false});
+    if let Some(policy)=extensions{record["extensions"]=policy;}
     let Some(saved) = state.store.put_if_absent("session", &record) else {
         return error(StatusCode::INTERNAL_SERVER_ERROR, "세션을 저장할 수 없습니다.");
     };
     state.bus.record("session", &saved);
+    Json(saved).into_response()
+}
+
+/// Backend-only extension boundary: no frontend navigation or menu change.
+/// Replacing the policy is atomic for the current private/room session and
+/// preserves its transcript, providers, owner identity and running tasks.
+pub async fn set_session_extensions(
+    State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>,
+)->Response{
+    let policy=match engine::extensions::validate_policy(&body) {
+        Ok(value)=>value,Err(message)=>return error(StatusCode::BAD_REQUEST,&message),
+    };
+    let Some(mut session)=state.store.get("session",&id) else {
+        return error(StatusCode::NOT_FOUND,"세션을 찾을 수 없습니다.");
+    };
+    if state.active.lock().unwrap().contains(&id) ||
+       state.store.has_running_execution_for_session(&id).unwrap_or(false) {
+        return error(StatusCode::CONFLICT,"실행 중에는 부가기능 설정을 변경할 수 없습니다.");
+    }
+    session["extensions"]=policy;
+    let Some(saved)=state.store.put("session",&session) else {
+        return error(StatusCode::INTERNAL_SERVER_ERROR,"세션 부가기능 설정을 저장하지 못했습니다.");
+    };
+    state.bus.record("session",&saved);
     Json(saved).into_response()
 }
 
@@ -193,6 +226,9 @@ pub async fn archive_session(
 /// learning has completed before the worker persists its result.
 pub async fn learn(State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>)->Response{
     let Some(session)=state.store.get("session",&id)else{return error(StatusCode::NOT_FOUND,"학습할 세션을 찾을 수 없습니다.")};
+    if !engine::extensions::enabled(&state,&id,session["agentId"].as_str(),engine::extensions::Extension::Memory){
+        return error(StatusCode::CONFLICT,"이 세션에서 장기기억 부가기능이 비활성화되어 있습니다.");
+    }
     if session["channelContext"]["authorIsBot"]==true{return error(StatusCode::FORBIDDEN,"봇 발언은 주인의 기억 근거로 학습하지 않습니다.")}
     let messages=state.store.messages(&id);
     if messages.is_empty(){return Json(json!({"status":"completed","result":{"memories":0,"skill":false,"reason":"no messages"},"message":"기억을 추출할 대화가 없습니다."})).into_response();}
