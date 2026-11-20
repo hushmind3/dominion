@@ -56,56 +56,6 @@ pub fn active_optimizer(state: &AppState) -> Value {
         .unwrap_or_else(default_optimizer)
 }
 
-/// Comparison data for the optimizer meta-loop. Every number comes from
-/// recorded search episodes, not from the revision string itself.
-pub fn optimizer_report(state: &AppState) -> Value {
-    let active = active_optimizer(state);
-    let episodes = state.store.all("search_episode");
-    let policies = state.store.all("adaptation_policy");
-    let optimizer_revisions = state
-        .store
-        .all("optimizer_policy")
-        .into_iter()
-        .map(|policy| policy["revision"].as_str().unwrap_or("optimizer-v1").to_string())
-        .chain(std::iter::once(
-            active["revision"].as_str().unwrap_or("optimizer-v1").to_string(),
-        ))
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut rows = Vec::new();
-    for revision in optimizer_revisions {
-        let runs = episodes
-            .iter()
-            .filter(|episode| episode["optimizerRevision"].as_str() == Some(revision.as_str()))
-            .collect::<Vec<_>>();
-        let wins = runs
-            .iter()
-            .filter(|episode| episode["selectedPolicy"].as_str().is_some())
-            .count() as f64;
-        let cost = runs
-            .iter()
-            .map(|episode| episode["cost"].as_f64().unwrap_or(0.0))
-            .sum::<f64>();
-        let generated = policies
-            .iter()
-            .filter(|policy| policy["optimizerRevision"].as_str() == Some(revision.as_str()))
-            .count();
-        rows.push(json!({
-            "revision": revision,
-            "searches": runs.len(),
-            "selected": wins,
-            "generatedCandidates": generated,
-            "cost": cost,
-            "score": (wins + 1.0) / (runs.len() as f64 + 2.0) - cost * 0.001,
-            "active": active["revision"].as_str() == Some(revision.as_str()),
-        }));
-    }
-    json!({
-        "active": active["revision"],
-        "optimizers": rows,
-        "episodes": episodes.len(),
-    })
-}
-
 pub fn register_optimizer(
     state: &AppState,
     name: &str,
