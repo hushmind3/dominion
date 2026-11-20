@@ -53,6 +53,14 @@ if(!externalBridge.includes('pub async fn inspect(')||
    !externalBridge.includes('session["delegationProfile"]!="inspection"')||
    !readFileSync(path.join(root,'src/addons/integrations/tool_delegation.rs'),'utf8').includes('"externalRuntime":external'))
   throw Error('External agent bridge lost its isolated inspection boundary')
+const teamOrchestrator=readFileSync(path.join(root,'src/addons/operations/team_orchestrator.rs'),'utf8')
+const nativeTools=readFileSync(path.join(root,'src/engine/tools.rs'),'utf8')
+if(!teamOrchestrator.includes('pub async fn start(')||
+   !teamOrchestrator.includes('pub async fn run(')||
+   !teamOrchestrator.includes('pub async fn integrate(')||
+   !nativeTools.includes('"team_execute" => crate::addons::team_orchestrator::start(')||
+   !nativeTools.includes('"team_integrate" => crate::addons::team_orchestrator::integrate('))
+  throw Error('Native Lead team runner lost its tool admission, coordinator or approval path')
 const taskDag=readFileSync(path.join(root,'src/addons/operations/team_dag.rs'),'utf8')
 const tasks=readFileSync(path.join(root,'src/addons/operations/jobs.rs'),'utf8')
 const delegated=readFileSync(path.join(root,'src/addons/integrations/tool_delegation.rs'),'utf8')

@@ -90,6 +90,21 @@ pub fn definitions() -> Vec<Value> {
             "profile": json!({"type":"string","enum":["general","inspection","implementation","verification"],
                 "description":"2026 role-scoped child task: inspection is read-only; implementation and verification require isolatedWorktree; verification admits only a sandboxed Cargo test runner and observational tools"})
         }), vec!["agentId", "prompt"])),
+        tool("team_execute","Autonomously split a goal, assign existing agents, execute a bounded parallel Lead/Worker DAG, and collect verified evidence. Optional steps avoid a separate planner call. Code changes are staged until approved team_integrate.",object(json!({
+            "goal":text("Team objective, 1-4000 bytes"),
+            "steps":json!({"type":"array","maxItems":8,"items":{
+                "type":"object","additionalProperties":false,
+                "properties":{"id":{"type":"string"},"agentId":{"type":"string"},
+                    "profile":{"type":"string","enum":["general","inspection","implementation","verification"]},
+                    "prompt":{"type":"string"},"dependsOn":{"type":"array","maxItems":4,
+                        "items":{"type":"string"}},"externalRuntime":{"type":"string",
+                        "enum":["codex","claude","qwen"]}},
+                "required":["id","prompt"]},
+                "description":"Optional concrete Lead-authored DAG. Omit to let Lead model generate a validated plan."}),
+            "maxParallel":json!({"type":"integer","minimum":1,"maximum":4}),
+            "workerBudget":json!({"type":"integer","minimum":1})
+        }),vec!["goal"])),
+        tool("team_integrate","Integrate all verified isolated implementation patches of a completed team in deterministic order, after the normal mutation approval (approval required)",object(json!({"jobId":text("Completed Lead team job ID")}),vec!["jobId"])),
         tool("task_integrate","Integrate a completed isolated child patch into this parent workspace (approval required)",object(json!({"jobId":text("Completed child job id")}),vec!["jobId"])),
         tool("task_status", "Check a delegated task's status or its parent-scoped Lead/Worker DAG", object(json!({"jobId": text("Job id"),"includeTeam":json!({"type":"boolean","description":"Include the sibling task DAG with status and dependency edges but no raw prompts"})}), vec!["jobId"])),
         tool("task_result", "Read a delegated task's result, artifacts and final answer", object(json!({"jobId": text("Job id")}), vec!["jobId"])),
@@ -182,6 +197,7 @@ pub fn requires_approval(name: &str) -> bool {
             | "shell_exec"
             | "terminal_exec"
             | "task_integrate"
+            | "team_integrate"
             | "github_api"
             | "github_file_update"
             | "github_file_replace"
@@ -225,6 +241,8 @@ pub async fn execute(
         if !target.starts_with(ctx.workspace.canonicalize().map_err(|e|e.to_string())?){return Err("격리 위임에서는 외부 파일에 접근할 수 없습니다.".into());}
     }
     match name {
+        "team_execute" => crate::addons::team_orchestrator::start(ctx,args,run_id).await,
+        "team_integrate" => crate::addons::team_orchestrator::integrate(ctx,args).await,
         "workspace_list" => {
             let path = resolve_workspace(ctx.workspace, string_arg(args, "path").unwrap_or("."))?;
             list_dir(&path).await

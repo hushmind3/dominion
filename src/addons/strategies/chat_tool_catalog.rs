@@ -84,7 +84,7 @@ pub(super) fn room_tool_request(input: &str) -> bool {
         "열어줘", "열어봐", "보여줘", "보여 줘", "실행", "명령", "터미널",
         "빌드", "테스트", "설치", "검색", "웹",
         "http", "url", "api", "코드", "버그", "도구", "계속", "이어", "마저",
-        "결과", "가져와", "확인해", "진행해",
+        "결과", "가져와", "확인해", "진행해", "팀", "병렬", "협업", "team", "parallel",
         "스킬", "메모리", "브라우저", "깃허브", "github", "shell", "file", "read",
         "write", "run", "search", "fetch", "install", "build", "test", "tool",
         "browser", "memory", "delegate", "task",
@@ -142,7 +142,12 @@ pub(super) fn select_room_tools(
         (&["스킬", "skill"], &["skill_propose"]),
         (
             &["위임", "delegate", "task", "에이전트"],
-            &["delegate_task", "task_integrate", "task_status", "task_result"],
+            &["delegate_task", "team_execute", "team_integrate",
+                "task_integrate", "task_status", "task_result"],
+        ),
+        (
+            &["팀", "협업", "병렬", "team", "parallel", "orchestrat", "multi-agent"],
+            &["team_execute", "team_integrate", "task_status", "task_result"],
         ),
         (
             &["브라우저", "browser", "클릭", "click"],

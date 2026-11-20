@@ -314,6 +314,15 @@ pub fn start(state: AppState) {
         loop {
             // A single dispatcher checks the durable queue once per wake,
             // not once per worker every 400 ms when the queue is empty.
+            // Team coordinators must not occupy all worker slots while
+            // waiting for their own child jobs. start_now CAS-claims each.
+            if let Ok(active)=dispatch_state.store.active_jobs(){
+                for team in active.iter().filter(|j|j["kind"]=="team"&&j["status"]=="queued"){
+                    if let Some(id)=team["id"].as_str(){
+                        start_now(dispatch_state.clone(),id.to_string());
+                    }
+                }
+            }
             while let Ok(permit) = capacity.clone().try_acquire_owned() {
                 let Some(job) = next_queued(&dispatch_state) else {
                     drop(permit);
@@ -385,6 +394,13 @@ fn next_queued(state: &AppState) -> Option<Value> {
         .iter()
         .cloned()
         .filter(|job| job.get("status").and_then(|value| value.as_str()) == Some("queued"))
+        .filter(|job|job["kind"]!="team")
+        .filter(|job|{
+            let Some(team)=job["input"]["teamJobId"].as_str() else{return true};
+            let bound=job["input"]["teamMaxParallel"].as_u64().unwrap_or(3).clamp(1,4);
+            jobs.iter().filter(|other|other["status"]=="running"&&
+                other["input"]["teamJobId"].as_str()==Some(team)).count() < bound as usize
+        })
         // Learning is background work: at most one at a time, so it can never
         // occupy every worker while a prompt/room job waits.
         .filter(|job| !(job["kind"] == "learn" && learning_running))
@@ -495,6 +511,7 @@ async fn run_job(state: AppState, job: Value) {
     let result = match kind.as_str() {
         "room" | "meeting" => rooms::run(&context, &job).await,
         "prompt" => run_prompt(&context, &job).await,
+        "team" => crate::addons::team_orchestrator::run(&context,&job).await,
         "resume" => run_resume(&context, &job).await,
         "learn"|"reflect"|"discord" =>
             crate::engine::extensions::jobs::run(&context,&job).await,

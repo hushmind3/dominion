@@ -56,6 +56,10 @@ jobs:
         run: cargo test --locked --bin dominion-rust db::room_cursor::tests
       - name: External read-only Codex Claude Qwen Agent Bridge contracts (dev profile)
         run: cargo test --locked --bin dominion-rust addons::agent_bridge::tests
+      - name: End-to-end Lead team admission and plan validation (dev profile)
+        run: |
+          cargo test --locked --bin dominion-rust engine::execution_budget::team_admission_tests
+          cargo test --locked --bin dominion-rust addons::team_orchestrator::tests
       - name: Lead/Worker DAG dependency admission, isolation and persistence (dev profile)
         run: |
           cargo test --locked --bin dominion-rust addons::team_dag::tests
