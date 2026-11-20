@@ -724,6 +724,34 @@ mod tests {
     }
 
     #[test]
+    fn private_budget_keeps_ordered_tool_receipts_when_old_context_is_evicted() {
+        let (state,dir)=state();
+        state.store.put("session",&json!({"id":"private:paired"})).unwrap();
+        for i in 0..30 {
+            state.store.write_message(&json!({"session_id":"private:paired",
+                "role":"user","content":format!("old-{i}:{}", "x".repeat(1_400))})).unwrap();
+        }
+        state.store.write_message(&json!({"session_id":"private:paired","role":"assistant",
+            "content":"","tool_calls":[
+                {"id":"read-a","type":"function","function":{"name":"workspace_read","arguments":"{}"}},
+                {"id":"read-b","type":"function","function":{"name":"workspace_read","arguments":"{}"}}
+            ]})).unwrap();
+        for (call,content) in [("read-b","second"),("read-a","first")] {
+            state.store.write_message(&json!({"session_id":"private:paired","role":"tool",
+                "tool_call_id":call,"content":content})).unwrap();
+        }
+        let view=history(&state,"private:paired",None,Some(400_000)).unwrap();
+        let tool_rows=view.iter().filter(|row|row["role"]=="tool").collect::<Vec<_>>();
+        assert_eq!(tool_rows.len(),2);
+        assert_eq!(tool_rows[0]["tool_call_id"],"read-a");
+        assert_eq!(tool_rows[1]["tool_call_id"],"read-b");
+        assert!(view.iter().any(|row|row["tool_calls"].is_array()));
+        assert!(!json!(view).to_string().contains("old-0:"));
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn private_history_never_truncates_the_current_owners_message() {
         let (state,dir)=state();
         state.store.put("session",&json!({"id":"private:large-user"})).unwrap();
