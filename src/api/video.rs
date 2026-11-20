@@ -31,7 +31,6 @@ pub async fn get_config(State(_state):State<AppState>)->Json<Value>{
     Json(json!({"retired":true,"available":false}))
 }
 pub async fn outputs_handler(State(state):State<AppState>)->Json<Value>{Json(json!(outputs(&state)))}
-pub async fn files(State(state):State<AppState>)->Json<Value>{Json(json!(outputs(&state)))}
 pub async fn list_jobs(State(state):State<AppState>)->Json<Value>{
     Json(json!(state.store.all("job").iter().filter(|job|
         matches!(job["kind"].as_str(),Some("video"|"youtube_upload")))
