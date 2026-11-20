@@ -63,10 +63,52 @@ pub async fn cancel(State(state):State<AppState>,Path(id):Path<String>)->Respons
         "status":"cancelled","cancelRequested":true,
         "finishedAt":chrono::Utc::now().to_rfc3339()})){
         Some(updated)=>{
+            // The endpoint must fence child jobs immediately. Previously only
+            // the team's 350ms supervisor poll performed this cascade, which
+            // left live workers able to start another model/tool operation.
+            if let Ok(team)=Team::parse(&updated["input"]) {
+                task_team::cancel_children(&state,&id,&team.tasks);
+            }else{
+                state.store.audit("team.cancel_invalid_contract",
+                    json!({"teamId":id}));
+            }
             state.bus.record("job",&updated);
             state.job_wakeup.notify_waiters();
             Json(task_team::project(&state,&updated)).into_response()
         }
         None=>error(StatusCode::CONFLICT,"Task Team status changed"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{config::Config,db::Store,vault::Vault};
+    #[tokio::test]
+    async fn api_cancel_fences_child_before_supervisor_wakes() {
+        let root=std::env::temp_dir().join(format!(
+            "dominion-team-cancel-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=Config{port:0,data_dir:root.clone(),workspace:root.clone(),
+            web_dir:root.join("web")};
+        let state=AppState::new(config.clone(),
+            Store::open(&config.db_path()).unwrap(),Vault::open(&config.key_path()));
+        let team=json!({"goal":"Inspect","maxParallel":1,
+            "tasks":[{"id":"inspect","prompt":"Read files","mode":"read",
+                "runtime":"native"}]});
+        state.store.put("job",&json!({"id":"parent","kind":"team",
+            "status":"running","input":team})).unwrap();
+        state.store.put("job",&json!({"id":"team-child:parent:inspect",
+            "kind":"prompt","status":"running","attempts":1,
+            "input":{"parentRunId":"parent","teamTaskId":"inspect",
+                "teamMode":"read","bridgeRuntime":"native"}})).unwrap();
+        let response=cancel(State(state.clone()),Path("parent".into())).await;
+        assert_eq!(response.status(),StatusCode::OK);
+        let parent=state.store.get("job","parent").unwrap();
+        assert_eq!(parent["status"],"cancelled");
+        let child=state.store.get("job","team-child:parent:inspect").unwrap();
+        assert_eq!(child["status"],"cancelled");
+        assert_eq!(child["cancelRequested"],true);
+        crate::test_support::cleanup_dir(&root);
     }
 }
