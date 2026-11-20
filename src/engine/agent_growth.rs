@@ -237,28 +237,16 @@ pub fn context_block(state: &AppState, agent_id: &str) -> Option<(String, Vec<Va
         .filter(|item| item["confidence"].as_f64().unwrap_or(0.0) >= 0.15)
         .take(3)
         .collect::<Vec<_>>();
-    let rated_runs = growth["ratedRuns"].as_u64().unwrap_or_else(|| {
-        growth["succeeded"].as_u64().unwrap_or(0) + growth["failed"].as_u64().unwrap_or(0)
-    });
-    let summary = if rated_runs > 0 {
-        let rate = growth["succeeded"].as_u64().unwrap_or(0) as f64 / rated_runs as f64;
-        format!(
-            "success {:.0}% over {rated_runs} verified runs",
-            rate * 100.0
-        )
-    } else {
-        "no verified success/failure history yet".to_string()
-    };
-    let mut block = format!(
-        "Agent growth (this bot only; from {runs} runs, {summary}):"
-    );
+    // Execution counters change every ordinary chat turn. They are useful
+    // for the dashboard, but injecting them as prompts invalidates exact
+    // provider prefixes and wastes tokens even when no new lesson exists.
+    if guidance.is_empty() { return None; }
+    let mut block=String::from("Agent growth guidance (verified lessons only):");
     for item in &guidance {
-        block.push_str(&format!(
-            "\n- {} (evidence {}, confidence {:.0}%)",
-            item["text"].as_str().unwrap_or(""),
-            item["evidenceCount"].as_u64().unwrap_or(0),
-            item["confidence"].as_f64().unwrap_or(0.0) * 100.0
-        ));
+        if let Some(text)=item["text"].as_str().filter(|text|!text.is_empty()) {
+            block.push_str("\n- ");
+            block.push_str(text);
+        }
     }
     let items = guidance
         .iter()
@@ -267,7 +255,6 @@ pub fn context_block(state: &AppState, agent_id: &str) -> Option<(String, Vec<Va
                 "kind": "agent_growth",
                 "id": item["id"],
                 "revision": item["revision"],
-                "confidence": item["confidence"],
             })
         })
         .collect();
@@ -370,12 +357,8 @@ mod tests {
         assert_eq!(growth["failed"], 0, "{growth}");
         assert_eq!(growth["unrated"], 10, "{growth}");
         assert_eq!(growth["ratedRuns"], 0, "{growth}");
-        let (block, _) = context_block(&state, "agent-a").unwrap();
-        assert!(
-            block.contains("no verified success/failure history"),
-            "{block}"
-        );
-        assert!(!block.contains("success 0%"), "{block}");
+        assert!(context_block(&state,"agent-a").is_none(),
+            "unverified chat counters must not be injected into the next model prompt");
         let _ = std::fs::remove_dir_all(dir);
     }
 
