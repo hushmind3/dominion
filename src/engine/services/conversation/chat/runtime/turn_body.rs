@@ -703,7 +703,7 @@ pub(super) async fn run_turn_body(
             &provider.tool_mode,
         ]),
     }));
-    if let Some(digest) = plan_digest {
+    if let Some(ref digest) = plan_digest {
         context_items.push(json!({"kind":"plan","digest":digest}));
     }
     let final_system = messages

@@ -322,19 +322,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dominion-agent-kernel"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "dominion-agent-loop"
 version = "0.1.0"
 dependencies = [
  "dominion-turn-core",
  "serde_json",
  "tokio",
-]
-
-[[package]]
-name = "dominion-agent-kernel"
-version = "0.1.0"
-dependencies = [
- "serde_json",
 ]
 
 [[package]]

@@ -84,6 +84,15 @@ pub async fn run<A:AgentLoop,M:ModelPort,T:ToolPort>(
                 });
             }
             Step::Execute{..}=>{
+                // Reject the entire proposal before ANY host effect. A batch
+                // with a visible read followed by a hidden mutation must not
+                // partially execute, regardless of which strategy selected it.
+                if !Driver::batch_advertised(
+                    response.calls.iter().map(|call|call.name.as_str()),
+                    visible_tools,
+                ){
+                    return Err("tool was not advertised to this model round".into());
+                }
                 let calls=response.calls.iter().map(|c|json!({
                     "id":c.id,"type":"function",
                     "function":{"name":c.name,"arguments":c.arguments.to_string()}
@@ -169,6 +178,25 @@ mod tests{
             assert!(result.is_err());
             assert!(tools.executed.is_empty());
         }
+    }
+    #[tokio::test]
+    async fn any_hidden_batch_member_prevents_every_host_side_effect(){
+        let mut algorithm=select(false);
+        let mut driver=Driver::new(3,3);
+        let mut model=Model{
+            replies:VecDeque::from(vec![ModelResponse{
+                content:String::new(),
+                calls:vec![
+                    ToolRequest{id:"1".into(),name:"file_read".into(),arguments:json!({})},
+                    ToolRequest{id:"2".into(),name:"mcp__hidden__write".into(),arguments:json!({})},
+                ]
+            }]),called:0,cancelled:false,
+        };
+        let mut tools=Tools::default();
+        let result=run(&mut algorithm,&mut driver,&mut model,&mut tools,
+            &mut vec![],&catalog(),true,false).await;
+        assert!(result.unwrap_err().contains("not advertised"));
+        assert!(tools.executed.is_empty());
     }
     #[tokio::test]
     async fn cancellation_and_round_limit_stop_model_and_tool_dispatch(){
