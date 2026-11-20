@@ -49,6 +49,7 @@ jobs:
           # source references, preserve exact on-demand evidence, and attribute
           # lifetime versus cleared-session usage without a production build.
           cargo test --lib engine::chat::context_window::tests
+          cargo test --lib engine::chat::prompt_sources::tests
           cargo test --lib engine::chat::context::tests::full_sqlite_transcript_replays_as_small_current_context_without_data_loss
           cargo test --lib engine::tools::tests::historical_evidence_reader_paginates_exact_results_and_enforces_agent_scope
           cargo test --lib db::tests::session_usage_breakdown_keeps_lifetime_and_since_clear_separate

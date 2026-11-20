@@ -838,6 +838,7 @@ pub(crate) fn compile(
         system: PromptContext {
             prompt,
             dynamic_context: String::new(),
+            source_instructions: String::new(),
             items,
             memory_watermark: watermark,
         },

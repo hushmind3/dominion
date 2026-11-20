@@ -78,6 +78,9 @@ pub(crate) struct PromptContext {
     /// Retrieved memory/experience context. It changes every turn, so it is
     /// sent after the stable system prefix to keep provider caches warm.
     pub dynamic_context: String,
+    /// Query-matched passages from versioned user/agent policy sources.
+    /// Kept apart from the immutable identity to avoid cache churn.
+    pub source_instructions: String,
     pub items: Vec<Value>,
     pub memory_watermark: String,
 }
@@ -112,7 +115,15 @@ pub(super) fn system_prompt_with_manifest_at(
     improvements: Option<&[Value]>,
     execution_id: Option<&str>,
 ) -> PromptContext {
-    let (mut prompt,mut identity_items)=identity_prefix(state,request);
+    let indexed=request.tools_enabled && request.tools_execution_enabled
+        && !state.store.get("session",session_id)
+            .is_some_and(|session|session["roomId"].is_string());
+    let (mut prompt, mut source_instructions, mut identity_items)=if indexed{
+        super::prompt_sources::indexed_identity(state,request,query)
+    }else{
+        let (prompt,items)=identity_prefix(state,request);
+        (prompt,String::new(),items)
+    };
     prompt.push_str(
         "\n당신은 Rust 엔진에서 동작하는 에이전트형 AI 작업 공간 DOMINION입니다. \
          사용자가 다른 언어로 쓰지 않는 한 한국어로 답하십시오.",
@@ -183,6 +194,7 @@ pub(super) fn system_prompt_with_manifest_at(
     PromptContext {
         prompt,
         dynamic_context: dynamic,
+        source_instructions: std::mem::take(&mut source_instructions),
         items,
         memory_watermark: watermark,
     }

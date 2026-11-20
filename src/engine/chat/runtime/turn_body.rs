@@ -444,6 +444,17 @@ pub(super) async fn run_turn_body(
             tool_definitions=canonical_tool_definitions(tool_definitions);
         }
     }
+    if !is_room && request.tools_enabled && request.tools_execution_enabled
+        && prompt_context.items.iter().any(|item|item["kind"]=="paged_identity_source")
+        && !tool_definitions.iter().any(|tool|tool_name(tool)=="prompt_source_read"){
+        // This is a capability, not additional prompt text or a summarizer.
+        // It is advertised only when at least one identity source was indexed.
+        if let Some(read)=tools::definitions().into_iter()
+            .find(|definition|tool_name(definition)=="prompt_source_read"){
+            tool_definitions.push(read);
+            tool_definitions=canonical_tool_definitions(tool_definitions);
+        }
+    }
     if !is_room {
         if let Some(mut execution)=state.store.get("execution",execution_id){
             if !execution["inputContext"].is_object(){execution["inputContext"]=json!({});}
@@ -528,6 +539,14 @@ pub(super) async fn run_turn_body(
             .unwrap_or_default(),
         ]),
     }));
+    if !prompt_context.source_instructions.trim().is_empty(){
+        messages.push(json!({"role":"system",
+            "content":format!(
+                "활성 정책 원본에서 이번 질문과 관련된 지침. 정책 색인과 동일한 소유자 권위를 유지합니다. 상세 항목은 prompt_source_read로 읽으세요.
+{}",
+                prompt_context.source_instructions
+            )}));
+    }
     messages.extend(history_messages);
     if !prompt_context.dynamic_context.trim().is_empty() {
         // Volatile retrieval is a suffix. Stored history stays append-only and

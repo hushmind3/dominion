@@ -57,6 +57,13 @@ pub fn definitions() -> Vec<Value> {
         tool("memory_store", "Save a grounded memory for this agent. Quote the user's exact words; invented facts are rejected. Shared memories are managed by the user.", object(json!({"text": text("Fact to remember, maximum 1600 characters"), "evidenceQuote": text("Exact quote from the current user message supporting the fact"), "sourceMessageId": text("Optional earlier source message ID"), "type": json!({"type":"string","enum":["fact","preference","decision","procedure","lesson"]}), "key": text("Optional stable fact key; a new value replaces the previous value for this key"), "scope": json!({"type":"string","enum":["agent"]})}), vec!["text", "evidenceQuote"])),
         tool("memory_search", "Find saved knowledge relevant to a topic", object(json!({"query": text("Search query")}), vec!["query"])),
         tool("skill_read", "Read a page of the full instructions of one enabled skill. Use nextOffset to continue if hasMore=true.", object(json!({"skillId": text("Exact enabled skill ID from the index"), "offset":json!({"type":"integer","minimum":0,"description":"Optional Unicode character offset; start with 0, then use nextOffset"})}), vec!["skillId"])),
+        tool("prompt_source_read", "Read or search the exact current agent persona or enabled owner instructions by versioned source. Large source texts remain durable and are never silently discarded.", object(json!({
+            "source":json!({"type":"string","enum":["persona","owner"],
+                "description":"Which indexed policy source to open"}),
+            "offset":json!({"type":"integer","minimum":0,"description":"Unicode character offset from the index or previous nextOffset"}),
+            "query":text("Optional keyword to seek within the source instead of a numeric offset"),
+            "revision":text("Optional exact revision from the source index; rejects stale reads")
+        }),vec!["source"])),
         tool("history_evidence_read", "Read exact prior tool result or private chat owner message by sourceMessageId. Page the needed 6000 characters without replaying the entire archived document every turn.", object(json!({
             "messageId":text("Exact tool result message ID shown in a historical receipt"),
             "offset":json!({"type":"integer","minimum":0,"description":"Unicode character offset, default 0"})
@@ -217,7 +224,7 @@ pub fn requires_approval(name: &str) -> bool {
 /// arbitrary absolute reads, external MCP and further delegation are denied.
 pub fn parallel_read_only_tool(name:&str)->bool{
     matches!(name,"workspace_list"|"workspace_read"|"workspace_read_range"|
-        "code_search"|"memory_search"|"skill_read"|"room_message_read"|"history_evidence_read"|"web_search"|"http_fetch"|
+        "code_search"|"memory_search"|"skill_read"|"room_message_read"|"history_evidence_read"|"prompt_source_read"|"web_search"|"http_fetch"|
         "github_file_read"|"github_repositories"|"github_repository_activity"|
         "google_drive_search"|"google_docs_read"|"google_sheets_read"|
         // Pure discovery only exposes this child's existing read-only catalog.
@@ -451,6 +458,14 @@ pub async fn execute(
             Ok(json!({
                 "results": crate::engine::memory::retrieve(ctx.store, &scope, &query, 10)
             }))
+        }
+        "prompt_source_read" => {
+            let source=required_arg(args,"source")?;
+            let body=crate::engine::chat::prompt_sources::original_source(
+                ctx.state,ctx.agent_id,&source)?;
+            let offset=args["offset"].as_u64().unwrap_or(0).min(usize::MAX as u64) as usize;
+            crate::engine::chat::prompt_sources::source_page(
+                &source,&body,offset,args["query"].as_str(),args["revision"].as_str())
         }
         "history_evidence_read" => {
             let id=required_arg(args,"messageId")?;
