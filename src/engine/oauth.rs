@@ -31,15 +31,6 @@ const PROVIDERS: &[Provider] = &[
         scopes: "openid email profile https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/spreadsheets",
         extra: &[("access_type", "offline"), ("prompt", "consent")],
     },
-    Provider {
-        id: "youtube",
-        name: "YouTube 업로드",
-        authorize: "https://accounts.google.com/o/oauth2/v2/auth",
-        token: "https://oauth2.googleapis.com/token",
-        user: "https://www.googleapis.com/oauth2/v3/userinfo",
-        scopes: "openid email profile https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly",
-        extra: &[("access_type", "offline"), ("prompt", "consent")],
-    },
 ];
 
 fn provider(id: &str) -> Option<&'static Provider> {
@@ -179,14 +170,13 @@ pub fn save(
 }
 
 fn client_credentials(state: &AppState, id: &str) -> Result<(String, String), String> {
-    let sealed = state.read_secret(&format!("oauth:{id}:secret"))
-        .or_else(||(id=="youtube").then(||state.read_secret("oauth:google:secret")).flatten());
+    let sealed = state.read_secret(&format!("oauth:{id}:secret"));
     // Packaged deployments can supply operator-managed OAuth clients; end
     // users then click Connect instead of configuring a separate OAuth app.
     let sealed=match sealed{
         Some(value)=>value,
         None=>{
-            let label=match id{"github"=>"GITHUB","google"|"youtube"=>"GOOGLE",
+            let label=match id{"github"=>"GITHUB","google"=>"GOOGLE",
                 _=>return Err("지원하지 않는 OAuth 제공자입니다.".into())};
             let client_id=std::env::var(format!("DOMINION_{label}_CLIENT_ID")).unwrap_or_default();
             let client_secret=std::env::var(format!("DOMINION_{label}_CLIENT_SECRET")).unwrap_or_default();
@@ -256,7 +246,7 @@ pub fn start(state: &AppState, id: &str) -> Result<Value, String> {
         for (key, value) in provider.extra {
             query.append_pair(key, value);
         }
-        if id == "google" || id == "youtube" {
+        if id == "google" {
             query
                 .append_pair("response_type", "code")
                 .append_pair("code_challenge", &challenge)
@@ -468,7 +458,7 @@ pub fn disconnect(state: &AppState, id: &str) {
     }
 }
 
-/// Bearer token for tools (GitHub / YouTube). `None` until the user connects.
+/// Bearer token for connected native tools. `None` until the user connects.
 pub fn access_token(state: &AppState, id: &str) -> Option<String> {
     let sealed = state.read_secret(&format!("oauth:{id}:token"))?;
     let value: Value = serde_json::from_str(&sealed).ok()?;
@@ -478,8 +468,7 @@ pub fn access_token(state: &AppState, id: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Refresh long-lived service grants in the vault; Google identity and YouTube
-/// intentionally have independent grants, expiry and disconnect operations.
+/// Refresh long-lived service grants in the vault for connected accounts.
 pub async fn fresh_access_token(state: &AppState, id: &str) -> Result<String, String> {
     let raw=match state.read_secret(&format!("oauth:{id}:token")){
         Some(raw)=>raw,
