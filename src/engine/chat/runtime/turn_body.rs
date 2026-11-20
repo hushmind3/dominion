@@ -444,7 +444,7 @@ pub(super) async fn run_turn_body(
             tool_definitions=canonical_tool_definitions(tool_definitions);
         }
     }
-    if !is_room && request.tools_enabled && request.tools_execution_enabled
+    if request.tools_enabled && request.tools_execution_enabled
         && prompt_context.items.iter().any(|item|item["kind"]=="paged_identity_source")
         && !tool_definitions.iter().any(|tool|tool_name(tool)=="prompt_source_read"){
         // This is a capability, not additional prompt text or a summarizer.
