@@ -31,6 +31,7 @@ pub struct Task {
     #[serde(default)] pub mode:Mode,
     #[serde(default)] pub runtime:WorkerRuntime,
     #[serde(default)] pub isolation:Isolation,
+    #[serde(default)] pub resume_id:Option<String>,
     #[serde(default)] pub agent_id:Option<String>,
     #[serde(default)] pub provider_id:Option<String>,
     #[serde(default)] pub model:Option<String>,
@@ -43,6 +44,7 @@ pub struct Team {
     pub goal:String,
     pub tasks:Vec<Task>,
     #[serde(default="default_parallel")] pub max_parallel:usize,
+    #[serde(default)] pub max_read_retries:u8,
 }
 fn default_parallel()->usize{MAX_CONCURRENT_WORKERS}
 fn valid_id(id:&str)->bool {
@@ -64,7 +66,8 @@ impl Team {
     pub fn validate(&self)->Result<(),String>{
         if self.goal.trim().is_empty()||self.goal.len()>16_000||
             self.tasks.is_empty()||self.tasks.len()>MAX_TEAM_TASKS||
-            !(1..=MAX_CONCURRENT_WORKERS).contains(&self.max_parallel){
+            !(1..=MAX_CONCURRENT_WORKERS).contains(&self.max_parallel)
+            || self.max_read_retries>2{
             return Err("Task Team goal/tasks/parallel budget out of bounds".into());
         }
         let mut ids=HashSet::new();
@@ -75,8 +78,14 @@ impl Team {
                 task.agent_id.as_ref().is_some_and(|v|v.is_empty()||v.len()>128)||
                 task.provider_id.as_ref().is_some_and(|v|v.is_empty()||v.len()>128)||
                 task.model.as_ref().is_some_and(|v|v.is_empty()||v.len()>256)||
+                task.resume_id.as_ref().is_some_and(|v|
+                    v.len()<4||v.len()>128||!v.bytes()
+                        .all(|c|c.is_ascii_alphanumeric()||c==b'-'||c==b'_'))||
                 task.allowed_tools.len()>16||task.checks.len()>16 {
                 return Err("Invalid Team Task ID, instruction or budget".into());
+            }
+            if task.runtime==WorkerRuntime::Native&&task.resume_id.is_some(){
+                return Err("Native SDK jobs resume from their own durable checkpoint, not an external session".into());
             }
             if task.runtime!=WorkerRuntime::Native &&
                 (task.mode!=Mode::Read||!task.allowed_tools.is_empty()
@@ -141,6 +150,7 @@ fn input(task:&Task,parent:&str)->Value{
     let mut input=json!({
         "prompt":task.prompt,"parentRunId":parent,"teamTaskId":task.id,
         "bridgeRuntime":task.runtime,"teamIsolation":task.isolation,
+        "resumeId":task.resume_id,
         "teamMode":task.mode,"allowedTools":allowed,
         "toolsEnabled":true,"toolsExecutionEnabled":true,
         "requireEvidence":task.mode==Mode::Write,
@@ -286,7 +296,7 @@ pub fn project(state:&AppState,parent:&Value)->Value{
             let child=state.store.get("job",&id);
             children.push(json!({
                 "taskId":task.id,"mode":task.mode,"runtime":task.runtime,
-                "isolation":task.isolation,
+                "isolation":task.isolation,"resumeId":task.resume_id,
                 "dependsOn":task.depends_on,
                 "agentId":task.agent_id,"childJobId":id,
                 "status":child.as_ref().map(|c|&c["status"]),
@@ -310,6 +320,7 @@ pub fn project(state:&AppState,parent:&Value)->Value{
     }
     json!({"id":parent["id"],"kind":"team","status":parent["status"],
         "goal":parent["input"]["goal"],"maxParallel":parent["input"]["maxParallel"],
+        "maxReadRetries":parent["input"]["maxReadRetries"],
         "tasks":children,"result":parent["result"],"error":parent["error"],
         "createdAt":parent["queuedAt"],"teamState":parent["teamState"]})
 }
@@ -341,6 +352,46 @@ fn child_due_for_launch(child:&Value)->bool {
             .and_then(|s|chrono::DateTime::parse_from_rfc3339(s).ok())
             .is_none_or(|time|time<=chrono::Utc::now())
 }
+
+/// No speculative model-call replay: safe retry is limited to a native READ
+/// job that failed BEFORE route pinning and before an execution ever existed.
+/// Owner explicitly sets maxReadRetries (default zero; hard cap two).
+fn safe_pre_dispatch_retry(state:&AppState,task:&Task,child:&Value,budget:u8)->bool{
+    task.mode==Mode::Read&&task.runtime==WorkerRuntime::Native
+        &&budget>0&&child["status"]=="failed"
+        &&child["cancelRequested"]!=true
+        &&child["attempts"].as_u64().is_some_and(|attempt|
+            attempt>0&&attempt<=budget as u64)
+        &&child["nativeRoute"].is_null()
+        &&child["nativeState"].is_null()
+        &&child["nativeInFlight"]!=true
+        &&child["bridgeState"].is_null()
+        &&child["result"].is_null()
+        &&child["sessionId"].is_null()
+        &&child["id"].as_str().is_some_and(|id|
+            state.store.get("execution",id).is_none())
+}
+fn retry_pre_dispatch_reads(state:&AppState,rows:&[(&Task,Option<Value>)],budget:u8)->bool{
+    let mut rescheduled=false;
+    for (task,record) in rows{
+        let Some(record)=record else{continue};
+        if !safe_pre_dispatch_retry(state,task,record,budget){continue;}
+        let Some(id)=record["id"].as_str() else{continue};
+        let attempt=record["attempts"].as_u64().unwrap_or(1).min(2);
+        let next=chrono::Utc::now()
+            +chrono::Duration::seconds(2_i64.pow(attempt as u32));
+        if let Some(saved)=state.store.patch_if("job",id,"status",
+            &json!("failed"),&json!({"status":"queued",
+                "availableAt":next.to_rfc3339(),
+                "retryReason":"owner_opted_in_predispatch_read_only",
+                "retriedAt":chrono::Utc::now().to_rfc3339()})){
+            state.bus.record("job",&saved);
+            state.job_wakeup.notify_waiters();
+            rescheduled=true;
+        }
+    }
+    rescheduled
+}
 /// A durable parent job, not an extra model session. Worker status comes only
 /// from the existing native job journal; claims of success in worker text do
 /// not satisfy dependencies.
@@ -359,6 +410,11 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
         let rows=team.tasks.iter().map(|task|(
             task,ctx.state.store.get("job",&child_id(parent,&task.id))
         )).collect::<Vec<_>>();
+        if retry_pre_dispatch_reads(&ctx.state,&rows,team.max_read_retries){
+            ctx.checkpoint(json!({"teamState":{"contractVersion":1,
+                "phase":"retrying_safe_reads","retryBudget":team.max_read_retries}}))?;
+            continue;
+        }
         let mut completed=HashSet::new();
         let mut active=0usize;
         let mut errors=Vec::new();
@@ -451,13 +507,13 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
 mod tests {
     use super::*;
     fn sample()->Team{
-        Team{goal:"Implement and verify".into(),max_parallel:3,tasks:vec![
+        Team{goal:"Implement and verify".into(),max_parallel:3,max_read_retries:0,tasks:vec![
             Task{id:"investigate".into(),prompt:"Inspect source".into(),
-                runtime:WorkerRuntime::Native,mode:Mode::Read,isolation:Isolation::Shared,
+                runtime:WorkerRuntime::Native,mode:Mode::Read,isolation:Isolation::Shared,resume_id:None,
                 depends_on:vec![],agent_id:None,provider_id:None,model:None,
                 allowed_tools:vec![],checks:vec![]},
             Task{id:"write".into(),prompt:"Apply approved patch".into(),
-                runtime:WorkerRuntime::Native,mode:Mode::Write,isolation:Isolation::Shared,
+                runtime:WorkerRuntime::Native,mode:Mode::Write,isolation:Isolation::Shared,resume_id:None,
                 depends_on:vec!["investigate".into()],agent_id:None,
                 provider_id:None,model:None,allowed_tools:vec![],
                 checks:vec![json!({"type":"file_exists","path":"src/finished.rs"})]},
@@ -605,11 +661,11 @@ mod tests {
             crate::vault::Vault::open(&config.key_path()));
         let task=Task{id:"inspect".into(),prompt:"Read source".into(),
             mode:Mode::Read,runtime:WorkerRuntime::Native,
-            isolation:Isolation::Shared,depends_on:vec![],
+            isolation:Isolation::Shared,resume_id:None,depends_on:vec![],
             agent_id:None,provider_id:Some("missing-provider".into()),
             model:None,allowed_tools:vec![],checks:vec![]};
         let team=Team{goal:"Recover task".into(),tasks:vec![task.clone()],
-            max_parallel:1};
+            max_parallel:1,max_read_retries:0};
         state.store.put("job",&json!({"id":"team-lead","kind":"team",
             "status":"running","attempts":1,"input":team})).unwrap();
         state.store.put("job",&json!({"id":child_id("team-lead","inspect"),
@@ -634,6 +690,42 @@ mod tests {
         assert!(!child_due_for_launch(&json!({"status":"queued","availableAt":future})));
         assert!(!child_due_for_launch(&json!({"status":"queued","cancelRequested":true})));
         assert!(child_due_for_launch(&json!({"status":"queued"})));
+    }
+
+    #[test] fn retry_policy_never_replays_a_paid_or_effectful_run(){
+        let dir=std::env::temp_dir().join(format!("dominion-safe-retry-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=crate::config::Config{
+            port:0,data_dir:dir.clone(),workspace:dir.clone(),web_dir:dir.join("web")};
+        let state=AppState::new(config.clone(),crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        let team=sample();
+        let read=&team.tasks[0];
+        let mut failed=json!({"id":"test-read","kind":"prompt","status":"failed",
+            "attempts":1,"error":"Provider discovery temporarily unavailable"});
+        assert!(!safe_pre_dispatch_retry(&state,read,&failed,0));
+        assert!(safe_pre_dispatch_retry(&state,read,&failed,1));
+        failed["nativeInFlight"]=json!(true);
+        assert!(!safe_pre_dispatch_retry(&state,read,&failed,2));
+        failed["nativeInFlight"]=Value::Null;
+        failed["nativeRoute"]=json!({"providerId":"paid-model"});
+        assert!(!safe_pre_dispatch_retry(&state,read,&failed,2));
+        failed["nativeRoute"]=Value::Null;
+        assert!(!safe_pre_dispatch_retry(&state,&team.tasks[1],&failed,2));
+        crate::test_support::cleanup_dir(dir);
+    }
+    #[test] fn invalid_resume_ids_and_automatic_retry_budgets_fail_closed(){
+        let mut team=sample();
+        team.max_read_retries=3;
+        assert!(team.validate().is_err());
+        team.max_read_retries=0;
+        team.tasks[0].resume_id=Some("some_thread".into());
+        assert!(team.validate().is_err());
+        team.tasks[0].runtime=WorkerRuntime::Codex;
+        team.tasks[0].resume_id=Some("../escape".into());
+        assert!(team.validate().is_err());
+        team.tasks[0].resume_id=Some("thr_valid_2026".into());
+        team.validate().unwrap();
     }
     #[test] fn immutable_child_id_is_scoped_to_parent(){
         assert_ne!(child_id("lead-a","research"),child_id("lead-b","research"));
