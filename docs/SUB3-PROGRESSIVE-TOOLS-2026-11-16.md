@@ -1,5 +1,12 @@
 # Sub3 2026: cache-stable progressive tools inside the native Rust agent
 
+## 2026-11-20 update: metadata fusion and contract-fenced bridge
+
+- The Rust SDK and chat now both rank tools using names/descriptions **plus** bounded JSON Schema field vocabulary. This catches opaque MCP tools whose domain appears only in their argument names, without adding embeddings, network calls or a second authorized registry.
+- Native discovery receipts must match current tool JSON parameters, effect/read-only classification and displayed description at bridge admission. Changed metadata requires searching again; host approvals and actual schema validation are still mandatory.
+- Coverage: unit regressions in `crates/dominion-agent-sdk/src/tool_discovery.rs` and `src/engine/chat/runtime/capability.rs`. No 27B task accuracy, real token billing or runtime validation is asserted before those checks execute.
+- External context: [MCP 2026-07-28 tools specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2026-07-28/server/tools.mdx) (tool lists can change) and [SCOUT hybrid tool retrieval, Aug 2026](https://arxiv.org/abs/2608.23992). DOMINION implements deterministic lexical+schema fusion, **not** SCOUT's dense vector stage.
+
 ## Cause and execution path
 
 The product's `src/engine/native_agent.rs` resolves the entire owner-approved built-in + MCP catalogue and passes it into `crates/dominion-agent-sdk/src/lib.rs`. Previously, each model round copied **every** tool name, description and JSON schema into the legacy JSON system prompt, and native providers received every schema in `complete_with_tools`. A 100-tool catalogue therefore incurred work even when only code inspection or shell validation was needed.
