@@ -9,27 +9,45 @@ use tokio::{io::{AsyncBufReadExt,AsyncReadExt,AsyncWriteExt,BufReader},
 const MAX_TIME:Duration=Duration::from_secs(3600);
 const MAX_LINE:usize=1_048_576;
 const MAX_ANSWER:usize=24_000;
+const MAX_PRETURN_EVENTS:usize=128;
+const MAX_PRETURN_BYTES:usize=2*MAX_LINE;
 fn ensure(ctx:&JobContext,started:Instant)->Result<(),String>{
     ctx.ensure_running()?;
     if started.elapsed()>MAX_TIME {Err("External Agent Bridge timed out".into())}
     else {Ok(())}
 }
+/// Bounded streaming JSONL read. Never call read_line() on an untrusted
+/// subprocess: an endless line would allocate memory before the size check.
 async fn read(ctx:&JobContext,reader:&mut BufReader<ChildStdout>,
     started:Instant)->Result<Value,String>{
-    loop{
-        ensure(ctx,started)?;
-        let mut line=String::new();
-        match tokio::time::timeout(Duration::from_millis(300),
-            reader.read_line(&mut line)).await{
-            Ok(Ok(0))=>return Err("External agent exited before completion".into()),
-            Ok(Ok(_))=>{
-                if line.len()>MAX_LINE {return Err("External event over size cap".into());}
-                if line.trim().is_empty(){continue;}
-                return serde_json::from_str(&line).map_err(|e|e.to_string());
-            },
-            Ok(Err(e))=>return Err(e.to_string()),
-            Err(_)=>{}
+    loop {
+        let mut line=Vec::new();
+        loop {
+            ensure(ctx,started)?;
+            let (count,terminated)={
+                let chunk=match tokio::time::timeout(Duration::from_millis(300),
+                    reader.fill_buf()).await {
+                    Ok(Ok(chunk))=>chunk,
+                    Ok(Err(error))=>return Err(error.to_string()),
+                    Err(_)=>continue,
+                };
+                if chunk.is_empty() {
+                    return Err("External agent stdout closed before complete JSONL event".into());
+                }
+                let end=chunk.iter().position(|byte|*byte==b'\n')
+                    .map(|idx|idx+1).unwrap_or(chunk.len());
+                if line.len().saturating_add(end)>MAX_LINE {
+                    return Err("External JSONL event over size cap".into());
+                }
+                line.extend_from_slice(&chunk[..end]);
+                (end,chunk[end-1]==b'\n')
+            };
+            reader.consume(count);
+            if terminated {break;}
         }
+        if line.iter().all(|b|b.is_ascii_whitespace()){continue;}
+        return serde_json::from_slice(&line).map_err(|e|
+            format!("External agent sent invalid JSONL: {e}"));
     }
 }
 async fn send(child:&mut Child,value:Value)->Result<(),String>{
@@ -44,9 +62,14 @@ async fn send(child:&mut Child,value:Value)->Result<(),String>{
 fn needs_host_approval(event:&Value)->bool{
     event.get("id").is_some()&&event.get("method").is_some()
 }
+/// Notifications can legitimately precede the JSON-RPC response for
+/// turn/start. Retain these frames rather than swallowing a finished turn
+/// and then waiting forever for a second completion notification.
 async fn rpc(ctx:&JobContext,child:&mut Child,reader:&mut BufReader<ChildStdout>,
-    started:Instant,id:u64,method:&str,params:Value)->Result<Value,String>{
+    started:Instant,id:u64,method:&str,params:Value)->Result<(Value,Vec<Value>),String>{
     send(child,json!({"id":id,"method":method,"params":params})).await?;
+    let mut notifications=Vec::new();
+    let mut buffered_bytes=0usize;
     for _ in 0..512{
         let event=read(ctx,reader,started).await?;
         if needs_host_approval(&event){
@@ -54,7 +77,14 @@ async fn rpc(ctx:&JobContext,child:&mut Child,reader:&mut BufReader<ChildStdout>
         }
         if event["id"]==id {
             if !event["error"].is_null(){return Err(format!("{method}: {}",event["error"]));}
-            return Ok(event["result"].clone());
+            return Ok((event["result"].clone(),notifications));
+        }
+        if event["method"].is_string() {
+            buffered_bytes=buffered_bytes.saturating_add(event.to_string().len());
+            if notifications.len()>=MAX_PRETURN_EVENTS||buffered_bytes>MAX_PRETURN_BYTES {
+                return Err("External RPC pre-response event budget exhausted".into());
+            }
+            notifications.push(event);
         }
     }
     Err("External RPC response budget exhausted".into())
@@ -86,6 +116,14 @@ fn codex_event(frame:&Value,answer:&mut String)->Result<Option<bool>,String>{
     }
     Ok(None)
 }
+fn codex_finish(thread_id:&str,completed:bool,answer:&str)->Result<Value,String>{
+    if !completed||answer.trim().is_empty(){
+        return Err("Codex turn not successfully completed".into());
+    }
+    Ok(json!({"status":"completed","runtime":"codex",
+        "threadId":thread_id,"answer":answer,
+        "evidenceGrade":"external_unverified"}))
+}
 async fn run_codex(ctx:&JobContext,child:&mut Child,started:Instant,
     prompt:&str,model:Option<&str>)->Result<Value,String>{
     let mut reader=BufReader::new(child.stdout.take().ok_or("Codex stdout missing")?);
@@ -95,23 +133,24 @@ async fn run_codex(ctx:&JobContext,child:&mut Child,started:Instant,
     let mut params=json!({"cwd":ctx.state.config.workspace.to_string_lossy(),
         "sandbox":"read-only","approvalPolicy":"never"});
     if let Some(model)=model{params["model"]=json!(model);}
-    let thread=rpc(ctx,child,&mut reader,started,2,"thread/start",params).await?;
+    let (thread,_)=rpc(ctx,child,&mut reader,started,2,"thread/start",params).await?;
     let thread_id=thread["thread"]["id"].as_str().filter(|s|!s.is_empty())
         .ok_or("Codex thread ID missing")?.to_string();
     ctx.checkpoint(json!({"bridgeState":{"runtime":"codex",
         "inFlight":true,"phase":"turn","threadId":thread_id}}))?;
-    rpc(ctx,child,&mut reader,started,3,"turn/start",
+    let (_,pre_response)=rpc(ctx,child,&mut reader,started,3,"turn/start",
         json!({"threadId":thread_id,"input":[{"type":"text","text":prompt}]})).await?;
     let mut answer=String::new();
+    // A very short turn may finish before the turn/start RPC response.
+    for event in pre_response {
+        if let Some(completed)=codex_event(&event,&mut answer)? {
+            return codex_finish(&thread_id,completed,&answer);
+        }
+    }
     for _ in 0..4096 {
         let event=read(ctx,&mut reader,started).await?;
         if let Some(completed)=codex_event(&event,&mut answer)? {
-            if !completed || answer.trim().is_empty(){
-                return Err("Codex turn not successfully completed".into());
-            }
-            return Ok(json!({"status":"completed","runtime":"codex",
-                "threadId":thread_id,"answer":answer,
-                "evidenceGrade":"external_unverified"}));
+            return codex_finish(&thread_id,completed,&answer);
         }
     }
     Err("Codex event budget exhausted".into())
@@ -218,6 +257,29 @@ mod tests{
             "params":{"turn":{"status":"failed"}}}),&mut text).unwrap(),Some(false));
         assert_eq!(codex_event(&json!({"method":"turn/completed",
             "params":{"turn":{"status":"completed"}}}),&mut text).unwrap(),Some(true));
+    }
+    #[test] fn early_turn_completion_is_not_lost_before_rpc_ack(){
+        // turn/start can produce an agent message and terminal notification
+        // before its own RPC acknowledgement; the buffered order is preserved.
+        let buffered=vec![
+            json!({"method":"item/agentMessage/delta","params":{"delta":"proof"}}),
+            json!({"method":"turn/completed","params":{"turn":{"status":"completed"}}}),
+        ];
+        let mut answer=String::new();
+        let mut final_status=None;
+        for frame in buffered {
+            if let Some(status)=codex_event(&frame,&mut answer).unwrap(){
+                final_status=Some(status);
+                break;
+            }
+        }
+        let result=codex_finish("thread1",final_status.unwrap(),&answer).unwrap();
+        assert_eq!(result["answer"],"proof");
+        assert_eq!(result["evidenceGrade"],"external_unverified");
+    }
+    #[test] fn incomplete_codex_turn_must_not_unlock_team_dependency(){
+        assert!(codex_finish("thread1",true," ").is_err());
+        assert!(codex_finish("thread1",false,"false success").is_err());
     }
     #[test] fn unmediated_approval_request_is_denied(){
         let mut text=String::new();
