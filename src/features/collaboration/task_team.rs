@@ -167,6 +167,43 @@ fn checks_satisfied(child:&Value)->bool {
     child["result"]["checks"].as_array().is_some_and(|checks|
         !checks.is_empty() && checks.iter().all(|check|check["satisfied"]==true))
 }
+/// A writer cannot satisfy an unrelated pre-existing file_exists check by
+/// executing some other tool. The host must have observed an artifact delta
+/// across the SAME workspace and acceptance criteria as the original request.
+fn artifact_delta_verified(task:&Task,child:&Value)->bool {
+    let before=&child["nativeEvidenceBaseline"];
+    let after=&child["nativeEvidenceFinal"];
+    if before["complete"]!=true || after["complete"]!=true
+        || !before["workspaceRootDigest"].is_string()
+        || before["workspaceRootDigest"]!=after["workspaceRootDigest"]
+        || !before["criteriaDigest"].is_string()
+        || before["criteriaDigest"]!=after["criteriaDigest"] {
+        return false;
+    }
+    task.checks.iter().any(|check|{
+        let Some(path)=check["path"].as_str().filter(|path|!path.is_empty())
+        else{return false};
+        let previous=&before["entries"][path];
+        let current=&after["entries"][path];
+        matches!(previous["state"].as_str(),Some("file"|"missing"))
+            && matches!(current["state"].as_str(),Some("file"|"missing"))
+            && previous!=current
+    })
+}
+/// The immutable child job must belong to this exact DAG node, not just have
+/// the same final message or a matching status. Never import a foreign run's
+/// receipts across parent or task boundaries.
+fn belongs_to_team(parent:&str,task:&Task,child:&Value)->bool {
+    let expected_kind=if task.runtime==WorkerRuntime::Native {
+        "prompt"
+    }else{"external_agent"};
+    child["id"].as_str()==Some(child_id(parent,&task.id).as_str())
+        && child["kind"]==expected_kind
+        && child["input"]["parentRunId"].as_str()==Some(parent)
+        && child["input"]["teamTaskId"].as_str()==Some(task.id.as_str())
+        && child["input"]["teamMode"]==json!(task.mode)
+        && child["input"]["bridgeRuntime"]==json!(task.runtime)
+}
 fn complete(task:&Task,child:&Value)->bool {
     if child["status"]!="completed"||child["result"]["status"]!="completed"{
         return false;
@@ -175,7 +212,9 @@ fn complete(task:&Task,child:&Value)->bool {
         return task.mode==Mode::Read && child["result"]["evidenceGrade"]=="external_unverified";
     }
     if task.mode==Mode::Write {
-        return has_effect_receipt(child) && checks_satisfied(child);
+        return has_effect_receipt(child)
+            && checks_satisfied(child)
+            && artifact_delta_verified(task,child);
     }
     true
 }
@@ -215,9 +254,7 @@ fn dependency_observations(state:&AppState,parent:&str,
         let id=child_id(parent,dependency);
         let child=state.store.get("job",&id)
             .ok_or("Task dependency was not persisted")?;
-        if child["input"]["parentRunId"]!=parent
-            || child["input"]["teamTaskId"]!=dependency.as_str()
-            || !complete(dep,&child) {
+        if !belongs_to_team(parent,dep,&child) || !complete(dep,&child) {
             return Err("Task dependency does not have a validated durable result".into());
         }
         observations.push(child_observation(dep,&child));
@@ -250,8 +287,12 @@ pub fn project(state:&AppState,parent:&Value)->Value{
                 "status":child.as_ref().map(|c|&c["status"]),
                 "executionId":child.as_ref().map(|c|&c["nativeExecutionId"]),
                 "verified":child.as_ref().is_some_and(|c|
-                    complete(&task,c)&&evidence_grade(&task,c)=="host_verified"),
-                "evidenceGrade":child.as_ref().map(|c|evidence_grade(&task,c)),
+                    belongs_to_team(parent["id"].as_str().unwrap_or(""),&task,c)
+                    && complete(&task,c)&&evidence_grade(&task,c)=="host_verified"),
+                "evidenceGrade":child.as_ref().map(|c|
+                    if belongs_to_team(parent["id"].as_str().unwrap_or(""),&task,c){
+                        evidence_grade(&task,c)
+                    }else{"foreign_binding"}),
                 "observedOperations":child.as_ref().map(|c|
                     child_observation(&task,c)["observedOperations"].clone()),
                 "answerExcerpt":child.as_ref().map(|c|
@@ -265,7 +306,7 @@ pub fn project(state:&AppState,parent:&Value)->Value{
         "tasks":children,"result":parent["result"],"error":parent["error"],
         "createdAt":parent["queuedAt"],"teamState":parent["teamState"]})
 }
-fn cancel_children(state:&AppState,parent:&str,tasks:&[Task]){
+pub(crate) fn cancel_children(state:&AppState,parent:&str,tasks:&[Task]){
     for task in tasks {
         let id=child_id(parent,&task.id);
         if let Some(current)=state.store.get("job",&id) {
@@ -305,6 +346,10 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
         let mut errors=Vec::new();
         for (task,row) in &rows {
             if let Some(row)=row {
+                if !belongs_to_team(parent,task,row) {
+                    errors.push(format!("{}:foreign-child-binding",task.id));
+                    continue;
+                }
                 match row["status"].as_str().unwrap_or("") {
                     "completed" if complete(task,row)=>{
                         completed.insert(task.id.as_str());
@@ -434,18 +479,34 @@ mod tests {
             "result":{"status":"completed","answer":"I finished all files",
                 "checks":[{"satisfied":true}],"receipts":[]}});
         assert!(!complete(writer,&claimed));
-        let actual=json!({"kind":"prompt","status":"completed",
+        let mut actual=json!({"kind":"prompt","status":"completed",
             "result":{"status":"completed",
                 "checks":[{"satisfied":true}],
-                "receipts":[{"id":"op-1","tool":"workspace_write","success":true}]}});
+                "receipts":[{"id":"op-1","tool":"workspace_write","success":true}]},
+            "nativeEvidenceBaseline":{
+                "complete":true,"workspaceRootDigest":"root","criteriaDigest":"checks",
+                "entries":{"src/finished.rs":{"state":"missing"}}
+            },
+            "nativeEvidenceFinal":{
+                "complete":true,"workspaceRootDigest":"root","criteriaDigest":"checks",
+                "entries":{"src/finished.rs":{"state":"file","sha256":"actual-bytes"}}
+            }
+        });
         assert!(complete(writer,&actual));
         assert_eq!(evidence_grade(writer,&actual),"host_verified");
+        actual["nativeEvidenceFinal"]["entries"]["src/finished.rs"]=
+            actual["nativeEvidenceBaseline"]["entries"]["src/finished.rs"].clone();
+        assert!(!complete(writer,&actual),
+            "an unrelated successful tool call cannot verify an unchanged artifact");
+        actual["nativeEvidenceFinal"]["criteriaDigest"]=json!("different-checks");
+        assert!(!complete(writer,&actual));
     }
     #[test] fn dependency_prompt_carries_bounded_provenance_not_raw_tool_secrets(){
         let team=sample();
         let source=&team.tasks[0];
         let completed=json!({"id":"team-child:lead:investigate","kind":"prompt",
-            "status":"completed","input":{"parentRunId":"lead","teamTaskId":"investigate"},
+            "status":"completed","input":{"parentRunId":"lead","teamTaskId":"investigate",
+                "teamMode":"read","bridgeRuntime":"native"},
             "result":{"status":"completed","answer":"Found source anchor",
                 "receipts":[{"id":"read-1","tool":"workspace_read","success":true,
                     "arguments":{"apiKey":"SECRET_SHOULD_NOT_LEAK"}}]}});
@@ -470,7 +531,8 @@ mod tests {
             crate::vault::Vault::open(&config.key_path()));
         let id=child_id("lead",&team.tasks[0].id);
         state.store.put("job",&json!({"id":id,"kind":"prompt",
-            "status":"completed","input":{"parentRunId":"lead","teamTaskId":"investigate"},
+            "status":"completed","input":{"parentRunId":"lead","teamTaskId":"investigate",
+                "teamMode":"read","bridgeRuntime":"native"},
             "result":{"status":"completed","answer":"Located source",
                 "receipts":[{"id":"receipt-a","tool":"workspace_read","success":true,
                     "arguments":{"secret":"DONT_SEND_ME"}}]}})).unwrap();
@@ -480,6 +542,21 @@ mod tests {
         assert!(!evidence.to_string().contains("DONT_SEND_ME"));
         assert!(dependency_observations(&state,"another-lead",&team,&team.tasks[1]).is_err());
         crate::test_support::cleanup_dir(dir);
+    }
+
+    #[test] fn finished_child_from_another_parent_or_runtime_is_not_trusted(){
+        let team=sample();
+        let read=&team.tasks[0];
+        let mut job=json!({"id":"team-child:lead:investigate","kind":"prompt",
+            "status":"completed","input":{"parentRunId":"lead","teamTaskId":"investigate",
+                "teamMode":"read","bridgeRuntime":"native"},
+            "result":{"status":"completed"}});
+        assert!(belongs_to_team("lead",read,&job));
+        job["input"]["parentRunId"]=json!("other");
+        assert!(!belongs_to_team("lead",read,&job));
+        job["input"]["parentRunId"]=json!("lead");
+        job["input"]["bridgeRuntime"]=json!("codex");
+        assert!(!belongs_to_team("lead",read,&job));
     }
     #[test] fn immutable_child_id_is_scoped_to_parent(){
         assert_ne!(child_id("lead-a","research"),child_id("lead-b","research"));
