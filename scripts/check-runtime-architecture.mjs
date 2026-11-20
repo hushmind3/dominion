@@ -33,7 +33,10 @@ for(const name of e2eModules){
   if(lines>1500)throw Error('E2E module grew past 1500 lines: '+file+' ('+lines+')')
   e2eCases+=(body.match(/^#\[test\]/gm)||[]).length
 }
-if(e2eCases!==111)throw Error('E2E regression tests lost or duplicated: '+e2eCases+' (expected 111)')
+// Baseline grows only when a deliberately reviewed real-process case is
+// added. Do not silently drop old tests while claiming full E2E coverage.
+const expectedE2eCases=112
+if(e2eCases!==expectedE2eCases)throw Error('E2E regression tests lost or duplicated: '+e2eCases+' (expected '+expectedE2eCases+')')
 
 const runtime=readFileSync(path.join(root,'src/engine/chat/runtime.rs'),'utf8')
 // Product-specific chat phases must be owned outside the native chat directory.
