@@ -38,6 +38,58 @@ fn private_chat_selects_one_current_context_and_evicts_old_long_input() {
         "private chat must not keep rebilling old 24KB messages");
 }
 
+/// Measures the actual provider-wire JSON requests; this is not a claimed
+/// billed-token percentage (the fake provider's usage is synthetic).
+fn private_chat_wire_budget_probe(turns:usize) {
+    let _serial=serial();
+    let (port,requests)=scripted_provider(|_|vec![json!({
+        "choices":[{"delta":{"content":"cost-fixture-ack"},"finish_reason":"stop"}],
+        "usage":{"prompt_tokens":128,"completion_tokens":5,"total_tokens":133}
+    })]);
+    let app=TestApp::new(port,"native");
+    let persona=format!("STABLE_PERSONA_COST_FIXTURE_{}", "P".repeat(6_000));
+    let agent=app.post("/api/agents",&json!({"name":"cost probe","systemPrompt":persona}));
+    let session=app.post("/api/sessions",&json!({
+        "title":"private wire budget probe","agentId":agent["id"]}));
+    let mut inputs=Vec::new();
+    for i in 0..turns {
+        let message=format!("WIRE_OWNER_TURN_{i:03}_{}", "Q".repeat(4_000));
+        let stream=app.chat(&json!({"sessionId":session["id"],
+            "agentId":agent["id"],"input":message,
+            "toolsEnabled":false,"autoLearning":false,"thinking":false}));
+        assert!(stream.contains("cost-fixture-ack"),"turn {i}: {stream}");
+        inputs.push(message);
+    }
+    let seen=requests.lock().unwrap();
+    assert_eq!(seen.len(),turns,"each owner turn should require exactly one model call");
+    let observed=seen.iter().map(|body|body.to_string().len()).sum::<usize>();
+    let static_bytes=seen[0]["messages"][0].to_string().len();
+    let naive=(0..turns).map(|i|static_bytes+
+        inputs[..=i].iter().map(String::len).sum::<usize>()).sum::<usize>();
+    assert!(observed<naive,
+        "selected private context should cost less than full unbounded replay: observed {observed} vs {naive}");
+    let last=seen.last().unwrap().to_string();
+    assert!(last.contains(&format!("WIRE_OWNER_TURN_{:03}",turns-1)));
+    assert!(!last.contains("WIRE_OWNER_TURN_000_"),
+        "old four-kilobyte owner turns should not stay in final context");
+    assert!(!last.contains("Current date:"),
+        "a token-cost probe does not request current dates");
+    assert!(!last.contains("dominion_tool_search"),
+        "model-only chat must not send an irrelevant discovery schema");
+    eprintln!("PRIVATE_CONTEXT_WIRE_PROBE turns={turns} requests={turns} observed_json_bytes={observed} naive_unbounded_json_bytes={naive} ratio={:.3}",
+        observed as f64 / naive as f64);
+}
+
+#[test]
+fn private_chat_ten_turn_wire_budget_regression() {
+    private_chat_wire_budget_probe(10);
+}
+
+#[test]
+fn private_chat_hundred_turn_wire_budget_regression() {
+    private_chat_wire_budget_probe(100);
+}
+
 #[test]
 fn common_participant_state_follows_provider_and_protocol_changes() {
     let _serial=serial();
