@@ -1341,9 +1341,8 @@ impl Store {
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|error|error.to_string())?;
         tx.execute(
-            "INSERT INTO event_clock(id,last_seq)
-             SELECT 1,COALESCE(MAX(seq),0) FROM event_log
-             WHERE NOT EXISTS(SELECT 1 FROM event_clock WHERE id=1)",
+            "INSERT OR IGNORE INTO event_clock(id,last_seq)
+             SELECT 1,COALESCE(MAX(seq),0) FROM event_log",
             [],
         ).map_err(|error|error.to_string())?;
         let last:i64=tx.query_row(
