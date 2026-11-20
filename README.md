@@ -76,6 +76,7 @@ changes, explicit dispatch or a version tag.
 | --- | --- |
 | Core execution and durable effects | [dominion-core](crates/dominion-core/src/engine.rs), [effect journal](crates/dominion-core/src/journal.rs) |
 | Agent orchestration and tool admission | [chat runtime](src/engine/chat/runtime.rs), [native gateway](src/engine/chat/runtime/tool_dispatch.rs) |
+| Private-chat context compilation | [Context Engine](src/engine/chat/context_engine.rs), [continuity](src/engine/chat/continuity.rs) |
 | Group state, memory and provider continuity | [rooms](src/engine/rooms.rs), [room context](src/engine/chat/room_context.rs), [continuity](src/engine/chat/continuity.rs) |
 | Local API, durable records | [HTTP router](src/api/mod.rs), [SQLite store](src/db.rs) |
 | React interface | [App](web/src/App.tsx), [workspace shell](web/src/components/WorkspaceShell.tsx) |
@@ -92,6 +93,34 @@ evidence. Mutating tools and deferred/discovered MCP tools pass the same
 permission, schema, cancellation and effect journal gates.
 
 ### Context and token accounting
+
+Ordinary **1:1 chat** uses a separate [private Context Engine](src/engine/chat/context_engine.rs).
+The [SQLite store](src/db.rs) retains the original conversation and evidence;
+only model-visible history, contextual retrieval and tool contracts are selected.
+Full owner instructions and persona are preserved.
+
+- **Stable stateful prefix:** An unchanged contextual snapshot is anchored once
+  before the transcript; edits or revocations trigger an explicit rebase.
+  Codex WebSocket `previous_response_id` is reused only for a compatible chain.
+- **Small social turns:** An unmistakable greeting does not replay a previous
+  coding task, enumerate MCP servers, or inject unrelated skill/growth data.
+  Date metadata is emitted only for a date-relevant question.
+- **Capacity-aware input:** History is bounded by model context, output reserve,
+  static instructions, selected retrieval and tool-schema costs, in addition
+  to the private 32KB history / 12,000-token working-view bounds. The newest
+  owner input is preserved even if large.
+- **Provider accounting:** Every completed private or group call records
+  prompt/output tokens, optional provider-reported cache reads/writes, and
+  whether the values were estimated. Session totals include auxiliary calls;
+  unknown cache telemetry is **unknown**, never an invented zero. Configured
+  cache input rates can be used for cost settlement.
+
+Real-process tests through the Rust HTTP/SSE runtime and a mock inference
+provider measured cumulative **API request JSON bytes** against a conservative
+unbounded history replay baseline: **4.9% less over 10 turns**, **83.2% less
+over 100 turns**. These are wire-traffic results, **not** an API-provider
+billed-token or price-reduction claim. See the
+[reproducible benchmark](benchmark/PRIVATE-CHAT-WIRE-2026-11-20.md).
 
 ### Native execution contracts and lean model rounds
 
