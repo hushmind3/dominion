@@ -27,10 +27,16 @@ pub fn record(
     {
         return Err("workboard: message does not belong to owner turn".into());
     }
+    let linked_session=state.store.get("session",session_id)
+        .ok_or("workboard: missing room session")?;
+    if linked_session["roomId"].as_str()!=Some(room_id){
+        return Err("workboard: session and room identity mismatch".into());
+    }
     let source=state.store.message(source_id)
         .ok_or("workboard: missing owner message")?;
     if source["session_id"]!=session_id || source["role"]!="user"
         || source["metadata"]["authorKind"]!="owner"
+        || source["metadata"]["roomId"].as_str().is_some_and(|id|id!=room_id)
     {
         return Err("workboard: owner instruction scope mismatch".into());
     }
@@ -47,7 +53,10 @@ pub fn record(
     // stdout, tool arguments or other agents' private context in this record.
     let proven=operations.iter().filter(|op|
         op["status"]=="completed" && op["outcomeUnknown"]!=true
-            && op["effectState"]!="effect_unknown"
+            && op["id"].as_str().is_some_and(|id|!id.is_empty())
+            && op["tool"].as_str().is_some_and(|tool|!tool.is_empty())
+            && !matches!(op["effectState"].as_str(),
+                Some("prepared"|"started"|"effect_unknown"|"needs_review"))
     ).collect::<Vec<_>>();
     let tool_refs=proven.iter().take(MAX_TOOL_REFS).map(|op|json!({
         "operationId":op["id"],
@@ -132,6 +141,7 @@ mod tests{
         let config=Config{port:0,data_dir:dir.clone(),web_dir:dir.join("web"),
             workspace:dir.clone()};
         let store=Store::open(&config.db_path()).unwrap();
+        store.put("session",&json!({"id":"room:r","roomId":"r"})).unwrap();
         let vault=Vault::open(&config.key_path());
         (AppState::new(config,store,vault),dir)
     }
@@ -177,6 +187,11 @@ mod tests{
             "id":"op-2","runId":"exec-a","status":"running",
             "tool":"shell_exec","resourceKey":"shell:unsafe"
         })).unwrap();
+        state.store.put("execution_operation",&json!({
+            "id":"op-3","runId":"exec-a","status":"completed",
+            "effectState":"effect_unknown","tool":"external_call",
+            "resourceKey":"external:uncertain"
+        })).unwrap();
         let first=record(&state,"r","room:r","owner-a","task-a","a",1,&msg).unwrap();
         let second=record(&state,"r","room:r","owner-a","task-a","a",1,&msg).unwrap();
         assert_eq!(first["id"],second["id"]);
@@ -197,6 +212,24 @@ mod tests{
         assert!(record(&state,"r","room:other","owner-a","task-a","a",1,&msg).is_err());
         assert!(record(&state,"r","room:r","owner-b","task-a","a",1,&msg).is_err());
         assert!(state.store.room_work_items("r","owner-a",48).unwrap().is_empty());
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn workboard_snapshot_is_bounded_and_uses_only_visible_committed_refs(){
+        let (state,dir)=state();
+        for step in 0..12{
+            let message_id=format!("reply-{step}");
+            seed(&state,"owner-a",&message_id,"a","no-execution");
+            let msg=state.store.message(&message_id).unwrap();
+            record(&state,"r","room:r","owner-a","task-a","a",step+1,&msg).unwrap();
+        }
+        let visible=state.store.messages("room:r");
+        let (_,text,count)=snapshot(&state,"r","owner-a",&visible)
+            .unwrap().unwrap();
+        assert_eq!(count,6);
+        assert!(text.contains("reply-11"));
+        assert!(!text.contains("reply-0\""));
         let _=std::fs::remove_dir_all(dir);
     }
 }

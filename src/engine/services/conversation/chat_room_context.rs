@@ -1454,4 +1454,46 @@ mod tests {
         assert!(corrected.system.items.iter().any(|item|item["kind"]=="owner_state" && item["id"].is_string()));
         let dir=state.config.data_dir.clone(); drop(state); std::fs::remove_dir_all(dir).unwrap();
     }
+
+    #[test]
+    fn workboard_compiles_into_bounded_room_context_without_future_owner_leakage(){
+        let state=state();
+        state.store.put("room",&json!({"id":"r","agentIds":["a","b"],
+            "toolsEnabled":true,"contextBudgetTokens":2400})).unwrap();
+        state.store.put("agent",&json!({"id":"b","name":"B","systemPrompt":"검증"})).unwrap();
+        state.store.write_message(&json!({
+            "id":"owner-1","session_id":"room:r","role":"user","content":"문서 만들기",
+            "metadata":{"authorKind":"owner","roomId":"r"}
+        })).unwrap();
+        state.store.write_message(&json!({
+            "id":"reply-1","session_id":"room:r","role":"assistant",
+            "agent_id":"a","content":"completed file inspection",
+            "metadata":{"authorKind":"agent","replyToMessageId":"owner-1",
+                "executionId":"exec-1"}
+        })).unwrap();
+        let reply=state.store.message("reply-1").unwrap();
+        crate::engine::room_workboard::record(
+            &state,"r","room:r","owner-1","task-1","a",1,&reply,
+        ).unwrap();
+        state.store.write_message(&json!({
+            "id":"owner-2","session_id":"room:r","role":"user","content":"새로운 별도 요청",
+            "metadata":{"authorKind":"owner","roomId":"r"}
+        })).unwrap();
+        let request=TurnRequest::from_value(&json!({
+            "input":"문서 만들기","agentId":"b","toolsEnabled":true,
+            "toolsExecutionEnabled":true,"sessionId":"room:r"
+        })).unwrap();
+        let compiled=compile(&state,&request,"room:r","owner-1",&[],&[])
+            .unwrap();
+        let joined=compiled.history.to_string();
+        assert!(joined.contains("room-workboard:"));
+        assert!(joined.contains("reply-1"));
+        assert!(!joined.contains("새로운 별도 요청"));
+        assert_eq!(compiled.accounting["workboardVisibleRecords"],1);
+        assert!(compiled.accounting["workboardTokens"].as_u64().unwrap_or(0)>0);
+        let newer=compile(&state,&request,"room:r","owner-2",&[],&[])
+            .unwrap();
+        assert_eq!(newer.accounting["workboardVisibleRecords"],0);
+        assert!(!newer.history.to_string().contains("room-workboard:"));
+    }
 }
