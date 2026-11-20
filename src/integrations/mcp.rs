@@ -77,7 +77,7 @@ async fn checkout_session(state:&AppState,server:&Value)
     ->Result<(String,LiveSession),String> {
     let id=server["id"].as_str().unwrap_or("").to_string();
     let identity=connection_identity(state,server);
-    if let Some(session)=state.mcp_sessions.checkout(&id,&identity){
+    if let Some(session)=state.integrations.mcp_sessions.checkout(&id,&identity){
         return Ok((identity,session));
     }
     let session=if server["transport"].as_str()==Some("http") {
@@ -92,7 +92,7 @@ fn return_session(state:&AppState,server:&Value,identity:String,session:LiveSess
     if identity==connection_identity(state,server) &&
         state.store.get("mcp",server["id"].as_str().unwrap_or(""))
             .as_ref()==Some(server) {
-        state.mcp_sessions.checkin(server["id"].as_str().unwrap_or("").to_string(),
+        state.integrations.mcp_sessions.checkin(server["id"].as_str().unwrap_or("").to_string(),
             identity,session);
     }
 }
@@ -123,7 +123,7 @@ fn cache() -> &'static Cache {
 
 pub fn invalidate(state:&AppState) {
     cache().lock().unwrap().clear();
-    state.mcp_sessions.clear();
+    state.integrations.mcp_sessions.clear();
 }
 
 fn slug(value: &str) -> String {
@@ -872,7 +872,7 @@ mod tests {
         state.save_secret("mcp:mcp-pool-echo","rotated");
         call(&state,&qualified,&json!({"text":"after-rotation"})).await.unwrap();
         assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(),3);
-        assert!(state.mcp_sessions.idle.lock().unwrap().len()<=1);
+        assert!(state.integrations.mcp_sessions.idle.lock().unwrap().len()<=1);
         drop(cloned);
         drop(state);
     }

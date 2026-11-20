@@ -302,7 +302,6 @@ pub fn retry_failed_learning(state: &AppState) -> usize {
 }
 
 pub fn start(state: AppState) {
-    crate::engine::channel_adapter::start(state.clone());
     let workers = std::env::var("DOMINION_JOB_WORKERS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -497,7 +496,7 @@ async fn run_job(state: AppState, job: Value) {
         "resume" => run_resume(&context, &job).await,
         "learn" => learning::run(&context, &job).await,
         "reflect" => reflect::run(&context, &job).await,
-        "discord" => crate::engine::discord::run(&context, &job).await,
+        "discord" => crate::integrations::channels::discord::run(&context, &job).await,
         other => Err(format!("지원하지 않는 작업 종류입니다: {other}")),
     };
 

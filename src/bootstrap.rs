@@ -1,7 +1,7 @@
 //! Runtime composition. The process claims its port before touching durable
 //! state, so opening an already-running app cannot interrupt its approvals.
 use crate::{
-    api, config::Config, db::Store, engine, migrations, platform, state::AppState, vault::Vault,
+    api, config::Config, db::Store, engine, integrations, migrations, platform, state::AppState, vault::Vault,
 };
 use std::future::IntoFuture;
 
@@ -48,7 +48,7 @@ async fn serve(mut config: Config, open_browser: bool, parent_bound: bool) -> Re
     let vault = Vault::open(&config.key_path());
     let state = AppState::new(config.clone(), store, vault);
     migrations::run(&state)?;
-    engine::oauth::purge_retired_grants(&state);
+    integrations::accounts::oauth::purge_retired_grants(&state);
     // OAuth polls live in memory; a restart cannot complete an in-flight
     // login, so do not leave a stale device code visible in the UI.
     if let Some(mut login) = state.store.get("codex_login", "codex") {
@@ -78,8 +78,7 @@ async fn serve(mut config: Config, open_browser: bool, parent_bound: bool) -> Re
             }
         });
     }
-    engine::discord::start(state.clone());
-    engine::telegram::start(state.clone());
+    integrations::start(state.clone());
     let app = api::router(state);
     println!(
         "DOMINION (rust engine) listening on http://127.0.0.1:{}",
