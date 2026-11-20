@@ -20,8 +20,6 @@ React web UI ─────► web/src/api.ts ───────────
 | Streaming chat | `streamChat(..., signal)` | `POST /api/chat` → `api/chat.rs::chat` → `engine::chat::run` |
 | Group collaboration | `rooms.send(id,{input,clientMessageId})` | `POST /api/rooms/:id/messages` → `api/rooms.rs::submit_internal` → persisted message + idempotent job |
 | User approvals | `approvals.resolve` | `POST /api/approvals` → `api/approvals.rs::resolve_approval` → engine waiter + persisted decision |
-| Video | `video.create`, `video.get`, `video.download` | `/api/video/jobs`, `/content` → `api/video.rs` → `engine/video.rs` |
-| RSI | `rsi.campaigns`, `rsi.campaign` | `/api/rsi/campaigns` → `api/rsi.rs` → existing research engine |
 
 ## Actual defects addressed
 1. **One-page event replay gap**: prior `/api/events` read 500 historical entries then jumped to live events. `system::durable_replay` drains paginated durable history and recovers a lagging live stream. The bounded retention (roughly 2,000 events, pruning periodically) is preserved.
@@ -34,7 +32,7 @@ React web UI ─────► web/src/api.ts ───────────
 - Rust unit cases added to `src/events.rs` (8 concurrent emitters × 80 events) and `src/api/system.rs` (1,100-event paginated replay, expired cursor over 2,600 writes).
 - TypeScript tests in `sdk/typescript/tests/sdk.test.mjs` cover routing, auth, denied paths, provider errors, UTF-8 split SSE, no chat retry, cursor resumption, job polling and abort.
 - A local preliminary TypeScript test prototype passed 9/9. The exact published head has **not** been exercised by CI or full Rust test run in this session; Rust integration and live-model reliability remain to be established. No benchmark score or savings are asserted.
-- CI completion, real-provider E2E, sustained event soak and video output quality measurements remain follow-up checks; they are not simulated by mock tests.
+- CI completion, real-provider E2E, sustained event soak remain follow-up checks; they are not simulated by mock tests.
 
 ## UI / SDK compatibility
 The `web/` subtree is an exact copy of the main branch. Its `web/src/api.ts` retains the original GUI exports (`request`, `get`, `post`, `del`, `streamChat`, `setAuthToken`) and directly calls the Rust API; it does **not** import `@dominion/sdk`. The standalone SDK continues to use the same `/api/*` contract for external clients and can be built independently using `npm run build --prefix sdk/typescript`.
@@ -44,8 +42,8 @@ Patterns were compared with the published [OpenAI Agents JS streaming lifecycle]
 
 ## Native engine evolution — 2026-11-15
 
-The primary public SDK is Rust (`src/lib.rs`, `src/sdk.rs`); TypeScript is an optional /api client. The desktop and Rust consumers boot the same runtime. `src/engine/autonomy.rs` runs bounded evidence-driven repair cycles for ordinary prompt jobs; the specialized detached RSI verifier remains separate. `src/engine/jobs.rs::steer` persists owner instructions for the next model boundary; `src/api/jobs.rs` adapts the same engine method. The unchanged main GUI exposes its existing execution/activity views; step receipts, revisioned steering and usage deltas remain available through the Rust SDK and job API, not additional sub2 GUI controls. See [frontier comparison](FRONTIER-COMPARISON-SUB2-2026-11-15.md).
+The primary public SDK is Rust (`src/lib.rs`, `src/sdk.rs`); TypeScript is an optional /api client. The desktop and Rust consumers boot the same runtime. `src/engine/autonomy.rs` runs bounded evidence-driven repair cycles for ordinary prompt jobs and shares the native verification path. `src/engine/jobs.rs::steer` persists owner instructions for the next model boundary; `src/api/jobs.rs` adapts the same engine method. The unchanged main GUI exposes its existing execution/activity views; step receipts, revisioned steering and usage deltas remain available through the Rust SDK and job API, not additional sub2 GUI controls. See [frontier comparison](FRONTIER-COMPARISON-SUB2-2026-11-15.md).
 
 ## Native main-frontend API compatibility added after initial integration
 
-The unchanged main-branch `web/src/components/NativeAgentPanel.tsx` uses `GET/POST /api/sdk/runs`, `GET /api/sdk/runs/:id` and `POST /api/sdk/runs/:id/{cancel,approve,resume,reconcile}`. `src/api/sdk_bridge.rs` now handles those routes using existing `engine::jobs` and the native durable approval service. No vendor SDK or second execution kernel was added. The optional TypeScript SDK continues to use the same Rust REST API. Verification commands become engine-level acceptance conditions; results after the last source change are required. [Additional implementation notes](SUB2-RUNTIME-VIDEO-2026-11-15.md).
+The unchanged main-branch `web/src/components/NativeAgentPanel.tsx` uses `GET/POST /api/sdk/runs`, `GET /api/sdk/runs/:id` and `POST /api/sdk/runs/:id/{cancel,approve,resume,reconcile}`. `src/api/sdk_bridge.rs` now handles those routes using existing `engine::jobs` and the native durable approval service. No vendor SDK or second execution kernel was added. The optional TypeScript SDK continues to use the same Rust REST API. Verification commands become engine-level acceptance conditions; results after the last source change are required.
