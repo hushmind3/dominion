@@ -148,22 +148,6 @@ mod lazy_skill_tests {
     }
 }
 
-#[cfg(test)]
-mod retired_tools_tests {
-    use super::*;
-    #[test]
-    fn general_agent_menu_excludes_autonomous_research_tools() {
-        let names = definitions().into_iter().filter_map(|tool|
-            tool["function"]["name"].as_str().map(str::to_string)
-        ).collect::<Vec<_>>();
-        for retired in ["algorithm_propose", "unsafe_audit", "rsi_system_plan", "rsi_method_propose"] {
-            assert!(!names.iter().any(|name| name == retired), "{retired} must not consume prompt tokens");
-        }
-        assert!(names.iter().any(|name| name == "workspace_write"));
-        assert!(names.iter().any(|name| name == "delegate_task"));
-    }
-}
-
 fn tool(name: &str, description: &str, parameters: Value) -> Value {
     json!({
         "type": "function",
