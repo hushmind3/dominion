@@ -137,6 +137,10 @@ The execution infrastructure is now independently compiled as `crates/dominion-a
 
 This is **module ownership, independent runtime/intelligence crates, and portable-kernel separation**, not a separately deployable plugin system or complete host-independent app binary. Existing app features still access the host's SQLite through its own `AppState`; the SDK kernel has no such dependency. [Detailed architecture and contract checks](docs/CORE-BOUNDARY-2026-11-20.md) · [Algorithm injection and runtime dependency boundaries](docs/ALGORITHM-RUNTIME-2026-11-20.md).
 
+## Pre-dispatch cancellation and owner corrections (sub3, 2026-11-20)
+
+The version-pinned Rust agent loop rechecks **cancellation and owner directive changes immediately after durable write-ahead intent persistence** and before calling a paid model, an authorized tool, or an owner-required verification command. If a correction arrives at that fence before execution begins, the pending intent is cleared in the journal; cancelled runs stop, while corrected tasks replan from the updated owner instruction. Tool calls that have already begun still require their normal durable receipt or explicit review if their outcome is uncertain. Regression tests in `crates/dominion-agent-sdk/tests/kernel_replanning.rs` cover model/tool/acceptance cancellation and tool-dispatch correction. This does not claim instant cancellation of already-running provider or tool calls.
+
 ## Development verification
 
 Routine changes: run *focused Rust development-profile tests*, not a blanket release build.

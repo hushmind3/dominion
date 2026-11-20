@@ -666,3 +666,46 @@ async fn cancellation_at_owner_check_write_ahead_fence_skips_command() {
         "Owner checks cannot run after cancellation at durable checkpoint");
     assert!(journal.snapshots.lock().unwrap().last().unwrap().in_flight.is_empty());
 }
+
+struct RedirectAtToolFence {
+    redirected: std::sync::atomic::AtomicBool,
+    snapshots: Mutex<Vec<Snapshot>>,
+}
+impl Journal for RedirectAtToolFence {
+    fn save(&self,snapshot:&Snapshot)->Result<(),String> {
+        self.snapshots.lock().unwrap().push(snapshot.clone());
+        if snapshot.in_flight.iter().any(|a|a.tool=="read") {
+            self.redirected.store(true,std::sync::atomic::Ordering::SeqCst);
+        }
+        Ok(())
+    }
+    fn directive(&self,_id:&str)->Result<Option<String>,String> {
+        Ok(self.redirected.load(std::sync::atomic::Ordering::SeqCst)
+            .then(||"Inspect only, do not run the prior tool".into()))
+    }
+}
+#[tokio::test]
+async fn owner_correction_at_tool_fence_replans_without_stale_execution() {
+    let model=ScriptedModel::new(vec![
+        decide(json!([op("stale-read","read",&[])]),None),
+        decide(json!([]),Some("Updated owner instruction followed")),
+    ]);
+    let tools=RecordingTools::new(&[]);
+    let journal=RedirectAtToolFence {
+        redirected:std::sync::atomic::AtomicBool::new(false),
+        snapshots:Mutex::new(Vec::new()),
+    };
+    let kernel=Kernel{model:&model,tools:&tools,evidence:&AlwaysTrueEvidence,journal:&journal};
+    let mut req=request("tool-fence-redirect");
+    req.require_evidence=false;
+    let result=kernel.run(req).await.unwrap();
+    assert!(matches!(result.status,Status::Completed),"{result:?}");
+    assert_eq!(result.model_calls,2);
+    assert!(tools.called.lock().unwrap().is_empty(),
+        "Changing the owner directive during checkpoint save cancels the stale batch");
+    assert!(result.in_flight.is_empty());
+    let prompts=model.prompts.lock().unwrap();
+    assert_eq!(prompts.len(),2);
+    assert!(prompts[1].contains("Inspect only, do not run the prior tool"));
+    assert!(journal.snapshots.lock().unwrap().last().unwrap().in_flight.is_empty());
+}
