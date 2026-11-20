@@ -2,7 +2,7 @@
 //! Only core/ owns the conversational execution path. All other Rust
 //! capabilities are source-isolated; historical engine:: paths stay stable.
 pub mod addons;
-pub mod core;
+pub use dominion_turn_core as core;
 pub use addons::{browser,bridge,channel_adapter,discord,github_work,google_work,mcp,telegram};
 pub use core::TurnStats;
 #[path = "services/automation/turn_quiet.rs"]
@@ -21,8 +21,7 @@ use core::collect_tool_event;
 // Natural language, execution admission and evidence
 #[path = "services/operations/execution_scope.rs"]
 pub mod execution_scope;
-#[path = "services/decision/agent_kernel.rs"]
-pub mod agent_kernel;
+pub use dominion_agent_kernel as agent_kernel;
 #[path = "services/tools/workspace_scope.rs"]
 pub mod workspace_scope;
 #[path = "services/operations/effect.rs"]

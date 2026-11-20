@@ -1,10 +1,9 @@
 //! Native Rust chat engine: shared request contract and stable public entry points.
 mod approval;
 mod cancellation;
-mod budget;
+use dominion_agent_kernel as budget;
 mod tool_schedule;
-#[path = "../../operations/chat_trace_budget.rs"]
-mod trace_budget;
+use dominion_context_policy as trace_budget;
 #[path = "../../conversation/chat_context_window.rs"]
 mod context_window;
 #[path = "../../conversation/chat_prompt_sources.rs"]

@@ -62,12 +62,6 @@ impl Driver {
         })
     }
 
-    pub fn batch_advertised<'a>(
-        names: impl IntoIterator<Item = &'a str>, visible: &[Value],
-    ) -> bool {
-        names.into_iter().all(|name|Self::advertised(name,visible))
-    }
-
     /// Atomically reserve every tool call in one model response before any host
     /// side effect. Duplicate provider IDs are rejected across the entire
     /// turn; names must be visible in the current model round.
@@ -95,18 +89,6 @@ impl Driver {
         Ok(())
     }
 
-    pub fn admit_tool(&mut self, name: &str, visible: &[Value], enabled: bool)
-        -> Result<(), &'static str> {
-        if !enabled {return Err("tool execution disabled");}
-        if self.proposals >= self.max_tools.saturating_mul(2) {
-            return Err("tool proposal limit exceeded");
-        }
-        self.proposals += 1;
-        if !Self::advertised(name,visible) {
-            return Err("tool was not advertised");
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -131,11 +113,11 @@ mod tests {
         let mut gate=Driver::new(3,2);
         assert_eq!(gate.select_step(0,false),Ok(Step::Answer));
         assert_eq!(gate.select_step(1,false),Err("tool execution disabled"));
-        assert_eq!(gate.admit_tool("mcp__safe__read",&visible,false),
+        assert_eq!(gate.admit_batch([("id-a","mcp__safe__read")],&visible,false),
             Err("tool execution disabled"));
-        assert_eq!(gate.admit_tool("mcp__safe__delete",&visible,true),
+        assert_eq!(gate.admit_batch([("id-a","mcp__safe__delete")],&visible,true),
             Err("tool was not advertised"));
-        assert!(gate.admit_tool("mcp__safe__read",&visible,true).is_ok());
+        assert!(gate.admit_batch([("id-a","mcp__safe__read")],&visible,true).is_ok());
         assert_eq!(gate.select_step(4,true),Err("tool proposal limit exceeded"));
         assert!(!Driver::advertised("mcp__safe__read_more",&visible));
     }
@@ -145,9 +127,17 @@ mod tests {
         let visible=vec![json!({"type":"function","function":{
             "name":"workspace_read","parameters":{"type":"object"}
         }})];
-        assert!(Driver::batch_advertised(["workspace_read","workspace_read"],&visible));
-        assert!(!Driver::batch_advertised(["workspace_read","file_read"],&visible));
-        assert!(!Driver::batch_advertised(["workspace_read","mcp__other__read"],&visible));
+        let mut gate=Driver::new(3,3);
+        assert_eq!(gate.admit_batch([
+            ("r1","workspace_read"),("r2","mcp__other__read")
+        ],&visible,true),Err("tool was not advertised"));
+        // A rejected batch cannot reserve an earlier valid sibling.
+        assert!(gate.admit_batch([
+            ("r1","workspace_read"),("r2","workspace_read")
+        ],&visible,true).is_ok());
+        assert_eq!(gate.admit_batch([
+            ("r3","workspace_read"),("r4","file_read")
+        ],&visible,true),Err("tool was not advertised"));
     }
 
     #[tokio::test]
@@ -169,10 +159,12 @@ mod tests {
     fn tool_proposal_budget_has_no_wraparound() {
         let mut gate=Driver::new(2,1);
         let visible=vec![json!({"name":"workspace_read"})];
-        assert!(gate.admit_tool("workspace_read",&visible,true).is_ok());
-        assert!(gate.admit_tool("workspace_read",&visible,true).is_ok());
-        assert_eq!(gate.admit_tool("workspace_read",&visible,true),
-            Err("tool proposal limit exceeded"));
+        assert!(gate.admit_batch([
+            ("c1","workspace_read"),("c2","workspace_read")
+        ],&visible,true).is_ok());
+        assert_eq!(gate.admit_batch([
+            ("c3","workspace_read")
+        ],&visible,true),Err("tool proposal limit exceeded"));
     }
     #[test]
     fn atomic_batch_rejects_hidden_duplicate_and_over_budget_calls_without_reserving_any() {

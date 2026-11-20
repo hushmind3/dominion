@@ -212,3 +212,10 @@ https://openai.com/index/unrolling-the-codex-agent-loop/
 일반 Chat에서는 최종 사용자 메시지를 영속 기록한 뒤 `preflight::bind_execution_source`가 실행 레코드의 `sourceMessageId`를 SQLite CAS로 연결합니다. 다른 원문으로 바꿔치기하는 재개는 거부하고 같은 원문을 반복 기록하지 않습니다. 그룹 작업은 이미 알고 있는 owner source를 execution 생성 시점부터 바인딩하여 `run_state` 이벤트가 올바른 소유자를 가리킵니다.
 
 이에 따라 TypeScript `runEvents()`/Rust `run_events_after()`는 작업 ID만 보여주는 상태 스트림이 아니라, 가능한 실행에서 실제 커밋된 사용자 원문 메시지 ID와 연결되는 버전 1 이벤트입니다. UI 메뉴, HTTP URL, 저장소 브랜치 권한은 변경하지 않았습니다.
+
+## 2026-11-21: 호환 껍데기 및 구형 우회 도구 승인 API 제거
+
+- 서브2에서 실행 로직이 없는 `src/engine/core/mod.rs`, `src/engine/services/decision/agent_kernel.rs`, `src/engine/services/conversation/chat/budget.rs`, `src/engine/services/operations/chat_trace_budget.rs` 4개 파일을 **물리 삭제**했습니다. 기존 경로를 무조건 유지하는 얇은 shim 대신 `engine/mod.rs`와 `chat/mod.rs`가 각 독립 Rust crate를 직접 alias합니다. Rust API에서 사용 중인 `engine::core`, `engine::agent_kernel`, `chat::budget`, `chat::trace_budget` 이름은 유지합니다.
+- `dominion-turn-core::Driver`에서 과거 **호출별 도구 허용** `admit_tool`과 **광고만 검사**하는 `batch_advertised` API를 삭제했습니다. 두 진입점은 전체 모델 응답의 ID·광고 범위를 원자적으로 검증하는 `admit_batch`보다 약했고, 실제 제품 경로는 이미 새 API를 사용하고 있었습니다.
+- 기존 단위 테스트를 실패한 배치 후 ID를 재사용할 수 있는지, 숨겨진 도구가 포함된 응답이 먼저 실행되지 않는지 검증하는 직접 코어 테스트로 변경했습니다. 구조 검사도 삭제된 shim 복귀를 CI에서 차단하도록 전환했습니다.
+- UI, HTTP 엔드포인트, 로컬/클라우드 모델 경로 및 다른 브랜치는 수정하지 않았습니다. 호출되는 실험/메모리/정책 모듈은 이 정리에서 임의 삭제하지 않았습니다.

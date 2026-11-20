@@ -7,8 +7,10 @@ const engine=source('src/engine/mod.rs');
 const chat=source('src/engine/services/conversation/chat/mod.rs');
 
 test('core entrypoint owns natural language execution, not product services',()=>{
- const core=source('src/engine/core/mod.rs');
- assert.match(source('crates/dominion-turn-core/src/lib.rs'),/pub async fn run_with_events/);
+ const core=source('crates/dominion-turn-core/src/lib.rs');
+ assert.match(engine,/pub use dominion_turn_core as core;/);
+ assert.ok(!exists('src/engine/core/mod.rs'),'obsolete core shim reintroduced');
+ assert.match(core,/pub async fn run_with_events/);
  assert.match(source('crates/dominion-turn-core/src/lib.rs'),/pub trait ExecutionPort/);
  const imports=core.split('\n').filter(line=>line.trimStart().startsWith('use ')).join('\n');
  assert.doesNotMatch(imports,/AppState|chat|mcp|memory|jobs|models/);
@@ -33,7 +35,6 @@ const chatServices={
  continuity:'conversation/chat_continuity.rs',
  room_context:'conversation/chat_room_context.rs',
  prompt_sources:'conversation/chat_prompt_sources.rs',
- trace_budget:'operations/chat_trace_budget.rs',
  evidence:'decision/chat_evidence.rs',
  tool_projection:'tools/chat_tool_projection.rs',
  capability:'tools/chat_capability.rs',
@@ -45,7 +46,11 @@ test('context, providers, catalogs and transport are outside execution core',()=
   assert.ok(exists('src/engine/services/'+target),'missing service '+target);
   assert.ok(!exists('src/engine/services/conversation/chat/'+mod+'.rs'),'core still owns '+mod);
  }
- for(const mod of ['protocol','runtime','budget','cancellation','approval','outcome']){
+ assert.match(chat,/use dominion_agent_kernel as budget;/);
+ assert.match(chat,/use dominion_context_policy as trace_budget;/);
+ assert.ok(!exists('src/engine/services/conversation/chat/budget.rs'));
+ assert.ok(!exists('src/engine/services/operations/chat_trace_budget.rs'));
+ for(const mod of ['protocol','runtime','cancellation','approval','outcome']){
   assert.ok(exists('src/engine/services/conversation/chat/'+mod+'.rs'),'missing execution stage '+mod);
  }
 });
@@ -124,19 +129,24 @@ test('real chat model loop consults pure execution driver and gates parallel too
 });
 
 test('provider and tool authority are exposed as host ports, not implemented in core',()=>{
- const core=source('src/engine/core/mod.rs');
+ const core=source('crates/dominion-turn-core/src/lib.rs');
  const driver=source('crates/dominion-turn-core/src/driver.rs');
  assert.doesNotMatch(core,/crate::engine::(memory|mcp|rooms|jobs|models|policy)/);
- assert.match(core,/pub use dominion_turn_core::\*/);
+ assert.match(engine,/pub use dominion_turn_core as core;/);
+ assert.match(engine,/pub use dominion_agent_kernel as agent_kernel;/);
+ assert.ok(!exists('src/engine/services/decision/agent_kernel.rs'));
  assert.match(source('Cargo.toml'),/dominion-turn-core =/);
  assert.doesNotMatch(source('crates/dominion-turn-core/Cargo.toml'),/dominion-rust|mcp|reqwest|rusqlite|axum/);
  assert.doesNotMatch(driver,/crate::engine|AppState|reqwest|tokio::process/);
  assert.match(driver,/pub async fn request_model/);
+ assert.match(driver,/pub fn admit_batch/);
+ assert.doesNotMatch(driver,/pub fn admit_tool|pub fn batch_advertised/);
  assert.match(source('crates/dominion-turn-core/src/lib.rs'),/pub trait ExecutionPort/);
 });
 
-test('product core is a one-file facade; standalone core has a stable source boundary',()=>{
- assert.deepEqual(readdirSync(new URL('../src/engine/core/',import.meta.url)).sort(),['mod.rs']);
+test('product imports the standalone core directly without facade files',()=>{
+ assert.ok(!exists('src/engine/core/mod.rs'));
+ assert.match(engine,/pub use dominion_turn_core as core;/);
  assert.deepEqual(readdirSync(new URL('../crates/dominion-turn-core/src/',import.meta.url)).sort(),['agent_loop.rs','driver.rs','lib.rs','port_tests.rs','run_state.rs']);
 });
 
@@ -305,14 +315,13 @@ test('catalog and MCP/skill/account visibility live outside the model-round loop
 
 test('provider tool history compaction is pure independently testable middleware',()=>{
  const pure=source('crates/dominion-context-policy/src/lib.rs');
- const facade=source('src/engine/services/operations/chat_trace_budget.rs');
  const dep=source('crates/dominion-context-policy/Cargo.toml');
  assert.match(pure,/pub fn bounded_tool_trace/);
  assert.match(pure,/pub fn compact_historical/);
  assert.match(pure,/completed_frame_end/);
  assert.match(pure,/sourceMessageId/);
- assert.match(facade,/dominion_context_policy::bounded_tool_trace/);
- assert.match(facade,/dominion_context_policy::compact_historical/);
+ assert.match(chat,/use dominion_context_policy as trace_budget;/);
+ assert.ok(!exists('src/engine/services/operations/chat_trace_budget.rs'));
  assert.doesNotMatch(dep,/dominion-rust|dominion-turn-core|reqwest|rusqlite|axum/);
  assert.doesNotMatch(source('crates/dominion-turn-core/Cargo.toml'),/dominion-context-policy/);
  assert.match(source('Cargo.toml'),/dominion-context-policy =/);
