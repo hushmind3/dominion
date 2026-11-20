@@ -39,6 +39,20 @@ impl<'a> TurnPolicy<'a>{
             self.state,self.agent_id,Some(self.execution_id),input,
         ).unwrap_or(Value::Null)
     }
+    pub fn decompose_request(&self,input:&str)->Value{
+        let selected=self.decomposition(input);
+        crate::engine::decompose::decompose(input,&selected)
+    }
+    pub fn plan_heuristic(input:&str,checks:&Option<(String,Value)>)->bool{
+        decision_policy::needs_plan(input,checks)
+    }
+    pub fn skip_extra_planner(input:&str,checks:&Option<(String,Value)>)->bool{
+        decision_policy::local_multifile_skips_extra_planner(input,checks)
+    }
+    pub fn plan_scores(plan:&str,input:&str)->(Value,Value){
+        (crate::engine::plan_quality::score(plan,input),
+         crate::engine::plan_quality::score_independent(plan,input))
+    }
     pub fn order(&self)->ToolOrder{
         let choice=self.choose("execution.ordering",true);
         ToolOrder::from_implementation(choice.as_ref()

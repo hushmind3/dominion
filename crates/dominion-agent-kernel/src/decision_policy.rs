@@ -1,5 +1,6 @@
 //! Pure, replaceable planning and action-selection strategies.
 //! No provider, runtime, state, MCP, network, database or UI dependencies.
+use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolOrder { ModelOrder, ReadFirst }
@@ -58,6 +59,38 @@ pub fn admit_plan(explicit:Option<bool>,heuristic:bool,
         _=>explicit.unwrap_or(heuristic)&&!previous_panel_answer&&!native_contract_plan,
     }
 }
+
+/// Pure extra-planner admission: a bounded single-file task usually needs no
+/// additional model call, whereas a multi-step request does.
+pub fn needs_plan(input:&str,acceptance:&Option<(String,Value)>)->bool{
+    let text=input.trim();
+    if text.chars().count()>240 || text.contains('\n'){return true;}
+    if ["그리고","그 다음","다음으로","한 뒤","후에","then","after",";"]
+        .iter().any(|marker|text.contains(marker)){return true;}
+    match acceptance{
+        Some((_,checks))=>checks.as_array().map(|items|items.is_empty()).unwrap_or(true),
+        None=>true,
+    }
+}
+/// A multi-file acceptance contract is a complete execution target, unless
+/// the owner specifically requested a separate plan before the actions.
+pub fn local_multifile_skips_extra_planner(
+    input:&str,acceptance:&Option<(String,Value)>
+)->bool{
+    let lower=input.to_lowercase();
+    if ["계획을","계획부터","실행 계획","plan first","make a plan",
+        "design a plan","계획 수립"].iter().any(|word|lower.contains(word)){
+        return false;
+    }
+    let Some((_,checks))=acceptance else{return false};
+    let Some(items)=checks.as_array() else{return false};
+    (2..=20).contains(&items.len())&&items.iter().all(|check|{
+        matches!(check["type"].as_str(),
+            Some("file_exists"|"file_changed"|"file_contains"|"file_equals"))
+            && check["path"].as_str().is_some_and(|path|!path.trim().is_empty())
+    })
+}
+
 #[cfg(test)]
 mod tests{
     use super::*;
@@ -93,4 +126,20 @@ mod tests{
         assert!(admit_plan(None,true,false,false,None));
         assert!(!admit_plan(Some(false),true,false,false,None));
     }
+    #[test]
+    fn plan_heuristics_respect_owner_requested_plans_and_existing_contracts(){
+        let single=Some(("owner".into(),serde_json::json!([
+            {"type":"file_exists","path":"src/main.rs"}
+        ])));
+        assert!(!needs_plan("파일 생성",&single));
+        assert!(needs_plan("파일 작성 그리고 테스트",&single));
+        let many=Some(("owner".into(),serde_json::json!([
+            {"type":"file_changed","path":"src/a.rs"},
+            {"type":"file_changed","path":"src/b.rs"}
+        ])));
+        assert!(local_multifile_skips_extra_planner("두 파일 수정",&many));
+        assert!(!local_multifile_skips_extra_planner("계획부터 세워 주세요",&many));
+        assert!(needs_plan("제안해 주세요",&None));
+    }
+
 }

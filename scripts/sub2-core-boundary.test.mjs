@@ -161,3 +161,18 @@ test('policy algorithms are independently replaceable and never imported by exec
  assert.doesNotMatch(source('crates/dominion-turn-core/Cargo.toml'),/dominion-agent-kernel/);
  assert.match(source('src/engine/mod.rs'),/services\/decision\/turn_policy.rs/);
 });
+
+test('planning heuristics and decomposition flow only through the decision adapter',()=>{
+ const runtime=source('src/engine/services/conversation/chat/runtime/turn_body.rs');
+ const adapter=source('src/engine/services/decision/turn_policy.rs');
+ const pure=source('crates/dominion-agent-kernel/src/decision_policy.rs');
+ assert.doesNotMatch(runtime,/crate::engine::decompose::|crate::engine::plan_quality::/);
+ assert.match(runtime,/decision_policy\.decompose_request\(/);
+ assert.match(runtime,/TurnPolicy::plan_heuristic\(/);
+ assert.match(runtime,/TurnPolicy::skip_extra_planner\(/);
+ assert.match(runtime,/TurnPolicy::plan_scores\(/);
+ assert.match(adapter,/pub fn decompose_request/);
+ assert.match(adapter,/pub fn plan_scores/);
+ assert.match(pure,/pub fn needs_plan/);
+ assert.match(pure,/pub fn local_multifile_skips_extra_planner/);
+});

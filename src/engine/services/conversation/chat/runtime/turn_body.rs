@@ -568,9 +568,7 @@ pub(super) async fn run_turn_body(
     // Deterministic decomposition runs before any model call. It gives the
     // turn an engine-owned ordered sub-goal list and an independently graded
     // signal that does not depend on whole-task success.
-    let decomposition_algorithm=decision_policy.decomposition(task_input(&session,&request.input));
-    let decomposition =
-        crate::engine::decompose::decompose(task_input(&session,&request.input), &decomposition_algorithm);
+    let decomposition=decision_policy.decompose_request(task_input(&session,&request.input));
     let subtask_count = decomposition["subtasks"]
         .as_array()
         .map(Vec::len)
@@ -589,7 +587,7 @@ pub(super) async fn run_turn_body(
             decomposition["kernel"].as_str().unwrap_or(""),
         ]),
     }));
-    let plan_heuristic=needs_plan(&request.input,&acceptance)||subtask_count>1;
+    let plan_heuristic=crate::engine::turn_policy::TurnPolicy::plan_heuristic(&request.input,&acceptance)||subtask_count>1;
     // Home autonomous jobs already retain an engine-owned task plan and
     // deterministic unmet checks across repair turns. Paying another planner
     // model on every repeat is redundant; the repair instruction provides
@@ -600,7 +598,7 @@ pub(super) async fn run_turn_body(
             && message["metadata"]["authorKind"]=="agent");
     let native_contract_plan=!is_room
         && planning_policy.is_none()
-        && local_multifile_contract_needs_no_secondary_planner(&request.input,&acceptance);
+        && crate::engine::turn_policy::TurnPolicy::skip_extra_planner(&request.input,&acceptance);
     let plan_requested=crate::engine::turn_policy::TurnPolicy::plan_requested(
         planning_policy.as_ref(),request.input.chars().count(),plan_heuristic,
         previous_panel_answer,native_contract_plan,
@@ -628,10 +626,9 @@ pub(super) async fn run_turn_body(
             // compare planning quality instead of only file success.
             if let Some(mut execution) = state.store.get("execution", execution_id) {
                 execution["plan"] = json!(plan.chars().take(4_000).collect::<String>());
-                execution["planQuality"] =
-                    crate::engine::plan_quality::score(&plan, &request.input);
-                execution["planQualityIndependent"] =
-                    crate::engine::plan_quality::score_independent(&plan, &request.input);
+                let (quality,independent)=crate::engine::turn_policy::TurnPolicy::plan_scores(&plan,&request.input);
+                execution["planQuality"]=quality;
+                execution["planQualityIndependent"]=independent;
                 if let Some(policy) = &planning_policy {
                     execution["planPolicyId"] = policy["id"].clone();
                     execution["planPolicyRevision"] = policy["revision"].clone();

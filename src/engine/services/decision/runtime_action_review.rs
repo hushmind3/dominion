@@ -23,43 +23,18 @@ pub(super) fn simple_file_creation(
 /// decides edits and receives all user instructions; a second, separate
 /// planning model would only paraphrase the same bounded file list.
 /// Owner-requested planning and explicit planning policies remain authoritative.
+#[allow(dead_code)]
 pub(super) fn local_multifile_contract_needs_no_secondary_planner(
-    input:&str, acceptance:&Option<(String,Value)>
+    input:&str,acceptance:&Option<(String,Value)>
 )->bool{
-    let lower=input.to_lowercase();
-    if ["계획을", "계획부터", "실행 계획", "plan first", "make a plan",
-        "design a plan", "계획 수립"].iter().any(|word|lower.contains(word)){
-        return false;
-    }
-    let Some((_,checks))=acceptance else{return false};
-    let Some(items)=checks.as_array() else{return false};
-    (2..=20).contains(&items.len()) && items.iter().all(|check|{
-        matches!(check["type"].as_str(),
-            Some("file_exists"|"file_changed"|"file_contains"|"file_equals"))
-            && check["path"].as_str().is_some_and(|path|!path.trim().is_empty())
-    })
+    dominion_agent_kernel::decision_policy::local_multifile_skips_extra_planner(input,acceptance)
 }
 
 /// Deterministic single-step file work should not pay for an extra planner
 /// call. Multi-step, long or unverified requests still get one.
-pub(super) fn needs_plan(input: &str, acceptance: &Option<(String, Value)>) -> bool {
-    let text = input.trim();
-    if text.chars().count() > 240 || text.contains('\n') {
-        return true;
-    }
-    if ["그리고", "그 다음", "다음으로", "한 뒤", "후에", "then", "after", ";"]
-        .iter()
-        .any(|marker| text.contains(marker))
-    {
-        return true;
-    }
-    match acceptance {
-        Some((_, checks)) => checks
-            .as_array()
-            .map(|items| items.is_empty())
-            .unwrap_or(true),
-        None => true,
-    }
+#[allow(dead_code)]
+pub(super) fn needs_plan(input:&str,acceptance:&Option<(String,Value)>)->bool{
+    dominion_agent_kernel::decision_policy::needs_plan(input,acceptance)
 }
 
 pub(super) async fn action_plan(state: &AppState, request: &TurnRequest, text: &str) -> Option<String> {
