@@ -548,12 +548,19 @@ fn edit_stale_read_context(messages: &mut [Value], capacity: usize, schema_chars
     if candidates.iter().map(|(_, _, saving)| saving).sum::<usize>() < minimum {
         return 0;
     }
-    // Oldest-first, then stop. This avoids needless cache invalidation on
-    // subsequent turns and leaves the most recent work available verbatim.
+    // Cacheless local routes pay full prefill on each model call: shrink stale
+    // read-only evidence to a tighter target, while keeping the last three
+    // observations, mutations and errors untouched. Cache-capable routes
+    // retain the existing gentler threshold to preserve stable prefixes.
     candidates.reverse();
+    let target = if uncached_local {
+        capacity / 4
+    } else {
+        capacity.saturating_mul(3) / 5
+    };
     let mut cleared = 0usize;
     for (index, compact, saving) in candidates {
-        if total <= capacity.saturating_mul(3) / 5 && cleared >= minimum { break; }
+        if total <= target && cleared >= minimum { break; }
         messages[index]["content"] = json!(compact);
         total = total.saturating_sub(saving);
         cleared = cleared.saturating_add(saving);
