@@ -186,6 +186,31 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[tokio::test]
+    async fn a_disabled_memory_tool_cannot_mutate_state_even_with_a_cached_tool_schema(){
+        let root=std::env::temp_dir().join(format!("dominion-addon-dispatch-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=Config{port:0,data_dir:root.clone(),web_dir:root.join("web"),workspace:root.clone()};
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),Vault::open(&config.key_path()));
+        state.store.put("session",&json!({"id":"s","extensions":{"memory":false,"skills":false}})).unwrap();
+        let ctx=crate::engine::tools::ToolContext{
+            workspace:&root,store:&state.store,state:&state,session_id:"s",
+            agent_id:None,tools_enabled:true,tools_execution_enabled:true,
+        };
+        let memory_result=crate::engine::tools::execute(&ctx,"memory_store",
+            &json!({"text":"untrusted-memory","evidenceQuote":"untrusted-memory"}),
+            "run").await;
+        assert!(memory_result.is_err(),"disabled memory cannot execute through the builtin gateway");
+        let skills_result=crate::engine::extensions::knowledge_tools::execute(
+            &ctx,"skill_propose",&json!({"name":"untrusted","instructions":"untrusted"}));
+        assert!(skills_result.is_err(),"disabled skills cannot execute even directly in the adapter");
+        assert!(state.store.all("memory").is_empty());
+        assert!(state.store.all("skill").is_empty());
+        drop(ctx);
+        drop(state);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn policy_rejects_unknown_or_untyped_capability_keys(){
         assert_eq!(validate_policy(&json!({"mcp":false,"memory":false})).unwrap(),
