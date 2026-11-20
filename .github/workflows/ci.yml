@@ -139,6 +139,10 @@ jobs:
           cargo test --locked --bin dominion-benchmark truncated_http_stream_is_not_counted_as_a_completed_trial
           cargo test --locked --bin dominion-rust speaker_accounting_joins_only_the_owning_execution_and_marks_estimates
           cargo test --locked --bin dominion-rust db::tests::session_running_probe_avoids_global_history_and_uses_session_index
+      - name: Optional backend extension boundaries (dev profile)
+        run: |
+          cargo test --locked --bin dominion-rust engine::extensions::tests
+          cargo test --locked --test e2e room_identity::backend_extensions_are_isolated_from_the_core_conversation -- --nocapture
       - name: Explicit public web search requires verified tool evidence (dev profile)
         run: |
           cargo test --locked --bin dominion-rust engine::chat::web_research::tests
