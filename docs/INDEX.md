@@ -13,7 +13,6 @@
 
 **Archived development findings (historical, not the current API contract)**
 
-- [Source audit, 2026-11-18](SUB2-SOURCE-AUDIT-2026-11-18.md)
 - [Room context and token compaction](SUB2-ROOM-CONTEXT-COMPACTION-2026-11-18.md)
 - [Room delta and memory](SUB2-ROOM-DELTA-MEMORY-2026-11-18.md)
 - [Native tool progression](SUB2-PROGRESSIVE-NATIVE-TOOLS-2026-11-18.md)
