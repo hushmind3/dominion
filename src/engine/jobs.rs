@@ -148,8 +148,7 @@ pub fn steer_with_mode(state:&AppState,id:&str,instruction:&str,mode:&str)
     }
     for _ in 0..4 {
         let job=state.store.get("job",id).ok_or(SteeringError::NotFound)?;
-        if job["kind"]!="prompt" || job["input"]["rsiSourceDir"].is_string()
-            || job["input"]["autonomous"]==false {
+        if job["kind"]!="prompt" || job["input"]["autonomous"]==false {
             return Err(SteeringError::BadInput(
                 "자율 실행 중인 일반 작업에서만 추가 지시를 지원합니다.".into()));
         }
@@ -266,14 +265,8 @@ pub fn recover(state: &AppState) {
         let flagged = [
             "/inFlight",
             "/promptState/inFlight",
-            "/rsiCompareInFlight",
-            "/rsiEvolutionInFlight",
-            "/goalState/inFlight",
-            "/goalState/reviewPending",
             "/roomState/inFlight",
-            "/workflowState/inFlight",
             "/discordState/inFlight",
-            "/videoState/inFlight",
         ]
         .iter()
         .any(|path| {
