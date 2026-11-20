@@ -31,6 +31,7 @@ pub(super) async fn run(
     // to create a session cannot leave half the roster running.
     let mut work=Vec::new();
     let mut sessions=Vec::new();
+    let mut read_watermarks=std::collections::HashMap::<String,u64>::new();
     for agent_id in initial {
         let agent=state.store.get("agent",agent_id)
             .ok_or_else(||format!("참가 에이전트가 삭제되었습니다: {agent_id}"))?;
@@ -68,6 +69,9 @@ pub(super) async fn run(
             "jobTokenLimit":if token_budget==0 {Value::Null}
                 else{json!(token_budget/initial.len() as u64)},
         });
+        let reader=crate::engine::room_state::unread_for(
+            state,room_id,room_session,agent_id)?;
+        read_watermarks.insert(agent_id.clone(),reader.through);
         sessions.push(private_id.clone());
         work.push((agent_id.clone(),private_id,chat::TurnRequest{
             session_id:Some(session["id"].as_str().unwrap_or("").to_string()),
@@ -80,7 +84,8 @@ pub(super) async fn run(
                 "You are an independent read-only worker in a group. \
                  Other participants run concurrently; do not assume their work \
                  or claim tool effects. Provide a concise answer for the owner. \
-                 Room topic: {}",room["topic"].as_str().unwrap_or("")
+                 Room topic: {}\n{}",room["topic"].as_str().unwrap_or(""),
+                 reader.unread.as_deref().unwrap_or("")
             )),task_id:None,parent_task_id:None,task_revision:None,
             verification_owner:Some("parent".into()),
         }));
@@ -254,6 +259,12 @@ pub(super) async fn run(
         let assignment=assignments.get(agent_id)
             .ok_or("그룹 작업의 사전 할당 기록이 누락되었습니다.")?;
         crate::engine::room_workboard::complete(state,assignment,&observed)?;
+        crate::engine::room_state::acknowledge_read(
+            state,room_id,room_session,agent_id,source_id,
+            saved["id"].as_str().ok_or("병렬 응답 메시지 ID가 없습니다.")?,
+            *read_watermarks.get(agent_id)
+                .ok_or("병렬 작업 읽기 위치가 누락되었습니다.")?,
+        )?;
         state.bus.emit(json!({"type":"room_event","roomId":room_id,
             "sessionId":room_session,"agentId":agent_id,
             "event":{"type":"assistant_saved","messageId":saved["id"]}}));

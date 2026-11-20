@@ -225,3 +225,9 @@ https://openai.com/index/unrolling-the-codex-agent-loop/
 공통 `dominion-turn-core::agent_loop::Harness`를 구현해, 제품의 모델 요청/전략 검증/전체 도구 배치 예약과 독립 `dominion-agent-loop::run`이 **같은 한 Rust 구조체**를 거치도록 연결했습니다. 두 실행기 모두 모델 호출 전 취소·라운드 제한을 적용하고, 전략이 실재 호출을 증감하지 못하게 검증하며, 숨겨진 도구가 포함된 배치는 도구 하나도 실행하기 전에 거부합니다. 기존의 `Driver` 호출을 이 Harness 뒤로 이동했습니다. 화면/프로바이더/SQLite/도구 구현은 호스트에 남겨 두었습니다.
 
 주의: 호스트의 복합 ProgramIR·스트리밍·동시 읽기 스케줄러가 `dominion-agent-loop::run` 함수에 완전히 들어간 것은 아닙니다. 제품 실행 경로와 독립 포트 실행기의 **공통 실행 제어기**를 먼저 완료한 단계로, 모든 상세 구현의 물리적 단일화와 혼동하지 않습니다.
+
+## 2026-11-21: Room participant read cursor + SSE UI state reconciliation
+
+- `room_state::unread_for`가 에이전트별 `room_agent_cursor` 레코드에서 이전 읽기 위치를 조회하고, **모델 입력 직전의 전역 SQLite 이벤트 저널 seq**를 고정합니다. 최신 24개의 신규 메시지 ID·작성 주체·답글 출처만 제한된 데이터로 전달하며 해당 메시지의 텍스트를 새 소유자 명령으로 승격하지 않습니다.
+- 직렬 Room과 병렬 읽기 Room 모두 실제 에이전트 응답이 저장된 뒤 `acknowledge_read`를 호출합니다. **모델 처리 중 도착한 이벤트는 읽은 것으로 처리하지 않습니다.** CAS로 단조 증가하고, 다른 에이전트의 응답/다른 세션을 전진 근거로 쓰지 못합니다. 커서 누락·저널 간격은 조용히 넘기지 않고 명시합니다.
+- React의 기존 SSE 갱신 분류기에 버전 1 `run_state`를 연결해 작업·실행·그룹 화면이 같은 공통 상태 이벤트로 갱신됩니다. 탐색 탭·메뉴·HTTP 경로는 추가하지 않았습니다.

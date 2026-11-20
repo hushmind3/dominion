@@ -1,7 +1,7 @@
 /** Pure SSE invalidation map. Unknown events do not invalidate the whole UI. */
 export type RefreshScope = {targets:string[];sessions:string[];rooms:string[]}
 type BusRow = Record<string,unknown>
-export type BusChange = {type?:string;kind?:string;record?:BusRow;message?:BusRow;approval?:BusRow;sessionId?:string;roomId?:string;jobId?:string}
+export type BusChange = {type?:string;kind?:string;record?:BusRow;message?:BusRow;approval?:BusRow;sessionId?:string;roomId?:string;jobId?:string;runKind?:string;runId?:string;sourceMessageId?:string;agentId?:string;eventSeq?:number;schemaVersion?:number}
 const field=(row:BusRow|undefined,name:string):string|undefined=>{
  const value=row?.[name]
  return typeof value==='string'&&value.length>0?value:undefined
@@ -44,6 +44,17 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
     break
   }
   if(event.kind==='job'&&field(row,'kind')?.startsWith('model_'))add('/api/model-library/*')
+ }else if(event.type==='run_state' && event.schemaVersion===1 && typeof event.eventSeq==='number'){
+  // The same durable state stream is used by Rust and TypeScript SDKs.
+  // Update only the corresponding product surface; never reload menus.
+  if(event.runKind==='job'){
+   add('/api/jobs')
+   if(event.runId)add('/api/jobs/'+encoded(event.runId))
+  }else if(event.runKind==='execution'){
+   add('/api/executions')
+  }else if(event.runKind==='room_work_assignment'){
+   add('/api/rooms')
+  }
  }else if(event.type==='message'){
   add('/api/sessions')
   if(session)add('/api/sessions/'+encoded(session)+'/messages')

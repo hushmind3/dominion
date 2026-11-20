@@ -71,6 +71,11 @@ impl Bus {
         self.emit(json!({ "type": "approval", "approval": approval }));
     }
 
+    /// Snapshot a single global journal watermark at the moment the model
+    /// receives its context. The room reader must acknowledge THIS watermark,
+    /// not the later cursor after provider/tool work has completed.
+    pub fn cursor(&self)->u64{self.seq.load(Ordering::SeqCst)}
+
     pub fn subscribe(&self) -> broadcast::Receiver<Value> {
         self.sender.subscribe()
     }

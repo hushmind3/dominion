@@ -41,3 +41,16 @@ test('merge collapses rapid SSE bursts while unknown events do not cause full re
  assert.deepEqual(classifyRefreshEvent({type:'audit'}).targets,['/api/audit/*','/api/audit'])
  assert.deepEqual(classifyRefreshEvent({type:'unrecognized'}).targets,[])
 })
+
+test('versioned durable run state feeds existing UI surfaces without an extra menu',()=>{
+ const job=classifyRefreshEvent({type:'run_state',runKind:'job',runId:'job-1',eventSeq:17,schemaVersion:1})
+ assert.ok(matchesRefreshTarget('/api/jobs/job-1',job.targets))
+ assert.equal(matchesRefreshTarget('/api/providers',job.targets),false)
+ const execution=classifyRefreshEvent({type:'run_state',runKind:'execution',runId:'ex-1',eventSeq:18,schemaVersion:1})
+ assert.ok(matchesRefreshTarget('/api/executions',execution.targets))
+ assert.equal(matchesRefreshTarget('/api/jobs',execution.targets),false)
+ const room=classifyRefreshEvent({type:'run_state',runKind:'room_work_assignment',runId:'a',eventSeq:19,schemaVersion:1})
+ assert.ok(matchesRefreshTarget('/api/rooms',room.targets))
+ const old=classifyRefreshEvent({type:'run_state',runKind:'job',runId:'old',eventSeq:17,schemaVersion:0})
+ assert.deepEqual(old.targets,[])
+})

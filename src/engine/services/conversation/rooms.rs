@@ -696,6 +696,8 @@ async fn run_locked(
             .or_else(||agent["thinking"].as_bool())
             .or_else(||effort_choice.as_deref().map(|effort| effort != "none"))
             .or_else(||(!codex_route).then_some(false));
+        let reader=crate::engine::room_state::unread_for(
+            state,room_id,session_id,&agent_id)?;
         let mut request=TurnRequest {
             session_id:Some(session_id.to_string()),request_id:None,input:owner_text.to_string(),agent_id:Some(agent_id.clone()),provider_id,model,attachment_ids: Vec::new(),tools_enabled:room["toolsEnabled"].as_bool().unwrap_or(false),tools_execution_enabled:true,thinking,auto_learning:room["autoLearning"].as_bool().unwrap_or(true),reasoning_effort,reasoning_language: (input["reasoningLanguage"].as_str().unwrap_or("ko") == "ko").then(|| "ko".into()),
             task_id:Some(task_id.clone()),parent_task_id:None,task_revision:task_revision.clone(),verification_owner:Some("self".into()),
@@ -706,6 +708,10 @@ async fn run_locked(
         };
         if let Some(note) = crate::engine::debate::guidance(&conflict_resolution) {
             request.system_override = Some(note.to_string());
+        }
+        if let Some(unread)=&reader.unread{
+            request.system_override=Some(format!(
+                "{}\n{}",request.system_override.as_deref().unwrap_or(""),unread));
         }
         let message = match run_room_quiet(state, &request, source_id).await {
             Ok(Some(message)) => message,
@@ -777,6 +783,11 @@ async fn run_locked(
             )?;
             crate::engine::room_workboard::complete(state,assignment,&observed)?;
         }
+        crate::engine::room_state::acknowledge_read(
+            state,room_id,session_id,&agent_id,source_id,
+            message["id"].as_str().ok_or("응답 메시지 ID가 없습니다.")?,
+            reader.through,
+        )?;
         let resolution =
             crate::engine::debate::resolve(owner_text, &outputs, &conflict_strategy);
         if resolution["conflict"].as_bool() == Some(true)
