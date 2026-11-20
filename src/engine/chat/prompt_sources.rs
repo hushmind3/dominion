@@ -156,6 +156,68 @@ pub(super) fn indexed_identity(
     (stable,relevant,items)
 }
 
+/// Compact the common owner charter in the SAME stable location for every
+/// room participant. The owner's binding rules remain pinned verbatim.
+pub(super) fn room_shared_identity(state:&AppState)->(String,Vec<Value>){
+    let (mut stable,mut items)=super::context::room_shared_identity_prefix(state);
+    let Some(text)=state.store.get("assistant_settings","global")
+        .filter(|row|row["enabled"]!=false)
+        .and_then(|row|row["instructions"].as_str().map(str::to_owned))else{
+        return (stable,items);
+    };
+    let view=project("owner",&text,"");
+    if view.indexed && stable.ends_with(&text) {
+        stable.truncate(stable.len()-text.len());
+        stable.push_str(&view.stable);
+        items.retain(|item|item["kind"]!="owner_instructions");
+        items.push(json!({"kind":"paged_identity_source","source":"owner",
+            "id":"global","revision":view.digest,"originalChars":view.original_chars}));
+    }
+    (stable,items)
+}
+
+/// A room's agent-specific tail follows the shared owner charter, not the
+/// other way around. Only this participant's persona is ever addressable.
+pub(super) fn room_agent_identity(
+    state:&AppState,request:&TurnRequest
+)->(String,Vec<Value>){
+    let (mut stable,mut items)=super::context::room_agent_identity_suffix(state,request);
+    let Some((id,text))=request.agent_id.as_deref()
+        .and_then(|id|state.store.get("agent",id)
+            .and_then(|row|row["systemPrompt"].as_str()
+                .map(|text|(id.to_owned(),text.to_owned()))))
+    else{return (stable,items)};
+    let view=project("persona",&text,"");
+    if view.indexed && stable.ends_with(&text) {
+        stable.truncate(stable.len()-text.len());
+        stable.push_str(&view.stable);
+        items.retain(|item|item["kind"]!="persona");
+        items.push(json!({"kind":"paged_identity_source","source":"persona",
+            "id":id,"revision":view.digest,"originalChars":view.original_chars}));
+    }
+    (stable,items)
+}
+
+/// Query-specific parts are supplemental system evidence, not a moving
+/// permanent shared identity. Unreduced full texts stay durable in SQLite.
+pub(super) fn room_query_passages(state:&AppState,request:&TurnRequest,query:&str)->String{
+    if !request.tools_enabled || !request.tools_execution_enabled {
+        return String::new();
+    }
+    let mut relevant=String::new();
+    if let Some(text)=state.store.get("assistant_settings","global")
+        .filter(|row|row["enabled"]!=false)
+        .and_then(|row|row["instructions"].as_str().map(str::to_owned)){
+        relevant.push_str(&project("owner",&text,query).relevant);
+    }
+    if let Some(text)=request.agent_id.as_deref()
+        .and_then(|id|state.store.get("agent",id))
+        .and_then(|row|row["systemPrompt"].as_str().map(str::to_owned)){
+        relevant.push_str(&project("persona",&text,query).relevant);
+    }
+    relevant
+}
+
 pub(crate) fn original_source(state:&AppState,agent_id:Option<&str>,source:&str)->Result<String,String>{
     match source{
         "owner"=>state.store.get("assistant_settings","global")
