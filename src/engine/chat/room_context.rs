@@ -939,7 +939,7 @@ mod tests {
             "agentId":"b","toolsEnabled":true,"toolsExecutionEnabled":true})).unwrap();
         let (sys_a,_,items_a)=core(&state,&a,&room,"검색해");
         let (sys_b,_,items_b)=core(&state,&b,&room,"검색해");
-        let shared=super::prompt_sources::room_shared_identity(&state).0;
+        let shared=super::super::prompt_sources::room_shared_identity(&state).0;
         assert!(sys_a.starts_with(&shared));
         assert!(sys_b.starts_with(&shared));
         assert!(sys_a.chars().count()<10_000);
