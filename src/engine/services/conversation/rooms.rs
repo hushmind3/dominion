@@ -2183,4 +2183,43 @@ mod tests {
         assert_eq!(routing_mode(&state, &explicit).unwrap(), "round_robin");
         let _ = std::fs::remove_dir_all(dir);
     }
+
+    #[tokio::test]
+    async fn opt_in_readonly_agents_run_in_isolated_sessions_and_merge_once(){
+        let (state,dir)=test_state();
+        state.store.put("room",&json!({
+            "id":"r","name":"동시 검토","agentIds":["a","b"],
+            "routingMode":"discussion","executionMode":"parallel_readonly",
+            "rounds":1,"maxTurns":2,"toolsEnabled":false,"autoLearning":false,
+        })).unwrap();
+        let (server,bodies)=provider(&state,vec![
+            text_delta("독립 의견 1"),text_delta("독립 의견 2"),
+            text_delta("최종 의견 1"),text_delta("최종 의견 2"),
+        ],None).await;
+        let mut job=save_owner_job(&state,"parallel-test","독립적으로 검토해주세요");
+        job["input"]["agentIds"]=json!(["a","b"]);
+        job["input"]["explicitAgentIds"]=json!(true);
+        let job=state.store.put("job",&job).unwrap();
+        let output=run(&run_context(&state,"parallel-test"),&job).await.unwrap();
+        assert_eq!(output["status"],"completed","{output}");
+        assert_eq!(output["turns"],2,"{output}");
+        assert_eq!(output["outputs"][0]["agentId"],"a");
+        assert_eq!(output["outputs"][1]["agentId"],"b");
+        assert!(output["outputs"].as_array().unwrap().iter()
+            .all(|o|o["parallelReadOnly"]==true && o["toolCallCount"]==0));
+        let public=state.store.messages("room:r");
+        assert_eq!(public.iter().filter(|m|m["role"]=="user").count(),1);
+        assert_eq!(public.iter().filter(|m|m["role"]=="assistant").count(),2);
+        let workers=state.store.all("session").into_iter()
+            .filter(|s|s["kind"]=="room_worker").collect::<Vec<_>>();
+        assert_eq!(workers.len(),2);
+        assert_ne!(workers[0]["id"],workers[1]["id"]);
+        assert_eq!(state.store.room_work_items("r","parallel-test:owner",12)
+            .unwrap().len(),2);
+        assert!(bodies.lock().unwrap().len()>=2);
+        assert!(state.store.all("execution_operation").is_empty());
+        server.abort();
+        drop(state);
+        let _=std::fs::remove_dir_all(dir);
+    }
 }
