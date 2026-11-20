@@ -1,13 +1,12 @@
 import {emailLoginReady, startEmailLogin, verifyEmailLogin, pollEmailLogin} from './email_auth.js';
+import {b64url, hash, randomToken} from './token_crypto.js';
 // DOMINION account gateway: no Nous credentials and no shared client-side API key.
 // Cloudflare Worker + D1. Credits are integer micro-KRW (one KRW = 1,000 units).
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), {
   status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers }
 });
 const bytes = text => new TextEncoder().encode(text);
-const b64url = data => btoa(String.fromCharCode(...new Uint8Array(data))).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 const unb64 = text => Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - text.length % 4) % 4)), c => c.charCodeAt(0));
-const hash = async value => b64url(await crypto.subtle.digest('SHA-256', bytes(value)));
 const err = (message, status = 400) => json({ error: message }, status);
 const now = () => Math.floor(Date.now() / 1000);
 const maxBody = async (request, limit = 150000) => {
@@ -80,7 +79,7 @@ function oauthConfig(provider, env) {
 async function createSession(env,id,email) {
   await env.DB.prepare('INSERT INTO accounts(id,email,credits,created_at) VALUES(?,?,0,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email')
     .bind(id,String(email||'').slice(0,320),now()).run();
-  const token=b64url(crypto.getRandomValues(new Uint8Array(32)));
+  const token=randomToken();
   await env.DB.prepare('INSERT INTO sessions(token_hash,account_id,expires_at) VALUES(?,?,?)')
     .bind(await hash(token),id,now()+7*86400).run();
   return token;
@@ -91,7 +90,7 @@ function oauthCookie(provider,value,maxAge) {
 async function oauthStart(request,env,provider) {
   const config=oauthConfig(provider,env);
   if(!config)return err('Login provider not configured',503);
-  const state=b64url(crypto.getRandomValues(new Uint8Array(32)));
+  const state=randomToken();
   const callback=new URL('/v1/auth/'+provider+'/callback',request.url).href;
   const url=new URL(config.authorize);
   url.searchParams.set('response_type','code');
