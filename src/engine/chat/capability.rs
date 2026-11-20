@@ -169,7 +169,11 @@ fn search_catalog(catalog:&[Value],args:&Value)->Result<Value,String>{
             "description":tool.pointer("/function/description")
                 .and_then(Value::as_str).unwrap_or("")
                 .chars().take(180).collect::<String>(),
-            "parameters":tool.pointer("/function/parameters"),
+            // The provider receives this exact schema on the following
+            // round after promotion. Echoing it inside the search observation
+            // duplicates potentially huge MCP input contracts in chat history.
+            // Only identity/short summary belong to the discovery receipt.
+            "schemaDeferred":true,
         })).collect::<Vec<_>>();
     Ok(json!({"query":query,"matches":matches,
         "availableCount":catalog.len(),
@@ -276,6 +280,35 @@ mod tests{
         })).unwrap();
         assert!(search["matches"].as_array().unwrap().iter()
             .any(|row|row["name"]=="google_docs_read"));
+    }
+
+    #[test]
+    fn discovery_receipt_never_echoes_full_mcp_schema_but_promotes_exact_original(){
+        let huge_description="large payload specification ".repeat(1200);
+        let actual=json!({"type":"function","function":{
+            "name":"mcp__invoice_upload",
+            "description":"Upload an invoice after approval",
+            "parameters":{"type":"object","properties":{
+                "invoice":{"type":"string","description":huge_description},
+                "secretContext":{"type":"string","description":"private schema detail"}
+            },"required":["invoice"]}
+        }});
+        let catalog=vec![actual.clone()];
+        let result=search_catalog(&catalog,&json!({
+            "query":"mcp__invoice_upload","limit":1
+        })).unwrap();
+        let hit=&result["matches"][0];
+        assert_eq!(hit["name"],"mcp__invoice_upload");
+        assert_eq!(hit["schemaDeferred"],true);
+        assert!(hit.get("parameters").is_none(),
+            "discovery must not duplicate MCP argument schemas into tool results");
+        assert!(!result.to_string().contains("secretContext"));
+        assert!(result.to_string().len()<1000,
+            "tool search is a compact capability card, not a schema transfer");
+        let mut visible=Vec::new();
+        assert_eq!(promote(&mut visible,&catalog,&result),1);
+        assert_eq!(visible,vec![actual],
+            "the provider must receive the exact original schema after promotion");
     }
 
     #[test]
