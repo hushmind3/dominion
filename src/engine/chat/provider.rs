@@ -476,12 +476,16 @@ fn edit_stale_read_context(messages: &mut [Value], capacity: usize, schema_chars
         .filter(|row| row["role"] == "tool")
         .filter_map(|row| row["content"].as_str())
         .map(escaped_content_chars).sum::<usize>());
-    // Local routes without a declared server KV cache pay full prefill again
-    // every round; reclaim stale reads earlier. On cacheable routes wait until
-    // pressure is real, avoiding gratuitous cache-prefix invalidation.
+    // Cache hits are not an unlimited context budget. A large provider may
+    // have 128k+ context, so waiting until 75% full causes old HTML/file
+    // dumps to survive dozens of short replies. Retire an oversized *old*
+    // read on its own merits while retaining the last three read results,
+    // write effects and error diagnostics at their original fidelity.
     let threshold = if uncached_local { 2 } else { 3 };
     let divisor = if uncached_local { 5 } else { 4 };
-    if total <= capacity.saturating_mul(threshold) / divisor { return 0; }
+    let capacity_pressure = total > capacity.saturating_mul(threshold) / divisor;
+    let aging_evidence_pressure = !uncached_local && total > 32_000;
+    if !capacity_pressure && !aging_evidence_pressure { return 0; }
 
     // IDs are only unique within their assistant tool batch. Providers may
     // reuse an ID in a later turn: never reclassify an older WRITE as a READ.
@@ -540,11 +544,15 @@ fn edit_stale_read_context(messages: &mut [Value], capacity: usize, schema_chars
         let saving = size.saturating_sub(escaped_content_chars(&compact));
         if saving > 1000 { candidates.push((index, compact, saving)); }
     }
-    let minimum = if uncached_local {
-        (capacity / 20).clamp(2_000, 12_000)
-    } else {
-        (capacity / 12).clamp(8_000, 24_000)
-    };
+    // Do not churn provider cache for tiny observations. Significant stale
+    // reads can be retired even at 20%-30% model occupancy; a high-capacity
+    // route is not a reason to repeatedly send yesterday's full page HTML.
+    let early_bulk_read = aging_evidence_pressure && candidates.iter()
+        .any(|(_, _, saving)| *saving >= 8_000);
+    if !capacity_pressure && !early_bulk_read { return 0; }
+    let minimum = if !capacity_pressure && early_bulk_read { 8_000 }
+        else if uncached_local { (capacity / 20).clamp(2_000, 12_000) }
+        else { (capacity / 12).clamp(8_000, 24_000) };
     if candidates.iter().map(|(_, _, saving)| saving).sum::<usize>() < minimum {
         return 0;
     }
@@ -553,11 +561,12 @@ fn edit_stale_read_context(messages: &mut [Value], capacity: usize, schema_chars
     // observations, mutations and errors untouched. Cache-capable routes
     // retain the existing gentler threshold to preserve stable prefixes.
     candidates.reverse();
-    let target = if uncached_local {
-        capacity / 4
-    } else {
-        capacity.saturating_mul(3) / 5
-    };
+    let target = if !capacity_pressure && early_bulk_read {
+        // Retire the oldest oversized read without rewriting unrelated
+        // cacheable context or evicting recent evidence.
+        total.saturating_sub(minimum)
+    } else if uncached_local { capacity / 4 }
+    else { capacity.saturating_mul(3) / 5 };
     let mut cleared = 0usize;
     for (index, compact, saving) in candidates {
         if total <= target && cleared >= minimum { break; }
@@ -2404,10 +2413,39 @@ mod tests {
         assert_eq!(original[2]["content"].as_str().unwrap().len(),22_000,
             "durable context must never be mutated");
         let mut short=original.clone();
-        assert_eq!(edit_stale_read_context(&mut short,before_chars * 2,0, false),0);
-        assert_eq!(short,original, "avoid breaking prompt cache far below threshold");
+        assert!(edit_stale_read_context(&mut short,before_chars * 2,0, false)>30_000,
+            "oversized historical reads should not wait for provider context exhaustion");
+        assert_eq!(short[6],original[6],"historical writes are never compacted");
     }
 
+
+    #[test]
+    fn oversized_html_read_is_retired_early_on_high_context_cached_provider() {
+        let mut rows=vec![json!({"role":"system","content":"owner task"})];
+        for (id,tool,text) in [
+            ("old","http_fetch",format!("<html>{}</html>","JAVASCRIPT_DATA".repeat(8_000))),
+            ("new1","web_search","recent reference 1".repeat(200)),
+            ("new2","web_search","recent reference 2".repeat(200)),
+            ("new3","web_search","recent reference 3".repeat(200)),
+        ] {
+            rows.push(json!({"role":"assistant","content":"","tool_calls":[{
+                "id":id,"function":{"name":tool,"arguments":"{}"}
+            }]}));
+            rows.push(json!({"role":"tool","tool_call_id":id,"content":text}));
+        }
+        let original=rows.clone();
+        let cleared=edit_stale_read_context(&mut rows,500_000,0,false);
+        assert!(cleared>90_000,"a cached provider must not retain a 120k stale HTML dump");
+        assert!(rows[2]["content"].as_str().unwrap().contains("compacted"));
+        assert!(rows[2]["content"].as_str().unwrap().contains("http_fetch"));
+        for index in [4,6,8] {
+            assert_eq!(rows[index],original[index],
+                "the three most recent observations remain verbatim");
+        }
+        assert_eq!(original[2]["content"].as_str().unwrap().len(),
+            "<html></html>".len()+"JAVASCRIPT_DATA".len()*8_000,
+            "full evidence must remain unchanged in the durable source");
+    }
 
     #[test]
     fn uncached_local_compacts_older_reads_before_the_hard_context_limit() {
