@@ -198,7 +198,13 @@ impl Store {
                  WHERE kind='algorithm';
              CREATE INDEX IF NOT EXISTS idx_execution_task
                  ON records(json_extract(data,'$.taskId'))
-                 WHERE kind='execution';",
+                 WHERE kind='execution';
+             -- Only work records for one immutable owner instruction may be
+             -- injected into a speaker's context. Never scan all room history.
+             CREATE INDEX IF NOT EXISTS idx_room_work_scope
+                 ON records(json_extract(data,'$.roomId'),
+                            json_extract(data,'$.sourceMessageId'))
+                 WHERE kind='room_work_item';",
         )?;
         // Older databases predate reasoning/tool columns.
         for (column, decl) in [
@@ -383,6 +389,30 @@ impl Store {
         let rows=stmt.query_map([task_id],record_from_row)
             .map_err(|e|e.to_string())?;
         rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// Bounded, indexed workboard reads. A room ID alone is not sufficient:
+    /// owner turns are immutable, isolated scopes even within one room.
+    pub fn room_work_items(
+        &self, room_id: &str, source_id: &str, limit: usize,
+    ) -> Result<Vec<Value>, String> {
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='room_work_item'
+             AND json_extract(data,'$.roomId')=?1
+             AND json_extract(data,'$.sourceMessageId')=?2
+             ORDER BY CAST(json_extract(data,'$.step') AS INTEGER) DESC,id DESC
+             LIMIT ?3"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map(
+            params![room_id,source_id,limit.clamp(1,48) as i64],
+            record_from_row,
+        ).map_err(|e|e.to_string())?;
+        let mut items=rows.collect::<Result<Vec<_>,_>>()
+            .map_err(|e|e.to_string())?;
+        items.reverse();
+        Ok(items)
     }
 
     pub fn execution_operations(&self, run_id: &str) -> Result<Vec<Value>, String> {

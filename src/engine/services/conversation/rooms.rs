@@ -730,6 +730,15 @@ async fn run_locked(
             "evidenceCount":evidence_count,
             "toolCalls":message["tool_calls"].clone(),
         }));
+        // Persist a task-scoped observation after the assistant message
+        // is committed, before room checkpoint acknowledges the speaker.
+        // Ordinary discussion rooms keep their historical transcript flow.
+        if room["toolsEnabled"].as_bool().unwrap_or(false) && roster.len() >= 2 {
+            crate::engine::room_workboard::record(
+                state,room_id,session_id,source_id,&task_id,
+                &agent_id,outputs.len(),&message,
+            )?;
+        }
         let resolution =
             crate::engine::debate::resolve(owner_text, &outputs, &conflict_strategy);
         if resolution["conflict"].as_bool() == Some(true)

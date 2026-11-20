@@ -533,6 +533,23 @@ pub(crate) fn compile(
     let policy_passage_tokens=if policy_passages.is_empty(){0}
         else{estimate(&policy_passages)};
     let shared=crate::engine::room_state::conversation_context(state,&room,session_id,source_id,&all[..source]);
+    // Only committed peers from THIS owner turn are visible. The workboard
+    // stores compact progress/evidence references rather than replaying their
+    // full transcripts, stdout or other agents' private history.
+    let workboard=if room["toolsEnabled"].as_bool().unwrap_or(false)
+        && room["agentIds"].as_array().is_some_and(|v|v.len()>=2) {
+        crate::engine::room_workboard::snapshot(state,room_id,source_id,&all[source+1..])?
+    }else{None};
+    let workboard_frame=workboard.as_ref().map(|(digest,text,_)|json!({
+        "role":"user","_dominion_frame":format!("room-workboard:{digest}"),
+        "content":text,
+    }));
+    let workboard_tokens=workboard_frame.as_ref()
+        .map(|frame|estimate(&frame.to_string())).unwrap_or(0);
+    if let Some((digest,_,count))=&workboard{
+        items.push(json!({"kind":"room_workboard","digest":digest,
+            "sourceMessageId":source_id,"visibleRecords":count}));
+    }
     // Frame identity tracks *visible semantic state*, not a new owner
     // message ID. Exact source IDs/participant receipts remain in SQLite.
     let shared_text_digest=shared["textDigest"].as_str()
@@ -556,7 +573,7 @@ pub(crate) fn compile(
     };
     let owner_state_tokens=owner_state.as_ref().map(|message|estimate(&message.to_string())).unwrap_or(0);
     let fixed_cost = estimate(&prompt) + schema_tokens + owner_state_tokens
-        + shared_tokens + policy_passage_tokens;
+        + shared_tokens + policy_passage_tokens + workboard_tokens;
     let previous_owner = all[..source].iter().rposition(|row| row["role"] == "user");
     // Each participant carries its own last visible answer and the owner
     // message it answered, even after other participants have spoken. Read
@@ -809,6 +826,7 @@ pub(crate) fn compile(
         estimate(&json!(prefix).to_string())
     };
     prefix.insert(0,shared_frame);
+    if let Some(frame)=workboard_frame{prefix.insert(0,frame);}
     if let Some(index)=indexed_peers.as_ref(){
         for frame in index.frames.iter().rev(){prefix.insert(0,frame.clone());}
     }
@@ -840,7 +858,9 @@ pub(crate) fn compile(
         "personaTokens":persona_tokens,"memoryTokens":memory_tokens,
         "policyPassageTokens":policy_passage_tokens,"ownerStateTokens":owner_state_tokens,
         "sharedStateTokens":shared_tokens,"sharedStateDigest":shared["digest"],
-        "historyTokens":estimate(&json!(history).to_string()).saturating_sub(memory_tokens+owner_state_tokens+shared_tokens),
+        "workboardTokens":workboard_tokens,
+        "workboardVisibleRecords":workboard.as_ref().map(|(_,_,n)|*n).unwrap_or(0),
+        "historyTokens":estimate(&json!(history).to_string()).saturating_sub(memory_tokens+owner_state_tokens+shared_tokens+workboard_tokens),
         "systemTokens":estimate(&prompt).saturating_sub(persona_tokens),"toolSchemaTokens":schema_tokens,"totalInputTokens":input_estimate(&messages,tools),
         "peerIndexedMessageIds":indexed_peers.as_ref().map(|index|index.ids.clone()).unwrap_or_default(),
         "peerIndexEstimatedTokens":indexed_peers.as_ref().map(|index|index.estimated_tokens).unwrap_or(0),

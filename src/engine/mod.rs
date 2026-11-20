@@ -73,6 +73,8 @@ pub mod rooms;
 pub mod room_knowledge;
 #[path = "services/conversation/room_state.rs"]
 pub mod room_state;
+#[path = "services/conversation/room_workboard.rs"]
+pub mod room_workboard;
 #[path = "services/conversation/skills.rs"]
 pub mod skills;
 

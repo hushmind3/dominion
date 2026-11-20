@@ -207,3 +207,21 @@ test('active workflow revisions use existing policy storage without UI changes',
  assert.match(algorithms,/Some\("plan-execute"\)/);
  assert.doesNotMatch(source('crates/dominion-turn-core/src/agent_loop.rs'),/agent\.loop|select_named/);
 });
+
+test('group coordination persists indexed owner-scoped workboard and injects only compact committed evidence',()=>{
+ const rooms=source('src/engine/services/conversation/rooms.rs');
+ const compiler=source('src/engine/services/conversation/chat_room_context.rs');
+ const board=source('src/engine/services/conversation/room_workboard.rs');
+ const db=source('src/db.rs');
+ assert.match(rooms,/room_workboard::record\(/);
+ assert.match(compiler,/room_workboard::snapshot\(/);
+ assert.match(compiler,/workboardTokens/);
+ assert.match(board,/put_if_absent\("room_work_item"/);
+ assert.match(board,/replyToMessageId/);
+ assert.match(board,/completedToolCount/);
+ assert.match(board,/visible_messages/);
+ assert.match(db,/idx_room_work_scope/);
+ assert.match(db,/pub fn room_work_items/);
+ assert.match(engine,/services\/conversation\/room_workboard.rs/);
+ assert.doesNotMatch(source('crates/dominion-turn-core/src/lib.rs'),/room_workboard/);
+});

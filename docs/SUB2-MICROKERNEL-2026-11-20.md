@@ -85,3 +85,11 @@ ProgramIR 실행, 대안 후보 실험, 작업 검토, 정책 스냅샷과 세�
 ## 알고리즘 버전 선택 (UI 변경 없음)
 
 기존 정책 저장소의 활성 `agent.loop` 슬롯에서 `parameters.implementation` 값 `react` 또는 `plan-execute`를 읽어 작업별로 루프 구현을 선택합니다. 저장된 선택이 없거나 알 수 없는 이름이면 기존 작업 기반 자동 선택을 사용합니다. 이 레지스트리는 현재 컴파일된 알고리즘의 선택 방식이며, 임의 Rust/WASM 코드를 런타임에 동적으로 로드하는 것은 아닙니다. 외부 모델 인증·승인·샌드박스·도구 실행 허용은 실행 코어 및 호스트에 남습니다.
+
+## 2026-11-20 그룹 실행 공유 작업판 (Blackboard)
+
+기존 rooms.rs의 체크포인트와 세션별 직렬화는 유지합니다. 도구 실행이 켜져 있고 참가자가 2명 이상인 그룹 작업에서 실제로 저장된 assistant 답변을 sourceMessageId(불변 주인 원문)별 `room_work_item`으로 추가합니다. 메모리 전체 스캔 대신 SQLite expression index `(roomId,sourceMessageId)`를 사용합니다. 재개나 재시도 시 `roomId/sourceMessageId/messageId`에서 유도한 결정적 ID와 `put_if_absent`로 중복 기록을 방지합니다.
+
+다음 참가자 문맥에는 최대 6개의 짧은 관찰과 완료된 실제 `execution_operation` ID/도구/리소스 참조만 넣습니다. 모델 주장과 검증된 도구 관측을 구분하며 진행 중/결과 불명 효과는 근거로 승격하지 않습니다. 과거/미래 소유자 메시지, 타 대화방, 미저장 메시지, 에이전트 개인 프롬프트는 전파하지 않습니다. 구조화된 작업판은 모델과 하네스 독립적인 제품 서비스이며 기존 UI 및 API를 수정하지 않습니다.
+
+근거 비교: https://docs.openclaw.ai/concepts/queue (세션 lane 직렬화), https://docs.rs/adk-rust/latest/adk_rust/agent/team/index.html (공유 블랙보드), https://github.com/whatstask/Cairn (durable event provenance).
