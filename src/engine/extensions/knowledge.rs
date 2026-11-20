@@ -38,6 +38,42 @@ pub fn visible_skills(state:&AppState,session_id:&str,agent_id:Option<&str>)->Ve
 pub fn has_visible_skills(state:&AppState,session_id:&str,agent_id:Option<&str>)->bool{
     !visible_skills(state,session_id,agent_id).is_empty()
 }
+/// Optional post-turn learning and correction processing. An ordinary
+/// completed Rust turn must not enqueue memory jobs or reflection when the
+/// memory extension is disabled at any scope. Stored transcript is unchanged.
+pub fn after_turn(
+    state:&AppState,request:&crate::engine::chat::TurnRequest,
+    session_id:&str,execution_id:&str,result:&Result<Option<Value>,String>,
+){
+    if !enabled(state,session_id,request.agent_id.as_deref(),Extension::Memory){
+        return;
+    }
+    if request.auto_learning {
+        let successful=state.store.get("execution",execution_id).is_some_and(|execution|
+            execution["taskOutcome"]=="succeeded" ||
+            (execution["taskOutcome"]=="answered_unverified"
+                && execution["acceptanceText"].is_null())
+        );
+        if successful && matches!(result,Ok(Some(_))) {
+            crate::engine::learning::enqueue_for_agent_through(
+                state,session_id,request.agent_id.as_deref(),
+                request.provider_id.as_deref().unwrap_or(""),
+                request.model.as_deref().unwrap_or(""),
+                result.as_ref().ok().and_then(|message|message.as_ref())
+                    .and_then(|message|message["id"].as_str()),
+            );
+        }
+    }
+    if let Some(correction)=crate::engine::reflect::correction_to_reflect(
+        state,session_id,&request.input){
+        crate::engine::reflect::enqueue(
+            state,session_id,&correction,request.agent_id.as_deref(),
+            request.provider_id.as_deref().unwrap_or(""),
+            request.model.as_deref().unwrap_or(""),
+        );
+    }
+}
+
 pub fn record_context_use(state:&AppState,session_id:&str,agent_id:Option<&str>,items:&[Value]){
     if enabled(state,session_id,agent_id,Extension::Memory){
         memory::record_context_use(&state.store,items);
