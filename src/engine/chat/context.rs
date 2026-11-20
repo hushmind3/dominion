@@ -734,9 +734,9 @@ mod tests {
         state.store.write_message(&json!({"session_id":"case","role":"user",
             "content":"말 짧게 해라"})).unwrap();
         let original=history(&state,"case",None,None).unwrap();
-        let focused=super::context_window::focus(original.clone(),"말 짧게 해라",false);
-        let before=super::room_context::input_estimate(&original,&[]);
-        let after=super::room_context::input_estimate(&focused,&[]);
+        let focused=crate::engine::chat::context_window::focus(original.clone(),"말 짧게 해라",false);
+        let before=crate::engine::chat::room_context::input_estimate(&original,&[]);
+        let after=crate::engine::chat::room_context::input_estimate(&focused,&[]);
         assert!(before>15_000,"old full HTML must cost real model tokens: {before}");
         assert!(after*10<before,"compact context must reduce input at least 10x: {after}/{before}");
         assert!(focused.iter().any(|m|m["content"]=="말 짧게 해라"));
