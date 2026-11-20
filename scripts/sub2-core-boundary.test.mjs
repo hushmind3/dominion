@@ -8,7 +8,10 @@ const chat=source('src/engine/services/conversation/chat/mod.rs');
 
 test('core entrypoint owns natural language execution, not product services',()=>{
  const core=source('src/engine/core/mod.rs');
- assert.match(core,/pub async fn run_quiet_outcome/);
+ assert.match(core,/pub async fn run_with_events/);
+ assert.match(core,/pub trait ExecutionPort/);
+ assert.doesNotMatch(core,/AppState|use super::chat/);
+ assert.match(source('src/engine/services/automation/turn_quiet.rs'),/impl core::ExecutionPort for ChatPort/);
  assert.doesNotMatch(core,/pub async fn run_quiet_resume/);
  assert.doesNotMatch(core,/pub async fn run_room_quiet/);
  assert.match(source('src/engine/services/automation/turn_resume.rs'),/pub async fn run_quiet_resume/);
@@ -115,4 +118,13 @@ test('real chat model loop consults pure execution driver and gates parallel too
  assert.match(s,/driver\.admit_tool/);
  assert.match(s,/Driver::batch_advertised/);
  assert.ok(exists('src/engine/core/driver.rs'));
+});
+
+test('provider and tool authority are exposed as host ports, not implemented in core',()=>{
+ const core=source('src/engine/core/mod.rs');
+ const driver=source('src/engine/core/driver.rs');
+ assert.doesNotMatch(core,/crate::engine::(memory|mcp|rooms|jobs|models|policy)/);
+ assert.doesNotMatch(driver,/crate::engine|AppState|reqwest|tokio::process/);
+ assert.match(driver,/pub async fn request_model/);
+ assert.match(core,/pub trait ExecutionPort/);
 });

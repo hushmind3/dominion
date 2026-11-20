@@ -50,3 +50,7 @@ ProgramIR 실행, 대안 후보 실험, 작업 검토, 정책 스냅샷과 세�
 - 새 메뉴, 새 API URL, 별도 HTTP 서버 또는 새 권한/저장소를 만들지 않았습니다.
 
 2026-11-20 추가: 기존 코어의 그룹 대화 스트리밍/이벤트 전송은 `src/engine/services/conversation/room_worker.rs`로, 작업 재개는 `src/engine/services/automation/turn_resume.rs`로 이동했습니다. 기존 `engine::run_room_quiet`와 `engine::run_quiet_resume` 공개 경로는 재내보내기로 보존합니다.
+
+## 실제 의존성 역전 (2026-11-20)
+
+`core::ExecutionPort`는 자연어 실행 요청을 전달하는 제네릭 Rust 포트입니다. `core::run_with_events`는 서비스에서 발생한 도구 성공/실패/결과 불명 영수증을 수집하고 최종 결과를 그대로 반환합니다. `src/engine/services/automation/turn_quiet.rs`가 현재 `ChatPort`를 구현해 기존 채팅 서비스를 연결합니다. 이 경계 덕분에 코어는 `AppState`, 구체 모델 제공자, 메모리, 방, 계획, MCP를 직접 import하지 않습니다. `core::driver::Driver`는 실제 모델 호출을 provider Future 포트로 실행하고 도구 이름을 현재 모델에 제공된 스키마로 검사합니다. 독립적인 FakePort 회귀 테스트로 DB 없이 성공/실패 영수증 보존을 검증합니다.

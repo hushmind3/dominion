@@ -2,8 +2,6 @@
 //! Providers, tools, memory, rooms, jobs and other product subsystems live
 //! outside this module. Historical API paths are reexported by engine::mod.
 pub mod driver;
-use super::chat;
-use crate::state::AppState;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -48,43 +46,32 @@ pub(super) fn collect_tool_event(stats: &mut TurnStats, event: &Value) {
     }
 }
 
-/// Runs a turn and collects tool evidence for the goal harness.
-pub async fn run_quiet_outcome(
-    state: &AppState,
-    request: &chat::TurnRequest,
+/// Host ports implement all product work; core never imports AppState,
+/// Chat, model providers, automation, memory, room logic or MCP.
+pub trait ExecutionPort {
+    type Request: ?Sized;
+    async fn execute(&self, request: &Self::Request,
+        events: mpsc::UnboundedSender<Value>) -> Result<Option<Value>, String>;
+}
+
+/// The only generic owner-to-result boundary. Evidence collection remains
+/// active on both success and failure; no operation is declared successful
+/// merely because the model produced text.
+pub async fn run_with_events<P: ExecutionPort>(
+    port: &P, request: &P::Request,
 ) -> (Result<Option<Value>, String>, TurnStats) {
     let (sender, mut receiver) = mpsc::unbounded_channel::<Value>();
     let collector = tokio::spawn(async move {
         let mut stats = TurnStats::default();
         while let Some(event) = receiver.recv().await {
-            collect_tool_event(&mut stats,&event);
+            collect_tool_event(&mut stats, &event);
         }
         stats
     });
-    let result = chat::run_turn_background(state, request, &sender).await;
-    drop(sender);
+    let result = port.execute(request, sender).await;
     let stats = collector.await.unwrap_or_default();
     (result, stats)
 }
 
-/// Compatibility wrapper; harnesses that need evidence after a model/runtime
-/// error use run_quiet_outcome instead of discarding completed tool work.
-pub async fn run_quiet_with_stats(
-    state: &AppState,
-    request: &chat::TurnRequest,
-) -> Result<(Option<Value>, TurnStats), String> {
-    let (result, stats) = run_quiet_outcome(state, request).await;
-    result.map(|message| (message, stats))
-}
-
-/// Runs a turn with nobody listening on the event stream (background jobs).
-/// The channel stays open so tool execution is not treated as cancelled.
-pub async fn run_quiet(
-    state: &AppState,
-    request: &chat::TurnRequest,
-) -> Result<Option<Value>, String> {
-    run_quiet_with_stats(state, request)
-        .await
-        .map(|(message, _)| message)
-}
-
+#[cfg(test)]
+mod port_tests;
