@@ -58,6 +58,16 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
                 }
                 value["strategy"]=json!(strategy);
             }
+            // Job-local intelligence profiles: no mutable global engine mode.
+            if let Some(raw)=input.get("algorithmId") {
+                let Some(id)=raw.as_str() else {
+                    return error(StatusCode::BAD_REQUEST,"알고리즘 ID는 문자열이어야 합니다.");
+                };
+                if !crate::features::cognition::profiles::supported(id) {
+                    return error(StatusCode::BAD_REQUEST,"지원하지 않는 에이전트 알고리즘입니다.");
+                }
+                value["algorithmId"]=json!(id);
+            }
             if let Some(owner)=input["ownerInstructions"].as_str() {
                 if owner.len()>32_000 {return error(StatusCode::BAD_REQUEST,"추가 지시가 너무 깁니다.");}
                 value["ownerInstructions"]=json!(owner);

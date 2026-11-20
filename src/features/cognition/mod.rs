@@ -17,3 +17,4 @@ pub mod principle;
 pub mod adaptation;
 
 pub mod tools;
+pub mod profiles;

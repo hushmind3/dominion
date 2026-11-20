@@ -6,6 +6,7 @@
 use crate::host::journal::DurableJournal;
 use crate::{engine::{chat, gateway, jobs::JobContext, llm, tools, verification}, state::AppState};
 use crate::integrations::registry as external;
+use crate::features::cognition::profiles;
 use dominion_sdk::harness::{
     Action, BoxFuture, Criterion, CriterionKind, Evidence, Journal, Kernel,
     Limits, Model, ModelReply, ModelTurn, Receipt, RunRequest, Snapshot, Strategy, ToolSpec, Tools,
@@ -361,6 +362,16 @@ fn native_tool_authority_fingerprint(
 
 /// New default entry for persistent Rust prompt jobs. No separate goals API.
 pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
+    // Profile validation and storage occur before the first provider route,
+    // paid generation or external effect, including on recovered workers.
+    let selected=match profiles::for_job(job){
+        Ok(profile)=>profile,
+        Err(reason)=>return Ok(json!({"status":"needs_review","reason":reason,
+            "snapshot":job["nativeState"]})),
+    };
+    if job["nativeAlgorithm"].is_null() {
+        context.checkpoint(json!({"nativeAlgorithm":selected.binding()}))?;
+    }
     let input=&job["input"];
     let task=input["prompt"].as_str().filter(|text|!text.trim().is_empty())
         .ok_or("Native agent prompt cannot be empty")?;
@@ -583,9 +594,9 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     let owner_checks=request.checks.clone();
     let kernel=Kernel{model:&model,tools:&host_tools,evidence:&evidence,journal:&journal};
     let snapshot=if let Some(saved)=resume_snapshot {
-        kernel.resume(request,saved).await?
+        kernel.resume_with_algorithm(request,saved,selected.algorithm).await?
     } else {
-        kernel.run(request).await?
+        kernel.run_with_algorithm(request,selected.algorithm).await?
     };
     // Record the post-run artifact witness only after the kernel settles.
     // This is an observation at completion, not a claim that future workspace

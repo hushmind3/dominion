@@ -185,6 +185,11 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
     // its new tasks into the native job kernel. The former API exposed only
     // workspace file operations and a shell; do not silently grant MCP,
     // browser, remote account, network or arbitrary filesystem capabilities.
+    // The existing SDK adapter forwards optional algorithm selection to the
+    // single validated job API, without introducing a new execution path.
+    if let Some(id)=body.get("algorithmId") {
+        input["algorithmId"]=id.clone();
+    }
     if body["harnessCompat"]==true {
         input["harnessCompat"]=json!(true);
         input["allowedTools"]=json!([
