@@ -18,9 +18,9 @@ test('retired video producer, YouTube sign-in and independent improvement UI do 
   /(?:YouTube|youtu\.be|유튜브)/i,
   /(?:ComfyUI|ffmpeg|video[_-]studio|video[_-]autopilot)/i,
   /(?:rsiRun|rsi[_-]campaign|selfimprove\.search)/i,
-  /(?:영상\s*제작|비디오\s*제작|머니\s*탐색)/,
+  /(?:영상\s*제작|비디오\s*제작|머\s*니\s*탐색)/,
   /(?:rooms\.selfReview|jobk\.video)/,
-  /\/api\/(?:improvements|experiment-requests|policy-searches|optimizers|algorithms\/evaluate(?:ions)?)(?:\b|\/)/
+  /\/api\/(?:improvements|experiment-requests|policy-searches|optimizers|algorithms\/evaluat(?:e|ions))(?:\b|\/)/
  ]
  for(const file of sources(root)){
   const source=readFileSync(file,'utf8')

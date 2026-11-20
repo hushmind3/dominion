@@ -23,13 +23,6 @@ const when=(value:any)=>{
  const text=str(value)
  return text&&Number.isFinite(Date.parse(text))?formatDateTime(text):text
 }
-const fallback=(rec:Rec,index:number):Row=>({
- key:str(rec.id)||String(index),
- title:str(rec.name)||str(rec.title)||str(rec.text)||str(rec.lesson)||str(rec.id)||'기록',
- tags:[str(rec.status),str(rec.kind)].filter(Boolean),
- facts:Object.entries(rec).filter(([,value])=>['string','number','boolean'].includes(typeof value)).slice(0,8).map(([key,value])=>[key,String(value)] as [string,string]),
- raw:rec,
-})
 const experience=(rec:Rec,index:number):Row=>({
  key:str(rec.id)||`experience-${index}`,
  title:str(rec.lesson)||str(rec.request)||str(rec.id)||'경험',
