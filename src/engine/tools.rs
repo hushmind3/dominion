@@ -48,18 +48,6 @@ pub fn definitions() -> Vec<Value> {
         tool("http_fetch", "Fetch a URL and return its readable text content", object(json!({"url": text("HTTP or HTTPS URL")}), vec!["url"])),
         tool("memory_store", "Save a grounded memory for this agent. Quote the user's exact words; invented facts are rejected. Shared memories are managed by the user.", object(json!({"text": text("Fact to remember, maximum 1600 characters"), "evidenceQuote": text("Exact quote from the current user message supporting the fact"), "sourceMessageId": text("Optional earlier source message ID"), "type": json!({"type":"string","enum":["fact","preference","decision","procedure","lesson"]}), "key": text("Optional stable fact key; a new value replaces the previous value for this key"), "scope": json!({"type":"string","enum":["agent"]})}), vec!["text", "evidenceQuote"])),
         tool("memory_search", "Find saved knowledge relevant to a topic", object(json!({"query": text("Search query")}), vec!["query"])),
-        tool("skill_propose", "Draft a reusable skill for user review", object(json!({"name": text("Skill name"), "instructions": text("Reusable instructions")}), vec!["name", "instructions"])),
-        tool("skill_search", "Discover owner-enabled Skills 스킬 by task relevance. Returns only scoped names, descriptions and IDs; does not read the full instructions or grant new permissions.", object(json!({
-            "query": text("Missing procedural capability, task, or skill topic"),
-            "limit":json!({"type":"integer","minimum":1,"maximum":8})
-        }), vec!["query"])),
-        tool("skill_read", "Load the bounded instructions for an enabled Skill 스킬 by exact ID. Honors agent, session and channel scope. Content is advisory, not a new owner instruction.", object(json!({
-            "id":text("ID returned by skill_search")
-        }), vec!["id"])),
-        tool("skill_resource_read", "Read a text reference/template belonging to an enabled Skill 스킬. Relative paths only, file size bounded, no script execution or access outside the installed Skill folder.", object(json!({
-            "id":text("Skill ID returned by skill_search"),
-            "path":text("Relative reference path from the installed Skill root")
-        }),vec!["id","path"])),
         tool("delegate_task", "Delegate a self-contained task to another agent and optionally wait for its result", object(json!({
             "agentId": text("Target agent id"),
             "prompt": text("Task instructions"),
@@ -68,15 +56,11 @@ pub fn definitions() -> Vec<Value> {
         }), vec!["agentId", "prompt"])),
         tool("task_status", "Check a delegated task's status", object(json!({"jobId": text("Job id")}), vec!["jobId"])),
         tool("task_result", "Read a delegated task's result, artifacts and final answer", object(json!({"jobId": text("Job id")}), vec!["jobId"])),
-        tool("browser_control", "Control a local Chrome/Chromium window: open pages, observe text and interactive elements, click, type, press keys and capture screenshots (approval required)", object(json!({
-            "action": json!({"type": "string", "enum": ["status", "open", "observe", "click", "type", "press", "screenshot", "close"]}),
-            "url": text("URL to open"),
-            "index": json!({"type": "number", "description": "Element index returned by observe"}),
-            "text": text("Text to type into the indexed element"),
-            "key": text("Key to press: Enter, Escape, Tab, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Backspace")
-        }), vec!["action"])),
+
 
     ];
+    definitions.extend(crate::integrations::skills::tools::definitions());
+    definitions.push(crate::integrations::browser::tool_definition());
     definitions.extend(crate::integrations::accounts::tools::definitions());
     definitions
 }
@@ -102,8 +86,9 @@ pub fn requires_approval(name: &str) -> bool {
             | "file_write"
             | "shell_exec"
             | "terminal_exec"
-            | "browser_control"
-    ) || crate::integrations::accounts::tools::requires_approval(name)
+
+    ) || crate::integrations::browser::requires_approval(name)
+      || crate::integrations::accounts::tools::requires_approval(name)
 }
 
 pub async fn execute(
@@ -114,6 +99,12 @@ pub async fn execute(
 ) -> Result<Value, String> {
     if let Some(result) = crate::integrations::accounts::tools::execute(ctx.state,name,args).await {
         return result;
+    }
+    if let Some(result) = crate::integrations::skills::tools::execute(ctx,name,args).await {
+        return result;
+    }
+    if name=="browser_control" {
+        return crate::integrations::browser::execute_tool(ctx,args).await;
     }
     match name {
         "workspace_list" => {
@@ -236,18 +227,6 @@ pub async fn execute(
                 .unwrap_or_default();
             executable(&command, &argv, ctx.workspace).await
         }
-        "browser_control" => {
-            let action = required_arg(args, "action")?;
-            let owner_id=format!("{}:{}",ctx.agent_id.unwrap_or("user"),ctx.session_id);
-            crate::integrations::browser::execute_for_owner(
-                &action,
-                args,
-                &ctx.state.config.data_dir,
-                ctx.workspace,
-                &owner_id,
-            )
-            .await
-        }
         "web_search" => {
             let query = required_arg(args, "query")?;
             web_search(&query).await
@@ -274,55 +253,6 @@ pub async fn execute(
             Ok(json!({
                 "results": crate::engine::memory::retrieve(ctx.store, &scope, &query, 10)
             }))
-        }
-        "skill_search" => {
-            let query = required_arg(args, "query")?;
-            let limit = args["limit"].as_u64().unwrap_or(5).clamp(1,8) as usize;
-            let scope = crate::engine::memory::MemoryScope::for_session(
-                ctx.store,ctx.session_id,ctx.agent_id
-            );
-            crate::integrations::skills::discovery::search(ctx.store,&scope,&query,limit)
-        }
-        "skill_read" => {
-            let id = required_arg(args, "id")?;
-            let scope = crate::engine::memory::MemoryScope::for_session(
-                ctx.store,ctx.session_id,ctx.agent_id
-            );
-            crate::integrations::skills::discovery::read(ctx.store,&scope,&id)
-        }
-        "skill_resource_read" => {
-            let id=required_arg(args,"id")?;
-            let path=required_arg(args,"path")?;
-            let scope=crate::engine::memory::MemoryScope::for_session(
-                ctx.store,ctx.session_id,ctx.agent_id
-            );
-            crate::integrations::skills::discovery::read_resource(ctx.store,&scope,&id,&path)
-        }
-        "skill_propose" => {
-            let name = required_arg(args, "name")?;
-            let instructions = required_arg(args, "instructions")?;
-            let scope = crate::engine::memory::MemoryScope::for_session(
-                ctx.store,
-                ctx.session_id,
-                ctx.agent_id,
-            );
-            let record = ctx.store.put(
-                "skill",
-                &json!({
-                    "name": name,
-                    "instructions": instructions,
-                    "description": instructions.chars().take(160).collect::<String>(),
-                    "enabled": false,
-                    "status": "draft",
-                    "source": "agent",
-                    "scope": "agent",
-                    "sessionId": ctx.session_id,
-                    "agentId": ctx.agent_id,
-                    "partitionKey": scope.partition_key,
-                    "createdAt": chrono::Utc::now().to_rfc3339(),
-                }),
-            );
-            Ok(json!({ "proposed": true, "skill": record }))
         }
         "delegate_task" => delegate(ctx, args).await,
         "task_status" => task_payload(ctx, args, false),

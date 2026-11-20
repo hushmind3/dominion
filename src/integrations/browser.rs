@@ -637,3 +637,24 @@ mod tests {
         assert!(OBSERVE_SCRIPT.contains("elements"));
     }
 }
+
+/// Browser tool description lives with its CDP adapter, not the engine catalog.
+pub fn tool_definition()->Value{
+ json!({"type":"function","function":{
+  "name":"browser_control",
+  "description":"Control a local Chrome/Chromium window: open pages, observe text and interactive elements, click, type, press keys and capture screenshots (approval required)",
+  "parameters":{"type":"object","properties":{
+   "action":{"type":"string","enum":["status","open","observe","click","type","press","screenshot","close"]},
+   "url":{"type":"string","description":"URL to open"},
+   "index":{"type":"number","description":"Element index returned by observe"},
+   "text":{"type":"string","description":"Text to type into the indexed element"},
+   "key":{"type":"string","description":"Key to press: Enter, Escape, Tab, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Backspace"}
+  },"required":["action"],"additionalProperties":false}
+ }})
+}
+pub fn requires_approval(name:&str)->bool{name=="browser_control"}
+pub async fn execute_tool(ctx:&crate::engine::tools::ToolContext<'_>,args:&Value)->Result<Value,String>{
+ let action=args["action"].as_str().filter(|s|!s.is_empty()).ok_or("Missing tool argument: action")?;
+ let owner_id=format!("{}:{}",ctx.agent_id.unwrap_or("user"),ctx.session_id);
+ execute_for_owner(action,args,&ctx.state.config.data_dir,ctx.workspace,&owner_id).await
+}
