@@ -110,7 +110,7 @@ export function ConnectionsPage(){
    <div className="grid gap-4 p-5">
     <p className="text-xs leading-6 text-[#7C7469]">{t('conn.oauthAppHint')}</p>
      {oauth.value.find(item=>item.id===oauthEditor.id)?.configured&&<p role="note" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">{t('conn.oauthAppReconfigure')}</p>}
-     {oauthEditor.id==='google'&&<p className="text-xs text-[#7C7469]">{t('conn.oauthGoogleSecret')}</p>
+     {oauthEditor.id==='google'&&<p className="text-xs text-[#7C7469]">{t('conn.oauthGoogleSecret')}</p>}
     <FormField label={t('conn.oauthRedirectUri')}><code className="block break-all rounded-lg bg-[#FAF7F1] p-3 text-xs text-[#4A443C]">{oauth.value.find(item=>item.id===oauthEditor.id)?.callback||''}</code></FormField>
     <FormField label={t('conn.oauthClientId')}><TextInput autoComplete="off" value={oauthEditor.clientId} disabled={oauthSaving} onChange={e=>setOauthEditor(previous=>previous?{...previous,clientId:e.target.value}:previous)}/></FormField>
     <FormField label={t('conn.oauthClientSecret')}><TextInput type="password" autoComplete="new-password" value={oauthEditor.clientSecret} disabled={oauthSaving} onChange={e=>setOauthEditor(previous=>previous?{...previous,clientSecret:e.target.value}:previous)}/></FormField>
