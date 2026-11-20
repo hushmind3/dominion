@@ -955,7 +955,7 @@ const en: Record<LocaleKey, string> = {
   'rooms.autoModels': 'Rotate participant models',
   'rooms.autoModelsDesc': 'Rotate models across turns to spread provider rate limits.',
   'rooms.sharedLearning': 'Room learning',
-  'rooms.selfReview': 'Self-improvement',
+  'rooms.review': 'Conversation review',
   'rooms.autoLearn': 'Extract memory candidates after the chat',
   'rooms.autoLearnDesc': 'Only grounded statements become per-agent memories.',
   'rooms.tools': 'Allow tools in this room',

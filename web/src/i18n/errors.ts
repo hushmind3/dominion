@@ -12,7 +12,6 @@ const exact: Record<string, string> = {
   'API 연결을 해제할 수 없습니다.': 'Could not disconnect the API connection.',
   'API 형식 워크플로 JSON 객체가 필요합니다.': 'An API-format workflow JSON object is required.',
   'Bot Token 형식이 올바르지 않습니다.': 'Invalid bot token format.',
-  'ComfyUI HTTP(S) 주소를 확인하세요.': 'Check the ComfyUI HTTP(S) address.',
   'FreeLLMAPI 연결을 찾을 수 없습니다.': 'FreeLLMAPI connection not found.',
   'FreeLLMAPI 허브에 연결할 수 없습니다.': 'Could not connect to the FreeLLMAPI hub.',
   'HTTP(S) 주소만 허용됩니다.': 'Only HTTP(S) addresses are allowed.',

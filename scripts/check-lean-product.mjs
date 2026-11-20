@@ -92,6 +92,14 @@ assert.ok(!read('web/src/i18n/index.ts').includes("'resume','video'"),
  'Retired media job-kind catalog returned');
 assert.ok(!read('web/src/i18n/errors.ts').includes('Create video job'),
  'Retired media errors returned');
+for(const [file,token] of [
+ ['web/src/i18n/errors.ts','ComfyUI'],
+ ['web/src/i18n/en.ts', 'rooms.selfReview'],
+ ['web/src/i18n/ko.ts', 'rooms.selfReview'],
+ ['web/src/pages/Rooms.tsx', 'rooms.selfReview']
+]) assert.ok(!read(file).includes(token),
+ 'Retired media or standalone-improvement frontend label returned: '+file);
+
 
 for(const file of ['web/src/pages/Connections.tsx',
                     'web/src/components/ConnectedAccounts.tsx']){
