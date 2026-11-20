@@ -19,6 +19,7 @@ import {useJob,jobFinished,type JobState} from '../hooks/useJob'
 import {t,useLocale,type LocaleKey} from '../i18n'
 import {translateError} from '../i18n/errors'
 
+type SessionUsageBreakdown={byPurpose?:{purpose:string;calls:number;totalTokens:number;tokensSinceClear:number}[];hasClearMarker?:boolean}
 type LearningResult={memories:number;skill:boolean}
 type LearningJob=JobState & {result?:LearningResult}
 type ModelOverride={scope?:string;providerId:string;model:string}
@@ -39,6 +40,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const messages=transcript.value
  const messageUsage=useMemo(()=>messages.reduce((sum,message)=>sum+(Number(message.metadata?.usage?.totalTokens)||0),0),[messages])
  const [serverUsage,setServerUsage]=useState(0);
+ const [usageBreakdown,setUsageBreakdown]=useState<SessionUsageBreakdown>();
  const approvals=useRemote<Approval[]>('/api/approvals',[],active);
  const [input,setInput]=useState('');
  const [agentChoice,setAgentChoice]=useState<{scope?:string;id:string}>();
@@ -84,7 +86,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const slashItems=slashOpen?slashCandidates(input,agents.value,models):[];
  const transcriptRevision=JSON.stringify([messages.at(-1)?.id,messages.length,viewingTurn?live.length:0,viewingTurn?thought.length:0,viewingTurn?toolStatus:'',approval?.id]);
  const usageRevision=JSON.stringify([messages.at(-1)?.id,messages.length]);
- useEffect(()=>{if(!current){setServerUsage(0);return}let alive=true;get<{totalTokens?:number}>('/api/sessions/'+encodeURIComponent(current)+'/usage').then(usage=>{if(alive)setServerUsage(Number(usage.totalTokens)||0)}).catch(()=>{});return()=>{alive=false}},[current,usageRevision])
+ useEffect(()=>{if(!current){setServerUsage(0);setUsageBreakdown(undefined);return}let alive=true;get<{totalTokens?:number;breakdown?:SessionUsageBreakdown}>('/api/sessions/'+encodeURIComponent(current)+'/usage').then(usage=>{if(alive){setServerUsage(Number(usage.totalTokens)||0);setUsageBreakdown(usage.breakdown)}}).catch(()=>{});return()=>{alive=false}},[current,usageRevision])
  const {scrollRef,onScroll,jumpDown}=useTranscriptScroll(current,transcriptRevision);
  const modelPanel=useAnchoredPanel(modelMenu,()=>setModelMenu(false),380);
  useEffect(()=>()=>stream.current?.abort(),[]);
@@ -396,7 +398,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      </div>
     </div>
     <div className="flex shrink-0 items-center gap-1">
-     {(serverUsage||messageUsage)>0&&<span className="hidden rounded-lg border border-[#E7DDCC] bg-[#F7F1E6] px-2 py-1 text-[10px] font-semibold text-[#8A775F] sm:inline-flex">{t('usage.sessionTotal',{count:(serverUsage||messageUsage).toLocaleString()})}</span>}
+     {(serverUsage||messageUsage)>0&&<span title={usageBreakdown?["세션 전체 누적 (지운 대화 이전 사용량 포함)",...(usageBreakdown.byPurpose||[]).map(row=>`${row.purpose==="chat"?"채팅":"보조·"+row.purpose}: ${row.totalTokens.toLocaleString()}토큰 · ${row.calls}회`),usageBreakdown.hasClearMarker?`대화 삭제 후: ${(usageBreakdown.byPurpose||[]).reduce((sum,row)=>sum+(row.tokensSinceClear||0),0).toLocaleString()}토큰`:""].filter(Boolean).join("\n"):undefined} className="hidden rounded-lg border border-[#E7DDCC] bg-[#F7F1E6] px-2 py-1 text-[10px] font-semibold text-[#8A775F] sm:inline-flex">{t('usage.sessionTotal',{count:(serverUsage||messageUsage).toLocaleString()})}</span>}
 
      
      <Button size="icon" variant="ghost" title={t('chat.modelManage')} aria-label={t('chat.modelManage')} onClick={openModels}><Cpu size={18}/></Button>

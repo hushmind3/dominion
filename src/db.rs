@@ -1432,6 +1432,64 @@ impl Store {
         }
     }
 
+
+    /// Decomposes the audit ledger without ever copying prompts, HTML or tool
+    /// arguments into telemetry. The lifetime counter includes prior cleared
+    /// transcripts and helper calls; the view since the last clear is separate.
+    pub fn session_usage_breakdown(&self, session_id:&str)->Value{
+        let conn=self.conn.lock().unwrap();
+        let last_clear=conn.query_row(
+            "SELECT COALESCE(MAX(rowid),0) FROM audit
+             WHERE event='chat.session_cleared' AND json_valid(detail)
+               AND json_extract(detail,'$.sessionId')=?1",
+            [session_id],|row|row.get::<_,i64>(0)
+        ).unwrap_or(0);
+        let groups=conn.prepare(
+            "SELECT COALESCE(json_extract(detail,'$.purpose'),'unknown'),COUNT(*),
+                    COALESCE(SUM(CAST(json_extract(detail,'$.promptTokens') AS INTEGER)),0),
+                    COALESCE(SUM(CAST(json_extract(detail,'$.completionTokens') AS INTEGER)),0),
+                    COALESCE(SUM(CAST(json_extract(detail,'$.totalTokens') AS INTEGER)),0),
+                    COALESCE(SUM(CASE WHEN json_type(detail,'$.cachedPromptTokens')='integer'
+                        AND json_extract(detail,'$.estimated')!=1
+                        THEN CAST(json_extract(detail,'$.cachedPromptTokens') AS INTEGER) ELSE 0 END),0),
+                    COALESCE(SUM(CASE WHEN json_type(detail,'$.cachedPromptTokens')='integer'
+                        AND json_extract(detail,'$.estimated')!=1 THEN 1 ELSE 0 END),0),
+                    COALESCE(SUM(CASE WHEN json_extract(detail,'$.estimated')=1 THEN 1 ELSE 0 END),0),
+                    COALESCE(SUM(CASE WHEN rowid>?2 THEN CAST(json_extract(detail,'$.totalTokens') AS INTEGER) ELSE 0 END),0)
+             FROM audit WHERE event='model.usage' AND json_valid(detail)
+               AND json_extract(detail,'$.sessionId')=?1
+             GROUP BY COALESCE(json_extract(detail,'$.purpose'),'unknown') ORDER BY COUNT(*) DESC"
+        ).and_then(|mut stmt|{
+            stmt.query_map(rusqlite::params![session_id,last_clear],|row|{
+                Ok(json!({
+                    "purpose":row.get::<_,String>(0)?,"calls":row.get::<_,i64>(1)?,
+                    "promptTokens":row.get::<_,i64>(2)?,"completionTokens":row.get::<_,i64>(3)?,
+                    "totalTokens":row.get::<_,i64>(4)?,"observedCachedTokens":row.get::<_,i64>(5)?,
+                    "cacheObservedCalls":row.get::<_,i64>(6)?,"estimatedCalls":row.get::<_,i64>(7)?,
+                    "tokensSinceClear":row.get::<_,i64>(8)?
+                }))
+            }).and_then(|rows|rows.collect::<rusqlite::Result<Vec<_>>>())
+        }).unwrap_or_default();
+        let recent=conn.prepare(
+            "SELECT created_at,detail FROM audit
+             WHERE event='model.usage' AND json_valid(detail)
+               AND json_extract(detail,'$.sessionId')=?1 ORDER BY rowid DESC LIMIT 12"
+        ).and_then(|mut stmt|{
+            stmt.query_map([session_id],|row|{
+                let at:String=row.get(0)?;
+                let raw:String=row.get(1)?;
+                let v=serde_json::from_str::<Value>(&raw).unwrap_or(Value::Null);
+                Ok(json!({"recordedAt":at,"purpose":v["purpose"],"model":v["model"],
+                    "promptTokens":v["promptTokens"],"completionTokens":v["completionTokens"],
+                    "totalTokens":v["totalTokens"],"cachedPromptTokens":v["cachedPromptTokens"],
+                    "estimated":v["estimated"]}))
+            }).and_then(|rows|rows.collect::<rusqlite::Result<Vec<_>>>())
+        }).unwrap_or_default();
+        json!({"byPurpose":groups,"recentCalls":recent,"hasClearMarker":last_clear>0,
+            "scope":"lifetime session audit including earlier cleared transcripts and helper calls",
+            "cachePolicy":"cached tokens are included in promptTokens; unreported cache remains unknown"})
+    }
+
     pub fn recent_audit(&self, limit: usize) -> Vec<Value> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = match conn
@@ -2086,6 +2144,35 @@ mod tests {
                   AND json_extract(detail,'$.sessionId')='usage-s'",
             [],|row|row.get(3)).unwrap();
         assert!(plan.contains("idx_audit_usage_session"),"{plan}");
+    }
+
+    #[test]
+    fn session_usage_breakdown_keeps_lifetime_and_since_clear_separate(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.audit("model.usage",json!({"sessionId":"s","purpose":"chat",
+            "promptTokens":56000,"completionTokens":100,"totalTokens":56100,
+            "cachedPromptTokens":50000,"estimated":false}));
+        store.audit("model.usage",json!({"sessionId":"s","purpose":"helper",
+            "promptTokens":1000,"completionTokens":20,"totalTokens":1020,
+            "estimated":true}));
+        store.audit("chat.session_cleared",json!({"sessionId":"s"}));
+        store.audit("model.usage",json!({"sessionId":"s","purpose":"chat",
+            "promptTokens":250,"completionTokens":50,"totalTokens":300,"estimated":false}));
+        store.audit("model.usage",json!({"sessionId":"other","purpose":"chat",
+            "promptTokens":500000,"completionTokens":0,"totalTokens":500000}));
+        assert_eq!(store.session_usage("s")["totalTokens"],57420);
+        let report=store.session_usage_breakdown("s");
+        let groups=report["byPurpose"].as_array().unwrap();
+        let chat=groups.iter().find(|g|g["purpose"]=="chat").unwrap();
+        let helper=groups.iter().find(|g|g["purpose"]=="helper").unwrap();
+        assert_eq!(chat["calls"],2);
+        assert_eq!(chat["totalTokens"],56400);
+        assert_eq!(chat["tokensSinceClear"],300);
+        assert_eq!(chat["observedCachedTokens"],50000);
+        assert_eq!(helper["totalTokens"],1020);
+        assert_eq!(helper["tokensSinceClear"],0);
+        assert_eq!(report["recentCalls"].as_array().unwrap().len(),3);
+        assert_eq!(report["hasClearMarker"],true);
     }
 
     #[test]

@@ -46,7 +46,9 @@ pub async fn session_usage(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Json<Value> {
-    Json(state.store.session_usage(&id))
+    let mut summary=state.store.session_usage(&id);
+    summary["breakdown"]=state.store.session_usage_breakdown(&id);
+    Json(summary)
 }
 
 pub async fn rename_session(
@@ -74,6 +76,7 @@ pub async fn rename_session(
 
 pub async fn clear_session(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
     state.store.clear_messages(&id);
+    state.store.audit("chat.session_cleared",json!({"sessionId":id}));
     state
         .bus
         .emit(json!({ "type": "record", "kind": "session", "id": id }));
