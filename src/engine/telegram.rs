@@ -256,7 +256,8 @@ pub fn start(state: AppState) {
                 .all("channel")
                 .into_iter()
                 .filter(|config| {
-                    config["kind"] == "telegram"
+                    crate::engine::extensions::channels::enabled(&state)
+                        && config["kind"] == "telegram"
                         && config["driver"] == "dominion-telegram"
                         && config["enabled"] == true
                 })
