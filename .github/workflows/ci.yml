@@ -54,6 +54,10 @@ jobs:
         run: cargo test --locked -p dominion-algorithms --lib
       - name: Durable participant room cursors and anti-regression (dev profile)
         run: cargo test --locked --bin dominion-rust db::room_cursor::tests
+      - name: Historical room conversation provenance across 100+ messages (dev profile)
+        run: |
+          cargo test --locked --bin dominion-rust historical_owner_and_answer_are_retrieved_as_a_bounded_evidence_pair
+          cargo test --locked --bin dominion-rust questions_about_the_start_keep_the_first_owner_turn_and_reply
       - name: External read-only Codex Claude Qwen Agent Bridge contracts (dev profile)
         run: cargo test --locked --bin dominion-rust addons::agent_bridge::tests
       - name: Isolated verifier patch inheritance and parallelism (dev profile)
