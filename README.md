@@ -18,8 +18,11 @@ execution receipts and user-controlled workspace boundaries in the application.
 
 - **Native agent execution:** structured tool calls, bounded budgets, approval
   decisions, durable effect records, cancellation, restart and repair.
+  Team patches require full frozen-worker preflight and stop across owner
+  cancellation boundaries; incomplete external CLI runs require review.
 - **Model choice:** bring OpenAI / Anthropic API credentials, or connect supported
   local inference endpoints such as Ollama, llama.cpp and LM Studio.
+  Explicit per-endpoint tool/text capability denials are enforced on fallback.
 - **Nine-plus participant rooms:** per-agent personas, stable session history,
   user-confirmed state, bounded context selection and per-call usage evidence.
   Each participant's durable read cursor records exact visible message IDs;
