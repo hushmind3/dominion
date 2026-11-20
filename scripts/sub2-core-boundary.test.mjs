@@ -325,3 +325,13 @@ test('fallback model capabilities are model specific and fail closed on explicit
  assert.match(completion,/gateway::supports_requirements\(/);
  assert.match(completion,/tools:!tools\.is_empty\(\)/);
 });
+
+test('versioned run state contract and scoped assignment are in actual room execution',()=>{
+ const core=source('crates/dominion-turn-core/src/run_state.rs');
+ const board=source('src/engine/services/conversation/room_workboard.rs');
+ assert.match(core,/pub enum RunState/);
+ assert.match(core,/pub struct RunEvent/);
+ assert.match(board,/RunState::parse/);
+ assert.match(board,/RunEvent\{/);
+ assert.match(board,/memory::stable_id\(&\[/);
+});

@@ -105,3 +105,7 @@ ProgramIR 실행, 대안 후보 실험, 작업 검토, 정책 스냅샷과 세�
 ## 모델별·엔드포인트별 Capability Admission
 
 `gateway::ModelRequirements`는 `text`, `toolCalling`, `vision`, `reasoningSupported` 등의 명시적 거부를 우선 적용합니다. `provider.modelCapabilities[modelId]`가 있으면 제공자 기본 `capabilities`보다 먼저 적용하며, 대체 모델은 사전에 현재 도구 스키마·이미지 요구사항과 비교합니다. 기존 미등록 제공자/모델은 보수적인 호환 동작을 유지하되 **명시적으로 지원하지 않는 기능을 fallback에서 실행하지 않습니다.** Codex/Claude 등 외부 에이전트 실행기 연결은 이 ModelGateway와 별도 AgentBridge 계약이 필요합니다.
+
+## 공통 실행 상태와 작업 재실행 정합성
+
+독립 코어에 RunState/RunEvent 버전 1 계약을 추가하고, 그룹 작업 할당과 완료/건너뜀 전이에 연결했습니다. 작업 ID는 주인 원문, 에이전트, 작업 순서에서 결정적으로 유도되어 작업 재개에서 중복 할당을 만들지 않습니다. Chat/SDK 전체 이벤트의 전환까지 완료한 것은 아닙니다.

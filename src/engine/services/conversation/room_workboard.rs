@@ -5,6 +5,7 @@
 use crate::{engine::memory,state::AppState};
 use serde_json::{json,Value};
 use std::collections::HashSet;
+use dominion_turn_core::run_state::{RunEvent,RunState};
 
 const MAX_SUMMARY_CHARS:usize=260;
 const MAX_ITEMS_IN_PROMPT:usize=6;
@@ -29,7 +30,9 @@ pub fn assign(
         || source["metadata"]["roomId"].as_str().is_some_and(|id|id!=room_id){
         return Err("workboard assignment: owner scope mismatch".into());
     }
-    let id=format!("room-assignment-{}",uuid::Uuid::new_v4());
+    let id=format!("room-assignment-{}",memory::stable_id(&[
+        room_id,source_id,task_id,agent_id,&step.to_string()
+    ]));
     let value=json!({
         "id":id,"roomId":room_id,"sessionId":session_id,
         "sourceMessageId":source_id,"taskId":task_id,
@@ -37,10 +40,20 @@ pub fn assign(
         "ownerDigest":memory::stable_id(&[source_id,
             source["content"].as_str().unwrap_or("")]),
     });
-    let saved=state.store.put_if_absent("room_work_assignment",&value)
-        .ok_or("workboard assignment: could not persist before execution")?;
-    state.bus.record("room_work_assignment",&saved);
-    Ok(saved)
+    if let Some(saved)=state.store.put_if_absent("room_work_assignment",&value){
+        state.bus.record("room_work_assignment",&saved);
+        state.bus.emit(RunEvent{
+            run_id:id,source_id:source_id.into(),event_seq:step as u64,
+            state:RunState::Queued,actor_id:Some(agent_id.into()),
+        }.into_value());
+        return Ok(saved);
+    }
+    state.store.get("room_work_assignment",&id)
+        .filter(|row|row["roomId"]==room_id
+            && row["sourceMessageId"]==source_id
+            && row["taskId"]==task_id
+            && row["agentId"]==agent_id && row["step"]==step)
+        .ok_or("workboard assignment: previous record conflicts with owner scope".into())
 }
 
 /// A model assertion is never automatically converted to verified work.
@@ -53,6 +66,10 @@ pub fn complete(state:&AppState,assignment:&Value,work:&Value)->Result<Value,Str
         return Err("workboard completion: provenance mismatch".into());
     }
     let id=assignment["id"].as_str().ok_or("workboard completion: missing id")?;
+    if !RunState::parse(assignment["status"].as_str().unwrap_or(""))
+        .is_some_and(|current|current.permits(RunState::Completed)){
+        return Err("workboard completion: invalid state transition".into());
+    }
     let saved=state.store.patch_if(
         "room_work_assignment",id,"status",&json!("assigned"),
         &json!({"status":"completed","workItemId":work["id"],
@@ -64,16 +81,34 @@ pub fn complete(state:&AppState,assignment:&Value,work:&Value)->Result<Value,Str
             && row["workItemId"]==work["id"]))
         .ok_or("workboard completion: assignment is not live")?;
     state.bus.record("room_work_assignment",&saved);
+    state.bus.emit(RunEvent{
+        run_id:id.into(),
+        source_id:work["sourceMessageId"].as_str().unwrap_or("").into(),
+        event_seq:work["step"].as_u64().unwrap_or(0),
+        state:RunState::Completed,
+        actor_id:work["agentId"].as_str().map(str::to_string),
+    }.into_value());
     Ok(saved)
 }
 
 /// A voluntary pass is recorded without inventing a completed result.
 pub fn skip(state:&AppState,assignment:&Value,reason:&str)->Result<(),String>{
     let id=assignment["id"].as_str().ok_or("workboard skip: missing id")?;
+    if !RunState::parse(assignment["status"].as_str().unwrap_or(""))
+        .is_some_and(|current|current.permits(RunState::Skipped)){
+        return Err("workboard skip: invalid state transition".into());
+    }
     let _=state.store.patch_if("room_work_assignment",id,"status",
         &json!("assigned"),&json!({"status":"skipped",
             "reason":reason.chars().take(80).collect::<String>()}))
         .ok_or("workboard skip: assignment is not live")?;
+    state.bus.emit(RunEvent{
+        run_id:id.into(),
+        source_id:assignment["sourceMessageId"].as_str().unwrap_or("").into(),
+        event_seq:assignment["step"].as_u64().unwrap_or(0),
+        state:RunState::Skipped,
+        actor_id:assignment["agentId"].as_str().map(str::to_string),
+    }.into_value());
     Ok(())
 }
 
@@ -324,6 +359,19 @@ mod tests{
         skip(&state,&other,"pass").unwrap();
         assert_eq!(state.store.get("room_work_assignment",other["id"].as_str().unwrap())
             .unwrap()["status"],"skipped");
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn assignment_is_reused_across_replay_instead_of_inserted_twice(){
+        let (state,dir)=state();
+        seed(&state,"owner-a","reply-a","a","exec-a");
+        let first=assign(&state,"r","room:r","owner-a","task-a","a",1).unwrap();
+        let second=assign(&state,"r","room:r","owner-a","task-a","a",1).unwrap();
+        assert_eq!(first["id"],second["id"]);
+        assert_eq!(state.store.all("room_work_assignment").len(),1);
+        assert_ne!(assign(&state,"r","room:r","owner-a","task-a","a",2)
+            .unwrap()["id"],first["id"]);
         let _=std::fs::remove_dir_all(dir);
     }
 }

@@ -3,6 +3,7 @@
 //! outside this module. Historical API paths are reexported by engine::mod.
 pub mod driver;
 pub mod agent_loop;
+pub mod run_state;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
