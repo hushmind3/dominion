@@ -206,6 +206,60 @@ fn private_web_search_disabled_or_empty_fails_without_fabricated_answer() {
 }
 
 #[test]
+fn backend_extensions_are_isolated_from_the_core_conversation() {
+    let _serial=serial();
+    let (port,captured)=scripted_provider(|_|vec![json!({
+        "choices":[{"delta":{"content":"core survives disabled extensions"},"finish_reason":"stop"}],
+        "usage":{"prompt_tokens":90,"completion_tokens":5,"total_tokens":95}
+    })]);
+    let app=TestApp::new(port,"native");
+    let session=app.post("/api/sessions",&json!({
+        "title":"extension isolation proof",
+        "extensions":{"mcp":false,"memory":false,"skills":false,"channels":false}
+    }));
+    assert_eq!(session["extensions"]["memory"],false);
+    let id=session["id"].as_str().unwrap();
+    let all=app.get("/api/extensions/runtime");
+    assert_eq!(all["enabled"]["mcp"],true,
+        "the default global policy does not forcibly disable existing users");
+    let stream=app.chat(&json!({"sessionId":id,
+        "input":"기억을 쓰지 말고 오늘의 생각을 설명해",
+        "toolsEnabled":true,"toolsExecutionEnabled":true,
+        "autoLearning":true,"thinking":false}));
+    assert!(stream.contains("core survives disabled extensions"),"{stream}");
+    let saved=app.get(&format!("/api/sessions/{id}/messages"));
+    assert!(saved.as_array().unwrap().iter().any(|m|m["role"]=="user"));
+    assert!(saved.as_array().unwrap().iter().any(|m|m["role"]=="assistant"));
+    let seen=captured.lock().unwrap();
+    assert_eq!(seen.len(),1);
+    let body=&seen[0];
+    let tools=body["tools"].as_array().cloned().unwrap_or_default();
+    assert!(tools.iter().all(|t|{
+        let name=t["function"]["name"].as_str().unwrap_or("");
+        name!="memory_search"&&name!="memory_store"&&
+            name!="skill_view"&&name!="skill_propose"&&
+            !name.starts_with("mcp__")
+    }),"disabled extension tools were advertised: {body}");
+    assert!(!body.to_string().contains("Enabled skills index"));
+    drop(seen);
+    let updated=app.post(&format!("/api/sessions/{id}/extensions"),
+        &json!({"mcp":false,"memory":false,"skills":false,"channels":true}));
+    assert_eq!(updated["extensions"]["channels"],true);
+    assert_eq!(app.get(&format!("/api/sessions/{id}"))["extensions"]["mcp"],false);
+    let global=app.post("/api/extensions/runtime",&json!({
+        "mcp":false,"memory":false,"skills":false,"channels":false
+    }));
+    assert_eq!(global["enabled"]["channels"],false);
+    assert_eq!(app.get("/api/extensions/runtime")["enabled"]["memory"],false);
+    // The runtime policy does not erase the core's transcript.
+    let persisted=app.get(&format!("/api/sessions/{id}/messages"));
+    assert_eq!(persisted.as_array().unwrap().len(),2);
+    let invalid=app.client.post(format!("{}/api/extensions/runtime",app.base))
+        .json(&json!({"mcp":"off","unknown":false})).send().unwrap();
+    assert_eq!(invalid.status(),reqwest::StatusCode::BAD_REQUEST);
+}
+
+#[test]
 fn common_participant_state_follows_provider_and_protocol_changes() {
     let _serial=serial();
     let (port,requests)=scripted_provider(|body| {
