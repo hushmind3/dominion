@@ -9,21 +9,21 @@ pub use core::{TurnStats,run_quiet_outcome,run_quiet_resume,run_quiet_with_stats
 use core::collect_tool_event;
 
 // Natural language, execution admission and evidence
-#[path = "core/execution_scope.rs"]
+#[path = "services/operations/execution_scope.rs"]
 pub mod execution_scope;
-#[path = "core/agent_kernel.rs"]
+#[path = "services/decision/agent_kernel.rs"]
 pub mod agent_kernel;
-#[path = "core/workspace_scope.rs"]
+#[path = "services/tools/workspace_scope.rs"]
 pub mod workspace_scope;
-#[path = "core/effect.rs"]
+#[path = "services/operations/effect.rs"]
 pub mod effect;
-#[path = "core/chat/mod.rs"]
+#[path = "services/conversation/chat/mod.rs"]
 pub mod chat;
-#[path = "core/verification.rs"]
+#[path = "services/decision/verification.rs"]
 pub mod verification;
-#[path = "core/resource_lock.rs"]
+#[path = "services/operations/resource_lock.rs"]
 pub mod resource_lock;
-#[path = "core/run_state.rs"]
+#[path = "services/operations/run_state.rs"]
 pub mod run_state;
 
 // External service: providers

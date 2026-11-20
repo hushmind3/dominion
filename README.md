@@ -43,10 +43,10 @@ Start the UI separately with `npm --prefix web run dev`. A release package and l
 | --- | --- |
 | Main-synchronized frontend, routing and pages | `web/src/App.tsx`, `web/src/pages/`, `web/src/components/` |
 | HTTP API, public model catalog and GitHub login | `src/api/mod.rs`, `src/api/services/providers/providers.rs`, `src/api/services/providers/cli_oauth.rs` |
-| Chat turn execution and tool dispatch | `src/engine/core/chat/runtime.rs`, `src/engine/core/chat/runtime/turn_body.rs` |
+| Chat turn execution and tool dispatch | `src/engine/services/conversation/chat/runtime.rs`, `src/engine/services/conversation/chat/runtime/turn_body.rs` |
 | Room context and semantic continuation | `src/engine/services/conversation/chat_room_context.rs`, `src/engine/services/conversation/chat_continuity.rs` |
 | Room status, owner facts, speaker routing | `src/engine/services/conversation/room_state.rs`, `src/engine/services/conversation/rooms.rs` |
-| Native tool contracts, verification | `src/engine/services/tools/chat_tool_projection.rs`, `src/engine/core/verification.rs` |
+| Native tool contracts, verification | `src/engine/services/tools/chat_tool_projection.rs`, `src/engine/services/decision/verification.rs` |
 | Durable jobs and SQLite storage | `src/engine/services/automation/jobs.rs`, `src/db.rs` |
 | User SDK and Rust kernel | `sdk/typescript/src/index.ts`, `crates/dominion-agent-kernel/src/lib.rs` |
 

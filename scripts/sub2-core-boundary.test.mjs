@@ -4,7 +4,7 @@ import {existsSync,readFileSync} from 'node:fs';
 const source=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 const exists=path=>existsSync(new URL('../'+path,import.meta.url));
 const engine=source('src/engine/mod.rs');
-const chat=source('src/engine/core/chat/mod.rs');
+const chat=source('src/engine/services/conversation/chat/mod.rs');
 
 test('core entrypoint owns natural language execution, not product services',()=>{
  const core=source('src/engine/core/mod.rs');
@@ -12,7 +12,7 @@ test('core entrypoint owns natural language execution, not product services',()=
  assert.match(core,/pub async fn run_quiet_resume/);
  assert.doesNotMatch(engine,/pub async fn run_quiet_outcome/);
  assert.match(engine,/pub use core::/);
- assert.match(engine,/#\[path = "core\/chat\/mod.rs"\]/);
+ assert.match(engine,/#\[path = "services\/conversation\/chat\/mod.rs"\]/);
  for(const name of ['models','memory','rooms','jobs','tools','router']){
   assert.ok(!exists('src/engine/'+name+'.rs'),'stale product implementation '+name);
  }
@@ -36,10 +36,10 @@ test('context, providers, catalogs and transport are outside execution core',()=
  for(const [mod,target] of Object.entries(chatServices)){
   assert.ok(chat.includes('#[path = "../../services/'+target+'"]'),'missing path boundary '+mod);
   assert.ok(exists('src/engine/services/'+target),'missing service '+target);
-  assert.ok(!exists('src/engine/core/chat/'+mod+'.rs'),'core still owns '+mod);
+  assert.ok(!exists('src/engine/services/conversation/chat/'+mod+'.rs'),'core still owns '+mod);
  }
  for(const mod of ['protocol','runtime','budget','cancellation','approval','outcome']){
-  assert.ok(exists('src/engine/core/chat/'+mod+'.rs'),'missing execution stage '+mod);
+  assert.ok(exists('src/engine/services/conversation/chat/'+mod+'.rs'),'missing execution stage '+mod);
  }
 });
 
@@ -51,11 +51,11 @@ const runtimeServices={
  session_state:'conversation/runtime_session_state.rs'
 };
 test('optional program and policy modules are no longer part of runtime core',()=>{
- const runtime=source('src/engine/core/chat/runtime.rs');
+ const runtime=source('src/engine/services/conversation/chat/runtime.rs');
  for(const [mod,target] of Object.entries(runtimeServices)){
   assert.ok(runtime.includes('#[path = "../../services/'+target+'"]'),mod+' service declaration missing');
   assert.ok(exists('src/engine/services/'+target),'missing runtime service '+target);
-  assert.ok(!exists('src/engine/core/chat/runtime/'+mod+'.rs'),'core still owns '+mod);
+  assert.ok(!exists('src/engine/services/conversation/chat/runtime/'+mod+'.rs'),'core still owns '+mod);
  }
 });
 

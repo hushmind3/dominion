@@ -44,7 +44,7 @@ UI 개발 서버: `npm --prefix web run dev`. 데스크톱 실행/설치, 실제
 | --- | --- |
 | 최신 프론트와 페이지 | `web/src/App.tsx`, `web/src/pages/`, `web/src/components/` |
 | API·공개 모델 목록·GitHub 연결 | `src/api/mod.rs`, `src/api/services/providers/providers.rs`, `src/api/services/providers/cli_oauth.rs` |
-| 에이전트 실행·도구 경계 | `src/engine/core/chat/runtime.rs`, `src/engine/core/chat/runtime/turn_body.rs` |
+| 에이전트 실행·도구 경계 | `src/engine/services/conversation/chat/runtime.rs`, `src/engine/services/conversation/chat/runtime/turn_body.rs` |
 | 대화 비용·기억 연속성 | `src/engine/services/conversation/chat_room_context.rs`, `src/engine/services/conversation/chat_continuity.rs` |
 | 방 상태와 발언자 선택 | `src/engine/services/conversation/room_state.rs`, `src/engine/services/conversation/rooms.rs` |
 | 실행 작업·지속 저장 | `src/engine/services/automation/jobs.rs`, `src/db.rs` |
