@@ -131,17 +131,20 @@ MCP sessions, messaging transports, browser CDP control, local Skills and third-
 
 ## Minimal language-to-action core (2026-11-20)
 
-The **only portable agent kernel** is `crates/dominion-agent-sdk/`. Its Model, Tools and Journal host interfaces implement the natural-language → model decision → permitted action → observed result loop without SQLite, `AppState`, credentials, channels or a web server.
+The execution infrastructure is now independently compiled as `crates/dominion-agent-runtime/`, with budgets, shared action/receipt contracts, dependency-aware scheduling and fail-closed argument-schema admission. Model-facing intelligence is owned by `crates/dominion-agent-algorithms/`: planning instructions, intent signals, tool ranking/discovery, context projection and failure guidance. The public `crates/dominion-agent-sdk/` is the **composition facade**: it owns the bounded Model → Tool → Result loop and exposes `run_with_algorithm()` / `resume_with_algorithm()` for per-run policy injection, while retaining `run()` / `resume()` as unchanged defaults. Neither runtime nor algorithms links to SQLite, `AppState`, credentials, channels or the web server.
 
 **SQLite and its migrations live in `src/storage/`** (alongside the encrypted vault); product-state ownership and the DB-backed job/approval/effect implementation live under `src/host/`. The old `src/engine/` directory has been removed. `src/main.rs` supplies a temporary `crate::engine` alias to `host::execution` for existing internal Rust imports, preserving network APIs and stored records. Chat lives under `src/conversation/`, learning/group/model-platform features under `src/features/`, and MCP/CLI/web/local tool transports under `src/integrations/`.
 
-This is **module ownership and portable-kernel separation**, not a separately deployable plugin system or complete host-independent app binary. Existing app features still access the host's SQLite through its own `AppState`; the SDK kernel has no such dependency. [Detailed architecture and contract checks](docs/CORE-BOUNDARY-2026-11-20.md).
+This is **module ownership, independent runtime/intelligence crates, and portable-kernel separation**, not a separately deployable plugin system or complete host-independent app binary. Existing app features still access the host's SQLite through its own `AppState`; the SDK kernel has no such dependency. [Detailed architecture and contract checks](docs/CORE-BOUNDARY-2026-11-20.md) · [Algorithm injection and runtime dependency boundaries](docs/ALGORITHM-RUNTIME-2026-11-20.md).
 
 ## Development verification
 
 Routine changes: run *focused Rust development-profile tests*, not a blanket release build.
 
 ```sh
+cargo test -p dominion-agent-runtime --lib
+cargo test -p dominion-agent-algorithms --lib
+cargo test -p dominion-agent-sdk --test algorithm_policy_injection
 cargo test -p dominion-agent-sdk --lib
 cargo test -p dominion-sdk --lib
 cargo test --bin dominion-rust features::collaboration::rooms::tests

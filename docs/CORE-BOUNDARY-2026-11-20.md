@@ -3,7 +3,7 @@ Date: 2026-11-20. Branch: `dominion-sub3`.
 
 ## Core: model decisions and authorized execution
 
-`crates/dominion-agent-sdk/` owns the portable agent runtime, bounded iterations, decision planning, dispatch order, result interpretation and recovery checkpoints. It requires only `serde`, `serde_json` and `futures-util` at runtime; it **does not compile SQLite, passwords, web API, MCP transports or a product AppState**. The traits `Model`, `Tools` and `Journal` define how the embedding application supplies these functions.
+`crates/dominion-agent-runtime/` owns portable execution budgets, shared action/receipt contracts, dependency-aware read/effect scheduling, and schema admission. It has **no dependency on the Algorithms or SDK crates**. `crates/dominion-agent-algorithms/` owns replaceable planning prompts, task-intent classification, tool discovery/ranking, model-visible context projection and failure diagnoses; it depends only on Runtime and `serde_json`. `crates/dominion-agent-sdk/` composes both while retaining the Model → Tool → Result loop, durable Journal contract, replay controls and acceptance verification. None of these three crates depends on the product's SQLite or `AppState`.
 
 ```text
 User natural language -> host request adapter -> independent SDK kernel
@@ -19,7 +19,9 @@ User natural language -> host request adapter -> independent SDK kernel
 
 | Layer | Implementation | Responsibility |
 | --- | --- | --- |
-| Core | `crates/dominion-agent-sdk/` | Receive request, decide, call authorized tool, interpret output, bounded continue |
+| Runtime | `crates/dominion-agent-runtime/` | Budget admission, action/receipt contracts, scheduling, JSON Schema guards |
+| Intelligence | `crates/dominion-agent-algorithms/` | Swap planning prompts, intent, tool discovery, context views and failure guidance |
+| SDK facade | `crates/dominion-agent-sdk/` | Compose model/tool/journal adapters, maintain the bounded turn loop and evidence checks |
 | Host | `src/host/execution/` + `src/host/state.rs` | Product-level auth, durable SQLite-backed journal, approvals, job recovery, effect records |
 | Storage | `src/storage/sqlite.rs`, `src/storage/migrations.rs`, `src/storage/vault.rs` | Durable records, schema upgrades and encrypted credentials |
 | Conversation | `src/conversation/chat/` | UI-facing streaming and room/context projection |
@@ -35,6 +37,14 @@ The product's existing Rust calls to `crate::engine::...`, `crate::db::...`, `cr
 
 The feature catalog, conversation facade and local tool-driver reexports were removed from `src/host/execution/mod.rs` and relocated to `src/compat/engine.rs`. They are **source-only compatibility aliases** for existing `crate::engine::...` imports; they do not belong to the portable kernel or the host execution module. New code imports `host`, `features`, `storage`, `conversation` and `integrations` directly.
 
+## Replaceable algorithms over invariant execution
+
+The SDK exposes `Kernel::run_with_algorithm(request, &policy)` and `Kernel::resume_with_algorithm(request, snapshot, &policy)`. `AgentAlgorithm` controls planner instructions, stricter plan validation, tool-shortlist selection, receipt-context projection, failure diagnostics and task-intent signals. Existing `run()` / `resume()` call `StandardAlgorithm` and preserve public wire contracts.
+
+Every returned model-visible tool description must match a **real owner-approved tool name, JSON Schema, description and effect/read-only classification** and fit the bounded visible-catalog limit. The SDK refuses fabricated or changed declarations before issuing a model call. Additional intent policies can demand more evidence, but cannot weaken the standard code-edit/effect evidence requirements. Full authority remains at the host's approval and pinned tool contracts.
+
+See [per-run algorithm injection details](ALGORITHM-RUNTIME-2026-11-20.md).
+
 ## Isolation level
 
 This is an actual source ownership separation, with **an independently compilable Rust agent-kernel crate** and host-owned persistent storage. It does **not** assert the product host can run without database services or that host features are independently hot-unloadable plugins. The host `AppState` and job adapters still use `Store`; this is intentionally outside the SDK and must be further narrowed by host-specific persistence traits before multiple backends are supported.
@@ -43,6 +53,6 @@ The kernel's `Journal` trait already receives snapshots/receipts. The concrete d
 
 ## Regression verification
 
-`scripts/core-boundary.test.mjs` requires an engine-free source tree, storage under `src/storage/`, product execution adapters under `src/host/`, and no SQLite or `AppState` references in SDK sources. `scripts/integration-boundary.test.mjs` tracks the external tool boundary. The sub3 product and Rust SDK workflows are updated to use actual test module paths and watch the new host/storage directories.
+`scripts/algorithm-boundary.test.mjs` additionally enforces the one-way Runtime → Algorithms → SDK dependency and relocated algorithms; Rust regression `algorithm_policy_injection` tests default compatibility, stricter policy selection and rejection of forged tool declarations. `scripts/core-boundary.test.mjs` requires an engine-free source tree, storage under `src/storage/`, product execution adapters under `src/host/`, and no SQLite or `AppState` references in SDK sources. `scripts/integration-boundary.test.mjs` tracks the external tool boundary. The sub3 product and Rust SDK workflows are updated to use actual test module paths and watch the new host/storage directories.
 
 A passing source-boundary test does not replace Rust compilation or real-world model/provider integration verification.
