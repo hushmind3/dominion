@@ -1,7 +1,7 @@
 //! Durable, dependency-aware tool execution lane shared by native chat and
 //! structured model planners. The host owns permissions and read classification.
 //! Completed receipts are the recovery authority; no side effects are replayed.
-use crate::{runtime, Action, Dispatcher, Journal, Receipt, Snapshot, Status};
+use crate::{Action, Dispatcher, Journal, Receipt, Snapshot, Status};
 use futures_util::future::join_all;
 use serde_json::json;
 use std::collections::HashSet;
@@ -48,7 +48,7 @@ pub async fn dispatch_batch<D: Dispatcher>(
         if journal.directive(&run.id)? != planned_directive {
             return Err("작업 지시가 변경되어 기존 도구 계획을 중단했습니다.".into());
         }
-        let parallel_end = runtime::read_batch_end(
+        let parallel_end = crate::read_batch_end(
             actions, cursor, dispatcher.max_parallel_reads().clamp(1, 16),
             |action| dispatcher.is_read_only(action),
         );

@@ -10,6 +10,11 @@ use serde::{Serialize,Deserialize};
 pub const KERNEL_VERIFICATION_PREFIX:&str="kernel-verify-";
 pub mod scheduler;
 pub mod schema;
+pub mod contracts;
+pub use contracts::*;
+pub mod dispatch;
+pub use dispatch::dispatch_batch;
+pub mod acceptance;
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

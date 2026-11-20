@@ -6,12 +6,12 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path};
 
 /// IDs reserved for host-owned acceptance checks, never model operations.
-pub(crate) use dominion_agent_runtime::KERNEL_VERIFICATION_PREFIX;
+pub use crate::KERNEL_VERIFICATION_PREFIX;
 
 /// The *latest* successful workspace write for each path defines the expected
 /// final bytes. Reads, shell tests and agent self-reports are not witnesses.
 /// Host evidence rehashes the file during completion; changed bytes block it.
-pub(crate) fn artifact_witnesses(receipts: &[Receipt]) -> Vec<Criterion> {
+pub fn artifact_witnesses(receipts: &[Receipt]) -> Vec<Criterion> {
     let mut latest = BTreeMap::<String,String>::new();
     for receipt in receipts {
         if !receipt.success || receipt.result["written"] != true ||
@@ -35,7 +35,7 @@ pub(crate) fn artifact_witnesses(receipts: &[Receipt]) -> Vec<Criterion> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CommandState {
+pub enum CommandState {
     /// The newest matching attempt succeeded after every intervening effect.
     Passed,
     /// No eligible attempt exists for the current workspace revision.
@@ -44,7 +44,7 @@ pub(crate) enum CommandState {
     Failed,
 }
 
-pub(crate) fn required_command(criterion: &Criterion) -> Option<&str> {
+pub fn required_command(criterion: &Criterion) -> Option<&str> {
     (criterion.kind == CriterionKind::ToolSucceeded
         && criterion.tool.as_deref() == Some("shell_exec"))
         .then_some(criterion.contains.as_deref()).flatten()
@@ -66,7 +66,7 @@ fn is_effect(receipt: &Receipt, checks: &[Criterion],
     !catalog.get(&receipt.tool).is_some_and(|spec| spec.read_only)
 }
 
-pub(crate) fn command_state(receipts: &[Receipt], checks: &[Criterion],
+pub fn command_state(receipts: &[Receipt], checks: &[Criterion],
     catalog: &HashMap<String, ToolSpec>, command: &str) -> CommandState {
     let latest_effect = receipts.iter().rposition(|r| is_effect(r, checks, catalog));
     let latest_attempt = receipts.iter().enumerate().rev().find(|(_, r)| {

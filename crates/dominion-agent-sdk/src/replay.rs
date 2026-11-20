@@ -11,7 +11,7 @@ use std::collections::{BTreeMap,BTreeSet};
 /// Kernel-issued acceptance checks are the only legitimate receipts without
 /// model actions. The host journal independently verifies external effects.
 fn kernel_verification_receipt(receipt:&Receipt)->bool{
- let Some(suffix)=receipt.id.strip_prefix(crate::acceptance::KERNEL_VERIFICATION_PREFIX)
+ let Some(suffix)=receipt.id.strip_prefix(dominion_agent_runtime::acceptance::KERNEL_VERIFICATION_PREFIX)
   else{return false};
  let Some((step,index))=suffix.split_once('-') else{return false};
  receipt.tool=="shell_exec"
@@ -115,7 +115,7 @@ pub fn trace(snapshot:&Snapshot)->Value{
  let mut kernel_checks=Vec::new();
  for receipt in &snapshot.receipts {
   if planned.contains(receipt.id.as_str()) {
-   if receipt.id.starts_with(crate::acceptance::KERNEL_VERIFICATION_PREFIX) {
+   if receipt.id.starts_with(dominion_agent_runtime::acceptance::KERNEL_VERIFICATION_PREFIX) {
     issues.push(format!("Model action reused a kernel verification id: {}",receipt.id));
    }
    continue;
