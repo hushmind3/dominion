@@ -326,6 +326,55 @@ pub async fn inspect(
 mod tests{
     use super::*;
     #[test]
+    fn completed_external_resume_claim_is_owner_agent_and_job_scoped(){
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-external-resume-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg=crate::config::Config{port:0,data_dir:dir.clone(),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(cfg.clone(),
+            crate::db::Store::open(&cfg.db_path()).unwrap(),
+            crate::vault::Vault::open(&cfg.key_path()));
+        let owned=json!({"path":"/isolated/checked","jobId":"original",
+            "baseCommit":"frozen"});
+        state.store.put("session",&json!({"id":"old-session",
+            "parentSessionId":"owner","agentId":"a","readOnly":true,
+            "delegationProfile":"inspection",
+            "delegationWorkspace":owned})).unwrap();
+        state.store.put("job",&json!({"id":"original","kind":"prompt",
+            "status":"completed",
+            "input":{"sessionId":"old-session","parentSessionId":"owner",
+                "agentId":"a","delegationProfile":"inspection",
+                "externalRuntime":"codex"},
+            "result":{"externalRunId":"external:original"}})).unwrap();
+        state.store.put("external_agent_run",&json!({
+            "id":"external:original","jobId":"original","sessionId":"old-session",
+            "runtime":"codex","agentId":"a","status":"completed",
+            "externalSessionId":"123e4567-e89b-12d3-a456-426614174000"
+        })).unwrap();
+        let context=JobContext::new(state.clone(),"followup".into());
+        let current=json!({"parentSessionId":"owner","agentId":"a",
+            "delegationWorkspace":owned});
+        let mut foreign=current.clone();
+        foreign["parentSessionId"]=json!("different-owner");
+        assert!(claim_completed_session(&context,&foreign,
+            ExternalAgent::Codex,"original").is_err());
+        foreign=current.clone();
+        foreign["agentId"]=json!("b");
+        assert!(claim_completed_session(&context,&foreign,
+            ExternalAgent::Codex,"original").is_err());
+        assert!(claim_completed_session(&context,&current,
+            ExternalAgent::Qwen,"original").is_err());
+        let token=claim_completed_session(&context,&current,
+            ExternalAgent::Codex,"original").unwrap();
+        assert_eq!(token,"123e4567-e89b-12d3-a456-426614174000");
+        assert!(claim_completed_session(&context,&current,
+            ExternalAgent::Codex,"original").is_err());
+        assert_eq!(state.store.get("external_agent_run","external:original")
+            .unwrap()["resumedByJobId"],"followup");
+    }
+
+    #[test]
     fn headless_resume_tokens_are_terminal_verified_and_scoped(){
         let token="123e4567-e89b-12d3-a456-426614174000";
         let codex=format!(
