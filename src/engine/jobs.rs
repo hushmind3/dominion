@@ -442,7 +442,7 @@ fn next_queued(state: &AppState) -> Option<Value> {
         .cloned()
         .filter(|job| job.get("status").and_then(|value| value.as_str()) == Some("queued"))
         // Learning is background work: at most one at a time, so it can never
-        // occupy every worker while a prompt/room/workflow job waits.
+        // occupy every worker while a prompt/room job waits.
         .filter(|job| !(job["kind"] == "learn" && learning_running))
         .filter(|job| {
             if !matches!(job["kind"].as_str(), Some("room" | "meeting")) {
@@ -603,7 +603,7 @@ async fn run_job(state: AppState, job: Value) {
         }
     }
     // No automatic source adoption or install on job completion.
-    // Owner-directed code changes use ordinary prompt/workflow jobs instead.
+    // Owner-directed code changes use ordinary prompt jobs instead.
 }
 
 /// Publish a terminal outcome only if the job was still live at commit time.
