@@ -13,55 +13,13 @@ pub mod tools;
 // Backwards-compatible product API: implementation moved to src/addons/.
 // Execution correctness remains in the standalone dominion-core crate.
 pub use crate::addons::{
-    compact, goal_control, obligation_repair, program, reasoning, delegation_worktree, jobs, wake, job_control,
+    compact, obligation_repair, program, reasoning, delegation_worktree, jobs, wake, job_control,
     agent_growth, distill, experience, learning, memory, principle, reflect, room_knowledge, skills, adaptation, adaptation_loop, algorithm_eval, algorithms, debate, decompose, episode, improve, plan_quality, policy_patch, preflight_fixture, procedure, attachments, bridge, browser, channel_adapter, cli_model, code_index, codex_oauth, dev, discord, extensions, gateway, mcp, models, oauth, personas, room_state, rooms, telegram, backup_keys, maintenance, remote_backup, vault_rotation
 };
 
 use crate::state::AppState;
 use serde_json::Value;
 use tokio::sync::mpsc;
-
-#[derive(Default, Clone)]
-pub struct TurnStats {
-    pub tool_success: Vec<String>,
-    pub tool_errors: Vec<String>,
-    pub evidence: Vec<Value>,
-}
-
-/// Runs a turn and collects tool evidence for the goal harness.
-pub async fn run_quiet_outcome(
-    state: &AppState,
-    request: &chat::TurnRequest,
-) -> (Result<Option<Value>, String>, TurnStats) {
-    let (sender, mut receiver) = mpsc::unbounded_channel::<Value>();
-    let collector = tokio::spawn(async move {
-        let mut stats = TurnStats::default();
-        while let Some(event) = receiver.recv().await {
-            let name = event
-                .get("name")
-                .and_then(|value| value.as_str())
-                .unwrap_or("");
-            match event.get("type").and_then(|value| value.as_str()) {
-                Some("tool_end") if !name.is_empty() => {
-                    stats.tool_success.push(name.to_string());
-                    stats.evidence.push(serde_json::json!({
-                        "tool": name,
-                        "callId": event.get("id"),
-                        "arguments": event.get("arguments"),
-                        "result": event.get("result"),
-                    }));
-                }
-                Some("tool_error") if !name.is_empty() => stats.tool_errors.push(name.to_string()),
-                _ => {}
-            }
-        }
-        stats
-    });
-    let result = chat::run_turn_background(state, request, &sender).await;
-    drop(sender);
-    let stats = collector.await.unwrap_or_default();
-    (result, stats)
-}
 
 /// Background resume that never records a second owner message.
 pub async fn run_quiet_resume(
