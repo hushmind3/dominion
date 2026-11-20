@@ -162,13 +162,6 @@ impl Dominion {
         engine::jobs::enqueue(&self.state,"prompt",input)
             .ok_or_else(|| "cannot persist job".to_string())
     }
-    /// Legacy archive remains readable without loading the retired media engine.
-    pub fn archived_media_job(&self,id:&str)->Option<Value>{
-        self.state.store.get("job",id)
-            .filter(|job|matches!(job["kind"].as_str(),Some("video"|"youtube_upload")))
-            .map(|job|crate::api::video::public_job(&job))
-    }
-
     /// Claim a queued job through the same worker path, never a duplicate runner.
     pub fn schedule_now(&self,id:&str)->Result<(),String>{
         if self.state.store.get("job",id).is_none(){return Err("unknown job".into());}
@@ -286,16 +279,6 @@ mod tests {
         prompt.agent_id=Some("unknown-agent".into());
         assert!(sdk.submit(prompt).is_err());
         assert!(sdk.jobs().is_empty());
-        drop(sdk);let _=std::fs::remove_dir_all(dir);
-    }
-    #[tokio::test]
-    async fn native_archived_video_receipt_never_starts_generation(){
-        let (sdk,dir)=sdk();
-        let job=sdk.state.store.put("job",&json!({"kind":"video",
-            "status":"completed","input":{"title":"Old footage"}})).unwrap();
-        let id=job["id"].as_str().unwrap();
-        assert_eq!(sdk.archived_media_job(id).unwrap()["archived"],true);
-        assert_eq!(sdk.archived_media_job(id).unwrap()["generationAvailable"],false);
         drop(sdk);let _=std::fs::remove_dir_all(dir);
     }
     #[tokio::test]
