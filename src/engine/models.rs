@@ -933,7 +933,7 @@ async fn install_from_release(state: &AppState) -> Result<(PathBuf, String), Str
         ));
     }
     let mut found = Vec::new();
-    walk(&extracted, 0, &mut found);
+    scan_model_tree(&extracted, 0, &mut found, ModelEntry::File);
     let binary = found
         .into_iter()
         .find(|path| {
