@@ -5,7 +5,8 @@ import {readFileSync} from 'node:fs';
 const load=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 const ui=load('web/src/pages/Connections.tsx');
 const broker=load('src/api/cli_oauth.rs');
-const oauth=load('src/engine/oauth.rs');
+const oauth=load('src/integrations/accounts/oauth.rs');
+const accountTools=load('src/integrations/accounts/tools.rs');
 const tools=load('src/engine/tools.rs');
 
 test('only the quick-connect UI exposes GitHub and Google sign-in',()=>{
@@ -46,6 +47,6 @@ test('official CLI grant enters existing encrypted vault and standard agent tool
   assert.match(oauth,/authSource"\]=json!\("github_cli"\)/);
   assert.match(oauth,/authSource"\]=json!\("gws_cli"\)/);
   assert.match(tools,/pub fn definitions_for/);
-  assert.match(tools,/"github_work_read"/);
-  assert.match(tools,/"google_workspace_read"/);
+  assert.match(accountTools,/"github_work_read"/);
+  assert.match(accountTools,/"google_workspace_read"/);
 });
