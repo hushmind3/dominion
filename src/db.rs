@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 mod sdk_sources;
 mod room_cursor;
+mod team_dag;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FinalizeOutcome {
@@ -208,6 +209,9 @@ impl Store {
              );
              CREATE INDEX IF NOT EXISTS idx_job_active_status
                  ON records(kind, json_extract(data,'$.status'), json_extract(data,'$.queuedAt'))
+                 WHERE kind='job';
+             CREATE INDEX IF NOT EXISTS idx_team_parent_jobs
+                 ON records(json_extract(data,'$.input.parentSessionId'), updated_at DESC)
                  WHERE kind='job';
              CREATE INDEX IF NOT EXISTS idx_records_kind_updated
                  ON records(kind, updated_at DESC);
