@@ -683,6 +683,9 @@ pub async fn run(context: &JobContext, job: &Value) -> Result<Value, String> {
         .get("channel", text(input, "connectionId"))
         .ok_or("Discord 연결이 삭제되었습니다.")?;
     validate(state, &config)?;
+    if !crate::engine::extensions::channels::enabled_binding(state,&config) {
+        return Err("needs_review: 메시지 채널 부가기능이 비활성화되어 외부 연결을 실행하지 않았습니다.".into());
+    }
     if text(&config, "driver") != "dominion-discord"
         || config.get("enabled").and_then(Value::as_bool) != Some(true)
         || input.get("configVersion") != config.get("revision")
@@ -739,6 +742,12 @@ pub async fn run(context: &JobContext, job: &Value) -> Result<Value, String> {
             {
                 return Err("Discord 대화 세션을 저장할 수 없습니다.".into());
             }
+        }
+        if !crate::engine::extensions::enabled(
+            state,&session_id,Some(agent_id),
+            crate::engine::extensions::Extension::Channels
+        ){
+            return Err("needs_review: 이 에이전트의 메신저 부가기능이 비활성화되어 외부 전송을 중지했습니다.".into());
         }
         context.checkpoint(
             json!({"sessionId":session_id,"stepIndex":index,"stepTotal":agents.len()}),
