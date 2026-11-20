@@ -298,7 +298,7 @@ async fn wait_dispatch_event(
 }
 
 pub fn start(state: AppState) {
-    crate::engine::channel_adapter::start(state.clone());
+    crate::engine::extensions::channels::start_outbound(state.clone());
     let workers = std::env::var("DOMINION_JOB_WORKERS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -350,7 +350,8 @@ pub fn start(state: AppState) {
         loop {
             tokio::select! {
                 _ = tick.tick() => {
-                    if dirty {
+                    if dirty && crate::engine::extensions::globally_enabled(
+                        &maintenance_state,crate::engine::extensions::Extension::Memory) {
                         crate::engine::agent_growth::sweep(&maintenance_state);
                         crate::engine::distill::sweep(&maintenance_state);
                         dirty = false;
