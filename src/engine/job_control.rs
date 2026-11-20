@@ -100,7 +100,7 @@ pub fn steer(
     }
     for _ in 0..4 {
         let row = state.store.get(kind, id).ok_or(SteeringError::NotFound)?;
-        if kind == "job" && (row["kind"] != "prompt" || row["input"]["rsiSourceDir"].is_string()) {
+        if kind == "job" && row["kind"] != "prompt" {
             return Err(SteeringError::BadInput(
                 "일반 프롬프트 작업에서만 지시를 변경할 수 있습니다.".into(),
             ));

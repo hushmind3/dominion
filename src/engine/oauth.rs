@@ -402,7 +402,7 @@ pub fn disconnect(state: &AppState, id: &str) {
     }
 }
 
-/// Bearer token for tools (GitHub / YouTube). `None` until the user connects.
+/// Bearer token for connected tools. `None` until the user connects.
 pub fn access_token(state: &AppState, id: &str) -> Option<String> {
     let sealed = state.read_secret(&format!("oauth:{id}:token"))?;
     let value: Value = serde_json::from_str(&sealed).ok()?;
@@ -412,8 +412,8 @@ pub fn access_token(state: &AppState, id: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Refresh long-lived service grants in the vault; Google identity and YouTube
-/// intentionally have independent grants, expiry and disconnect operations.
+/// Refresh long-lived service grants in the vault; each provider has its
+/// own grant, expiry, and disconnect operation.
 pub async fn fresh_access_token(state: &AppState, id: &str) -> Result<String, String> {
     let raw = state
         .read_secret(&format!("oauth:{id}:token"))

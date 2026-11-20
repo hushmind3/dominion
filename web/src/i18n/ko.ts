@@ -1156,7 +1156,6 @@ const ko = {
   'jobk.workflow': '워크플로',
   'jobk.reflect': '검토',
   'jobk.resume': '재개',
-  'jobk.video': '영상',
   'jobk.build': '빌드',
   'jobk.setup': '환경 구성',
   'jobk.test': '테스트',

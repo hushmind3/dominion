@@ -1157,7 +1157,6 @@ const en: Record<LocaleKey, string> = {
   'jobk.workflow': 'Workflow',
   'jobk.reflect': 'Reflection',
   'jobk.resume': 'Resume',
-  'jobk.video': 'Video',
   'jobk.build': 'Build',
   'jobk.setup': 'Setup',
   'jobk.test': 'Test',

@@ -2,7 +2,6 @@ mod response;
 #[cfg(test)]
 mod tests;
 pub mod algorithms;
-pub mod rsi;
 pub mod translation;
 pub mod settings;
 pub mod improvements;
@@ -34,7 +33,6 @@ pub mod models;
 pub mod oauth;
 pub mod personas;
 pub mod rooms;
-pub mod video;
 
 use crate::state::AppState;
 use axum::{
@@ -86,17 +84,6 @@ pub fn router(state: AppState) -> Router {
         .route("/api/run-wakes", get(system::run_wakes))
         .route("/api/experiment-requests", get(system::experiment_requests))
         .route("/api/optimizers", get(experiments::optimizers))
-        // Archived RSI records remain readable. No new campaign, mutation,
-        // evaluation, or automatic deployment can be started over HTTP.
-        .route("/api/rsi", get(rsi::list))
-        .route("/api/rsi/issues/:id", get(rsi::issue))
-        .route("/api/rsi/evaluation-profiles", get(rsi::evaluation_profiles))
-        .route("/api/rsi/signals", get(rsi::signals))
-        .route("/api/rsi/index", get(rsi::index))
-        .route("/api/rsi/campaigns", get(rsi::campaigns))
-        .route("/api/rsi/campaigns/:id", get(rsi::campaign))
-        .route("/api/rsi/campaigns/:id/verify", get(rsi::verify))
-        .route("/api/rsi/:id", get(rsi::one))
         .route("/api/algorithms", get(algorithms::list).post(algorithms::register))
         .route("/api/algorithms/evaluate", get(algorithms::evaluate))
         .route("/api/algorithms/evaluations", get(algorithms::evaluations))
@@ -286,18 +273,6 @@ pub fn router(state: AppState) -> Router {
         .route("/api/oauth/:id/open", post(oauth::open))
         .route("/api/oauth/:id/callback", get(oauth::callback))
         .route("/api/oauth/:id", axum::routing::delete(oauth::disconnect))
-        // Read-only archive compatibility. Built-in media creation, model
-        // downloads, regeneration and upload actions are retired.
-        .route("/api/youtube/status", get(compat::youtube_status))
-        .route("/api/youtube/uploads", get(compat::youtube_uploads))
-        .route("/api/youtube/uploads/:id", get(video::job))
-        .route("/api/video/status", get(video::status))
-        .route("/api/video/config", get(video::get_config))
-        .route("/api/video/outputs", get(video::outputs_handler))
-        .route("/api/video/files", get(video::outputs_handler))
-        .route("/api/video/jobs/:id", get(video::job))
-        .route("/api/video/jobs", get(video::list_jobs))
-        .route("/api/video/jobs/:id/content", get(video::content))
         .route("/api/system/pick-folder", post(compat::pick_folder))
         .route("/api/channels/catalog", get(channels::catalog_handler))
         .route("/api/channels", get(channels::list).post(channels::save))

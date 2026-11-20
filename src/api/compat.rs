@@ -9,31 +9,6 @@ use axum::{
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-pub async fn youtube_uploads(State(state): State<AppState>) -> Json<Value> {
-    let mut uploads = state
-        .store
-        .all("job")
-        .iter()
-        .filter(|job| job["kind"] == "youtube_upload")
-        .map(crate::api::video::public_job)
-        .collect::<Vec<_>>();
-    uploads.sort_by(|a, b| {
-        b["createdAt"]
-            .as_str()
-            .unwrap_or("")
-            .cmp(a["createdAt"].as_str().unwrap_or(""))
-    });
-    Json(json!(uploads))
-}
-
-pub async fn youtube_status(State(state): State<AppState>) -> Json<Value> {
-    let connection = state.store.get("oauth_config", "youtube").unwrap_or(json!({}));
-    Json(
-        json!({"connected":connection["connected"],"retired":true,"uploadAllowed":false,"account":connection["account"],"uploads":state.store.all("job").iter().filter(|j|j["kind"]=="youtube_upload").map(crate::api::video::public_job).collect::<Vec<_>>(),"channel":null}),
-    )
-}
-
-
 /// Opens the platform folder picker. Headless hosts can set DOMINION_FOLDER
 /// to bypass the dialog; the result is always a real existing directory.
 pub async fn pick_folder() -> Response {

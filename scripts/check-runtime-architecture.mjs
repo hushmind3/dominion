@@ -1,4 +1,4 @@
-// Verify the slim runtime graph without probing retired RSI/media engines.
+// Check the active runtime graph and forbid retired native modules.
 import {execFileSync} from 'node:child_process'
 import {existsSync,readFileSync,readdirSync} from 'node:fs'
 import path from 'node:path'
@@ -82,8 +82,13 @@ console.log(`Agent runtime graph OK: ${members.map(p=>p.name).join(', ')}`)
 for(const file of readdirSync(path.join(root,'src/engine')))
   if(/^(?:rsi(?:_|\.)|video(?:_|\.))/.test(file))throw Error('Retired engine source remains: '+file)
 const api=readFileSync(path.join(root,'src/api/mod.rs'),'utf8')
-for(const line of api.split('\n'))if(/\.route\("\/api\/(?:rsi|video|youtube)(?:\/|\")/.test(line)&&/\bpost\(/.test(line))
-  throw Error('Retired mutation endpoint is registered: '+line.trim())
+for(const line of api.split('\n'))if(/\.route\("\/api\/(?:rsi|video|youtube)(?:\/|\")/.test(line))
+  throw Error('Retired endpoint remains: '+line.trim())
+for(const file of ['src/api/rsi.rs','src/api/video.rs'])
+  if(existsSync(path.join(root,file)))throw Error('Retired API module remains: '+file)
+if(/(?:pub )?mod (?:rsi|video);/.test(api))throw Error('Retired API module remains imported')
+const compat=readFileSync(path.join(root,'src/api/compat.rs'),'utf8')
+if(/youtube_(?:status|uploads)/.test(compat))throw Error('Retired YouTube compatibility API remains')
 const bootstrap=readFileSync(path.join(root,'src/bootstrap.rs'),'utf8')
 if(bootstrap.includes('refresh_free_catalog('))throw Error('Idle provider-model sweep reintroduced')
 // Check the transitive finalization and prompt-selection paths, not just

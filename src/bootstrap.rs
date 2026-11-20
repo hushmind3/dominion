@@ -6,9 +6,6 @@ use crate::{
 use std::future::IntoFuture;
 
 pub async fn run(args: Vec<String>) -> Result<(), String> {
-    if args.first().is_some_and(|arg| arg.starts_with("--rsi-")) {
-        return Err("RSI 자동 실행 CLI는 종료되었습니다.".into());
-    }
     if platform::handle_control(&args)? {
         return Ok(());
     }
