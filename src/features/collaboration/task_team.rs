@@ -236,7 +236,7 @@ fn input_with_evidence(task:&Task,parent:&str,evidence:&Value)->Value {
     }
     value
 }
-pub fn project(state:&AppState,parent:&Value){
+pub fn project(state:&AppState,parent:&Value)->Value{
     let team=Team::parse(&parent["input"]).ok();
     let mut children=Vec::new();
     if let Some(team)=team {
@@ -255,7 +255,7 @@ pub fn project(state:&AppState,parent:&Value){
                 "observedOperations":child.as_ref().map(|c|
                     child_observation(&task,c)["observedOperations"].clone()),
                 "answerExcerpt":child.as_ref().map(|c|
-                    child["result"]["answer"].as_str().unwrap_or("")
+                    c["result"]["answer"].as_str().unwrap_or("")
                         .chars().take(400).collect::<String>()),
             }));
         }
