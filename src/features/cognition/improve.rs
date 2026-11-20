@@ -728,9 +728,12 @@ pub fn execution_updates(
                 improvement["status"] = json!("validated");
                 improvement["evidenceGrade"] = json!("E1_observed");
                 improvement["validatedBy"] = json!("production_observation");
-                improvement["requiresExperiment"] = json!(
-                    improvement["experimentRevision"].is_null()
-                );
+                // Existing historical strategies can already have explicit
+                // verification. Never replace a persisted false verdict
+                // with true just because old rows lack experimentRevision.
+                let requires_experiment = improvement["requiresExperiment"]
+                    .as_bool().unwrap_or_else(|| improvement["experimentRevision"].is_null());
+                improvement["requiresExperiment"] = json!(requires_experiment);
                 improvement["validatedAt"] = json!(chrono::Utc::now().to_rfc3339());
             }
         }
