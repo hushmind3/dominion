@@ -47,11 +47,12 @@ for(const [owner,original,replacement] of [["src/engine/chat/runtime.rs","src/en
      !existsSync(path.join(root,replacement)))
     throw Error('Chat product extension leaked into engine: '+original)
 }
+const boardAddonIndex=readFileSync(path.join(root,'src/addons/mod.rs'),'utf8')
 const board=readFileSync(path.join(root,'src/addons/integrations/room_board.rs'),'utf8')
 const rooms=readFileSync(path.join(root,'src/addons/integrations/rooms.rs'),'utf8')
 const boardRoomContext=readFileSync(path.join(root,'src/addons/integrations/chat_room_context.rs'),'utf8')
 const dbSource=readFileSync(path.join(root,'src/db.rs'),'utf8')
-if(!addonIndex.includes('pub mod room_board;')||
+if(!boardAddonIndex.includes('pub mod room_board;')||
    !rooms.includes('crate::addons::room_board::publish(')||
    !boardRoomContext.includes('crate::addons::room_board::context_frame(')||
    !board.includes('operation["toolReceipt"]["verified"]==true')||
