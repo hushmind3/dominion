@@ -125,13 +125,60 @@ pub async fn dispatch_batch<D:Dispatcher>(snapshot:&mut Snapshot,actions:&[Actio
     snapshot.native.messages.push(json!({"role":"assistant","content":"","tool_calls":calls.iter().map(|c|json!({"id":c.id,"type":"function","function":{"name":c.name,"arguments":c.arguments.to_string()}})).collect::<Vec<_>>()}));
     let parallel=calls.len()>1&&calls.iter().all(|c|journal::parallel_safe(&c.name));
     if parallel{
-        journal::begin_read_batch(&mut snapshot.native,&calls)?;store.save(snapshot)?;
-        let results=futures_util::future::join_all(actions.iter().map(|a|dispatcher.execute(a))).await;
-        let observations=results.iter().map(|r|match r{Ok(r) if r.success&&succeeded(&r.observation)=>Ok(r.observation.to_string()),Ok(r)=>Err(r.observation.to_string()),Err(e)=>Err(e.clone())}).collect::<Vec<_>>();
-        journal::finish_read_batch(&mut snapshot.native,&calls,&observations)?;
-        for ((action,result),observed) in actions.iter().zip(&results).zip(&observations){snapshot.receipts.push(Receipt{id:action.id.clone(),tool:action.tool.clone(),arguments:action.arguments.clone(),success:observed.is_ok(),result:match result{Ok(r)=>r.observation.clone(),Err(e)=>json!({"error":e})},step:snapshot.step});}
-        store.save(snapshot)?;
-        return Ok(results.into_iter().map(|r|r.map(|r|r.output)).collect());
+        // A model turn can legally request 16 calls, while a durable read
+        // barrier admits at most eight. Partition into independently journaled
+        // waves: a crash never loses which wave completed, and a cancellation
+        // between waves must not launch the remaining reads.
+        let mut outputs=Vec::with_capacity(actions.len());
+        for (wave,calls_in_wave) in calls.chunks(8).enumerate(){
+            if snapshot.native.status!=RunStatus::Running {
+                return Err("실행이 중단되었습니다.".into());
+            }
+            if store.cancelled(&snapshot.native.id.to_string()){
+                let skipped=journal::cancel_unstarted(&mut snapshot.native)?;
+                for call in skipped {
+                    snapshot.receipts.push(Receipt{id:call.id,tool:call.name,arguments:call.arguments,
+                        success:false,result:json!({"error":"cancelled_before_dispatch"}),step:snapshot.step});
+                }
+                store.save(snapshot)?;
+                return Err("실행이 중단되었습니다.".into());
+            }
+            let offset=wave*8;
+            let actions_in_wave=&actions[offset..offset+calls_in_wave.len()];
+            if calls_in_wave.len()==1 {
+                // The last wave of a 9-call turn is a regular durable read,
+                // not an invalid one-element parallel barrier.
+                let action=&actions_in_wave[0];
+                let call=&calls_in_wave[0];
+                journal::begin(&mut snapshot.native,call)?;store.save(snapshot)?;
+                let result=dispatcher.execute(action).await?;
+                let success=result.success&&succeeded(&result.observation);
+                let receipt=if success{Ok(result.observation.to_string())}else{Err(result.observation.to_string())};
+                journal::finish(&mut snapshot.native,call,&receipt,false)?;
+                snapshot.receipts.push(Receipt{id:action.id.clone(),tool:action.tool.clone(),
+                    arguments:action.arguments.clone(),success,result:result.observation,step:snapshot.step});
+                store.save(snapshot)?;
+                outputs.push(Ok(result.output));
+                continue;
+            }
+            journal::begin_read_batch(&mut snapshot.native,calls_in_wave)?;store.save(snapshot)?;
+            let results=futures_util::future::join_all(
+                actions_in_wave.iter().map(|a|dispatcher.execute(a))).await;
+            let observations=results.iter().map(|r|match r{
+                Ok(r) if r.success&&succeeded(&r.observation)=>Ok(r.observation.to_string()),
+                Ok(r)=>Err(r.observation.to_string()),
+                Err(e)=>Err(e.clone())
+            }).collect::<Vec<_>>();
+            journal::finish_read_batch(&mut snapshot.native,calls_in_wave,&observations)?;
+            for ((action,result),observed) in actions_in_wave.iter().zip(&results).zip(&observations){
+                snapshot.receipts.push(Receipt{id:action.id.clone(),tool:action.tool.clone(),
+                    arguments:action.arguments.clone(),success:observed.is_ok(),
+                    result:match result{Ok(r)=>r.observation.clone(),Err(e)=>json!({"error":e})},step:snapshot.step});
+            }
+            store.save(snapshot)?;
+            outputs.extend(results.into_iter().map(|r|r.map(|r|r.output)));
+        }
+        return Ok(outputs);
     }
     let mut outputs=Vec::new();
     for (action,call) in actions.iter().zip(&calls){
@@ -203,6 +250,73 @@ mod tests{
         snapshot.native.waiting_for_children=false;
         assert!(snapshot.settled());
         assert_eq!(snapshot.next_round(&mut budget,&journal).unwrap(),Some(0));
+    }
+
+    #[tokio::test]
+    async fn sixteen_read_calls_complete_as_ordered_durable_waves(){
+        for count in [9usize,16] {
+            let mut snapshot=run();
+            let dispatcher=Tool(AtomicUsize::new(0));
+            let store=Memory{saved:Mutex::new(None),fail:false};
+            let actions=(0..count).map(|index|Action{
+                id:format!("read-{index}"),tool:"read_file".into(),
+                arguments:json!({"path":format!("file-{index}")}),depends_on:vec![],
+            }).collect::<Vec<_>>();
+            let outputs=dispatch_batch(&mut snapshot,&actions,&dispatcher,&store).await.unwrap();
+            assert_eq!(outputs.len(),count);
+            assert_eq!(dispatcher.0.load(Ordering::SeqCst),count);
+            assert!(snapshot.native.queued_calls.is_empty());
+            assert!(snapshot.native.read_batch_in_flight.is_empty());
+            assert_eq!(snapshot.receipts.len(),count);
+            let observed=snapshot.native.messages.iter()
+                .filter(|message|message["role"]=="tool")
+                .map(|message|message["tool_call_id"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(observed,actions.iter().map(|a|a.id.clone()).collect::<Vec<_>>());
+            assert_eq!(snapshot.native.events.iter()
+                .filter(|event|event.kind=="read_batch_started").count(),
+                if count==9 {1} else {2});
+            assert_eq!(store.saved.lock().unwrap().as_ref().unwrap().receipts.len(),count);
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelling_between_read_waves_aborts_tail_without_dispatch(){
+        use std::sync::{Arc,atomic::AtomicBool};
+        struct StopJournal{saved:Mutex<Option<Snapshot>>,stop:Arc<AtomicBool>}
+        impl Journal for StopJournal{
+            fn save(&self,s:&Snapshot)->Result<(),String>{
+                *self.saved.lock().unwrap()=Some(s.clone());Ok(())
+            }
+            fn cancelled(&self,_:&str)->bool{self.stop.load(Ordering::SeqCst)}
+        }
+        struct StopOnRead{count:AtomicUsize,stop:Arc<AtomicBool>}
+        impl Dispatcher for StopOnRead{
+            type Output=();
+            fn execute<'a>(&'a self,_:&'a Action)->BoxFuture<'a,Result<DispatchResult<()>,String>>{
+                Box::pin(async move {
+                    if self.count.fetch_add(1,Ordering::SeqCst)==0{
+                        self.stop.store(true,Ordering::SeqCst);
+                    }
+                    Ok(DispatchResult{output:(),observation:json!({"ok":true}),success:true})
+                })
+            }
+        }
+        let stop=Arc::new(AtomicBool::new(false));
+        let journal=StopJournal{saved:Mutex::new(None),stop:stop.clone()};
+        let dispatcher=StopOnRead{count:AtomicUsize::new(0),stop};
+        let mut snapshot=run();
+        let actions=(0..9).map(|i|Action{id:format!("r{i}"),
+            tool:"read_file".into(),arguments:json!({"path":i}),depends_on:vec![]})
+            .collect::<Vec<_>>();
+        assert!(dispatch_batch(&mut snapshot,&actions,&dispatcher,&journal).await.is_err());
+        assert_eq!(dispatcher.count.load(Ordering::SeqCst),8);
+        assert_eq!(snapshot.native.status,RunStatus::Cancelled);
+        assert!(snapshot.native.queued_calls.is_empty());
+        assert_eq!(snapshot.receipts.len(),9);
+        assert_eq!(snapshot.receipts.iter().filter(|receipt|receipt.success).count(),8);
+        assert_eq!(snapshot.native.messages.iter().filter(|m|m["role"]=="tool").count(),9);
+        assert_eq!(journal.saved.lock().unwrap().as_ref().unwrap().receipts.len(),9);
     }
 
     #[tokio::test]
