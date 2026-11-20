@@ -716,6 +716,38 @@ mod tests {
     }
 
     #[test]
+    fn full_sqlite_transcript_replays_as_small_current_context_without_data_loss(){
+        let (state,dir)=state();
+        state.store.put("session",&json!({"id":"case","title":"web research"}));
+        state.store.write_message(&json!({"session_id":"case","role":"user",
+            "content":"피클AI 검색해"})).unwrap();
+        state.store.write_message(&json!({"session_id":"case","role":"assistant",
+            "content":"검색 결과를 확인 중","tool_calls":[{
+                "id":"search1","type":"function",
+                "function":{"name":"http_fetch","arguments":"{\"url\":\"https://example.org\"}"}
+            }]})).unwrap();
+        let html="UNRELATED_BLOG_HTML_".repeat(5_000);
+        let receipt=state.store.write_message(&json!({"session_id":"case",
+            "role":"tool","tool_call_id":"search1","content":html})).unwrap();
+        state.store.write_message(&json!({"session_id":"case","role":"assistant",
+            "content":"피클은 AI 에이전트입니다"})).unwrap();
+        state.store.write_message(&json!({"session_id":"case","role":"user",
+            "content":"말 짧게 해라"})).unwrap();
+        let original=history(&state,"case",None,None).unwrap();
+        let focused=super::context_window::focus(original.clone(),"말 짧게 해라",false);
+        let before=super::room_context::input_estimate(&original,&[]);
+        let after=super::room_context::input_estimate(&focused,&[]);
+        assert!(before>15_000,"old full HTML must cost real model tokens: {before}");
+        assert!(after*10<before,"compact context must reduce input at least 10x: {after}/{before}");
+        assert!(focused.iter().any(|m|m["content"]=="말 짧게 해라"));
+        assert!(focused.iter().any(|m|m["content"]=="피클은 AI 에이전트입니다"));
+        assert!(!json!(focused).to_string().contains("UNRELATED_BLOG_HTML_UNRELATED_BLOG_HTML"));
+        assert_eq!(state.store.message(receipt["id"].as_str().unwrap()).unwrap()["content"],
+            html,"full source remains in SQLite and can be reread");
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn skill_manifest_is_compact_sorted_and_never_embeds_full_instructions(){
         let (state,dir)=state();
         state.store.put("session",&json!({"id":"s"}));
