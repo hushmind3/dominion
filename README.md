@@ -42,11 +42,11 @@ Start the UI separately with `npm --prefix web run dev`. A release package and l
 | Boundary | Active source |
 | --- | --- |
 | Main-synchronized frontend, routing and pages | `web/src/App.tsx`, `web/src/pages/`, `web/src/components/` |
-| HTTP API, public model catalog and GitHub login | `src/api/mod.rs`, `src/api/providers.rs`, `src/api/cli_oauth.rs` |
+| HTTP API, public model catalog and GitHub login | `src/api/mod.rs`, `src/api/services/providers/providers.rs`, `src/api/services/providers/cli_oauth.rs` |
 | Chat turn execution and tool dispatch | `src/engine/core/chat/runtime.rs`, `src/engine/core/chat/runtime/turn_body.rs` |
 | Room context and semantic continuation | `src/engine/services/conversation/chat_room_context.rs`, `src/engine/services/conversation/chat_continuity.rs` |
-| Room status, owner facts, speaker routing | `src/engine/room_state.rs`, `src/engine/rooms.rs` |
-| Native tool contracts, verification | `src/engine/chat/tool_projection.rs`, `src/engine/core/verification.rs` |
+| Room status, owner facts, speaker routing | `src/engine/services/conversation/room_state.rs`, `src/engine/services/conversation/rooms.rs` |
+| Native tool contracts, verification | `src/engine/services/tools/chat_tool_projection.rs`, `src/engine/core/verification.rs` |
 | Durable jobs and SQLite storage | `src/engine/services/automation/jobs.rs`, `src/db.rs` |
 | User SDK and Rust kernel | `sdk/typescript/src/index.ts`, `crates/dominion-agent-kernel/src/lib.rs` |
 
@@ -63,3 +63,5 @@ Obsolete embedded generation, campaign and upload endpoints, their Rust implemen
 ## Minimal execution core (2026-11-20)
 
 The natural-language execution loop is isolated in `src/engine/core/`; provider routing, memory, rooms, automation, planning and concrete tools are in `src/engine/services/`, with MCP and external channels under `src/engine/addons/`. Rust module names and existing API/UI routes remain stable. See [core isolation design](docs/SUB2-MICROKERNEL-2026-11-20.md).
+
+API architecture: 11 execution endpoints remain in the guarded core router; 123 domain endpoints use five service route modules, and 27 external-integration endpoints use the addon router. All retain their original URL paths and shared middleware.

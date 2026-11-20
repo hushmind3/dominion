@@ -39,3 +39,12 @@ https://github.com/QwenLM/qwen-code/issues/11695
 ## 런타임 내부 추가 분리
 
 ProgramIR 실행, 대안 후보 실험, 작업 검토, 정책 스냅샷과 세션 상태 관리 5개 파일도 `services/decision/` 및 `services/conversation/`으로 이동했습니다. 기존 단일 실행 루프는 결과를 수집하는 역할을 유지합니다.
+
+## HTTP 경계 정리
+
+- 코어 HTTP 주소는 자연어 실행·SDK 실행 제어·승인·이벤트·상태 확인 등 11개로 축소했습니다.
+- 모델·대화·자동화·평가·운영의 기존 123개 API는 `src/api/surfaces/` 5개 라우터에서 등록합니다.
+- MCP, OAuth, 브라우저, 연결 채널 등 27개 API는 기존 `src/api/addons.rs`가 등록합니다.
+- 기존 핸들러 구현 27개 파일도 `src/api/services/` 또는 `src/api/addons/`로 위치를 옮겼습니다.
+- 모든 라우터가 기존 Axum 서버의 공통 CORS·승인/보안·정비 중 차단 경계를 그대로 사용합니다.
+- 새 메뉴, 새 API URL, 별도 HTTP 서버 또는 새 권한/저장소를 만들지 않았습니다.

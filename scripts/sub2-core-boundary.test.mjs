@@ -79,3 +79,28 @@ test('only language execution and approval endpoints remain in HTTP core',()=>{
  }
 });
 
+
+const handlerGroups={
+ providers:['providers','models','cli_oauth'],
+ conversation:['agents','attachments','sessions','rooms','memory','personas','translation'],
+ automation:['jobs','tasks','executions'],
+ evaluation:['benchmark','experiments','improvements','experience'],
+ management:['settings','system','dev','collections'],
+ addons:['browser','channels','extensions','oauth','gateways','compat']
+};
+test('HTTP handler implementations are source-isolated from the minimal API core',()=>{
+ const api=source('src/api/mod.rs');
+ let moved=0;
+ for(const [domain,names] of Object.entries(handlerGroups)){
+  for(const name of names){
+   const rel=domain==='addons'?'addons/'+name+'.rs':'services/'+domain+'/'+name+'.rs';
+   assert.ok(api.includes('#[path = "'+rel+'"]'),name+' handler declaration missing');
+   assert.ok(exists('src/api/'+rel),'missing handler '+name);
+   assert.ok(!exists('src/api/'+name+'.rs'),'stale root handler '+name);
+   moved++;
+  }
+ }
+ assert.equal(moved,27);
+ for(const mod of ['chat','sdk_bridge','approvals'])assert.ok(exists('src/api/'+mod+'.rs'));
+});
+
