@@ -430,6 +430,35 @@ pub(super) async fn run_turn_body(
         }else{history_messages};
         (prompt_context, history_messages)
     };
+    if !is_room {
+        if let Some(mut execution)=state.store.get("execution",execution_id){
+            if !execution["inputContext"].is_object(){execution["inputContext"]=json!({});}
+            let owner=state.store.get("assistant_settings","global")
+                .filter(|setting|setting["enabled"]!=false)
+                .and_then(|setting|setting["instructions"].as_str().map(|s|s.chars().count()))
+                .unwrap_or(0);
+            let persona=request.agent_id.as_deref()
+                .and_then(|id|state.store.get("agent",id))
+                .and_then(|agent|agent["systemPrompt"].as_str().map(|s|s.chars().count()))
+                .unwrap_or(0);
+            execution["inputContext"]["sourceCharacterCounts"]=json!({
+                "fixedSystemPrompt":prompt_context.prompt.chars().count(),
+                "ownerInstructions":owner,
+                "agentPersona":persona,
+                "systemOverride":request.system_override.as_deref()
+                    .unwrap_or("").chars().count(),
+                "retrievedMemoryAndExperience":prompt_context.dynamic_context.chars().count(),
+                "selectedHistory":history_messages.iter()
+                    .map(|m|m["content"].as_str().unwrap_or("").chars().count())
+                    .sum::<usize>(),
+                "historicalToolReceipts":history_messages.iter()
+                    .filter(|m|m["_dominion_trace_compacted"]==true).count(),
+                "restoredOwnerGoal":history_messages.iter()
+                    .any(|m|m["_dominion_goal_anchor"]==true),
+            });
+            state.store.put("execution",&execution);
+        }
+    }
      let mut messages = vec![json!({"role":"system","content":prompt_context.prompt,"_dominion_source":reply_to,
         "_dominion_dependencies":super::continuity::dependencies(state,&prompt_context.items)})];
     if is_room {
@@ -998,6 +1027,25 @@ pub(super) async fn run_turn_body(
                     )
                 );
                 execution["inputContext"]["toolTraceBudgetBytes"]=json!(tool_trace_budget);
+                state.store.put("execution",&execution);
+            }
+        }
+        if !is_room {
+            // Retain *numeric* attribution for every model round. The
+            // first-only view cannot explain a 500k-token multi-call turn.
+            if let Some(mut execution)=state.store.get("execution",execution_id){
+                if !execution["inputContext"].is_object(){execution["inputContext"]=json!({});}
+                if !execution["inputContext"]["wireRounds"].is_array(){
+                    execution["inputContext"]["wireRounds"]=json!([]);
+                }
+                if let Some(rounds)=execution["inputContext"]["wireRounds"].as_array_mut(){
+                    if rounds.len()<24{
+                        rounds.push(json!({"round":round+1,
+                            "providerId":provider.id,"model":provider.model,
+                            "breakdown":super::room_context::wire_profile(&wire_messages,&round_tools),
+                            "toolTraceBudgetBytes":tool_trace_budget}));
+                    }
+                }
                 state.store.put("execution",&execution);
             }
         }

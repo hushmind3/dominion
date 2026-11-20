@@ -809,6 +809,18 @@ async fn stream_completion_once_body(
         request.reasoning_effort.as_deref(),
     );
 
+    // This is the fully adapted Chat Completions payload, AFTER compat
+    // tool-manual insertion and stale-result editing. Log numbers only; no
+    // user prompts, credentials or tool arguments enter the diagnostic audit.
+    if let Some(rows)=body["messages"].as_array(){
+        state.store.audit("chat.provider_prompt_profile",json!({
+            "sessionId":session_id,"providerId":provider.id,"model":provider.model,
+            "wire":"openai-chat-completions",
+            "profile":super::room_context::wire_profile(
+                rows,if compatible{&[]}else{tools}),
+            "measuredProviderTokens":Value::Null,
+        }));
+    }
     // The same admission slot is shared with helper (non-streaming) calls, so
     // one local model instance is never asked to run two generations at once.
     crate::engine::gateway::reserve_generation(

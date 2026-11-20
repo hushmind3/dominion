@@ -1485,7 +1485,18 @@ impl Store {
                     "estimated":v["estimated"]}))
             }).and_then(|rows|rows.collect::<rusqlite::Result<Vec<_>>>())
         }).unwrap_or_default();
-        json!({"byPurpose":groups,"recentCalls":recent,"hasClearMarker":last_clear>0,
+        let wire_profiles=conn.prepare(
+            "SELECT detail FROM audit
+             WHERE event='chat.provider_prompt_profile' AND json_valid(detail)
+               AND json_extract(detail,'$.sessionId')=?1 ORDER BY rowid DESC LIMIT 8"
+        ).and_then(|mut stmt|{
+            stmt.query_map([session_id],|row|{
+                let raw:String=row.get(0)?;
+                Ok(serde_json::from_str::<Value>(&raw).unwrap_or(Value::Null))
+            }).and_then(|rows|rows.collect::<rusqlite::Result<Vec<_>>>())
+        }).unwrap_or_default();
+        json!({"byPurpose":groups,"recentCalls":recent,
+            "recentPromptProfiles":wire_profiles,"hasClearMarker":last_clear>0,
             "scope":"lifetime session audit including earlier cleared transcripts and helper calls",
             "cachePolicy":"cached tokens are included in promptTokens; unreported cache remains unknown"})
     }
