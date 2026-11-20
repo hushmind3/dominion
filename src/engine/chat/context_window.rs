@@ -210,6 +210,12 @@ mod tests{
             json!({"role":"assistant","content":"응답"}),
             json!({"role":"user","_dominion_frame":"next-two","content":"최근 질문"}),
             json!({"role":"assistant","content":"응답"}),
+            json!({"role":"user","_dominion_frame":"next-three","content":"사용법 질문"}),
+            json!({"role":"assistant","content":"응답"}),
+            json!({"role":"user","_dominion_frame":"next-four","content":"테스트 결과"}),
+            json!({"role":"assistant","content":"응답"}),
+            json!({"role":"user","_dominion_frame":"next-five","content":"설치 방법"}),
+            json!({"role":"assistant","content":"응답"}),
             json!({"role":"user","_dominion_frame":"current","content":"배포 설정 좀 알려줘"})];
         let retained=focus(h,"배포 설정 좀 알려줘",false,true);
         assert!(retained.iter().any(|row|row["_dominion_goal_excerpt"]==true));
