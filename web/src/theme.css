@@ -49,8 +49,13 @@
  .workspace-settings>aside>div{display:none}.workspace-settings>aside nav{display:flex;align-items:center;gap:5px;margin:0;padding:5px 8px;overflow-x:auto;overflow-y:hidden}.workspace-settings>aside nav section{display:contents}.workspace-settings>aside nav section>h2{display:none}.workspace-settings>aside nav section>div{display:contents}.workspace-settings>aside nav button{width:auto;flex-shrink:0;white-space:nowrap;gap:6px;padding:0 9px}
 }
 
-.connection-tabs{display:flex;gap:4px;overflow-x:auto;white-space:nowrap;padding:0 0 10px;margin-bottom:18px;border-bottom:1px solid #E7E0D5}
-.connection-tabs button{display:flex;align-items:center;gap:6px;flex-shrink:0;padding:8px 10px;border-radius:8px;font-size:12px;color:#82786B}.connection-tabs button:hover{background:#F0EAE1}.connection-tabs [aria-current]{background:#F7E8E1;color:#A94E30;font-weight:650}
+.connection-tabs{display:flex;align-items:center;gap:2px;overflow-x:auto;white-space:nowrap;padding:0;margin:0 0 22px;border-bottom:1px solid #E6DCD0;scrollbar-width:thin;scrollbar-color:#D9C9B8 transparent}
+.connection-tabs>span{display:inline-flex;align-items:center;flex-shrink:0}
+.connection-tabs button{display:inline-flex;align-items:center;gap:7px;flex-shrink:0;min-height:43px;padding:10px 11px;border-bottom:2px solid transparent;border-radius:8px 8px 0 0;font-size:12px;font-weight:550;color:#887B6F;transition:background .15s ease,color .15s ease}
+.connection-tabs button:hover{background:#F8F1EB;color:#4F4134}
+.connection-tabs [aria-current]{background:#FAF1EA;color:#9F5035;font-weight:700;border-bottom-color:#C96442}
+.connection-tabs [aria-current] svg{stroke-width:2.5}
+@media(max-width:767px){.connection-tabs{margin-bottom:16px}.connection-tabs button{min-height:40px;padding:9px 10px;font-size:11px}}
 
 /* Both modes use the same always-visible toolbar switch, outside session lists. */
 .conversation-switch{display:flex;align-items:center;gap:3px;flex:0 0 auto;white-space:nowrap}

@@ -111,14 +111,22 @@ export function ConnectionsPage(){
   }catch(e){setOauthError((e as Error).message)}finally{setOauthSaving(false)}
  }
  const tabs=[{id:'channels',label:t('conn.tab.channels'),icon:RadioTower},{id:'quick-connect',label:t('conn.tab.quickConnect'),icon:Link2},{id:'accounts',label:t('conn.tab.accounts'),icon:KeyRound},{id:'market',label:'MCP 마켓',icon:Blocks},{id:'installed',label:t('ext.tab.installed'),icon:Server},{id:'skills',label:t('ext.tab.skills'),icon:BookOpenText},{id:'plugins',label:t('ext.tab.plugins'),icon:PackagePlus},{id:'capabilities',label:'역량 마켓',icon:Sparkles}] as const
- const pageHeader=<div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h1 className="m-0 text-[19px] font-bold text-[#24211D]">{t('conn.title')}</h1><p className="mt-1 text-[12px] text-[#7C7469]">{t('conn.description')}</p></div>{section==='channels'&&<Button type="button" variant="secondary" disabled={refreshing} onClick={()=>void refreshChannels()}><Activity size={15} className={refreshing?'animate-spin':''}/> {t('conn.refresh')}</Button>}</div>
+ const pageHeader=<header className="mb-5 flex flex-wrap items-end justify-between gap-4">
+  <div className="min-w-0"><p className="mb-1 text-[10px] font-bold uppercase tracking-[.2em] text-[#B76D50]">DOMINION / CONNECTIONS</p>
+   <h1 className="m-0 text-[26px] font-bold tracking-[-.035em] text-[#29221B]">{t('conn.title')}</h1>
+   <p className="mt-2 max-w-xl text-[12px] leading-5 text-[#817467]">{t('conn.description')}</p>
+  </div>
+  <Button type="button" variant="secondary" disabled={refreshing} onClick={()=>void refreshChannels()}>
+   <Activity size={15} className={refreshing?'animate-spin':''}/>{t('conn.refresh')}
+  </Button>
+ </header>
  const sectionTabs=<nav className="connection-tabs" aria-label={t('conn.navigation')}>{tabs.map(({id,label,icon:Icon},index)=><span key={id} className="inline-flex shrink-0 items-center gap-1">
   {(index===3||index===7)&&<span aria-hidden="true" className="mx-2 h-5 w-px shrink-0 bg-[#DED4C8]"/>}
   <Button variant="bare" aria-current={section===id?'page':undefined} onClick={()=>setSection(id)}><Icon size={15}/>{label}</Button>
  </span>)}</nav>
- if(section!=='channels'&&section!=='accounts'&&section!=='quick-connect')return <div className="mx-auto w-full max-w-[1320px] px-4 py-3 sm:px-6">{pageHeader}{sectionTabs}{section==='capabilities'?<CapabilitiesPage embedded navigate={page=>setSection(page==='extensions'?'market':'channels')}/>:<ExtensionsPage section={section} embedded/>}</div>
+ if(section!=='channels'&&section!=='accounts'&&section!=='quick-connect')return <div className="mx-auto w-full max-w-[1320px] px-4 py-3 sm:px-6">{sectionTabs}{section==='capabilities'?<CapabilitiesPage embedded navigate={page=>setSection(page==='extensions'?'market':'channels')}/>:<ExtensionsPage section={section} embedded/>}</div>
  return <div className="mx-auto w-full max-w-[1320px] px-4 py-3 sm:px-6">
-  {pageHeader}
+  {section==='channels'&&pageHeader}
   {sectionTabs}
   {section==='quick-connect'&&<ConnectedAccounts onSetupApp={id=>{setOauthError('');setOauthEditor({id,clientId:'',clientSecret:''});setSection('accounts')}}/>}
   {info&&<div role="status" className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{info}</div>}
