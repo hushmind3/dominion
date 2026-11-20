@@ -64,7 +64,6 @@ separate terminals. For native packaging on a supported operating system:
 
 ```bash
 node scripts/check-release-contract.mjs
-node scripts/check-retired-domains.mjs
 node scripts/build-desktop.mjs
 ```
 
@@ -132,9 +131,8 @@ See [getting started](docs/GETTING-STARTED.md),
 - [Native release](.github/workflows/release.yml): native test/build matrix for
   macOS ARM64, macOS x64 and Windows x64. Artifacts are published only when
   required jobs succeed.
-- [Runtime structure guard](scripts/check-runtime-architecture.mjs),
-  [retired-feature guard](scripts/check-retired-domains.mjs) and
-  [version/sidecar guard](scripts/check-release-contract.mjs).
+- [Runtime structure check](scripts/check-runtime-architecture.mjs) and
+  [version/sidecar check](scripts/check-release-contract.mjs).
 
 **License:** MIT. The [main branch](https://github.com/hushmind3/dominion-rust/tree/main)
 is the canonical development line.
