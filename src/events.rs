@@ -1,9 +1,5 @@
 use crate::db::Store;
 use serde_json::{json, Value};
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
-};
 use tokio::sync::broadcast;
 
 /// In-process event bus backing `GET /api/events`, backed by a bounded durable
@@ -13,25 +9,30 @@ use tokio::sync::broadcast;
 pub struct Bus {
     sender: broadcast::Sender<Value>,
     store: Store,
-    seq: Arc<AtomicU64>,
 }
 
 impl Bus {
     pub fn new(store: Store) -> Self {
-        let seq = store.last_event_seq();
         let (sender, _) = broadcast::channel(512);
-        Self {
-            sender,
-            store,
-            seq: Arc::new(AtomicU64::new(seq)),
-        }
+        Self { sender, store }
     }
 
-    pub fn emit(&self, mut value: Value) {
-        let seq = self.seq.fetch_add(1, Ordering::SeqCst) + 1;
-        value["seq"] = json!(seq);
-        self.store.append_event(seq, &value);
-        let _ = self.sender.send(value);
+    /// Commit before broadcasting: a subscriber must never observe an event
+    /// that cannot be replayed following a disconnect.
+    pub fn try_emit(&self, value: Value) -> Result<u64, String> {
+        let committed=self.store.append_event_next(value)?;
+        let seq=committed["seq"].as_u64()
+            .ok_or("Committed event missing durable sequence")?;
+        let _ = self.sender.send(committed);
+        Ok(seq)
+    }
+
+    pub fn emit(&self, value: Value) {
+        if let Err(error)=self.try_emit(value) {
+            // Preserve the existing infallible producer API while making
+            // storage failure visible instead of publishing phantom events.
+            eprintln!("dominion event persistence failed: {error}");
+        }
     }
 
     pub fn record(&self, kind: &str, record: &Value) {
@@ -96,4 +97,67 @@ mod tests {
         assert_eq!(recent.last().unwrap()["index"], 599);
         assert!(recent.len() <= 600);
     }
+    #[test]
+    fn separately_opened_process_buses_never_overwrite_sequence_or_replay() {
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-event-clock-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path=dir.join("events.sqlite");
+        let a=Bus::new(Store::open(&path).unwrap());
+        let b=Bus::new(Store::open(&path).unwrap());
+        assert_eq!(a.try_emit(json!({"type":"a1"})).unwrap(),1);
+        assert_eq!(b.try_emit(json!({"type":"b1"})).unwrap(),2);
+        assert_eq!(a.try_emit(json!({"type":"a2"})).unwrap(),3);
+        let events=b.replay(0,10);
+        assert_eq!(events.iter().map(|row|row["seq"].as_u64().unwrap())
+            .collect::<Vec<_>>(),vec![1,2,3]);
+        assert_eq!(events.iter().map(|row|row["type"].as_str().unwrap())
+            .collect::<Vec<_>>(),vec!["a1","b1","a2"]);
+        drop(a);
+        drop(b);
+        let c=Bus::new(Store::open(&path).unwrap());
+        assert_eq!(c.try_emit(json!({"type":"after_restart"})).unwrap(),4);
+        drop(c);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn interleaved_cross_connection_writes_are_unique_and_gap_free() {
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-event-parallel-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path=dir.join("events.sqlite");
+        let a=Bus::new(Store::open(&path).unwrap());
+        let b=Bus::new(Store::open(&path).unwrap());
+        let left=std::thread::spawn(move||{
+            (0..50).map(|n|a.try_emit(json!({"type":"left","n":n})).unwrap())
+                .collect::<Vec<_>>()
+        });
+        let right=std::thread::spawn(move||{
+            (0..50).map(|n|b.try_emit(json!({"type":"right","n":n})).unwrap())
+                .collect::<Vec<_>>()
+        });
+        let mut observed=left.join().unwrap();
+        observed.extend(right.join().unwrap());
+        observed.sort_unstable();
+        assert_eq!(observed,(1..=100).collect::<Vec<_>>());
+        let reopened=Bus::new(Store::open(&path).unwrap());
+        assert_eq!(reopened.replay(0,200).len(),100);
+        drop(reopened);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn retention_pruning_does_not_rewind_durable_event_clock() {
+        let store=store();
+        let bus=Bus::new(store.clone());
+        for n in 0..2250 {bus.try_emit(json!({"type":"tick","n":n})).unwrap();}
+        let before=store.last_event_seq();
+        assert_eq!(before,2250);
+        let remaining=bus.replay(0,1000);
+        assert_eq!(remaining[0]["seq"],256);
+        assert_eq!(bus.try_emit(json!({"type":"new"})).unwrap(),2251);
+        assert_eq!(bus.replay(2250,2)[0]["seq"],2251);
+    }
+
 }

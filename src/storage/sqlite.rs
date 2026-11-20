@@ -147,6 +147,12 @@ impl Store {
                  data TEXT NOT NULL,
                  created_at TEXT NOT NULL DEFAULT (datetime('now'))
              );
+             -- The durable sequence cannot be inferred from a process-local
+             -- counter, especially after retention or process restart.
+             CREATE TABLE IF NOT EXISTS event_clock(
+                 id INTEGER PRIMARY KEY CHECK(id=1),
+                 last_seq INTEGER NOT NULL CHECK(last_seq>=0)
+             );
              CREATE TABLE IF NOT EXISTS adaptation_schema(
                  version INTEGER PRIMARY KEY,
                  applied_at TEXT NOT NULL
@@ -1263,21 +1269,38 @@ impl Store {
             .map_err(|error| error.to_string())
     }
 
-    pub fn append_event(&self, seq: u64, value: &Value) {
-        let conn = self.conn.lock().unwrap();
-        let _ = conn.execute(
-            "INSERT OR REPLACE INTO event_log(seq, data) VALUES(?1, ?2)",
-            params![seq as i64, value.to_string()],
-        );
+    /// Allocate one durable global sequence and append its event in the SAME
+    /// SQLite IMMEDIATE transaction. The clock is seeded from existing logs
+    /// once for upgrades; it continues monotonically even after pruning.
+    /// No process may replace an earlier event with a reused sequence number.
+    pub fn append_event_next(&self, mut value: Value) -> Result<Value, String> {
+        let mut conn = self.conn.lock().map_err(|error|error.to_string())?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|error|error.to_string())?;
+        tx.execute(
+            "INSERT INTO event_clock(id,last_seq)
+             SELECT 1,COALESCE(MAX(seq),0) FROM event_log
+             WHERE NOT EXISTS(SELECT 1 FROM event_clock WHERE id=1)",
+            [],
+        ).map_err(|error|error.to_string())?;
+        let last:i64=tx.query_row(
+            "SELECT last_seq FROM event_clock WHERE id=1",[],|row|row.get(0),
+        ).map_err(|error|error.to_string())?;
+        let seq=last.checked_add(1).ok_or("Durable event sequence exhausted")?;
+        value["seq"]=json!(seq as u64);
+        tx.execute("UPDATE event_clock SET last_seq=?1 WHERE id=1",params![seq])
+            .map_err(|error|error.to_string())?;
+        tx.execute(
+            "INSERT INTO event_log(seq,data) VALUES(?1,?2)",
+            params![seq,value.to_string()],
+        ).map_err(|error|error.to_string())?;
         if seq % 256 == 0 {
-            let cutoff = seq.saturating_sub(2_000) as i64;
-            if cutoff > 0 {
-                let _ = conn.execute(
-                    "DELETE FROM event_log WHERE seq <= ?1",
-                    params![cutoff],
-                );
-            }
+            tx.execute("DELETE FROM event_log WHERE seq <= ?1",
+                params![seq.saturating_sub(2_000)])
+                .map_err(|error|error.to_string())?;
         }
+        tx.commit().map_err(|error|error.to_string())?;
+        Ok(value)
     }
 
     pub fn events_after(&self, after: u64, limit: usize) -> Vec<Value> {
