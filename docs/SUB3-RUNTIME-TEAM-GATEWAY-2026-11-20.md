@@ -39,9 +39,14 @@ observations are imported from committed child jobs as **lower-trust data**
 with bounded answer excerpts and operation IDs; raw tool arguments and
 model reasoning are not copied.
 
-A writer must have an explicit artifact acceptance check and a successful
-effectful tool receipt before unlocking dependent work. Task status alone or
-a textual "done" is never sufficient. An external worker's completed response
+A writer must have an explicit artifact acceptance check, a successful
+effectful tool receipt, and a host-sealed before/after artifact delta under
+the same workspace/criteria digest before unlocking dependent work.
+Preexisting files cannot satisfy an unrelated modification check. The Team
+lead also verifies that each child job's immutable ID, parent ID, task ID,
+runtime and access mode match the declared DAG node. Task status alone or
+a textual "done" is never sufficient. A direct Team cancel request fences
+active child jobs synchronously, not after the supervisor poll. An external worker's completed response
 is tagged \`external_unverified\`, not a native tool receipt.
 
 ## External agent bridge
@@ -69,9 +74,18 @@ uncertain external calls are held for manual review, not retried as clean runs.
   security claim about arbitrary third-party CLI code.
 - No full OS-specific Tauri release build is asserted unless CI confirms it.
 
+## Operational hardening
+
+SQLite lease lifecycle now uses owner-fenced, expiry-checked SQL predicates:
+an old worker cannot release a new owner's lease or refresh a lease after
+expiry; startup cleanup preserves another process's live writer lease. The
+Codex JSONL bridge bounds input while reading rather than allocating an
+unbounded line and buffers turn notifications that arrive before the
+turn/start RPC response, avoiding a short-turn deadlock.
+
 ## Regression entrypoints
 
-\`cargo test --bin dominion-rust features::collaboration::task_team::tests\`
+\`cargo test --bin dominion-rust features::collaboration::task_team::tests\`\n\`cargo test --bin dominion-rust api::task_teams::tests\`\n\`cargo test --bin dominion-rust host::execution::lease::tests\`\n\`cargo test --bin dominion-rust host::execution::jobs::tests\`
 \`cargo test --bin dominion-rust integrations::agent_bridge::tests\`
 \`cargo test --bin dominion-rust features::providers::gateway::tests\`
 \`cargo test --bin dominion-rust features::cognition::strategy_eval::tests\`
