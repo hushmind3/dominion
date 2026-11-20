@@ -1025,9 +1025,7 @@ async fn main() -> Result<(), String> {
         .env("DOMINION_HOME", root.join("home"))
         .env("DOMINION_WEB", root.join("web"))
         .env("DOMINION_BENCHMARK", "1")
-        // The isolated experiment engine must never start its own production
-        // scheduler or remote backup loop; those are inherited env otherwise.
-        .env("DOMINION_EXPERIMENT_SCHEDULER", "0")
+        // Avoid inherited remote backup work in isolated benchmark fixtures.
         .env("DOMINION_BACKUP_INTERVAL_SECS", "0")
         .env("DOMINION_ENGINE_INSTANCE", &instance)
         .env("DOMINION_JOB_WORKERS", "1")
