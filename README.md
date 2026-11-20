@@ -111,6 +111,12 @@ The standalone RSI generation/campaign/core-auto-promotion engine and built-in v
 
 Connections to GitHub/Google may use a configured OAuth application or an authorized official CLI flow. Provider consent/configuration is still required; credentials are not bundled. See [connected accounts](docs/CONNECTED-ACCOUNTS-2026-11-17.md).
 
+## Schema-aware progressive tool discovery (sub3, 2026-11-20)
+
+- Native Rust SDK jobs and interactive chat now share a bounded **two-view lexical ranker**: authorized tool names/descriptions and JSON Schema parameter-field vocabulary. This helps discover generic MCP endpoints whose action is described by fields such as `repository_name` and `issue_number`; the field view is capped at four nested levels and 96 terms.
+- A native `dominion_tool_search` receipt is now bound to the exact authorized JSON Schema, read-only/effect classification and displayed description before `dominion_tool_call` may invoke it. Catalog contract drift requires a new discovery; existing host authorization, argument validation, approvals and durable execution remain in charge.
+- Regression cases cover opaque MCP names, native/chat ranking parity, schema/effect drift and authorization boundaries. The change adds no menu, new indexing service, paid discovery call or claim of measured real-model accuracy gains. Automated branch CI and real task evaluation are tracked separately.
+
 ## Sub3 input-token optimization (2026-11-20)
 
 - Checkpoint summarization budgets its input from the configured model context window (output reserved) and caps the transcript at 48,000 characters instead of forwarding up to 110,000.
