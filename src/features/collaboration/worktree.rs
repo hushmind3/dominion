@@ -348,6 +348,72 @@ mod tests{
         assert_eq!(view(&state,&worker)["status"],"ready");
         drop(state);let _=std::fs::remove_dir_all(dir);
     }
+
+    #[tokio::test]
+    async fn owner_reviews_exact_patch_and_promotes_only_after_confirmation(){
+        let (state,dir)=fixture();
+        let id=prepare(&state,"lead-promote","writer").await.unwrap();
+        let worker=json!({"id":"team-child:lead-promote:writer","kind":"prompt",
+            "status":"completed","input":{"parentRunId":"lead-promote",
+                "teamTaskId":"writer","teamMode":"write",
+                "bridgeRuntime":"native","teamIsolation":"worktree",
+                "teamWorktreeId":id},
+            "result":{"status":"completed",
+                "receipts":[{"tool":"workspace_write","id":"write-1","success":true}],
+                "checks":[{"satisfied":true}]},
+            "nativeEvidenceBaseline":{"complete":true,
+                "workspaceRootDigest":"workspace-digest",
+                "criteriaDigest":"criteria-digest",
+                "entries":{"sample.txt":{"state":"file","sha256":"old"}}},
+            "nativeEvidenceFinal":{"complete":true,
+                "workspaceRootDigest":"workspace-digest",
+                "criteriaDigest":"criteria-digest",
+                "entries":{"sample.txt":{"state":"file","sha256":"new"}}}
+        });
+        state.store.put("job",&json!({"id":"lead-promote","kind":"team",
+            "status":"completed","input":{"goal":"Update sample","maxParallel":1,
+                "tasks":[{"id":"writer","prompt":"Update source",
+                    "runtime":"native","mode":"write","isolation":"worktree",
+                    "checks":[{"type":"file_contains","path":"sample.txt",
+                        "contains":"edited"}]}]}})).unwrap();
+        state.store.put("job",&worker).unwrap();
+        let target=for_job(&state,&worker).unwrap();
+        std::fs::write(target.join("sample.txt"),"edited").unwrap();
+        let snapshot=preview(&state,"lead-promote","writer").await.unwrap();
+        let original=state.config.workspace.join("sample.txt");
+        assert_eq!(std::fs::read_to_string(&original).unwrap(),"original");
+        assert!(promote(&state,"lead-promote","writer",
+            &"0".repeat(64)).await.is_err());
+        assert_eq!(std::fs::read_to_string(&original).unwrap(),"original");
+        let reviewed=snapshot["diffSha256"].as_str().unwrap();
+        let outcome=promote(&state,"lead-promote","writer",reviewed).await.unwrap();
+        assert_eq!(outcome["status"],"applied");
+        assert_eq!(outcome["requiresOwnerCommit"],true);
+        assert_eq!(std::fs::read_to_string(&original).unwrap(),"edited");
+        assert_eq!(state.store.get("team_worktree",&id).unwrap()["mergeStatus"],
+            "applied");
+        assert!(promote(&state,"lead-promote","writer",reviewed).await.is_err());
+        drop(state);let _=std::fs::remove_dir_all(dir);
+    }
+    #[tokio::test]
+    async fn worktree_rejects_source_divergence_before_owner_promotion(){
+        let (state,dir)=fixture();
+        let id=prepare(&state,"lead-stale","writer").await.unwrap();
+        let record=state.store.get("team_worktree",&id).unwrap();
+        let baseline=record["baseCommit"].as_str().unwrap().to_string();
+        assert_eq!(git(&state.config.workspace,&["rev-parse","HEAD"]).await.unwrap(),
+            baseline);
+        // A separate commit on the user's branch must never be overwritten.
+        std::fs::write(state.config.workspace.join("sample.txt"),"owner edited").unwrap();
+        assert!(std::process::Command::new("git").arg("-C").arg(&state.config.workspace)
+            .args(["add","sample.txt"]).status().unwrap().success());
+        assert!(std::process::Command::new("git").arg("-C").arg(&state.config.workspace)
+            .args(["-c","user.name=DOMINION","-c","user.email=dev@example.test",
+                "commit","-qm","owner moved source"]).status().unwrap().success());
+        assert_ne!(git(&state.config.workspace,&["rev-parse","HEAD"]).await.unwrap(),
+            baseline);
+        drop(state);let _=std::fs::remove_dir_all(dir);
+    }
     #[test]
     fn unreviewed_workspace_paths_are_not_accepted(){
         let (state,dir)=fixture();

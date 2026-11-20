@@ -604,7 +604,8 @@ mod tests {
             crate::db::Store::open(&config.db_path()).unwrap(),
             crate::vault::Vault::open(&config.key_path()));
         let task=Task{id:"inspect".into(),prompt:"Read source".into(),
-            mode:Mode::Read,runtime:WorkerRuntime::Native,depends_on:vec![],
+            mode:Mode::Read,runtime:WorkerRuntime::Native,
+            isolation:Isolation::Shared,depends_on:vec![],
             agent_id:None,provider_id:Some("missing-provider".into()),
             model:None,allowed_tools:vec![],checks:vec![]};
         let team=Team{goal:"Recover task".into(),tasks:vec![task.clone()],
