@@ -326,12 +326,18 @@ test('fallback model capabilities are model specific and fail closed on explicit
  assert.match(completion,/tools:!tools\.is_empty\(\)/);
 });
 
-test('versioned run state contract and scoped assignment are in actual room execution',()=>{
+test('chat, SDK jobs and room assignments share a durable typed run state projection',()=>{
  const core=source('crates/dominion-turn-core/src/run_state.rs');
+ const bus=source('src/events.rs');
  const board=source('src/engine/services/conversation/room_workboard.rs');
  assert.match(core,/pub enum RunState/);
  assert.match(core,/pub struct RunEvent/);
+ assert.match(core,/pub fn from_record/);
+ assert.match(bus,/RunEvent::from_record\(kind,record\)/);
+ assert.match(bus,/value\["eventSeq"\]=json!\(seq\)/);
+ assert.match(bus,/self\.emit_many\(events\)/);
  assert.match(board,/RunState::parse/);
- assert.match(board,/RunEvent\{/);
  assert.match(board,/memory::stable_id\(&\[/);
+ assert.match(board,/state\.bus\.record\("room_work_assignment",&saved\)/);
+ assert.doesNotMatch(board,/RunEvent\{/);
 });
