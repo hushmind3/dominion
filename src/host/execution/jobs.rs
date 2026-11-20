@@ -2,7 +2,7 @@ use crate::engine::chat::TurnRequest;
 use crate::engine::run_quiet;
 use crate::state::AppState;
 use serde_json::{json, Value};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 const MAX_EVENTS: usize = 200;
@@ -115,6 +115,30 @@ impl JobContext {
     }
 }
 
+
+
+/// The normal job pool is bounded, but Task Team's deadlock-avoidance path
+/// may start children directly. Both paths must share one per-process cap,
+/// otherwise many concurrent teams can bypass the worker limit.
+const DEFAULT_TEAM_WORKER_LIMIT:usize=6;
+static TEAM_WORKER_SLOTS:OnceLock<Arc<tokio::sync::Semaphore>>=OnceLock::new();
+fn team_worker_slots()->Arc<tokio::sync::Semaphore>{
+    TEAM_WORKER_SLOTS.get_or_init(||{
+        let limit=std::env::var("DOMINION_TEAM_WORKER_LIMIT").ok()
+            .and_then(|v|v.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_TEAM_WORKER_LIMIT).clamp(1,16);
+        Arc::new(tokio::sync::Semaphore::new(limit))
+    }).clone()
+}
+fn reserve_team_slot(pool:&Arc<tokio::sync::Semaphore>,job:&Value)
+    ->Result<Option<tokio::sync::OwnedSemaphorePermit>,&'static str>{
+    if !job["id"].as_str().is_some_and(|id|id.starts_with("team-child:"))
+        && job["input"]["teamTaskId"].is_null(){
+        return Ok(None);
+    }
+    pool.clone().try_acquire_owned().map(Some)
+        .map_err(|_|"deferred: Task Team worker concurrency budget exhausted")
+}
 
 /// Parent-child admission is checked at scheduler claim, worker execution,
 /// checkpoint and recovery. A stale queued child can never escape when its
@@ -591,11 +615,15 @@ async fn run_job(state: AppState, job: Value) {
             "finishedAt":chrono::Utc::now().to_rfc3339()}));
         return;
     }
+    // Shared across the directly spawned child path and the ordinary worker
+    // pool. Dropping this owned permit releases capacity after settlement.
+    let team_slot=reserve_team_slot(&team_worker_slots(),&job);
+    let team_at_capacity=team_slot.is_err();
     // Durable writer ownership is held by the ACTUAL child worker, not a
     // supervisor that can crash and leave this job still running. Competing
     // workspace writers defer without starting their model or any tool effect.
     let is_team_writer=kind=="prompt"&&job["input"]["teamMode"]=="write";
-    let writer_lease=if is_team_writer {
+    let writer_lease=if is_team_writer&&!team_at_capacity {
         crate::host::execution::lease::LeaseGuard::acquire(
             &state,&format!("task-team-writer:{}",
                 state.config.workspace.to_string_lossy()))
@@ -603,6 +631,8 @@ async fn run_job(state: AppState, job: Value) {
     // Only the language-to-action executor runs in the core job worker.
     // Optional job families attach through the host composition boundary.
     let result=match team_child_gate(&state,&job){
+        TeamChildGate::Ready if team_at_capacity=>
+            Err("deferred: Task Team worker concurrency budget exhausted".into()),
         TeamChildGate::WaitingForLead=>Err("deferred: Task Team lead has not resumed".into()),
         TeamChildGate::Halt{status,reason}=>Err(format!("{status}: {reason}")),
         TeamChildGate::Ready if is_team_writer&&writer_lease.is_none()=>
@@ -813,6 +843,22 @@ mod tests {
         let unrelated=json!({"id":"workflow-generated","kind":"prompt",
             "status":"queued","input":{"parentRunId":"workflow-parent"}});
         assert_eq!(team_child_gate(&state,&unrelated),TeamChildGate::Ready);
+    }
+
+    #[test]
+    fn all_task_team_worker_paths_share_a_bounded_slot_budget(){
+        let pool=Arc::new(tokio::sync::Semaphore::new(1));
+        let worker=json!({"id":"team-child:lead:inspect",
+            "input":{"teamTaskId":"inspect"}});
+        let first=reserve_team_slot(&pool,&worker).unwrap().unwrap();
+        assert_eq!(pool.available_permits(),0);
+        assert!(reserve_team_slot(&pool,&worker).is_err(),
+            "a directly spawned worker cannot evade a busy global team slot");
+        let unrelated=json!({"id":"normal","input":{"prompt":"hello"}});
+        assert!(reserve_team_slot(&pool,&unrelated).unwrap().is_none(),
+            "ordinary chat work must not spend the Task Team budget");
+        drop(first);
+        assert!(reserve_team_slot(&pool,&worker).unwrap().is_some());
     }
     #[test]
     fn enqueue_creates_a_queued_job() {
