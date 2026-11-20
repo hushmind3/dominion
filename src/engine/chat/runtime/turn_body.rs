@@ -432,6 +432,18 @@ pub(super) async fn run_turn_body(
         }else{history_messages};
         (prompt_context, history_messages)
     };
+    if !is_room && request.tools_enabled && request.tools_execution_enabled
+        && super::super::context_window::requires_source_reader(&history_messages)
+        && !tool_definitions.iter().any(|t|tool_name(t)=="history_evidence_read"){
+        // An old owner task can be excerpted only when its exact-source
+        // reader is actually available in this provider call. No extra
+        // discovery model round should be required to read the source.
+        if let Some(reader)=tools::definitions().into_iter()
+            .find(|definition|tool_name(definition)=="history_evidence_read"){
+            tool_definitions.push(reader);
+            tool_definitions=canonical_tool_definitions(tool_definitions);
+        }
+    }
     if !is_room {
         if let Some(mut execution)=state.store.get("execution",execution_id){
             if !execution["inputContext"].is_object(){execution["inputContext"]=json!({});}

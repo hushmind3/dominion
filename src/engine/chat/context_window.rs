@@ -89,6 +89,10 @@ pub(super) fn focus(history:Vec<Value>,query:&str,is_room:bool,can_reopen:bool)-
     trace_budget::compact_historical(&retained,if is_action{8}else{2})
 }
 
+pub(super) fn requires_source_reader(history:&[Value])->bool{
+    history.iter().any(|row|row["_dominion_goal_excerpt"]==true)
+}
+
 /// A long chain of tool calls can displace the owner's original task from
 /// the last-N transcript window. On an explicit continuation, restore the
 /// most recent unambiguous source-authored work goal, never an assistant guess.
@@ -186,10 +190,12 @@ mod tests{
         let recent=vec![json!({"role":"user","content":"이어서해"})];
         let reduced=restore_owner_goal(recent.clone(),"이어서해",&stored,true);
         assert_eq!(reduced[0]["_dominion_goal_excerpt"],true);
+        assert!(requires_source_reader(&reduced));
         assert!(reduced[0]["content"].as_str().unwrap().contains("old-owner"));
         assert!(json!(reduced).to_string().len()<3_000);
         assert_eq!(stored[0]["content"],full);
         let tool_free=restore_owner_goal(recent,"이어서해",&stored,false);
+        assert!(!requires_source_reader(&tool_free));
         assert_eq!(tool_free[0]["content"],full,
             "when tools are disabled, exact owner instructions must remain accessible");
     }
