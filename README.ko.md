@@ -70,6 +70,7 @@ node scripts/build-desktop.mjs
 | --- | --- |
 | 실행 커널·효과 영수증 | [dominion-core](crates/dominion-core/src/engine.rs), [저널](crates/dominion-core/src/journal.rs) |
 | 실행·도구 승인 | [채팅 실행기](src/engine/chat/runtime.rs), [도구 게이트웨이](src/engine/chat/runtime/tool_dispatch.rs) |
+| 개인 대화 문맥 | [Context Engine](src/engine/chat/context_engine.rs), [문맥 연속성](src/engine/chat/continuity.rs) |
 | 방·기억·연속성 | [그룹 방](src/engine/rooms.rs), [문맥 구성](src/engine/chat/room_context.rs), [연속성](src/engine/chat/continuity.rs) |
 | HTTP·영속 저장 | [API 라우터](src/api/mod.rs), [SQLite](src/db.rs) |
 | 화면 | [React 앱](web/src/App.tsx), [메뉴](web/src/components/WorkspaceShell.tsx) |
@@ -85,6 +86,31 @@ MCP 검색 후 도구를 호출하는 경우에도 현재 스키마와 실행·�
 권한을 재검증합니다.
 
 ### 대화 기억과 토큰 비용
+
+기본 **1:1 채팅**은 별도의 [Context Engine](src/engine/chat/context_engine.rs)에서
+기존 [원문·첨부파일·기억 저장소](src/db.rs)를 건드리지 않고 모델에 필요한 문맥만
+구성합니다. 에이전트 페르소나와 주인 지시는 전체가 유지되며, 기억·경험·도구
+정보는 현재 요청에 필요한 항목만 선택합니다.
+
+- **캐시 가능한 고정 접두사:** 같은 내용의 기억 스냅샷을 1회만 조립하고
+  내용 수정·철회 시 명시적으로 작업 문맥을 갱신합니다. Codex WebSocket은
+  이전 응답을 재사용할 수 있을 때만 `previous_response_id`를 전달합니다.
+- **일반 대화 경량화:** 단순 인사에는 기존 작업 기록, MCP 전체 목록,
+  무관한 스킬·성장 통계를 주입하지 않습니다. 최신 상태·날짜가 필요하지
+  않은 요청에는 시계 정보도 추가하지 않습니다.
+- **문맥 예산:** 모델별 최대 컨텍스트와 출력 예약량을 먼저 반영합니다.
+  기본 1:1 채팅은 이전 기록 32KB, 작업 문맥 12,000토큰 상한을 사용하고
+  중요한 최신 사용자 입력은 잘리지 않도록 보존합니다. 모델 공급자의
+  실제 토큰 수와 내부 예측치는 구별합니다.
+- **통합 사용량 기록:** 각 모델 호출과 보조 호출의 사용량을 세션별로
+  집계하고, 공급자가 제공한 캐시 읽기·쓰기 토큰을 별도로 기록합니다.
+  보고되지 않은 캐시 적중 수치는 0이 아닌 '알 수 없음'으로 취급합니다.
+  별도 캐시 단가를 설정하면 예산 정산에 반영합니다.
+
+실제 Rust 앱과 모의 모델을 연결한 [1:1 채팅 10/100턴 벤치마크](benchmark/PRIVATE-CHAT-WIRE-2026-11-20.md)에서
+모델 API에 전송한 JSON 본문 누적량이 비제한 과거 입력 재전송 기준보다
+10턴 **4.9%**, 100턴 **83.2%** 감소했습니다. 이 수치는 **전송 바이트 기준**이며
+실제 상용 제공자의 과금 토큰·캐시 할인율을 대신하지 않습니다.
 
 ### 실행기 개선 · 불필요한 모델 호출 절감
 
