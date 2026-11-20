@@ -287,7 +287,7 @@ pub(super) fn finalize_execution(
         record["reason"]=json!("최종 응답이 생성되지 않았습니다.");
     }
     let status = record["status"].as_str().unwrap_or("failed").to_string();
-    record["phase"] = json!(final_phase(&status));
+    record["phase"] = json!(crate::engine::run_state::phase_for_status(&status));
     record["phaseUpdatedAt"] = json!(chrono::Utc::now().to_rfc3339());
     for mut operation in state.store.all("execution_operation") {
         if operation["runId"] == execution_id && operation["status"] == "running" {
