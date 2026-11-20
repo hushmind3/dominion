@@ -560,11 +560,13 @@ fn edit_stale_read_context(messages: &mut [Value], capacity: usize, schema_chars
     // read-only evidence to a tighter target, while keeping the last three
     // observations, mutations and errors untouched. Cache-capable routes
     // retain the existing gentler threshold to preserve stable prefixes.
+    // Retire every old oversized observation in early-bulk mode, rather
+    // than stopping after one result and carrying the next giant HTML dump
+    // into every subsequent request. Recent observations stay untouched.
+    let stale_savings=candidates.iter().map(|(_,_,saving)|saving).sum::<usize>();
     candidates.reverse();
     let target = if !capacity_pressure && early_bulk_read {
-        // Retire the oldest oversized read without rewriting unrelated
-        // cacheable context or evicting recent evidence.
-        total.saturating_sub(minimum)
+        total.saturating_sub(stale_savings)
     } else if uncached_local { capacity / 4 }
     else { capacity.saturating_mul(3) / 5 };
     let mut cleared = 0usize;
@@ -2466,8 +2468,12 @@ mod tests {
         }
         let mut cached = original.clone();
         let mut uncached = original.clone();
-        assert_eq!(edit_stale_read_context(&mut cached, 110_000, 0, false), 0,
-            "cacheable route should preserve its stable prefix at low pressure");
+        assert!(edit_stale_read_context(&mut cached, 110_000, 0, false)>20_000,
+            "large stale observations should retire even on cacheable routes");
+        for i in [6,8,10] {
+            assert_eq!(cached[i], original[i],
+                "newest observations must remain intact while reclaiming stale reads");
+        }
         let saved = edit_stale_read_context(&mut uncached, 90_000, 0, true);
         assert!(saved > 20_000,"uncached route paid full repeated prefill: {saved}");
         for i in [6,8,10] {
