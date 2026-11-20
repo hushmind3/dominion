@@ -102,7 +102,6 @@ pub fn router(state: AppState) -> Router {
             post(experiments::enqueue),
         )
         .route("/api/policies", get(system::policies))
-        .route("/api/scheduler-runs", get(system::scheduler_runs))
         .route("/api/policy-searches", get(system::policy_searches))
         .route("/api/policy-patches", get(system::policy_patches))
         .route("/api/system/backup", post(system::create_backup))
