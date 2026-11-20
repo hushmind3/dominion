@@ -150,9 +150,9 @@ SQLite/API schemas are unchanged.
 
 ## Further core slimming (2026-11-20)
 
-Nine more implementation modules moved from `src/engine/` into categorized add-ons:
+Nine implementation modules were originally moved from `src/engine/` into categorized add-ons.
+The superseded `goal_control.rs` shim was later deleted; current modules are:
 - `src/addons/knowledge/compact.rs`
-- `src/addons/strategies/goal_control.rs`
 - `src/addons/strategies/obligation_repair.rs`
 - `src/addons/strategies/program.rs`
 - `src/addons/strategies/reasoning.rs`
@@ -161,7 +161,7 @@ Nine more implementation modules moved from `src/engine/` into categorized add-o
 - `src/addons/operations/wake.rs`
 - `src/addons/operations/job_control.rs`
 
-The app's `src/engine/mod.rs` retains compatibility exports temporarily. The
+The app's `src/engine/mod.rs` keeps only the compatibility exports still used by product callers; the obsolete goal-outcome collector and deprecated transport entrypoint have been removed. The
 standalone `crates/dominion-algorithms` owns the only model/tool iteration loop,
 while `crates/dominion-core` owns stable execution infrastructure and ports.
 
