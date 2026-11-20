@@ -14,6 +14,7 @@ on:
       - 'web/**'
       - 'src-tauri/**'
       - 'scripts/**'
+      - 'tests/**'
   pull_request:
     branches: [main]
     paths:
@@ -25,6 +26,7 @@ on:
       - 'web/**'
       - 'src-tauri/**'
       - 'scripts/**'
+      - 'tests/**'
 
 permissions:
   contents: read
@@ -125,7 +127,7 @@ jobs:
           cargo test --locked --bin dominion-rust identity_has_a_shared_stable_prefix_without_changing_owner_personas
           cargo test --locked --bin dominion-rust owner_fact_selection_reuses_prefix_and_appends_missing_facts_until_real_revision
           cargo test --locked --bin dominion-rust room_selector_budget_is_not_the_accumulated_cache_prefix_budget
-          cargo test --locked --bin dominion-rust private_coding_context_keeps_original_forty_thousand_token_allowance
+          cargo test --locked --bin dominion-rust private_chat_working_view_is_bounded_independently_of_large_model_windows
           cargo test --locked --bin dominion-rust budget_rotation_carries_only_valid_owner_facts_not_old_transcript
           cargo test --locked --bin dominion-rust nine_speaker_status_reuses_visible_digest_across_identical_completed_rounds
           cargo test --locked --bin dominion-rust room_status_reuses_content_key_then_rotates_on_changed_status_without_losing_owner_facts
@@ -137,6 +139,12 @@ jobs:
           cargo test --locked --bin dominion-benchmark truncated_http_stream_is_not_counted_as_a_completed_trial
           cargo test --locked --bin dominion-rust speaker_accounting_joins_only_the_owning_execution_and_marks_estimates
           cargo test --locked --bin dominion-rust db::tests::session_running_probe_avoids_global_history_and_uses_session_index
+      - name: Private chat context ownership and 10/100-turn cost regressions (dev profile)
+        run: |
+          cargo test --locked --bin dominion-rust engine::chat::context_engine::tests
+          cargo test --locked --bin dominion-rust private_context_epoch_keeps_stable_snapshot_and_invalidates_corrections
+          cargo test --locked --bin dominion-rust engine::chat::context::tests::private_
+          cargo test --locked --test e2e room_identity::private_chat
       - name: Native Codex tool verification, room snapshot rotation and ordered mutation e2e
         run: |
           cargo test --locked --test e2e codex_websocket_verified_tool_finishes_without_extra_model_call
