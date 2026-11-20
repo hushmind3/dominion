@@ -216,7 +216,7 @@ if(!finalizationSource.includes('pub(super) fn acceptance_repair(')||
   throw Error('Verifier-grounded repair escalation or uncertain-effect stop was bypassed')
 // Delegated work must reuse the shared budget and journal. Historical
 // child results are bounded in SQLite, never fetched from the entire archive.
-const delegateSource=readFileSync(path.join(root,'src/engine/tools/delegation.rs'),'utf8')
+const delegateSource=readFileSync(path.join(root,'src/addons/integrations/tool_delegation.rs'),'utf8')
 const toolSource=readFileSync(path.join(root,'src/engine/tools.rs'),'utf8')
 for(const addon of ['native_tools.rs','native_web.rs','native_github.rs',
                     'tool_delegation.rs','tool_github_repositories.rs','tool_github_replace.rs']){
