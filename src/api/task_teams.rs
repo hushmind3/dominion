@@ -189,7 +189,7 @@ pub async fn retry_team(
             "Only failed/interrupted/review-needed Teams can be replayed");
     }
     let team=match Team::parse(&old["input"]){
-        Ok(team)=>team,Err(error)=>return error(StatusCode::CONFLICT,error),
+        Ok(team)=>team,Err(reason)=>return error(StatusCode::CONFLICT,reason),
     };
     // Each worker receives a new parent-scoped ID; no old native receipts or
     // uncertain prior external session are copied into the new run.
