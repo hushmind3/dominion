@@ -102,6 +102,9 @@ for(const route of ['/api/chat','/api/jobs','/api/sdk/runs','/api/harness/runs',
  '/api/mcp/catalog','/api/algorithms','/api/attachments','/api/sessions','/api/events']){
  assert.ok(routes.includes(route),'Rust app missing existing product contract: '+route);
 }
+const codeIndex=read('src/engine/code_index.rs');
+assert.ok(!codeIndex.includes('rsi.index.refreshed'),'Retired RSI event remains in source index');
+assert.ok(!codeIndex.includes('rsi_evolve.rs'),'Retired source index test fixture remains');
 const native=read('src/engine/native_agent.rs'),
  kernel=read('crates/dominion-agent-sdk/src/lib.rs'),
  chatRoot=read('src/engine/chat/runtime.rs'),

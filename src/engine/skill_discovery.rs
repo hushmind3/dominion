@@ -184,7 +184,7 @@ mod tests{
     fn finds_relevant_skill_after_first_three_without_loading_unrelated_content(){
         let s=scope();
         let mut records=(0..9).map(|i|item(&format!("irrelevant-{i}"),
-            "Video studio","Make movies and music")).collect::<Vec<_>>();
+            "Unrelated sample","Generic unrelated skill")).collect::<Vec<_>>();
         records.push(item("contract","계약서 검토","Review legal agreement clauses"));
         let selected=select(records,&s,"계약서 조항 검토",2);
         assert_eq!(selected.len(),1);
@@ -220,7 +220,7 @@ mod tests{
     fn real_store_progressively_discloses_only_live_enabled_scoped_skills(){
         let db=Store::open(std::path::Path::new(":memory:")).unwrap();
         for i in 0..6 {
-            db.put("skill",&item(&format!("d{i}"),"Video studio","audio editing"))
+            db.put("skill",&item(&format!("d{i}"),"Unrelated sample","unrelated metadata"))
                 .unwrap();
         }
         let target=db.put("skill",&item("target","계약서 검토",
@@ -229,7 +229,7 @@ mod tests{
         let scoped=scope();
         let prompt=initial_context(&db,&scoped,"계약서 조항 검토",true);
         assert!(prompt.contains("계약서 검토"));
-        assert!(!prompt.contains("Video studio"));
+        assert!(!prompt.contains("Unrelated sample"));
         let matches=search(&db,&scoped,"계약서 조항",5).unwrap();
         assert_eq!(matches["matches"].as_array().unwrap().len(),1);
         assert_eq!(matches["matches"][0]["id"],id);

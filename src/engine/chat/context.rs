@@ -591,9 +591,9 @@ mod tests {
         for index in 0..7 {
             state.store.put("skill", &json!({
                 "id": format!("noise-{index}"),
-                "name":"Video studio",
-                "description":"Film music editing",
-                "instructions":"UNRELATED_VIDEO_INSTRUCTIONS",
+                "name":"Unrelated sample",
+                "description":"Generic unrelated description",
+                "instructions":"UNRELATED_SAMPLE_INSTRUCTIONS",
                 "enabled":true,
                 "status":"active",
             }));
@@ -618,7 +618,7 @@ mod tests {
             &state, "s1", None, "계약서 조항 검토", None, None,
         ).expect("relevant Skill context");
         assert!(block.contains("CHECK_CLAUSE_CONTEXT_SPECIAL"));
-        assert!(!block.contains("UNRELATED_VIDEO_INSTRUCTIONS"));
+        assert!(!block.contains("UNRELATED_SAMPLE_INSTRUCTIONS"));
         assert!(!block.contains("DISABLED_PRIVATE_INSTRUCTIONS"));
         let injected = items.iter().filter(|value| value["kind"] == "skill")
             .collect::<Vec<_>>();

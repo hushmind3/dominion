@@ -36,7 +36,7 @@ fn is_source(path: &Path) -> bool {
         .and_then(|value| value.to_str())
         .unwrap_or("");
     // Evaluator oracle fixtures must never be exposed as source-edit context.
-    // The legacy fixture-name exclusion is a safety boundary, not a live RSI engine.
+    // Keep the older evaluator metadata format excluded as inert data.
     if name.ends_with("_oracle_fixture.rs") || name == "rsi_meta.rs"
         || name.ends_with(".min.js") || name.ends_with(".lock") || name.starts_with('.') {
         return false;
@@ -665,7 +665,7 @@ pub fn refresh(state: &AppState, source: &Path) -> Result<Value, String> {
         .put(INDEX_KIND, &meta)
         .ok_or("전수조사 인덱스 저장 실패")?;
     state.store.audit(
-        "rsi.index.refreshed",
+        "code_index.refreshed",
         json!({"indexId":meta["id"],"files":meta["files"],"changed":changed,"reused":reused}),
     );
     Ok(meta)
@@ -711,13 +711,6 @@ pub fn prompt_context(
 }
 
 
-/// Exposes the exact indexed revision for evidence reuse across campaigns.
-/// A prior unsuccessful target is never penalized after its source changes.
-pub fn indexed_source_hash(state:&AppState,index_id:&str,path:&str)->Option<String>{
-    state.store.get(FILE_KIND,&file_id(index_id,path))?["hash"]
-        .as_str().map(str::to_string)
-}
-
 /// Shared goal vocabulary for file navigation and source-span selection.
 /// No source file names are embedded in the vocabulary.
 fn focus_terms(objective:&str,domain:&str)->Vec<String> {
@@ -734,7 +727,7 @@ fn focus_terms(objective:&str,domain:&str)->Vec<String> {
         ("문맥", &["context","continuity","prompt"][..]),
         ("학습", &["learning","experience","distill"][..]),
         ("알고리즘", &["algorithm","strategy","policy"][..]),
-        ("자기개선", &["rsi","evolve","improve"][..]),
+        ("리팩터링", &["refactor","simplify","cleanup"][..]),
         ("토큰", &["token","budget","usage"][..]),
         ("비용", &["cost","budget","usage"][..]),
         ("대화", &["chat","room","conversation"][..]),
@@ -973,7 +966,7 @@ fn rank_focus_spans(
     ranking
 }
 
-/// Returns compact, source-hash-verified RSI context instead of repeatedly
+/// Returns compact, source-hash-verified file context instead of repeatedly
 /// sending an entire large source file to the model on every tool round.
 pub fn bounded_focus_context(
     state: &AppState, source: &Path, index_id: &str, path: &str,
@@ -1274,7 +1267,7 @@ mod tests {
     }
 
     #[test]
-    fn rsi_navigation_reuses_the_index_without_injecting_source_or_hotspots() {
+    fn repository_navigation_reuses_the_index_without_injecting_source_or_hotspots() {
         let (state,root)=temp_state();let source=root.join("repo");
         std::fs::create_dir_all(source.join("src")).unwrap();
         let content=format!("pub fn target() {{\n// {}\n}}\n","SOURCE_ONLY_NOT_A_TASK ".repeat(4000));
@@ -1328,8 +1321,8 @@ mod tests {
         let source = root.join("source");
         std::fs::create_dir_all(source.join("src/engine")).unwrap();
         std::fs::write(
-            source.join("src/engine/rsi_evolve.rs"),
-            "//! rsi\npub fn run_loop() {\n    // TODO: remove the cap\n}\n#[test]\nfn a_test() {}\n",
+            source.join("src/engine/legacy_handler.rs"),
+            "//! legacy sample\npub fn run_loop() {\n    // TODO: remove the cap\n}\n#[test]\nfn a_test() {}\n",
         )
         .unwrap();
         let first = refresh(&state, &source).unwrap();
@@ -1342,15 +1335,15 @@ mod tests {
         assert_eq!(second["changedFiles"], 0);
         assert_eq!(second["reusedFiles"], 1);
         std::fs::write(
-            source.join("src/engine/rsi_evolve.rs"),
+            source.join("src/engine/legacy_handler.rs"),
             "pub fn run_loop() {}\n",
         )
         .unwrap();
         let third = refresh(&state, &source).unwrap();
         assert_eq!(third["changedFiles"], 1);
         assert_eq!(third["todos"], 0);
-        let (_, block) = prompt_context(&state, &source, &["src/engine/rsi_evolve.rs".into()]).unwrap();
-        assert!(block.contains("src/engine/rsi_evolve.rs"));
+        let (_, block) = prompt_context(&state, &source, &["src/engine/legacy_handler.rs".into()]).unwrap();
+        assert!(block.contains("src/engine/legacy_handler.rs"));
         assert!(block.contains("run_loop"));
         let _ = std::fs::remove_dir_all(root);
     }
