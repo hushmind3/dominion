@@ -48,6 +48,7 @@ async fn serve(mut config: Config, open_browser: bool, parent_bound: bool) -> Re
     let vault = Vault::open(&config.key_path());
     let state = AppState::new(config.clone(), store, vault);
     migrations::run(&state)?;
+    engine::oauth::purge_retired_grants(&state);
     // OAuth polls live in memory; a restart cannot complete an in-flight
     // login, so do not leave a stale device code visible in the UI.
     if let Some(mut login) = state.store.get("codex_login", "codex") {

@@ -31,19 +31,29 @@ const PROVIDERS: &[Provider] = &[
         scopes: "openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/calendar.events",
         extra: &[("access_type", "offline"), ("prompt", "consent")],
     },
-    Provider {
-        id: "youtube",
-        name: "YouTube 업로드",
-        authorize: "https://accounts.google.com/o/oauth2/v2/auth",
-        token: "https://oauth2.googleapis.com/token",
-        user: "https://www.googleapis.com/oauth2/v3/userinfo",
-        scopes: "openid email profile https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly",
-        extra: &[("access_type", "offline"), ("prompt", "consent")],
-    },
 ];
 
 fn provider(id: &str) -> Option<&'static Provider> {
     PROVIDERS.iter().find(|provider| provider.id == id)
+}
+
+/// Retire credentials left by removed built-in service integrations.
+/// Only the obsolete OAuth grants are erased, never unrelated jobs, artifacts
+/// or account grants for supported providers. Run after DB migrations.
+pub fn purge_retired_grants(state: &AppState) {
+    for id in ["youtube"] {
+        state.store.remove_secret(&format!("oauth:{id}:token"));
+        state.store.remove_secret(&format!("oauth:{id}:secret"));
+        state.store.remove("oauth_config", id);
+        for entry in state.store.all("oauth_state") {
+            if entry["provider"].as_str() == Some(id) {
+                if let Some(key) = entry["id"].as_str() {
+                    state.store.remove_secret(&format!("oauth-state:{key}"));
+                    state.store.remove("oauth_state", key);
+                }
+            }
+        }
+    }
 }
 
 fn config(state: &AppState, id: &str) -> Option<Value> {
@@ -138,27 +148,19 @@ pub fn save(
 /// credentials individually. Secrets remain in the host environment.
 fn deployed_client_credentials(id:&str)->Option<(String,String)> {
     let service=match id{
-        "github"=>"GITHUB","google"=>"GOOGLE","youtube"=>"YOUTUBE",
+        "github"=>"GITHUB","google"=>"GOOGLE",
         _=>return None
     };
     let read=|key:&str|std::env::var(format!("DOMINION_{service}_OAUTH_{key}"))
         .ok().filter(|v|!v.trim().is_empty());
-    let client=read("CLIENT_ID").or_else(||
-        (id=="youtube").then(||std::env::var("DOMINION_GOOGLE_OAUTH_CLIENT_ID").ok()).flatten())?;
-    let secret=read("CLIENT_SECRET")
-        .or_else(||(id=="youtube").then(||std::env::var("DOMINION_GOOGLE_OAUTH_CLIENT_SECRET").ok()).flatten())
-        .unwrap_or_default();
+    let client=read("CLIENT_ID")?;
+    let secret=read("CLIENT_SECRET").unwrap_or_default();
     if id=="github"&&secret.is_empty(){return None;}
     Some((client,secret))
 }
 fn client_credentials(state: &AppState, id: &str) -> Result<(String, String), String> {
     let sealed = state
         .read_secret(&format!("oauth:{id}:secret"))
-        .or_else(|| {
-            (id == "youtube")
-                .then(|| state.read_secret("oauth:google:secret"))
-                .flatten()
-        })
         .or_else(||deployed_client_credentials(id).map(|(client,secret)|json!({
             "clientId":client,"clientSecret":secret
         }).to_string()))
@@ -214,7 +216,7 @@ pub fn start(state: &AppState, id: &str) -> Result<Value, String> {
         for (key, value) in provider.extra {
             query.append_pair(key, value);
         }
-        if id == "google" || id == "youtube" {
+        if id == "google" {
             query
                 .append_pair("response_type", "code")
                 .append_pair("code_challenge", &challenge)
@@ -380,6 +382,7 @@ pub async fn callback(
 }
 
 pub fn disconnect(state: &AppState, id: &str) {
+    if provider(id).is_none() { return; }
     state.store.remove_secret(&format!("oauth:{id}:token"));
     if let Some(mut record) = config(state, id) {
         record["connected"] = json!(false);
@@ -390,8 +393,9 @@ pub fn disconnect(state: &AppState, id: &str) {
     }
 }
 
-/// Bearer token for tools (GitHub / YouTube). `None` until the user connects.
+/// Bearer token for registered service tools only.
 pub fn access_token(state: &AppState, id: &str) -> Option<String> {
+    provider(id)?;
     let sealed = state.read_secret(&format!("oauth:{id}:token"))?;
     let value: Value = serde_json::from_str(&sealed).ok()?;
     value
@@ -400,9 +404,10 @@ pub fn access_token(state: &AppState, id: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Refresh long-lived service grants in the vault; Google identity and YouTube
-/// intentionally have independent grants, expiry and disconnect operations.
+/// Refresh long-lived service grants only for supported providers.
+/// Old removed-provider tokens must not be usable even before startup cleanup.
 pub async fn fresh_access_token(state: &AppState, id: &str) -> Result<String, String> {
+    provider(id).ok_or("지원하지 않는 OAuth 제공자입니다.")?;
     if id=="github"&&config(state,"github")
         .is_some_and(|v|v["authSource"]=="github_cli"){
         // Disconnect revokes Dominion's authority even if the user stays
@@ -634,6 +639,31 @@ mod tests {
         assert!(parse_workspace_credentials(r#"{"client_id":"id","refresh_token":null}"#).is_err());
         assert!(parse_workspace_credentials("notice\n{\"client_id\":\"id\",\"client_secret\":\"secret\",\"refresh_token\":\"refresh\"}")
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn retired_youtube_cannot_reuse_old_google_or_saved_grants() {
+        let (state, dir) = temp_state();
+        state.store.put("oauth_config", &json!({"id":"youtube","connected":true})).unwrap();
+        state.save_secret("oauth:youtube:token",
+            &json!({"accessToken":"old-upload-token"}).to_string());
+        state.save_secret("oauth:youtube:secret",
+            &json!({"clientId":"old-client","clientSecret":"old-secret"}).to_string());
+        state.store.put("oauth_state", &json!({"id":"old-state","provider":"youtube"})).unwrap();
+        state.save_secret("oauth-state:old-state", "old-verifier");
+        assert_eq!(status(&state).len(), 2);
+        assert!(provider("youtube").is_none());
+        assert!(start(&state, "youtube").is_err());
+        assert!(access_token(&state, "youtube").is_none());
+        assert!(fresh_access_token(&state, "youtube").await.is_err());
+        purge_retired_grants(&state);
+        assert!(state.store.get("oauth_config", "youtube").is_none());
+        assert!(state.store.get("oauth_state", "old-state").is_none());
+        assert!(!state.store.has_secret("oauth:youtube:token"));
+        assert!(!state.store.has_secret("oauth:youtube:secret"));
+        assert!(!state.store.has_secret("oauth-state:old-state"));
+        assert_eq!(status(&state).len(), 2);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

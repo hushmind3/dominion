@@ -66,6 +66,14 @@ assert.ok(!/page==='(?:video|rsi)'/.test(app),'Retired route remains in app');
 for(const p of ['nav.chat','nav.memory','nav.connections','nav.rooms'])
  assert.ok(nav.includes(p),'Retained navigation missing: '+p);
 assert.ok(!/id:'(?:video|rsi)'/.test(nav),'Retired navigation remains');
+
+// A retired upload integration must not remain a live OAuth provider or
+// silently regain a Google refresh grant through fallback credentials.
+const oauth=read('src/engine/oauth.rs');
+assert.ok(!/id:\s*["']youtube["']/.test(oauth),'Removed upload OAuth provider returned');
+assert.ok(!oauth.includes('auth/youtube.'),'Removed upload permission returned');
+assert.ok(!/id\s*==\s*["']youtube["']/.test(oauth),'Removed upload token fallback returned');
+assert.ok(oauth.includes('purge_retired_grants'),'Obsolete OAuth grant cleanup missing');
 const routes=read('src/api/mod.rs');
 const providerEndpoints=[
  '/api/providers/catalog/:id/models',
