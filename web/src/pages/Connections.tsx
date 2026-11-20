@@ -111,13 +111,13 @@ export function ConnectionsPage(){
   }catch(e){setOauthError((e as Error).message)}finally{setOauthSaving(false)}
  }
  const tabs=[{id:'channels',label:t('conn.tab.channels'),icon:RadioTower},{id:'quick-connect',label:t('conn.tab.quickConnect'),icon:Link2},{id:'accounts',label:t('conn.tab.accounts'),icon:KeyRound},{id:'market',label:'MCP 마켓',icon:Blocks},{id:'installed',label:t('ext.tab.installed'),icon:Server},{id:'skills',label:t('ext.tab.skills'),icon:BookOpenText},{id:'plugins',label:t('ext.tab.plugins'),icon:PackagePlus},{id:'capabilities',label:'역량 마켓',icon:Sparkles}] as const
- const pageHeader=<header className="mb-5 flex flex-wrap items-end justify-between gap-4">
-  <div className="min-w-0"><p className="mb-1 text-[10px] font-bold uppercase tracking-[.2em] text-[#B76D50]">DOMINION / CONNECTIONS</p>
-   <h1 className="m-0 text-[26px] font-bold tracking-[-.035em] text-[#29221B]">{t('conn.title')}</h1>
-   <p className="mt-2 max-w-xl text-[12px] leading-5 text-[#817467]">{t('conn.description')}</p>
+ const pageHeader=<header className="mb-2 flex flex-wrap items-center justify-between gap-3 sm:mb-5 sm:items-end">
+  <div className="min-w-0"><p className="mb-1 hidden text-[10px] font-bold uppercase tracking-[.2em] text-[#B76D50] sm:block">DOMINION / CONNECTIONS</p>
+   <h1 className="m-0 text-[21px] font-bold tracking-[-.035em] text-[#29221B] sm:text-[26px]">{t('conn.title')}</h1>
+   <p className="mt-2 hidden max-w-xl text-[12px] leading-5 text-[#817467] sm:block">{t('conn.description')}</p>
   </div>
-  <Button type="button" variant="secondary" disabled={refreshing} onClick={()=>void refreshChannels()}>
-   <Activity size={15} className={refreshing?'animate-spin':''}/>{t('conn.refresh')}
+  <Button type="button" size="sm" variant="secondary" aria-label={t('conn.refresh')} disabled={refreshing} onClick={()=>void refreshChannels()}>
+   <Activity size={15} className={refreshing?'animate-spin':''}/><span className="hidden sm:inline">{t('conn.refresh')}</span>
   </Button>
  </header>
  const sectionTabs=<nav className="connection-tabs" aria-label={t('conn.navigation')}>{tabs.map(({id,label,icon:Icon},index)=><span key={id} className="inline-flex shrink-0 items-center gap-1">
