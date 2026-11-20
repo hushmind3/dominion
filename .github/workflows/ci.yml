@@ -139,6 +139,11 @@ jobs:
           cargo test --locked --bin dominion-benchmark truncated_http_stream_is_not_counted_as_a_completed_trial
           cargo test --locked --bin dominion-rust speaker_accounting_joins_only_the_owning_execution_and_marks_estimates
           cargo test --locked --bin dominion-rust db::tests::session_running_probe_avoids_global_history_and_uses_session_index
+      - name: Explicit public web search requires verified tool evidence (dev profile)
+        run: |
+          cargo test --locked --bin dominion-rust engine::chat::web_research::tests
+          cargo test --locked --bin dominion-rust engine::tools::tests::web_search_parsers_produce_real_source_urls_not_empty_success
+          cargo test --locked --test e2e room_identity::private_web_search -- --nocapture
       - name: Private chat context ownership and 10/100-turn cost regressions (dev profile)
         run: |
           cargo test --locked --bin dominion-rust engine::chat::context_engine::tests
