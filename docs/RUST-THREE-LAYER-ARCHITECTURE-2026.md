@@ -73,3 +73,11 @@ adding algorithm imports to the core crate.
 
 The algorithm remains in the same trusted Rust address space; the interface
 is not a sandbox and its type-level boundary must not be mistaken for one.
+
+## Context compaction ownership
+
+The original `context::compact` projection and its unit tests now live in
+`dominion-algorithms/src/context.rs`. It is an algorithm, not a durable
+storage API. The gateway's existing provider-specific context compiler is
+unchanged. The core retains snapshots and transcript persistence, never
+deciding which previous messages to include in a model prompt.

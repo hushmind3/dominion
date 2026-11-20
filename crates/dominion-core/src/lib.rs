@@ -1,6 +1,5 @@
 //! Native Rust execution harness. The product supplies SQLite, model and tool adapters.
 pub mod domain;
-pub mod context;
 pub mod journal;
 pub mod tool_schema;
 pub mod policy;

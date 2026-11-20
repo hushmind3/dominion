@@ -78,6 +78,11 @@ const outcome=readFileSync(path.join(root,'src/engine/chat/outcome.rs'),'utf8')
 const driver=readFileSync(path.join(root,'crates/dominion-algorithms/src/engine.rs'),'utf8')
 const nativePort=readFileSync(path.join(root,'crates/dominion-core/src/runtime_port.rs'),'utf8')
 const coreLib=readFileSync(path.join(root,'crates/dominion-core/src/lib.rs'),'utf8')
+const algorithmsLib=readFileSync(path.join(root,'crates/dominion-algorithms/src/lib.rs'),'utf8')
+if(coreLib.includes('pub mod context;')||
+   !algorithmsLib.includes('pub mod context;')||
+   !existsSync(path.join(root,'crates/dominion-algorithms/src/context.rs')))
+  throw Error('Context projection algorithm returned to infrastructure core')
 if(coreLib.includes('pub mod engine;')||
    !coreLib.includes('pub mod runtime_port;')||
    nativePort.includes('pub struct Engine;')||
