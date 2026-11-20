@@ -7,7 +7,7 @@ pub mod context;
 pub mod failure_guidance;
 pub mod tool_discovery;
 pub mod agent_loop;
-pub use agent_loop::Kernel;
+pub use agent_loop::{Kernel,ReActLoop};
 pub mod replay;
 pub use dominion_agent_runtime::{BoxFuture,Limits,CriterionKind,Criterion,RunRequest,
     Decision,ModelReply,ModelTurn,Model,Tools,Evidence,Journal,DispatchResult,

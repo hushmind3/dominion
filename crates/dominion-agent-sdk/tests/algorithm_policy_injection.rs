@@ -138,3 +138,17 @@ impl AgentAlgorithm for ForgedCatalog {
  assert_eq!(result.algorithm_id.as_deref(),Some("standard-v1"));
  assert!(matches!(result.status,Status::Completed));
 }
+
+#[tokio::test]async fn independent_runtime_loop_trait_invokes_algorithm_with_pinned_evidence(){
+ let policy=FocusedAlgorithm;
+ let loop_impl=ReActLoop{policy:&policy};
+ let model=RecordedModel::new(vec![json!({"plan":[],"actions":[],"answer":"done"})]);
+ let journal=Checkpoints::default();
+ let snapshot=loop_impl.execute(
+    AgentPorts{model:&model,tools:&NoTools,evidence:&NoEvidence,journal:&journal},
+    request("summarize",1),None).await.unwrap();
+ assert_eq!(loop_impl.id(),"react-v1");
+ assert_eq!(snapshot.algorithm_id.as_deref(),Some("focused-v1"));
+ assert!(matches!(snapshot.status,Status::Completed));
+ assert!(journal.0.lock().unwrap().len()>0);
+}

@@ -4,10 +4,28 @@ use crate::{AgentAlgorithm,StandardAlgorithm,context,tool_discovery,failure_guid
 use dominion_agent_runtime::{self as runtime, acceptance, scheduler, schema, Action,
     BoxFuture,Limits,CriterionKind,Criterion,RunRequest,Decision,ModelReply,ModelTurn,
     Model,Tools,Evidence,Journal,DispatchResult,Dispatcher,Status,CheckResult,
-    Snapshot,Receipt,Strategy,ToolSpec};
+    Snapshot,Receipt,Strategy,ToolSpec,AgentLoop,AgentPorts};
 use futures_util::future::join_all;
 use serde_json::{json,Value};
 use std::collections::HashMap;
+
+/// Default ReAct-compatible orchestration, selected by the host separately
+/// from the version-pinned prompt/intent/compaction policy.
+pub struct ReActLoop<'p> {pub policy:&'p dyn AgentAlgorithm}
+impl AgentLoop for ReActLoop<'_> {
+    fn id(&self)->&'static str {"react-v1"}
+    fn execute<'a>(&'a self,ports:AgentPorts<'a>,request:RunRequest,
+        checkpoint:Option<Snapshot>)->BoxFuture<'a,Result<Snapshot,String>>{
+        Box::pin(async move {
+            let kernel=Kernel{model:ports.model,tools:ports.tools,
+                evidence:ports.evidence,journal:ports.journal};
+            match checkpoint {
+                Some(saved)=>kernel.resume_with_algorithm(request,saved,self.policy).await,
+                None=>kernel.run_with_algorithm(request,self.policy).await,
+            }
+        })
+    }
+}
 
 pub struct Kernel<'a> {
     pub model: &'a dyn Model,

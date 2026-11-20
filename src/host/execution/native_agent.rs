@@ -10,6 +10,7 @@ use crate::features::cognition::profiles;
 use dominion_sdk::harness::{
     Action, BoxFuture, Criterion, CriterionKind, Evidence, Journal, Kernel,
     Limits, Model, ModelReply, ModelTurn, Receipt, RunRequest, Snapshot, Strategy, ToolSpec, Tools,
+    AgentLoop,AgentPorts,ReActLoop,
 };
 use serde_json::{json, Value};
 use std::{path::PathBuf, collections::HashSet};
@@ -592,17 +593,18 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     }
     let _socket_cleanup=NativeSocketCleanup(&context.job_id);
     let owner_checks=request.checks.clone();
-    let kernel=Kernel{model:&model,tools:&host_tools,evidence:&evidence,journal:&journal};
-    let snapshot=if let Some(saved)=resume_snapshot {
-        match kernel.resume_with_algorithm(request,saved,selected.algorithm).await {
-            Ok(snapshot)=>snapshot,
-            Err(reason) if reason.contains("algorithm") || reason.contains("policy") =>
-                return Ok(json!({"status":"needs_review",
-                    "reason":reason,"snapshot":previous})),
-            Err(reason)=>return Err(reason),
-        }
-    } else {
-        kernel.run_with_algorithm(request,selected.algorithm).await?
+    // The host selects a loop implementation and an independent policy.
+    // The core only defines AgentLoop and trusted host ports.
+    let agent_loop=ReActLoop{policy:selected.algorithm};
+    let recovery=resume_snapshot.is_some();
+    let snapshot=match agent_loop.execute(
+        AgentPorts{model:&model,tools:&host_tools,evidence:&evidence,journal:&journal},
+        request,resume_snapshot).await {
+        Ok(snapshot)=>snapshot,
+        Err(reason) if recovery && (reason.contains("algorithm")||reason.contains("policy"))=>
+            return Ok(json!({"status":"needs_review",
+                "reason":reason,"snapshot":previous})),
+        Err(reason)=>return Err(reason),
     };
     // Record the post-run artifact witness only after the kernel settles.
     // This is an observation at completion, not a claim that future workspace

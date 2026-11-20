@@ -167,6 +167,28 @@ pub trait Journal: Send + Sync {
 
 /// Native tool protocols may retain additional host data (stream events,
 /// receipts and message framing) without forcing the model through JSON prose.
+
+/// Minimal host ports exposed to a compiled agent-loop implementation.
+/// No concrete DB, channels, provider SDK or UI types cross this boundary.
+#[derive(Clone,Copy)]
+pub struct AgentPorts<'a> {
+    pub model: &'a dyn Model,
+    pub tools: &'a dyn Tools,
+    pub evidence: &'a dyn Evidence,
+    pub journal: &'a dyn Journal,
+}
+
+/// Replaceable agent-loop strategy; independent of the runtime crate.
+///
+/// Rust loop implementations are trusted components of the host binary:
+/// they must run tool effects through the host Tools authority interface.
+/// Third-party/untrusted loops require an additional sandbox boundary.
+pub trait AgentLoop: Send + Sync {
+    fn id(&self)->&'static str;
+    fn execute<'a>(&'a self,ports:AgentPorts<'a>,request:RunRequest,
+        checkpoint:Option<Snapshot>)->BoxFuture<'a,Result<Snapshot,String>>;
+}
+
 pub struct DispatchResult<T> {
     pub output: T,
     pub observation: Value,
