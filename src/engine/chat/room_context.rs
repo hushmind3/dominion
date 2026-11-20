@@ -224,6 +224,9 @@ fn evidence(
             false,
         );
     }
+    if crate::engine::extensions::enabled(
+        state,session_id,request.agent_id.as_deref(),
+        crate::engine::extensions::Extension::Memory) {
     for record in state.store.all("experience").into_iter().filter(|record| {
         record["status"] == "active" && crate::engine::experience::visible(record, &scope)
     }) {
@@ -285,6 +288,10 @@ fn evidence(
             priority,
         );
     }
+    }
+    if crate::engine::extensions::enabled(
+        state,session_id,request.agent_id.as_deref(),
+        crate::engine::extensions::Extension::Memory) {
     if let Some(growth) = request
         .agent_id
         .as_deref()
@@ -302,6 +309,7 @@ fn evidence(
                 false,
             );
         }
+    }
     }
 }
 
