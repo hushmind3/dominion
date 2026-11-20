@@ -231,13 +231,19 @@ pub(crate) fn resolve_bridge(action:&Action,catalog:&HashMap<String,ToolSpec>,
  if name==CALL||name==SEARCH||name.starts_with("dominion_receipt_"){
   return Err("Internal tools cannot be invoked through the external tool bridge".into())
  }
- if !catalog.contains_key(name) {
-  return Err(format!("Tool is not authorized by the owner: {name}"))
- }
+ let spec=catalog.get(name)
+  .ok_or_else(||format!("Tool is not authorized by the owner: {name}"))?;
+ // Bind a recovered discovery receipt to its exact authorized tool contract.
+ // The 2026 MCP tool list can change between discovery and execution. Name
+ // alone is not evidence that an updated schema or effect policy was seen.
+ let description=spec.description.chars().take(170).collect::<String>();
  let found=receipts.iter().any(|r|r.tool==SEARCH && r.success
-  && r.result["matches"].as_array().is_some_and(|list|list.iter()
-    .any(|item|item["name"].as_str()==Some(name))));
- if !found {return Err("Tool not previously discovered in this execution; call dominion_tool_search first".into())}
+  && r.result["matches"].as_array().is_some_and(|list|list.iter().any(|item|
+   item["name"].as_str()==Some(name)
+   &&item["parameters"]==spec.schema
+   &&item["readOnly"].as_bool()==Some(spec.read_only)
+   &&item["description"].as_str()==Some(description.as_str()))));
+ if !found {return Err("Tool not discovered with its current schema and effect policy; call dominion_tool_search again".into())}
  let arguments=action.arguments["arguments"].as_object()
   .ok_or("Bridge arguments must be a JSON object matching the retrieved schema")?;
  Ok(Some(Action{id:action.id.clone(),tool:name.into(),
@@ -296,9 +302,18 @@ mod tests{
   let bridge=Action{id:"publish".into(),tool:CALL.into(),
     arguments:json!({"name":"mcp__archive_publish","arguments":{"id":"example"}}),
     depends_on:vec!["lookup".into()]};
-  let resolved=resolve_bridge(&bridge,&c,&[receipt]).unwrap().unwrap();
+  let resolved=resolve_bridge(&bridge,&c,&[receipt.clone()]).unwrap().unwrap();
   assert_eq!(resolved.tool,"mcp__archive_publish");
   assert_eq!(resolved.arguments,json!({"id":"example"}));
+  let mut schema_drift=c.clone();
+  schema_drift.get_mut("mcp__archive_publish").unwrap().schema=
+   json!({"type":"object","properties":{"different_id":{"type":"string"}}});
+  assert!(resolve_bridge(&bridge,&schema_drift,&[receipt.clone()]).is_err(),
+   "stale discovery cannot bind a changed tool schema");
+  let mut policy_drift=c.clone();
+  policy_drift.get_mut("mcp__archive_publish").unwrap().read_only=true;
+  assert!(resolve_bridge(&bridge,&policy_drift,&[receipt.clone()]).is_err(),
+   "stale discovery cannot bind a changed effect policy");
   assert!(resolve_bridge(&bridge,&c,&[]).is_err());
   let unknown=Action{arguments:json!({"name":"unapproved","arguments":{}}),..bridge};
   assert!(resolve_bridge(&unknown,&c,&[]).is_err());
