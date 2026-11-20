@@ -1635,7 +1635,13 @@ impl Store {
                     COALESCE(SUM(CAST(json_extract(detail,'$.promptTokens') AS INTEGER)),0),
                     COALESCE(SUM(CAST(json_extract(detail,'$.completionTokens') AS INTEGER)),0),
                     COALESCE(SUM(CAST(json_extract(detail,'$.totalTokens') AS INTEGER)),0),
-                    COALESCE(SUM(CASE WHEN json_extract(detail,'$.estimated')=1 THEN 1 ELSE 0 END),0)
+                    COALESCE(SUM(CASE WHEN json_extract(detail,'$.estimated')=1 THEN 1 ELSE 0 END),0),
+                    COALESCE(SUM(CAST(json_extract(detail,'$.cachedPromptTokens') AS INTEGER)),0),
+                    COALESCE(SUM(CAST(json_extract(detail,'$.cacheCreationTokens') AS INTEGER)),0),
+                    COALESCE(SUM(CASE WHEN json_type(detail,'$.cachedPromptTokens')='integer' THEN 1 ELSE 0 END),0),
+                    COALESCE(SUM(CASE WHEN json_extract(detail,'$.promptTokens') IS NOT NULL
+                        AND json_type(detail,'$.cachedPromptTokens')!='integer' THEN 1 ELSE 0 END),0),
+                    COALESCE(SUM(CASE WHEN json_type(detail,'$.cacheCreationTokens')='integer' THEN 1 ELSE 0 END),0)
              FROM audit
              WHERE event='model.usage' AND json_extract(detail,'$.sessionId')=?1",
             [session_id],
@@ -1646,19 +1652,35 @@ impl Store {
                     row.get::<_, i64>(2)?,
                     row.get::<_, i64>(3)?,
                     row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, i64>(9)?,
                 ))
             },
         );
         match summary {
-            Ok((calls, prompt, completion, total, estimated)) => json!({
-                "calls": calls.max(0),
-                "promptTokens": prompt.max(0),
-                "completionTokens": completion.max(0),
-                "totalTokens": total.max(0),
-                "estimatedCalls": estimated.max(0),
-            }),
+            Ok((calls, prompt, completion, total, estimated, cached, cache_writes, reported, unknown, write_reported)) => {
+                let known=reported>0 && unknown==0;
+                json!({
+                    "calls":calls.max(0),
+                    "promptTokens":prompt.max(0),
+                    "completionTokens":completion.max(0),
+                    "totalTokens":total.max(0),
+                    "estimatedCalls":estimated.max(0),
+                    "cacheReportedCalls":reported.max(0),
+                    "cacheUnknownCalls":unknown.max(0),
+                    "cachedPromptTokens":known.then_some(cached.max(0)),
+                    "uncachedPromptTokens":known.then_some(prompt.max(0).saturating_sub(cached.max(0))),
+                    "cacheCreationTokens":(write_reported>0).then_some(cache_writes.max(0)),
+                })
+            },
             Err(_) => json!({
-                "calls":0,"promptTokens":0,"completionTokens":0,"totalTokens":0,"estimatedCalls":0
+                "calls":0,"promptTokens":0,"completionTokens":0,"totalTokens":0,
+                "estimatedCalls":0,"cacheReportedCalls":0,"cacheUnknownCalls":0,
+                "cachedPromptTokens":null,"uncachedPromptTokens":null,
+                "cacheCreationTokens":null,
             }),
         }
     }
