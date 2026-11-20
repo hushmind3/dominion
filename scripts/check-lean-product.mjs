@@ -92,6 +92,15 @@ assert.ok(!read('web/src/i18n/index.ts').includes("'resume','video'"),
  'Retired media job-kind catalog returned');
 assert.ok(!read('web/src/i18n/errors.ts').includes('Create video job'),
  'Retired media errors returned');
+
+for(const file of ['web/src/pages/Connections.tsx',
+                    'web/src/components/ConnectedAccounts.tsx']){
+ assert.ok(read(file).includes('supportedOAuthAccounts('),
+  'Front-end renders unregistered OAuth accounts: '+file);
+}
+assert.ok(read('src/api/channels.rs').includes('is_supported_provider'),
+ 'Archived OAuth records are still exposed through the account API');
+
 const app=read('web/src/App.tsx'),nav=read('web/src/components/WorkspaceShell.tsx');
 for(const p of ['ChatPage','MemoryPage','ConnectionsPage','RoomsPage','HomePage'])
  assert.ok(app.includes(p),'Retained feature disconnected from app: '+p);

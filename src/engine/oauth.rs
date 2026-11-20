@@ -37,6 +37,12 @@ fn provider(id: &str) -> Option<&'static Provider> {
     PROVIDERS.iter().find(|provider| provider.id == id)
 }
 
+/// Shared authority check for account listings and OAuth dispatch.
+/// Persisted records of retired integrations are never displayable accounts.
+pub fn is_supported_provider(id: &str) -> bool {
+    provider(id).is_some()
+}
+
 /// Retire credentials left by removed built-in service integrations.
 /// Only the obsolete OAuth grants are erased, never unrelated jobs, artifacts
 /// or account grants for supported providers. Run after DB migrations.

@@ -3,6 +3,7 @@ import {CheckCircle2,ExternalLink,Github,Globe2,Link2,RefreshCcw,Unlink} from 'l
 import {del,get,openOAuth,post} from '../api'
 import {Action,Notice,Panel,StateTag,useRemote} from './UI'
 import {t} from '../i18n'
+import {supportedOAuthAccounts,type OAuthAccountId} from '../utils/oauthAccounts'
 
 type Provider={id:string;name:string;configured:boolean;connected:boolean;account?:string|null;scope?:string;credentialSource?:'application'|'local'|'missing'}
 type Account={provider:string;displayName:string;hasToken:boolean;scopes:string}
@@ -31,7 +32,7 @@ export function ConnectedAccounts(){
 
  const refresh=useCallback(()=>{void providers.reload();void accounts.reload()},[providers.reload,accounts.reload])
  useEffect(()=>{window.addEventListener('focus',refresh);return ()=>window.removeEventListener('focus',refresh)},[refresh])
- const connect=async(id:string)=>{
+ const connect=async(id:OAuthAccountId)=>{
   setBusy(id);setError('');setNotice('')
   try{
    if(id==='github'&&!providers.value.find(p=>p.id===id)?.configured){
@@ -47,14 +48,14 @@ export function ConnectedAccounts(){
   catch(e){setError((e as Error).message)}
   finally{setBusy(null)}
  }
- const disconnect=async(id:string)=>{
+ const disconnect=async(id:OAuthAccountId)=>{
   if(!window.confirm(t('conn.quick.disconnectConfirm')))return
   setBusy(id);setError('');setNotice('')
   try{await del('/api/oauth/'+encodeURIComponent(id));refresh()}
   catch(e){setError((e as Error).message)}
   finally{setBusy(null)}
  }
- const ordered=[...providers.value].sort((a,b)=>a.id==='github'?-1:b.id==='github'?1:0)
+ const ordered=supportedOAuthAccounts(providers.value).sort((a,b)=>a.id==='github'?-1:b.id==='github'?1:0)
  return <div className="space-y-5">
   <div className="flex flex-wrap items-center justify-between gap-3">
    <div><h2 className="text-[22px] font-bold tracking-tight text-[#24211D]">{t('conn.quick.title')}</h2>

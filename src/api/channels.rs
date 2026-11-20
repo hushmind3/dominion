@@ -113,7 +113,11 @@ pub fn connected_accounts(state: &AppState) -> Vec<Value> {
         .store
         .all("oauth_config")
         .into_iter()
-        .filter(|record| record.get("connected").and_then(|v| v.as_bool()) == Some(true))
+        .filter(|record| {
+            record.get("id").and_then(Value::as_str)
+                .is_some_and(crate::engine::oauth::is_supported_provider)
+                && record.get("connected").and_then(Value::as_bool) == Some(true)
+        })
         .map(|record| {
             let id = record
                 .get("id")
@@ -157,6 +161,26 @@ mod tests {
             );
         }
         (state, dir)
+    }
+
+    #[test]
+    fn obsolete_upload_account_never_surfaces_even_before_startup_cleanup() {
+        let (state, dir) = test_state();
+        for id in ["github", "google", "youtube", "removed-plugin"] {
+            state.store.put("oauth_config", &json!({
+                "id":id,"connected":true,"account":format!("{id}-user"),
+                "scopes":"user"
+            })).unwrap();
+            state.save_secret(&format!("oauth:{id}:token"), "legacy-grant");
+        }
+        let accounts=connected_accounts(&state);
+        assert_eq!(accounts.len(),2,"only currently registered providers may be listed");
+        assert!(accounts.iter().any(|a| a["provider"]=="github" && a["hasToken"]==true));
+        assert!(accounts.iter().any(|a| a["provider"]=="google" && a["hasToken"]==true));
+        assert!(!accounts.iter().any(|a| a["provider"]=="youtube"));
+        assert!(state.store.get("oauth_config","youtube").is_some(),
+            "account API filtering must not modify historical records");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
