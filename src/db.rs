@@ -1016,7 +1016,10 @@ impl Store {
         let conn=self.conn.lock().unwrap();
         let mut stmt=conn.prepare(
             "SELECT id,session_id,role,content,reasoning,agent_id,tool_calls,tool_call_id,created_at,metadata
-             FROM messages WHERE session_id=?1 ORDER BY created_at DESC,rowid DESC LIMIT ?2"
+             FROM messages WHERE session_id=?1
+               AND (NOT json_valid(metadata) OR
+                    COALESCE(json_extract(metadata,'$.kind'),'')!='learning_report')
+             ORDER BY created_at DESC,rowid DESC LIMIT ?2"
         ).map_err(|error|error.to_string())?;
         let rows=stmt.query_map(rusqlite::params![session_id,limit.min(256) as i64],
             message_from_row).map_err(|error|error.to_string())?;
@@ -2188,11 +2191,16 @@ mod tests {
         }
         store.write_message(&json!({"session_id":"recent","role":"user",
             "content":"이어서해"})).unwrap();
+        for _ in 0..50 {
+            store.write_message(&json!({"session_id":"recent","role":"assistant",
+                "content":"learning noise","metadata":{"kind":"learning_report"}})).unwrap();
+        }
         store.write_message(&json!({"session_id":"other","role":"user",
             "content":"ISOLATED_PRIVATE"})).unwrap();
         let latest=store.try_recent_messages("recent",4).unwrap();
         assert_eq!(latest.len(),4);
         assert_eq!(latest.last().unwrap()["content"],"이어서해");
+        assert!(latest.iter().all(|row|row["metadata"]["kind"]!="learning_report"));
         assert!(!json!(latest).to_string().contains("0:OLD_HTML_"));
         let owners=store.try_recent_user_messages("recent",16).unwrap();
         assert_eq!(owners.len(),2);
@@ -2200,7 +2208,7 @@ mod tests {
         assert_eq!(owners[1]["content"],"이어서해");
         assert!(!json!(owners).to_string().contains("OLD_HTML_"));
         assert!(!json!(owners).to_string().contains("ISOLATED_PRIVATE"));
-        assert_eq!(store.messages("recent").len(),72,
+        assert_eq!(store.messages("recent").len(),122,
             "indexed retrieval must never mutate or drop archived evidence");
         let empty=store.try_recent_messages("not-this-session",10).unwrap();
         assert!(empty.is_empty());
