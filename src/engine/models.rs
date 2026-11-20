@@ -319,7 +319,7 @@ fn format_bytes(bytes: u64) -> String {
 pub fn installed(state: &AppState) -> Vec<Value> {
     let dir = models_dir(state);
     let mut found = Vec::new();
-    walk(&dir, 0, &mut found);
+    scan_model_tree(&dir, 0, &mut found, ModelEntry::File);
     let lms = lmstudio_models();
     let indexed = lms
         .iter()
@@ -396,7 +396,7 @@ fn local_mlx_models(state: &AppState) -> Vec<Value> {
     let mut seen = std::collections::HashSet::new();
     for root in mlx_search_roots(state) {
         let mut found = Vec::new();
-        walk_dirs(&root, 0, &mut found);
+        scan_model_tree(&root, 0, &mut found, ModelEntry::Directory);
         for model in found.into_iter().filter_map(|dir| mlx_model_from_dir(&dir, &root)) {
             if let Some(repo) = model["repo"].as_str() {
                 if seen.insert(repo.to_string()) {
@@ -444,21 +444,27 @@ fn mlx_model_from_dir(dir: &Path, root: &Path) -> Option<Value> {
             }))
 }
 
-fn walk_dirs(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
-    if depth > 4 {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
+// Both MLX directories and GGUF files traverse the same depth-bounded
+// filesystem tree. Avoid a second recursive walker with subtly different
+// symlink rules: directory entries are never followed through symlinks.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ModelEntry { File, Directory }
+
+fn scan_model_tree(dir:&Path, depth:usize, found:&mut Vec<PathBuf>, entry_kind:ModelEntry) {
+    if depth>4 { return; }
+    let Ok(entries)=std::fs::read_dir(dir) else { return; };
     for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            found.push(path.clone());
-            walk_dirs(&path, depth + 1, found);
+        let Ok(file_type)=entry.file_type() else { continue; };
+        let path=entry.path();
+        if file_type.is_dir() {
+            if entry_kind==ModelEntry::Directory { found.push(path.clone()); }
+            scan_model_tree(&path,depth+1,found,entry_kind);
+        } else if file_type.is_file() && entry_kind==ModelEntry::File {
+            found.push(path);
         }
     }
 }
+
 
 /// Models already managed by LM Studio (including its native MLX runtime).
 fn lmstudio_models() -> Vec<Value> {
@@ -1320,25 +1326,6 @@ pub async fn install_runtime(state: AppState, engine: &str) -> Result<Value, Str
     }))
 }
 
-fn walk(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
-    if depth > 4 {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_dir() {
-            walk(&path, depth + 1, found);
-        } else {
-            found.push(path);
-        }
-    }
-}
 
 pub fn import_local(state: &AppState, file_path: &str) -> Result<Value, String> {
     let source = PathBuf::from(file_path.trim());
@@ -2927,6 +2914,26 @@ mod tests {
         assert!(!install_active());
         assert_eq!(install_snapshot()["status"], "installed");
         set_install(Value::Null);
+    }
+
+    #[test]
+    fn model_scanner_shares_one_bounded_walk_for_files_and_dirs() {
+        let root=std::env::temp_dir().join(format!(
+            "dominion-model-scan-{}",uuid::Uuid::new_v4()));
+        let nested=root.join("one").join("two");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("test.gguf"),"gguf").unwrap();
+        std::fs::write(root.join("other.txt"),"other").unwrap();
+        let mut files=Vec::new();
+        scan_model_tree(&root,0,&mut files,ModelEntry::File);
+        assert_eq!(files.len(),2);
+        assert!(files.contains(&nested.join("test.gguf")));
+        let mut dirs=Vec::new();
+        scan_model_tree(&root,0,&mut dirs,ModelEntry::Directory);
+        assert_eq!(dirs.len(),2);
+        assert!(dirs.contains(&root.join("one")));
+        assert!(dirs.contains(&nested));
+        let _=std::fs::remove_dir_all(root);
     }
 
     #[test]
