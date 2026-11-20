@@ -51,6 +51,7 @@ impl AgentLoop for ActiveLoop{
                    Self::PlanExecute(p)=>p.after_model(observation)}
     }
 }
+#[derive(Debug)]
 pub struct RunResult {
     pub response:String,
     pub model_rounds:usize,
