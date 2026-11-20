@@ -619,9 +619,9 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
   return (
     <div className={embedded?"min-w-0":"mx-auto w-full max-w-[1320px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8"}>
       <Headline
-        eyebrow={t('ui.eyebrow.marketplace')}
-        title={embedded?(tab==='market'?'MCP 마켓':tab==='installed'?t('ext.tab.installed'):tab==='plugins'?t('ext.tab.plugins'):t('ext.tab.skills')):t('ext.title')}
-        description={t('ext.description')}
+        eyebrow={embedded?undefined:t('ui.eyebrow.marketplace')}
+        title={embedded?(tab==='market'?'MCP 마켓':tab==='installed'?t('ext.installedTitle'):tab==='plugins'?t('ext.tab.plugins'):t('ext.tab.skills')):t('ext.title')}
+        description={embedded?(tab==='market'?t('ext.marketDescription'):tab==='installed'?t('ext.installedDescription'):tab==='plugins'?t('ext.pluginsDescription'):t('ext.skillsDescription')):t('ext.description')}
         actions={(tab==='market'||tab==='installed')?
           <Action
             variant="secondary"
@@ -712,11 +712,12 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
               }
             />
           </div>
-          <Panel className="min-w-0 p-5">
+          <Panel className="min-w-0 space-y-4 p-4 sm:p-5">
             <div className="flex min-w-0 items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] px-3 py-2">
               <Search size={18} />
               <TextInput
                 value={query}
+                className="!min-w-0 !border-0 !bg-transparent !p-1 !shadow-none !ring-0"
                 placeholder={t('ext.searchPlaceholder')}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && search()}
@@ -728,19 +729,19 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
             <div className="rounded-xl bg-[#FAF7F1] p-3 text-xs leading-5 text-[#7C7469]">
               {t('ext.registryNote')}
             </div>
-            <div className="registry-results">
+            <div className="registry-results grid gap-2.5">
               {catalog.map((x) => (
                 <div
-                  className="flex min-w-0 items-start gap-3 rounded-xl border border-[#E7E0D5] bg-white p-4 hover:border-[#E6C9B8]"
+                  className="flex min-w-0 flex-wrap items-start gap-3 rounded-xl border border-[#E7E0D5] bg-white p-3.5 transition-colors hover:border-[#D7B59E] sm:flex-nowrap"
                   key={x.name}
                 >
                   <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-[#F7E8E1] text-[#C96442]">
                     <Server size={19} />
                   </span>
-                  <div>
-                    <strong>{x.name}</strong>
-                    <p>{x.description || "MCP server"}</p>
-                    <small>{x.packageName || x.url || t('ext.noInstallInfo')}</small>
+                  <div className="min-w-0 flex-1">
+                    <strong className="block truncate text-[13px] font-semibold text-[#392F28]">{x.name}</strong>
+                    <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-[#766C62]">{x.description || "MCP server"}</p>
+                    <small className="mt-1.5 block truncate font-mono text-[10px] text-[#978B7F]" title={x.packageName || x.url || ''}>{x.packageName || x.url || t('ext.noInstallInfo')}</small>
                   </div>
                   {(x.packageName || x.url) &&
                     (mcp.value.some((r: any) => r.name === x.name) ? (
