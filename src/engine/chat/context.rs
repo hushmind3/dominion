@@ -398,6 +398,43 @@ fn context_block_with_manifest(
     Some((block, items, watermark))
 }
 
+/// Budget what the provider will actually see, not raw SQLite transcript bytes.
+/// Full tool evidence remains persisted and re-readable; a tool dump should not
+/// push out the owner's earlier instructions before trace projection compresses it.
+pub(super) fn history_wire_allowance(
+    query:&str, is_room:bool, is_sdk:bool, provider_context_tokens:Option<u64>,
+)->Option<usize>{
+    let provider_cap=provider_context_tokens.map(|tokens|
+        ((tokens as usize).saturating_mul(3)).clamp(8_000,400_000));
+    if is_room{return provider_cap;}
+    let lowered=query.to_lowercase();
+    let continuing_work=[
+        "이어서","계속","고쳐","수정","구현","개발","만들","테스트","분석",
+        "검토","전수","읽어","검색","조사","코드","파일","프로젝트","디버그",
+        "patch","implement","fix","continue","debug","refactor","repo","code",
+        "build","test","search","review","analyze","inspect",
+    ].iter().any(|word|lowered.contains(word));
+    // Action work keeps enough exact recent evidence; explanatory follow-ups
+    // avoid paying to replay many rounds of unrelated HTML and tool receipts.
+    let target=if continuing_work{48_000}else if is_sdk{32_000}else{24_000};
+    Some(provider_cap.unwrap_or(target).min(target))
+}
+
+fn projected_history_bytes(message:&Value,is_room:bool)->usize{
+    let content=message["content"].as_str().unwrap_or("").len();
+    if is_room{return content;}
+    if message["role"]=="tool"{
+        // Completed frames are rendered as bounded receipts by trace_budget.
+        return content.min(1_200).saturating_add(96);
+    }
+    if message["role"]=="assistant" && message["tool_calls"].is_array(){
+        return content.min(800).saturating_add(400);
+    }
+    content.saturating_add(message["reasoning"].as_str()
+        .or_else(||message["metadata"]["providerReasoning"].as_str())
+        .map(|reasoning|reasoning.len().min(1_000)).unwrap_or(0))
+}
+
 pub(super) fn history(
     state: &AppState,
     session_id: &str,
@@ -451,7 +488,7 @@ pub(super) fn history(
     let mut start = all.len().saturating_sub(limit);
     let mut bytes = 0;
     for index in (start..all.len()).rev() {
-        bytes += all[index]["content"].as_str().unwrap_or("").len();
+        bytes += projected_history_bytes(&all[index],is_room);
         if bytes > byte_budget && index + 1 < all.len() {
             start = index + 1;
             break;
@@ -766,6 +803,37 @@ mod tests {
         assert!(greeting.is_none(),"casual chat must not replay tool telemetry");
         assert_eq!(state.store.all("tool_stat").len(),24,
             "prompt optimization must preserve persisted tool evidence");
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+
+    #[test]
+    fn ordinary_chat_reuses_a_small_context_and_action_work_keeps_more() {
+        assert_eq!(history_wire_allowance("왜 입력 토큰이 많아?",false,false,None),Some(24_000));
+        assert_eq!(history_wire_allowance("코드 수정 계속해",false,false,None),Some(48_000));
+        assert_eq!(history_wire_allowance("explain results",false,true,None),Some(32_000));
+        assert_eq!(history_wire_allowance("코드 수정",false,false,Some(5_000)),Some(15_000));
+        assert_eq!(history_wire_allowance("코드 수정",true,false,Some(10_000)),Some(30_000));
+    }
+
+    #[test]
+    fn large_historical_tool_dumps_do_not_evict_small_owner_instructions() {
+        let (state,dir)=state();
+        state.store.put("session",&json!({"id":"session","title":"evidence"}));
+        state.store.write_message(&json!({"session_id":"session","role":"user",
+            "content":"First owner constraint: preserve output artifacts."}));
+        state.store.write_message(&json!({"session_id":"session","role":"assistant",
+            "content":"","tool_calls":[{"id":"call-1","type":"function",
+                "function":{"name":"http_fetch","arguments":"{\"url\":\"https://example.com\"}"}}]}));
+        state.store.write_message(&json!({"session_id":"session","role":"tool",
+            "tool_call_id":"call-1","content":"webpage dump ".repeat(6000)}));
+        state.store.write_message(&json!({"session_id":"session","role":"user",
+            "content":"Now explain the token cost."}));
+        let view=history(&state,"session",None,Some(2_400)).unwrap();
+        assert!(view.iter().any(|m|m["content"].as_str().unwrap_or("")
+            .contains("First owner constraint")));
+        assert!(view.iter().any(|m|m["content"].as_str().unwrap_or("")
+            .contains("Now explain")));
         let _=std::fs::remove_dir_all(dir);
     }
 
