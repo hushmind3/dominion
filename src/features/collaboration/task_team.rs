@@ -727,6 +727,45 @@ mod tests {
         team.tasks[0].resume_id=Some("thr_valid_2026".into());
         team.validate().unwrap();
     }
+
+    #[test] fn local_and_api_workers_keep_distinct_owner_pinned_model_routes(){
+        let dir=std::env::temp_dir().join(format!("dominion-team-mixed-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=crate::config::Config{
+            port:0,data_dir:dir.clone(),workspace:dir.clone(),web_dir:dir.join("web")};
+        let state=AppState::new(config.clone(),crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        state.store.put("provider",&json!({"id":"local","enabled":true,
+            "kind":"openai","name":"Local Qwen","local":true,
+            "baseUrl":"http://127.0.0.1:21435/v1","model":"qwen-local",
+            "toolMode":"native"})).unwrap();
+        state.store.put("provider",&json!({"id":"remote","enabled":true,
+            "kind":"openai","name":"API model","local":false,
+            "baseUrl":"https://api.example.test/v1","model":"api-remote",
+            "toolMode":"native"})).unwrap();
+        let mut team=sample();
+        team.tasks[0].provider_id=Some("local".into());
+        team.tasks[0].model=Some("qwen-local".into());
+        team.tasks[1].mode=Mode::Read;
+        team.tasks[1].checks.clear();
+        team.tasks[1].provider_id=Some("remote".into());
+        team.tasks[1].model=Some("api-remote".into());
+        team.validate().unwrap();
+        let local=input(&team.tasks[0],"lead");
+        let remote=input(&team.tasks[1],"lead");
+        let local_route=crate::engine::gateway::resolve(&state,
+            local["providerId"].as_str().unwrap(),local["model"].as_str()).unwrap();
+        let remote_route=crate::engine::gateway::resolve(&state,
+            remote["providerId"].as_str().unwrap(),remote["model"].as_str()).unwrap();
+        assert!(local_route.local);
+        assert!(!remote_route.local);
+        assert_eq!(local_route.model,"qwen-local");
+        assert_eq!(remote_route.model,"api-remote");
+        assert_ne!(local_route.id,remote_route.id);
+        assert_eq!(local["parentRunId"],remote["parentRunId"]);
+        assert_eq!(local["limits"],remote["limits"]);
+        crate::test_support::cleanup_dir(dir);
+    }
     #[test] fn immutable_child_id_is_scoped_to_parent(){
         assert_ne!(child_id("lead-a","research"),child_id("lead-b","research"));
         assert_eq!(child_id("lead-a","research"),child_id("lead-a","research"));

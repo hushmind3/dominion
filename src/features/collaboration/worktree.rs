@@ -87,6 +87,11 @@ pub async fn prepare(state:&AppState,parent:&str,task:&str)->Result<String,Strin
     let base=base_dir(state)?;
     let id=id_for(parent,task);
     let target=base.join(&id);
+    if state.store.get("team_worktree",&id).is_none()
+        && !git(&source,&["status","--porcelain","--untracked-files=no"]).await?
+            .is_empty() {
+        return Err("Source has uncommitted tracked changes; explicitly commit or clean before isolation".into());
+    }
     let new_record=json!({"id":id,"schemaVersion":1,
         "parentRunId":parent,"taskId":task,
         "sourceRoot":source.to_string_lossy(),"worktreePath":target.to_string_lossy(),

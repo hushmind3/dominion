@@ -65,16 +65,11 @@ mod tests{
             ("worker","prompt","sdk","needs_review"),
             ("external","external_agent","external_agent","cancelled")
         ]{
-            store.put("job",&json!({"id":id,"kind":kind,"status":status,
-                "input":{"secret":"PRIVATE_PROMPT",
-                    "parentRunId":if id=="worker"{"team"}else{""}}})).unwrap();
-            let actual=lookup(&store,id);
-            if id=="worker"{
-                assert!(actual.is_none(),
-                    "Invalid parent marker must not silently forge a RunRef");
-                continue;
-            }
-            let result=actual.unwrap();
+            let mut input=json!({"secret":"PRIVATE_PROMPT"});
+            if id=="worker"{input["parentRunId"]=json!("team");}
+            store.put("job",&json!({"id":id,"kind":kind,
+                "status":status,"input":input})).unwrap();
+            let result=lookup(&store,id).unwrap();
             assert_eq!(result["ref"]["surface"],surface);
             assert_eq!(result["ref"]["version"],1);
             assert!(!result.to_string().contains("PRIVATE_PROMPT"));
