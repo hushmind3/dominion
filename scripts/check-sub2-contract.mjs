@@ -12,6 +12,7 @@ const retired=[
   'src/api/money','src/engine/money','src/db/money.rs',
   'web/src/pages/Money.tsx','web/src/refreshScope.ts',
   'src/api/rsi.rs','src/api/video.rs','src/engine/goal_control.rs',
+  'src/engine/scheduler.rs',
   'web/src/pages/Video.tsx','web/src/pages/SelfImprovement.tsx',
   'rsi/evaluations','benchmark/rsi-evidence',
   // Obsolete documentation that incorrectly advertised the withdrawn APIs.
@@ -49,6 +50,7 @@ for(const path of codePaths){
     ['embedded media',/\bvideo(?:_|\b)|\byoutube(?:_|\b)|\/api\/(?:video|youtube)\b|\bVideoJob\b|\barchived_media_job\b/i],
     ['independent RSI',/\brsi(?:_|\b|[A-Z])|\bRsi[A-Z]|\/api\/rsi\b/i],
     ['orphan goal controller',/\bgoal_control\b|\bGoalControl\b/i],
+    ['detached experiment scheduler',/\b(?:engine::scheduler|schedule_experiments|DOMINION_EXPERIMENT_SCHEDULER|DOMINION_EXPERIMENT_RUNNER)\b/i],
   ];
   for(const [feature,pattern] of forbidden){
     if(pattern.test(text))errors.push(`retired ${feature} reference in ${path}`);
