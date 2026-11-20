@@ -61,6 +61,16 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
  const [routerMessage,setRouterMessage]=useState('')
  const [routerModels,setRouterModels]=useState<RemoteModel[]>([])
  const [routerSearch,setRouterSearch]=useState('')
+ // All sign-in methods share one session persistence and hydration path.
+ // Keep this callback stable: email polling must not restart on parent rerenders.
+ const completeLogin=useCallback(async(session:string,method:'google'|'email')=>{
+  sessionStorage.setItem('dominion_cloud_session',session)
+  setToken(session);setShowLoginOptions(false)
+  setMessage(method==='google'?'Google 계정으로 로그인했습니다.':'이메일 확인으로 로그인했습니다.')
+  try{await Promise.all([fetchModels(session),loadBilling(session)])}
+  catch(error){setMessage('로그인은 완료됐지만 Cloud 정보 조회에 실패했습니다: '+(error as Error).message)}
+ },[])
+ const emailLoginComplete=useCallback(async(session:string)=>completeLogin(session,'email'),[completeLogin])
  useEffect(()=>{
   if(!cloudUrl)return
   const controller=new AbortController()
@@ -106,10 +116,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
     }
     if(response.status==='waiting'||response.status==='processing')continue
     if(response.status!=='done'||!response.token)throw Error(response.error||'Google 인증을 완료하지 못했습니다.')
-    sessionStorage.setItem('dominion_cloud_session',response.token)
-    setToken(response.token);setShowLoginOptions(false);setMessage('Google 계정으로 로그인했습니다.')
-    try{await Promise.all([fetchModels(response.token),loadBilling(response.token)])}
-    catch(error){setMessage('로그인은 완료됐지만 Cloud 정보 조회에 실패했습니다: '+(error as Error).message)}
+    await completeLogin(response.token,'google')
     sessionStorage.removeItem('dominion_cloud_google_native_flight')
     setNativeFlow('')
     void post('/api/cloud-auth/google/ack',{id:nativeFlow}).catch(()=>{})
@@ -119,7 +126,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   }
   void run().catch(error=>{if(active){sessionStorage.removeItem('dominion_cloud_google_native_flight');setMessage((error as Error).message);setNativeFlow('')}})
   return()=>{active=false}
- },[nativeFlow])
+ },[nativeFlow,completeLogin])
  async function loadBilling(session:string){
   const response=await fetch(cloudUrl+'/v1/billing',{headers:{Authorization:'Bearer '+session}})
   if(!response.ok)throw Error('구독 정보를 불러오지 못했습니다.')
@@ -207,10 +214,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
       throw Error(error.error||'Google 계정 인증에 실패했습니다.')
      }
      const data=await response.json() as {token:string}
-     sessionStorage.setItem('dominion_cloud_session',data.token)
-     setToken(data.token);setShowLoginOptions(false);setMessage('Google 계정으로 로그인했습니다.')
-     try{await Promise.all([fetchModels(data.token),loadBilling(data.token)])}
-     catch(error){setMessage('로그인은 완료됐지만 Cloud 정보 조회에 실패했습니다: '+(error as Error).message)}
+     await completeLogin(data.token,'google')
     }catch(error){setMessage((error as Error).message)}finally{setBusy(false)}
    }})
    window.google.accounts.id.renderButton(button.current,{theme:'outline',size:'large',text:'signin_with',width:240})
@@ -223,13 +227,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   script.onerror=()=>{if(active)setMessage('Google 로그인 창을 불러오지 못했습니다. 네트워크나 차단 설정을 확인해 주세요.')}
   document.head.appendChild(script)
   return()=>{active=false;script.remove()}
- },[showLoginOptions,googleClientId,desktopGoogleReady])
- const emailLoginComplete=useCallback(async(session:string)=>{
-  sessionStorage.setItem('dominion_cloud_session',session)
-  setToken(session);setShowLoginOptions(false);setMessage('이메일 확인으로 로그인했습니다.')
-  try{await Promise.all([fetchModels(session),loadBilling(session)])}
-  catch(error){setMessage('로그인 완료 · Cloud 정보 조회 실패: '+(error as Error).message)}
- },[])
+ },[showLoginOptions,googleClientId,desktopGoogleReady,completeLogin])
  function logout(){
   sessionStorage.removeItem('dominion_cloud_session');setIdentity(null);setBilling(null);setToken('');setModels([]);setSelected('');setModelSearch('');setMessage('DOMINION Cloud에서 로그아웃했습니다.');
   window.google?.accounts.id.disableAutoSelect?.()
