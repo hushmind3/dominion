@@ -2,16 +2,16 @@ mod api;
 mod build_identity;
 mod bootstrap;
 mod config;
-mod db;
 mod engine;
+mod host;
 mod conversation;
 mod events;
 mod features;
 mod integrations;
-mod migrations;
 mod platform;
-mod state;
-mod vault;
+mod storage;
+pub(crate) use crate::host::state;
+pub(crate) use crate::storage::{sqlite as db, migrations, vault};
 #[cfg(test)]
 mod test_support;
 
