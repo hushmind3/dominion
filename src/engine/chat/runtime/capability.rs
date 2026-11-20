@@ -77,7 +77,8 @@ fn rank<'a>(catalog:&'a [Value],query:&str,limit:usize)->Vec<&'a Value>{
     let mut candidates=catalog.iter().filter_map(|definition|{
         let name=tool_name(definition);
         let description=definition["function"]["description"].as_str().unwrap_or("");
-        let score=dominion_agent_sdk::tool_relevance(name,description,query);
+        let score=dominion_agent_sdk::tool_relevance_with_schema(
+            name,description,&definition["function"]["parameters"],query);
         (score>0).then_some((score,definition))
     }).collect::<Vec<_>>();
     candidates.sort_by(|a,b|b.0.cmp(&a.0).then_with(||tool_name(a.1).cmp(tool_name(b.1))));
