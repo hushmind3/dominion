@@ -146,6 +146,33 @@ pub fn enqueue_once(state: &AppState, id: &str, kind: &str, input: Value) -> Opt
 /// Recovers work left behind by a crash: running jobs are re-queued (unless
 /// they already exhausted retries) and running executions become interrupted.
 pub fn recover(state: &AppState) {
+    // CLI workers are separate processes. After a backend restart their
+    // previous result is unknown; never infer completion or launch the same
+    // external inspection again just because the parent job was re-queued.
+    let unfinished_external=match state.store.running_recovery_records("external_agent_run"){
+        Ok(records)=>records,
+        Err(error)=>{
+            state.store.audit("recovery.external_agents_read_failed",
+                json!({"error":error}));
+            Vec::new()
+        }
+    };
+    let mut external_jobs=std::collections::HashSet::new();
+    for mut external in unfinished_external {
+        if let Some(job_id)=external["jobId"].as_str(){
+            external_jobs.insert(job_id.to_string());
+        }
+        external["status"]=json!("needs_review");
+        external["errorClass"]=json!("restart_unknown");
+        external["reason"]=json!("외부 실행기가 재시작 전에 종료되었으며 결과를 확인하지 못했습니다.");
+        external["recoveredAt"]=json!(chrono::Utc::now().to_rfc3339());
+        if let Some(saved)=state.store.put("external_agent_run",&external){
+            state.bus.record("external_agent_run",&saved);
+        }else{
+            state.store.audit("recovery.external_agent_write_failed",
+                json!({"externalRunId":external["id"]}));
+        }
+    }
     let jobs = match state.store.active_jobs() {
         Ok(jobs) => jobs,
         Err(error) => {
@@ -161,7 +188,17 @@ pub fn recover(state: &AppState) {
         }
     };
     for job in jobs {
+        let external_unknown=job["id"].as_str()
+            .is_some_and(|id|external_jobs.contains(id));
         if job.get("status").and_then(|value| value.as_str()) != Some("running") {
+            if external_unknown && job["status"]=="queued" {
+                if let Some(id)=job["id"].as_str(){
+                    let saved=state.store.patch_if("job",id,"status",&json!("queued"),
+                        &json!({"status":"needs_review","recovered":true,
+                            "error":"외부 실행 결과가 미확정이므로 자동 재실행하지 않습니다."}));
+                    if let Some(saved)=saved{state.bus.record("job",&saved);}
+                }
+            }
             continue;
         }
         let attempts = job
@@ -193,15 +230,18 @@ pub fn recover(state: &AppState) {
         let unknown_external_result = job_session.is_some_and(|session| {
             uncertain_sessions.as_ref().is_none_or(|sessions| sessions.contains(session))
         });
-        let uncertain = flagged || unknown_external_result;
+        let uncertain = flagged || unknown_external_result || external_unknown;
         updated["status"] = json!(if attempts >= 3 || uncertain {
             "needs_review"
         } else {
             "queued"
         });
         if uncertain {
-            updated["error"] =
-                json!("재시작 전 작업 결과를 확정할 수 없습니다. 실행 기록을 확인하세요.");
+            updated["error"] =json!(if external_unknown{
+                "외부 실행 결과가 미확정이므로 자동 재실행하지 않습니다."
+            }else{
+                "재시작 전 작업 결과를 확정할 수 없습니다. 실행 기록을 확인하세요."
+            });
         }
         state.store.put("job", &updated);
         if matches!(job["kind"].as_str(), Some("room" | "meeting")) {
@@ -738,6 +778,31 @@ mod tests {
         AppState::new(config, store, vault)
     }
 
+    #[test]
+    fn restart_fences_external_inspector_and_parent_job_without_replay(){
+        let state=temp_state();
+        state.store.put("job",&json!({"id":"external-job","kind":"prompt",
+            "status":"running","attempts":1,"input":{"sessionId":"child"}})).unwrap();
+        state.store.put("external_agent_run",&json!({
+            "id":"external:external-job","jobId":"external-job",
+            "sessionId":"child","runtime":"qwen","status":"running",
+            "nativeToolReceipts":false
+        })).unwrap();
+        recover(&state);
+        let external=state.store.get("external_agent_run","external:external-job")
+            .unwrap();
+        assert_eq!(external["status"],"needs_review");
+        assert_eq!(external["errorClass"],"restart_unknown");
+        assert!(external["recoveredAt"].is_string());
+        let job=state.store.get("job","external-job").unwrap();
+        assert_eq!(job["status"],"needs_review");
+        assert_eq!(job["recovered"],true);
+        assert!(job["error"].as_str().unwrap().contains("자동 재실행"));
+        recover(&state);
+        assert_eq!(state.store.get("job","external-job").unwrap()["status"],"needs_review");
+        assert_eq!(state.store.get("external_agent_run","external:external-job")
+            .unwrap()["status"],"needs_review");
+    }
     #[test]
     fn dependency_scheduler_does_not_start_unfinished_or_failed_predecessors(){
         let state=temp_state();
