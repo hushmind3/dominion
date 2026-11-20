@@ -213,3 +213,45 @@ mod native_acceptance_tests {
             "tool":"shell_exec","contains":"cargo test"}));
     }
 }
+
+#[cfg(test)]
+mod algorithm_profile_api_tests {
+    use super::*;
+    use crate::{config::Config,db::Store,vault::Vault};
+    fn state()->(AppState,std::path::PathBuf){
+        let root=std::env::temp_dir().join(format!("dominion-profile-api-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=Config{port:0,data_dir:root.clone(),web_dir:root.join("web"),workspace:root.clone()};
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        (state,root)
+    }
+    #[tokio::test]
+    async fn job_api_rejects_unknown_and_nonstring_profiles_before_queueing(){
+        let (state,root)=state();
+        for id in [json!("uninstalled"),json!(42),json!(null)]{
+            let response=create(State(state.clone()),Json(json!({"kind":"prompt",
+                "input":{"prompt":"summarize","algorithmId":id}}))).await;
+            assert_eq!(response.status(),StatusCode::BAD_REQUEST);
+        }
+        assert!(state.store.all("job").is_empty());
+        drop(state);
+        let _=std::fs::remove_dir_all(root);
+    }
+    #[tokio::test]
+    async fn focused_and_legacy_jobs_keep_exact_saved_input_contract(){
+        let (state,root)=state();
+        let selected=create(State(state.clone()),Json(json!({"kind":"prompt",
+            "input":{"prompt":"summarize","algorithmId":"focused-v1"}}))).await;
+        assert_eq!(selected.status(),StatusCode::ACCEPTED);
+        let default=create(State(state.clone()),Json(json!({"kind":"prompt",
+            "input":{"prompt":"summarize"}}))).await;
+        assert_eq!(default.status(),StatusCode::ACCEPTED);
+        let jobs=state.store.all("job");
+        assert_eq!(jobs.len(),2);
+        assert!(jobs.iter().any(|job|job["input"]["algorithmId"]=="focused-v1"));
+        assert!(jobs.iter().any(|job|job["input"]["algorithmId"].is_null()));
+        drop(state);
+        let _=std::fs::remove_dir_all(root);
+    }
+}

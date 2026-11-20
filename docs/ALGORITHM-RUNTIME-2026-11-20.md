@@ -58,12 +58,34 @@ This is **per-run dependency injection**, not a dynamically installed plugin ABI
 
 The model and selected algorithm cannot add new tools, change a tool schema, alter the read-only/effect bit, skip the host approval dialog, discard a durable receipt, rewrite the pinned checkpoint, bypass per-run budgets or accept an unobserved write. `Kernel` checks name/description/schema/classification against the original host catalog **before invoking the model**; writes still pass through the host and Journal.
 
+## Actual product job selection — implemented
+
+The Rust product now accepts an optional algorithm profile **per job**, independently of model/provider selection:
+
+```json
+{"kind":"prompt","input":{"prompt":"Inspect the repository and fix the bug","algorithmId":"focused-v1"}}
+```
+
+For the existing native SDK compatibility endpoint:
+
+```json
+{"instruction":"Inspect the repository and fix the bug","algorithmId":"focused-v1"}
+```
+
+The default when omitted is `standard-v1`. The allowlist lives under `src/features/cognition/profiles.rs`, not inside the Rust execution kernel. `focused-v1` uses shorter model plans and a compact context view for non-VerifyFirst jobs; both profiles share the same durable effect admission and approval rules.
+
+The job record pins `nativeAlgorithm: {format, id, revision}` before any provider/model call. The SDK snapshot separately pins `algorithmId` before any model invocation or external tool call. On recovery, either an ID/revision change or a snapshot mismatch fails closed instead of silently switching policies. A preexisting, unpinned snapshot can resume only with the original default profile. Increment the immutable revision when algorithm semantics change; this is an explicit implementation revision, **not a source-code-derived cryptographic hash**.
+
+The TypeScript SDK exposes `AlgorithmId` on both `jobs.create` and `nativeRuns.start`; SDK run responses expose `algorithmId` and `algorithmRevision`. No new UI tab, menu, permanent memory or global runtime setting is created.
+
 ## Tests and scope
 
 ```sh
 cargo test -p dominion-agent-runtime --lib
 cargo test -p dominion-agent-algorithms --lib
 cargo test -p dominion-agent-sdk --test algorithm_policy_injection
+cargo test --bin dominion-rust features::cognition::profiles::tests
+cargo test --bin dominion-rust api::jobs::algorithm_profile_api_tests
 cargo test -p dominion-agent-sdk --lib
 node --test scripts/algorithm-boundary.test.mjs
 ```
