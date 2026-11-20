@@ -1,12 +1,13 @@
 import {DialogBackdrop,DialogPanel} from '../components/Dialog'
-import {Button,TextInput,SelectInput} from '../components/Primitives'
+import {Button,TextInput} from '../components/Primitives'
+import {ChannelEditor} from '../components/ChannelEditor'
 import {useState} from 'react'
-import {Activity,Blocks,BookOpenText,PackagePlus,Sparkles,Server,Check,ExternalLink,Globe2,Github,KeyRound,Link2,MessageCircle,RadioTower,Settings2,UsersRound,X} from 'lucide-react'
+import {Activity,Blocks,BookOpenText,PackagePlus,Sparkles,Server,Check,Globe2,Github,KeyRound,Link2,RadioTower,Settings2,X} from 'lucide-react'
 import {del,post} from '../api'
 import {Action,FormField,Notice,Panel,StateTag,Subheading,useRemote} from '../components/UI'
 import {t,useLocale} from '../i18n'
 import {ChannelDirectory} from '../components/ChannelDirectory'
-import {channelDraftMissing,type Channel,type ChannelEntry} from '../utils/channelView'
+import {type Channel,type ChannelEntry} from '../utils/channelView'
 import {ExtensionsPage,type ExtensionTab} from './Extensions'
 import {CapabilitiesPage} from './Capabilities'
 import {ConnectedAccounts} from '../components/ConnectedAccounts'
@@ -31,7 +32,6 @@ export function ConnectionsPage(){
  const [oauthSaving,setOauthSaving]=useState(false),[oauthError,setOauthError]=useState('');
  const [busyAction,setBusyAction]=useState<string|null>(null);
  const [refreshing,setRefreshing]=useState(false);
- const editorMissing=editor?channelDraftMissing(editor.entry,editor.record):[];
  const openEditor=(entry:ChannelEntry,existing?:Channel)=>{
   if(!entry.available)return;
   const record:any=existing?{...existing}:{name:entry.name,kind:entry.id,enabled:false,syncRoomMessages:entry.mode==='outbound',mentionOnly:true,roomId:'',roomPolicy:'all_or_named',agentId:'',providerId:'',model:''};
@@ -118,34 +118,10 @@ export function ConnectionsPage(){
    </div>
    <div className="flex justify-end gap-2 border-t border-[#EFE9DF] p-5"><Action variant="secondary" disabled={oauthSaving} onClick={()=>setOauthEditor(null)}>{t('conn.cancel')}</Action><Action disabled={oauthSaving||!oauthEditor.clientId.trim()||(oauthEditor.id==='github'&&!oauthEditor.clientSecret.trim())} onClick={()=>void saveOAuthApp()}><Check size={16}/>{t('conn.oauthAppSave')}</Action></div>
   </DialogPanel></DialogBackdrop>}
-  {editor&&<DialogBackdrop onDismiss={()=>{if(!saving)setEditor(null)}}><DialogPanel size="wide" aria-label={editor.entry.name+' '+t('conn.edit')}>
-   <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#EFE9DF] bg-white p-5"><div><small>CHANNEL CONFIGURATION · {editor.entry.id.toUpperCase()}</small><h2>{editor.record.id?t('conn.edit'):t('conn.new')}</h2></div><Button size="icon" variant="ghost" disabled={saving} onClick={()=>setEditor(null)} aria-label={t('conn.cancel')}><X size={18}/></Button></div>
-   <div className="grid gap-4 p-5">
-    <div className="mb-5 flex items-center gap-4 rounded-xl border border-[#EED9CC] bg-[#F7E8E1] p-5"><div className="grid size-12 shrink-0 place-items-center rounded-xl bg-[#F1DCCF] text-[#C96442]"><MessageCircle size={21}/></div><div><strong>{editor.entry.name}</strong><p>{editor.entry.description}</p></div></div>
-    <FormField label={t('conn.name')}><TextInput autoComplete="off" value={editor.record.name||''} onChange={e=>setEditor({...editor,record:{...editor.record,name:e.target.value}})}/></FormField>
-    <h3 className="border-t border-[#EFE9DF] pt-4 text-sm font-bold text-[#3A342D]">{t('conn.editorCredentials')}</h3>
-    <p className="text-xs leading-5 text-[#7C7469]">{t('conn.editorCredentialsHint')}</p>
-    {editor.entry.fields.map(field=><FormField key={field.key} label={field.label+(field.required?' *':'')} hint={field.type==='secret'&&editor.record.id&&editor.record.credentialsPresent?.[field.key]?t('conn.dlg.secretHint'):undefined}><TextInput autoComplete={field.type==='secret'?'new-password':'off'} type={field.type==='secret'?'password':field.type==='url'?'url':'text'} value={editor.record[field.key]||''} placeholder={field.placeholder||''} onChange={e=>setEditor({...editor,record:{...editor.record,[field.key]:e.target.value}})}/></FormField>)}
-    <h3 className="border-t border-[#EFE9DF] pt-4 text-sm font-bold text-[#3A342D]">{t('conn.editorRouting')}</h3>
-    <FormField label={editor.entry.requiresRoom?t('conn.roomOrAgent'):t('conn.replyMode')}><SelectInput  value={editor.record.roomId||''} onChange={e=>setEditor({...editor,record:{...editor.record,roomId:e.target.value}})}><option value="">{editor.entry.requiresRoom?t('conn.pickRoom'):t('conn.singleAgent')}</option>{rooms.value.map(r=><option value={r.id} key={r.id} disabled={!!editor.entry.maxRoomParticipants&&(r.agentIds?.length||0)>editor.entry.maxRoomParticipants}>{t('conn.dlg.roomOption',{name:r.name,count:r.agentIds?.length||0})}</option>)}</SelectInput></FormField>
-    {editor.record.roomId&&<div className="rounded-xl border border-[#EED9CC] bg-[#F7E8E1] p-3 text-xs leading-6 text-blue-800"><UsersRound size={19}/><div><strong>{t('conn.roomNote')}</strong><p>{editor.entry.maxRoomParticipants?t('conn.dlg.maxParticipants',{count:editor.entry.maxRoomParticipants}):editor.entry.mode==='outbound'?t('conn.dlg.outboundNote'):t('conn.dlg.roomPolicyNote')}</p></div></div>}
-    {editor.record.roomId&&editor.entry.mode!=='outbound'&&<FormField label={t('conn.policy')}><SelectInput  value={editor.record.roomPolicy||'all_or_named'} onChange={e=>setEditor({...editor,record:{...editor.record,roomPolicy:e.target.value}})}><option value="all_or_named">{t('conn.dlg.policyAll')}</option><option value="named_only">{t('conn.dlg.policyNamed')}</option><option value="round_robin">{t('conn.dlg.policyRound')}</option></SelectInput></FormField>}
-    {editor.entry.mode!=='outbound'&&<>
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><FormField label={t('conn.agent')}><SelectInput  value={editor.record.agentId||''} onChange={e=>setEditor({...editor,record:{...editor.record,agentId:e.target.value}})}><option value="">{t('conn.dlg.pickAgent')}</option>{agents.value.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</SelectInput></FormField><FormField label={t('conn.provider')}><SelectInput  value={editor.record.providerId||''} onChange={e=>setEditor({...editor,record:{...editor.record,providerId:e.target.value}})}><option value="">{t('conn.dlg.agentDefault')}</option>{providers.value.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</SelectInput></FormField></div>
-    <FormField label={t('conn.model')}><TextInput  value={editor.record.model||''} onChange={e=>setEditor({...editor,record:{...editor.record,model:e.target.value}})} placeholder={t('conn.dlg.agentDefaultModel')}/></FormField>
-    <label className="inline-flex items-center gap-2 text-sm text-[#4A443C]"><TextInput type="checkbox" checked={editor.record.mentionOnly!==false} onChange={e=>setEditor({...editor,record:{...editor.record,mentionOnly:e.target.checked}})}/> {t('conn.mentionOnly')}</label>
-    </>}
-    <h3 className="border-t border-[#EFE9DF] pt-4 text-sm font-bold text-[#3A342D]">{t('conn.editorBehavior')}</h3>
-    {editor.entry.id==='discord'&&<label className="inline-flex items-center gap-2 text-sm text-[#4A443C]"><TextInput type="checkbox" checked={Boolean(editor.record.replyMentionBots)} onChange={e=>setEditor({...editor,record:{...editor.record,replyMentionBots:e.target.checked}})}/> {t('conn.dlg.discordMention')}</label>}
-    {editor.entry.id==='discord'&&<label className="inline-flex items-center gap-2 text-sm text-[#4A443C]"><TextInput type="checkbox" checked={Boolean(editor.record.toolsEnabled)} onChange={e=>setEditor({...editor,record:{...editor.record,toolsEnabled:e.target.checked}})}/> {t('conn.dlg.discordTools')}</label>}
-    {editor.record.roomId&&<label className="inline-flex items-center gap-2 text-sm text-[#4A443C]"><TextInput type="checkbox" checked={Boolean(editor.record.syncRoomMessages)} onChange={e=>setEditor({...editor,record:{...editor.record,syncRoomMessages:e.target.checked}})}/> {t('conn.dlg.syncRoom')}</label>}
-    <label className="inline-flex items-center gap-2 text-sm text-[#4A443C]"><TextInput type="checkbox" checked={Boolean(editor.record.enabled)} onChange={e=>setEditor({...editor,record:{...editor.record,enabled:e.target.checked}})}/> {t('conn.enable')}</label>
-    {editor.record.webhookPath&&<div className="rounded-xl bg-[#FAF7F1] p-3 font-mono text-xs text-[#4A443C]"><strong>{t('conn.webhook')}</strong><code>{editor.record.webhookPath}</code><small>{t('conn.dlg.webhookNote')}</small></div>}
-    {(editor.entry.instructions?.length||0)>0&&<div className="rounded-xl border border-[#E7E0D5] p-4 text-xs leading-6"><strong>{t('conn.instructions')}</strong><ol>{(editor.entry.instructions||[]).map((t,i)=><li key={i}>{t}</li>)}</ol><a href={editor.entry.docs} target="_blank" rel="noreferrer">{t('conn.openDocs')} <ExternalLink size={13}/></a></div>}
-   </div>
-   {!!editorMissing.length&&<p role="status" className="mx-5 mb-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">{t('conn.fieldsRequired',{fields:editorMissing.map(field=>field==='roomId'?t('conn.roomOrAgent'):field==='name'?t('conn.name'):field).join(', ')})}</p>}
-   {error&&<div className="px-5"><Notice message={error}/></div>}
-   <div className="sticky bottom-0 z-10 flex flex-wrap justify-end gap-2 border-t border-[#EFE9DF] bg-white p-5"><Action variant="secondary" disabled={saving} onClick={()=>setEditor(null)}>{t('conn.cancel')}</Action><Action onClick={save} disabled={saving||editorMissing.length>0}><Check size={16}/>{t('conn.save')}</Action></div>
-  </DialogPanel></DialogBackdrop>}
+  {editor&&<ChannelEditor editor={editor} rooms={rooms.value} agents={agents.value}
+   providers={providers.value} saving={saving} error={error}
+   onChange={record=>setEditor(previous=>previous?{...previous,record}:null)}
+   onClose={()=>{if(!saving)setEditor(null)}} onSave={()=>void save()}/>}
+
  </div>
 }
