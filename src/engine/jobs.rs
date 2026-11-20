@@ -430,7 +430,7 @@ pub fn start(state:AppState){
             crate::engine::chat::expire_stale_approvals(&state);
         }
     });
-    // No background model learning/RSI sweeps outside user-initiated work.
+    // No detached background model-learning sweeps outside user-initiated work.
 }
 
 fn next_queued(state: &AppState) -> Option<Value> {
@@ -564,14 +564,10 @@ async fn run_job(state: AppState, job: Value) {
     let result = match kind.as_str() {
         "room" | "meeting" => rooms::run(&context, &job).await,
         "prompt" => run_prompt(&context, &job).await,
-        "rsi_compare"|"rsi_evolve"|"rsi_generation" => Err(
-            "needs_review: 독립 RSI 캠페인은 종료되었습니다. 기존 작업 기록은 보존했습니다.".into()),
         "resume" => run_resume(&context, &job).await,
         "learn" => learning::run(&context, &job).await,
         "reflect" => reflect::run(&context, &job).await,
         "discord" => crate::engine::discord::run(&context, &job).await,
-        "video"|"youtube_upload" => Err(
-            "needs_review: 내장 영상·오디오 제작은 종료되었습니다. 연결 채널에서 외부 생성 도구를 사용하세요.".into()),
         other => Err(format!("지원하지 않는 작업 종류입니다: {other}")),
     };
 
@@ -667,11 +663,6 @@ pub(crate) async fn run_prompt(context:&JobContext,job:&Value)->Result<Value,Str
  let input=job.get("input").cloned().unwrap_or_else(||json!({}));
  let prompt=input["prompt"].as_str().unwrap_or("").trim().to_owned();
  if prompt.is_empty(){return Err("작업 입력(prompt)이 비어 있습니다.".into());}
- if input["rsiSourceDir"].is_string()||input["rsiCampaignId"].is_string()
-    ||input["rsiNativeInduction"]==true{
-    return Ok(json!({"status":"needs_review",
-      "reason":"자동 RSI 소스 개선 작업은 종료되었습니다. 일반 코딩 작업으로 다시 요청하세요."}));
- }
  if let Some(result)=job.pointer("/promptState/result"){
     return Ok(result.clone());
  }
@@ -989,17 +980,6 @@ mod tests {
             "a second learning job must wait while one is running"
         );
         let _ = std::fs::remove_dir_all(&state.config.data_dir);
-    }
-
-    #[test]
-    fn retired_legacy_generation_falls_back_to_owner_review(){
-        let state=temp_state();
-        let job=state.store.put("job",&json!({
-            "kind":"rsi_generation","status":"queued","input":{}
-        })).unwrap();
-        let current=state.store.get("job",job["id"].as_str().unwrap()).unwrap();
-        assert!(matches!(current["status"].as_str(),Some("queued")));
-        assert_eq!(current["kind"],"rsi_generation");
     }
 
     #[test]
