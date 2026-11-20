@@ -53,7 +53,7 @@ pub fn definitions() -> Vec<Value> {
         tool("shell_exec", "Run a shell command on this computer and return stdout/stderr (approval required)", object(json!({"command": text("Shell command line"), "cwd": text("Optional absolute working directory")}), vec!["command"])),
         tool("terminal_exec", "Run an executable with an argument array without a shell (approval required)", object(json!({"command": text("Executable"), "args": json!({"type": "array", "items": {"type": "string"}})}), vec!["command"])),
         tool("web_search", "Search the public web for current information", object(json!({"query": text("Search query")}), vec!["query"])),
-        tool("http_fetch", "Fetch a URL and return its readable text content", object(json!({"url": text("HTTP or HTTPS URL")}), vec!["url"])),
+        tool("http_fetch", "Fetch readable page text, excluding HTML script/style/navigation. Returns a short page with nextOffset; follow it to read more, instead of injecting entire pages into model context.", object(json!({"url": text("HTTP or HTTPS URL"), "offset": json!({"type":"integer","minimum":0,"description":"Unicode character offset; use prior nextOffset"}), "maxChars": json!({"type":"integer","minimum":1000,"maximum":16000,"description":"Page size, default 6000; request larger only when needed"})}), vec!["url"])),
         tool("memory_store", "Save a grounded memory for this agent. Quote the user's exact words; invented facts are rejected. Shared memories are managed by the user.", object(json!({"text": text("Fact to remember, maximum 1600 characters"), "evidenceQuote": text("Exact quote from the current user message supporting the fact"), "sourceMessageId": text("Optional earlier source message ID"), "type": json!({"type":"string","enum":["fact","preference","decision","procedure","lesson"]}), "key": text("Optional stable fact key; a new value replaces the previous value for this key"), "scope": json!({"type":"string","enum":["agent"]})}), vec!["text", "evidenceQuote"])),
         tool("memory_search", "Find saved knowledge relevant to a topic", object(json!({"query": text("Search query")}), vec!["query"])),
         tool("skill_read", "Read a page of the full instructions of one enabled skill. Use nextOffset to continue if hasMore=true.", object(json!({"skillId": text("Exact enabled skill ID from the index"), "offset":json!({"type":"integer","minimum":0,"description":"Optional Unicode character offset; start with 0, then use nextOffset"})}), vec!["skillId"])),
@@ -425,7 +425,9 @@ pub async fn execute(
         }
         "http_fetch" => {
             let url = required_arg(args, "url")?;
-            http_fetch(&url).await
+            let offset = args["offset"].as_u64().unwrap_or(0).min(1_000_000) as usize;
+            let page_chars = args["maxChars"].as_u64().unwrap_or(6_000).clamp(1_000,16_000) as usize;
+            http_fetch_page(&url, offset, page_chars).await
         }
         "memory_store" => {
             let scope = crate::engine::memory::MemoryScope::for_session(
@@ -1625,7 +1627,7 @@ fn append_http_chunk(output:&mut Vec<u8>,chunk:&[u8])->bool {
     chunk.len()>room
 }
 
-pub(crate) async fn http_fetch(url: &str) -> Result<Value, String> {
+pub(crate) async fn http_fetch_page(url: &str, offset: usize, page_chars: usize) -> Result<Value, String> {
     let mut current=public_http_url(url)?;
     for redirect in 0..=HTTP_REDIRECT_LIMIT {
         let hostname=current.host_str().ok_or("URL 호스트가 없습니다.")?
@@ -1676,14 +1678,18 @@ pub(crate) async fn http_fetch(url: &str) -> Result<Value, String> {
             }
         }
         let body=String::from_utf8_lossy(&bytes);
-        let text=if content_type.contains("html") {strip_html(&body)} else {body.into_owned()};
-        let clipped=text.chars().take(60_000).collect::<String>();
-        truncated|=clipped.len()!=text.len();
-        return Ok(json!({
-            "status":status,"contentType":content_type,"text":clipped,
-            "truncated":truncated,"maxResponseBytes":HTTP_FETCH_LIMIT,
-            "redirects":redirect
-        }));
+        let readable=if content_type.to_ascii_lowercase().contains("html") {
+            strip_html(&body)
+        } else {
+            body.into_owned()
+        };
+        let mut page = text_page(&readable, offset, page_chars);
+        page["status"] = json!(status);
+        page["contentType"] = json!(content_type);
+        page["truncated"] = json!(truncated);
+        page["maxResponseBytes"] = json!(HTTP_FETCH_LIMIT);
+        page["redirects"] = json!(redirect);
+        return Ok(page);
     }
     Err("http_fetch 리다이렉션 상한을 초과했습니다.".into())
 }
@@ -1761,29 +1767,67 @@ fn percent_decode(value: &str) -> String {
     String::from_utf8_lossy(&out).to_string()
 }
 
+
+fn text_page(text: &str, offset: usize, page_chars: usize) -> Value {
+    let total_chars = text.chars().count();
+    let begin = offset.min(total_chars);
+    let end = begin.saturating_add(page_chars.clamp(1_000,16_000)).min(total_chars);
+    let page = text.chars().skip(begin).take(end - begin).collect::<String>();
+    json!({
+        "text": page,
+        "offset": begin,
+        "nextOffset": (end < total_chars).then_some(end),
+        "hasMore": end < total_chars,
+        "totalChars": total_chars,
+    })
+}
+
+/// Render article text, not the site's script/style bundles or navigation chrome.
+/// A subsequent http_fetch call can request any Unicode-character page of this
+/// deterministic text; nothing needs to be duplicated in the next model prompt.
 fn strip_html(html: &str) -> String {
-    let mut out = String::with_capacity(html.len() / 2);
-    let mut in_tag = false;
-    for ch in html.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => {
-                in_tag = false;
-                out.push(' ');
-            }
-            _ if !in_tag => out.push(ch),
-            _ => {}
+    let lower=html.to_ascii_lowercase();
+    let mut text=String::with_capacity(html.len().min(65_536));
+    let mut cursor=0usize;
+    while cursor < html.len() {
+        let Some(rel)=html[cursor..].find('<') else {
+            text.push_str(&html[cursor..]);
+            break;
+        };
+        let open=cursor+rel;
+        text.push_str(&html[cursor..open]);
+        if lower[open..].starts_with("<!--") {
+            cursor=lower[open+4..].find("-->")
+                .map(|pos|open+4+pos+3).unwrap_or(html.len());
+            continue;
         }
+        let Some(close_rel)=html[open..].find('>') else {break;};
+        let close=open+close_rel;
+        let tag=lower[open+1..close].trim();
+        let name=tag.trim_start_matches('/')
+            .split(|ch:char|ch.is_ascii_whitespace()||ch=='/')
+            .next().unwrap_or("");
+        if !tag.starts_with('/') && matches!(name,
+            "script"|"style"|"noscript"|"template"|"svg"|"head"|"nav"|"footer"|"aside")
+        {
+            let closer=format!("</{name}");
+            cursor=lower[close+1..].find(&closer)
+                .and_then(|offset|{
+                    let at=close+1+offset;
+                    lower[at..].find('>').map(|end|at+end+1)
+                }).unwrap_or(html.len());
+            text.push(' ');
+            continue;
+        }
+        if matches!(name,"p"|"div"|"br"|"li"|"article"|"section"|"h1"|"h2"|"h3"|"h4"|"tr") {
+            text.push(' ');
+        }
+        cursor=close+1;
     }
-    out.replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&nbsp;", " ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    text.replace("&amp;","&").replace("&lt;","<").replace("&gt;",">")
+        .replace("&quot;","\"").replace("&#39;","'")
+        .replace("&nbsp;"," ")
+        .split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[cfg(test)]
@@ -2267,6 +2311,37 @@ mod tests {
         let redirected=origin.join("http://127.0.0.1:4317/private").unwrap();
         assert!(public_http_url(redirected.as_str()).is_err(),
             "redirect must not bypass local address protection");
+    }
+
+
+    #[test]
+    fn html_extraction_excludes_site_chrome_and_preserves_article() {
+        let html=r#"<html><head><title>Noise</title><style>.huge{}</style></head>
+            <body><nav>Sign in and unrelated links</nav>
+            <article><h1>Research result</h1><p>Evidence &amp; explanation.</p></article>
+            <script>window.__NEXT_DATA__ = "very large repeated blob";</script>
+            <footer>Legal menu</footer></body></html>"#;
+        let clean=strip_html(html);
+        assert!(clean.contains("Research result Evidence & explanation."),"{clean}");
+        for unused in ["Noise","huge","Sign in","NEXT_DATA","Legal menu"] {
+            assert!(!clean.contains(unused),"{clean}");
+        }
+    }
+
+    #[test]
+    fn fetched_text_pages_are_unicode_exact_and_recoverable() {
+        let original="가나다라마바사ABC123".repeat(1100);
+        let mut offset=0usize;
+        let mut reconstructed=String::new();
+        loop {
+            let page=text_page(&original,offset,1000);
+            assert!(page["text"].as_str().unwrap().chars().count()<=1000);
+            reconstructed.push_str(page["text"].as_str().unwrap());
+            let Some(next)=page["nextOffset"].as_u64() else {break};
+            assert!(next as usize>offset);
+            offset=next as usize;
+        }
+        assert_eq!(reconstructed,original);
     }
 
     #[test]
