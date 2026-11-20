@@ -31,6 +31,27 @@ impl LeaseGuard {
         // engine must not both believe they own the session.
         let owner = format!("{}:{}", state.instance_id, uuid::Uuid::new_v4());
         state.store.acquire_lease(&id, &owner, ttl_ms)?;
+        Some(Self::from_committed_lease(state,id,owner,ttl))
+    }
+
+    /// Shared-read/exclusive-write workspace lock for Task Teams.
+    /// Read workers may run in parallel, but a writer waits for all readers
+    /// across independent engine instances to release their durable leases.
+    pub fn acquire_workspace(
+        state:&AppState,mode:&str,
+    )->Option<Self>{
+        if !matches!(mode,"read"|"write"){return None;}
+        let workspace=std::fs::canonicalize(&state.config.workspace).ok()?;
+        let scope=workspace.to_string_lossy().to_string();
+        let id=format!("session:task-workspace:{}",uuid::Uuid::new_v4());
+        let owner=format!("{}:{}",state.instance_id,uuid::Uuid::new_v4());
+        state.store.acquire_workspace_access(&id,&owner,
+            LEASE_TTL.as_millis() as i64,&scope,mode)?;
+        Some(Self::from_committed_lease(state,id,owner,LEASE_TTL))
+    }
+
+    fn from_committed_lease(state:&AppState,id:String,owner:String,ttl:Duration)->Self {
+        let ttl_ms=ttl.as_millis() as i64;
         let store = state.store.clone();
         let heartbeat_store = store.clone();
         let heartbeat_id = id.clone();
@@ -49,12 +70,12 @@ impl LeaseGuard {
                 }
             }
         });
-        Some(Self {
+        Self {
             store,
             id,
             owner,
             heartbeat: Some(heartbeat),
-        })
+        }
     }
 
 }
@@ -108,6 +129,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+
+    #[tokio::test]
+    async fn workspace_readers_share_while_writer_excludes_them(){
+        let (state,dir)=state();
+        let reader_a=LeaseGuard::acquire_workspace(&state,"read").unwrap();
+        let reader_b=LeaseGuard::acquire_workspace(&state,"read").unwrap();
+        assert!(LeaseGuard::acquire_workspace(&state,"write").is_none());
+        drop(reader_a);
+        assert!(LeaseGuard::acquire_workspace(&state,"write").is_none());
+        drop(reader_b);
+        let writer=LeaseGuard::acquire_workspace(&state,"write").unwrap();
+        assert!(LeaseGuard::acquire_workspace(&state,"read").is_none());
+        drop(writer);
+        assert!(LeaseGuard::acquire_workspace(&state,"read").is_some());
+        let _=std::fs::remove_dir_all(dir);
+    }
     #[tokio::test]
     async fn heartbeat_keeps_a_long_turn_alive() {
         let (state, dir) = state();
