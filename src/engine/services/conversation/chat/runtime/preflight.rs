@@ -133,5 +133,66 @@ pub(super) fn prepare(
         execution["acceptanceSourceMessageId"] = json!(reply_to);
         state.store.put("execution", &execution).ok_or("검증 조건을 저장할 수 없습니다.")?;
     }
+    // Owner-message identity must be recorded even when no acceptance
+    // checks were required. Typed Chat/Room/SDK run events can then all
+    // reference the real committed source, not a guessed session ID.
+    bind_execution_source(state,execution_id,reply_to.as_deref())?;
     Ok(TurnSetup{session,strategy_candidates,reply_to,acceptance})
+}
+
+/// Bind only the committed owner-message ID, once. CAS protects against an
+/// asynchronous resume or a mismatched turn overwriting the original source.
+fn bind_execution_source(
+    state:&AppState,execution_id:&str,source_id:Option<&str>,
+)->Result<(),String>{
+    let Some(source_id)=source_id.filter(|s|!s.is_empty()) else{return Ok(());};
+    let execution=state.store.get("execution",execution_id)
+        .ok_or("실행 기록의 출처를 확인할 수 없습니다.")?;
+    let current=execution.get("sourceMessageId").cloned().unwrap_or(Value::Null);
+    if current==json!(source_id){return Ok(());}
+    if !current.is_null(){
+        return Err("실행 출처의 원문 메시지가 변경되었습니다.".into());
+    }
+    if let Some(saved)=state.store.patch_if("execution",execution_id,
+        "sourceMessageId",&Value::Null,&json!({"sourceMessageId":source_id})){
+        state.bus.record("execution",&saved);
+        return Ok(());
+    }
+    // A concurrent bind of the SAME source is idempotent; a different source
+    // is never adopted, even after a restart.
+    if state.store.get("execution",execution_id).is_some_and(|execution|
+        execution["sourceMessageId"].as_str()==Some(source_id)){
+        return Ok(());
+    }
+    Err("실행 출처 메시지의 소유권이 변경되었습니다.".into())
+}
+
+#[cfg(test)]
+mod source_binding_tests{
+    use super::*;
+    use crate::{config::Config,db::Store,vault::Vault};
+    #[test]
+    fn chat_and_group_runs_bind_the_exact_owner_source_once(){
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-source-binding-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=Config{port:0,data_dir:dir.clone(),web_dir:dir.join("web"),
+            workspace:dir.clone()};
+        let store=Store::open(&config.db_path()).unwrap();
+        let state=AppState::new(config,store,Vault::open(&dir.join("key")));
+        state.store.put("execution",&json!({"id":"chat-run","status":"running",
+            "sessionId":"owner-session"})).unwrap();
+        bind_execution_source(&state,"chat-run",Some("owner-message-1")).unwrap();
+        bind_execution_source(&state,"chat-run",Some("owner-message-1")).unwrap();
+        assert!(bind_execution_source(&state,"chat-run",
+            Some("unrelated-message")).is_err());
+        assert_eq!(state.store.get("execution","chat-run").unwrap()
+            ["sourceMessageId"],"owner-message-1");
+        let typed=state.bus.replay(0,30).into_iter().filter(|event|
+            event["type"]=="run_state"&&event["runId"]=="chat-run"
+        ).collect::<Vec<_>>();
+        assert_eq!(typed.len(),1);
+        assert_eq!(typed[0]["sourceMessageId"],"owner-message-1");
+        let _=std::fs::remove_dir_all(dir);
+    }
 }

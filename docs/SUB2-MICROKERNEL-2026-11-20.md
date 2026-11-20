@@ -206,3 +206,9 @@ https://openai.com/index/unrolling-the-codex-agent-loop/
 - 모델 없는 정확 치환 경로(`run_frozen_replacements`)도 일반 Chat과 같은 `write_final_message_and_link`를 사용합니다. 기존의 최종 메시지 저장→실행 링크 별도 저장을 제거했습니다.
 - 해시 검증된 deterministic read/write 단계 사이와 종료 전마다 동일한 session cancellation generation과 요청 취소를 검사합니다. 중단 후 남은 새 도구 호출이나 성공 답변을 만들지 않습니다.
 - 여전히 하나의 거대한 AgentLoop 루프로 전체 코드가 완전히 물리적으로 합쳐진 것은 아니고, **도구·상태·최종 커밋 계약**이 일반 Chat·Model-free 경로·SDK·Room에서 재사용되는 구조입니다.
+
+## 2026-11-20: 모든 제품 실행 이벤트의 원문 소유권 추적
+
+일반 Chat에서는 최종 사용자 메시지를 영속 기록한 뒤 `preflight::bind_execution_source`가 실행 레코드의 `sourceMessageId`를 SQLite CAS로 연결합니다. 다른 원문으로 바꿔치기하는 재개는 거부하고 같은 원문을 반복 기록하지 않습니다. 그룹 작업은 이미 알고 있는 owner source를 execution 생성 시점부터 바인딩하여 `run_state` 이벤트가 올바른 소유자를 가리킵니다.
+
+이에 따라 TypeScript `runEvents()`/Rust `run_events_after()`는 작업 ID만 보여주는 상태 스트림이 아니라, 가능한 실행에서 실제 커밋된 사용자 원문 메시지 ID와 연결되는 버전 1 이벤트입니다. UI 메뉴, HTTP URL, 저장소 브랜치 권한은 변경하지 않았습니다.

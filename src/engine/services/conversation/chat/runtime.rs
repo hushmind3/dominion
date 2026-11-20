@@ -278,6 +278,10 @@ async fn run_turn_with_policy(
         .ok_or("작업 계약을 준비할 수 없습니다.")?;
     let execution_document = json!({
         "id": execution_id,
+        // Room speakers already have a durable owner source at execution
+        // creation. Ordinary Chat attaches its freshly saved source in
+        // preflight, before its first model/tool call.
+        "sourceMessageId":source_message_id,
         "taskId": task_id,
         "taskRevision": task_revision,
         "parentTaskId": parent_task_id,

@@ -358,3 +358,13 @@ test('both agent loops share one tool transcript protocol and persisted feedback
  assert.match(dispatch,/"content":feedback\.content/);
  assert.match(dispatch,/soft_denial_replay_is_byte_identical_to_provider_transcript/);
 });
+
+test('owner source binding is durable across Chat Room and SDK run state feeds',()=>{
+ const preflight=source('src/engine/services/conversation/chat/runtime/preflight.rs');
+ const lifecycle=source('src/engine/services/conversation/chat/runtime.rs');
+ assert.match(preflight,/fn bind_execution_source/);
+ assert.match(preflight,/patch_if\("execution",execution_id/);
+ assert.match(preflight,/bind_execution_source\(state,execution_id,reply_to/);
+ assert.match(lifecycle,/"sourceMessageId":source_message_id/);
+ assert.match(source('src/events.rs'),/RunEvent::from_record\(kind,record\)/);
+});
