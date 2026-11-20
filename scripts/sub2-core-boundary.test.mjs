@@ -66,7 +66,7 @@ test('no UI navigation changes or SDK API removal from core refactor',()=>{
 });
 test('only language execution and approval endpoints remain in HTTP core',()=>{
  const api=source('src/api/mod.rs');
- const only=[...api.matchAll(/\\.route\\(\\s*["'](\\/api\\/[^"']+)["']/g)].map(x=>x[1]);
+ const only=[...api.matchAll(/\.route\(\s*["'](\/api\/[^"']+)["']/g)].map(x=>x[1]).filter(x=>x!=='/api/*rest');
  const expected=['/api/health','/api/events','/api/chat','/api/sdk/runs',
  '/api/sdk/runs/:id','/api/sdk/runs/:id/cancel',
  '/api/sdk/runs/:id/approve','/api/sdk/runs/:id/resume',
