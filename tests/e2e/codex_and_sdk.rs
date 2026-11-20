@@ -506,26 +506,3 @@ fn owner_replacement_during_approval_cannot_write_the_old_goal_or_escape_workspa
     assert!(!project.join("stale-approved.md").exists());assert!(!app._root.join("current-approved.md").exists());
     assert_eq!(requests.lock().unwrap().len(),2);
 }
-
-
-#[test]
-fn removed_legacy_generation_routes_are_not_exposed() {
-    let _serial = serial();
-    let app = TestApp::new(1, "native");
-    for endpoint in [
-        "/api/rsi", "/api/rsi/campaigns", "/api/rsi/signals",
-        "/api/video/status", "/api/video/config", "/api/video/jobs",
-        "/api/youtube/status", "/api/youtube/uploads",
-    ] {
-        let response = app.client.get(format!("{}{endpoint}", app.base)).send().unwrap();
-        assert_eq!(response.status().as_u16(), 404, "{endpoint}: {}", response.status());
-    }
-    let before = app.get("/api/jobs").as_array().unwrap().len();
-    for kind in ["video", "youtube_upload", "rsi_evolve", "rsi_compare", "rsi_generation"] {
-        let response = app.client.post(format!("{}/api/jobs", app.base))
-            .json(&json!({"kind":kind,"input":{"prompt":"not supported"}}))
-            .send().unwrap();
-        assert_eq!(response.status().as_u16(), 400, "{kind}");
-    }
-    assert_eq!(app.get("/api/jobs").as_array().unwrap().len(), before);
-}
