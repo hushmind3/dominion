@@ -64,3 +64,18 @@ test('no UI navigation changes or SDK API removal from core refactor',()=>{
  assert.match(source('web/src/components/WorkspaceShell.tsx'),/id:'connections'/);
  assert.match(source('src/api/addons.rs'),/\/api\/mcp\/catalog/);
 });
+test('only language execution and approval endpoints remain in HTTP core',()=>{
+ const api=source('src/api/mod.rs');
+ const only=[...api.matchAll(/\\.route\\(\\s*["'](\\/api\\/[^"']+)["']/g)].map(x=>x[1]);
+ const expected=['/api/health','/api/events','/api/chat','/api/sdk/runs',
+ '/api/sdk/runs/:id','/api/sdk/runs/:id/cancel',
+ '/api/sdk/runs/:id/approve','/api/sdk/runs/:id/resume',
+ '/api/sdk/runs/:id/reconcile','/api/executions/:id/operations',
+ '/api/approvals'];
+ assert.deepEqual(only,expected);
+ assert.match(api,/router=router\\.merge\\(surfaces::routes\\(\\)\\)/);
+ for(const name of ['provider_routes','conversation_routes','automation_routes','evaluation_routes','management_routes']){
+  assert.ok(exists('src/api/surfaces/'+name+'.rs'),'missing HTTP surface '+name);
+ }
+});
+

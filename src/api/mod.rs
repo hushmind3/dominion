@@ -1,5 +1,6 @@
 mod response;
 mod addons;
+mod surfaces;
 #[cfg(test)]
 mod tests;
 pub mod translation;
@@ -47,252 +48,32 @@ use tower_http::{cors::CorsLayer, services::ServeDir};
 
 pub fn router(state: AppState) -> Router {
     let mut router = Router::new()
-        // core
         .route("/api/health", get(system::health))
-        .route("/api/benchmark/strategies", post(benchmark::seed_strategy))
-        .route("/api/benchmark/experiments", post(benchmark::record_experiment))
-        .route("/api/benchmark/policies", post(benchmark::register_policy))
-        .route(
-            "/api/benchmark/policies/experiment",
-            post(benchmark::policy_experiment),
-        )
-        .route(
-            "/api/benchmark/policies/state",
-            post(benchmark::policy_state),
-        )
-        .route("/api/benchmark/policy-search", post(benchmark::policy_search))
-        .route("/api/benchmark/policy-patches", post(benchmark::register_patch))
-        .route(
-            "/api/benchmark/policy-patches/experiment",
-            post(benchmark::patch_experiment),
-        )
-        .route("/api/benchmark/identity", get(system::benchmark_identity))
-        .route("/api/status", get(system::status))
-        .route(
-            "/api/settings/assistant",
-            get(settings::assistant_settings).post(settings::save_assistant_settings),
-        )
-        .route(
-            "/api/settings/owner-profile",
-            get(settings::owner_profile).post(settings::save_owner_profile),
-        )
-        .route("/api/attachments", post(attachments::upload))
-        .route("/api/attachments/:id/content", get(attachments::content))
         .route("/api/events", get(system::events))
-        .route("/api/model-usage", get(system::model_usage))
-        .route("/api/evaluation/summary",get(system::evaluation_summary))
-        .route("/api/run-wakes", get(system::run_wakes))
-        .route("/api/experiment-requests", get(system::experiment_requests))
-        .route("/api/experiment-requests/claim", post(experiments::claim))
-        .route(
-            "/api/experiment-requests/release-runner",
-            post(experiments::release_runner),
-        )
-        .route("/api/experiment-requests/:id/complete", post(experiments::complete))
-        .route("/api/experiment-requests/:id/release", post(experiments::release))
-        .route(
-            "/api/benchmark/experiment-requests",
-            post(experiments::enqueue),
-        )
-        .route("/api/policies", get(system::policies))
-        .route("/api/policy-searches", get(system::policy_searches))
-        .route("/api/policy-patches", get(system::policy_patches))
-        .route("/api/system/backup", post(system::create_backup))
-        .route("/api/system/backup-keys", get(system::backup_keys))
-        .route(
-            "/api/system/backup-keys/rotate",
-            post(system::rotate_backup_keys),
-        )
-        .route("/api/system/secret-key", get(system::secret_key))
-        .route(
-            "/api/system/secret-key/rotate",
-            post(system::rotate_secret_key),
-        )
-        .route("/api/system/backups", get(system::list_backups))
-        .route(
-            "/api/system/maintenance",
-            get(system::maintenance_status).post(system::maintenance),
-        )
-        .route("/api/system/restore", post(system::restore_backup))
         .route("/api/chat", post(chat::chat))
-        .route("/api/jobs",get(jobs::list).post(jobs::create))
-        .route("/api/jobs/:id",get(jobs::one))
-        .route("/api/jobs/:id/cancel",post(jobs::cancel))
-        .route("/api/jobs/:id/steer",post(jobs::steer))
-        // Main branch NativeAgentPanel uses this bridge to the SAME native Rust job engine.
         .route("/api/sdk/runs", get(sdk_bridge::list).post(sdk_bridge::start))
         .route("/api/sdk/runs/:id", get(sdk_bridge::one))
         .route("/api/sdk/runs/:id/cancel", post(sdk_bridge::cancel))
         .route("/api/sdk/runs/:id/approve", post(sdk_bridge::approve))
         .route("/api/sdk/runs/:id/resume", post(sdk_bridge::resume))
         .route("/api/sdk/runs/:id/reconcile", post(sdk_bridge::reconcile))
-        .route("/api/tasks", get(tasks::list))
-        .route("/api/tasks/:id", get(tasks::one))
-        
-        
-        
-        
-        .route("/api/policy", get(approvals::get_policy).post(approvals::save_policy))
-        .route("/api/audit", get(system::audit_log))
-        .route("/api/model-route", get(system::model_route))
-        .route("/api/memory/overview", get(memory::memory_overview))
-        .route("/api/translate", post(translation::translate))
-        .route("/api/translate/config", get(translation::translate_config))
-        .route("/api/upload", post(compat::upload))
-        // providers
-        .route(
-            "/api/providers",
-            get(providers::list_providers).post(providers::save_provider),
-        )
-        .route(
-            "/api/providers/:id",
-            axum::routing::delete(providers::delete_provider),
-        )
-        .route("/api/providers/catalog", get(providers::provider_catalog))
-        .route("/api/providers/catalog/:id/models", get(providers::public_catalog_models))
-        .route("/api/providers/openrouter/free-models", get(providers::public_openrouter_free_catalog))
-        .route("/api/providers/free-catalog", get(providers::free_catalog))
-        .route("/api/providers/free-catalog/refresh", post(providers::free_catalog_refresh))
-        .route("/api/providers/cli", get(providers::cli_credentials))
-        .route("/api/providers/cli/:source/model", post(providers::set_cli_model))
-        .route("/api/providers/cli/:source/login", post(cli_oauth::start))
-        .route("/api/providers/cli/:source/login/status", get(cli_oauth::status))
-        .route("/api/providers/cli/:source/login/input", post(cli_oauth::input))
-        .route("/api/providers/cli/:source/login/cancel", post(cli_oauth::cancel))
-        .route("/api/providers/codex/login", get(providers::codex_login_start))
-        .route("/api/providers/codex/device", post(providers::codex_device_start))
-        .route("/api/providers/codex/login/status", get(providers::codex_login_status))
-        .route("/api/providers/cli/import", post(providers::import_cli_credential))
-        .route("/api/providers/:id/models", get(providers::provider_models))
-        .route("/api/providers/:id/test", post(providers::test_provider))
-        
-        
-        // agents
-        .route("/api/agents", get(agents::list_agents).post(agents::save_agent))
-        .route("/api/agents/bulk-model", post(agents::bulk_agent_model))
-        .route("/api/personas/import/preview", get(personas::preview))
-        .route("/api/personas/import", post(personas::import))
-        .route("/api/agents/:id/growth", get(agents::growth))
-        .route("/api/synergy", get(agents::synergy))
-        .route("/api/agents/:id/avatar", get(personas::avatar))
-        .route("/api/agents/:id", axum::routing::delete(agents::delete_agent))
-        .route("/api/rooms", get(rooms::list).post(rooms::save))
-        .route(
-            "/api/rooms/:id",
-            get(rooms::one).post(rooms::update).delete(rooms::remove),
-        )
-        .route(
-            "/api/rooms/:id/messages",
-            get(rooms::messages).post(rooms::send_message),
-        )
-        .route("/api/rooms/:id/state", get(rooms::state))
-        .route("/api/rooms/:id/knowledge", get(rooms::knowledge))
-        .route("/api/rooms/:id/system-prompt", get(rooms::system_prompt))
-        .route("/api/rooms/:id/knowledge/learn", post(rooms::learn))
-        .route("/api/rooms/:id/run", post(rooms::run))
-        .route("/api/rooms/:id/reset", post(rooms::reset))
-        .route("/api/rooms/:id/stop", post(rooms::stop))
-        // sessions
-        .route(
-            "/api/sessions",
-            get(sessions::list_sessions).post(sessions::create_session),
-        )
-        .route(
-            "/api/sessions/:id",
-            get(sessions::get_session)
-                .delete(sessions::delete_session)
-                .post(sessions::rename_session),
-        )
-        .route("/api/sessions/:id/messages", get(sessions::session_messages))
-        .route("/api/sessions/:id/usage", get(sessions::session_usage))
-        .route("/api/sessions/:id/rename", post(sessions::rename_session))
-        .route("/api/sessions/:id/clear", post(sessions::clear_session))
-        .route("/api/sessions/:id/fork", post(sessions::fork_session))
-        .route("/api/sessions/:id/compact", post(sessions::compact_session))
-        .route("/api/sessions/:id/cancel", post(sessions::cancel_session))
-        .route("/api/sessions/:id/cancel-status", get(sessions::cancel_status))
-        .route("/api/sessions/:id/archive", post(sessions::archive_session))
-        .route("/api/sessions/:id/learn", post(sessions::learn))
         .route(
             "/api/executions/:id/operations",
             get(executions::execution_operations),
         )
-        
-        // approvals
         .route(
             "/api/approvals",
             get(approvals::list_approvals).post(approvals::resolve_approval),
         )
-        // capabilities + commands
-        .route("/api/capabilities", get(system::capabilities))
-        .route("/api/commands", get(system::commands))
-        // compatibility surface
-        
-        
-        
-        
-        
-        
-        
-        .route("/api/model-library/catalog", get(models::catalog))
-        .route("/api/model-library/details", get(models::details))
-        .route("/api/model-library/installed", get(models::installed))
-        .route("/api/model-library/installed/:id", axum::routing::delete(models::remove_installed))
-        .route("/api/model-library/pick-file", post(compat::pick_model))
-        .route("/api/model-library/jobs", get(models::jobs))
-        .route("/api/model-library/runtime", get(models::runtime))
-        .route("/api/model-library/runtime/load", post(models::load))
-        .route("/api/model-library/runtime/unload", post(models::unload))
-        .route("/api/model-library/runtime/install", post(models::install_runtime))
-        .route("/api/model-library/runtimes", get(models::runtimes))
-        .route("/api/model-library/download", post(models::download))
-        .route("/api/model-library/import", post(models::import))
-        .route(
-            "/api/model-library/jobs/:id/:action",
-            post(models::job_action),
-        )
-        .route("/api/dev/jobs/:id", get(dev::get_job))
-        .route("/api/dev/update", get(dev::update_status).post(dev::update))
-        
-        
-        
-        
-        
-        
-        
-        
-        .route("/api/system/pick-folder", post(compat::pick_folder))
-        
-        
-        
-        
-        .route("/api/executions", get(executions::list))
-        .route("/api/executions/active", get(executions::active_executions))
-        .route("/api/improvements", get(improvements::list))
-        .route("/api/experience", get(experience::list))
-        .route("/api/transfer", get(experience::transfer))
-        .route("/api/improvements/:id/:action", post(improvements::decide))
-        .route("/api/executions/:id", get(executions::one))
-        .route("/api/executions/:id/cancel", post(executions::cancel))
         ;
 
     // Optional integrations share the same global guard and runtime, but
     // own no core API routes or independent listener.
     router=router.merge(addons::routes());
 
-    for kind in collections::COLLECTIONS {
-        router = router
-            .route(
-                &format!("/api/{kind}"),
-                get(collections::list).post(collections::save),
-            )
-            .route(
-                &format!("/api/{kind}/:id"),
-                get(collections::one)
-                    .delete(collections::remove)
-                    .post(collections::save),
-            );
-    }
+    // Execution is the only intrinsic HTTP surface. Everything else is a
+    // service module sharing this router's middleware and persisted state.
+    router=router.merge(surfaces::routes());
 
     let static_files =
         ServeDir::new(state.config.web_dir.clone()).append_index_html_on_directories(true);
