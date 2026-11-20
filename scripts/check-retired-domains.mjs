@@ -38,6 +38,18 @@ if(/googleRequiresApp|googleDescription|Globe2|id==='google'/.test(quickAccounts
 const operations=read('web/src/pages/Operations.tsx')
 if(/ops\.accounts|oauthProvider|openOAuth\(/.test(operations))
  throw Error('Duplicate OAuth control in advanced settings')
+// Old UI modules must not poll retained media/RSI/money endpoints.
+for(const source of [
+ 'web/src/pages/Connections.tsx','web/src/pages/Operations.tsx',
+ 'web/src/pages/memory/Growth.tsx','web/src/pages/memory/LearningRecords.tsx'
+]){
+ const current=read(source)
+ if(/\/api\/(?:video|youtube|rsi|money|optimizers|experiment-requests)(?:\/|['"]|$)/.test(current))
+  throw Error('Retired feature API still used in frontend: '+source)
+}
+const errorMessages=read('web/src/i18n/errors.ts')
+if(/영상 작업|video job|ComfyUI HTTP/.test(errorMessages))
+ throw Error('Obsolete video error text still bundled')
 const bootstrap=read('src/bootstrap.rs')
 if(/--rsi-|rsiSourceDir/.test(bootstrap))throw Error('Retired CLI remained')
 const strings=read('web/src/i18n/errors.ts')

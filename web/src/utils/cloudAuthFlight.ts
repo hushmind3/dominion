@@ -1,4 +1,4 @@
-/** A native Google OAuth handshake may outlive a React page or navigation. */
+/** DOMINION Cloud Google sign-in may outlive a React page or navigation. */
 export const nativeGoogleFlightKey='dominion_cloud_google_native_flight'
 export const nativeGoogleFlightTtlMs=5*60*1000
 

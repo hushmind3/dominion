@@ -111,7 +111,6 @@ const nouns: Record<string, string> = {
   '승인 요청': 'approval request',
   '모델 제공자': 'model provider',
   제공자: 'provider',
-  '영상 작업': 'video job',
   워크플로: 'workflow',
   개선안: 'improvement',
   레코드: 'record',

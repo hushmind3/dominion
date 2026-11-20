@@ -1,14 +1,13 @@
 import {AppUpdatePanel} from '../components/AppUpdatePanel'
-import {DialogBackdrop,DialogPanel} from '../components/Dialog'
 import {StatusPill} from '../components/StatusPill'
 import {Button,TextInput,SelectInput} from '../components/Primitives'
 import {useEffect,useState} from 'react'
 import {Activity,Check,KeyRound,Lock,RefreshCw,Shield,Sparkles,TerminalSquare,Workflow} from 'lucide-react'
-import {Agent,Provider,del,get,post,setAuthToken} from '../api'
+import {Agent,Provider,get,post,setAuthToken} from '../api'
 import {t,useLocale,setLocale,formatDateTime,auditEventLabel} from '../i18n'
 import {translateError} from '../i18n/errors'
 import {statusLabel} from '../components/StatusPill'
-import {Action,Empty,FormField,Headline,Notice,Panel,StateTag,Subheading,refresh,useRemote} from '../components/UI'
+import {Action,Empty,FormField,Headline,Notice,Panel,Subheading,refresh,useRemote} from '../components/UI'
 import {BackupPanel} from './operations/Backup'
 export function OperationsPage({section}:{section:'activity'|'settings'}){
  const loc=useLocale()
