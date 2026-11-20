@@ -1,7 +1,7 @@
 //! Progressive capability disclosure for the single native Rust harness.
 //! Search is informational. Calls are bound to a completed search receipt in
 //! the same execution, then use the existing effect/approval/dispatch gateway.
-use crate::{engine::{mcp,tools},state::AppState};
+use crate::{engine::{extensions,tools},state::AppState};
 use serde_json::{json,Value};
 use std::collections::HashSet;
 use sha2::{Digest,Sha256};
@@ -43,6 +43,9 @@ fn enabled_in_session(state:&AppState,session_id:&str,name:&str)->bool {
     if name.is_empty() || name==SEARCH || name==CALL {return false;}
     let session=state.store.get("session",session_id).unwrap_or(Value::Null);
     if !tools::profile_tool_visible(&session,name) {return false;}
+    if !extensions::tool_allowed(state,session_id,session["agentId"].as_str(),name) {
+        return false;
+    }
     if session["readOnly"]==true && !tools::observational(name) {return false;}
     if session["delegationWorkspace"].is_object() &&
         (name.starts_with("mcp__") || matches!(name,
@@ -58,8 +61,8 @@ async fn catalog(state:&AppState,session_id:&str)->Vec<Value> {
         if state.store.get("room",room_id)
             .is_some_and(|room|room["toolsEnabled"]==false){return Vec::new();}
     }
-    let mut all=tools::definitions();
-    all.extend(mcp::definitions(state).await);
+    let all=extensions::tools::catalog(
+        state,session_id,session["agentId"].as_str()).await;
     let mut unique=HashSet::new();
     all.into_iter().filter(|definition|{
         let name=tool_name(definition);
@@ -185,7 +188,7 @@ pub async fn search(state:&AppState,session_id:&str,args:&Value)->Result<Value,S
         "parameters":tool.pointer("/function/parameters"),
         "schemaSha256":schema_digest(tool),
         "requiresApproval":if tool_name(tool).starts_with("mcp__"){
-            mcp::requires_approval(state,tool_name(tool))
+            extensions::tools::mcp_requires_approval(state,tool_name(tool))
         }else{tools::requires_approval(tool_name(tool))}
     })).collect::<Vec<_>>();
     Ok(json!({
