@@ -222,8 +222,7 @@ pub fn parallel_read_only_tool(name:&str)->bool{
 
 /// The UI's optional capabilities are a persisted execution policy.
 pub fn ui_tool_allowed(policy:&Value,name:&str)->bool{
-    if matches!(name,"rsi_system_plan"|"rsi_method_propose"|
-        "algorithm_propose"|"unsafe_audit"){return false;}
+    if matches!(name,"algorithm_propose"|"unsafe_audit"){return false;}
     if policy.is_null(){return true;}
     if name.starts_with("skill_") && policy["skillsEnabled"]==false{return false;}
     if name.starts_with("mcp__") && policy["mcpEnabled"]!=true{return false;}
@@ -269,7 +268,7 @@ pub async fn execute(
             let text = result["content"].as_str().unwrap_or_default();
             let lines = text.lines().collect::<Vec<_>>();
             let begin = (start as usize).min(lines.len());
-            // Match the tool contract in RSI too. Silently cutting a requested
+            // Match the advertised tool contract. Silently cutting a requested
             // 400-line read to 120 forces repeated paid prefix replays.
             let line_cap = 399;
             let end = (requested_end as usize).min(lines.len()).max(begin).min(begin.saturating_add(line_cap));
@@ -2066,7 +2065,7 @@ mod tests {
                 "newText":"let value = 0;","expectedSha256":digest}),"run").await.unwrap();
         assert_eq!(no_op["unchanged"],true);
         // A no-op in ordinary user-directed editing is reported precisely;
-        // the retired RSI-only self-scoring rule must not reject it.
+        // legacy scoring heuristics must not reject it.
         assert!(no_op["error"].is_null());
         assert_eq!(no_op["written"],false);
         assert_eq!(std::fs::read_to_string(&path).unwrap(),source);
@@ -2330,7 +2329,6 @@ mod tests {
         assert!(names.iter().any(|name|name=="workspace_apply_patch"));
         assert!(requires_approval("workspace_apply_patch"));
         assert!(!parallel_read_only_tool("workspace_apply_patch"));
-        assert!(!names.iter().any(|name|name=="rsi_system_plan"));
         assert!(parallel_read_only_tool("workspace_read_range"));
         assert!(!parallel_read_only_tool("shell_exec"));
         assert!(!parallel_read_only_tool("workspace_write"));
@@ -2344,7 +2342,6 @@ mod tests {
         assert!(!ui_tool_allowed(&policy,"external_harness_run"));
         assert!(ui_tool_allowed(&json!({"subagentsEnabled":true}),"external_harness_run"));
         assert!(!ui_tool_allowed(&json!({"skillsEnabled":false}),"skill_propose"));
-        assert!(!ui_tool_allowed(&json!({"skillsEnabled":true}),"rsi_system_plan"));
         assert!(ui_tool_allowed(&json!({"skillsEnabled":true}),"workspace_apply_patch"));
     }
     #[cfg(unix)]
