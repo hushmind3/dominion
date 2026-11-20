@@ -125,12 +125,12 @@ fn codex_finish(thread_id:&str,completed:bool,answer:&str)->Result<Value,String>
         "evidenceGrade":"external_unverified"}))
 }
 async fn run_codex(ctx:&JobContext,child:&mut Child,started:Instant,
-    prompt:&str,model:Option<&str>)->Result<Value,String>{
+    prompt:&str,model:Option<&str>,workspace:&std::path::Path)->Result<Value,String>{
     let mut reader=BufReader::new(child.stdout.take().ok_or("Codex stdout missing")?);
     rpc(ctx,child,&mut reader,started,1,"initialize",
         json!({"clientInfo":{"name":"dominion","title":"DOMINION","version":"0.3.0"}})).await?;
     send(child,json!({"method":"initialized","params":{}})).await?;
-    let mut params=json!({"cwd":ctx.state.config.workspace.to_string_lossy(),
+    let mut params=json!({"cwd":workspace.to_string_lossy(),
         "sandbox":"read-only","approvalPolicy":"never"});
     if let Some(model)=model{params["model"]=json!(model);}
     let (thread,_)=rpc(ctx,child,&mut reader,started,2,"thread/start",params).await?;
@@ -199,8 +199,9 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
         else{"DOMINION_CLAUDE_BINARY"};
     let binary=std::env::var(env_name).ok().filter(|s|!s.is_empty())
         .unwrap_or_else(||runtime.into());
+    let workspace=crate::features::collaboration::worktree::for_job(&ctx.state,job)?;
     let mut command=Command::new(binary);
-    command.current_dir(&ctx.state.config.workspace)
+    command.current_dir(&workspace)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
         .kill_on_drop(true);
     if runtime=="codex"{command.arg("app-server");}
@@ -225,7 +226,7 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
     };
     let started=Instant::now();
     let outcome=if runtime=="codex"{
-        run_codex(ctx,&mut child,started,prompt,job["input"]["model"].as_str()).await
+        run_codex(ctx,&mut child,started,prompt,job["input"]["model"].as_str(),&workspace).await
     }else{run_claude(ctx,&mut child,started).await};
     let _=child.kill().await;
     match outcome{
@@ -320,7 +321,7 @@ done
             .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
             .kill_on_drop(true).spawn().unwrap();
         let output=tokio::time::timeout(Duration::from_secs(8),
-            run_codex(&context,&mut child,Instant::now(),"Inspect fixture",None))
+            run_codex(&context,&mut child,Instant::now(),"Inspect fixture",None,&context.state.config.workspace))
             .await.expect("The buffered finish must not hang").unwrap();
         assert_eq!(output["status"],"completed");
         assert_eq!(output["answer"],"verified JSONL exchange");

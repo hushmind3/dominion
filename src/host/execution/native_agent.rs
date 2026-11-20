@@ -374,6 +374,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
         context.checkpoint(json!({"nativeAlgorithm":selected.binding()}))?;
     }
     let input=&job["input"];
+    let workspace=crate::features::collaboration::worktree::for_job(&context.state,job)?;
     let task=input["prompt"].as_str().filter(|text|!text.trim().is_empty())
         .ok_or("Native agent prompt cannot be empty")?;
     let provider=input["providerId"].as_str().unwrap_or("");
@@ -544,7 +545,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     // a later file state must not masquerade as the pre-run state.
     if previous.is_none() {
         let initial=crate::engine::native_evidence::artifact_witness(
-            &context.state.config.workspace,&request.checks);
+            &workspace,&request.checks);
         context.checkpoint(json!({"nativeEvidenceBaseline":initial}))?;
     }
 
@@ -556,11 +557,11 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
         allow_fallback:input["allowFallback"].as_bool().unwrap_or(false),
     };
     let host_tools=NativeTools {
-        state:context.state.clone(),workspace:context.state.config.workspace.clone(),
+        state:context.state.clone(),workspace:workspace.clone(),
         session:session.clone(),agent:input["agentId"].as_str().map(str::to_string),
         run_id:context.job_id.clone(),tool_specs:available,tools_enabled:input["toolsEnabled"]!=false,
     };
-    let evidence=FsEvidence{workspace:context.state.config.workspace.clone()};
+    let evidence=FsEvidence{workspace:workspace.clone()};
     let journal=DurableJournal{context};
     if let Some(existing)=context.state.store.get("execution",&context.job_id) {
         if existing["sessionId"].as_str()!=Some(session.as_str()) {
@@ -618,11 +619,11 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     let kernel_criteria=snapshot.checks.iter()
         .map(|check|check.criterion.clone()).collect::<Vec<_>>();
     let kernel_witness=crate::engine::native_evidence::artifact_witness(
-        &context.state.config.workspace,&kernel_criteria);
+        &workspace,&kernel_criteria);
     let final_witness=crate::engine::native_evidence::project_owner_witness(
         &kernel_witness,&owner_checks,&kernel_criteria,
     ).unwrap_or_else(||crate::engine::native_evidence::artifact_witness(
-        &context.state.config.workspace,&owner_checks,
+        &workspace,&owner_checks,
     ));
     // Seal the two evidence scopes in one ownership-fenced SQLite update.
     // Previously these caused two writes and two event projections per run.

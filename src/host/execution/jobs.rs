@@ -626,10 +626,14 @@ async fn run_job(state: AppState, job: Value) {
         .is_some_and(|id|id.starts_with("team-child:"))
         ||job["input"]["teamTaskId"].is_string();
     let child_gate=team_child_gate(&state,&job);
+    let worker_workspace=if is_team_worker&&child_gate==TeamChildGate::Ready {
+        Some(crate::features::collaboration::worktree::for_job(&state,&job))
+    }else{None};
     let workspace_lease=if is_team_worker&&!team_at_capacity
         &&child_gate==TeamChildGate::Ready {
-        crate::host::execution::lease::LeaseGuard::acquire_workspace(
-            &state,job["input"]["teamMode"].as_str().unwrap_or(""))
+        worker_workspace.as_ref().and_then(|root|root.as_ref().ok())
+            .and_then(|root|crate::host::execution::lease::LeaseGuard::acquire_workspace_for(
+                &state,root,job["input"]["teamMode"].as_str().unwrap_or("")))
     }else{None};
     // Only the language-to-action executor runs in the core job worker.
     // Optional job families attach through the host composition boundary.
@@ -638,6 +642,11 @@ async fn run_job(state: AppState, job: Value) {
             Err("deferred: Task Team worker concurrency budget exhausted".into()),
         TeamChildGate::WaitingForLead=>Err("deferred: Task Team lead has not resumed".into()),
         TeamChildGate::Halt{status,reason}=>Err(format!("{status}: {reason}")),
+        TeamChildGate::Ready if is_team_worker&&worker_workspace.as_ref()
+            .is_some_and(|path|path.is_err())=>
+            Err(format!("needs_review: {}",
+                worker_workspace.as_ref().and_then(|value|value.as_ref().err())
+                    .cloned().unwrap_or_default())),
         TeamChildGate::Ready if is_team_worker&&!state.config.workspace.is_dir()=>
             Err("needs_review: Task Team workspace does not exist".into()),
         TeamChildGate::Ready if is_team_worker&&workspace_lease.is_none()=>

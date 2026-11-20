@@ -19,6 +19,9 @@ impl Default for Mode {fn default()->Self{Self::Read}}
 #[derive(Clone,Copy,Debug,Serialize,Deserialize,PartialEq,Eq,Default)]
 #[serde(rename_all="snake_case")]
 pub enum WorkerRuntime {#[default] Native,Codex,Claude}
+#[derive(Clone,Copy,Debug,Serialize,Deserialize,PartialEq,Eq,Default)]
+#[serde(rename_all="snake_case")]
+pub enum Isolation {#[default] Shared,Worktree}
 #[derive(Clone,Debug,Serialize,Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 pub struct Task {
@@ -27,6 +30,7 @@ pub struct Task {
     #[serde(default)] pub depends_on:Vec<String>,
     #[serde(default)] pub mode:Mode,
     #[serde(default)] pub runtime:WorkerRuntime,
+    #[serde(default)] pub isolation:Isolation,
     #[serde(default)] pub agent_id:Option<String>,
     #[serde(default)] pub provider_id:Option<String>,
     #[serde(default)] pub model:Option<String>,
@@ -136,7 +140,7 @@ fn input(task:&Task,parent:&str)->Value{
     }else{task.allowed_tools.clone()};
     let mut input=json!({
         "prompt":task.prompt,"parentRunId":parent,"teamTaskId":task.id,
-        "bridgeRuntime":task.runtime,
+        "bridgeRuntime":task.runtime,"teamIsolation":task.isolation,
         "teamMode":task.mode,"allowedTools":allowed,
         "toolsEnabled":true,"toolsExecutionEnabled":true,
         "requireEvidence":task.mode==Mode::Write,
@@ -282,6 +286,7 @@ pub fn project(state:&AppState,parent:&Value)->Value{
             let child=state.store.get("job",&id);
             children.push(json!({
                 "taskId":task.id,"mode":task.mode,"runtime":task.runtime,
+                "isolation":task.isolation,
                 "dependsOn":task.depends_on,
                 "agentId":task.agent_id,"childJobId":id,
                 "status":child.as_ref().map(|c|&c["status"]),
@@ -295,6 +300,8 @@ pub fn project(state:&AppState,parent:&Value)->Value{
                     }else{"foreign_binding"}),
                 "observedOperations":child.as_ref().map(|c|
                     child_observation(&task,c)["observedOperations"].clone()),
+                "worktree":child.as_ref().map(|c|
+                    super::worktree::view(state,c)),
                 "answerExcerpt":child.as_ref().map(|c|
                     c["result"]["answer"].as_str().unwrap_or("")
                         .chars().take(400).collect::<String>()),
@@ -416,8 +423,14 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
                 "taskCount":team.tasks.len()}}))?;
             let evidence=dependency_observations(&ctx.state,parent,&team,task)?;
             let kind=if task.runtime==WorkerRuntime::Native{"prompt"}else{"external_agent"};
-            let Some(child)=jobs::enqueue_once(&ctx.state,&id,kind,
-                input_with_evidence(task,parent,&evidence))
+            let mut payload=input_with_evidence(task,parent,&evidence);
+            if task.isolation==Isolation::Worktree {
+                ctx.checkpoint(json!({"teamState":{"contractVersion":1,
+                    "phase":"preparing_worktree","activeChildJobId":id}}))?;
+                let worktree_id=super::worktree::prepare(&ctx.state,parent,&task.id).await?;
+                payload["teamWorktreeId"]=json!(worktree_id);
+            }
+            let Some(child)=jobs::enqueue_once(&ctx.state,&id,kind,payload)
             else{return Err(format!("Team child {id} conflicts with a prior immutable job"));};
             let status=child["status"].as_str().unwrap_or("");
             if status=="queued" {jobs::start_now(ctx.state.clone(),id.clone());}
@@ -440,11 +453,11 @@ mod tests {
     fn sample()->Team{
         Team{goal:"Implement and verify".into(),max_parallel:3,tasks:vec![
             Task{id:"investigate".into(),prompt:"Inspect source".into(),
-                runtime:WorkerRuntime::Native,mode:Mode::Read,
+                runtime:WorkerRuntime::Native,mode:Mode::Read,isolation:Isolation::Shared,
                 depends_on:vec![],agent_id:None,provider_id:None,model:None,
                 allowed_tools:vec![],checks:vec![]},
             Task{id:"write".into(),prompt:"Apply approved patch".into(),
-                runtime:WorkerRuntime::Native,mode:Mode::Write,
+                runtime:WorkerRuntime::Native,mode:Mode::Write,isolation:Isolation::Shared,
                 depends_on:vec!["investigate".into()],agent_id:None,
                 provider_id:None,model:None,allowed_tools:vec![],
                 checks:vec![json!({"type":"file_exists","path":"src/finished.rs"})]},

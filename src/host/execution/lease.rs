@@ -41,7 +41,13 @@ impl LeaseGuard {
         state:&AppState,mode:&str,
     )->Option<Self>{
         if !matches!(mode,"read"|"write"){return None;}
-        let workspace=std::fs::canonicalize(&state.config.workspace).ok()?;
+        Self::acquire_workspace_for(state,&state.config.workspace,mode)
+    }
+    pub fn acquire_workspace_for(
+        state:&AppState,root:&std::path::Path,mode:&str,
+    )->Option<Self>{
+        if !matches!(mode,"read"|"write"){return None;}
+        let workspace=std::fs::canonicalize(root).ok()?;
         let scope=workspace.to_string_lossy().to_string();
         let id=format!("session:task-workspace:{}",uuid::Uuid::new_v4());
         let owner=format!("{}:{}",state.instance_id,uuid::Uuid::new_v4());
