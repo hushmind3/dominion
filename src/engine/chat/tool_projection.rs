@@ -196,7 +196,7 @@ pub(super) fn select_room_tools(
     scored.sort_by(|a, b| b.0.cmp(&a.0));
     if scored.is_empty() {
         // A verifiable room action needs the normal read/edit/run toolchain,
-        // not every unrelated browser, account, RSI and MCP schema. The
+        // not every unrelated browser, account and MCP schema. The
         // owner can still explicitly request any enabled optional capability.
         return definitions.into_iter().filter(|definition|{
             matches!(tool_name(definition),
