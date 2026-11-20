@@ -764,6 +764,7 @@ async fn run_turn_body(
         }
     }
     let mut messages = vec![json!({"role":"system","content":prompt_context.prompt,"_dominion_source":reply_to,
+        "_dominion_context_reset":social_private,
         "_dominion_dependencies":super::continuity::dependencies(state,&provenance_items)})];
     if is_room {
         if let Some(mut execution) = state.store.get("execution", execution_id) {
