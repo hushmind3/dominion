@@ -9,7 +9,6 @@ struct Provider {
     token: &'static str,
     user: &'static str,
     scopes: &'static str,
-    extra: &'static [(&'static str, &'static str)],
 }
 
 const PROVIDERS: &[Provider] = &[
@@ -20,16 +19,6 @@ const PROVIDERS: &[Provider] = &[
         token: "https://github.com/login/oauth/access_token",
         user: "https://api.github.com/user",
         scopes: "repo read:user user:email",
-        extra: &[],
-    },
-    Provider {
-        id: "google",
-        name: "Google 계정",
-        authorize: "https://accounts.google.com/o/oauth2/v2/auth",
-        token: "https://oauth2.googleapis.com/token",
-        user: "https://www.googleapis.com/oauth2/v3/userinfo",
-        scopes: "openid email profile",
-        extra: &[("access_type", "offline"), ("prompt", "consent")],
     },
 
 ];
@@ -85,7 +74,7 @@ pub fn save(
     client_secret: &str,
 ) -> Result<Value, String> {
     let provider = provider(id).ok_or_else(|| format!("지원하지 않는 OAuth 제공자입니다: {id}"))?;
-    if client_id.trim().is_empty() || (id == "github" && client_secret.trim().is_empty()) {
+    if client_id.trim().is_empty() || client_secret.trim().is_empty() {
         return Err("Client ID가 필요합니다. GitHub 앱은 Client Secret도 입력하세요.".into());
     }
     let mut record = config(state, id).unwrap_or_else(|| json!({ "id": id }));
@@ -116,17 +105,14 @@ pub fn save(
 /// over a legacy local administrator configuration. Never expose the secret in
 /// /api/oauth/providers or to the browser.
 fn packaged_client_credentials(id: &str) -> Option<(String, String)> {
-    let name=match id {
-        "github"=>"DOMINION_GITHUB",
-        "google"=>"DOMINION_GOOGLE",
-        _=>return None,
-    };
+    if id != "github" {return None;}
+    let name="DOMINION_GITHUB";
     let client_id=std::env::var(format!("{name}_CLIENT_ID")).ok()?;
     let client_id=client_id.trim().to_string();
     if client_id.is_empty(){return None;}
     let secret=std::env::var(format!("{name}_CLIENT_SECRET"))
         .unwrap_or_default().trim().to_string();
-    if id=="github" && secret.is_empty(){return None;}
+    if secret.is_empty(){return None;}
     Some((client_id,secret))
 }
 
@@ -154,7 +140,7 @@ fn client_credentials(state: &AppState, id: &str) -> Result<(String, String), St
         .and_then(|item| item.as_str())
         .unwrap_or("")
         .to_string();
-    if client_id.is_empty() || (id == "github" && client_secret.is_empty()) {
+    if client_id.is_empty() || client_secret.is_empty() {
         return Err("OAuth 앱 자격 증명이 비어 있습니다.".into());
     }
     Ok((client_id, client_secret))
@@ -163,17 +149,7 @@ fn client_credentials(state: &AppState, id: &str) -> Result<(String, String), St
 pub fn start(state: &AppState, id: &str) -> Result<Value, String> {
     let provider = provider(id).ok_or_else(|| format!("지원하지 않는 OAuth 제공자입니다: {id}"))?;
     let (client_id, _) = client_credentials(state, id)?;
-    use base64::Engine;
-    use sha2::Digest;
     let state_token = uuid::Uuid::new_v4().to_string();
-    let verifier = format!(
-        "{}{}",
-        uuid::Uuid::new_v4().simple(),
-        uuid::Uuid::new_v4().simple()
-    );
-    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .encode(sha2::Sha256::digest(verifier.as_bytes()));
-    state.save_secret(&format!("oauth-state:{state_token}"), &verifier);
     state.store.put(
         "oauth_state",
         &json!({
@@ -191,20 +167,6 @@ pub fn start(state: &AppState, id: &str) -> Result<Value, String> {
             .append_pair("redirect_uri", &callback_url(state, id))
             .append_pair("scope", provider.scopes)
             .append_pair("state", &state_token);
-        for (key, value) in provider.extra {
-            query.append_pair(key, value);
-        }
-        if id == "google" {
-            query
-                .append_pair("response_type", "code")
-                .append_pair("code_challenge", &challenge)
-                .append_pair("code_challenge_method", "S256");
-            if let Some(account) =
-                config(state, "google").and_then(|r| r["account"].as_str().map(str::to_string))
-            {
-                query.append_pair("login_hint", &account);
-            }
-        }
     }
     Ok(json!({ "url": url.to_string(), "state": state_token }))
 }
@@ -230,9 +192,6 @@ pub async fn callback(
         .ok_or("OAuth state 가 손상되었습니다.")?;
     if chrono::Utc::now().timestamp_millis() - created_ms > 10 * 60 * 1000 {
         state.store.remove("oauth_state", state_token);
-        state
-            .store
-            .remove_secret(&format!("oauth-state:{state_token}"));
         return Err("OAuth state 가 만료되었습니다. 다시 연결하세요.".into());
     }
     if record.get("provider").and_then(|value| value.as_str()) != Some(provider.id) {
@@ -249,29 +208,15 @@ pub async fn callback(
         )
         .ok_or("이미 처리한 OAuth state입니다.")?;
     state.store.remove("oauth_state", state_token);
-    let verifier = state.read_secret(&format!("oauth-state:{state_token}"));
-    state
-        .store
-        .remove_secret(&format!("oauth-state:{state_token}"));
 
     let (client_id, client_secret) = client_credentials(state, id)?;
     let client = reqwest::Client::new();
-    let mut form = vec![
+    let form = [
         ("client_id", client_id),
         ("client_secret", client_secret),
         ("code", code.to_string()),
         ("redirect_uri", callback_url(state, id)),
-        ("grant_type", "authorization_code".to_string()),
     ];
-    if provider.id == "github" {
-        form.pop();
-    } else {
-        form.push((
-            "code_verifier",
-            verifier.ok_or("PKCE verifier가 없습니다. 다시 연결하세요.")?,
-        ));
-        form.retain(|(key, value)| *key != "client_secret" || !value.is_empty());
-    }
 
     let response = client
         .post(provider.token)
@@ -504,6 +449,16 @@ mod tests {
             url.contains("127.0.0.1%3A4999%2Fapi%2Foauth%2Fgithub%2Fcallback")
                 || url.contains("127.0.0.1:4999")
         );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn retired_google_oauth_is_not_advertised_or_accepted() {
+        let (state, dir) = temp_state();
+        assert_eq!(status(&state).len(), 1);
+        assert_eq!(status(&state)[0]["id"], "github");
+        assert!(start(&state, "google").is_err());
+        assert!(save(&state, "google", "legacy", "secret").is_err());
         let _ = std::fs::remove_dir_all(dir);
     }
 
