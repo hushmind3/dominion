@@ -139,7 +139,7 @@ export function SkillsPanel(p:Props){
                   } catch (e) {
                     setError((e as Error).message);
                   } finally {setBusy(null)}
-                }
+                }}
               >
                 {x.enabled ? t('sp.disable') : t('sp.enable')}
               </Button>
