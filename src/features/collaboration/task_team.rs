@@ -390,7 +390,9 @@ mod tests {
         let x=input(&team.tasks[0],"lead");
         assert!(!x["allowedTools"].as_array().unwrap().iter().any(|t|t=="shell_exec"));
         let y=input(&team.tasks[1],"lead");
-        assert!(!y["allowedTools"].as_array().unwrap().iter().any(|t|t=="shell_exec"));
+        assert!(y["allowedTools"].as_array().unwrap().iter().any(|t|t=="shell_exec"),
+            "Only a writer with explicit artifact acceptance may run verification commands");
+        assert!(team.tasks[1].checks.iter().any(|check|check["type"]=="file_exists"));
         assert_eq!(y["parentRunId"],"lead");
         assert_eq!(y["requireEvidence"],true);
     }
