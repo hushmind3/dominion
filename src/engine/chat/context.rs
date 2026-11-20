@@ -781,8 +781,8 @@ mod tests {
         assert!(indexed.prompt.chars().count()<12_000,
             "large persona+owner policy should be indexed rather than resent");
         assert!(indexed.source_instructions.chars().count()<4_000);
-        assert_eq!(super::prompt_sources::original_source(&state,Some("agent-p"),"persona").unwrap(),persona);
-        assert_eq!(super::prompt_sources::original_source(&state,Some("agent-p"),"owner").unwrap(),policy);
+        assert_eq!(crate::engine::chat::prompt_sources::original_source(&state,Some("agent-p"),"persona").unwrap(),persona);
+        assert_eq!(crate::engine::chat::prompt_sources::original_source(&state,Some("agent-p"),"owner").unwrap(),policy);
         let tools_off=TurnRequest::from_value(&json!({"sessionId":"prompt-case",
             "agentId":"agent-p","input":"말 짧게 해라","toolsEnabled":false,
             "toolsExecutionEnabled":false})).unwrap();
