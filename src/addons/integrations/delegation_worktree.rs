@@ -441,6 +441,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn team_integration_applies_only_reviewed_frozen_patches(){
+        let (state,source)=fixture().await;
+        let owned=prepare(&state,&source,"team-writer").await.unwrap();
+        std::fs::write(Path::new(owned["path"].as_str().unwrap()).join("target.txt"),
+            "approved team change\n").unwrap();
+        state.store.put("session",&json!({"id":"impl-session",
+            "delegationWorkspace":owned})).unwrap();
+        let child=json!({"id":"team-writer","kind":"prompt","status":"completed",
+            "input":{"sessionId":"impl-session","parentSessionId":"owner",
+                "delegationProfile":"implementation","teamJobId":"team"}});
+        state.store.put("job",&child).unwrap();
+        freeze_result(&state,&child).await.unwrap();
+        state.store.put("job",&json!({"id":"team","kind":"team",
+            "status":"needs_review",
+            "input":{"sessionId":"owner"},
+            "result":{"gaps":[],"pendingIntegrationJobs":["team-writer"]}
+        })).unwrap();
+        let ctx=ToolContext{workspace:&source,store:&state.store,state:&state,
+            session_id:"owner",agent_id:None,tools_enabled:true,
+            tools_execution_enabled:true};
+        assert!(crate::engine::tools::requires_approval("team_integrate"));
+        assert_eq!(std::fs::read_to_string(source.join("target.txt")).unwrap(),"original\n");
+        let applied=crate::addons::team_orchestrator::integrate(
+            &ctx,&json!({"jobId":"team"})).await.unwrap();
+        assert_eq!(applied["status"],"integrated");
+        assert_eq!(std::fs::read_to_string(source.join("target.txt")).unwrap(),
+            "approved team change\n");
+        assert_eq!(state.store.get("job","team").unwrap()["status"],"completed");
+        assert!(state.store.get("job","team-writer").unwrap()["integratedAt"].is_string());
+        let outsider=ToolContext{session_id:"other",..ctx};
+        assert!(crate::addons::team_orchestrator::integrate(
+            &outsider,&json!({"jobId":"team"})).await.is_err());
+    }
+    #[tokio::test]
     async fn child_patch_stays_isolated_until_approved_integration_and_cannot_replay() {
         let (state, source) = fixture().await;
         let workspace = prepare(&state, &source, "child-job").await.unwrap();

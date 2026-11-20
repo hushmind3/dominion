@@ -59,6 +59,7 @@ jobs:
       - name: Isolated verifier patch inheritance and parallelism (dev profile)
         run: |
           cargo test --locked --bin dominion-rust addons::delegation_worktree::tests::verifier_inherits
+          cargo test --locked --bin dominion-rust addons::delegation_worktree::tests::team_integration_applies
           cargo test --locked --bin dominion-rust addons::jobs::tests::team_parallelism
           cargo test --locked --bin dominion-rust addons::team_orchestrator::tests::team_aggregates
       - name: End-to-end Lead team admission and plan validation (dev profile)
