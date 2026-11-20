@@ -1,7 +1,7 @@
 //! Replaceable model/tool workflows. ReAct and plan-and-execute run through
 //! the same core driver, tool gates, cancellation and host authority.
 use dominion_turn_core::agent_loop::{
-    AgentLoop,ModelPort,ModelResponse,RoundObservation,ToolFeedback,ToolPort,
+    AgentLoop,Harness,ModelPort,ModelResponse,RoundObservation,ToolFeedback,ToolPort,
 };
 use dominion_turn_core::driver::{Driver,Step};
 use serde_json::{json,Value};
@@ -74,15 +74,16 @@ pub async fn run<A:AgentLoop,M:ModelPort,T:ToolPort>(
     history:&mut Vec<Value>,visible_tools:&[Value],tools_enabled:bool,
     has_plan:bool,
 )->Result<RunResult,String>{
+    let mut harness=Harness::new(driver,policy);
     let mut rounds=0usize;
     let mut dispatched=0usize;
     loop{
-        let response:ModelResponse=driver.request_model(
+        let response:ModelResponse=harness.request_model(
             model.cancelled()||tools.cancelled(),
             model.complete(history,visible_tools),
         ).await?;
         rounds+=1;
-        let step=driver.authorize_step(policy,RoundObservation{
+        let step=harness.authorize_step(RoundObservation{
             proposed_calls:response.calls.len(),has_plan,
         },tools_enabled).map_err(str::to_string)?;
         match step{
@@ -90,14 +91,14 @@ pub async fn run<A:AgentLoop,M:ModelPort,T:ToolPort>(
                 history.push(json!({"role":"assistant","content":response.content}));
                 return Ok(RunResult{
                     response:response.content,model_rounds:rounds,
-                    tool_calls:dispatched,workflow:policy.name(),
+                    tool_calls:dispatched,workflow:harness.workflow(),
                 });
             }
             Step::Execute{..}=>{
                 // Reserve the full batch before any external effect. A
                 // hidden tool, duplicate call ID or exhausted budget denies
                 // every call in the proposal, not just the later ones.
-                driver.admit_batch(
+                harness.admit_batch(
                     response.calls.iter().map(|c|(c.id.as_str(),c.name.as_str())),
                     visible_tools,tools_enabled,
                 ).map_err(str::to_string)?;

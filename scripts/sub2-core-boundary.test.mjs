@@ -119,9 +119,10 @@ test('HTTP handler implementations are source-isolated from the minimal API core
 
 test('real chat model loop consults pure execution driver and gates parallel tool batches',()=>{
  const s=source('src/engine/services/conversation/chat/runtime/turn_body.rs');
- assert.match(s,/driver\.request_model/);
- assert.match(s,/driver\.authorize_step/);
- assert.match(s,/driver\.admit_batch/);
+ assert.match(s,/Harness::new/);
+ assert.match(s,/harness\.request_model/);
+ assert.match(s,/harness\.authorize_step/);
+ assert.match(s,/harness\.admit_batch/);
  assert.match(s,/budget\.charge_proposals\(round_calls\.len\(\)\)/);
  assert.doesNotMatch(s,/driver\.admit_tool/);
  assert.doesNotMatch(s,/Driver::batch_advertised/);
@@ -201,7 +202,9 @@ test('swap-ready agent loops use the core trait without importing the gateway',(
  assert.match(algo,/impl AgentLoop for ReActLoop/);
  assert.match(algo,/impl AgentLoop for PlanExecuteLoop/);
  assert.match(algo,/pub async fn run</);
- assert.match(runtime,/driver\.authorize_step\(&mut agent_loop/);
+ assert.match(runtime,/Harness::new/);
+ assert.match(runtime,/harness\.authorize_step/);
+ assert.match(algo,/Harness::new\(driver,policy\)/);
  assert.match(runtime,/decision_policy\.workflow\(plan_requested\)/);
  assert.match(policy,/pub fn workflow\(/);
  assert.doesNotMatch(source('crates/dominion-agent-loop/Cargo.toml'),/dominion-rust|rusqlite|reqwest|axum/);

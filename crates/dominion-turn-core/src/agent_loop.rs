@@ -1,6 +1,7 @@
 //! Contracts for swappable agent algorithms. Runtime admission remains in
 //! Driver: plugins can suggest a transition but cannot invent tool authority.
 use crate::driver::{Driver,Step};
+use std::future::Future;
 use serde_json::{json, Value};
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq)]
@@ -54,6 +55,38 @@ pub struct ModelResponse {
     pub content:String,
     pub calls:Vec<ToolRequest>,
 }
+/// The single provider-independent round coordinator shared by both the
+/// product Chat runtime and the standalone port-driven AgentLoop. Strategy
+/// decisions cannot bypass the driver; no product, model, tool or I/O code
+/// belongs here. Host-specific streaming and tool scheduling stay adapters.
+pub struct Harness<'a,A:AgentLoop+?Sized>{
+    driver:&'a mut Driver,
+    algorithm:&'a mut A,
+}
+impl<'a,A:AgentLoop+?Sized> Harness<'a,A>{
+    pub fn new(driver:&'a mut Driver,algorithm:&'a mut A)->Self{
+        Self{driver,algorithm}
+    }
+    pub fn workflow(&self)->&'static str{self.algorithm.name()}
+    pub async fn request_model<T,F>(
+        &mut self,cancelled:bool,request:F,
+    )->Result<T,String>
+    where F:Future<Output=Result<T,String>>{
+        self.driver.request_model(cancelled,request).await
+    }
+    pub fn authorize_step(
+        &mut self,observation:RoundObservation,tools_enabled:bool,
+    )->Result<Step,&'static str>{
+        self.driver.authorize_step(self.algorithm,observation,tools_enabled)
+    }
+    pub fn admit_batch<'b>(
+        &mut self,calls:impl IntoIterator<Item=(&'b str,&'b str)>,
+        visible_tools:&[Value],enabled:bool,
+    )->Result<(),&'static str>{
+        self.driver.admit_batch(calls,visible_tools,enabled)
+    }
+}
+
 /// Implemented in the gateway (actual provider, streaming and auth live there).
 pub trait ModelPort {
     async fn complete(&mut self, transcript:&[Value], visible_tools:&[Value])
@@ -96,6 +129,34 @@ mod tests{
             proposed_calls:1,has_plan:true},false),
             Err("tool execution disabled"));
     }
+    #[test]
+    fn harness_guards_strategy_and_atomically_admits_each_provider_batch(){
+        struct Safe;
+        impl AgentLoop for Safe{
+            fn name(&self)->&'static str{"safe"}
+            fn after_model(&mut self,observation:RoundObservation)->Step{
+                if observation.proposed_calls==0{Step::Answer}
+                else{Step::Execute{calls:observation.proposed_calls}}
+            }
+        }
+        let mut driver=Driver::new(2,2);
+        let mut policy=Safe;
+        let mut harness=Harness::new(&mut driver,&mut policy);
+        let observed=RoundObservation{proposed_calls:2,has_plan:false};
+        assert_eq!(harness.workflow(),"safe");
+        assert_eq!(harness.authorize_step(observed,true),
+            Ok(Step::Execute{calls:2}));
+        let visible=vec![json!({"name":"read"})];
+        assert_eq!(harness.admit_batch(
+            [("a","read"),("b","hidden")],&visible,true),
+            Err("tool was not advertised"));
+        assert!(harness.admit_batch(
+            [("a","read"),("b","read")],&visible,true).is_ok());
+        assert_eq!(harness.admit_batch(
+            [("a","read")],&visible,true),
+            Err("duplicate or missing tool call id"));
+    }
+
     #[test]
     fn shared_tool_feedback_preserves_host_content_and_marks_unexecuted_effects(){
         let actual=json!({"content":"tool output","success":true});

@@ -617,6 +617,9 @@ pub(super) async fn run_turn_body(
     // This provider-neutral gate has no knowledge of memory, MCP, plans,
     // SQLite, or product UI. The host retains the existing effect receipts.
     let mut driver=crate::engine::core::driver::Driver::new(max_rounds,max_tools);
+    let mut harness=crate::engine::core::agent_loop::Harness::new(
+        &mut driver,&mut agent_loop,
+    );
     for round in 0..max_rounds {
         if finished { break; }
         if !budget.charge_round() {
@@ -878,7 +881,7 @@ pub(super) async fn run_turn_body(
                 return Err("모델 판단 횟수 한도에 도달했습니다.".into());
             }
         }
-        let completion_result = driver.request_model(
+        let completion_result = harness.request_model(
             state.is_cancelled(session_id)
                 || state.cancellation_generation(session_id)!=generation,
             stream_completion(
@@ -1101,7 +1104,7 @@ pub(super) async fn run_turn_body(
             }
         }
 
-        let next_step=driver.authorize_step(&mut agent_loop,
+        let next_step=harness.authorize_step(
             crate::engine::core::agent_loop::RoundObservation{
                 proposed_calls:completion.tool_calls.len(),
                 has_plan:plan_digest.is_some(),
@@ -1390,7 +1393,7 @@ pub(super) async fn run_turn_body(
             return Err(format!("도구 제안 예산({}회)을 초과했습니다.",
                 max_tools.saturating_mul(2)));
         }
-        if let Err(reason)=driver.admit_batch(
+        if let Err(reason)=harness.admit_batch(
             round_calls.iter().map(|call|(call.id.as_str(),call.name.as_str())),
             &round_tools,
             request.tools_enabled && request.tools_execution_enabled,
