@@ -495,10 +495,9 @@ impl Host for MainTurn<'_> {
                 call_prompt + call_completion
             };
             self.total_tokens += call_total;
-            if self.is_room {
-                if let Some(mut execution) = self.state.store.get("execution", self.execution_id) {
-                    // Attribute provider-reported usage to each completed
-                    // speaker model call, not just the final accumulated turn.
+            if let Some(mut execution) = self.state.store.get("execution", self.execution_id) {
+                    // Attribute each actual provider model call, including
+                    // ordinary 1:1 chat, not only group-room speakers.
                     // A missing cache field stays unknown, never a fake zero.
                     let cached = if completion.usage_exact {
                         completion.cached_prompt_tokens.map(|value|value.min(call_prompt))
@@ -545,7 +544,6 @@ impl Host for MainTurn<'_> {
                         json!(self.completion_tokens_total);
                     execution["inputContext"]["providerUsageExact"] = json!(!self.usage_estimated);
                     self.state.store.put("execution", &execution);
-                }
             }
             self.metrics.lock().unwrap().tokens = self.total_tokens;
             if self.total_tokens > MAX_TOKENS
