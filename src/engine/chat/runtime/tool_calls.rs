@@ -60,7 +60,7 @@ pub(super) async fn dispatch_tool_call(
     let _ = tx.send(json!({ "type": "tool_start", "name": call.name, "id": call.id }));
 
     let needs_approval = if call.name.starts_with("mcp__") {
-        mcp::requires_approval(state, &call.name)
+        crate::engine::addons::requires_tool_approval(state, &call.name)
     } else {
         tools::requires_approval(&call.name)
     };
@@ -167,7 +167,7 @@ pub(super) async fn dispatch_tool_call(
         } else if call.name==capability::SEARCH {
             capability::search(state,session_id,execution_id,&arguments).await
         } else if call.name.starts_with("mcp__") {
-            mcp::call(state, &call.name, &arguments).await
+            crate::engine::addons::execute_tool(state, &call.name, &arguments).await
         } else {
             tools::execute(&context, &call.name, &arguments, execution_id).await
         };

@@ -213,7 +213,7 @@ pub(super) async fn run_turn_body(
     };
     if request.tools_enabled && request.tools_execution_enabled
         && (session["sdkUiPolicy"].is_null() || session["sdkUiPolicy"]["mcpEnabled"]==true){
-        tool_definitions.extend(mcp::definitions(state).await);
+        tool_definitions.extend(crate::engine::addons::tool_definitions(state).await);
     }
     // Account-specific API tools require a real OAuth/CLI grant. A Google
     // login in our visible browser profile only grants browser_control UI

@@ -1,7 +1,7 @@
 //! Progressive tool schema disclosure inside the existing chat/SDK/room
 //! execution loop. Search is a read-only native observation, not a new agent
 //! runner, approval authority, or persistent permission grant.
-use crate::{engine::{mcp,tools},state::AppState};
+use crate::{engine::{addons,tools},state::AppState};
 use serde_json::{json,Value};
 use std::collections::{HashMap,HashSet};
 
@@ -131,7 +131,7 @@ pub(super) async fn catalog(state:&AppState,session_id:&str)->Vec<Value>{
     let Some(session)=state.store.get("session",session_id) else{return Vec::new()};
     let mut definitions=tools::definitions();
     if session["sdkUiPolicy"].is_null() || session["sdkUiPolicy"]["mcpEnabled"]==true{
-        definitions.extend(mcp::definitions(state).await);
+        definitions.extend(addons::tool_definitions(state).await);
     }
     tools::retain_connected_account_tools(state,&mut definitions);
     if session["parallelReadOnly"]==true || session["readOnly"]==true {
