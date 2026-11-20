@@ -43,11 +43,11 @@ Start the UI separately with `npm --prefix web run dev`. A release package and l
 | --- | --- |
 | Main-synchronized frontend, routing and pages | `web/src/App.tsx`, `web/src/pages/`, `web/src/components/` |
 | HTTP API, public model catalog and GitHub login | `src/api/mod.rs`, `src/api/providers.rs`, `src/api/cli_oauth.rs` |
-| Chat turn execution and tool dispatch | `src/engine/chat/runtime.rs`, `src/engine/chat/runtime/turn_body.rs` |
-| Room context and semantic continuation | `src/engine/chat/room_context.rs`, `src/engine/chat/continuity.rs` |
+| Chat turn execution and tool dispatch | `src/engine/core/chat/runtime.rs`, `src/engine/core/chat/runtime/turn_body.rs` |
+| Room context and semantic continuation | `src/engine/services/conversation/chat_room_context.rs`, `src/engine/services/conversation/chat_continuity.rs` |
 | Room status, owner facts, speaker routing | `src/engine/room_state.rs`, `src/engine/rooms.rs` |
-| Native tool contracts, verification | `src/engine/chat/tool_projection.rs`, `src/engine/verification.rs` |
-| Durable jobs and SQLite storage | `src/engine/jobs.rs`, `src/db.rs` |
+| Native tool contracts, verification | `src/engine/chat/tool_projection.rs`, `src/engine/core/verification.rs` |
+| Durable jobs and SQLite storage | `src/engine/services/automation/jobs.rs`, `src/db.rs` |
 | User SDK and Rust kernel | `sdk/typescript/src/index.ts`, `crates/dominion-agent-kernel/src/lib.rs` |
 
 See [ENGINE.md](ENGINE.md), [documentation index](docs/INDEX.md) and [development CI](.github/workflows/ci.yml). This branch deliberately retains its own Rust design; main's cloud/backend modules have **not** been copied indiscriminately.
@@ -59,3 +59,7 @@ CI includes Rust regression tests, TypeScript checking, main UI unit tests and a
 ## Legacy code cleanup (2026-11-20)
 
 Obsolete embedded generation, campaign and upload endpoints, their Rust implementation modules, stale SDK facades and related OAuth/UI adapters were removed. User-directed code inspection, native execution, validation, recovery and external MCP extensions remain. Historical SQLite records and user-created files are not destructively migrated or erased by this cleanup.
+
+## Minimal execution core (2026-11-20)
+
+The natural-language execution loop is isolated in `src/engine/core/`; provider routing, memory, rooms, automation, planning and concrete tools are in `src/engine/services/`, with MCP and external channels under `src/engine/addons/`. Rust module names and existing API/UI routes remain stable. See [core isolation design](docs/SUB2-MICROKERNEL-2026-11-20.md).

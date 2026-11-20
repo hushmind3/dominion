@@ -44,10 +44,10 @@ UI 개발 서버: `npm --prefix web run dev`. 데스크톱 실행/설치, 실제
 | --- | --- |
 | 최신 프론트와 페이지 | `web/src/App.tsx`, `web/src/pages/`, `web/src/components/` |
 | API·공개 모델 목록·GitHub 연결 | `src/api/mod.rs`, `src/api/providers.rs`, `src/api/cli_oauth.rs` |
-| 에이전트 실행·도구 경계 | `src/engine/chat/runtime.rs`, `src/engine/chat/runtime/turn_body.rs` |
-| 대화 비용·기억 연속성 | `src/engine/chat/room_context.rs`, `src/engine/chat/continuity.rs` |
+| 에이전트 실행·도구 경계 | `src/engine/core/chat/runtime.rs`, `src/engine/core/chat/runtime/turn_body.rs` |
+| 대화 비용·기억 연속성 | `src/engine/services/conversation/chat_room_context.rs`, `src/engine/services/conversation/chat_continuity.rs` |
 | 방 상태와 발언자 선택 | `src/engine/room_state.rs`, `src/engine/rooms.rs` |
-| 실행 작업·지속 저장 | `src/engine/jobs.rs`, `src/db.rs` |
+| 실행 작업·지속 저장 | `src/engine/services/automation/jobs.rs`, `src/db.rs` |
 | SDK/커널 | `sdk/typescript/src/index.ts`, `crates/dominion-agent-kernel/src/lib.rs` |
 
 [엔진 구조](ENGINE.md) · [문서 목차](docs/INDEX.md) · [서브2 CI](.github/workflows/ci.yml)
@@ -69,3 +69,7 @@ UI 개발 서버: `npm --prefix web run dev`. 데스크톱 실행/설치, 실제
 현재 사용하지 않는 영상 생성·업로드, 독립적 자기개선 캠페인, 과거 목표 제어용 Rust 모듈과 HTTP 경로를 삭제했습니다. 별도 실험 프로세스를 주기적으로 시작하던 환경변수 기반 스케줄러, 자동 실험 요청 예약 함수 및 스케줄러 상태 API도 제거했습니다. 네이티브 Rust SDK·TypeScript SDK·OAuth·도구 라우팅·번역·테스트와 구형 개발 문서의 참조도 함께 제거했습니다. 제품에서 계속 쓰는 일반 작업·코드 인덱스·검증·복구·MCP 도구는 유지합니다. 과거 사용자의 SQLite 기록과 파일은 자동 삭제하지 않습니다.
 
 `scripts/check-sub2-contract.mjs`는 구형 실행 경로의 재유입을 막고, `scripts/sub2-source-audit.mjs`는 활성 파일과 API 경로의 중복을 확인합니다. GitHub Actions에서 점검하지만 실제 모델·외부 계정·결제 검증은 별도입니다.
+
+## 자연어 실행 코어 최소화 (2026-11-20)
+
+자연어→실행→결과의 흐름은 `src/engine/core/`에 두고, 모델 선택·메모리·멀티에이전트·자동화·판단·파일 도구 구현은 `src/engine/services/`로 분리했습니다. MCP·외부 채널은 `src/engine/addons/`에서 처리합니다. 기존 메뉴·Rust 모듈 이름·API 주소는 유지됩니다. [코어 분리 설계](docs/SUB2-MICROKERNEL-2026-11-20.md)를 참고하세요.
