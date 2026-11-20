@@ -7,13 +7,13 @@ The `dominion-sub2` branch separates the **model-independent task decision core*
 - The independent crate owns bounded attempts, focused/conservative repair vs review, replay barriers for tools whose effects cannot be safely assumed, monotonic usage deltas, versioned owner instruction replacement, and the chat runtime's real round/tool/proposal budget ledger with deadline admission checks.
 - The root Rust engine owns model/provider protocol, SQLite transactions, tool approvals, multi-agent scheduling, cancellation, real acceptance verification and user assets.
 - `src/engine/execution_scope.rs` limits Home SDK tool-policy/budget effects to the active compatible job and calculates its budget relative to its own persisted session baseline. Standard chat is no longer constrained by the *finished* Home job.
-- Existing embeddable Rust SDK (`src/sdk.rs`), optional TypeScript SDK, UI/SDK compatibility API, SQLite schema, historical media/RSI reads remain unchanged.
+- Existing embeddable Rust SDK (`src/sdk.rs`), optional TypeScript SDK, UI/SDK compatibility API, SQLite schema, and durable user records remain unchanged.
 
 ## Evaluation boundaries
 
 This source separation is meant to make replay decisions independently testable and portable, **not to claim frontier parity**. The available CI exercises the new workspace library's unit tests together with the root package. End-to-end real-model patch completion rate, restart-on-unknown-effect tests and token/latency benchmarks still require comparative runs against the same task set and budget.
 
-This work does not modify `main`, does not restore retired RSI campaigns or media production, and does not delete stored data.
+This work does not modify `main`, does not add detached campaign engines or built-in generators, and does not delete stored data.
 
 ## Cancellation and resource boundaries
 
