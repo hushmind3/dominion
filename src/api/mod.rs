@@ -137,6 +137,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/tasks", get(tasks::list))
         .route("/api/tasks/:id", get(tasks::one))
         .route("/api/tools", get(extensions::list_tools))
+        .route("/api/extensions/runtime",
+            get(extensions::runtime_extensions).post(extensions::set_runtime_extensions))
         .route("/api/browser/status", get(browser::status))
         .route("/api/browser/screenshot", get(browser::screenshot))
         .route("/api/browser/action", post(browser::action))
@@ -212,6 +214,7 @@ pub fn router(state: AppState) -> Router {
                 .post(sessions::rename_session),
         )
         .route("/api/sessions/:id/messages", get(sessions::session_messages))
+        .route("/api/sessions/:id/extensions", post(sessions::set_session_extensions))
         .route("/api/sessions/:id/usage", get(sessions::session_usage))
         .route("/api/sessions/:id/rename", post(sessions::rename_session))
         .route("/api/sessions/:id/clear", post(sessions::clear_session))
