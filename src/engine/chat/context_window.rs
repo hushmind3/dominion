@@ -92,8 +92,8 @@ mod tests{
         let out=focus(h,"그럼 어떤 방식으로?",false);
         assert!(out.iter().any(|r|r["content"]=="말 짧게 해라"));
         assert!(out.iter().any(|r|r["content"]=="그럼 어떤 방식으로?"));
-        assert!(!out.to_string().contains("NOISY_HTML_NOISY_HTML"));
-        assert!(out.to_string().len()<2000);
+        assert!(!json!(out).to_string().contains("NOISY_HTML_NOISY_HTML"));
+        assert!(json!(out).to_string().len()<2000);
         assert_eq!(original[2]["tool_call_id"],"fetch-one");
     }
     #[test]
@@ -105,9 +105,9 @@ mod tests{
         let out=focus(h,"이어서해",false);
         assert!(out.iter().any(|r|r["content"]=="도미니언 Rust 코드 고쳐"));
         assert!(out.iter().any(|r|r["content"]=="이어서해"));
-        assert!(out.to_string().contains("call-29"));
-        assert!(!out.to_string().contains("SOURCE_29_SOURCE_29"));
-        assert!(out.to_string().len()<14000);
+        assert!(json!(out).to_string().contains("call-29"));
+        assert!(!json!(out).to_string().contains("SOURCE_29_SOURCE_29"));
+        assert!(json!(out).to_string().len()<14000);
         assert!(out.iter().all(|r|r["role"]!="tool"));
     }
     #[test]
