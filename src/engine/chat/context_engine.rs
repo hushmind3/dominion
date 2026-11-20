@@ -72,8 +72,16 @@ pub(super) fn compile_private(
     // the separate provider-token estimate still reports oversubscription.
     let history_byte_budget=history_target_tokens.saturating_mul(4)
         .clamp(1_024,32_000);
-    let history=context::history(state,session_id,request.agent_id.as_deref(),
+    let selected=context::history(state,session_id,request.agent_id.as_deref(),
         Some(history_byte_budget))?;
+    let history=if is_social_turn(query) {
+        // "Hello" after a 100-turn coding task must not rebill the whole
+        // coding transcript. This is an explicit fresh context epoch; the
+        // preceding assistant/tool frames remain durable in SQLite.
+        selected.into_iter().rev()
+            .find(|frame|frame["role"]=="user")
+            .into_iter().collect::<Vec<_>>()
+    } else {selected};
     let history_tokens=room_context::estimate(&json!(history).to_string());
     let accounted_input=fixed_tokens.saturating_add(history_tokens);
     let accounting=json!({
@@ -158,6 +166,11 @@ mod tests {
         assert!(small.history.last().unwrap()["content"].as_str().unwrap().contains("owner-13:"),
             "the latest owner message is mandatory even when old history is pruned");
         assert_eq!(large.accounting["contextModelCalls"],0);
+        let greeting=compile_private(&state,&request,"private:compile",
+            "안녕",None,None,Some(65_536),Some(4_096),&[]).unwrap();
+        assert_eq!(greeting.history.len(),1,
+            "a social one-liner should never replay a completed long task");
+        assert!(greeting.history[0]["content"].as_str().unwrap().contains("owner-13:"));
         drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
