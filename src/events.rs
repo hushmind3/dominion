@@ -155,7 +155,9 @@ mod tests {
         let before=store.last_event_seq();
         assert_eq!(before,2250);
         let remaining=bus.replay(0,1000);
-        assert_eq!(remaining[0]["seq"],256);
+        // At the last pruning boundary (seq 2048), 48 old entries
+        // were removed. The global clock is independent of retention.
+        assert_eq!(remaining[0]["seq"],49);
         assert_eq!(bus.try_emit(json!({"type":"new"})).unwrap(),2251);
         assert_eq!(bus.replay(2250,2)[0]["seq"],2251);
     }
