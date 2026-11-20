@@ -24,6 +24,17 @@ pub fn public_job(job:&Value)->Value{
   "archived":true,"generationAvailable":false
  })
 }
+/// One read-only archive projection shared by video and YouTube compatibility
+/// APIs. Never queues generation, modifies jobs or drops historical records.
+pub(crate) fn archived_jobs(
+ state:&AppState,kind:Option<&str>,completed_only:bool,
+)->Vec<Value>{
+ state.store.all("job").into_iter()
+  .filter(|job|matches!(job["kind"].as_str(),Some("video"|"youtube_upload")))
+  .filter(|job|kind.is_none_or(|kind|job["kind"]==kind))
+  .filter(|job|!completed_only||job["status"]=="completed")
+  .map(|job|public_job(&job)).collect()
+}
 fn legacy_job(state:&AppState,id:&str)->Option<Value>{
  state.store.get("job",id).filter(|j|
  matches!(j["kind"].as_str(),Some("video"|"youtube_upload")))
@@ -53,9 +64,7 @@ pub async fn get_config(State(state):State<AppState>)->Json<Value>{
  Json(state.store.get("video_config","default").unwrap_or(Value::Null))
 }
 pub async fn list_jobs(State(state):State<AppState>)->Json<Value>{
- Json(json!(state.store.all("job").into_iter().filter(|j|
-   matches!(j["kind"].as_str(),Some("video"|"youtube_upload")))
-  .map(|j|public_job(&j)).collect::<Vec<_>>()))
+ Json(json!(archived_jobs(&state,None,false)))
 }
 pub async fn job(State(state):State<AppState>,Path(id):Path<String>)->Response{
  match legacy_job(&state,&id){
@@ -64,9 +73,7 @@ pub async fn job(State(state):State<AppState>,Path(id):Path<String>)->Response{
  }
 }
 pub async fn outputs_handler(State(state):State<AppState>)->Json<Value>{
- Json(json!(state.store.all("job").into_iter().filter(|j|
-    j["kind"]=="video" && j["status"]=="completed")
-  .map(|j|public_job(&j)).collect::<Vec<_>>()))
+ Json(json!(archived_jobs(&state,Some("video"),true)))
 }
 pub async fn content(State(state):State<AppState>,Path(id):Path<String>,request:Request<Body>)->Response{
  let file=match output_path(&state,&id){
@@ -84,6 +91,25 @@ pub async fn content(State(state):State<AppState>,Path(id):Path<String>,request:
 #[cfg(test)]
 mod tests{
  use super::*;
+ #[test]
+ fn archival_filter_maintains_kind_and_completion_boundaries() {
+  let examples=vec![
+   json!({"kind":"video","status":"completed"}),
+   json!({"kind":"video","status":"failed"}),
+   json!({"kind":"youtube_upload","status":"completed"}),
+   json!({"kind":"model_job","status":"completed"}),
+  ];
+  let matches=|kind:Option<&str>,completed_only:bool|{
+   examples.iter().filter(|job|
+    matches!(job["kind"].as_str(),Some("video"|"youtube_upload"))
+    &&kind.is_none_or(|kind|job["kind"]==kind)
+    &&(!completed_only||job["status"]=="completed")
+   ).count()
+  };
+  assert_eq!(matches(None,false),3);
+  assert_eq!(matches(Some("video"),true),1);
+  assert_eq!(matches(Some("youtube_upload"),false),1);
+ }
  #[test]
  fn archived_content_links_require_completed_video(){
   let complete=json!({"id":"old","kind":"video","status":"completed","input":{"title":"Archive"}});
