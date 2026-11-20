@@ -17,6 +17,7 @@ pub struct TurnLimits {
 pub trait TurnStrategyPort {
     fn execution_limits(&self, default_rounds: usize, default_tools: usize) -> TurnLimits;
     fn tool_discovery(&self, is_room: bool) -> Value;
+    fn discovery_overridden(&self, reason: &str);
     fn decompose(&self, input: &str, checks: &Value) -> Value;
     fn planning_policy(&self) -> Option<Value>;
     fn needs_plan(
@@ -40,6 +41,7 @@ mod tests {
             TurnLimits { max_rounds: rounds, max_tools: tools }
         }
         fn tool_discovery(&self, _: bool) -> Value { Value::Null }
+        fn discovery_overridden(&self, _: &str) {}
         fn decompose(&self, _: &str, _: &Value) -> Value { Value::Null }
         fn planning_policy(&self) -> Option<Value> { None }
         fn needs_plan(&self, _: Option<&Value>, _: &str, _: &Option<(String, Value)>, _: usize) -> bool {

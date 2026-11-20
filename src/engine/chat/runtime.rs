@@ -592,7 +592,7 @@ async fn run_turn_body(
             }
         }).collect();
         if !request.tools_enabled || !request.tools_execution_enabled { tool_definitions.clear(); }
-        crate::addons::runtime_hooks::mark_unrated(state, execution_id, "tool.discovery", "single-file task catalog");
+        intelligence.discovery_overridden("single-file task catalog");
         if let Some(mut execution) = state.store.get("execution", execution_id) {
             execution["contextPolicy"] = json!("single-file-creation");
             state.store.put("execution", &execution);

@@ -49,6 +49,9 @@ impl TurnStrategyPort for ScopedAlgorithms<'_> {
                 .unwrap_or(default_tools as u64).clamp(4,120) as usize,
         }
     }
+    fn discovery_overridden(&self,reason:&str) {
+        runtime_hooks::mark_unrated(self.state,self.execution_id,"tool.discovery",reason);
+    }
     fn tool_discovery(&self,is_room:bool)->Value{
         if is_room {return Value::Null;}
         runtime_hooks::choose_for_agent(
