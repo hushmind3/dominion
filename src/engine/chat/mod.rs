@@ -4,6 +4,7 @@ mod cancellation;
 mod budget;
 mod tool_schedule;
 mod trace_budget;
+mod context_window;
 mod codex_ws;
 mod context;
 mod continuity;

@@ -147,6 +147,76 @@ pub(super) fn bounded_tool_trace(messages:&[Value],budget_bytes:usize)->Vec<Valu
     out
 }
 
+/// Historical tool observations are references, not a new tool round.
+/// Every old successful tool call/result pair gets an inert, source-labelled
+/// receipt; only the most recent relevant receipts enter the model context.
+/// Complete results and arguments remain in the durable original transcript.
+pub(super) fn compact_historical(messages:&[Value],max_receipts:usize)->Vec<Value>{
+    let mut full=0usize;
+    let mut i=0usize;
+    while i<messages.len(){
+        if let Some(end)=completed_frame_end(messages,i){
+            full+=1;
+            i=end;
+        }else{i+=1;}
+    }
+    let first_kept=full.saturating_sub(max_receipts);
+    let mut visited=0usize;
+    let mut omitted=false;
+    let mut out=Vec::with_capacity(messages.len().min(32));
+    i=0;
+    while i<messages.len(){
+        if let Some(end)=completed_frame_end(messages,i){
+            if visited>=first_kept{
+                let mut summary=note(messages,i,end);
+                if let Some(source)=messages[i]["_dominion_frame"].as_str(){
+                    summary["_dominion_frame"]=json!(source);
+                }
+                out.push(summary);
+            } else if !omitted {
+                omitted=true;
+                out.push(json!({"role":"assistant",
+                    "content":"[이전 도구 기록은 SQLite에 보존됨. 필요한 원문은 해당 파일 또는 출처를 다시 조회하세요.]" }));
+            }
+            visited+=1;
+            i=end;
+            continue;
+        }
+        if messages[i]["role"]=="tool"{
+            // A tool result without its full assistant batch is unusable by
+            // the upstream tool protocol. Keep it in SQLite, not on the wire.
+            i+=1;
+            continue;
+        }
+        if messages[i]["role"]=="assistant" && messages[i]["tool_calls"].as_array()
+            .is_some_and(|calls|!calls.is_empty()){
+            // Incomplete prior tool batches do not form an executable frame.
+            // Never make them look like a fresh call in a later turn.
+            let mut row=messages[i].clone();
+            row.as_object_mut().map(|obj|{
+                obj.remove("tool_calls");obj.remove("reasoning_content");
+            });
+            let original=row["content"].as_str().unwrap_or("");
+            row["content"]=json!(format!(
+                "[이전 도구 호출은 완료되지 않음 — 보존된 실행 기록 참고] {}",
+                narrow(original,160)
+            ));
+            out.push(row);
+        }else{
+            let mut row=messages[i].clone();
+            if row["role"]=="assistant"{
+                if let Some(map)=row.as_object_mut(){
+                    map.remove("reasoning_content");
+                    map.remove("reasoning");
+                }
+            }
+            out.push(row);
+        }
+        i+=1;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests{
     use super::*;
