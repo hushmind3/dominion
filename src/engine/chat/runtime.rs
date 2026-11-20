@@ -322,46 +322,9 @@ async fn run_turn_with_policy(
     execution_budget.finish();
     close_pending_approvals(state, &session_id);
 
-    if request.auto_learning && extensions::enabled(
-        state,&session_id,request.agent_id.as_deref(),extensions::Extension::Memory) {
-        // Do not turn a failed or cancelled execution (including approval
-        // denial) into a success-learning sample.
-        let task_outcome = state
-            .store
-            .get("execution", &execution_id)
-            .is_some_and(|execution| {
-                execution["taskOutcome"] == "succeeded"
-                    || (execution["taskOutcome"] == "answered_unverified"
-                        && execution["acceptanceText"].is_null())
-            });
-        if matches!(&result, Ok(Some(_))) && task_outcome {
-            crate::engine::learning::enqueue_for_agent_through(
-                state,
-                &session_id,
-                request.agent_id.as_deref(),
-                request.provider_id.as_deref().unwrap_or(""),
-                request.model.as_deref().unwrap_or(""),
-                result.as_ref().ok().and_then(|message|message.as_ref()).and_then(|message|message["id"].as_str()),
-            );
-        }
-    }
-    // A correction is worth reflecting on even when the corrective turn
-    // itself failed, because the failure is additional evidence.
-    if extensions::enabled(
-        state,&session_id,request.agent_id.as_deref(),extensions::Extension::Memory) {
-    if let Some(correction_id) =
-        crate::engine::reflect::correction_to_reflect(state, &session_id, &request.input)
-    {
-        crate::engine::reflect::enqueue(
-            state,
-            &session_id,
-            &correction_id,
-            request.agent_id.as_deref(),
-            request.provider_id.as_deref().unwrap_or(""),
-            request.model.as_deref().unwrap_or(""),
-        );
-    }
-    }
+    extensions::knowledge::after_turn(
+        state,&request,&session_id,&execution_id,&result,
+    );
     result
 }
 
