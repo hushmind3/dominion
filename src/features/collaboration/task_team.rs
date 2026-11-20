@@ -193,7 +193,7 @@ fn artifact_delta_verified(task:&Task,child:&Value)->bool {
 /// The immutable child job must belong to this exact DAG node, not just have
 /// the same final message or a matching status. Never import a foreign run's
 /// receipts across parent or task boundaries.
-fn belongs_to_team(parent:&str,task:&Task,child:&Value)->bool {
+pub(crate) fn belongs_to_team(parent:&str,task:&Task,child:&Value)->bool {
     let expected_kind=if task.runtime==WorkerRuntime::Native {
         "prompt"
     }else{"external_agent"};
