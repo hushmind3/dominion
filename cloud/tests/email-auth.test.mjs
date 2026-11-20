@@ -133,3 +133,41 @@ test('expired confirmation cannot issue a session',async()=>{
  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sessions').get().n,0)
  db.close()
 })
+
+// The Google path must use the same durable session issuer as the OAuth providers.
+// Sign the fixture JWT with an actual RSA key so the Worker verifies its signature.
+test('Google ID token signature creates exactly one account and independently revocable sessions',async()=>{
+ const {db,env}=fixture()
+ env.ALLOWED_ORIGIN='http://127.0.0.1:4317'
+ env.GOOGLE_CLIENT_ID='dominion-browser-test'
+ const pair=await crypto.subtle.generateKey({name:'RSASSA-PKCS1-v1_5',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['sign','verify'])
+ const key={...(await crypto.subtle.exportKey('jwk',pair.publicKey)),kid:'fixture-kid',alg:'RS256',use:'sig'}
+ const encode=value=>Buffer.from(typeof value==='string'?value:JSON.stringify(value)).toString('base64url')
+ const epoch=Math.floor(Date.now()/1000)
+ const header=encode({alg:'RS256',kid:key.kid,typ:'JWT'})
+ const payload=encode({aud:env.GOOGLE_CLIENT_ID,iss:'https://accounts.google.com',sub:'google-fixture-1',email:'google@example.com',email_verified:true,iat:epoch-10,exp:epoch+300})
+ const message=header+'.'+payload
+ const signature=await crypto.subtle.sign('RSASSA-PKCS1-v1_5',pair.privateKey,new TextEncoder().encode(message))
+ const credential=message+'.'+Buffer.from(signature).toString('base64url')
+ const originalFetch=globalThis.fetch
+ globalThis.fetch=async url=>{
+  if(String(url)==='https://www.googleapis.com/oauth2/v3/certs')return new Response(JSON.stringify({keys:[key]}),{status:200})
+  throw Error('Unexpected outbound request: '+url)
+ }
+ try{
+  const logIn=()=>worker.fetch(new Request('https://dominion.example/v1/auth/google',{method:'POST',headers:{origin:env.ALLOWED_ORIGIN,'content-type':'application/json'},body:JSON.stringify({credential})}),env)
+  const first=await logIn()
+  assert.equal(first.status,200)
+  const session=await first.json()
+  assert.equal(session.account_id,'google:google-fixture-1')
+  assert.match(session.token,/^[A-Za-z0-9_-]{43}$/)
+  const me=await worker.fetch(new Request('https://dominion.example/v1/me',{headers:{origin:env.ALLOWED_ORIGIN,authorization:'Bearer '+session.token}}),env)
+  assert.equal(me.status,200)
+  assert.equal((await me.json()).account_id,session.account_id)
+  const second=await logIn()
+  assert.equal(second.status,200)
+  assert.notEqual((await second.json()).token,session.token)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM accounts').get().n,1)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sessions').get().n,2)
+ }finally{globalThis.fetch=originalFetch;db.close()}
+})
