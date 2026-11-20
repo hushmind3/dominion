@@ -336,23 +336,20 @@ mod tests {
     #[test]
     fn catalog_exposes_only_implemented_drivers() {
         let entries = catalog();
-        assert!(entries.len() >= 20, "expected the full channel registry");
+        let implemented = ["discord", "telegram", "slack", "matrix", "whatsapp",
+            "line", "zulip", "mattermost", "signal"];
+        assert_eq!(entries.len(), implemented.len(),
+            "catalog should describe only installed, executable channel drivers");
         let discord = entries
             .iter()
             .find(|entry| entry["id"] == "discord")
             .expect("discord entry");
         assert_eq!(discord["available"], true);
-        let implemented = ["discord", "telegram", "slack", "matrix", "whatsapp",
-            "line", "zulip", "mattermost", "signal"];
         for kind in implemented {
             let entry = entries.iter().find(|e| e["id"] == kind)
                 .unwrap_or_else(|| panic!("missing {kind}"));
             assert_eq!(entry["available"], true, "{entry}");
         }
-        assert!(entries
-            .iter()
-            .filter(|e| !implemented.contains(&e["id"].as_str().unwrap_or("")))
-            .all(|e| e["available"] == false), "{entries:?}");
         assert!(discord["fields"].as_array().is_some());
     }
 }
