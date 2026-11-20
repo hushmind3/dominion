@@ -31,7 +31,7 @@ pub fn definitions() -> Vec<Value> {
     };
     let text = |description: &str| json!({ "type": "string", "description": description });
 
-    vec![
+    let mut definitions = vec![
         tool("workspace_list", "List files and folders in the workspace", object(json!({"path": text("Relative folder path")}), vec![])),
         tool("workspace_read", "Read a UTF-8 file from the workspace", object(json!({"path": text("Relative file path")}), vec!["path"])),
         tool("workspace_read_range", "Read only a line range from a workspace file. Use the line numbers from the repository index instead of reading a large file end to end.", object(json!({"path": text("Relative file path"), "startLine": json!({"type":"integer","minimum":1}), "endLine": json!({"type":"integer","minimum":1, "description":"Inclusive end line; at most 400 lines are returned"})}), vec!["path","startLine"])),
@@ -68,7 +68,6 @@ pub fn definitions() -> Vec<Value> {
         }), vec!["agentId", "prompt"])),
         tool("task_status", "Check a delegated task's status", object(json!({"jobId": text("Job id")}), vec!["jobId"])),
         tool("task_result", "Read a delegated task's result, artifacts and final answer", object(json!({"jobId": text("Job id")}), vec!["jobId"])),
-        tool("account_status", "List OAuth accounts connected to DOMINION", object(json!({}), vec![])),
         tool("browser_control", "Control a local Chrome/Chromium window: open pages, observe text and interactive elements, click, type, press keys and capture screenshots (approval required)", object(json!({
             "action": json!({"type": "string", "enum": ["status", "open", "observe", "click", "type", "press", "screenshot", "close"]}),
             "url": text("URL to open"),
@@ -76,68 +75,15 @@ pub fn definitions() -> Vec<Value> {
             "text": text("Text to type into the indexed element"),
             "key": text("Key to press: Enter, Escape, Tab, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Backspace")
         }), vec!["action"])),
-        tool("github_file_read", "Read a UTF-8 file on a specific GitHub repository branch. Returns a blob SHA for safe, conflict-checked updates.", object(json!({
-            "owner":text("GitHub repository owner"),"repo":text("Repository name"),
-            "branch":text("Exact branch to inspect"),"path":text("Relative repository file path")
-        }),vec!["owner","repo","branch","path"])),
-        tool("github_file_commit", "Commit a UTF-8 file to the exact selected GitHub branch after checking its observed blob SHA; remotely re-read and verify (approval required).", object(json!({
-            "owner":text("GitHub repository owner"),"repo":text("Repository name"),
-            "branch":text("Exact branch to update"),"path":text("Relative repository file path"),
-            "content":text("Complete replacement UTF-8 content"),"message":text("Commit message"),
-            "expectedSha":text("Exact blobSha from github_file_read; mandatory for existing files"),
-            "createNew":json!({"type":"boolean","description":"Explicitly create a missing file; cannot overwrite existing source"})
-        }),vec!["owner","repo","branch","path","content","message"])),
-        tool("github_api", "Call the GitHub REST API as the connected account. Write methods require approval (approval required)", object(json!({"method": json!({"type": "string", "enum": ["GET", "POST", "PATCH", "PUT", "DELETE"]}), "path": text("GitHub API path beginning with /"), "body": json!({"type": "object"})}), vec!["method", "path"])),
 
-        tool("github_work_read", "Use the connected GitHub account to list repositories, branches, PRs, issues and CI runs.", object(json!({
-            "operation":{"type":"string","enum":["repositories","search_repositories","branches","pull_requests","issues","ci_runs"]},
-            "owner":text("Repository owner"),"repo":text("Repository name"),
-            "query":text("Repository name/description or GitHub search query"),
-            "branch":text("Branch for CI runs")
-        }),vec!["operation"])),
-        tool("github_work_write", "Create a GitHub branch, PR or issue and verify it on the connected account. Owner approval required.", object(json!({
-            "operation":{"type":"string","enum":["create_branch","open_pr","create_issue"]},
-            "owner":text("Repository owner"),"repo":text("Repository"),
-            "from":text("Existing branch"),"branch":text("New branch"),
-            "head":text("PR head"),"base":text("PR destination"),
-            "title":text("PR/issue title"),"body":text("PR/issue details")
-        }),vec!["operation","owner","repo"])),
-        tool("google_workspace_read", "Search/read connected Google Gmail, Drive, Docs and Calendar. Specify service and operation.", object(json!({
-            "service":{"type":"string","enum":["gmail","drive","docs","calendar"]},
-            "operation":{"type":"string","enum":["search","get","list"]},
-            "query":text("Gmail search or Drive name fragment"),"id":text("Resource ID"),
-            "calendarId":text("Calendar (default primary)"),"timeMin":text("RFC3339 start"),
-            "maxResults":{"type":"integer","minimum":1,"maximum":50},
-            "pageToken":text("Next page token")
-        }),vec!["service","operation"])),
-        tool("google_workspace_write", "Owner-approved Gmail send, Drive text create/update, Docs append or Calendar create/update/delete.", object(json!({
-            "service":{"type":"string","enum":["gmail","drive","docs","calendar"]},
-            "operation":{"type":"string","enum":["send","create_text","update_text","append","create","update","delete"]},
-            "to":text("Gmail recipient"),"subject":text("Subject"),"body":text("Plain-text email"),
-            "id":text("Resource ID"),"name":text("Drive file name"),
-            "content":text("File or appended text"),"expectedVersion":text("Prior Drive version"),
-            "calendarId":text("Calendar ID (default primary)"),
-            "summary":text("Event title"),"description":text("Event description"),
-            "start":text("RFC3339 start"),"end":text("RFC3339 end")
-        }),vec!["service","operation"])),
-    ]
+    ];
+    definitions.extend(crate::integrations::accounts::tools::definitions());
+    definitions
 }
 
 /// Show connected service tools only when the owner granted that account.
 pub fn definitions_for(state:&crate::state::AppState)->Vec<Value>{
-    let providers=crate::engine::oauth::status(state);
-    let active=|id:&str,workspace:bool|providers.iter().any(|provider|
-        provider["id"]==id && provider["connected"]==true &&
-        (!workspace || provider["workspaceReady"]==true));
-    let github=active("github",false);
-    let google=active("google",true);
-    definitions().into_iter().filter(|tool|{
-        match tool["function"]["name"].as_str().unwrap_or("") {
-            "github_work_read"|"github_work_write"=>github,
-            "google_workspace_read"|"google_workspace_write"=>google,
-            _=>true
-        }
-    }).collect()
+    crate::integrations::accounts::tools::filter_available(state, definitions())
 }
 
 fn tool(name: &str, description: &str, parameters: Value) -> Value {
@@ -156,12 +102,8 @@ pub fn requires_approval(name: &str) -> bool {
             | "file_write"
             | "shell_exec"
             | "terminal_exec"
-            | "github_api"
-            | "github_file_commit"
-            | "github_work_write"
-            | "google_workspace_write"
             | "browser_control"
-    )
+    ) || crate::integrations::accounts::tools::requires_approval(name)
 }
 
 pub async fn execute(
@@ -170,6 +112,9 @@ pub async fn execute(
     args: &Value,
     run_id: &str,
 ) -> Result<Value, String> {
+    if let Some(result) = crate::integrations::accounts::tools::execute(ctx.state,name,args).await {
+        return result;
+    }
     match name {
         "workspace_list" => {
             let path = resolve_workspace(ctx.workspace, string_arg(args, "path").unwrap_or("."))?;
@@ -382,52 +327,8 @@ pub async fn execute(
         "delegate_task" => delegate(ctx, args).await,
         "task_status" => task_payload(ctx, args, false),
         "task_result" => task_payload(ctx, args, true),
-        "account_status" => Ok(json!({
-            "providers": crate::engine::oauth::status(ctx.state),
-        })),
-        "github_file_read" => crate::engine::github_files::read(ctx.state,args).await,
-        "github_file_commit" => crate::engine::github_files::commit(ctx.state,args).await,
-        "github_api" => github_api(ctx, args).await,
-        "github_work_read" => crate::engine::github_workflow::execute(ctx.state,args,false).await,
-        "github_work_write" => crate::engine::github_workflow::execute(ctx.state,args,true).await,
-        "google_workspace_read" => crate::engine::google_workspace::execute(ctx.state,args,false).await,
-        "google_workspace_write" => crate::engine::google_workspace::execute(ctx.state,args,true).await,
         other => Err(format!("Unknown tool: {other}")),
     }
-}
-
-async fn github_api(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String> {
-    // Respect the account connector's expiry/refresh lifecycle. A stale
-    // cached bearer must not repeatedly fail GitHub requests until restart.
-    let token=crate::engine::oauth::fresh_access_token(ctx.state,"github").await
-        .map_err(|error|format!("GitHub 계정 재연결 또는 권한 확인이 필요합니다: {error}"))?;
-    let method = string_arg(args, "method").unwrap_or("GET").to_uppercase();
-    if !matches!(method.as_str(), "GET" | "POST" | "PATCH" | "PUT" | "DELETE") {
-        return Err("지원하지 않는 HTTP 메서드입니다.".into());
-    }
-    let path = required_arg(args, "path")?;
-    if !path.starts_with('/') || path.contains("..") {
-        return Err("GitHub API 경로는 / 로 시작해야 합니다.".into());
-    }
-    let method =
-        reqwest::Method::from_bytes(method.as_bytes()).map_err(|error| error.to_string())?;
-    let mut request = reqwest::Client::new()
-        .request(method, format!("https://api.github.com{path}"))
-        .header("Authorization", format!("Bearer {token}"))
-        .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", "DOMINION")
-        .timeout(Duration::from_secs(30));
-    if let Some(body) = args.get("body").filter(|value| !value.is_null()) {
-        request = request.json(body);
-    }
-    let response = request.send().await.map_err(|error| error.to_string())?;
-    let status = response.status().as_u16();
-    let text = response.text().await.unwrap_or_default();
-    let parsed: Value = serde_json::from_str(&text).unwrap_or_else(|_| json!(text));
-    Ok(json!({
-        "status": status,
-        "body": parsed.to_string().chars().take(20_000).collect::<String>(),
-    }))
 }
 
 const MAX_DELEGATION_DEPTH: usize = 4;
