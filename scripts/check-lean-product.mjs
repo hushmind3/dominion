@@ -38,6 +38,18 @@ for(const file of tracked){
   'Retired domain reference reintroduced: '+file);
 }
 for(const p of absent)assert.ok(!exists(p),'Retired or duplicate product path still exists: '+p);
+// Reject duplicate local module imports in the existing TypeScript UI. Most
+// imports are single-line; this zero-dependency gate catches accidental
+// double wiring without mutating or rebuilding any UI.
+for(const path of tracked.filter(p=>/^web\/src\/.*\.tsx?$/.test(p)&&exists(p))){
+ const modules=new Set();
+ for(const match of read(path).matchAll(/^\s*import\b[^\n]*\bfrom\s*['"]([^'"]+)['"]/gm)){
+  const target=match[1];
+  if(!target.startsWith('.'))continue;
+  assert.ok(!modules.has(target),'Duplicate frontend module import: '+path+' -> '+target);
+  modules.add(target);
+ }
+}
 // The old campaign provider policy must not silently return to the live chat
 // routing path. Historical job records are handled by a separate archive guard.
 const liveProvider=read('src/engine/chat/provider.rs');
