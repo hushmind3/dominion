@@ -44,7 +44,9 @@ test('native model turn delegates all MCP tool operations through addon port',()
  const turn=source('src/engine/services/conversation/chat/runtime/turn_body.rs');
  const dispatcher=source('src/engine/services/conversation/chat/runtime/tool_calls.rs');
  const discovery=source('src/engine/services/tools/chat_capability.rs');
- assert.match(turn,/addons::tool_definitions/);
+ const catalog=source('src/engine/services/conversation/chat/runtime/tool_catalog.rs');
+ assert.match(turn,/tool_catalog::prepare/);
+ assert.match(catalog,/addons::tool_definitions/);
  assert.match(discovery,/addons::tool_definitions/);
  assert.match(dispatcher,/addons::requires_tool_approval/);
  assert.match(dispatcher,/addons::execute_tool/);
