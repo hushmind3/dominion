@@ -24,7 +24,7 @@ use crate::engine::adaptation::types::TaskOutcome;
 use crate::engine::verification;
 use crate::{
     engine::{
-        llm, mcp,
+        llm,
         tools::{self, ToolContext},
     },
     state::AppState,
