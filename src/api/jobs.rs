@@ -68,7 +68,7 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
             if let Some(id)=value["agentId"].as_str(){if state.store.get("agent",id).is_none(){return error(StatusCode::BAD_REQUEST,"실행 에이전트를 찾을 수 없습니다.");}}
             value
         },
-        _=>return error(StatusCode::BAD_REQUEST,"해당 작업은 대화·회의·영상의 실행 API에서 시작하세요."),
+        _=>return error(StatusCode::BAD_REQUEST,"이 API는 일반 작업만 실행합니다. 대화와 회의는 전용 API를 사용하세요."),
     };
     match engine::jobs::enqueue(&state,kind,clean){Some(job)=>(StatusCode::ACCEPTED,Json(job)).into_response(),None=>error(StatusCode::INTERNAL_SERVER_ERROR,"작업을 대기열에 저장할 수 없습니다.")}
 }
