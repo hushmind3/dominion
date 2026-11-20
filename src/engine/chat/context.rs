@@ -134,7 +134,10 @@ pub(super) fn system_prompt_with_manifest_at(
     } else {String::new()};
     let mut items = Vec::new();
     items.append(&mut identity_items);
-    if !social {
+    if !social && crate::engine::extensions::enabled(
+        state,session_id,request.agent_id.as_deref(),
+        crate::engine::extensions::Extension::Memory
+    ) {
     if let Some(agent_id) = &request.agent_id {
         if let Some((growth, growth_items)) =
             crate::engine::agent_growth::context_block(state, agent_id)
@@ -217,7 +220,8 @@ fn context_block_with_manifest(
 ) -> Option<(String, Vec<Value>, String)> {
     let scope = crate::engine::memory::MemoryScope::for_session(&state.store, session_id, agent_id);
     let (memories, mut items) =
-        crate::engine::memory::context_block_with_manifest_at(state, &scope, query, execution_id);
+        crate::engine::extensions::knowledge::memory_context(
+            state,session_id,agent_id,query,execution_id);
 
     // Private chat used to preload twelve enabled skills on *every* message,
     // including "hello". Advertise relevant skills only. A direct request
@@ -228,13 +232,8 @@ fn context_block_with_manifest(
     let query_terms = lower_query.split(|ch: char| !ch.is_alphanumeric())
         .filter(|term|term.chars().count()>=2)
         .collect::<Vec<_>>();
-    let mut skills = state
-        .store
-        .all("skill")
-        .into_iter()
-        .filter(|skill| crate::engine::memory::visible(skill, &scope))
-        .filter(|skill| skill.get("status").and_then(Value::as_str) != Some("draft"))
-        .filter(|skill| skill.get("enabled").and_then(|v| v.as_bool()) != Some(false))
+    let mut skills = crate::engine::extensions::knowledge::visible_skills(
+        state,session_id,agent_id).into_iter()
         .filter_map(|skill| {
             let id = skill.get("id").and_then(|v| v.as_str())?.to_string();
             let name = skill.get("name").and_then(|v| v.as_str())?.to_string();
