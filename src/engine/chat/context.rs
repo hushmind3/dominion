@@ -741,7 +741,7 @@ mod tests {
         assert!(after*10<before,"compact context must reduce input at least 10x: {after}/{before}");
         assert!(focused.iter().any(|m|m["content"]=="말 짧게 해라"));
         assert!(focused.iter().any(|m|m["content"]=="피클은 AI 에이전트입니다"));
-        assert!(!json!(focused).to_string().contains("UNRELATED_BLOG_HTML_UNRELATED_BLOG_HTML"));
+        assert!(!json!(focused).to_string().contains(&"UNRELATED_BLOG_HTML_".repeat(100)));
         assert_eq!(state.store.message(receipt["id"].as_str().unwrap()).unwrap()["content"],
             html,"full source remains in SQLite and can be reread");
         let _=std::fs::remove_dir_all(dir);

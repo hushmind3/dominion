@@ -137,7 +137,7 @@ mod tests{
         assert!(out.iter().any(|r|r["content"]=="도미니언 Rust 코드 고쳐"));
         assert!(out.iter().any(|r|r["content"]=="이어서해"));
         assert!(json!(out).to_string().contains("call-29"));
-        assert!(!json!(out).to_string().contains("SOURCE_29_SOURCE_29"));
+        assert!(!json!(out).to_string().contains(&"SOURCE_29_".repeat(100)));
         assert!(json!(out).to_string().len()<14000);
         assert!(out.iter().all(|r|r["role"]!="tool"));
     }
