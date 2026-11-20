@@ -118,32 +118,41 @@ pub async fn mcp_catalog(Query(query): Query<HashMap<String, String>>) -> Respon
         .append_pair("version", "latest")
         .append_pair("limit", "60");
 
-    let response = reqwest::Client::new()
-        .get(endpoint)
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await;
-    let response = match response {
-        Ok(response) if response.status().is_success() => response,
-        Ok(response) => {
-            return error(
-                StatusCode::BAD_GATEWAY,
-                &format!("MCP registry HTTP {}", response.status()),
-            )
+    // Read bounded pages instead of silently showing only the first registry page.
+    // A cursor is supplied by the official registry, never synthesized locally.
+    let client = reqwest::Client::new();
+    let mut pages = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..3 {
+        let mut page_url = endpoint.clone();
+        if let Some(ref cursor) = cursor {
+            page_url.query_pairs_mut().append_pair("cursor", cursor);
         }
-        Err(message) => return error(StatusCode::BAD_GATEWAY, &message.to_string()),
-    };
-    let value: Value = match response.json().await {
-        Ok(value) => value,
-        Err(message) => return error(StatusCode::BAD_GATEWAY, &message.to_string()),
-    };
+        let response = match client.get(page_url).timeout(Duration::from_secs(15)).send().await {
+            Ok(response) if response.status().is_success() => response,
+            Ok(response) => return error(StatusCode::BAD_GATEWAY, &format!("MCP registry HTTP {}", response.status())),
+            Err(message) => return error(StatusCode::BAD_GATEWAY, &message.to_string()),
+        };
+        let value: Value = match response.json().await {
+            Ok(value) => value,
+            Err(message) => return error(StatusCode::BAD_GATEWAY, &message.to_string()),
+        };
+        cursor = value.get("metadata")
+            .and_then(|metadata| metadata.get("nextCursor"))
+            .and_then(Value::as_str)
+            .filter(|cursor| !cursor.is_empty())
+            .map(str::to_owned);
+        pages.push(value);
+        if cursor.is_none() { break; }
+    }
     let mut seen = std::collections::HashSet::new();
-    let items = value
-        .get("servers")
-        .and_then(|value| value.as_array())
-        .map(|servers| {
-            servers
-                .iter()
+    let items = pages
+        .iter()
+        .flat_map(|page| page.get("servers").and_then(Value::as_array).into_iter().flatten())
+        .collect::<Vec<_>>();
+    let items = {
+            items
+                .into_iter()
                 .filter_map(|entry| {
                     let server = entry.get("server").unwrap_or(entry);
                     let name = server.get("name").and_then(|value| value.as_str())?;
@@ -183,7 +192,6 @@ pub async fn mcp_catalog(Query(query): Query<HashMap<String, String>>) -> Respon
                     }))
                 })
                 .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    };
     Json(json!(items)).into_response()
 }
