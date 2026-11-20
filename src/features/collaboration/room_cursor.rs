@@ -22,7 +22,7 @@ pub(crate) struct Window {
 /// traffic and system/learning frames are excluded. The current owner turn
 /// remains mandatory in the room compiler, even if the older backlog is large.
 pub(crate) fn plan(
-    messages:&[Value],session_id:&str,agent_id:&str,cursor:Option<&Value>,
+    messages:&[Value],session_id:&str,agent_id:&str,source_id:&str,cursor:Option<&Value>,
 )->Result<Window,String>{
     let previous=if let Some(cursor)=cursor {
         if cursor["sessionId"].as_str()!=Some(session_id)
@@ -35,7 +35,13 @@ pub(crate) fn plan(
     let after=match previous {
         Some(id)=>messages.iter().position(|m|m["id"].as_str()==Some(id))
             .ok_or("Room cursor points to a missing transcript record")?+1,
-        None=>0,
+        // A newly joined agent starts with the triggering owner message,
+        // while earlier room history remains available for indexed recall.
+        None=>messages.iter().position(|m|m["id"].as_str()==Some(source_id)
+            && m["session_id"].as_str()==Some(session_id)
+            && m["role"]=="user"
+            && m["metadata"]["authorKind"]=="owner")
+            .ok_or("Room cursor has no matching owner trigger")?,
     };
     let unread=messages.iter().enumerate().skip(after).filter(|(_,m)|{
         m["session_id"].as_str()==Some(session_id)
@@ -81,26 +87,27 @@ mod tests {
     }
     #[test]
     fn each_delivery_is_a_contiguous_prefix_and_next_turn_starts_after_cursor(){
-        let messages=(0..11).map(|i|msg(&format!("m{i}"),"assistant","room:one","short"))
+        let messages=(0..11).map(|i|msg(&format!("m{i}"),
+            if i==0 {"user"} else {"assistant"},"room:one","short"))
             .collect::<Vec<_>>();
-        let a=plan(&messages,"room:one","a",None).unwrap();
+        let a=plan(&messages,"room:one","a","m0",None).unwrap();
         assert_eq!(a.required_indices,vec![0,1,2,3]);
         assert_eq!(a.through_message_id.as_deref(),Some("m3"));
         assert_eq!(a.unread_remaining,7);
         let cursor=checkpoint("room:one","a","owner","m3");
-        let b=plan(&messages,"room:one","a",Some(&cursor)).unwrap();
+        let b=plan(&messages,"room:one","a","m0",Some(&cursor)).unwrap();
         assert_eq!(b.required_indices,vec![4,5,6,7]);
         assert_eq!(b.through_message_id.as_deref(),Some("m7"));
-        let c=plan(&messages,"room:one","b",None).unwrap();
+        let c=plan(&messages,"room:one","b","m0",None).unwrap();
         assert_eq!(c.required_indices,vec![0,1,2,3],"agents cannot share cursors");
     }
     #[test]
     fn cursors_fail_closed_for_other_sessions_and_missing_anchors(){
         let messages=vec![msg("x","user","room:one","owner")];
         let wrong=checkpoint("room:other","a","owner","x");
-        assert!(plan(&messages,"room:one","a",Some(&wrong)).is_err());
+        assert!(plan(&messages,"room:one","a","x",Some(&wrong)).is_err());
         let missing=checkpoint("room:one","a","owner","deleted");
-        assert!(plan(&messages,"room:one","a",Some(&missing)).is_err());
+        assert!(plan(&messages,"room:one","a","x",Some(&missing)).is_err());
     }
     #[test]
     fn oversized_unread_message_is_not_acked_or_silently_skipped(){
@@ -108,7 +115,7 @@ mod tests {
             msg("large","user","room:one",&"x".repeat(MAX_REQUIRED_UNREAD_CHARS+1)),
             msg("small","assistant","room:one","good"),
         ];
-        let window=plan(&messages,"room:one","a",None).unwrap();
+        let window=plan(&messages,"room:one","a","large",None).unwrap();
         assert!(window.required_indices.is_empty());
         assert_eq!(window.unread_remaining,2);
         assert!(window.oversized_first_unread);
@@ -122,8 +129,21 @@ mod tests {
                 "metadata":{"authorKind":"agent"},"tool_calls":[{"id":"t"}]}),
             msg("owner","user","room:one","current"),
         ];
-        let window=plan(&messages,"room:one","a",None).unwrap();
+        let window=plan(&messages,"room:one","a","owner",None).unwrap();
         assert_eq!(window.required_indices,vec![2]);
         assert_eq!(window.through_message_id.as_deref(),Some("owner"));
     }
+    #[test]
+    fn joining_a_long_room_does_not_pin_unrelated_ancient_speech(){
+        let mut messages=(0..100).map(|i|msg(&format!("ancient-{i}"),
+            "assistant","room:one","unrelated old history")).collect::<Vec<_>>();
+        messages.push(msg("current","user","room:one","new owner task"));
+        messages.push(msg("peer","assistant","room:one","reply on this task"));
+        let window=plan(&messages,"room:one","new-agent","current",None).unwrap();
+        assert_eq!(window.required_indices,vec![100,101]);
+        assert_eq!(window.through_message_id.as_deref(),Some("peer"));
+        assert_eq!(window.unread_remaining,0);
+        assert!(!window.required_indices.contains(&0));
+    }
+
 }

@@ -409,7 +409,7 @@ pub(crate) fn compile(
         let cursor_id=crate::features::collaboration::room_cursor::binding_id(session_id,agent_id);
         let previous=state.store.get("room_read_cursor",&cursor_id);
         Some(crate::features::collaboration::room_cursor::plan(
-            &all,session_id,agent_id,previous.as_ref(),
+            &all,session_id,agent_id,source_id,previous.as_ref(),
         )?)
     }else{None};
     let (prompt, persona_tokens, mut items) = core(state, request, &room, query);
