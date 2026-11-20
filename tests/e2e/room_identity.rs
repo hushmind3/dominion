@@ -251,6 +251,14 @@ fn backend_extensions_are_isolated_from_the_core_conversation() {
     }));
     assert_eq!(global["enabled"]["channels"],false);
     assert_eq!(app.get("/api/extensions/runtime")["enabled"]["memory"],false);
+    assert_eq!(app.get("/api/mcp/discover"),json!([]),
+        "globally disabled MCP must not enumerate remote servers");
+    let exposed=app.get("/api/tools");
+    assert!(exposed.as_array().unwrap().iter().all(|tool|{
+        let name=tool["name"].as_str().unwrap_or("");
+        name!="memory_search"&&name!="memory_store"&&name!="skill_view"
+            &&name!="skill_propose"&&!name.starts_with("mcp__")
+    }),"the host must not advertise globally disabled add-ons: {exposed}");
     // The runtime policy does not erase the core's transcript.
     let persisted=app.get(&format!("/api/sessions/{id}/messages"));
     assert_eq!(persisted.as_array().unwrap().len(),2);
