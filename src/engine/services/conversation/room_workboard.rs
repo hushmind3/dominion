@@ -146,10 +146,13 @@ mod tests{
         (AppState::new(config,store,vault),dir)
     }
     fn seed(state:&AppState,source_id:&str,msg_id:&str,agent:&str,execution:&str){
-        state.store.write_message(&json!({
-            "id":source_id,"session_id":"room:r","role":"user","content":"make code",
-            "metadata":{"authorKind":"owner","roomId":"r"}
-        })).unwrap();
+        if state.store.message(source_id).is_none(){
+            state.store.write_message(&json!({
+                "id":source_id,"session_id":"room:r","role":"user",
+                "content":"make code",
+                "metadata":{"authorKind":"owner","roomId":"r"}
+            })).unwrap();
+        }
         state.store.write_message(&json!({
             "id":msg_id,"session_id":"room:r","role":"assistant",
             "agent_id":agent,"content":"I made an update","metadata":{
