@@ -223,6 +223,33 @@ including any delegated worktree patch receipt; a late completion cannot
 overwrite cancellation or an already finalized run. Failed persistence records
 `job.finalization_failed` instead of falsely reporting success.
 
+## 2026-11-20 bounded room, model-route and delegated recovery guards
+
+- Multi-agent context selection can link an old, query-matched owner message
+  with its committed agent answer while still enforcing the configured token
+  budget. A targeted fixture places 120 unrelated owner turns between the
+  original exchange and the recall request. Exact visible message IDs remain
+  the source of per-agent read cursors; delayed replies cannot claim content
+  from later owner turns.
+- Model capabilities remain endpoint/model-scoped. Explicit `text: false`
+  prevents routing an ordinary text turn; explicit native-tool denial cannot
+  be bypassed through a manually selected compatibility mode unless
+  `textToolCalls: true` has been declared. Unknowns retain existing behavior
+  elsewhere rather than being presented as observed compatibility.
+- Team integration validates the entire frozen implementation-worker set
+  before the first mutation. Parent cancellation, permission revocation or
+  generation change prevents the next patch or final completion claim.
+  A failed compare-and-swap team completion cannot return `integrated`.
+- External Codex, Claude and Qwen CLI inspectors remain isolated read-only
+  worker processes, not a model provider. Only a final successful CLI
+  terminal result may become an answer. On backend restart, in-flight
+  `external_agent_run` records become `needs_review`; their parent jobs
+  cannot automatically replay, even if the external evidence query fails.
+  The new partial index only reads unfinished external runs on recovery.
+- Focused regression tests are committed for these boundaries and wired into
+  the existing development CI; no claim of successful CI or desktop build is
+  made by this document.
+
 ## Durable room progress
 
 A room speaker's completed response now records elapsed milliseconds in its durable output and publishes a `speaker_finished` event containing the room/agent IDs, elapsed time and step count. The room still follows its existing sequential participation and shared-owner-message semantics; this instrumentation does not change UI routing or its model choice. It supports diagnosing a slow participant instead of guessing a fixed whole-room timeout.
