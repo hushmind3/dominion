@@ -445,8 +445,8 @@ fn mlx_model_from_dir(dir: &Path, root: &Path) -> Option<Value> {
 }
 
 // Both MLX directories and GGUF files traverse the same depth-bounded
-// filesystem tree. Avoid a second recursive walker with subtly different
-// symlink rules: directory entries are never followed through symlinks.
+// filesystem tree. Preserve the previous mode-specific symlink behavior:
+// local GGUF indexes symlink files, while MLX accepts linked model folders.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ModelEntry { File, Directory }
 
@@ -454,13 +454,17 @@ fn scan_model_tree(dir:&Path, depth:usize, found:&mut Vec<PathBuf>, entry_kind:M
     if depth>4 { return; }
     let Ok(entries)=std::fs::read_dir(dir) else { return; };
     for entry in entries.flatten() {
-        let Ok(file_type)=entry.file_type() else { continue; };
         let path=entry.path();
-        if file_type.is_dir() {
+        let is_dir=if entry_kind==ModelEntry::Directory {
+            path.is_dir() // Retain MLX symlinked directories.
+        }else{
+            entry.file_type().is_ok_and(|kind|kind.is_dir())
+        };
+        if is_dir {
             if entry_kind==ModelEntry::Directory { found.push(path.clone()); }
             scan_model_tree(&path,depth+1,found,entry_kind);
-        } else if file_type.is_file() && entry_kind==ModelEntry::File {
-            found.push(path);
+        } else if entry_kind==ModelEntry::File {
+            found.push(path); // Also retain manually symlinked GGUF files.
         }
     }
 }
