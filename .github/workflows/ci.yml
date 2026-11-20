@@ -103,7 +103,7 @@ jobs:
       - name: Runtime architecture and release contract
         run: |
           node scripts/check-runtime-architecture.mjs
-                    node scripts/check-release-contract.mjs
+          node scripts/check-release-contract.mjs
       - name: Nine-speaker three-turn work context and complete group delivery (dev profile)
         run: cargo test --locked --bin dominion-rust nine_participants_three_owner_turns_complete_thirty_messages_with_selective_work_context
       - name: Stateful Codex persona inheritance and per-turn wire delta (dev profile)
