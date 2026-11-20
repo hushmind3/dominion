@@ -162,7 +162,8 @@ jobs:
         run: |
           npm ci --prefix web --ignore-scripts
           npm --prefix web run typecheck
-          npm --prefix web run build
+          # Development CI intentionally skips Vite production build.
+          # Release packaging owns build artifacts; keep sub2 iterations fast.
           node --experimental-strip-types --test web/tests/*.test.mjs
           node scripts/check-sub2-contract.mjs
           node scripts/sub2-source-audit.mjs
