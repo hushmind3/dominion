@@ -5,7 +5,6 @@
 use crate::state::AppState;
 use serde_json::{json, Value};
 
-pub const ARCHIVED_KINDS: &[&str] = &["adaptation.selection", "selfimprove.search"];
 pub const KINDS: &[&str] = &[
     "learning.applicability",
     "strategy.selection",
@@ -72,8 +71,7 @@ pub fn kernel_exists(kind: &str, implementation: &str) -> bool {
 }
 
 fn expression_sample(_kind: &str) -> std::collections::BTreeMap<String, f64> {
-    // Keep the safe expression interpreter for active, validated strategy
-    // selection; retired RSI source-targeting expressions cannot be generated.
+    // The expression interpreter is restricted to registered executable kernels.
     let names = [
         "discrimination", "progress", "cost", "uncertainty", "historical",
         "unresolved", "precondition", "benefit", "similarity", "risk",
@@ -83,7 +81,6 @@ fn expression_sample(_kind: &str) -> std::collections::BTreeMap<String, f64> {
 
 pub fn kind_label(kind: &str) -> &str {
     match kind {
-        "adaptation.selection" => "적응 개입 선택",
         "learning.applicability" => "경험 적용 조건",
         "strategy.selection" => "전략 선택",
         "program.repair" => "프로그램 수리",
@@ -108,7 +105,6 @@ pub fn kind_label(kind: &str) -> &str {
         "multiagent.conflict" => "멀티에이전트 충돌 해결",
         "execution.ordering" => "도구 실행 순서",
         "execution.parallelism" => "병렬 실행",
-        "selfimprove.search" => "개선 후보 탐색",
         _ => "기타",
     }
 }
@@ -755,7 +751,6 @@ pub fn list(state: &AppState) -> Value {
     }
     let kinds = KINDS
         .iter()
-        .chain(ARCHIVED_KINDS.iter())
         .map(|kind| {
             let rows = items
                 .iter()
@@ -773,7 +768,7 @@ pub fn list(state: &AppState) -> Value {
                 .collect::<Vec<_>>();
             json!({
                 "kind": kind,
-                "retired": ARCHIVED_KINDS.contains(kind),
+                "retired": false,
                 "label": kind_label(kind),
                 "kernels": executable_kernels(kind),
                 "active": rows.iter().find(|item| item["status"].as_str() == Some("active")
@@ -784,19 +779,16 @@ pub fn list(state: &AppState) -> Value {
         .collect::<Vec<_>>();
     json!({
         "kinds": kinds,
-        // Algorithm activation is per kind. Self-improvement and the tool
-        // gateway are harness capabilities, not algorithm kinds, so changing
-        // one algorithm cannot disable them or leak into another tool.
+        // Algorithm activation is isolated per executable kind.
         "isolation": {
             "activationScope": "kind",
-            "selfImprovementIndependent": true,
             "toolGatewayIndependent": true,
         },
     })
 }
 
 pub fn active(state: &AppState, kind: &str) -> Option<Value> {
-    if ARCHIVED_KINDS.contains(&kind) { return None; }
+    if !KINDS.contains(&kind) { return None; }
     let mut rows = state.store.algorithms_for_kind(kind).ok()?;
     if !rows.iter().any(|row| row["implementation"].as_str()
         .is_some_and(|implementation|kernel_exists(kind,implementation))) {
@@ -863,7 +855,7 @@ pub fn choose_for_agent(
     agent_id: Option<&str>,
     execution_id: Option<&str>,
 ) -> Option<Value> {
-    if ARCHIVED_KINDS.contains(&kind) { return None; }
+    if !KINDS.contains(&kind) { return None; }
     let mut records = state.store.algorithms_for_kind(kind).ok()?;
     if !records.iter().any(|row| row["implementation"].as_str()
         .is_some_and(|implementation|kernel_exists(kind,implementation))) {
@@ -1425,10 +1417,11 @@ pub fn register(state: &AppState, body: &Value) -> Result<Value, String> {
             .as_str()
             .filter(|value| !value.trim().is_empty())
             .ok_or("expression kernel requires parameters.expression")?;
+        let params = body["parameters"].as_object().ok_or("expression parameters must be an object")?;
+        if params.len() != 1 {
+            return Err("expression kernel accepts only parameters.expression".into());
+        }
         eval_expression(expression, &expression_sample(kind))?;
-    }
-    if body["parameters"]["targetExpression"].as_str().is_some() {
-        return Err("retired source-targeting improvement kernels are read-only".into());
     }
     let variant = body["variant"].as_str().unwrap_or(implementation);
     let parameters = body["parameters"]
@@ -1476,9 +1469,6 @@ pub fn activate(state: &AppState, id: &str) -> Result<Value, String> {
         return Err("algorithm not found".into());
     };
     let kind = algorithm["kind"].as_str().unwrap_or("").to_string();
-    if ARCHIVED_KINDS.contains(&kind.as_str()) {
-        return Err("retired algorithm kind is read-only".into());
-    }
     if !algorithm["implementation"].as_str().is_some_and(|implementation|
         kernel_exists(&kind,implementation)) {
         return Err("retired algorithm implementation is read-only".into());
@@ -1514,7 +1504,6 @@ pub fn activate(state: &AppState, id: &str) -> Result<Value, String> {
             "kind": kind,
             "revision": activated["revision"],
             "activationScope": "kind",
-            "selfImprovementIndependent": true,
             "toolGatewayIndependent": true,
         }),
     );
@@ -1527,9 +1516,6 @@ pub fn activate_checked(state: &AppState, id: &str, force: bool) -> Result<Value
     let Some(algorithm) = state.store.get("algorithm", id) else {
         return Err("algorithm not found".into());
     };
-    if algorithm["kind"].as_str().is_some_and(|kind| ARCHIVED_KINDS.contains(&kind)) {
-        return Err("retired algorithm kind is read-only".into());
-    }
     if !algorithm["kind"].as_str().is_some_and(|kind|
         algorithm["implementation"].as_str().is_some_and(|implementation|
             kernel_exists(kind,implementation))) {
@@ -1815,32 +1801,6 @@ mod tests {
     }
 
     #[test]
-    fn retired_repair_algorithms_are_read_only_and_not_executable() {
-        let (state,dir)=state();
-        seed(&state);
-        let legacy=json!({
-            "id":"legacy-adaptation","kind":"adaptation.selection",
-            "implementation":"balanced","source":"builtin",
-            "name":"balanced","status":"active","revision":"legacy-v1"
-        });
-        state.store.put("algorithm",&legacy);
-        assert!(active(&state,"adaptation.selection").is_none());
-        assert!(choose_for_agent(&state,"adaptation.selection",None,None).is_none());
-        assert!(register(&state,&legacy).is_err());
-        assert!(activate(&state,"legacy-adaptation").is_err());
-        assert!(activate_checked(&state,"legacy-adaptation",true).is_err());
-        let generated=generate(&state,&json!({"kind":"adaptation.selection"}));
-        assert!(generated["created"].as_array().unwrap().is_empty());
-        let listed=list(&state);
-        let archived=listed["kinds"].as_array().unwrap().iter()
-            .find(|row|row["kind"]=="adaptation.selection").unwrap();
-        assert_eq!(archived["retired"],true);
-        assert!(archived["algorithms"].as_array().unwrap().iter()
-            .any(|row|row["id"]=="legacy-adaptation"));
-        let _=std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
     fn owner_activation_is_not_displaced_by_unverified_usage_statistics() {
         let (state,dir)=state();
         seed(&state);
@@ -1921,42 +1881,19 @@ mod tests {
     }
 
     #[test]
-    fn retired_improvement_candidates_remain_archived_not_executable() {
-        let (state,dir)=state();
-        seed(&state);
-        let old=json!({
-            "id":"legacy-rsi-target","kind":"selfimprove.search",
-            "implementation":"expression","name":"old-rsi",
-            "status":"active","source":"generated","revision":"old"
-        });
-        state.store.put("algorithm",&old);
-        assert!(active(&state,"selfimprove.search").is_none());
-        assert!(choose_for_agent(&state,"selfimprove.search",None,None).is_none());
-        assert!(register(&state,&old).is_err());
-        assert!(activate_checked(&state,"legacy-rsi-target",true).is_err());
-        let archived=list(&state);
-        let records=archived["kinds"].as_array().unwrap().iter()
-            .find(|v|v["kind"]=="selfimprove.search").unwrap();
-        assert_eq!(records["retired"],true);
-        assert!(records["algorithms"].as_array().unwrap()
-            .iter().any(|row|row["id"]=="legacy-rsi-target"));
-        let _=std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn archived_target_expressions_cannot_reenter_a_live_kernel() {
+    fn unknown_expression_parameters_cannot_enter_live_kernels() {
         let (state,dir)=state();
         let stale=json!({
-            "kind":"selfimprove.search","name":"stale-rsi",
+            "kind":"strategy.selection","name":"unexpected-parameters",
             "implementation":"expression",
-            "parameters":{"expression":"novelty - tokenCost",
-                "targetExpression":"pathEvidence - repeatPenalty"}
+            "parameters":{"expression":"progress - cost",
+                "unsupportedOption":"blocked"}
         });
         assert!(register(&state,&stale).is_err());
         assert!(register(&state,&json!({
             "kind":"memory.rerank","name":"foreign-target",
             "implementation":"bm25",
-            "parameters":{"targetExpression":"pathEvidence"}
+            "parameters":{}
         })).is_err());
         assert!(eval_expression(&"(".repeat(36),&expression_sample("strategy.selection")).is_err());
         assert!(eval_expression(&"a".repeat(513),&expression_sample("strategy.selection")).is_err());
