@@ -514,8 +514,6 @@ pub async fn run(context: &JobContext, job: &Value) -> Result<Value, String> {
             "skill": if skill_saved { Some(skill_name) } else { None },
             "strategies": if strategy_saved { vec![strategy_text] } else { Vec::<String>::new() },
             "experience": if experience_record.is_some() { vec![reflection_text] } else { Vec::<String>::new() },
-            "toolPolicies": [],
-            "harness": null,
         },
         "jobId": context.job_id,
         "at": chrono::Utc::now().to_rfc3339(),

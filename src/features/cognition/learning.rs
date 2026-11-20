@@ -733,9 +733,7 @@ fn apply_learning(
     // Historical strategy/tool-policy/harness proposals remain readable but
     // cannot be generated or silently adopted from a learning model response.
     Ok(json!({"memories":inserted,"rejected":rejected,"skill":skill_saved,
-        "improvements":0,"harnessProposal":false,
-        "items":{"memories":memory_items,"skill":skill_item,
-            "strategies":[],"toolPolicies":[],"harness":null}}))
+        "items":{"memories":memory_items,"skill":skill_item}}))
 }
 
 struct LearnedMemory {
@@ -891,6 +889,14 @@ mod tests {
         ).unwrap();
         assert!(learning.memories.is_empty());
         assert!(learning.skill.is_none());
+        let (state,dir)=state();
+        let scope=MemoryScope::for_session(&state.store,"s",Some("a"));
+        let outcome=apply_learning(&state,&scope,&[],&learning).unwrap();
+        assert!(outcome.get("harnessProposal").is_none());
+        assert!(outcome.get("improvements").is_none());
+        assert!(outcome["items"].get("strategies").is_none());
+        assert_eq!(state.store.count("improvement"),0);
+        crate::test_support::cleanup_dir(dir);
     }
 
     #[test]
