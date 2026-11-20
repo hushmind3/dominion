@@ -7,6 +7,7 @@
 - [Active Rust architecture](../ENGINE.md)
 - [Development CI](../.github/workflows/ci.yml)
 - [Source and frontend contract gate](../scripts/check-sub2-contract.mjs)
+- [Executable source duplicate audit](../scripts/sub2-source-audit.mjs)
 - [TypeScript SDK](../sdk/typescript/README.md)
 - [Rust execution kernel](../crates/dominion-agent-kernel/src/lib.rs)
 
@@ -17,5 +18,4 @@
 - [Room delta and memory](SUB2-ROOM-DELTA-MEMORY-2026-11-18.md)
 - [Native tool progression](SUB2-PROGRESSIVE-NATIVE-TOOLS-2026-11-18.md)
 
-Retired business-opportunity/Money material was deleted from the active branch;
-older artifacts, if needed for comparison, remain reachable through Git history.
+Historical feature experiments are available from Git history, not the active runtime or SDK.\n
