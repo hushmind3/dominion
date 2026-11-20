@@ -19,7 +19,7 @@ import {useJob,jobFinished,type JobState} from '../hooks/useJob'
 import {t,useLocale,type LocaleKey} from '../i18n'
 import {translateError} from '../i18n/errors'
 
-type SessionUsageBreakdown={byPurpose?:{purpose:string;calls:number;promptTokens:number;completionTokens:number;totalTokens:number;observedCachedTokens:number;cacheObservedCalls:number;estimatedCalls:number;tokensSinceClear:number}[];recentPromptProfiles?:{profile?:{totalEstimatedTokens?:number;components?:Record<string,number>}}[];hasClearMarker?:boolean}
+type SessionUsageBreakdown={byPurpose?:{purpose:string;calls:number;promptTokens:number;completionTokens:number;totalTokens:number;observedCachedTokens:number;cacheObservedCalls:number;estimatedCalls:number;tokensSinceClear:number}[];recentPromptProfiles?:{profile?:{totalEstimatedTokens?:number;components?:Record<string,number>}}[];latestSourceCharacterCounts?:{fixedSystemPrompt?:number;ownerInstructions?:number;agentPersona?:number;systemOverride?:number;retrievedMemoryAndExperience?:number;selectedHistory?:number};hasClearMarker?:boolean}
 type LearningResult={memories:number;skill:boolean}
 type LearningJob=JobState & {result?:LearningResult}
 type ModelOverride={scope?:string;providerId:string;model:string}
@@ -94,6 +94,11 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    lines.push(`  입력 ${row.promptTokens.toLocaleString()} · 출력 ${row.completionTokens.toLocaleString()} · 캐시 확인 ${row.observedCachedTokens.toLocaleString()}${row.estimatedCalls?" · 추정치 포함":""}`)
   }
   if(usageBreakdown.hasClearMarker)lines.push(`대화 기록 삭제 이후: ${(usageBreakdown.byPurpose||[]).reduce((sum,row)=>sum+(row.tokensSinceClear||0),0).toLocaleString()}토큰`)
+  const source=usageBreakdown.latestSourceCharacterCounts
+  if(source){
+   lines.push(`최근 입력 원문 크기: 전체 시스템 ${(source.fixedSystemPrompt||0).toLocaleString()}자 · 에이전트 지침 ${(source.agentPersona||0).toLocaleString()}자 · 공통 지침 ${(source.ownerInstructions||0).toLocaleString()}자`)
+   lines.push(`  과거 대화 ${(source.selectedHistory||0).toLocaleString()}자 · 검색된 기억 ${(source.retrievedMemoryAndExperience||0).toLocaleString()}자 · 추가 지시 ${(source.systemOverride||0).toLocaleString()}자`)
+  }
   const latest=usageBreakdown.recentPromptProfiles?.[0]?.profile
   if(latest?.components){
    const largest=Object.entries(latest.components).filter(([_,v])=>v>0).sort((a,b)=>b[1]-a[1]).slice(0,4)

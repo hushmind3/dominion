@@ -1495,8 +1495,17 @@ impl Store {
                 Ok(serde_json::from_str::<Value>(&raw).unwrap_or(Value::Null))
             }).and_then(|rows|rows.collect::<rusqlite::Result<Vec<_>>>())
         }).unwrap_or_default();
+        let latest_sources=conn.query_row(
+            "SELECT json_extract(data,'$.inputContext.sourceCharacterCounts')
+             FROM records WHERE kind='execution' AND json_valid(data)
+               AND json_extract(data,'$.sessionId')=?1
+               AND json_type(data,'$.inputContext.sourceCharacterCounts')='object'
+             ORDER BY updated_at DESC,rowid DESC LIMIT 1",
+            [session_id],|row|row.get::<_,String>(0)
+        ).ok().and_then(|raw|serde_json::from_str::<Value>(&raw).ok());
         json!({"byPurpose":groups,"recentCalls":recent,
-            "recentPromptProfiles":wire_profiles,"hasClearMarker":last_clear>0,
+            "recentPromptProfiles":wire_profiles,"latestSourceCharacterCounts":latest_sources,
+            "hasClearMarker":last_clear>0,
             "scope":"lifetime session audit including earlier cleared transcripts and helper calls",
             "cachePolicy":"cached tokens are included in promptTokens; unreported cache remains unknown"})
     }
@@ -2184,6 +2193,13 @@ mod tests {
         assert_eq!(helper["tokensSinceClear"],0);
         assert_eq!(report["recentCalls"].as_array().unwrap().len(),3);
         assert_eq!(report["hasClearMarker"],true);
+        store.put("execution",&json!({"id":"exam","sessionId":"s","inputContext":{
+            "sourceCharacterCounts":{"fixedSystemPrompt":54000,"agentPersona":52000,
+                "ownerInstructions":1000,"selectedHistory":120}}})).unwrap();
+        let explained=store.session_usage_breakdown("s");
+        assert_eq!(explained["latestSourceCharacterCounts"]["agentPersona"],52000);
+        assert_eq!(explained["latestSourceCharacterCounts"]["selectedHistory"],120);
+        assert!(explained["recentPromptProfiles"].as_array().unwrap().is_empty());
     }
 
     #[test]
