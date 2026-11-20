@@ -61,9 +61,6 @@ pub mod preflight_fixture;
 #[path = "strategies/procedure.rs"]
 pub mod procedure;
 
-#[path = "strategies/goal_control.rs"]
-pub mod goal_control;
-
 #[path = "strategies/obligation_repair.rs"]
 pub mod obligation_repair;
 
