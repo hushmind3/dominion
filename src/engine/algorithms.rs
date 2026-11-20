@@ -31,7 +31,6 @@ pub const KINDS: &[&str] = &[
     "multiagent.conflict",
     "execution.ordering",
     "execution.parallelism",
-    "selfimprove.search",
 ];
 
 /// Concrete kernels the Rust harness can execute. Registering a name that is
@@ -63,7 +62,6 @@ pub fn executable_kernels(kind: &str) -> &'static [&'static str] {
         "multiagent.conflict" => &["evidence-first", "owner-authority", "latest-speaker"],
         "execution.ordering" => &["as-written", "read-first"],
         "execution.parallelism" => &["concurrent", "sequential"],
-        "selfimprove.search" => &["failure-clusters", "counterexample-first", "expression"],
         _ => &[],
     }
 }
@@ -74,51 +72,10 @@ pub fn kernel_exists(kind: &str, implementation: &str) -> bool {
         .any(|kernel| *kernel == implementation)
 }
 
-/// Features available to a model-authored `selfimprove.search` expression.
-/// The search coordinator fills exactly these names before evaluating a domain.
-pub const SELFIMPROVE_FEATURES: &[&str] = &[
-    "attempts",
-    "accepted",
-    "regressions",
-    "inconclusive",
-    "novelty",
-    "successRate",
-    "usefulGenerations",
-    "barrenRate",
-    "verifiedOutcomes",
-    "holdoutGains",
-    "gainPer10kTokens",
-    "tokenCost",
-    "objectiveMatch",
-    "unresolved",
-    "exploration",
-    "forecastError",
-    "forecastBias",
-];
-
-fn expression_sample(kind: &str) -> std::collections::BTreeMap<String, f64> {
-    let names: &[&str] = if kind == "selfimprove.target" {
-        SELFIMPROVE_TARGET_FEATURES
-    } else if kind == "selfimprove.search" {
-        SELFIMPROVE_FEATURES
-    } else {
-        &[
-            "discrimination",
-            "progress",
-            "cost",
-            "uncertainty",
-            "historical",
-            "unresolved",
-            "precondition",
-            "benefit",
-            "similarity",
-            "risk",
-        ]
-    };
-    names
-        .iter()
-        .map(|name| (name.to_string(), 1.0))
-        .collect()
+fn expression_sample(_kind: &str) -> std::collections::BTreeMap<String, f64> {
+    ["discrimination","progress","cost","uncertainty","historical",
+     "unresolved","precondition","benefit","similarity","risk"]
+    .into_iter().map(|name|(name.to_string(),1.0)).collect()
 }
 
 pub fn kind_label(kind: &str) -> &str {
@@ -148,18 +105,9 @@ pub fn kind_label(kind: &str) -> &str {
         "multiagent.conflict" => "멀티에이전트 충돌 해결",
         "execution.ordering" => "도구 실행 순서",
         "execution.parallelism" => "병렬 실행",
-        "selfimprove.search" => "개선 후보 탐색",
         _ => "기타",
     }
 }
-
-/// Features supplied by the real indexed source selector to an AI-authored
-/// targeting formula. Unlike a hardcoded path table, these are measured from
-/// the current checkout and previous generations.
-pub const SELFIMPROVE_TARGET_FEATURES: &[&str] = &[
-    "pathEvidence", "symbolEvidence", "summaryEvidence", "bodyEvidence", "productiveEvidence",
-    "domainEvidence", "repeatPenalty", "novelty", "sourceCost",
-];
 
 /// Safe arithmetic expression over named candidate features. This lets a new
 /// selection rule be added as an executable algorithm record without a Rust
@@ -721,20 +669,6 @@ pub fn builtins() -> Vec<Value> {
             json!({"mode": "sequential"}),
         ),
         builtin(
-            "selfimprove.search",
-            "failure-clusters",
-            "failure-clusters",
-            "실패 유형 묶음에서 개선 후보를 생성한다.",
-            json!({"order": "frequency"}),
-        ),
-        builtin(
-            "selfimprove.search",
-            "counterexample-first",
-            "counterexample-first",
-            "회귀·미결 증거가 있는 분야를 먼저 재검토한다.",
-            json!({"order": "regressions"}),
-        ),
-        builtin(
             "tool.selection",
             "read-before-write",
             "read-before-write",
@@ -745,6 +679,17 @@ pub fn builtins() -> Vec<Value> {
 }
 
 pub fn seed(state: &AppState) -> Vec<Value> {
+    // Previously seeded standalone self-improvement algorithms may survive in
+    // SQLite. Retire their execution authority; retain records as history.
+    for mut old in state.store.all("algorithm") {
+        if old["kind"] == "selfimprove.search" && old["status"] != "disabled" {
+            old["status"] = json!("disabled");
+            old["retiredReason"] = json!("standalone improvement campaign removed");
+            if let Some(saved) = state.store.put("algorithm", &old) {
+                state.bus.record("algorithm", &saved);
+            }
+        }
+    }
     let mut saved = Vec::new();
     let mut active_kinds = state
         .store
@@ -1614,11 +1559,8 @@ pub fn register(state: &AppState, body: &Value) -> Result<Value, String> {
             .ok_or("expression kernel requires parameters.expression")?;
         eval_expression(expression, &expression_sample(kind))?;
     }
-    if let Some(target_expression) = body["parameters"]["targetExpression"].as_str() {
-        if kind != "selfimprove.search" || implementation != "expression" {
-            return Err("targetExpression requires selfimprove.search expression kernel".into());
-        }
-        eval_expression(target_expression, &expression_sample("selfimprove.target"))?;
+    if body["parameters"].get("targetExpression").is_some() {
+        return Err("Standalone source-target search expression has been retired".into());
     }
     let variant = body["variant"].as_str().unwrap_or(implementation);
     let parameters = body["parameters"]
@@ -1666,6 +1608,9 @@ pub fn activate(state: &AppState, id: &str) -> Result<Value, String> {
         return Err("algorithm not found".into());
     };
     let kind = algorithm["kind"].as_str().unwrap_or("").to_string();
+    if !KINDS.contains(&kind.as_str()) {
+        return Err("retired algorithm kind cannot be activated".into());
+    }
     let mut records = Vec::new();
     for mut other in state.store.all("algorithm") {
         if other["kind"].as_str() == Some(kind.as_str())
@@ -1704,36 +1649,12 @@ pub fn activate(state: &AppState, id: &str) -> Result<Value, String> {
     Ok(activated)
 }
 
-/// Promotion with evidence. Deterministic evaluation must recommend the exact
-/// winner for this kind unless the caller explicitly asks for a manual switch.
+/// Explicit owner-driven activation only; there is no hidden evaluator or
+/// automatic promotion. The legacy force argument stays for API compatibility.
 pub fn activate_checked(state: &AppState, id: &str, force: bool) -> Result<Value, String> {
-    let Some(algorithm) = state.store.get("algorithm", id) else {
-        return Err("algorithm not found".into());
-    };
-    if !force && algorithm["status"].as_str() != Some("active") {
-        let kind = algorithm["kind"].as_str().unwrap_or("");
-        let implementation = algorithm["implementation"].as_str().unwrap_or("");
-        let promoted = state.store.all("algorithm_eval").into_iter().any(|record| {
-            record["dimensions"].as_array().is_some_and(|rows| {
-                rows.iter().any(|row| {
-                    row["kind"].as_str() == Some(kind)
-                        && row["winner"].as_str() == Some(implementation)
-                        && row["recommendation"].as_str() == Some("promote")
-                })
-            })
-        });
-        if !promoted {
-            return Err(
-                "실험 평가에서 승격 추천을 받지 못했습니다. 검증 후 승급하거나 force=true로 수동 전환하세요."
-                    .into(),
-            );
-        }
-    }
     let activated = activate(state, id)?;
-    state.store.audit(
-        "algorithm.activation_mode",
-        json!({"id": id, "force": force, "kind": activated["kind"]}),
-    );
+    state.store.audit("algorithm.activation_mode",
+        json!({"id":id,"force":force,"kind":activated["kind"],"source":"owner"}));
     Ok(activated)
 }
 
@@ -1958,43 +1879,32 @@ mod tests {
     }
 
     #[test]
-    fn activation_requires_evaluation_evidence_unless_forced() {
-        let (state, dir) = state();
+    fn owner_activation_does_not_depend_on_retired_experiment_records() {
+        let (state,dir)=state();
         seed(&state);
-        let record = register(
-            &state,
-            &json!({
-                "kind": "memory.rerank",
-                "name": "bm25-candidate",
-                "variant": "bm25",
-                "implementation": "bm25"
-            }),
-        )
-        .unwrap();
-        let id = record["id"].as_str().unwrap();
-        assert!(activate_checked(&state, id, false).is_err());
-        state.store.put(
-            "algorithm_eval",
-            &json!({
-                "id": "eval-1",
-                "dimensions": [
-                    {"kind": "memory.rerank", "winner": "bm25", "recommendation": "promote"}
-                ]
-            }),
-        );
-        assert!(activate_checked(&state, id, false).is_ok());
-        let other = register(
-            &state,
-            &json!({
-                "kind": "memory.rerank",
-                "name": "none-manual",
-                "variant": "none",
-                "implementation": "none"
-            }),
-        )
-        .unwrap();
-        assert!(activate_checked(&state, other["id"].as_str().unwrap(), true).is_ok());
-        let _ = std::fs::remove_dir_all(dir);
+        let record=register(&state,&json!({
+            "kind":"memory.rerank","name":"bm25-candidate","implementation":"bm25"
+        })).unwrap();
+        assert!(activate_checked(&state,record["id"].as_str().unwrap(),false).is_ok());
+        assert_eq!(active(&state,"memory.rerank").unwrap()["id"],record["id"]);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn previously_seeded_improvement_search_is_disabled_not_deleted() {
+        let (state,dir)=state();
+        state.store.put("algorithm",&json!({"id":"legacy-search",
+            "kind":"selfimprove.search","name":"old-loop",
+            "implementation":"failure-clusters","status":"active"})).unwrap();
+        seed(&state);
+        let old=state.store.get("algorithm","legacy-search").unwrap();
+        assert_eq!(old["status"],"disabled");
+        assert!(activate_checked(&state,"legacy-search",true).is_err());
+        assert!(!list(&state)["kinds"].as_array().unwrap().iter().any(|k|
+            k["kind"]=="selfimprove.search"));
+        assert!(register(&state,&json!({"kind":"selfimprove.search",
+            "name":"resurrect","implementation":"failure-clusters"})).is_err());
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -2118,66 +2028,6 @@ mod tests {
         )
         .is_err());
         let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn selfimprove_expression_uses_search_features_and_rejects_unknown_names() {
-        let (state, dir) = state();
-        let record = register(
-            &state,
-            &json!({
-                "kind":"selfimprove.search",
-                "name":"search-formula",
-                "implementation":"expression",
-                "parameters":{"expression":"accepted * 2 - tokenCost + novelty - regressions"}
-            }),
-        )
-        .unwrap();
-        assert_eq!(record["implementation"], "expression");
-        assert!(register(
-            &state,
-            &json!({
-                "kind":"selfimprove.search",
-                "name":"wrong-features",
-                "implementation":"expression",
-                "parameters":{"expression":"discrimination * 2"}
-            })
-        )
-        .is_err());
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn generated_source_targeting_formula_is_validated_and_versioned() {
-        let (state,dir)=state();
-        let valid=json!({"kind":"selfimprove.search","name":"evolvable-target-v1",
-            "implementation":"expression",
-            "parameters":{"expression":"objectiveMatch * 5 + exploration",
-                "targetExpression":"pathEvidence * 3 + symbolEvidence - repeatPenalty - sourceCost"}});
-        let registered=register(&state,&valid).unwrap();
-        assert_eq!(registered["parameters"]["targetExpression"],
-            "pathEvidence * 3 + symbolEvidence - repeatPenalty - sourceCost");
-        assert_eq!(registered["status"],"available");
-        let body_aware = register(&state, &json!({
-            "kind":"selfimprove.search", "name":"body-evidence-target-v1",
-            "implementation":"expression",
-            "parameters":{"expression":"objectiveMatch + exploration",
-                "targetExpression":"bodyEvidence * 2 + pathEvidence - repeatPenalty"}
-        })).unwrap();
-        assert_eq!(body_aware["status"], "available");
-        assert!(register(&state,&json!({"kind":"selfimprove.search","name":"unknown-feature",
-            "implementation":"expression","parameters":{"expression":"novelty",
-                "targetExpression":"unguardedVariable + pathEvidence"}})).is_err());
-        assert!(register(&state,&json!({"kind":"selfimprove.search","name":"invalid-score",
-            "implementation":"expression","parameters":{"expression":"novelty",
-                "targetExpression":"pathEvidence / (novelty - novelty)"}})).is_err());
-        // A model-authored targeting rule cannot be silently attached to a
-        // different algorithm or a display-only kernel.
-        assert!(register(&state,&json!({"kind":"memory.rerank","name":"wrong-kind",
-            "implementation":"bm25","parameters":{"targetExpression":"sourceCost"}})).is_err());
-        assert!(eval_expression(&"(".repeat(36),&expression_sample("selfimprove.target")).is_err());
-        assert!(eval_expression(&"a".repeat(513),&expression_sample("selfimprove.target")).is_err());
-        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -15,7 +15,8 @@ const absent=[
  'web/src/components/VideoModelInstall.tsx','web/scripts/video-studio-smoke.mjs',
  'src/api/benchmark.rs','src/api/experiments.rs','src/engine/scheduler.rs',
  'scripts/rsi-lab.mjs','scripts/rsi-measure.mjs',
- 'crates/harness', 'packages/sdk-typescript', 'src/engine/policy_patch.rs'
+ 'crates/harness', 'packages/sdk-typescript', 'src/engine/policy_patch.rs',
+ 'src/engine/algorithm_eval.rs'
 ];
 // Prevent retired-domain code, clients and docs from silently returning.
 // Assemble the forbidden identifiers, rather than introducing them into
@@ -71,6 +72,10 @@ assert.ok(!/id:'(?:video|rsi)'/.test(nav),'Retired navigation remains');
 // silently regain a Google refresh grant through fallback credentials.
 // Retired RSI automation must not return as a hidden module-only
 // implementation, even if the router has no public campaign endpoint.
+const algorithms=read('src/engine/algorithms.rs');
+assert.ok(!algorithms.includes('"selfimprove.search" =>'),'Retired algorithm dispatch returned');
+assert.ok(!algorithms.includes('state.store.all("algorithm_eval")'),
+ 'Retired evaluator promotion remains');
 const runtimePolicy=read('src/engine/policy.rs');
 for(const name of ['propose_candidates','enqueue_policy_request','select_best',
  'apply_experiment_result','register_optimizer','meta_improve','experiment_request',
