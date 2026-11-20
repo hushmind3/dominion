@@ -361,6 +361,34 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
         }).await;
     }
 }
+/// Freeze membership checks for the full team before applying ANY patch.
+fn integration_members(
+    store:&crate::db::Store, team:&Value, session_id:&str,
+)->Result<Vec<Value>,String>{
+    let ids=team["result"]["pendingIntegrationJobs"].as_array()
+        .ok_or("팀 통합 대상 목록이 없습니다.")?;
+    if ids.is_empty()||ids.len()>8 {
+        return Err("팀 통합 대상은 1~8개여야 합니다.".into());
+    }
+    let mut seen=HashSet::new();
+    let mut workers=Vec::with_capacity(ids.len());
+    for id in ids{
+        let child_id=id.as_str().ok_or("통합 Worker ID가 올바르지 않습니다.")?;
+        if !seen.insert(child_id){
+            return Err("중복된 통합 Worker는 허용하지 않습니다.".into());
+        }
+        let worker=store.get("job",child_id).ok_or("Worker가 없습니다.")?;
+        if worker["input"]["teamJobId"]!=team["id"]
+            ||worker["input"]["parentSessionId"]!=session_id
+            ||worker["input"]["delegationProfile"]!="implementation"
+            ||worker["status"]!="completed"
+            ||!worker["delegationPatchSha256"].is_string() {
+            return Err("검증된 동일 팀의 고정 패치만 통합합니다.".into());
+        }
+        workers.push(worker);
+    }
+    Ok(workers)
+}
 pub async fn integrate(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
     let id=args["jobId"].as_str().ok_or("팀 작업 ID가 없습니다.")?;
     let team=ctx.store.get("job",id).ok_or("팀 작업이 없습니다.")?;
@@ -371,18 +399,13 @@ pub async fn integrate(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
     if !team["result"]["gaps"].as_array().is_some_and(Vec::is_empty){
         return Err("검증 공백이 있는 팀은 통합할 수 없습니다.".into());
     }
-    let ids=team["result"]["pendingIntegrationJobs"].as_array()
-        .ok_or("팀 통합 대상 목록이 없습니다.")?;
+    // Reject missing, foreign or duplicate children before mutating any
+    // parent workspace files; a late invalid entry cannot cause a partial
+    // merge of otherwise valid preceding entries.
+    let workers=integration_members(ctx.store,&team,ctx.session_id)?;
     let mut out=Vec::new();
-    for id in ids{
-        let child_id=id.as_str().ok_or("통합 Worker ID가 올바르지 않습니다.")?;
-        let worker=ctx.store.get("job",child_id).ok_or("Worker가 없습니다.")?;
-        if worker["input"]["teamJobId"]!=team["id"]
-            ||worker["input"]["parentSessionId"]!=ctx.session_id
-            ||worker["input"]["delegationProfile"]!="implementation"
-            ||worker["status"]!="completed" {
-            return Err("검증된 동일 팀의 구현 Worker만 통합합니다.".into());
-        }
+    for worker in &workers{
+        let child_id=worker["id"].as_str().ok_or("Worker ID가 없습니다.")?;
         if worker["integratedAt"].is_string(){
             out.push(json!({"jobId":child_id,"alreadyIntegrated":true}));continue;
         }
@@ -405,11 +428,11 @@ pub async fn integrate(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
         out.push(result);
     }
     let prior=team["status"].clone();
-    if let Some(saved)=ctx.store.patch_if("job",id,"status",&prior,
+    let saved=ctx.store.patch_if("job",id,"status",&prior,
         &json!({"status":"completed","integratedAt":chrono::Utc::now().to_rfc3339(),
-            "integration":out})){
-        ctx.state.bus.record("job",&saved);
-    }
+            "integration":out}))
+        .ok_or("패치 적용 이후 팀 완료 기록이 변경되었습니다. 재실행하지 말고 결과를 확인하세요.")?;
+    ctx.state.bus.record("job",&saved);
     Ok(json!({"teamId":id,"status":"integrated","integrated":out}))
 }
 #[cfg(test)]
@@ -452,6 +475,32 @@ mod tests{
         let mut corrupt=worker.clone();
         corrupt["input"]["sessionId"]=json!("other-session");
         assert!(verified_result(&state,&corrupt).is_err());
+    }
+    #[test]
+    fn team_merge_preflights_all_children_before_any_parent_mutation(){
+        let store=crate::db::Store::open(std::path::Path::new(":memory:")).unwrap();
+        let valid=json!({"id":"good","status":"completed",
+            "delegationPatchSha256":"frozen-sha",
+            "input":{"teamJobId":"t","parentSessionId":"owner",
+                "delegationProfile":"implementation"}});
+        let foreign=json!({"id":"foreign","status":"completed",
+            "delegationPatchSha256":"frozen-sha",
+            "input":{"teamJobId":"other-team","parentSessionId":"owner",
+                "delegationProfile":"implementation"}});
+        store.put("job",&valid).unwrap();
+        store.put("job",&foreign).unwrap();
+        let mut team=json!({"id":"t","result":{"pendingIntegrationJobs":["good","foreign"]}});
+        assert!(integration_members(&store,&team,"owner").is_err());
+        team["result"]["pendingIntegrationJobs"]=json!(["good","good"]);
+        assert!(integration_members(&store,&team,"owner").is_err());
+        team["result"]["pendingIntegrationJobs"]=json!(["good"]);
+        assert_eq!(integration_members(&store,&team,"owner").unwrap().len(),1);
+        assert!(integration_members(&store,&team,"another-owner").is_err());
+        // Frozen proof is required even if the worker says completed.
+        let mut changed=valid.clone();
+        changed["delegationPatchSha256"]=Value::Null;
+        store.put("job",&changed).unwrap();
+        assert!(integration_members(&store,&team,"owner").is_err());
     }
     #[test]
     fn rejects_cyclic_foreign_and_unverified_proposals(){
