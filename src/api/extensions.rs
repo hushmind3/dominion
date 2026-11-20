@@ -6,6 +6,34 @@ use std::collections::HashMap;
 use std::time::Duration;
 use super::response::error;
 
+/// Product-level optional extensions. This does not change frontend tabs.
+/// The engine always keeps the conversation journal and native run kernel.
+pub async fn runtime_extensions(State(state):State<AppState>)->Json<Value>{
+    Json(json!({
+        "enabled":engine::extensions::status(&state,None,None),
+        "configured":state.store.get("extension_policy","default")
+            .and_then(|record|record.get("extensions").cloned())
+            .unwrap_or_else(||json!({})),
+        "runtime":"optional-extensions-v1"
+    }))
+}
+pub async fn set_runtime_extensions(
+    State(state):State<AppState>,Json(body):Json<Value>,
+)->Response{
+    let policy=match engine::extensions::validate_policy(&body){
+        Ok(value)=>value,
+        Err(message)=>return error(StatusCode::BAD_REQUEST,&message),
+    };
+    let Some(saved)=state.store.put("extension_policy",&json!({
+        "id":"default","extensions":policy,
+    })) else {
+        return error(StatusCode::INTERNAL_SERVER_ERROR,"부가기능 실행 정책을 저장할 수 없습니다.");
+    };
+    state.bus.record("extension_policy",&saved);
+    Json(json!({"enabled":engine::extensions::status(&state,None,None),
+        "configured":saved["extensions"]})).into_response()
+}
+
 pub async fn list_tools(State(state): State<AppState>) -> Json<Value> {
     let mut items = engine::tools::definitions()
         .into_iter()
