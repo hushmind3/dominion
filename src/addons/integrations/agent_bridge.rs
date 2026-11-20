@@ -40,6 +40,102 @@ impl ExternalAgent {
         };
         (self.key(),argv.into_iter().map(str::to_string).collect())
     }
+    /// Opt-in continuation of a completed inspector. Never use --last:
+    /// that could attach an unrelated workspace's conversation.
+    fn command_with_resume(self,prompt:&str,resume:Option<&str>)
+        ->Result<(&'static str,Vec<String>),String>{
+        let (binary,mut args)=self.command(prompt);
+        if let Some(session)=resume {
+            if uuid::Uuid::parse_str(session).is_err(){
+                return Err("외부 Agent 재개 세션 ID가 유효하지 않습니다.".into());
+            }
+            match self{
+                Self::Codex=>{
+                    // The sandbox flag belongs BEFORE the resume subcommand.
+                    // Passing it after 'resume' can be rejected by some CLIs.
+                    args.pop();
+                    args.extend(["resume".into(),session.into(),prompt.into()]);
+                }
+                Self::Claude|Self::Qwen=>{
+                    args.extend(["--resume".into(),session.into()]);
+                }
+            }
+        }
+        Ok((binary,args))
+    }
+}
+
+/// Only a successful terminal envelope may supply a resumable CLI session.
+/// These IDs are external CLI state, never proof of native tool execution.
+fn terminal_session_id(kind:ExternalAgent,raw:&str)->Option<String>{
+    let session=match kind{
+        ExternalAgent::Codex=>raw.lines().filter_map(|line|
+            serde_json::from_str::<Value>(line).ok())
+            .find(|event|event["type"]=="thread.started")
+            .and_then(|event|event["thread_id"].as_str().map(str::to_string)),
+        ExternalAgent::Claude=>serde_json::from_str::<Value>(raw).ok()
+            .filter(|result|result["type"]=="result"
+                &&result["is_error"]!=true
+                &&result["subtype"].as_str().is_none_or(|v|v=="success"))
+            .and_then(|result|result["session_id"].as_str().map(str::to_string)),
+        ExternalAgent::Qwen=>serde_json::from_str::<Value>(raw).ok()
+            .and_then(|value|value.as_array().cloned())
+            .and_then(|rows|rows.into_iter().rev()
+                .find(|row|row["type"]=="result"))
+            .filter(|row|row["is_error"]!=true
+                &&row["subtype"].as_str().is_none_or(|v|v=="success"))
+            .and_then(|row|row["session_id"].as_str().map(str::to_string)),
+    }?;
+    uuid::Uuid::parse_str(&session).ok().map(|id|id.to_string())
+}
+
+/// Scope a resume token to a completed child of the SAME owner, agent,
+/// external runtime and isolated Git checkout. Claim once in durable SQLite.
+fn claim_completed_session(context:&JobContext,session:&Value,
+    kind:ExternalAgent,previous_job_id:&str)->Result<String,String>{
+    let store=&context.state.store;
+    let old=store.get("job",previous_job_id)
+        .ok_or("이전 외부 Agent 작업을 찾을 수 없습니다.")?;
+    if old["status"]!="completed"
+        ||old["input"]["delegationProfile"]!="inspection"
+        ||old["input"]["externalRuntime"]!=kind.key()
+        ||old["input"]["parentSessionId"]!=session["parentSessionId"]
+        ||old["input"]["agentId"]!=session["agentId"]
+        ||old["id"]==context.job_id {
+        return Err("완료된 같은 소유자·에이전트·실행기의 조사 작업만 재개할 수 있습니다.".into());
+    }
+    let old_session=old["input"]["sessionId"].as_str()
+        .and_then(|id|store.get("session",id))
+        .ok_or("이전 외부 Agent 격리 세션이 없습니다.")?;
+    if old_session["delegationWorkspace"]!=session["delegationWorkspace"]
+        ||old_session["readOnly"]!=true ||old_session["delegationProfile"]!="inspection" {
+        return Err("다른 격리 작업공간에서 외부 Agent 세션을 재사용할 수 없습니다.".into());
+    }
+    let run_id=old["result"]["externalRunId"].as_str()
+        .ok_or("이전 외부 Agent 실행 증거가 없습니다.")?;
+    let receipt=store.get("external_agent_run",run_id)
+        .ok_or("이전 CLI 실행 기록이 없습니다.")?;
+    if receipt["status"]!="completed"
+        ||receipt["jobId"]!=old["id"]
+        ||receipt["sessionId"]!=old["input"]["sessionId"]
+        ||receipt["runtime"]!=kind.key()
+        ||receipt["agentId"]!=session["agentId"]{
+        return Err("이전 CLI 실행의 소유권 또는 완료 증거가 불일치합니다.".into());
+    }
+    let token=receipt["externalSessionId"].as_str()
+        .filter(|id|uuid::Uuid::parse_str(id).is_ok())
+        .ok_or("이전 CLI가 재개 가능한 세션 ID를 저장하지 않았습니다.")?.to_string();
+    let claimed=store.mutate_record("external_agent_run",run_id,
+        json!({"id":run_id}),|row|{
+            if row["status"]!="completed"||row["resumedByJobId"].is_string(){
+                return Err("이 CLI 세션은 이미 이어졌거나 완료되지 않았습니다.".into());
+            }
+            row["resumedByJobId"]=json!(context.job_id);
+            row["resumeClaimedAt"]=json!(chrono::Utc::now().to_rfc3339());
+            Ok(vec![])
+        })?;
+    context.state.bus.record("external_agent_run",&claimed);
+    Ok(token)
 }
 
 fn final_answer(kind:ExternalAgent,raw:&str)->Result<String,String>{
@@ -109,7 +205,8 @@ async fn cancelled(state:&AppState,job_id:&str,session:&str,parent:&str,epoch:u6
 /// Execute an explicitly chosen external inspector in an isolated worktree.
 /// A crash with the in-flight marker is reviewed rather than replayed.
 pub async fn inspect(
-    context:&JobContext,session_id:&str,workspace:&Path,prompt:&str,runtime:&str
+    context:&JobContext,session_id:&str,workspace:&Path,prompt:&str,
+    runtime:&str,resume_from_job:Option<&str>,
 )->Result<(String,String),String>{
     let kind=ExternalAgent::parse(runtime)?;
     if prompt.trim().is_empty()||prompt.len()>MAX_PROMPT{
@@ -133,16 +230,22 @@ pub async fn inspect(
         return Err("상위 작업이 취소되어 외부 실행기를 시작하지 않습니다.".into());
     }
     let generation=context.state.cancellation_generation(parent);
+    // Explicit continuation is claimed once; a timeout, crash or cancellation
+    // after this point is review-only and never automatically replayed.
+    let resume_session=resume_from_job
+        .map(|previous|claim_completed_session(context,&session,kind,previous))
+        .transpose()?;
     let id=format!("external:{}",context.job_id);
     let started=context.state.store.put_if_absent("external_agent_run",
         &json!({"id":id,"jobId":context.job_id,"sessionId":session_id,
             "parentSessionId":parent,"agentId":session["agentId"],
             "runtime":kind.key(),"policy":"isolated-read-only",
+            "resumeFromJobId":resume_from_job,
             "nativeToolReceipts":false,"status":"running",
             "startedAt":chrono::Utc::now().to_rfc3339()}))
         .ok_or("이 외부 Agent 실행은 이미 기록되어 있습니다. 중단 후 자동 재실행하지 않습니다.")?;
     context.state.bus.record("external_agent_run",&started);
-    let (binary,argv)=kind.command(prompt);
+    let (binary,argv)=kind.command_with_resume(prompt,resume_session.as_deref())?;
     let mut command=Command::new(binary);
     command.args(argv).current_dir(&workspace)
         .stdin(std::process::Stdio::null())
@@ -186,16 +289,25 @@ pub async fn inspect(
         }
         let raw=String::from_utf8(output).map_err(|_|"외부 실행기 출력이 UTF-8이 아닙니다.")?;
         let answer=final_answer(kind,&raw)?;
+        let session=terminal_session_id(kind,&raw);
+        // For a resumed process, do not accept a different conversation ID.
+        if resume_session.as_ref().is_some_and(|id|
+            session.as_ref().is_some_and(|observed|observed!=id)){
+            return Err("외부 Agent가 다른 대화 세션으로 재연결되었습니다.".into());
+        }
         let hash=format!("{:x}",Sha256::digest(raw.as_bytes()));
-        Ok::<(String,String),String>((answer,hash))
+        Ok::<(String,String,Option<String>),String>((answer,hash,session))
     }.await;
     let mut record=context.state.store.get("external_agent_run",&id)
         .ok_or("외부 Agent 실행 기록이 사라졌습니다.")?;
     match &execution{
-        Ok((answer,hash))=>{
+        Ok((answer,hash,session))=>{
             record["status"]=json!("completed");
             record["outputSha256"]=json!(hash);
             record["answerLength"]=json!(answer.len());
+            if let Some(session)=session{
+                record["externalSessionId"]=json!(session);
+            }
         }
         Err(error)=>{
             record["status"]=json!("needs_review");
@@ -207,12 +319,47 @@ pub async fn inspect(
     let saved=context.state.store.put("external_agent_run",&record)
         .ok_or("외부 Agent 최종 증거를 기록하지 못했습니다.")?;
     context.state.bus.record("external_agent_run",&saved);
-    execution.map(|(answer,_)|(id,answer))
+    execution.map(|(answer,_,_)|(id,answer))
 }
 
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn headless_resume_tokens_are_terminal_verified_and_scoped(){
+        let token="123e4567-e89b-12d3-a456-426614174000";
+        let codex=format!(
+            "{{\"type\":\"thread.started\",\"thread_id\":\"{token}\"}}\n\
+             {{\"type\":\"item.completed\",\"item\":{{\"type\":\"agent_message\",\"text\":\"ok\"}}}}\n\
+             {{\"type\":\"turn.completed\"}}\n");
+        assert_eq!(terminal_session_id(ExternalAgent::Codex,&codex).as_deref(),Some(token));
+        assert_eq!(terminal_session_id(ExternalAgent::Claude,
+            &json!({"type":"result","subtype":"success","result":"ok",
+                "session_id":token}).to_string()).as_deref(),Some(token));
+        assert_eq!(terminal_session_id(ExternalAgent::Qwen,
+            &json!([{"type":"system","session_id":token},
+                {"type":"result","subtype":"success","result":"ok",
+                 "session_id":token}]).to_string()).as_deref(),Some(token));
+        assert!(terminal_session_id(ExternalAgent::Claude,
+            &json!({"type":"result","subtype":"error_max_turns","result":"partial",
+                "session_id":token}).to_string()).is_none());
+        assert!(terminal_session_id(ExternalAgent::Codex,
+            "{\"type\":\"turn.completed\"}\n").is_none());
+        assert!(ExternalAgent::Qwen.command_with_resume("hello",Some("--last")).is_err());
+        for kind in [ExternalAgent::Codex,ExternalAgent::Claude,ExternalAgent::Qwen]{
+            let (_binary,args)=kind.command_with_resume("new question",Some(token)).unwrap();
+            assert!(args.iter().any(|v|v==token));
+            assert!(args.iter().any(|v|v=="new question"));
+            assert!(!args.iter().any(|v|v=="--last"||v=="--yolo"
+                ||v=="danger-full-access"));
+            if kind==ExternalAgent::Codex{
+                assert!(args.windows(2).any(|w|w==["--sandbox","read-only"]));
+                assert!(args.windows(2).any(|w|w==["resume",token]));
+            }else{
+                assert!(args.windows(2).any(|w|w==["--resume",token]));
+            }
+        }
+    }
     #[test]
     fn agent_executors_are_explicitly_read_only_and_never_use_shell(){
         for name in ["codex","claude","qwen"]{
