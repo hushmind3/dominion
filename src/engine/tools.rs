@@ -57,7 +57,7 @@ pub fn definitions() -> Vec<Value> {
         tool("memory_store", "Save a grounded memory for this agent. Quote the user's exact words; invented facts are rejected. Shared memories are managed by the user.", object(json!({"text": text("Fact to remember, maximum 1600 characters"), "evidenceQuote": text("Exact quote from the current user message supporting the fact"), "sourceMessageId": text("Optional earlier source message ID"), "type": json!({"type":"string","enum":["fact","preference","decision","procedure","lesson"]}), "key": text("Optional stable fact key; a new value replaces the previous value for this key"), "scope": json!({"type":"string","enum":["agent"]})}), vec!["text", "evidenceQuote"])),
         tool("memory_search", "Find saved knowledge relevant to a topic", object(json!({"query": text("Search query")}), vec!["query"])),
         tool("skill_read", "Read a page of the full instructions of one enabled skill. Use nextOffset to continue if hasMore=true.", object(json!({"skillId": text("Exact enabled skill ID from the index"), "offset":json!({"type":"integer","minimum":0,"description":"Optional Unicode character offset; start with 0, then use nextOffset"})}), vec!["skillId"])),
-        tool("history_evidence_read", "Read the exact stored result of a prior tool call in this session by sourceMessageId from a compacted receipt. Page only the needed part; preserves original bytes without replaying the entire result every turn.", object(json!({
+        tool("history_evidence_read", "Read exact prior tool result or private chat owner message by sourceMessageId. Page the needed 6000 characters without replaying the entire archived document every turn.", object(json!({
             "messageId":text("Exact tool result message ID shown in a historical receipt"),
             "offset":json!({"type":"integer","minimum":0,"description":"Unicode character offset, default 0"})
         }),vec!["messageId"])),
@@ -454,16 +454,22 @@ pub async fn execute(
         }
         "history_evidence_read" => {
             let id=required_arg(args,"messageId")?;
+            let is_room=ctx.store.get("session",ctx.session_id)
+                .is_some_and(|session|session["roomId"].is_string());
             let message=ctx.store.message(&id)
-                .filter(|m|m["session_id"]==ctx.session_id && m["role"]=="tool")
-                .filter(|m|m["agent_id"].as_str()==ctx.agent_id)
-                .ok_or("현재 에이전트의 세션에 저장된 도구 결과가 아닙니다.")?;
+                .filter(|m|m["session_id"]==ctx.session_id)
+                .filter(|m| (m["role"]=="tool"
+                    && m["agent_id"].as_str()==ctx.agent_id)
+                    || (!is_room && m["role"]=="user"
+                        && m["agent_id"].is_null()))
+                .ok_or("현재 세션의 허용된 원본 메시지가 아닙니다.")?;
             let content=message["content"].as_str().unwrap_or("");
             let total=content.chars().count();
             let offset=args["offset"].as_u64().unwrap_or(0).min(usize::MAX as u64) as usize;
             if offset>total{return Err("도구 기록 읽기 시작 위치가 범위를 벗어났습니다.".into());}
             let next=offset.saturating_add(6_000).min(total);
             Ok(json!({"messageId":id,"toolCallId":message["tool_call_id"],
+                "role":message["role"],
                 "content":content.chars().skip(offset).take(next-offset).collect::<String>(),
                 "offset":offset,"nextOffset":next,"totalChars":total,
                 "hasMore":next<total,"readOnly":true,
@@ -1874,6 +1880,8 @@ mod tests {
             "role":"tool","agent_id":"other","tool_call_id":"call-3","content":"PEER"})).unwrap();
         state.store.write_message(&json!({"id":"assistant-private","session_id":"ours",
             "role":"assistant","agent_id":"agent","content":"REASONING"})).unwrap();
+        state.store.write_message(&json!({"id":"owner-long","session_id":"ours",
+            "role":"user","content":content})).unwrap();
         let ctx=ToolContext{workspace:&dir,store:&state.store,state:&state,
             session_id:"ours",agent_id:Some("agent"),
             tools_enabled:true,tools_execution_enabled:true};
@@ -1884,6 +1892,11 @@ mod tests {
             next["content"].as_str().unwrap()),content);
         assert_eq!(first["hasMore"],true);
         assert_eq!(next["hasMore"],false);
+        let owner=execute(&ctx,"history_evidence_read",
+            &json!({"messageId":"owner-long"}),"r").await.unwrap();
+        assert_eq!(owner["role"],"user");
+        assert_eq!(owner["nextOffset"],6000);
+        assert_eq!(owner["hasMore"],true);
         for bad in ["tool-other","tool-peer","assistant-private","unknown"]{
             assert!(execute(&ctx,"history_evidence_read",
                 &json!({"messageId":bad}),"r").await.is_err());
