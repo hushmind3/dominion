@@ -132,6 +132,9 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
     json!({
         "id":job["id"],"status":status,
         "instruction":job["input"]["prompt"],
+        "algorithmId":job["nativeAlgorithm"]["id"].as_str()
+            .or_else(||job["input"]["algorithmId"].as_str()).unwrap_or("standard-v1"),
+        "algorithmRevision":job["nativeAlgorithm"]["revision"],
         "answer":result["answer"].as_str().or_else(||snapshot["answer"].as_str()),
         "error":job["error"].as_str()
             .or_else(||result["reason"].as_str())

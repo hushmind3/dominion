@@ -56,14 +56,14 @@ test('native SDK steering and session binding share real Rust API contracts',asy
   await sdk.jobs.steer('job-1','Change summary');
   await sdk.jobs.create({kind:'prompt',input:{
     prompt:'Build the report',sessionId:'session-1',maxSteps:60,
-    strategy:'verify_first',requireEvidence:true,allowFallback:false
+    strategy:'verify_first',algorithmId:'focused-v1',requireEvidence:true,allowFallback:false
   }});
   assert.equal(observed[0].url,'http://127.0.0.1:4317/api/jobs/job-1/directive');
   assert.equal(observed[0].init.headers['X-Dominion-Token'],'owner');
   assert.equal(JSON.parse(observed[0].init.body).instruction,'Change summary');
   assert.deepEqual(JSON.parse(observed[1].init.body),{
     kind:'prompt',input:{prompt:'Build the report',sessionId:'session-1',
-      maxSteps:60,strategy:'verify_first',requireEvidence:true,allowFallback:false}
+      maxSteps:60,strategy:'verify_first',algorithmId:'focused-v1',requireEvidence:true,allowFallback:false}
   });
 });
 
@@ -74,7 +74,7 @@ test('native run controls share the real Rust autonomous UI job routes',async()=
     return reply({id:'native/1',instruction:'Fix tests',status:'running'});
   }});
   await sdk.nativeRuns.list();
-  await sdk.nativeRuns.start({instruction:'Fix tests',providerId:'p1',maxRounds:8,verifyCommand:'cargo test'});
+  await sdk.nativeRuns.start({instruction:'Fix tests',providerId:'p1',maxRounds:8,verifyCommand:'cargo test',algorithmId:'focused-v1'});
   await sdk.nativeRuns.get('native/1');
   await sdk.nativeRuns.approve('native/1','approval/3');
   await sdk.nativeRuns.cancel('native/1');
@@ -86,7 +86,7 @@ test('native run controls share the real Rust autonomous UI job routes',async()=
     '/api/sdk/runs/native%2F1/resume','/api/sdk/runs/native%2F1/reconcile'
   ]);
   assert.deepEqual(JSON.parse(calls[1].init.body),{
-    instruction:'Fix tests',providerId:'p1',maxRounds:8,verifyCommand:'cargo test'
+    instruction:'Fix tests',providerId:'p1',maxRounds:8,verifyCommand:'cargo test',algorithmId:'focused-v1'
   });
   assert.deepEqual(JSON.parse(calls[3].init.body),{callId:'approval/3'});
   assert.deepEqual(JSON.parse(calls[6].init.body),{applied:false,details:'Workspace checked'});

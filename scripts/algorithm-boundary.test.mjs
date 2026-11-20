@@ -26,6 +26,14 @@ test('intelligence owns policy and tool scoring; SDK receives it by injection',(
  assert.match(ranking,/pub fn tool_relevance_with_schema/);
  assert.match(sdk,/pub async fn run_with_algorithm/);
  assert.match(sdk,/pub async fn resume_with_algorithm/);
+ assert.match(sdk,/pub algorithm_id: Option<String>/);
+ assert.match(sdk,/Checkpoint algorithm differs/);
+ const profiles=read('src/features/cognition/profiles.rs');
+ const runner=read('src/host/execution/native_agent.rs');
+ assert.match(profiles,/Pinned agent algorithm ID or implementation revision changed/);
+ assert.match(runner,/profiles::for_job\(job\)/);
+ assert.match(runner,/run_with_algorithm\(request,selected.algorithm\)/);
+ assert.match(runner,/resume_with_algorithm\(request,saved,selected.algorithm\)/);
  assert.match(sdk,/algorithm\.planner_instructions/);
  assert.match(sdk,/algorithm\.select_tools/);
  assert.match(sdk,/algorithm\.project_context/);
