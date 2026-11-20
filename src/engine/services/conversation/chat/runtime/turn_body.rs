@@ -907,6 +907,26 @@ pub(super) async fn run_turn_body(
             }
         }
         let (mut completion, selected_provider) = completion_result?;
+        if let Some(model_record)=state.store.get("provider",&selected_provider.id){
+            let negotiated=crate::engine::gateway::negotiate_capabilities(
+                &model_record,&selected_provider.model,
+                crate::engine::gateway::ModelRequirements{
+                    tools:!round_tools.is_empty(),
+                    vision:!request.attachment_ids.is_empty(),
+                    reasoning:request.thinking==Some(true)
+                        ||request.reasoning_effort.as_deref()
+                            .is_some_and(|s|s!="none"&&!s.is_empty()),
+                });
+            // This is the route that ACTUALLY returned the response,
+            // including transparent local/API fallback. Leave unknown
+            // features null instead of inventing a tool/vision guarantee.
+            if let Some(saved)=state.store.patch_if(
+                "execution",execution_id,"id",&json!(execution_id),
+                &json!({"effectiveModelCapabilities":negotiated,
+                    "capabilityVerifiedRound":round+1})){
+                state.bus.record("execution",&saved);
+            }
+        }
         if selected_provider.id != provider.id {
             // The streamed response came from a fallback route; later rounds
             // must continue on that route rather than retrying the dead one.

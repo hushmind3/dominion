@@ -235,3 +235,7 @@ https://openai.com/index/unrolling-the-codex-agent-loop/
 ## 2026-11-21: Task Team 의존성 그래프
 
 ProgramIR의 기존 `parallel` 노드에 `dependsOn` 형제 ID를 정식 지원하고, `dominion-agent-loop::task_team::schedule`로 실행 전 위상 정렬·중복·불명확 참조·순환을 검증합니다. 읽기 전용의 독립 작업만 실제 병렬로 호출되며 파일 쓰기·외부 위임·알 수 없는 MCP 작업은 독립적으로 직렬화해 기존 호스트의 잠금·승인·효과 저널을 사용합니다. 별도 Task Team 프로세스는 추가하지 않고 기존 ProgramIR을 실사용 DAG 실행기로 강화했습니다.
+
+## 2026-11-21: Model Gateway 기능 협상과 실행 증거
+
+실제 API/로컬 모델 요청의 각 후보는 토큰·연결 점유 전에 `gateway::negotiate_capabilities`를 통과해야 합니다. 개별 `modelCapabilities[modelId]`가 provider 기본 설정을 우선하고, 도구·이미지·추론의 명시적 불지원은 거부합니다. 과거 사용자 정의 엔드포인트의 미선언 기능은 레거시 호환성을 위해 호출 가능성을 열어두되 **지원 확인으로 기록하지 않고 `supported:null,source:unknown`**으로 남깁니다. 실제 응답을 생성한 제공자(대체 모델 포함)의 버전 1 기능 스냅샷은 해당 `execution.effectiveModelCapabilities`에 SQLite CAS로 저장합니다. 화면·모델 선택 메뉴를 새로 만들지 않았습니다.

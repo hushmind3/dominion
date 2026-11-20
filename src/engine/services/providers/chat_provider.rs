@@ -588,6 +588,28 @@ pub(super) async fn stream_completion(
     let mut failed = Vec::new();
 
     for candidate in candidates {
+        // Deny explicit model/endpoint incompatibilities BEFORE slot
+        // allocation, streaming, token spend or any provider side effect.
+        let required=crate::engine::gateway::ModelRequirements{
+            tools:!tools.is_empty(),
+            vision:!request.attachment_ids.is_empty(),
+            reasoning:request.thinking==Some(true)
+                ||request.reasoning_effort.as_deref()
+                    .is_some_and(|s|s!="none"&&!s.is_empty()),
+        };
+        if let Some(record)=state.store.get("provider",&candidate.id){
+            let negotiated=crate::engine::gateway::negotiate_capabilities(
+                &record,&candidate.model,required);
+            if negotiated["admitted"]!=true{
+                state.store.audit("model.capability_denied",json!({
+                    "sessionId":session_id,"providerId":candidate.id,
+                    "model":candidate.model,"profile":negotiated,
+                }));
+                failed.push(json!({"providerId":candidate.id,
+                    "error":"model/endpoint does not support requested features"}));
+                continue;
+            }
+        }
         if state.is_cancelled(session_id) {
             return Err("실행이 중단되었습니다.".into());
         }

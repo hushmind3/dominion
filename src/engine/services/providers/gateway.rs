@@ -88,6 +88,47 @@ pub fn supports_requirements(
         (!required.reasoning || supported(&["reasoningSupported","thinking"]))
 }
 
+/// Versioned capability negotiation for one concrete model and endpoint.
+/// Unknown is represented by JSON null with source=unknown, never reported
+/// as confirmed support. Capability declarations at model scope override
+/// provider defaults; the admission verdict remains backward-compatible with
+/// legacy custom local endpoints that do not expose a capability catalog.
+pub fn negotiate_capabilities(
+    provider:&Value,model_id:&str,required:ModelRequirements,
+)->Value{
+    let base=&provider["capabilities"];
+    let model=&provider["modelCapabilities"][model_id];
+    let resolve=|keys:&[&str]|->Value{
+        for key in keys{
+            if let Some(value)=model[*key].as_bool(){
+                return json!({"supported":value,"source":"model","key":key});
+            }
+        }
+        for key in keys{
+            if let Some(value)=base[*key].as_bool(){
+                return json!({"supported":value,"source":"provider","key":key});
+            }
+        }
+        json!({"supported":null,"source":"unknown"})
+    };
+    json!({
+        "schemaVersion":1,
+        "providerId":provider["id"],
+        "modelId":model_id,
+        "protocol":provider["kind"],
+        "local":is_local_provider(provider),
+        "features":{
+            "text":resolve(&["text"]),
+            "tools":resolve(&["toolCalling","tools"]),
+            "vision":resolve(&["vision","images"]),
+            "reasoning":resolve(&["reasoningSupported","thinking"])
+        },
+        "required":{"tools":required.tools,"vision":required.vision,
+                    "reasoning":required.reasoning},
+        "admitted":supports_requirements(provider,model_id,required)
+    })
+}
+
 /// A provider may explicitly declare `capabilities.text=false`; absence means
 /// unknown, not unqualified.
 pub fn provider_eligible(provider: &Value) -> bool {
@@ -709,6 +750,23 @@ mod sub2_capability_tests {
         assert!(supports_requirements(&provider,"unknown",ModelRequirements{
             tools:true,..Default::default()
         }));
+    }
+    #[test]
+    fn negotiation_records_model_overrides_and_unknown_capabilities_without_fake_grants(){
+        let provider=json!({"id":"p","kind":"openai","baseUrl":"http://127.0.0.1:4321/v1",
+            "capabilities":{"toolCalling":true,"vision":false},
+            "modelCapabilities":{"a":{"toolCalling":false},"b":{"toolCalling":true}}});
+        let needed=ModelRequirements{tools:true,vision:false,reasoning:false};
+        let denied=negotiate_capabilities(&provider,"a",needed);
+        assert_eq!(denied["admitted"],false);
+        assert_eq!(denied["features"]["tools"]["source"],"model");
+        let allowed=negotiate_capabilities(&provider,"b",needed);
+        assert_eq!(allowed["admitted"],true);
+        assert_eq!(allowed["features"]["vision"]["source"],"provider");
+        assert_eq!(allowed["features"]["reasoning"]["source"],"unknown");
+        assert!(allowed["features"]["reasoning"]["supported"].is_null());
+        let unknown=negotiate_capabilities(&provider,"not-listed",needed);
+        assert_eq!(unknown["features"]["tools"]["source"],"provider");
     }
     #[test]
     fn explicitly_unsupported_text_or_tools_never_receives_fallback_work(){
