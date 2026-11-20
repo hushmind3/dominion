@@ -73,7 +73,7 @@ test('only language execution and approval endpoints remain in HTTP core',()=>{
  '/api/sdk/runs/:id/reconcile','/api/executions/:id/operations',
  '/api/approvals'];
  assert.deepEqual(only,expected);
- assert.match(api,/router=router\\.merge\\(surfaces::routes\\(\\)\\)/);
+ assert.match(api,/router=router\.merge\(surfaces::routes\(\)\)/);
  for(const name of ['provider_routes','conversation_routes','automation_routes','evaluation_routes','management_routes']){
   assert.ok(exists('src/api/surfaces/'+name+'.rs'),'missing HTTP surface '+name);
  }
