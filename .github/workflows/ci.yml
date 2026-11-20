@@ -50,6 +50,10 @@ jobs:
         run: |
           cargo test --locked --bin dominion-rust stop_before_native_turn_starts_does_not_clear_newer_cancellation
           cargo test --locked --bin dominion-rust user_stop_preempts_silent_model_stream_and_next_turn_succeeds
+      - name: Session-indexed web evidence and readable HTML regressions (dev profile)
+        run: |
+          cargo test --locked --bin dominion-rust engine::web_document::tests
+          cargo test --locked --bin dominion-rust fetched_html_excludes_executable_and_style_payloads
       - name: Streamable HTTP MCP and concurrent capability discovery (dev profile)
         run: cargo test --locked --bin dominion-rust engine::mcp::tests
       - name: Execution-scoped auxiliary model receipts and token coverage (dev profile)
