@@ -16,3 +16,17 @@ pub fn start_outbound(state:AppState){
 pub fn enabled(state:&AppState)->bool{
     globally_enabled(state,Extension::Channels)
 }
+/// A configured connection can be muted by its room/agent policy without
+/// disrupting any other messenger or the core session ledger.
+pub fn enabled_binding(state:&AppState,config:&serde_json::Value)->bool{
+    if !enabled(state) || config["enabled"]!=true {return false;}
+    if let Some(room)=config["roomId"].as_str(){
+        if state.store.get("room",room).is_some_and(|record|
+            record["extensions"]["channels"]==false) {return false;}
+    }
+    if let Some(agent)=config["agentId"].as_str(){
+        if state.store.get("agent",agent).is_some_and(|record|
+            record["extensions"]["channels"]==false) {return false;}
+    }
+    true
+}
