@@ -188,3 +188,26 @@ use super::*;
         assert_eq!(bounded_contract_intent("short"), "short");
     }
 
+
+#[test]
+fn product_and_standalone_loops_share_core_atomic_batch_admission(){
+    use crate::engine::core::driver::Driver;
+    let visible=vec![json!({"type":"function","function":{"name":"workspace_read"}})];
+    let batch=vec![
+        ToolCall{id:"read".into(),name:"workspace_read".into(),arguments:"{}".into()},
+        ToolCall{id:"hidden".into(),name:"mcp__hidden__write".into(),arguments:"{}".into()},
+    ];
+    let mut driver=Driver::new(3,3);
+    let mut ledger=budget::BudgetLedger::new(3,3,std::time::Duration::from_secs(30));
+    assert!(ledger.charge_proposals(batch.len()));
+    assert_eq!(driver.admit_batch(batch.iter().map(|c|(c.id.as_str(),c.name.as_str())),
+        &visible,true),Err("tool was not advertised"));
+    let retry=[ToolCall{id:"read".into(),name:"workspace_read".into(),
+        arguments:"{}".into()}];
+    assert!(ledger.charge_proposals(retry.len()));
+    assert!(driver.admit_batch(retry.iter().map(|c|(c.id.as_str(),c.name.as_str())),
+        &visible,true).is_ok());
+    assert_eq!(ledger.snapshot()["proposals"],3);
+    assert_eq!(driver.admit_batch(retry.iter().map(|c|(c.id.as_str(),c.name.as_str())),
+        &visible,true),Err("duplicate or missing tool call id"));
+}

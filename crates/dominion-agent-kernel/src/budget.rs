@@ -38,12 +38,17 @@ impl BudgetLedger {
         true
     }
 
-    pub fn charge_proposal(&mut self) -> bool {
-        if self.proposals >= self.max_proposals || self.expired() {
+    /// Reserve every model-proposed call before starting a sibling effect.
+    /// An exhausted batch leaves the proposal counter unchanged.
+    pub fn charge_proposals(&mut self,count:usize)->bool{
+        if count>self.max_proposals.saturating_sub(self.proposals)||self.expired(){
             return false;
         }
-        self.proposals += 1;
+        self.proposals+=count;
         true
+    }
+    pub fn charge_proposal(&mut self)->bool{
+        self.charge_proposals(1)
     }
 
     pub fn charge_tool(&mut self) -> bool {
@@ -186,4 +191,15 @@ mod tests {
         assert_eq!(snapshot["maxTools"], 40);
         assert_eq!(snapshot["maxProposals"], 80);
     }
+    #[test]
+    fn batch_reservation_cannot_partially_consume_remaining_proposal_budget(){
+        let mut budget=BudgetLedger::new(3,2,Duration::from_secs(60));
+        assert!(budget.charge_proposals(3));
+        assert!(!budget.charge_proposals(2));
+        assert_eq!(budget.snapshot()["proposals"],3);
+        assert!(budget.charge_proposals(1));
+        assert_eq!(budget.snapshot()["proposals"],4);
+        assert!(!budget.charge_proposal());
+    }
+
 }

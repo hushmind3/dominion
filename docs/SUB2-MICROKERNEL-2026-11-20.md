@@ -136,3 +136,28 @@ ProgramIR 실행, 대안 후보 실험, 작업 검토, 정책 스냅샷과 세�
 - 기존 그룹 할당/완료/건너뜀 이벤트의 인위적 step×2 계산과 중복 수동 발행을 제거했습니다. 성공한 CAS 전이에서만 실제 run_state를 방송하며, 완료 재생은 새 이벤트를 발생시키지 않습니다.
 - 이 변경은 **단일 이벤트 스키마의 실제 소비 가능 경계**입니다. 기존 복합 Chat 실행 루프와 독립 AgentLoop 통합을 완료했다는 뜻은 아닙니다. 저장된 실행 내용, API URL, UI, 메인 브랜치의 기능은 변경하지 않았습니다.
 - 2026 참고: https://openai.com/index/unlocking-the-codex-harness/ (안정적인 클라이언트용 실행 이벤트), https://github.com/QwenLM/qwen-code/blob/main/docs/developers/architecture.md (공통 에이전트 런타임 및 클라이언트 경계).
+
+## 2026-11-20: 실제 제품 Chat ↔ 독립 AgentLoop 도구 배치 승인 통합
+
+실제 Chat 실행기와 독립 `dominion-agent-loop::run`가 **동일한
+`dominion-turn-core::Driver::admit_batch`**를 사용합니다. 이전 Chat의
+호출별 승인에서는 앞선 도구가 실행된 후 뒤쪽의 숨겨진 MCP 호출을 발견할
+수 있었으나, 이제 한 모델 응답 전체의 호출 ID·도구 광고 범위·예산을
+**도구 실행 전에 일괄 검증**합니다.
+
+`BudgetLedger::charge_proposals(count)`로 제안 예산을 원자적으로 예약하며,
+거부된 배치에는 각 호출별 `dispatched:false` 오류 관찰을 남겨 모델이
+다음 라운드에서 수정할 수 있게 합니다. 기존 개별 `driver.admit_tool`,
+병렬 그룹 재광고 검사, 반복 `budget.charge_proposal` 경로를 실제
+채팅 모델 응답 경로에서 제거했습니다. 승인·샌드박스·영속 효과 영수증,
+연결된 MCP/도구 서비스는 기존 Host 소유입니다.
+
+현재 통합 범위는 **모델 라운드·전략 판단·도구 배치 승인**이며, 독립
+`dominion-agent-loop::run`가 기존 Chat의 영속 저장/복합 프로그램
+진행과 완전히 교체됐다는 뜻은 아닙니다. UI·API URL·메인 브랜치는
+변경하지 않았습니다.
+
+2026 공개 설계 참고: Qwen Code managed agent actions (2026-09-30)
+https://github.com/QwenLM/qwen-code/blob/main/docs/design/2026-09-30-managed-agent-actions.md
+OpenAI Codex Agent Loop (2026-01-23)
+https://openai.com/index/unrolling-the-codex-agent-loop/

@@ -116,8 +116,10 @@ test('real chat model loop consults pure execution driver and gates parallel too
  const s=source('src/engine/services/conversation/chat/runtime/turn_body.rs');
  assert.match(s,/driver\.request_model/);
  assert.match(s,/driver\.authorize_step/);
- assert.match(s,/driver\.admit_tool/);
- assert.match(s,/Driver::batch_advertised/);
+ assert.match(s,/driver\.admit_batch/);
+ assert.match(s,/budget\.charge_proposals\(round_calls\.len\(\)\)/);
+ assert.doesNotMatch(s,/driver\.admit_tool/);
+ assert.doesNotMatch(s,/Driver::batch_advertised/);
  assert.ok(exists('crates/dominion-turn-core/src/driver.rs'));
 });
 

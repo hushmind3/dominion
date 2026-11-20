@@ -1381,6 +1381,41 @@ pub(super) async fn run_turn_body(
         // write and feed stale observations back to the model.
         let ordering_kernel=decision_policy.order();
         let round_calls = completion.tool_calls.clone();
+        // The product Chat and standalone AgentLoop now use ONE Rust
+        // admission invariant for an entire provider response. Never start
+        // an earlier tool before validating a hidden later sibling.
+        if !budget.charge_proposals(round_calls.len()){
+            mark_budget_exhausted(state,execution_id);
+            return Err(format!("도구 제안 예산({}회)을 초과했습니다.",
+                max_tools.saturating_mul(2)));
+        }
+        if let Err(reason)=driver.admit_batch(
+            round_calls.iter().map(|call|(call.id.as_str(),call.name.as_str())),
+            &round_tools,
+            request.tools_enabled && request.tools_execution_enabled,
+        ){
+            state.store.audit("tool.batch_admission_denied",json!({
+                "executionId":execution_id,"round":round,
+                "count":round_calls.len(),"reason":reason,
+            }));
+            // The assistant proposal has already been persisted. Pair all
+            // calls with explicit NOT-DISPATCHED observations so the model
+            // can correct its tool names instead of leaving broken history.
+            for call in &round_calls{
+                let error=format!("도구 배치가 실행 전에 거부되었습니다: {reason}. 현재 제공된 도구만 사용하거나 dominion_tool_search로 탐색하세요.");
+                record_soft_tool_error(
+                    state,tx,session_id,request,execution_id,
+                    &call.name,&call.id,&error,metrics,
+                );
+                messages.push(json!({
+                    "role":"tool","tool_call_id":call.id,
+                    "content":json!({"error":error,"batchRejected":true,
+                        "dispatched":false}).to_string(),
+                }));
+            }
+            decision_policy.signal("tool.selection",false);
+            continue;
+        }
         let barrier_override=ordering_kernel.wants_read_first()
             && round_calls.iter().enumerate().any(|(index,call)|
                 !tool_is_read_only(&call.name) && round_calls[index+1..].iter()
@@ -1405,33 +1440,13 @@ pub(super) async fn run_turn_body(
             // core tool selection and prevents guessing hidden MCP names.
             // A disconnected SSE client must not stop work already promised by
             // the model; explicit cancel and budgets remain the stop signals.
-            if !budget.charge_proposal() {
-                return Err(format!(
-                    "도구 제안 예산({}회)을 초과했습니다.",
-                    max_tools.saturating_mul(2)
-                ));
-            }
             if state.is_cancelled(session_id)
                 || state.cancellation_generation(session_id) != generation
             {
                 return Err("실행이 중단되었습니다.".into());
             }
-            if driver.admit_tool(&call.name,&round_tools,
-                request.tools_enabled && request.tools_execution_enabled).is_err(){
-                let error=format!(
-                    "도구 {}는 이번 모델 요청에 제공되지 않았습니다. 필요한 도구는 dominion_tool_search로 탐색하세요.",
-                    call.name);
-                record_soft_tool_error(
-                    state,tx,session_id,request,execution_id,
-                    &call.name,&call.id,&error,metrics,
-                );
-                messages.push(json!({
-                    "role":"tool","tool_call_id":call.id,
-                    "content":json!({"error":error,"toolNotAdvertised":true}).to_string()
-                }));
-                decision_policy.signal("tool.selection",false);
-                continue;
-            }
+            // Batch-level core admission has already reserved this ID and
+            // tool visibility. Host approval/effect checks still run below.
             // Only adjacent read-only calls are concurrency-safe; an earlier
             // mutation is an exclusive barrier. Each read group is bounded to
             // four concurrent calls, with matching results emitted in the
@@ -1442,12 +1457,8 @@ pub(super) async fn run_turn_body(
                 let candidate=super::tool_schedule::parallel_prefix(
                     round_calls[call_index..].iter()
                         .map(|item|(item.name.as_str(),item.arguments.as_str())),4);
-                // Every member must have been visible in this model call.
-                // Otherwise fall back to serial dispatch, which returns an
-                // explicit tool-not-advertised observation for the hidden one.
-                let batch_len=if crate::engine::core::driver::Driver::batch_advertised(
-                    round_calls[call_index..call_index+candidate].iter()
-                        .map(|item|item.name.as_str()),&round_tools) {candidate} else {1};
+                // Every member passed the same core batch admission above.
+                let batch_len=candidate;
                 if batch_len>=2 {
                     decision_policy.note_combination();
                     let batch=&round_calls[call_index..call_index+batch_len];
@@ -1456,15 +1467,6 @@ pub(super) async fn run_turn_body(
                     // Preflight every call and charge the complete batch
                     // before starting *any* side effect or external request.
                     for (offset,read_call) in batch.iter().enumerate(){
-                        if offset>0 {
-                            if !budget.charge_proposal(){
-                                return Err(format!("도구 제안 예산({}회)을 초과했습니다.",
-                                    max_tools.saturating_mul(2)));
-                            }
-                            driver.admit_tool(&read_call.name,&round_tools,
-                                request.tools_enabled && request.tools_execution_enabled)
-                                .map_err(str::to_string)?;
-                        }
                         let parsed=serde_json::from_str::<Value>(&read_call.arguments);
                         match parsed {
                             Ok(args) if args.is_object()=>{
