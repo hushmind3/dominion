@@ -1344,42 +1344,99 @@ pub(crate) async fn http_fetch(url: &str) -> Result<Value, String> {
     Err("http_fetch 리다이렉션 상한을 초과했습니다.".into())
 }
 
-async fn web_search(query: &str) -> Result<Value, String> {
-    let response = reqwest::Client::new()
-        .post("https://html.duckduckgo.com/html/")
-        .form(&[("q", query)])
-        .timeout(Duration::from_secs(25))
-        .header(
-            "User-Agent",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-        )
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    let html = response.text().await.map_err(|error| error.to_string())?;
-    let mut results = Vec::new();
-    for chunk in html.split("result__a").skip(1).take(10) {
-        let Some(href_start) = chunk.find("href=\"") else {
-            continue;
-        };
-        let rest = &chunk[href_start + 6..];
-        let Some(href_end) = rest.find('"') else {
-            continue;
-        };
-        let href = decode_ddg(&rest[..href_end]);
-        let title = rest[href_end..]
-            .find('>')
-            .map(|start| {
-                let tail = &rest[href_end + start + 1..];
-                let end = tail.find("</a>").unwrap_or(tail.len().min(200));
-                strip_html(&tail[..end]).trim().to_string()
-            })
-            .unwrap_or_default();
-        if !href.is_empty() && !title.is_empty() {
-            results.push(json!({ "title": title, "url": href }));
+/// The test-only override is constrained to a loopback HTTP endpoint, so
+/// a test cannot accidentally query public providers or arbitrary LAN hosts.
+fn web_search_test_endpoint()->Option<String>{
+    let raw=std::env::var("DOMINION_WEB_SEARCH_TEST_ENDPOINT").ok()?;
+    let endpoint=reqwest::Url::parse(&raw).ok()?;
+    (endpoint.scheme()=="http"
+        && matches!(endpoint.host_str(),Some("127.0.0.1"|"localhost"))
+    ).then_some(raw)
+}
+
+fn parse_ddg_search_results(html:&str)->Vec<Value>{
+    let mut results=Vec::new();
+    for chunk in html.split("result__a").skip(1).take(12) {
+        let Some(href_start)=chunk.find("href=\\\"") else{continue;};
+        let rest=&chunk[href_start+6..];
+        let Some(href_end)=rest.find('"') else{continue;};
+        let href=decode_ddg(&rest[..href_end]);
+        let title=rest[href_end..].find('>').map(|start|{
+            let tail=&rest[href_end+start+1..];
+            let end=tail.find("</a>").unwrap_or(tail.len().min(200));
+            strip_html(&tail[..end])
+        }).unwrap_or_default();
+        if (href.starts_with("https://")||href.starts_with("http://"))
+            && !title.trim().is_empty()
+            && !results.iter().any(|r:&Value|r["url"]==href)
+        {
+            results.push(json!({"title":title,"url":href}));
         }
     }
-    Ok(json!({ "query": query, "results": results }))
+    results.truncate(10);
+    results
+}
+
+fn parse_bing_rss_search_results(rss:&str)->Vec<Value>{
+    let mut results=Vec::new();
+    for part in rss.split("<item>").skip(1).take(12) {
+        let segment=part.split("</item>").next().unwrap_or("");
+        let value=|tag:&str|->Option<String>{
+            let start=format!("<{tag}>");
+            let end=format!("</{tag}>");
+            let part=segment.split_once(&start)?.1.split_once(&end)?.0;
+            let cleaned=strip_html(part);
+            (!cleaned.is_empty()).then_some(cleaned)
+        };
+        let (Some(title),Some(url))=(value("title"),value("link")) else {continue};
+        if (url.starts_with("https://")||url.starts_with("http://"))
+            && !results.iter().any(|r:&Value|r["url"]==url) {
+            results.push(json!({"title":title,"url":url}));
+        }
+    }
+    results.truncate(10);
+    results
+}
+
+async fn web_search(query: &str) -> Result<Value, String> {
+    let client=reqwest::Client::builder()
+        .timeout(Duration::from_secs(18)).build().map_err(|e|e.to_string())?;
+    let test_endpoint=web_search_test_endpoint();
+    let endpoint=test_endpoint.as_deref()
+        .unwrap_or("https://html.duckduckgo.com/html/");
+    let first=client.post(endpoint).form(&[("q",query)])
+        .header("User-Agent","Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)")
+        .send().await;
+    let mut errors=Vec::new();
+    let mut results=match first {
+        Ok(response) if response.status().is_success()=>{
+            parse_ddg_search_results(&response.text().await.map_err(|e|e.to_string())?)
+        },
+        Ok(response)=>{errors.push(format!("DuckDuckGo HTTP {}",response.status()));Vec::new()},
+        Err(error)=>{errors.push(format!("DuckDuckGo: {error}"));Vec::new()},
+    };
+    // One independent backend prevents a silent "successful" empty result
+    // if the HTML scraper changes or DDG challenges this client.
+    if results.is_empty() && test_endpoint.is_none() {
+        let fallback=client.get("https://www.bing.com/search")
+            .query(&[("format","rss"),("q",query)])
+            .header("User-Agent","Mozilla/5.0")
+            .send().await;
+        match fallback {
+            Ok(response) if response.status().is_success()=>{
+                let rss=response.text().await.map_err(|e|e.to_string())?;
+                results=parse_bing_rss_search_results(&rss);
+            },
+            Ok(response)=>errors.push(format!("Bing RSS HTTP {}",response.status())),
+            Err(error)=>errors.push(format!("Bing RSS: {error}")),
+        }
+    }
+    if results.is_empty() {
+        return Err(format!("검색 공급자가 검증 가능한 결과를 반환하지 않았습니다: {}",
+            errors.join("; ")));
+    }
+    Ok(json!({"query":query,"results":results,"count":results.len(),
+        "source":"public_web_search"}))
 }
 
 fn decode_ddg(raw: &str) -> String {
