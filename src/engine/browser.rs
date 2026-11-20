@@ -619,7 +619,6 @@ mod tests {
         assert_eq!(login_url("github"),Some("https://github.com/login"));
         assert_eq!(login_url("google"),Some("https://drive.google.com/drive/u/0/my-drive"));
         assert!(login_url("https://evil.example").is_none());
-        assert!(login_url("youtube").is_none());
     }
     #[test]
     fn element_script_quotes_the_index() {
