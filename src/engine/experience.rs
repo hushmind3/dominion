@@ -544,7 +544,8 @@ pub fn context_block_with_manifest_at(
                     id,
                     case["signature"].as_str().unwrap_or(""),
                     case["lesson"].as_str().unwrap_or(""),
-                    case["lastUsedAt"].as_str().unwrap_or(""),
+                    // Last use is observation telemetry, not a semantic
+                    // edit. It must not invalidate a provider prompt prefix.
                 ]),
             })
         })
