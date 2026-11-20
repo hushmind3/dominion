@@ -335,6 +335,13 @@ async fn run_turn_with_policy(
     ) || state.cancellation_generation(&session_id)!=generation {
         Err("실행이 중단되었습니다.".into())
     }else{result};
+    // The native loop has no successful unit-return contract. Even a model
+    // completing without a final assistant message cannot be counted as a
+    // completed job or produce false success evidence.
+    let result=match result{
+        Ok(None)=>Err("최종 응답이 저장되지 않아 실행을 완료할 수 없습니다.".into()),
+        other=>other,
+    };
     finish_attempt(state, &execution_id, &result, &metrics);
     close_pending_approvals(state, &session_id);
 

@@ -51,6 +51,7 @@ pub(super) async fn run_turn_body(
                 task_id,
                 text,
                 replacements,
+                generation,
                 metrics,
             )
             .await?

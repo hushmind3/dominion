@@ -76,6 +76,16 @@ pub fn phase_for_status(status: &str) -> &'static str {
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq)]
 pub enum RunState{Queued,Running,Completed,Failed,Cancelled,Interrupted,NeedsReview,Skipped}
+/// Decide terminal meaning in the same model-independent core used
+/// by the chat host. A missing final answer is never completed work.
+pub fn terminal_result<T,E>(result:&Result<Option<T>,E>,cancelled:bool)->RunState{
+    if cancelled{return RunState::Cancelled;}
+    match result{
+        Ok(Some(_))=>RunState::Completed,
+        Ok(None)|Err(_)=>RunState::Failed,
+    }
+}
+
 impl RunState{
     pub const fn as_str(self)->&'static str{
         match self{
@@ -172,6 +182,18 @@ mod tests{
         assert_eq!(event["state"],"needs_review");
         assert_eq!(RunState::parse("assigned"),Some(RunState::Queued));
     }
+    #[test]
+    fn terminal_result_requires_a_delivered_answer_and_honors_cancellation(){
+        assert_eq!(terminal_result(&Ok::<Option<u8>,String>(Some(1)),false),
+            RunState::Completed);
+        assert_eq!(terminal_result(&Ok::<Option<u8>,String>(None),false),
+            RunState::Failed);
+        assert_eq!(terminal_result(&Err::<Option<u8>,String>("failed".into()),false),
+            RunState::Failed);
+        assert_eq!(terminal_result(&Ok::<Option<u8>,String>(Some(1)),true),
+            RunState::Cancelled);
+    }
+
     #[test]
     fn durable_job_chat_and_room_records_project_into_one_run_schema(){
         let job=RunEvent::from_record("job",&json!({

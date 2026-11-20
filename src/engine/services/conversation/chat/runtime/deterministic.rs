@@ -109,6 +109,20 @@ pub(super) fn record_partial_shortcut(
     }
 }
 
+/// No in-flight deterministic file operation may be followed by a new
+/// operation or a final response after the owner cancelled this run.
+fn ensure_frozen_not_cancelled(
+    state:&AppState,request:&TurnRequest,session_id:&str,generation:u64,
+)->Result<(),String>{
+    if state.is_cancelled(session_id)
+        || state.cancellation_generation(session_id)!=generation
+        || super::super::transport::request_cancelled(
+            state,session_id,request.request_id.as_deref()){
+        return Err("실행이 중단되었습니다.".into());
+    }
+    Ok(())
+}
+
 /// Executes every frozen replacement before any model call. Reads are all
 /// completed and validated first; a single mismatch falls back to the normal
 /// model path without mutating anything.
@@ -122,6 +136,7 @@ pub(super) async fn run_frozen_replacements(
     task_id: &str,
     text: &str,
     checks: Vec<Value>,
+    generation:u64,
     metrics: &std::sync::Mutex<Metrics>,
 ) -> Result<Option<Value>, String> {
     if !request.tools_enabled
@@ -130,6 +145,7 @@ pub(super) async fn run_frozen_replacements(
     {
         return Ok(None);
     }
+    ensure_frozen_not_cancelled(state,request,session_id,generation)?;
     let existing = state.store.execution_operations(execution_id)?;
     let mut op_seq = existing
         .iter()
@@ -149,6 +165,7 @@ pub(super) async fn run_frozen_replacements(
     }
     let mut prepared = Vec::new();
     for (check, path) in checks.iter().zip(paths) {
+        ensure_frozen_not_cancelled(state,request,session_id,generation)?;
         op_seq += 1;
         let (read, _) = deterministic_tool(
             state,
@@ -173,6 +190,7 @@ pub(super) async fn run_frozen_replacements(
     }
     let mut effect_ids = Vec::new();
     for (path, source_sha256, expected) in prepared {
+        ensure_frozen_not_cancelled(state,request,session_id,generation)?;
         op_seq += 1;
         let (_, operation) = deterministic_tool(
             state,
@@ -219,6 +237,7 @@ pub(super) async fn run_frozen_replacements(
         }
         effect_ids.push(operation["effectId"].clone());
     }
+    ensure_frozen_not_cancelled(state,request,session_id,generation)?;
     let answer = "요청한 정확 치환을 모델 호출 없이 수행하고 SHA-256으로 검증했습니다.".to_string();
     if let Some(mut execution) = state.store.get("execution", execution_id) {
         execution["acceptancePassed"] = json!(true);
@@ -234,9 +253,8 @@ pub(super) async fn run_frozen_replacements(
         });
         state.store.put("execution", &execution);
     }
-    let saved = state
-        .store
-        .write_message(&json!({
+    let (saved,linked)=state.store.write_final_message_and_link(execution_id,
+        &json!({
             "session_id": session_id,
             "role": "assistant",
             "content": answer,
@@ -249,12 +267,9 @@ pub(super) async fn run_frozen_replacements(
                 "acceptanceText": text,
             },
         }))
-        .ok_or("결정적 실행의 최종 응답을 저장할 수 없습니다.")?;
-    if let Some(mut execution) = state.store.get("execution", execution_id) {
-        execution["finalMessageId"] = saved["id"].clone();
-        state.store.put("execution", &execution);
-    }
+        .ok_or("결정적 실행의 최종 응답을 원자적으로 저장할 수 없습니다.")?;
     state.bus.message(&saved);
+    state.bus.record("execution",&linked);
     Ok(Some(saved))
 }
 

@@ -199,3 +199,10 @@ https://openai.com/index/unrolling-the-codex-agent-loop/
 - `jobs::recover`가 부모 job을 queued로 되돌리기 전에 **running execution과 일치하는 최종 assistant 메시지**를 SQLite에서 검증합니다. 최종 메시지와 그 실행 링크가 이미 커밋된 경우에는 다시 모델 호출·외부 효과를 시작하지 않고 `needs_review`로 보류합니다. 이는 성공을 날조하지 않으면서 중복 비용/효과를 방지하는 복구 경계입니다.
 - 그룹 작업판의 조회는 기존 SQLite 인덱스와 최근 48개 상한을 유지하면서, 기록이 48개를 넘으면 **최초 커밋된 관측 1개와 최신 47개**를 보존합니다. 모델로 전송되는 6개 요약은 최초 관측 1개와 최신 5개로 제한하여 오래된 그룹 합의/근거를 모두 잃지 않도록 합니다.
 - 테스트: 저장된 최종 답변이 있던 job의 재시작 중복 실행 금지, 105턴 모델-프리 그룹 관측의 최초/최근 메시지 유지 및 중간 메시지 제외. 전체 실제 모델 100턴의 비용/지능 평가는 이 테스트의 검증 범위 밖입니다.
+
+## 2026-11-20: 최종 완료 판정·결정적 실행도 단일 Harness 규칙
+
+- `dominion-turn-core::run_state::terminal_result`를 제품 `finalize_execution`과 연결했습니다. 반환이 `Ok(None)`인 빈 최종 응답은 성공이 아닌 실패이며, 승인된 취소는 `cancelled`로 정규화합니다. `runtime`은 실제 사용자 결과도 빈 성공으로 돌려주지 않습니다.
+- 모델 없는 정확 치환 경로(`run_frozen_replacements`)도 일반 Chat과 같은 `write_final_message_and_link`를 사용합니다. 기존의 최종 메시지 저장→실행 링크 별도 저장을 제거했습니다.
+- 해시 검증된 deterministic read/write 단계 사이와 종료 전마다 동일한 session cancellation generation과 요청 취소를 검사합니다. 중단 후 남은 새 도구 호출이나 성공 답변을 만들지 않습니다.
+- 여전히 하나의 거대한 AgentLoop 루프로 전체 코드가 완전히 물리적으로 합쳐진 것은 아니고, **도구·상태·최종 커밋 계약**이 일반 Chat·Model-free 경로·SDK·Room에서 재사용되는 구조입니다.

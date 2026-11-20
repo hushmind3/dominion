@@ -278,17 +278,13 @@ pub(super) fn finalize_execution(
     record["toolElapsedMs"] = json!(counters.tool_elapsed_ms);
     record["contextElapsedMs"] = json!(counters.context_elapsed_ms);
     record["finishedAt"] = json!(chrono::Utc::now().to_rfc3339());
-    let final_phase = |status: &str| crate::engine::run_state::phase_for_status(status);
-    match result {
-        Ok(_) => record["status"] = json!("completed"),
-        Err(message) if message.contains("중단") => {
-            record["status"] = json!("cancelled");
-            record["reason"] = json!(message);
-        }
-        Err(message) => {
-            record["status"] = json!("failed");
-            record["reason"] = json!(message);
-        }
+    let cancelled=result.as_ref().err().is_some_and(|message|message.contains("중단"));
+    let terminal=dominion_turn_core::run_state::terminal_result(result,cancelled);
+    record["status"]=json!(terminal.as_str());
+    if let Err(message)=result{
+        record["reason"]=json!(message);
+    }else if result.as_ref().is_ok_and(|answer|answer.is_none()){
+        record["reason"]=json!("최종 응답이 생성되지 않았습니다.");
     }
     let status = record["status"].as_str().unwrap_or("failed").to_string();
     record["phase"] = json!(final_phase(&status));
