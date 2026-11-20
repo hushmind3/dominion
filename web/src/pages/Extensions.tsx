@@ -339,27 +339,25 @@ function StatusLine({
 export type ExtensionTab='market'|'installed'|'plugins'|'skills'
 export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;embedded?:boolean}={}) {
   const loc = useLocale();
+  const [localTab, setTab] = useState<ExtensionTab>("market");
+  const tab = section ?? localTab;
   const mcp = useRemote<Mcp[]>("/api/mcp", []),
     skills = useRemote<Skill[]>("/api/skills", []),
-    presets = useRemote<any[]>("/api/mcp/presets", []);
+    presets = useRemote<any[]>(tab === "market" ? "/api/mcp/presets" : null, []);
   const catalogSkills = useRemote<{
     items: any[];
     total: number;
     updatedAt: string;
-  }>("/api/skill-catalog", { items: [], total: 0, updatedAt: "" }, false);
+  }>(tab === "plugins" ? "/api/skill-catalog" : null, { items: [], total: 0, updatedAt: "" }, false);
   const [repo, setRepo] = useState(""),
     [repoBusy, setRepoBusy] = useState(false),
     [mcpSaving, setMcpSaving] = useState(false);
-  const [localTab, setTab] = useState<ExtensionTab>(
-      "market",
-    ),
-    [query, setQuery] = useState(""),
+  const [query, setQuery] = useState(""),
     [catalog, setCatalog] = useState<RegistryItem[]>([]),
     [searching, setSearching] = useState(false),
     [installing, setInstalling] = useState(""),
     [error, setError] = useState(""),
     [message, setMessage] = useState("");
-  const tab=section??localTab;
   const [skillQuery, setSkillQuery] = useState(""),
     [skillCategory, setSkillCategory] = useState("all");
   const [pluginQuery, setPluginQuery] = useState(""),
