@@ -1,5 +1,5 @@
 import {useCallback,useEffect,useState} from 'react'
-import {CheckCircle2,ExternalLink,Github,Link2,RefreshCcw,Settings2,Unlink} from 'lucide-react'
+import {CheckCircle2,Copy,ExternalLink,Github,Link2,RefreshCcw,Settings2,Unlink} from 'lucide-react'
 import {del,get,openOAuth,post} from '../api'
 import {Action,Notice,Panel,StateTag,useRemote} from './UI'
 import {t} from '../i18n'
@@ -83,21 +83,27 @@ export function ConnectedAccounts(){
      <p role="status" className="mt-1 text-sm text-[#7C7469]">{githubCli.message||t('conn.quick.githubCliStarting')}</p></div>
     <StateTag online={githubCli.status==='completed'}>{githubCli.status}</StateTag>
    </div>
-   {githubCli.userCode&&<div className="mt-4 rounded-xl bg-[#F7F1E6] p-4">
-    <p className="text-xs font-semibold text-[#7C7469]">{t('conn.quick.githubCliCode')}</p>
-    <code className="mt-2 block select-all text-2xl font-bold tracking-widest text-[#24211D]">{githubCli.userCode}</code>
+   {githubCli.userCode&&<div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#F7F1E6] p-4">
+    <div className="min-w-0">
+     <p className="text-xs font-semibold text-[#7C7469]">{t('conn.quick.githubCliCode')}</p>
+     <code className="mt-2 block select-all break-all text-xl font-bold tracking-widest text-[#24211D]">{githubCli.userCode}</code>
+    </div>
+    <Action variant="secondary" onClick={()=>{
+     void navigator.clipboard.writeText(githubCli.userCode||'').then(()=>
+      setNotice(t('conn.quick.githubCliCode')+' ✓')).catch(e=>setError((e as Error).message))
+    }}><Copy size={15}/>{t('conn.quick.githubCliCode')}</Action>
    </div>}
    {githubCli.status!=='completed'&&githubCli.status!=='failed'&&githubCli.status!=='cancelled'&&<div className="mt-4 flex flex-wrap gap-2">
-    {githubCli.userCode&&<a href={githubCli.url||'https://github.com/login/device'} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-[#24211D] px-4 py-2 text-sm font-semibold text-white" onClick={()=>{void post('/api/providers/cli/github/login/input',{input:'enter'}).catch(e=>setError((e as Error).message))}}><ExternalLink size={16}/>{t('conn.quick.githubCliOpen')}</a>}
+    {githubCli.userCode&&<a href={githubCli.url||'https://github.com/login/device'} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-[#24211D] px-4 py-2 text-sm font-semibold text-white" ><ExternalLink size={16}/>{t('conn.quick.githubCliOpen')}</a>}
     <Action variant="secondary" onClick={()=>{void post('/api/providers/cli/github/login/input',{input:'enter'}).catch(e=>setError((e as Error).message))}}>{t('conn.quick.githubCliContinue')}</Action>
-    <Action variant="ghost" onClick={()=>{void post('/api/providers/cli/github/login/cancel',{}).then(()=>setGithubCli(null))}}>{t('conn.cancel')}</Action>
+    <Action variant="ghost" onClick={()=>{void post('/api/providers/cli/github/login/cancel',{}).then(()=>setGithubCli(null)).catch(e=>setError((e as Error).message))}}>{t('conn.cancel')}</Action>
    </div>}
   </Panel>}
   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
    {ordered.map(provider=>{
     const account=accounts.value.find(a=>a.provider===provider.id&&a.hasToken)
     const ready=Boolean(account)
-    const title='GitHub'
+    const title=provider.name||'GitHub'
     return <Panel key={provider.id} className="flex flex-col gap-4 p-5">
      <div className="flex items-start justify-between gap-3">
       <span className="grid size-12 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]"><Github size={27}/></span>
