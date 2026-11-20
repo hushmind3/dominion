@@ -105,3 +105,36 @@ impl AgentAlgorithm for ForgedCatalog {
  assert!(output.receipts.is_empty());
  assert!(model.systems.lock().unwrap().is_empty());
 }
+
+#[tokio::test]async fn focused_algorithm_is_pinned_before_first_model_turn(){
+ let model=RecordedModel::new(vec![json!({"plan":[],"actions":[],"answer":"done"})]);
+ let journal=Checkpoints::default();
+ let kernel=Kernel{model:&model,tools:&NoTools,evidence:&NoEvidence,journal:&journal};
+ let snapshot=kernel.run_with_algorithm(request("summarize",1),&FocusedAlgorithm).await.unwrap();
+ assert!(matches!(snapshot.status,Status::Completed));
+ assert_eq!(snapshot.algorithm_id.as_deref(),Some("focused-v1"));
+ assert!(model.systems.lock().unwrap()[0].contains("Focused mode"));
+ assert_eq!(journal.0.lock().unwrap()[0].algorithm_id.as_deref(),Some("focused-v1"));
+}
+#[tokio::test]async fn resume_rejects_policy_switch_before_model_or_tool(){
+ let req=request("summarize",3);
+ let mut previous=Snapshot::from_request(&req);
+ previous.algorithm_id=Some("focused-v1".into());
+ let model=RecordedModel::new(vec![json!({"plan":[],"actions":[],"answer":"done"})]);
+ let journal=Checkpoints::default();
+ let kernel=Kernel{model:&model,tools:&NoTools,evidence:&NoEvidence,journal:&journal};
+ assert!(kernel.resume(req,previous).await.unwrap_err().contains("algorithm differs"));
+ assert!(model.systems.lock().unwrap().is_empty());
+ assert!(journal.0.lock().unwrap().is_empty());
+}
+#[tokio::test]async fn old_unpinned_checkpoint_resumes_only_with_standard_algorithm(){
+ let req=request("summarize",3);
+ let old=Snapshot::from_request(&req);
+ let model=RecordedModel::new(vec![json!({"plan":[],"actions":[],"answer":"done"})]);
+ let journal=Checkpoints::default();
+ let kernel=Kernel{model:&model,tools:&NoTools,evidence:&NoEvidence,journal:&journal};
+ assert!(kernel.resume_with_algorithm(req.clone(),old.clone(),&FocusedAlgorithm).await.is_err());
+ let result=kernel.resume(req,old).await.unwrap();
+ assert_eq!(result.algorithm_id.as_deref(),Some("standard-v1"));
+ assert!(matches!(result.status,Status::Completed));
+}

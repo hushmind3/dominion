@@ -792,7 +792,8 @@ mod native_result_tests {
             instruction:"review".into(),plan:vec![],step:1,model_calls:0,
             charged_tokens:0,receipts:vec![],checks:vec![],answer:None,
             error:Some("Owner cancelled native model generation".into()),
-            in_flight:vec![],model_in_flight:false,decision_tape:vec![]
+            in_flight:vec![],model_in_flight:false,decision_tape:vec![],
+            algorithm_id:None
         };
         journal.save(&snap).unwrap();
         let job=state.store.get("job","cancelled-native").unwrap();

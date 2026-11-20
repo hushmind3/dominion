@@ -90,6 +90,37 @@ impl AgentAlgorithm for StandardAlgorithm {
     }
 }
 
+/// Compact reasoning policy, selectable independently for a single job.
+/// It does not change the runtime's budgets or the host's tool approvals.
+#[derive(Clone,Copy,Debug,Default)]
+pub struct FocusedAlgorithm;
+impl AgentAlgorithm for FocusedAlgorithm {
+    fn id(&self)->&'static str {"focused-v1"}
+    fn planner_instructions(&self,native_wire:bool,needs_discovery:bool,
+        strategy:&str,owner_instructions:&str)->String {
+        let mut text=StandardAlgorithm.planner_instructions(
+            native_wire,needs_discovery,strategy,owner_instructions);
+        text.push_str("\nFocused mode: keep the plan concise, inspect relevant state, perform the minimum authorized actions, and finish only after observed completion.");
+        text
+    }
+    fn classify(&self,instruction:&str)->Intent {
+        StandardAlgorithm.classify(instruction)
+    }
+    fn project_context(&self,receipts:&[Receipt],strategy:Strategy,max_chars:usize)
+        ->context::Projection {
+        if matches!(strategy,Strategy::VerifyFirst) {
+            context::project(receipts,strategy,max_chars)
+        } else {
+            context::project(receipts,Strategy::LowCost,max_chars.min(2400))
+        }
+    }
+    fn validate_plan(&self,plan:&[String])->Result<(),String> {
+        if plan.len()>10 {
+            Err("Focused policy allows at most 10 plan steps".into())
+        } else {Ok(())}
+    }
+}
+
 fn owner_requires_file_mutation(text: &str) -> bool {
     let text=text.to_lowercase();
     let edit=["수정","편집","작성","만들","생성","삭제","제거","고쳐","구현","개발",
@@ -125,6 +156,14 @@ fn owner_requires_effect(text: &str) -> bool {
         let base=StandardAlgorithm.classify("파일 수정");
         let combined=base.union(Intent::default());
         assert!(combined.requires_file_mutation && combined.requires_effect);
+    }
+    #[test] fn focused_profile_has_distinct_policy_and_preserves_effect_intent(){
+        let focused=FocusedAlgorithm;
+        assert_eq!(focused.id(),"focused-v1");
+        assert!(focused.planner_instructions(false,false,"Balanced","owner").contains("Focused mode"));
+        assert!(focused.classify("README 수정").requires_file_mutation);
+        assert!(focused.validate_plan(&vec!["step".into();10]).is_ok());
+        assert!(focused.validate_plan(&vec!["step".into();11]).is_err());
     }
     #[test] fn native_and_text_model_instructions_are_distinct(){
         let p=StandardAlgorithm;

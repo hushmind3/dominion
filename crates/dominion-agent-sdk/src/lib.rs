@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, future::Future, pin::Pin};
 use dominion_agent_runtime::scheduler;
 mod acceptance;
-pub use dominion_agent_algorithms::{AgentAlgorithm,StandardAlgorithm,Intent};
+pub use dominion_agent_algorithms::{AgentAlgorithm,StandardAlgorithm,FocusedAlgorithm,Intent};
 pub use dominion_agent_algorithms::{tool_relevance,tool_relevance_with_schema};
 use dominion_agent_algorithms::{context,tool_discovery,failure_guidance};
 use dominion_agent_runtime::schema;
@@ -223,6 +223,9 @@ pub struct Snapshot {
     pub id: String,
     pub status: Status,
     pub instruction: String,
+    /// Pinned algorithm across crash recovery. Older snapshots deserialize as None.
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub algorithm_id: Option<String>,
     pub plan: Vec<String>,
     pub step: usize,
     pub model_calls: usize,
@@ -243,7 +246,8 @@ pub struct Snapshot {
 impl Snapshot {
     pub fn from_request(request: &RunRequest) -> Self {
         Self { id: request.id.clone(), status: Status::Running,
-            instruction: request.instruction.clone(), plan: vec![], step: 0,
+            instruction: request.instruction.clone(), algorithm_id:None,
+            plan: vec![], step: 0,
             model_calls: 0, charged_tokens: 0, receipts: vec![], checks: vec![],
             answer: None, error: None, in_flight: vec![], model_in_flight: false,
             decision_tape: vec![] }
@@ -381,9 +385,21 @@ impl Kernel<'_> {
     async fn run_from(&self, request: RunRequest, saved: Option<Snapshot>,
         algorithm:&dyn AgentAlgorithm) -> Result<Snapshot, String> {
         request.validate()?;
+        let algorithm_id=algorithm.id();
+        if algorithm_id.is_empty()||algorithm_id.len()>128||!algorithm_id.bytes().all(|b|
+            b.is_ascii_alphanumeric()||matches!(b,b'-'|b'_')) {
+            return Err("Invalid algorithm identity".into());
+        }
         let mut run = if let Some(saved) = saved {
             if saved.id != request.id || saved.instruction != request.instruction {
                 return Err("Checkpoint does not match the requested task identity".into());
+            }
+            match saved.algorithm_id.as_deref() {
+                Some(pinned) if pinned!=algorithm_id =>
+                    return Err("Checkpoint algorithm differs from the requested policy; review required".into()),
+                None if algorithm_id!=StandardAlgorithm.id() =>
+                    return Err("Legacy checkpoint without algorithm binding cannot switch policies".into()),
+                _ => {}
             }
             if !saved.in_flight.is_empty() || saved.model_in_flight {
                 return Err("Checkpoint has an uncertain tool or model outcome; manual review required".into());
@@ -398,6 +414,8 @@ impl Kernel<'_> {
             }
             saved
         } else { Snapshot::from_request(&request) };
+        // Algorithm identity is journaled before any model call or tool effect.
+        if run.algorithm_id.is_none(){run.algorithm_id=Some(algorithm_id.to_owned());}
         let specs = self.tools.definitions();
         let mut tools = HashMap::new();
         for spec in specs {
