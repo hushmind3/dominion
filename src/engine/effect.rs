@@ -80,6 +80,7 @@ pub fn resource_key(tool: &str, arguments: &Value) -> Option<String> {
             Some(format!("github:{owner}/{repo}@{branch}:{}",normalize_path(file)))
         },
         "http_fetch" => arguments["url"].as_str().map(|url| format!("http:{url}")),
+        "http_document_read" => arguments["documentId"].as_str().map(|id| format!("webdoc:{id}")),
         "shell_exec" | "terminal_exec" => Some(format!(
             "process:{}",
             arguments["cwd"]
