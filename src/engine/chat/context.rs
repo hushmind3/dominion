@@ -668,10 +668,10 @@ mod tests {
             "id":"speaker","name":"speaker",
             "systemPrompt":format!("STABLE_PERSONA_{}", "P".repeat(16_000))
         })).unwrap();
-        let request=TurnRequest::from_value(&json!({"input":"continue",
+        let request=TurnRequest::from_value(&json!({"input":"오늘 날짜 알려줘",
             "agentId":"speaker","toolsEnabled":true,"toolsExecutionEnabled":true})).unwrap();
         let built=system_prompt_with_manifest_at(
-            &state,&request,"private:r","continue",None,None);
+            &state,&request,"private:r","오늘 날짜 알려줘",None,None);
         assert!(built.prompt.contains("STABLE_PERSONA_"));
         assert!(!built.prompt.contains("현재 날짜:"));
         assert!(!built.prompt.contains("Current date:"));
