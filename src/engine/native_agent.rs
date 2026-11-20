@@ -4,7 +4,7 @@
 //! execution path. Existing provider, vault, SQLite, MCP, tool and approval
 //! implementations are adapters, not owners of the new agent loop.
 use crate::{engine::{chat, gateway, jobs::JobContext, llm, tools, verification}, state::AppState};
-use crate::integrations::mcp;
+use crate::integrations::registry as external;
 use dominion_sdk::harness::{
     Action, BoxFuture, Criterion, CriterionKind, Evidence, Journal, Kernel,
     Limits, Model, ModelReply, ModelTurn, Receipt, RunRequest, Snapshot, Strategy, ToolSpec, Tools,
@@ -188,7 +188,7 @@ impl Tools for NativeTools {
             let mcp_contract=if let Some(spec)=mcp_spec {
                 let pinned=current["nativeMcpContracts"][&action.tool].as_str()
                     .ok_or("MCP tool contract absent from durable native job")?;
-                let current_fingerprint=mcp::native_contract_fingerprint(
+                let current_fingerprint=external::contract_fingerprint(
                     &self.state,&action.tool,&spec.schema,&spec.description)?;
                 if pinned!=current_fingerprint {
                     return Err("MCP server or tool identity changed after native run pin; review required".into())
@@ -216,7 +216,7 @@ impl Tools for NativeTools {
                 .and_then(|job|job.get("nativeDirective").cloned())
                 .unwrap_or(Value::Null);
             let approval_needed=if action.tool.starts_with("mcp__") {
-                mcp::requires_approval(&self.state,&action.tool)
+                external::external_requires_approval(&self.state,&action.tool)
             } else { tools::requires_approval(&action.tool) };
             let mut artifact_before=Value::Null;
             let mut artifact_after=Value::Null;
@@ -232,7 +232,7 @@ impl Tools for NativeTools {
             } else if let Some(spec)=mcp_spec {
                 // Re-list the tool on the SAME transport session as tools/call.
                 // A cached MCP manifest cannot authorize a changed endpoint.
-                mcp::call_pinned(&self.state,&action.tool,&action.arguments,
+                external::call_pinned_external(&self.state,&action.tool,&action.arguments,
                     &spec.schema,&spec.description).await
                     .and_then(|value|verified_tool_result(&action.tool,value))
             } else {
@@ -377,11 +377,9 @@ async fn allowed_tools(state:&AppState, input:&Value)->Vec<ToolSpec> {
     });
     let mut collected: Vec<_> = builtin.collect();
     // MCP tools use the same registry and authorization as interactive chat.
-    for item in mcp::tools(state).await {
-        let name=item.qualified();
-        if requested.as_ref().is_some_and(|allowed| !allowed.contains(name.as_str())) {continue;}
-        collected.push(ToolSpec {name,description:item.description,schema:item.schema,
-            read_only:false});
+    for item in external::native_external_tools(state).await {
+        if requested.as_ref().is_some_and(|allowed| !allowed.contains(item.name.as_str())) {continue;}
+        collected.push(item);
     }
     collected
 }
@@ -486,7 +484,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     // endpoint reconfiguration must not silently change its effect authority.
     let mut contract_map=serde_json::Map::new();
     for spec in available.iter().filter(|spec|spec.name.starts_with("mcp__")) {
-        let digest=mcp::native_contract_fingerprint(
+        let digest=external::contract_fingerprint(
             &context.state,&spec.name,&spec.schema,&spec.description)?;
         contract_map.insert(spec.name.clone(),json!(digest));
     }

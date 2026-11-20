@@ -37,6 +37,8 @@ test('optional module implementations cannot be reintroduced under engine',()=>{
 });
 test('non-core jobs and tools are dispatched through feature registries',()=>{
  const jobs=read('src/engine/jobs.rs');
+ assert.doesNotMatch(read('src/engine/native_agent.rs'),/\bmcp::/);
+ assert.match(read('src/engine/native_agent.rs'),/external::native_external_tools/);
  assert.match(jobs,/features::dispatch_job/);
  assert.match(jobs,/integrations::registry::dispatch_job/);
  for(const kind of ['room','meeting','learn','reflect','discord']){

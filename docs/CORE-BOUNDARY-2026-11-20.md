@@ -29,6 +29,10 @@ The former `src/engine/chat/` implementation (27 Rust files) now lives in `src/c
 - Existing approvals, user-selected permissions, MCP schema checks, durable receipts, tool identifiers, SQLite data shapes and HTTP/UI routing are preserved.
 - The 2026 comparison target is a minimal agent-loop spine with service/provider/feature plugins around it, as in [DeepSeek Harness official architecture](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md) and [Qwen Code architecture](https://github.com/QwenLM/qwen-code/blob/main/docs/developers/architecture.md). This refactor is independently authored Rust, **not** importing those runtimes.
 
+## Native external-tool port
+
+The native SDK host adapter no longer imports the MCP transport module. It receives typed `ToolSpec` descriptors and pinned external contracts from `src/integrations/registry.rs`, which owns MCP discovery, identity validation, approval classification and transport execution. The durable `nativeMcpContracts` field remains unchanged for stored-run compatibility.
+
 ## Known remaining seams
 
 - `src/engine/mod.rs` has five grouped compatibility re-exports of the moved modules. Rust callers outside the feature directories still reference historical `crate::engine::memory`, etc. They preserve compile-time source compatibility while call-site migration continues. Reexports do **not** copy implementation back to the engine.

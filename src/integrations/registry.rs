@@ -3,7 +3,8 @@
 //! connectors remain independently owned, but host approval, effect IDs,
 //! cancellation and durable receipts are never bypassed by this module.
 use crate::{engine::tools::ToolContext,state::AppState};
-use crate::integrations::{accounts,browser,skills,network};
+use crate::integrations::{accounts,browser,skills,network,mcp};
+use dominion_sdk::harness::ToolSpec;
 use serde_json::Value;
 
 /// Extend here when installing a new *host-integrated* tool family.
@@ -15,6 +16,26 @@ pub fn definitions()->Vec<Value>{
  result.extend(network::definitions());
  result
 }
+
+/// The engine sees only typed external-tool descriptors, never MCP transports.
+pub async fn native_external_tools(state:&AppState)->Vec<ToolSpec>{
+ mcp::tools(state).await.into_iter().map(|item|ToolSpec{
+  name:item.qualified(),description:item.description,schema:item.schema,read_only:false
+ }).collect()
+}
+
+/// Pin the registered transport/effect contract before dispatching a job tool.
+pub fn contract_fingerprint(
+ state:&AppState,name:&str,schema:&Value,description:&str
+)->Result<String,String>{mcp::native_contract_fingerprint(state,name,schema,description)}
+
+pub fn external_requires_approval(state:&AppState,name:&str)->bool{
+ mcp::requires_approval(state,name)
+}
+
+pub async fn call_pinned_external(
+ state:&AppState,name:&str,args:&Value,schema:&Value,description:&str
+)->Result<Value,String>{mcp::call_pinned(state,name,args,schema,description).await}
 
 pub fn filter_available(state:&AppState,definitions:Vec<Value>)->Vec<Value>{
  accounts::tools::filter_available(state,definitions)
