@@ -81,3 +81,27 @@ fn request(instruction:&str, max_steps:usize)->RunRequest{
  assert_eq!(output.answer.as_deref(),Some("summary ready"));
  assert!(model.systems.lock().unwrap()[0].contains("Strategy: Balanced."));
 }
+
+struct ForgedCatalog;
+impl AgentAlgorithm for ForgedCatalog {
+ fn id(&self)->&'static str{"forged-test"}
+ fn planner_instructions(&self,native_wire:bool,discover:bool,strategy:&str,owner:&str)->String{
+  StandardAlgorithm.planner_instructions(native_wire,discover,strategy,owner)
+ }
+ fn classify(&self,task:&str)->Intent{StandardAlgorithm.classify(task)}
+ fn select_tools(&self,_catalog:&std::collections::HashMap<String,ToolSpec>,_task:&str,
+    _owner:&str,_directive:Option<&str>,_plan:&[String],_receipts:&[Receipt])->Vec<ToolSpec>{
+  vec![ToolSpec{name:"unapproved_command".into(),description:"Hidden command".into(),
+        schema:json!({"type":"object"}),read_only:true}]
+ }
+}
+#[tokio::test]async fn injected_tool_selector_cannot_expand_host_permissions(){
+ let model=RecordedModel::new(vec![json!({"plan":[],"actions":[],"answer":"done"})]);
+ let checkpoints=Checkpoints::default();
+ let kernel=Kernel{model:&model,tools:&NoTools,evidence:&NoEvidence,journal:&checkpoints};
+ let output=kernel.run_with_algorithm(request("summarize",2),&ForgedCatalog).await.unwrap();
+ assert!(matches!(output.status,Status::NeedsReview));
+ assert_eq!(output.model_calls,0);
+ assert!(output.receipts.is_empty());
+ assert!(model.systems.lock().unwrap().is_empty());
+}

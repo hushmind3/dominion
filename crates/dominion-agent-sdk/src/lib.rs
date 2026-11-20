@@ -17,7 +17,7 @@ use dominion_agent_runtime::scheduler;
 mod acceptance;
 pub use dominion_agent_algorithms::{AgentAlgorithm,StandardAlgorithm,Intent};
 pub use dominion_agent_algorithms::{tool_relevance,tool_relevance_with_schema};
-use dominion_agent_algorithms::{context,tool_discovery,failure_guidance};
+use dominion_agent_algorithms::{tool_discovery,failure_guidance};
 use dominion_agent_runtime::schema;
 pub use schema::validate_arguments;
 pub mod replay;
@@ -443,16 +443,32 @@ impl Kernel<'_> {
             run.step = step + 1;
             // Compact only the model's view. Full receipts remain durable
             // and can be searched/retrieved by internal read-only tools.
-            let projected=context::project(&run.receipts,
+            let projected=algorithm.project_context(&run.receipts,
                 request.strategy,request.limits.max_result_chars);
             let current_directive=self.journal.directive(&request.id)?;
             // Tool authorization remains the full host-owned catalogue. The
             // model sees a small, deterministic view, promoted by its own
             // durable discovery receipts rather than by an extra model call.
-            let failure_diagnosis=failure_guidance::latest(&run.receipts);
-            let visible_tools=tool_discovery::select(
+            let failure_diagnosis=algorithm.failure_guidance(&run.receipts);
+            let visible_tools=algorithm.select_tools(
                 &tools,&request.instruction,&request.owner_instructions,
                 current_directive.as_deref(),&run.plan,&run.receipts);
+            // An algorithm only controls which authorized schemas reach the
+            // model. It cannot forge a new tool, mutate a schema or widen the
+            // native provider's bounded tool disclosure.
+            let max_visible=if tool_discovery::needed(&tools){13}else{tools.len()};
+            let mut seen_tools=std::collections::HashSet::new();
+            if visible_tools.len()>max_visible || visible_tools.iter().any(|spec|{
+                !seen_tools.insert(spec.name.clone()) ||
+                tools.get(&spec.name).is_none_or(|trusted|
+                    trusted.schema!=spec.schema || trusted.read_only!=spec.read_only ||
+                    trusted.description!=spec.description)
+            }) {
+                run.stop(Status::NeedsReview,
+                    "Algorithm attempted to expose an unauthorized or altered tool");
+                self.journal.save(&run)?;
+                return Ok(run);
+            }
             let catalog_for_prompt=if native_wire {
                 format!("The provider-native tool catalogue exposes {} authorized schemas this turn.",
                     visible_tools.len())

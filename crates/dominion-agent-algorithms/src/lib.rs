@@ -28,6 +28,17 @@ pub trait AgentAlgorithm: Send + Sync {
     fn planner_instructions(&self,native_wire:bool,needs_discovery:bool,
         strategy:&str,owner_instructions:&str)->String;
     fn classify(&self,instruction:&str)->Intent;
+    /// Choose model-visible context without mutating the durable receipt journal.
+    fn project_context(&self,receipts:&[Receipt],strategy:Strategy,max_chars:usize)
+        ->context::Projection{context::project(receipts,strategy,max_chars)}
+    /// Rank only host-authorized tool descriptions; the runtime revalidates every
+    /// returned schema, read-only classification and name before a model turn.
+    fn select_tools(&self,catalog:&std::collections::HashMap<String,ToolSpec>,
+        task:&str,owner:&str,directive:Option<&str>,plan:&[String],receipts:&[Receipt])
+        ->Vec<ToolSpec>{tool_discovery::select(catalog,task,owner,directive,plan,receipts)}
+    /// Supply diagnostic hints to the model; never authorize an effect.
+    fn failure_guidance(&self,receipts:&[Receipt])
+        ->Option<failure_guidance::FailureGuidance>{failure_guidance::latest(receipts)}
     /// Optional stricter plan constraint. The kernel always enforces its own limits.
     fn validate_plan(&self,_plan:&[String])->Result<(),String>{Ok(())}
 }

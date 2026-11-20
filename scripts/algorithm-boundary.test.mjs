@@ -27,6 +27,10 @@ test('intelligence owns policy and tool scoring; SDK receives it by injection',(
  assert.match(sdk,/pub async fn run_with_algorithm/);
  assert.match(sdk,/pub async fn resume_with_algorithm/);
  assert.match(sdk,/algorithm\.planner_instructions/);
+ assert.match(sdk,/algorithm\.select_tools/);
+ assert.match(sdk,/algorithm\.project_context/);
+ assert.match(sdk,/algorithm\.failure_guidance/);
+ assert.match(sdk,/Algorithm attempted to expose an unauthorized or altered tool/);
  assert.match(sdk,/algorithm\.validate_plan/);
  assert.match(sdk,/StandardAlgorithm\.classify\(&request\.instruction\)/);
  assert.match(sdk,/\.union\(algorithm\.classify\(&request\.instruction\)\)/);
