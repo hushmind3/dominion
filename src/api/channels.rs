@@ -333,6 +333,40 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn channel_listing_aggregates_outbox_once_and_reports_latest_failure() {
+        let (state,dir)=test_state();
+        for id in ["a","b"] {
+            state.store.put("channel",&json!({"id":id,"kind":"slack",
+                "driver":"dominion-slack","enabled":true,"roomId":"meeting",
+                "channelId":"C1","syncRoomMessages":true})).unwrap();
+        }
+        for (id,binding,status,error,date) in [
+            ("old","a","needs_review","old problem","2026-11-19T01:00:00Z"),
+            ("sent","a","sent","","2026-11-20T02:00:00Z"),
+            ("new","a","needs_review","latest problem","2026-11-20T04:00:00Z"),
+            ("other","b","needs_review","different channel","2026-11-20T03:00:00Z"),
+        ] {
+            state.store.put("channel_outbox",&json!({
+                "id":id,"bindingId":binding,"status":status,
+                "error":error,"updatedAt":date
+            })).unwrap();
+        }
+        let values=list(State(state.clone())).await.0;
+        let entries=values.as_array().unwrap();
+        let a=entries.iter().find(|row|row["id"]=="a").unwrap();
+        let b=entries.iter().find(|row|row["id"]=="b").unwrap();
+        assert_eq!(a["delivery"]["needsReview"],2);
+        assert_eq!(a["delivery"]["sent"],1);
+        assert_eq!(a["delivery"]["lastError"],"latest problem");
+        assert_eq!(b["delivery"]["needsReview"],1);
+        assert_eq!(b["delivery"]["lastError"],"different channel");
+        let direct=public_channel(&state,&state.store.get("channel","a").unwrap());
+        assert_eq!(a["delivery"],direct["delivery"],
+            "list and detail must use identical lifecycle accounting");
+        let _=std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn catalog_exposes_only_implemented_drivers() {
         let entries = catalog();
@@ -369,6 +403,12 @@ fn error(status: StatusCode, message: impl Into<String>) -> Response {
 /// Never return a submitted token, including legacy records written by the
 /// generic collection API. Public configuration uses an explicit field list.
 pub fn public_channel(state: &AppState, record: &Value) -> Value {
+    let outbox = state.store.all("channel_outbox").into_iter()
+        .filter(|item|item["bindingId"]==record["id"]).collect::<Vec<_>>();
+    public_channel_with_delivery(state,record,&outbox)
+}
+
+fn public_channel_with_delivery(state:&AppState,record:&Value,outbox:&[Value])->Value{
     let mut public = json!({});
     for key in [
         "id",
@@ -431,15 +471,21 @@ pub fn public_channel(state: &AppState, record: &Value) -> Value {
     public["credentialsPresent"] = json!({"token":present});
     public["configured"] = json!(missing.is_empty());
     public["missing"] = json!(missing);
-    let outbox = state
-        .store
-        .all("channel_outbox")
-        .into_iter()
-        .filter(|item| item["bindingId"] == record["id"])
-        .collect::<Vec<_>>();
-    public["delivery"] = json!({"pending":outbox.iter().filter(|item|item["status"]=="pending").count(),"sending":outbox.iter().filter(|item|item["status"]=="sending").count(),
-        "sent":outbox.iter().filter(|item|item["status"]=="sent").count(),"needsReview":outbox.iter().filter(|item|item["status"]=="needs_review").count(),
-        "lastError":outbox.iter().find(|item|item["status"]=="needs_review").map(|item|item["error"].clone())});
+    // Diagnostics should report the most recent reviewed failure, not the
+    // first record returned by SQLite. The durable outbox remains untouched.
+    let last_error=outbox.iter().filter(|item|item["status"]=="needs_review")
+        .max_by(|a,b|{
+            let when=|item:&Value|item["updatedAt"].as_str()
+                .or_else(||item["createdAt"].as_str()).unwrap_or("");
+            when(a).cmp(when(b))
+        }).and_then(|item|item.get("error")).cloned();
+    public["delivery"] = json!({
+        "pending":outbox.iter().filter(|item|item["status"]=="pending").count(),
+        "sending":outbox.iter().filter(|item|item["status"]=="sending").count(),
+        "sent":outbox.iter().filter(|item|item["status"]=="sent").count(),
+        "needsReview":outbox.iter().filter(|item|item["status"]=="needs_review").count(),
+        "lastError":last_error,
+    });
     if record.get("enabled").and_then(Value::as_bool) != Some(true) {
         public["status"] = json!("disabled");
     } else if !matches!(
@@ -458,12 +504,20 @@ pub fn public_channel(state: &AppState, record: &Value) -> Value {
 }
 
 pub async fn list(State(state): State<AppState>) -> Json<Value> {
-    Json(json!(state
-        .store
-        .all("channel")
-        .iter()
-        .map(|c| public_channel(&state, c))
-        .collect::<Vec<_>>()))
+    // A busy connection list previously read the entire outbox once for
+    // *each* binding. Group the durable rows in one pass for the whole page.
+    let mut grouped=std::collections::HashMap::<String,Vec<Value>>::new();
+    for item in state.store.all("channel_outbox") {
+        if let Some(binding_id)=item["bindingId"].as_str().map(str::to_string) {
+            grouped.entry(binding_id).or_default().push(item);
+        }
+    }
+    let channels=state.store.all("channel");
+    Json(json!(channels.iter().map(|record|{
+        let outbox=grouped.get(record["id"].as_str().unwrap_or(""))
+            .map(Vec::as_slice).unwrap_or(&[]);
+        public_channel_with_delivery(&state,record,outbox)
+    }).collect::<Vec<_>>()))
 }
 
 pub async fn one(State(state): State<AppState>, Path(id): Path<String>) -> Response {

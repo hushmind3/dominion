@@ -42,6 +42,7 @@ jobs:
           cargo test --bin dominion-rust engine::rooms::tests
           # Latest main provider UI depends on public, keyless model browsing.
           cargo test --bin dominion-rust api::providers::tests
+          cargo test --bin dominion-rust api::channels::tests
           cargo test --bin dominion-rust api::cli_oauth::tests
           # Chained developer persona must appear exactly once on the WS wire.
           cargo test --bin dominion-rust engine::chat::codex_ws::tests
