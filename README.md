@@ -19,6 +19,7 @@ This document describes the **experimental `dominion-sub2` branch**, checked aga
 - **Public model discovery without an API key:** read-only provider models via `/api/providers/catalog/:id/models` and verified OpenRouter free entries via `/api/providers/openrouter/free-models`. Actual model inference still follows the selected provider's authentication rules.
 - **GitHub CLI connection:** the main UI flow calls native CLI login; the Rust backend validates GitHub account credentials and stores the grant in the encrypted vault.
 - **Extensible tools and SDK:** native workspace/file/shell/browser/MCP execution, TypeScript client at `sdk/typescript/`, Rust kernel at `crates/dominion-agent-kernel/`.
+- **Progressive tool discovery (2026-11-20):** the existing Rust turn loop advertises on-demand MCP/native tools. Discovery observations carry only names and brief descriptions; full input schemas enter the next provider round after exact-name promotion, avoiding duplicate large JSON schemas in chat history. A focused regression is in CI; real-provider savings remain unmeasured.
 
 ## Development
 
