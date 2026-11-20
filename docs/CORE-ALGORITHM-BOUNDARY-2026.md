@@ -2,12 +2,21 @@
 
 ## Non-negotiable boundary
 
-The `crates/dominion-core` Rust package is the stable execution harness.
-It owns **phase order, model/tool round lifecycle, budgets, approval/effect
-receipts, journaling, cancellation and final verification**. It has no
-dependency on `src/addons`, model vendor selection, memory or experiment code.
+The `crates/dominion-core` Rust package is the stable **execution infrastructure**.
+It owns **model/tool intent journaling, bounded budgets, cancellation, snapshots,
+policy checks and host trait contracts**. It owns no agent-iteration algorithm
+or phase-order loop.
 
-The only intelligence-facing runtime contract is
+The `crates/dominion-algorithms` Rust package depends on `dominion-core`
+and owns the **single existing planning → model → tools → verification loop**.
+The product gateway (`src/api`, `src/bootstrap`, chat adapters) composes the
+driver, host implementations and native tool approvals. The core has no
+dependency on the algorithms crate, model vendors, memory or experiments.
+
+The execution host contract is
+[`runtime_port::Host`](../crates/dominion-core/src/runtime_port.rs), consumed by
+[`dominion_algorithms::engine::Engine::drive`](../crates/dominion-algorithms/src/engine.rs).
+The replaceable strategy-selection contract is
 [`TurnStrategyPort`](../crates/dominion-core/src/strategy.rs).
 It describes decisions, not their implementations:
 
@@ -24,7 +33,7 @@ The product host assembles the port through
 [`runtime_hooks::strategy_port`](../src/addons/runtime_hooks.rs).
 The current implementation is
 [`ScopedAlgorithms`](../src/addons/strategies/turn_policy.rs).
-The native chat adapter calls the port and **does not name algorithm
+The product gateway calls the port and **does not name algorithm
 implementation IDs**. Versioned strategy records can change selection without
 editing the Rust execution driver.
 
@@ -55,7 +64,8 @@ inside the execution engine.
 
 Regressions are covered by:
 
-- `cargo test --locked -p dominion-core strategy::tests`
+- `cargo test --locked -p dominion-core --lib`
+- `cargo test --locked -p dominion-algorithms --lib`
 - `cargo test --locked --bin dominion-rust addons::turn_policy::tests`
 - Existing focused Rust, real HTTP E2E, Windows and frontend CI.
 

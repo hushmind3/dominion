@@ -71,7 +71,8 @@ node scripts/build-desktop.mjs
 
 | 계층 | 실제 코드 |
 | --- | --- |
-| 실행 커널·효과 영수증 | [dominion-core](crates/dominion-core/src/engine.rs), [저널](crates/dominion-core/src/journal.rs) |
+| 실행 커널·효과 영수증 | [dominion-core 계약](crates/dominion-core/src/runtime_port.rs), [저널](crates/dominion-core/src/journal.rs) |
+| 에이전트 실행 루프·오케스트레이션 | [dominion-algorithms](crates/dominion-algorithms/src/engine.rs), [루프 회귀 테스트](crates/dominion-algorithms/src/engine_tests.rs) |
 | 코어/알고리즘 인터페이스 | [TurnStrategyPort](crates/dominion-core/src/strategy.rs), [호스트 조립](src/addons/runtime_hooks.rs), [교체형 알고리즘](src/addons/strategies/turn_policy.rs) |
 | 실행·도구 승인 | [채팅 실행기](src/engine/chat/runtime.rs), [도구 게이트웨이](src/engine/chat/runtime/tool_dispatch.rs) |
 | 개인 대화 문맥 | [Context Engine](src/engine/chat/context_engine.rs), [문맥 연속성](src/engine/chat/continuity.rs) |

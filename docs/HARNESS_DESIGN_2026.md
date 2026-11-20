@@ -2,16 +2,16 @@
 
 ## Decision
 
-**One native Rust execution driver; many interchangeable tools, strategies and external runtimes.** The primary engine remains `dominion_core::engine::Engine::drive` in `crates/dominion-core/src/engine.rs`. Its single durable budget/checkpoint/approval/effect chain must not be replaced or independently duplicated by an SDK, plugin, retired built-in media feature or optional external harness.
+**One Rust agent-iteration loop, with separately owned core infrastructure and algorithms.** The active driver is `dominion_algorithms::engine::Engine::drive` in `crates/dominion-algorithms/src/engine.rs`. The `dominion-core` crate owns journal/checkpoint, budget, cancellation and `runtime_port::Host` contracts. The product gateway composes these layers; an alternate driver must use the same authorization/effect journal rather than spawn an unchecked parent execution.
 
 Branch comparison is selective, not wholesale. The `dominion-sub3` discovery/search approach inspired the capability interface, but the independent `dominion-agent-sdk::Kernel::run/resume` loop is **not imported**. The `dominion-sub2` decision helpers and the standalone `dominion-sub4` engine remain isolated evaluation sources.
 
 ## Implemented on main
 
 - `src/engine/capability.rs`: stable `dominion_tool_search` and `dominion_tool_call` contracts; deterministic, bounded capability retrieval from actual enabled MCP and native tools; schema returned only for hits.
-- `src/engine/chat/runtime/tool_catalog.rs`: shortlist for large inventories while keeping the stable search/call bridge visible; never dump every unrelated MCP schema into a model request.
+- `src/addons/strategies/chat_tool_catalog.rs`: shortlist for large inventories while keeping the stable search/call bridge visible; never dump every unrelated MCP schema into a model request.
 - `src/engine/chat/runtime/tool_dispatch.rs`: search is read-only. `dominion_tool_call` requires a successfully persisted discovery operation from the **same execution and session**; resolved calls pass through the original Rust tool gateway (real tool name, effect ledger, approval, result receipt, sandbox and cancellation checks). A failed resolution stays a normal tool failure rather than executing the requested name.
-- `src/engine/chat/runtime.rs`, `src/engine/chat/product.rs`: original `dominion-core` model/tool loop stays in control, including after owner steering. A successful discovered mutation invalidates cached environment state.
+- `src/engine/chat/runtime.rs`, `src/addons/integrations/chat_product.rs`: single `dominion-algorithms` loop stays in control, including after owner steering. A successful discovered mutation invalidates cached environment state.
 - Focused tests exercise shortlist bounds, discovery receipt scoping, schema validation, read-only restrictions, and the end-to-end native gateway path.
 
 **Not implemented:** Installing Codex, Hermes, OpenCode or any external agent; ACP runtime interoperability; a new plugin marketplace; model-size-based auto-configuration; a new kernel. Those need distinct compatibility and benchmark evidence before adopting them.

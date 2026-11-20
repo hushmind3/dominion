@@ -1,0 +1,63 @@
+# Rust three-layer crate boundary — 2026-11-20
+
+## Concrete workspace
+
+```text
+Cargo Workspace
+├── crates/dominion-core/          # infrastructure and traits
+│   └── src/runtime_port.rs         # Host, Context, Flow, ModelDecision, model_call
+├── crates/dominion-algorithms/    # agent iteration + algorithm tests
+│   ├── src/engine.rs              # sole Engine::drive loop
+│   └── src/engine_tests.rs        # former core loop regression suite
+└── dominion-rust (root package)   # gateway + application composition
+    ├── src/api/                   # HTTP / SSE and SDK-facing endpoints
+    ├── src/engine/chat/           # model & tool host adapters
+    └── src/addons/strategies/     # optional algorithms and policies
+```
+
+Dependency direction is `dominion-rust -> dominion-algorithms -> dominion-core`.
+The gateway additionally imports core contracts directly for its adapters.
+No `dominion-core -> dominion-algorithms` import exists.
+
+The **single production loop** moved, rather than being copied. The original
+engine tests moved alongside it, so no duplicate retry controller, approval
+path or effect execution path was introduced. `Host` remains a core trait;
+`Engine::drive` is now an algorithm implementation.
+
+`runtime_port::model_call` remains in core because it only admits and
+journals model calls — it decides no prompts, strategies or loop phase order.
+The algorithm crate re-exports this function temporarily so existing
+auxiliary product callers use the same durable journal during migration.
+
+## What has not changed
+
+Existing model providers, native tool admission, approval policy, SQLite
+execution snapshots, streamed user events, restart/cancel semantics,
+multiagent workspaces and React UI are unchanged.
+
+`src/addons/strategies/turn_policy.rs` remains a product-owned strategy
+implementation because it accesses app-specific SQLite state. The 
+standalone algorithms crate contains the model/tool iteration loop, not the
+entire portfolio of product policies.
+
+Rust compilation remains a **single application binary**, so this is
+package/ownership isolation, not a WASM sandbox or hot-reload boundary.
+Changes to the algorithm crate still rebuild dependent linked binaries;
+the gain today is test scope, ownership and independent runtime evolution.
+
+## Checks
+
+- `cargo test --locked -p dominion-core --lib`
+- `cargo test --locked -p dominion-algorithms --lib`
+- `cargo test --locked --bin dominion-rust ...` (existing product regressions)
+- `node scripts/check-runtime-architecture.mjs` (reverse dependency / loop ownership)
+- CI macOS and Windows backend/frontend checks
+
+## References (architectural examples)
+
+- [ZeroClaw API/runtime crate ownership](https://github.com/zeroclaw-labs/zeroclaw/blob/master/docs/book/src/architecture/crates.md)
+- [ZeroClaw request lifecycle](https://github.com/zeroclaw-labs/zeroclaw/blob/master/docs/book/src/architecture/request-lifecycle.md)
+- [IronClaw runtime and WASM capability isolation](https://github.com/nearai/ironclaw)
+- [OpenCrust Rust workspace](https://github.com/opencrust-org/opencrust)
+
+These are patterns to compare, not source-code dependencies of DOMINION.
