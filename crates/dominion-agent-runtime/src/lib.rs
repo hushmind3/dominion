@@ -6,6 +6,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use serde::{Serialize,Deserialize};
 
+/// Reserved operation-id namespace for verified kernel checks.
+pub const KERNEL_VERIFICATION_PREFIX:&str="kernel-verify-";
+pub mod scheduler;
+pub mod schema;
+
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Strategy { #[default] Balanced, VerifyFirst, LowCost }

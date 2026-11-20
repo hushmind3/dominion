@@ -13,12 +13,12 @@ use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::HashMap, future::Future, pin::Pin};
-mod scheduler;
+use dominion_agent_runtime::scheduler;
 mod acceptance;
 pub use dominion_agent_algorithms::{AgentAlgorithm,StandardAlgorithm,Intent};
 pub use dominion_agent_algorithms::{tool_relevance,tool_relevance_with_schema};
 use dominion_agent_algorithms::{context,tool_discovery,failure_guidance};
-mod schema;
+use dominion_agent_runtime::schema;
 pub use schema::validate_arguments;
 pub mod replay;
 

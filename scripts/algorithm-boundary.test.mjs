@@ -10,6 +10,8 @@ test('runtime is standalone and never imports the planning policies',()=>{
  assert.match(src,/pub struct Action/);
  assert.match(src,/pub struct ToolSpec/);
  assert.match(src,/pub struct Receipt/);
+ assert.match(src,/pub mod scheduler/);
+ assert.match(src,/pub mod schema/);
  assert.match(src,/pub struct ModelTokenBudget/);
  assert.doesNotMatch(src,/AgentAlgorithm|StandardAlgorithm|crate::state|crate::db/);
  assert.equal(existsSync(new URL('../crates/dominion-agent-sdk/src/runtime.rs',import.meta.url)),false);

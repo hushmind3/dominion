@@ -6,7 +6,7 @@
 use crate::{Action, Receipt, ToolSpec};
 use std::collections::{HashMap, HashSet};
 
-pub(crate) fn arrange(
+pub fn arrange(
     proposed: Vec<Action>,
     catalog: &HashMap<String, ToolSpec>,
     prior: &[Receipt],
@@ -25,7 +25,7 @@ pub(crate) fn arrange(
         if action.id.trim().is_empty() || action.id.len() > 128 {
             return Err("Invalid tool operation id".into());
         }
-        if action.id.starts_with(crate::acceptance::KERNEL_VERIFICATION_PREFIX) {
+        if action.id.starts_with(crate::KERNEL_VERIFICATION_PREFIX) {
             return Err("Operation id belongs to the kernel verification namespace".into());
         }
         if !known.insert(action.id.clone()) {

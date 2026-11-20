@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path};
 
 /// IDs reserved for host-owned acceptance checks, never model operations.
-pub(crate) const KERNEL_VERIFICATION_PREFIX: &str = "kernel-verify-";
+pub(crate) use dominion_agent_runtime::KERNEL_VERIFICATION_PREFIX;
 
 /// The *latest* successful workspace write for each path defines the expected
 /// final bytes. Reads, shell tests and agent self-reports are not witnesses.
