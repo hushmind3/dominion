@@ -59,7 +59,6 @@ pub(crate) fn expire_stale_approvals(state: &crate::state::AppState) -> usize {
 }
 use serde_json::Value;
 use std::time::Duration;
-pub use transport::run;
 
 const MAX_ROUNDS: usize = 8;
 
