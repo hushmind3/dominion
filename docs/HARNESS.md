@@ -1,10 +1,17 @@
-# DOMINION Rust agent harness — current contract (2026-11-17)
+# DOMINION Rust agent harness — current contract (2026-11-20)
 
 ## Execution graph
 
-`Chat / Rooms / Tasks / Workflows / SDK → product adapter → dominion-core → model / MCP / tool drivers → SQLite journal`
+`Chat / Rooms / Tasks / Workflows / SDK → product adapter → dominion-algorithms::Engine::drive → dominion-core contracts / tool admission → providers + SQLite journal`
 
-- The **Rust core** owns execution stages, tool admission, budgets and replay-safe receipts.
+- The **single mandatory Rust harness loop** is
+  [`dominion-algorithms::engine::Engine::drive`](../crates/dominion-algorithms/src/engine.rs).
+- The **`dominion-core` crate** owns immutable execution contracts, budgets,
+  model-call admission, cancellation and replay-safe receipts. It owns **no
+  parallel agent loop**; product-specific approval/verification adapters
+  enforce the contract on all effects.
+- Optional planning, tool-selection, memory and model strategies belong to
+  `src/addons` and do not create new execution engines.
 - Product adapters own provider transport, task context, verification evidence and storage.
 - Tools are gated by approval, read-only delegation, cancellation and remaining budget.
 - Side-effect results that cannot be confirmed after a crash are marked **needs_review**, never silently replayed.

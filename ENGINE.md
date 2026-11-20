@@ -1,15 +1,20 @@
-# DOMINION — active Rust architecture (2026-11-19)
+# DOMINION — active Rust architecture (2026-11-20)
 
 This file documents the **current main-branch execution path**. Historical
 design notes and branch experiments are not the deployed product contract.
 
 ## 1. One kernel, one effect boundary
 
-The authoritative execution kernel is
-[`dominion-core::Engine`](crates/dominion-core/src/engine.rs).
-The [Rust runtime adapter](src/engine/chat/runtime.rs) and
-[provider orchestrator](src/engine/chat/product.rs) connect incoming turns,
-model calls and tool effects to the same kernel.
+The **single mandatory agent harness loop** is
+[`dominion_algorithms::engine::Engine::drive`](crates/dominion-algorithms/src/engine.rs).
+It implements [`dominion_core::runtime_port::AgentLoop`](crates/dominion-core/src/runtime_port.rs),
+where the core owns stable state, budgets, cancellations and journal contracts
+— not a competing execution loop. Optional strategies are selected by
+[`TurnStrategyPort`](crates/dominion-core/src/strategy.rs), implemented in
+[`src/addons/strategies`](src/addons/strategies/turn_policy.rs).
+The [Rust chat adapter](src/engine/chat/runtime.rs) and
+[product host](src/addons/integrations/chat_product.rs) connect incoming
+turns and model/tool callbacks to that **one** driver.
 
 A task consists of bounded model iterations, admitted tool proposals,
 durable approvals, committed effect receipts and independent verification.
@@ -23,15 +28,20 @@ for cancellation, reconciliation and recovery.
 [Provider adapters](src/engine/chat/provider.rs) handle local and remote
 model APIs. The [conversation continuity module](src/engine/chat/continuity.rs)
 maintains per-participant history frames and routes provider cache hints.
-[Room context](src/engine/chat/room_context.rs) budgets selected evidence
+[Room context](src/addons/integrations/chat_room_context.rs) budgets selected evidence
 separately from the immutable identity prefix.
-[Room state](src/engine/room_state.rs) retains owner-confirmed facts and
-stable shared-state digests. [Group orchestration](src/engine/rooms.rs)
+[Room state](src/addons/integrations/room_state.rs) retains owner-confirmed facts and
+stable shared-state digests. [Group orchestration](src/addons/integrations/rooms.rs)
 owns speaker selection, cancellation and group delivery.
 
 A stable cache key is a **request** to the provider, not proof of a cache
 hit. Provider-reported cache reads, uncached input and model output are
-recorded separately when available. User-visible history remains in SQLite.
+recorded separately when available. User-visible history remains in SQLite. The independent
+[room participant cursor](src/db/room_cursor.rs) advances only after a
+committed speaker reply; the cursor's exact selected-message IDs do not
+claim that every earlier room message was sent to the model.
+The [verified work board](src/addons/integrations/room_board.rs) shares
+completed tool receipts rather than raw peer tool payloads.
 
 ## 3. Progressive tools and MCP
 

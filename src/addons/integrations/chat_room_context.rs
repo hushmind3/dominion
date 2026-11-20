@@ -402,7 +402,7 @@ pub(crate) fn compile(
     let previous_self=agent_cursor.as_ref()
         .and_then(|cursor|cursor["replyMessageId"].as_str())
         .and_then(|id|all[..source].iter().rposition(|row|
-            row["id"]==id && row["agent_id"]==request.agent_id.as_deref() &&
+            row["id"].as_str()==Some(id) && row["agent_id"].as_str()==request.agent_id.as_deref() &&
             row["role"]=="assistant"))
         .or_else(||request.agent_id.as_deref().and_then(|agent_id| {
             all[..source].iter().rposition(|row| row["role"] == "assistant"

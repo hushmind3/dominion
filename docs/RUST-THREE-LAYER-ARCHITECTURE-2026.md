@@ -19,7 +19,10 @@ Dependency direction is `dominion-rust -> dominion-algorithms -> dominion-core`.
 The gateway additionally imports core contracts directly for its adapters.
 No `dominion-core -> dominion-algorithms` import exists.
 
-The **single production loop** moved, rather than being copied. The original
+The **single production loop** is a mandatory harness implementation
+(package name `dominion-algorithms`) rather than an optional selectable
+agent execution kernel. Moving it did not create an additional loop.
+The one production loop moved, rather than being copied. The original
 engine tests moved alongside it, so no duplicate retry controller, approval
 path or effect execution path was introduced. `Host` remains a core trait;
 `Engine::drive` is now an algorithm implementation.
@@ -81,3 +84,20 @@ The original `context::compact` projection and its unit tests now live in
 storage API. The gateway's existing provider-specific context compiler is
 unchanged. The core retains snapshots and transcript persistence, never
 deciding which previous messages to include in a model prompt.
+
+## Room delivery cursor (2026-11-20)
+
+The shared room transcript remains in SQLite `messages`. The
+`room_agent_read_cursors` table records each participant's last
+**durably completed reply**, the owner source cursor and exactly which
+messages entered that participant's compiled model context.
+A second round on the same owner message is allowed; stale commits and
+cross-room/session/agent forgery cannot advance the cursor.
+An in-flight crash still enters manual review; a cursor is never used to
+assume that an uncertain tool action finished. The room coordinator updates
+the cursor after the committed assistant message, and the context compiler
+uses it as the previous-self anchor across long conversations.
+
+The cursor is **not a global delivery acknowledgement for every earlier
+message**, because token-limited context selection intentionally omits
+some history. The exact `selectedMessageIds` set is the observation proof.

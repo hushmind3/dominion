@@ -13,6 +13,12 @@ The product gateway (`src/api`, `src/bootstrap`, chat adapters) composes the
 driver, host implementations and native tool approvals. The core has no
 dependency on the algorithms crate, model vendors, memory or experiments.
 
+**Ownership terminology:** `dominion-algorithms::Engine` is a mandatory,
+single product harness, **not** one of the optional swappable policies.
+Only model/tool/planning decisions under `TurnStrategyPort` are
+configurable strategies. These crates compile into the same Rust binary;
+runtime dynamic code loading is not implemented.
+
 The execution host contract is
 [`runtime_port::Host`](../crates/dominion-core/src/runtime_port.rs), consumed by
 [`dominion_algorithms::engine::Engine::drive`](../crates/dominion-algorithms/src/engine.rs).

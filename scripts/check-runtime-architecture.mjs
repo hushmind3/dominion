@@ -91,6 +91,14 @@ for(const file of ['src/engine/chat/runtime.rs','src/addons/integrations/chat_pr
    throw Error('Hot-path full tool journal scan reintroduced: '+file)
 }
 
+const activeContract=readFileSync(path.join(root,'ENGINE.md'),'utf8')
+const harnessContract=readFileSync(path.join(root,'docs/HARNESS.md'),'utf8')
+const extensionContract=readFileSync(path.join(root,'docs/EXTENSION-HOST-2026-11-20.md'),'utf8')
+for(const source of [activeContract,harnessContract,extensionContract]){
+  if(source.includes('crates/dominion-core/src/engine.rs')||
+     !source.includes('dominion-algorithms'))
+    throw Error('Active architecture docs disagree with the single Rust harness owner')
+}
 const outcome=readFileSync(path.join(root,'src/engine/chat/outcome.rs'),'utf8')
 const driver=readFileSync(path.join(root,'crates/dominion-algorithms/src/engine.rs'),'utf8')
 const nativePort=readFileSync(path.join(root,'crates/dominion-core/src/runtime_port.rs'),'utf8')

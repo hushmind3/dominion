@@ -1767,6 +1767,16 @@ mod tests {
         let job = save_owner_job(&state, "j", "@가람 오늘 어땠어?");
         let result = run(&run_context(&state, "j"), &job).await.unwrap();
         assert_eq!(result["turns"], 3);
+        // Each participant receives an independent durable source cursor.
+        for id in ["a","b","c"] {
+            let cursor=state.store.room_agent_read("r","room:r",id)
+                .unwrap().expect("completed speaker must advance its cursor");
+            assert_eq!(cursor["sourceMessageId"],"j:owner");
+            let reply=state.store.message(cursor["replyMessageId"].as_str().unwrap())
+                .expect("cursor reply must exist in committed transcript");
+            assert_eq!(reply["agent_id"],id);
+            assert_eq!(reply["metadata"]["replyToMessageId"],"j:owner");
+        }
         assert_eq!(
             result["outputs"]
                 .as_array()

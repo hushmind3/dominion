@@ -154,6 +154,39 @@ mod tests {
         assert_eq!(store.room_agent_read("r","room:r","b").unwrap().unwrap()["replyMessageId"],"b1");
     }
     #[test]
+    fn hundred_turn_cursor_survives_process_restart_without_resending_old_owner(){
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-cursor-persist-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db=dir.join("room.sqlite");
+        {
+            let store=Store::open(&db).unwrap();
+            store.put("session",&json!({"id":"room:r","roomId":"r"})).unwrap();
+            for index in 0..120 {
+                let owner=format!("owner-{index:03}");
+                let reply=format!("reply-{index:03}");
+                msg(&store,&owner,"room:r","user",None,None);
+                msg(&store,&reply,"room:r","assistant",Some("a"),Some(&owner));
+                assert!(store.commit_room_agent_read(
+                    "r","room:r","a",&owner,&reply,
+                    &[json!(owner)]
+                ).unwrap());
+            }
+        }
+        {
+            let reopened=Store::open(&db).unwrap();
+            let cursor=reopened.room_agent_read("r","room:r","a")
+                .unwrap().unwrap();
+            assert_eq!(cursor["sourceMessageId"],"owner-119");
+            assert_eq!(cursor["replyMessageId"],"reply-119");
+            assert_eq!(cursor["selectedMessageIds"],json!(["owner-119"]));
+            assert!(!reopened.commit_room_agent_read(
+                "r","room:r","a","owner-000","reply-000",&[]
+            ).unwrap());
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn cursor_rejects_cross_room_agent_and_uncommitted_or_future_messages(){
         let store=setup();
         msg(&store,"owner1","room:r","user",None,None);
