@@ -1046,8 +1046,10 @@ mod tests {
         let messages=vec![system.clone(),json!({"role":"user","content":"old procedure","_dominion_frame":"owner1"}),call.clone(),result.clone()];
         let mut plan=prepare(&state,&provider,&request,"s","identity",&json!({})).unwrap();
         let (_,pending)=project(&state,&provider,&messages,&[],"s",&mut plan);
+        assert!(pending.is_none(),
+            "private views are rebuilt from the selected context, not persisted");
         let saved=state.store.write_message(&json!({"session_id":"s","agent_id":"a","role":"assistant","content":"finished","metadata":{"replyToMessageId":"owner1"}})).unwrap();
-        commit(&state,&plan,&saved);commit_projection(&state,&plan,&saved,pending.unwrap());
+        commit(&state,&plan,&saved);
         state.store.patch_if("skill","skill","enabled",&json!(true),&json!({"lastUsedAt":"new telemetry","useCount":100}));
         let mut replay=vec![system.clone(),call,result,json!({"role":"user","content":"next","_dominion_frame":"owner2"})];
         replay[0]["_dominion_source"]=json!("owner2");
