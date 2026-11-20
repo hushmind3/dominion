@@ -22,19 +22,17 @@ pub fn propose(
     if text.is_empty() || text.len() > 4000 {
         return None;
     }
-    if !matches!(kind, "strategy" | "tool_policy" | "harness") {
+    if !matches!(kind, "strategy" | "tool_policy") {
         return None;
     }
-    if evidence_ids.is_empty() && kind != "harness" {
+    if evidence_ids.is_empty() {
         return None;
     }
-    if kind != "harness" && rationale.trim().is_empty() {
+    if rationale.trim().is_empty() {
         return None;
     }
 
-    let record_scope = if kind == "harness" {
-        "shared"
-    } else if requested_scope == "global" {
+    let record_scope = if requested_scope == "global" {
         "global"
     } else if requested_scope != "agent" {
         "shared"
@@ -122,10 +120,6 @@ pub fn propose(
             if evidence_ids.len() == 0 {
                 return reject(state, scope, kind, text, rationale, evidence_ids, &id);
             }
-        }
-        "harness" => {
-            status = "proposed";
-            reason = "하네스 코드 변경은 주인 승인이 필요합니다.".into();
         }
         _ => {}
     }
@@ -1132,7 +1126,7 @@ mod tests {
         )
         .unwrap();
         assert!(context_block(&state, &scope_b).is_none());
-        let harness = propose(
+        assert!(propose(
             &state,
             &scope_a,
             "harness",
@@ -1141,9 +1135,7 @@ mod tests {
             &["m1".into()],
             None,
             "shared",
-        )
-        .unwrap();
-        assert_eq!(harness["status"], "proposed");
+        ).is_none(), "retired standalone harness improvement cannot be proposed");
         assert!(!context_block(&state, &scope_a)
             .unwrap_or_default()
             .contains("재시도 예산"));

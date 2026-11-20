@@ -507,7 +507,7 @@ pub async fn run(context: &JobContext, job: &Value) -> Result<Value, String> {
         return Ok(result);
     }
     let completion = llm::complete_with_fallback_for_session(state,&preferred_provider,&preferred_model,
-        "너는 증거 기반 학습기다. 아래 messages에서 사용자가 명시한 선호·사실·결정을 추출한다. assistant 발언은 근거로 쓰지 않는다. 각 기억은 반드시 해당 user 메시지의 id와, 그 메시지 내용에서 띄어쓰기까지 그대로 복사한 evidenceQuote를 포함한다. 인용이 정확하지 않으면 저장하지 않는다. JSON 하나만 출력한다. 예시 형식: {\"memories\":[{\"text\":\"사용자는 앞으로 답변을 한국어로만 받길 원한다\",\"type\":\"preference\",\"importance\":0.8,\"key\":\"answer-language\",\"sourceMessageIds\":[\"u1\"],\"evidenceQuote\":\"앞으로 답변은 항상 한국어로만 해\"}],\"skill\":null,\"strategies\":[],\"toolPolicies\":[],\"harnessProposal\":null}. 위 예시는 형식 설명이다. 실제 messages의 id와 원문을 사용하라. 추출할 것이 없으면 memories를 빈 배열로 둔다.",
+        "너는 증거 기반 학습기다. 아래 messages에서 사용자가 명시한 선호·사실·결정을 추출한다. assistant 발언은 근거로 쓰지 않는다. 각 기억은 반드시 해당 user 메시지의 id와, 그 메시지 내용에서 띄어쓰기까지 그대로 복사한 evidenceQuote를 포함한다. 인용이 정확하지 않으면 저장하지 않는다. JSON 하나만 출력한다. 예시 형식: {\"memories\":[{\"text\":\"사용자는 앞으로 답변을 한국어로만 받길 원한다\",\"type\":\"preference\",\"importance\":0.8,\"key\":\"answer-language\",\"sourceMessageIds\":[\"u1\"],\"evidenceQuote\":\"앞으로 답변은 항상 한국어로만 해\"}],\"skill\":null}. 위 예시는 형식 설명이다. 실제 messages의 id와 원문을 사용하라. 추출할 것이 없으면 memories를 빈 배열로 둔다.",
         &json!({"messages":transcript,"existingFactKeys":existing_keys}).to_string(), session_id).await;
     let (raw, learning_provider, learning_model) = match completion {
         Ok(value) => value,
@@ -646,9 +646,6 @@ fn apply_learning(
     let mut rejected = 0;
     let mut memory_items: Vec<String> = Vec::new();
     let mut skill_item: Option<String> = None;
-    let mut strategy_items: Vec<String> = Vec::new();
-    let mut policy_items: Vec<String> = Vec::new();
-    let mut harness_item: Option<String> = None;
     for candidate in learning.memories.iter().take(8) {
         if !candidate
             .source_ids
@@ -732,88 +729,13 @@ fn apply_learning(
             }
         }
     }
-    let allowed = |ids: &[String]| -> Vec<String> {
-        ids.iter()
-            .filter(|id| allowed_ids.contains(id.as_str()))
-            .cloned()
-            .collect()
-    };
-    let mut improvements = 0usize;
-    for strategy in &learning.strategies {
-        let evidence = allowed(&strategy.source_ids);
-        if evidence.is_empty() {
-            continue;
-        }
-        if let Some(record) = crate::engine::improve::propose(
-            state,
-            scope,
-            "strategy",
-            &strategy.text,
-            &strategy.rationale,
-            &evidence,
-            None,
-            &strategy.scope,
-        ) {
-            if record["status"] == "adopted" {
-                improvements += 1;
-                strategy_items.push(strategy.text.clone());
-            }
-            let verification = crate::engine::procedure::normalize(&strategy.verification);
-            if verification["type"].as_str() != Some("unverified") {
-                crate::engine::improve::attach_verification(
-                    state,
-                    record["id"].as_str().unwrap_or(""),
-                    &verification,
-                );
-            }
-        }
-    }
-    for policy in &learning.tool_policies {
-        let evidence = allowed(&policy.source_ids);
-        if evidence.is_empty() {
-            continue;
-        }
-        if let Some(record) = crate::engine::improve::propose(
-            state,
-            scope,
-            "tool_policy",
-            &policy.text,
-            &policy.rationale,
-            &evidence,
-            Some(&policy.tool),
-            &policy.scope,
-        ) {
-            if record["status"] == "adopted" {
-                improvements += 1;
-                policy_items.push(policy.text.clone());
-            }
-        }
-    }
-    let mut harness_proposed = false;
-    if let Some(harness) = &learning.harness {
-        let title = harness["title"].as_str().unwrap_or("하네스 개선");
-        let problem = harness["problem"].as_str().unwrap_or("");
-        let change = harness["change"].as_str().unwrap_or("");
-        let test_plan = harness["testPlan"].as_str().unwrap_or("");
-        let text = format!("{title}: {change}");
-        let evidence = allowed(&[]);
-        if let Some(record) = crate::engine::improve::propose(
-            state,
-            scope,
-            "harness",
-            &text,
-            &format!("{problem}\n검증 계획: {test_plan}"),
-            &evidence,
-            None,
-            "shared",
-        ) {
-            harness_proposed = record["status"] == "proposed";
-            if harness_proposed {
-                harness_item = Some(text.clone());
-            }
-        }
-    }
-    Ok(json!({"memories":inserted,"rejected":rejected,"skill":skill_saved,"improvements":improvements,"harnessProposal":harness_proposed,"items":{"memories":memory_items,"skill":skill_item,"strategies":strategy_items,"toolPolicies":policy_items,"harness":harness_item}}))
+    // Manual learning writes owner-evidenced memories and draft Skills only.
+    // Historical strategy/tool-policy/harness proposals remain readable but
+    // cannot be generated or silently adopted from a learning model response.
+    Ok(json!({"memories":inserted,"rejected":rejected,"skill":skill_saved,
+        "improvements":0,"harnessProposal":false,
+        "items":{"memories":memory_items,"skill":skill_item,
+            "strategies":[],"toolPolicies":[],"harness":null}}))
 }
 
 struct LearnedMemory {
@@ -829,28 +751,9 @@ struct LearnedSkill {
     instructions: String,
     source_ids: Vec<String>,
 }
-struct LearnedStrategy {
-    text: String,
-    rationale: String,
-    scope: String,
-    source_ids: Vec<String>,
-    verification: Value,
-}
-
-struct LearnedToolPolicy {
-    tool: String,
-    text: String,
-    rationale: String,
-    scope: String,
-    source_ids: Vec<String>,
-}
-
 struct Learning {
     memories: Vec<LearnedMemory>,
     skill: Option<LearnedSkill>,
-    strategies: Vec<LearnedStrategy>,
-    tool_policies: Vec<LearnedToolPolicy>,
-    harness: Option<Value>,
 }
 
 fn source_ids(value: &Value) -> Vec<String> {
@@ -920,46 +823,9 @@ fn parse_learning(text: &str) -> Result<Learning, String> {
     } else {
         None
     };
-    let strategies = value["strategies"]
-        .as_array()
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| {
-                    Some(LearnedStrategy {
-                        text: item["text"].as_str()?.chars().take(2000).collect(),
-                        rationale: item["rationale"].as_str().unwrap_or("").chars().take(1000).collect(),
-                        scope: if item["scope"].as_str() == Some("agent") { "agent".into() } else { "shared".into() },
-                        source_ids: source_ids(item),
-                        verification: item["verification"].clone(),
-                    })
-                })
-                .take(4)
-                .collect()
-        })
-        .unwrap_or_default();
-    let tool_policies = value["toolPolicies"]
-        .as_array()
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| {
-                    Some(LearnedToolPolicy {
-                        tool: item["tool"].as_str()?.chars().take(80).collect(),
-                        text: item["text"].as_str()?.chars().take(2000).collect(),
-                        rationale: item["rationale"].as_str().unwrap_or("").chars().take(1000).collect(),
-                        scope: if item["scope"].as_str() == Some("agent") { "agent".into() } else { "shared".into() },
-                        source_ids: source_ids(item),
-                    })
-                })
-                .take(4)
-                .collect()
-        })
-        .unwrap_or_default();
-    let harness = value["harnessProposal"]
-        .is_object()
-        .then(|| value["harnessProposal"].clone());
-    Ok(Learning { memories, skill, strategies, tool_policies, harness })
+    // Ignore retired keys in legacy model output, rather than rewriting
+    // old sessions or accepting new strategy/harness side effects.
+    Ok(Learning { memories, skill })
 }
 
 #[cfg(test)]
@@ -1019,17 +885,12 @@ mod tests {
     }
 
     #[test]
-    fn parses_strategies_tool_policies_and_harness_proposal() {
+    fn retired_learned_strategy_and_harness_payload_is_ignored() {
         let learning = parse_learning(
-            r#"{"memories":[],"skill":null,"strategies":[{"text":"파일은 workspace_write로 먼저","rationale":"셸 실패 후 성공","scope":"shared","sourceMessageIds":["m1"]}],"toolPolicies":[{"tool":"shell_exec","text":"shell_exec 실패 시 workspace_write 우선","rationale":"통계","scope":"agent","sourceMessageIds":["m2"]}],"harnessProposal":{"title":"재시도 예산","problem":"반복 실패","change":"라운드별 예산 기록","testPlan":"단위 테스트"}}"#,
-        )
-        .unwrap();
-        assert_eq!(learning.strategies.len(), 1);
-        assert_eq!(learning.strategies[0].scope, "shared");
-        assert_eq!(learning.tool_policies.len(), 1);
-        assert_eq!(learning.tool_policies[0].tool, "shell_exec");
-        assert_eq!(learning.tool_policies[0].scope, "agent");
-        assert!(learning.harness.is_some());
+            r#"{"memories":[],"skill":null,"strategies":[{"text":"autoadopt"}],"toolPolicies":[{"tool":"shell_exec","text":"unapproved"}],"harnessProposal":{"change":"rewrite kernel"}}"#,
+        ).unwrap();
+        assert!(learning.memories.is_empty());
+        assert!(learning.skill.is_none());
     }
 
     #[test]

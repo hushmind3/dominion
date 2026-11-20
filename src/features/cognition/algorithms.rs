@@ -839,12 +839,9 @@ pub fn list(state: &AppState) -> Value {
         .collect::<Vec<_>>();
     json!({
         "kinds": kinds,
-        // Algorithm activation is per kind. Self-improvement and the tool
-        // gateway are harness capabilities, not algorithm kinds, so changing
-        // one algorithm cannot disable them or leak into another tool.
+        // Independent RSI is retired. Keep only real activation isolation.
         "isolation": {
             "activationScope": "kind",
-            "selfImprovementIndependent": true,
             "toolGatewayIndependent": true,
         },
     })
@@ -1645,7 +1642,6 @@ pub fn activate(state: &AppState, id: &str) -> Result<Value, String> {
             "kind": kind,
             "revision": activated["revision"],
             "activationScope": "kind",
-            "selfImprovementIndependent": true,
             "toolGatewayIndependent": true,
         }),
     );
