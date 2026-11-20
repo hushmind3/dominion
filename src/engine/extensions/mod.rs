@@ -11,6 +11,7 @@ use serde_json::{json,Value};
 pub mod channels;
 pub mod jobs;
 pub mod knowledge;
+pub mod knowledge_tools;
 pub mod tools;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
