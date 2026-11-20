@@ -408,21 +408,14 @@ pub(super) async fn run_turn_body(
             Some(&strategy_candidates),
             Some(execution_id),
         );
-        let provider_history_budget=provider.context_tokens.map(|tokens| {
-            ((tokens as usize).saturating_mul(3)).clamp(8_000, 400_000)
-        });
-        // Preserve the complete persisted transcript but stop resending up
-        // to 400 kB of prior tool output on every Home autonomous round.
-        // The latest tools and owner request remain available, and old file
-        // ranges can be re-read on demand without a second summarizer model.
-        let history_budget=if session["sdkUiPolicy"].is_object() {
-            Some(provider_history_budget.unwrap_or(56_000).min(56_000))
-        }else if !is_room {
-            // Main Chat stores the full transcript in SQLite. Sending 40
-            // past messages at a possible 400 kB each turn mostly repeats
-            // old tool output; retrieval and /compact remain available.
-            Some(provider_history_budget.unwrap_or(96_000).min(96_000))
-        }else{provider_history_budget};
+        // Size the history the provider will see *after* historical tool
+        // receipts are compacted. A short question no longer automatically
+        // replays the previous 96 kB of web/file observations. Execution
+        // artifacts and full source remain in SQLite for explicit rereading.
+        let history_budget=super::context::history_wire_allowance(
+            &request.input,is_room,session["sdkUiPolicy"].is_object(),
+            provider.context_tokens,
+        );
         let history_messages = history(
             state,session_id,request.agent_id.as_deref(),history_budget,
         )?;
@@ -957,9 +950,19 @@ pub(super) async fn run_turn_body(
         // in-memory transcript. Only the provider-wire replay is bounded:
         // large write arguments and repeated tool dumps are not billed on
         // every subsequent model call. Owner/system text is never rewritten.
-        let tool_trace_budget=provider.context_tokens
+        let provider_trace_ceiling=provider.context_tokens
             .map(|tokens|(tokens as usize).saturating_mul(2).clamp(8_000,48_000))
             .unwrap_or(if session["sdkUiPolicy"].is_object(){24_000}else{40_000});
+        let tool_trace_budget=if is_room {provider_trace_ceiling} else {
+            // Latest exact source reads remain available, but the provider
+            // should not replay tens of kilobytes of already consumed tool
+            // observations when answering a small conversational follow-up.
+            let work_budget=super::context::history_wire_allowance(
+                &request.input,false,session["sdkUiPolicy"].is_object(),
+                provider.context_tokens,
+            ).unwrap_or(24_000);
+            provider_trace_ceiling.min(if work_budget>=48_000{24_000}else{12_000})
+        };
         let wire_messages=trace_budget::bounded_tool_trace(
             &messages,tool_trace_budget);
         // The same immutable prompt/tool bundle enters every budget check.
@@ -967,6 +970,22 @@ pub(super) async fn run_turn_body(
         // to rescan repeatedly on each paid model round.
         let round_input_tokens =
             super::room_context::input_estimate(&wire_messages,&round_tools) as u64;
+        if !is_room && round==0 {
+            // Diagnose prompt inflation with numeric attribution, not the
+            // full private prompt or another LLM/summary call. This is
+            // pre-adapter estimation; provider-billed usage is stored later.
+            if let Some(mut execution)=state.store.get("execution",execution_id){
+                if !execution["inputContext"].is_object(){
+                    execution["inputContext"]=json!({});
+                }
+                execution["inputContext"]["preAdapterWireProfile"]=super::room_context::wire_profile(
+                    &wire_messages,&round_tools
+                );
+                execution["inputContext"]["historyBudgetBytes"]=json!(history_budget);
+                execution["inputContext"]["toolTraceBudgetBytes"]=json!(tool_trace_budget);
+                state.store.put("execution",&execution);
+            }
+        }
         if is_room {
             // Snapshot only numeric component estimates of the exact native
             // message+tool bundle selected for THIS provider call. A provider
