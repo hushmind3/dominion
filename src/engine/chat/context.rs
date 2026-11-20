@@ -321,18 +321,21 @@ fn context_block_with_manifest(
         }
         None => crate::engine::improve::context_block(state, &scope),
     };
-    let (experience, mut experience_items) =
+    let knowledge_enabled=crate::engine::extensions::enabled(
+        state,session_id,agent_id,crate::engine::extensions::Extension::Memory);
+    let (experience, mut experience_items) = if knowledge_enabled {
         crate::engine::experience::context_block_with_manifest_at(
             state, &scope, query, execution_id,
-        );
+        )
+    }else{(None,Vec::new())};
     items.append(&mut experience_items);
-    let room_knowledge = state
+    let room_knowledge = knowledge_enabled.then(||state
         .store
         .get("session", session_id)
         .and_then(|session| session["roomId"].as_str().map(str::to_string))
         .and_then(|room_id| {
             crate::engine::room_knowledge::context_block(state, &room_id, query).map(|block| (room_id, block))
-        });
+        })).flatten();
     if let Some((room_id, block)) = &room_knowledge {
         items.push(json!({
             "kind": "room_knowledge",
