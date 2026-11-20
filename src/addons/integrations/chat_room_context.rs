@@ -1069,7 +1069,11 @@ mod tests {
             "agent_id":"b","content":"CONFIRMED_ANSWER_MARKER: 설계 B로 확정",
             "metadata":{"authorKind":"agent","replyToMessageId":"plan-owner"}
         })).unwrap();
+        // Advance 120 complete, unrelated OWNER turns. The historical
+        // target is neither the previous owner nor this agent's last reply.
         for index in 0..120 {
+            message(&state,&format!("other-owner-{index}"),"user",
+                &format!("unrelated owner topic no.{index}"));
             message(&state,&format!("noise-{index}"),"assistant",
                 &format!("unrelated filler conversation no.{index}"));
         }
@@ -1085,7 +1089,7 @@ mod tests {
             "an old owner reference must recover its actual reply");
         assert!(compiled.accounting["linkedHistoryPairs"].as_u64().unwrap()>=1);
         assert!(json!(compiled.history).to_string().contains("CONFIRMED_ANSWER_MARKER"));
-        assert_eq!(state.store.messages("room:r").len(),123);
+        assert_eq!(state.store.messages("room:r").len(),243);
         let cleanup_dir=state.config.data_dir.clone();
         drop(state);
         std::fs::remove_dir_all(cleanup_dir).unwrap();
