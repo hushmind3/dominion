@@ -48,14 +48,23 @@ for(const source of [
   throw Error('Retired feature API still used in frontend: '+source)
 }
 const errorMessages=read('web/src/i18n/errors.ts')
-if(/영상 작업|video job|ComfyUI HTTP/.test(errorMessages))
+if(/영상 작업|video job|ComfyUI HTTP|영상 작업 만들기|Could not open the video/.test(errorMessages))
  throw Error('Obsolete video error text still bundled')
 const bootstrap=read('src/bootstrap.rs')
 if(/--rsi-|rsiSourceDir/.test(bootstrap))throw Error('Retired CLI remained')
-const strings=read('web/src/i18n/errors.ts')
-if(/ComfyUI HTTP|영상 작업 만들기|Could not open the video/.test(strings))
- throw Error('Retired video UI message remains')
 const pages=path.join(root,'web/src/pages')
 for(const name of readdirSync(pages))if(/^(Video|Money|SelfImprovement)\.(tsx?|jsx?)$/.test(name))
  throw Error('Retired product page remains: '+name)
-console.log('Retired video / money / RSI runtime surfaces absent')
+// Inspect every active frontend module, not only the historical page names.
+const pending=['web/src']
+const retiredFrontend=/\/api\/(?:video|youtube|rsi|money)(?:\/|['"`])|\b(?:VideoPage|MoneyPage|SelfImprovementPage|youtubeLogin|videoJobId|rsiCampaign|moneyCampaign)\b/i
+while(pending.length){
+ const dir=pending.pop()
+ for(const entry of readdirSync(file(dir),{withFileTypes:true})){
+  const candidate=path.posix.join(dir,entry.name)
+  if(entry.isDirectory()){pending.push(candidate);continue}
+  if(entry.isFile()&&/\.(?:tsx?|css)$/.test(entry.name)&&retiredFrontend.test(read(candidate)))
+   throw Error('Retired feature reference returned to frontend: '+candidate)
+ }
+}
+console.log('Retired video / money / RSI runtime and frontend surfaces absent')
