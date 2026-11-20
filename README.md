@@ -125,6 +125,10 @@ Connections to GitHub/Google may use a configured OAuth application or an author
 - The retired-feature regression scanner also examines SQL, HTML, CSS, Python, XML, SVG, text/config and dotenv files in addition to Rust/TypeScript/Markdown. This guard prevents dormant feature fragments from reappearing outside application source.
 - New regressions test replay fidelity, error tails, repeated tool outputs, Unicode safety and cache-sensitive thresholds. All savings are **projected prompt characters**, not claimed provider-billed token reductions. Verify with real model usage/cache telemetry before asserting cost savings.
 
+## Optional integrations outside the engine (2026-11-20)
+
+MCP sessions, channel transports, third-party account connectors and the complete GitHub/Google tool catalog are now owned by `src/integrations/` rather than `src/engine/`. The main process wires adapter startup through `bootstrap.rs`, while the Rust SDK kernel keeps planning, approval and durable effect verification. Existing `/api/mcp/*`, channel/account API paths and React navigation remain unchanged. Legacy `engine::mcp`/channel/account aliases were retired; source callers import the new modules directly. The `AppState::integrations` field owns pooled MCP sessions. The functionality is still compiled into the host executable; this refactor does **not** claim a dynamically loaded plugin ABI or fully independent Cargo crates. [Boundary and follow-up architecture](docs/INTEGRATIONS-BOUNDARY-2026-11-20.md).
+
 ## Development verification
 
 Routine changes: run *focused Rust development-profile tests*, not a blanket release build.

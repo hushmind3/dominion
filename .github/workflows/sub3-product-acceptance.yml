@@ -92,6 +92,7 @@ jobs:
           npm run typecheck --prefix web
           node --experimental-strip-types --test web/tests/*.test.mjs
           node --test scripts/account-login-contract.test.mjs
+          node --test scripts/integration-boundary.test.mjs
           npm run build --prefix web
       - name: Chromium connection UI walkthrough (desktop and mobile)
         run: |

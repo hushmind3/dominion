@@ -1,7 +1,3 @@
-// Compatibility-only paths; implementations live outside the agent engine.
-pub use crate::integrations::mcp;
-pub use crate::integrations::channels::{adapter as channel_adapter, bridge, discord, telegram};
-pub use crate::integrations::accounts::{oauth, github_files, github_workflow, google_workspace};
 pub mod goal_control;
 pub mod native_agent;
 pub(crate) mod native_evidence;
