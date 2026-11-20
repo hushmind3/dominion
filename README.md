@@ -107,7 +107,7 @@ Rust kernel implementers can import `dominion_sdk::harness::{Kernel, RunRequest,
 
 ## Product boundaries and data preservation
 
-The standalone RSI generation/campaign/core-auto-promotion engine and built-in video/audio production pipeline have been retired on this branch. External media tools may be connected through user-approved MCP/plugins. **Manual memory review, agent-growth records and stored improvement history remain**; they are not standalone RSI execution engines. Historical SQLite records and already generated user files are not deleted.
+The standalone RSI generation/campaign/core-auto-promotion engine and built-in video/audio production pipeline have been retired on this branch. External media tools may be connected through user-approved MCP/plugins. **Owner-evidenced manual memory review, unapproved Skill drafts, agent-growth records and archived improvement history remain**. Retired learner-to-strategy/tool-policy/harness-proposal generation has also been physically removed; an old model response cannot automatically adopt execution policies. Historical SQLite records and already generated user files are not deleted.
 
 Connections to GitHub/Google may use a configured OAuth application or an authorized official CLI flow. Provider consent/configuration is still required; credentials are not bundled. See [connected accounts](docs/CONNECTED-ACCOUNTS-2026-11-17.md).
 

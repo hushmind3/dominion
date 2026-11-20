@@ -49,6 +49,13 @@ jobs:
           cargo test --bin dominion-rust host::execution::jobs::tests
           cargo test --bin dominion-rust integrations::agent_bridge::tests
           cargo test --bin dominion-rust features::cognition::strategy_eval::tests
+          # Retirement cleanup: owner-grounded memory remains, old RSI learning
+          # proposals cannot reappear, and old records migrate only once.
+          cargo test --bin dominion-rust features::cognition::learning::tests
+          cargo test --bin dominion-rust features::cognition::improve::tests
+          cargo test --bin dominion-rust features::cognition::algorithms::tests
+          cargo test --bin dominion-rust features::cognition::reflect::tests
+          cargo test --bin dominion-rust storage::migrations::tests
           cargo test --bin dominion-rust features::collaboration::room_cursor::tests
           cargo test --bin dominion-rust events::tests
           # Latest main provider UI depends on public, keyless model browsing.
