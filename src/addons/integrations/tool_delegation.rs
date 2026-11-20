@@ -90,6 +90,7 @@ pub(super) async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Valu
             "sessionId":session_id,"toolsEnabled":ctx.tools_enabled&&ctx.tools_execution_enabled,
             "toolsExecutionEnabled":ctx.tools_execution_enabled,"parentSessionId":ctx.session_id,
             "parentAgentId":ctx.agent_id,"delegation":true,
+            "parentGeneration":ctx.state.cancellation_generation(ctx.session_id),
             "dependsOnJobIds":deps,"delegationProfile":profile}});
     let prepared=session["delegationWorkspace"].clone();
     if let Err(error)=crate::engine::execution_budget::enqueue_child(ctx.state,ctx.session_id,session,job,args["budget"].as_u64()){
@@ -185,7 +186,10 @@ pub(super) fn task_payload(ctx: &ToolContext<'_>, args: &Value, with_result: boo
         "budget":job["input"]["delegationBudget"],
         "dependsOnJobIds":job["input"]["dependsOnJobIds"],
     });
-    if args["includeTeam"]==true {
+    // The child may inspect its own job receipt; only the Lead session may
+    // enumerate sibling workers and their failure metadata.
+    if args["includeTeam"]==true
+        && job["input"]["parentSessionId"].as_str()==Some(ctx.session_id) {
         if let Some(parent)=job["input"]["parentSessionId"].as_str() {
             let siblings=ctx.store.team_jobs(parent,64)?;
             payload["teamGraph"]=json!({"parentSessionId":parent,
