@@ -679,7 +679,8 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
     }
     let (message,external_run)=if let Some(runtime)=input["externalRuntime"].as_str(){
         let (run_id,answer)=crate::addons::agent_bridge::inspect(
-            context,&session_id,&scoped.config.workspace,&request.input,runtime
+            context,&session_id,&scoped.config.workspace,&request.input,runtime,
+            input["resumeFromJobId"].as_str(),
         ).await?;
         let saved=context.state.store.write_message(&json!({
             "session_id":session_id,"role":"assistant",
