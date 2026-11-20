@@ -765,6 +765,161 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
               )}
             </div>
           </Panel>
+          <details className="mt-5 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9]">
+            <summary className="cursor-pointer px-4 py-3 text-[13px] font-semibold text-[#3A342D]">
+              {loc==='en'?'Browse curated MCP server examples':'추천 MCP 서버 보기'} · {presets.value.length+featured.length}
+            </summary>
+            <div className="border-t border-[#E7E0D5] p-4">
+          <div className="mb-4 flex flex-wrap items-center gap-1.5">
+            {pluginCategories.map((category) => (
+              <Button
+                key={category}
+                variant={pluginCategory === category ? "primary" : "ghost"}
+                onClick={() => setPluginCategory(category)}
+                className="!px-3 !py-1.5 !text-[12px]"
+              >
+                {category === "all" ? t('ext.all') : category}
+              </Button>
+            ))}
+          </div>
+          <div className="mb-5 flex items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] px-3 py-2">
+            <Search size={17} className="text-[#A79C8E]" />
+            <TextInput
+              value={pluginQuery}
+              onChange={(e) => setPluginQuery(e.target.value)}
+              placeholder={t('ext.pluginSearchExample')}
+            />
+          </div>
+          <Subheading
+            title={loc==='en'?'Recommended MCP servers':'추천 MCP 서버'}
+            extra={
+              <span className="text-[11px] text-[#8A8176]">
+                {t('ext.count', { count: filteredPresets.length })}
+              </span>
+            }
+          />
+          <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {filteredPresets.map((preset) => {
+              const record = mcp.value.find((x) => x.name === preset.name);
+              const connected = tools.filter(
+                (t) => t.mcpId === record?.id && !t.error,
+              ).length;
+              return (
+                <Panel
+                  key={preset.id}
+                  className="flex min-w-0 flex-col gap-3 p-5"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]">
+                      <PackagePlus size={21} />
+                    </div>
+                    <StateTag online={Boolean(record)}>
+                      {record
+                        ? connected
+                          ? t('ext.connectedTools', { count: connected })
+                          : t('ext.registeredCheck')
+                        : t('ext.notInstalled')}
+                    </StateTag>
+                  </div>
+                  <h3>{preset.name}</h3>
+                  <p>{preset.description}</p>
+                  <small className="text-[10px] font-semibold uppercase tracking-wider text-[#9C9388]">
+                    {preset.category}
+                  </small>
+                  <div className="mt-auto flex items-center justify-between gap-2 border-t border-[#EFE9DF] pt-3">
+                    <code className="truncate text-[10px] text-[#9C9388]">
+                      {preset.package}
+                    </code>
+                    {record ? (
+                      <Button
+                        variant="secondary"
+                        className="shrink-0 whitespace-nowrap"
+                        onClick={async () => {
+                          try {
+                            await del("/api/mcp/" + record.id);
+                            await mcp.reload();
+                            setMessage(t('ext.cancelled', { name: preset.name }));
+                          } catch (e) {
+                            setError((e as Error).message);
+                          }
+                        }}
+                      >
+                        {t('ext.cancel')}
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="secondary"
+                        className="shrink-0 whitespace-nowrap"
+                        disabled={installing === preset.id}
+                        onClick={() => void installPreset(preset)}
+                      >
+                        {installing === preset.id ? t('ext.installing') : t('ext.install')}
+                      </Button>
+                    )}
+                  </div>
+                </Panel>
+              );
+            })}
+          </div>
+          <Subheading
+            title={loc==='en'?'Featured MCP connections':'주요 MCP 연결'}
+            extra={
+              <span className="text-[10px] font-bold uppercase tracking-widest text-[#9C9388]">
+                CURATED EXAMPLES
+              </span>
+            }
+          />
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {featured.map((x) => {
+              const Icon = x.icon;
+              const record = mcp.value.find((y) => y.name === x.name);
+              const connected = tools.filter(
+                (t) => t.mcpId === record?.id && !t.error,
+              ).length;
+              return (
+                <Panel key={x.name} className="flex min-w-0 flex-col gap-3 p-5">
+                  <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]">
+                    <Icon size={24} />
+                  </div>
+                  <h3>{x.name}</h3>
+                  <p>{loc === "en" ? x.descriptionEn || x.description : x.description}</p>
+                  <div className="mt-auto flex items-center justify-between gap-3 border-t border-[#EFE9DF] pt-3">
+                    <a href={x.url} target="_blank" rel="noreferrer">
+                      {t('ext.officialGuide')} <ExternalLink size={13} />
+                    </a>
+                    {record ? (
+                      <Button
+                        variant="secondary"
+                        className="shrink-0 whitespace-nowrap"
+                        onClick={async () => {
+                          try {
+                            await del("/api/mcp/" + record.id);
+                            await mcp.reload();
+                            setMessage(t('ext.cancelled', { name: x.name }));
+                          } catch (e) {
+                            setError((e as Error).message);
+                          }
+                        }}
+                      >
+                        {t('ext.cancel')}
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="secondary"
+                        className="shrink-0 whitespace-nowrap"
+                        onClick={() => install(x)}
+                      >
+                        {t('ext.install')}
+                      </Button>
+                    )}
+                  </div>
+                </Panel>
+              );
+            })}
+          </div>
+
+            </div>
+          </details>
         </>
       )}
       {tab === "plugins" && (
@@ -913,153 +1068,6 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                 {t('ext.more')}
               </Button>
             )}
-          </div>
-          <div className="mb-4 flex flex-wrap items-center gap-1.5">
-            {pluginCategories.map((category) => (
-              <Button
-                key={category}
-                variant={pluginCategory === category ? "primary" : "ghost"}
-                onClick={() => setPluginCategory(category)}
-                className="!px-3 !py-1.5 !text-[12px]"
-              >
-                {category === "all" ? t('ext.all') : category}
-              </Button>
-            ))}
-          </div>
-          <div className="mb-5 flex items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] px-3 py-2">
-            <Search size={17} className="text-[#A79C8E]" />
-            <TextInput
-              value={pluginQuery}
-              onChange={(e) => setPluginQuery(e.target.value)}
-              placeholder={t('ext.pluginSearchExample')}
-            />
-          </div>
-          <Subheading
-            title={t('ext.recommendedPlugins')}
-            extra={
-              <span className="text-[11px] text-[#8A8176]">
-                {t('ext.count', { count: filteredPresets.length })}
-              </span>
-            }
-          />
-          <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {filteredPresets.map((preset) => {
-              const record = mcp.value.find((x) => x.name === preset.name);
-              const connected = tools.filter(
-                (t) => t.mcpId === record?.id && !t.error,
-              ).length;
-              return (
-                <Panel
-                  key={preset.id}
-                  className="flex min-w-0 flex-col gap-3 p-5"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]">
-                      <PackagePlus size={21} />
-                    </div>
-                    <StateTag online={Boolean(record)}>
-                      {record
-                        ? connected
-                          ? t('ext.connectedTools', { count: connected })
-                          : t('ext.registeredCheck')
-                        : t('ext.notInstalled')}
-                    </StateTag>
-                  </div>
-                  <h3>{preset.name}</h3>
-                  <p>{preset.description}</p>
-                  <small className="text-[10px] font-semibold uppercase tracking-wider text-[#9C9388]">
-                    {preset.category}
-                  </small>
-                  <div className="mt-auto flex items-center justify-between gap-2 border-t border-[#EFE9DF] pt-3">
-                    <code className="truncate text-[10px] text-[#9C9388]">
-                      {preset.package}
-                    </code>
-                    {record ? (
-                      <Button
-                        variant="secondary"
-                        className="shrink-0 whitespace-nowrap"
-                        onClick={async () => {
-                          try {
-                            await del("/api/mcp/" + record.id);
-                            await mcp.reload();
-                            setMessage(t('ext.cancelled', { name: preset.name }));
-                          } catch (e) {
-                            setError((e as Error).message);
-                          }
-                        }}
-                      >
-                        {t('ext.cancel')}
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="secondary"
-                        className="shrink-0 whitespace-nowrap"
-                        disabled={installing === preset.id}
-                        onClick={() => void installPreset(preset)}
-                      >
-                        {installing === preset.id ? t('ext.installing') : t('ext.install')}
-                      </Button>
-                    )}
-                  </div>
-                </Panel>
-              );
-            })}
-          </div>
-          <Subheading
-            title={t('ext.recommendedTools')}
-            extra={
-              <span className="text-[10px] font-bold uppercase tracking-widest text-[#9C9388]">
-                CURATED EXAMPLES
-              </span>
-            }
-          />
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {featured.map((x) => {
-              const Icon = x.icon;
-              const record = mcp.value.find((y) => y.name === x.name);
-              const connected = tools.filter(
-                (t) => t.mcpId === record?.id && !t.error,
-              ).length;
-              return (
-                <Panel key={x.name} className="flex min-w-0 flex-col gap-3 p-5">
-                  <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]">
-                    <Icon size={24} />
-                  </div>
-                  <h3>{x.name}</h3>
-                  <p>{loc === "en" ? x.descriptionEn || x.description : x.description}</p>
-                  <div className="mt-auto flex items-center justify-between gap-3 border-t border-[#EFE9DF] pt-3">
-                    <a href={x.url} target="_blank" rel="noreferrer">
-                      {t('ext.officialGuide')} <ExternalLink size={13} />
-                    </a>
-                    {record ? (
-                      <Button
-                        variant="secondary"
-                        className="shrink-0 whitespace-nowrap"
-                        onClick={async () => {
-                          try {
-                            await del("/api/mcp/" + record.id);
-                            await mcp.reload();
-                            setMessage(t('ext.cancelled', { name: x.name }));
-                          } catch (e) {
-                            setError((e as Error).message);
-                          }
-                        }}
-                      >
-                        {t('ext.cancel')}
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="secondary"
-                        className="shrink-0 whitespace-nowrap"
-                        onClick={() => install(x)}
-                      >
-                        {t('ext.install')}
-                      </Button>
-                    )}
-                  </div>
-                </Panel>
-              );
-            })}
           </div>
         </>
       )}
