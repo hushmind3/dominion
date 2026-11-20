@@ -2,6 +2,7 @@
 pub(crate) use crate::integrations::network::http_fetch;
 #[cfg(test)]
 use crate::integrations::network::{public_http_url,append_http_chunk,HTTP_FETCH_LIMIT};
+#[cfg(test)] use crate::features::platform::code_search::search_code_index;
 use crate::db::Store;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -39,7 +40,6 @@ pub fn definitions() -> Vec<Value> {
         tool("workspace_list", "List files and folders in the workspace", object(json!({"path": text("Relative folder path")}), vec![])),
         tool("workspace_read", "Read a UTF-8 file from the workspace", object(json!({"path": text("Relative file path")}), vec!["path"])),
         tool("workspace_read_range", "Read only a line range from a workspace file. Use the line numbers from the repository index instead of reading a large file end to end.", object(json!({"path": text("Relative file path"), "startLine": json!({"type":"integer","minimum":1}), "endLine": json!({"type":"integer","minimum":1, "description":"Inclusive end line; at most 400 lines are returned"})}), vec!["path","startLine"])),
-        tool("code_search", "Search the persistent repository index for file paths, symbols and line numbers. Use this before reading a large file.", object(json!({"query": text("Function, type, path or keyword fragment"), "limit": json!({"type":"integer","minimum":1,"maximum":50})}), vec!["query"])),
         tool("workspace_replace_range", "Replace a previously read inclusive line range with newText only. Use startLine/endLine and sourceSha256 returned by workspace_read_range; old text is not required.", object(json!({"path": text("Relative file path"), "startLine": json!({"type":"integer","minimum":1}), "endLine": json!({"type":"integer","minimum":1,"description":"Inclusive line number; at most 120 lines"}), "newText": text("Replacement lines (without old source text)"), "expectedSha256": text("Exact sourceSha256 from the successful prior read")}), vec!["path","startLine","endLine","newText","expectedSha256"])),
         tool("workspace_replace", "Replace one exact block in a workspace file without resending the whole file (approval required). oldText must occur exactly once.", object(json!({"path": text("Relative file path"), "oldText": text("Exact existing text to replace; must occur exactly once"), "newText": text("Replacement text"), "expectedSha256": text("Optional SHA-256 observed before editing")}), vec!["path","oldText","newText"])),
         tool("workspace_write", "Write a UTF-8 file inside the workspace (approval required)", object(json!({"path": text("Relative file path"), "content": text("UTF-8 content")}), vec!["path", "content"])),
@@ -138,11 +138,6 @@ pub async fn execute(
                 output["fileObservation"] = observation.clone();
             }
             Ok(output)
-        }
-        "code_search" => {
-            let query = required_arg(args, "query")?;
-            let limit = args["limit"].as_u64().unwrap_or(20).clamp(1, 50) as usize;
-            search_code_index(ctx, &query, limit)
         }
         "workspace_replace" => {
             let path = resolve_workspace(ctx.workspace, &required_arg(args, "path")?)?;
@@ -415,7 +410,7 @@ fn string_arg<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
 pub const WORKSPACE_ESCAPE: &str = "Path escapes the workspace";
 
 /// Reject `..` traversal and symlink escapes for workspace-scoped tools.
-pub(super) fn resolve_workspace(workspace: &Path, relative: &str) -> Result<PathBuf, String> {
+pub(crate) fn resolve_workspace(workspace: &Path, relative: &str) -> Result<PathBuf, String> {
     let base = canonical_target(workspace).map_err(|error| error.to_string())?;
     let candidate = Path::new(relative);
     if candidate
@@ -523,65 +518,6 @@ async fn observed_read(ctx: &ToolContext<'_>, path: &Path, run_id: &str) -> Resu
         "sha256": format!("{:x}", Sha256::digest(text.as_bytes())),
     });
     Ok(result)
-}
-
-fn search_code_index(
-    ctx: &ToolContext<'_>,
-    query: &str,
-    limit: usize,
-) -> Result<Value, String> {
-    let needle = query.trim().to_lowercase();
-    if needle.is_empty() {
-        return Err("code_search query는 비어 있을 수 없습니다.".into());
-    }
-    let meta=match crate::engine::code_index::get(ctx.state,ctx.workspace) {
-        Some(meta)=>meta,
-        None=>crate::engine::code_index::refresh(ctx.state,ctx.workspace)?,
-    };
-    let index_id = meta["id"].as_str().unwrap_or("");
-    let terms=needle.split_whitespace().map(|term|term.trim_matches(['`','\"','\'','(',')',',']))
-        .filter(|term|!term.is_empty() && !matches!(*term,"fn"|"pub"|"async"|"struct"|"enum"))
-        .collect::<Vec<_>>();
-    let score=|value:&str|{
-        let value=value.to_lowercase();
-        if value==needle {1000} else {
-            u64::from(value.contains(&needle))*200 + terms.iter().map(|term|
-                if value==*term {100} else {u64::from(value.contains(term))*20}).sum::<u64>()
-        }
-    };
-    let mut matches=Vec::new();
-    for file in ctx.store.all("code_index_file") {
-        if file["indexId"].as_str()!=Some(index_id) {continue;}
-        let path=file["path"].as_str().unwrap_or("");
-        let rank=score(path);
-        if rank>0 {matches.push((rank,json!({"path":path,"kind":"file","name":path,"line":1})));}
-        for symbol in file["symbols"].as_array().into_iter().flatten() {
-            let name=symbol["name"].as_str().unwrap_or("");let rank=score(name);
-            if rank==0 {continue;}
-            matches.push((rank,json!({"path":path,"kind":symbol["kind"],"name":name,"line":symbol["line"]})));
-        }
-    }
-    // Literal diagnostics and field names often are not symbol names. Search
-    // the actual workspace bytes when the index has no navigation hit.
-    if matches.is_empty() {
-        for file in ctx.store.all("code_index_file") {
-            if file["indexId"].as_str()!=Some(index_id) {continue;}
-            let Some(path)=file["path"].as_str() else {continue;};
-                let Ok(full)=resolve_workspace(ctx.workspace,path) else {continue;};
-            let Ok(content)=std::fs::read_to_string(full) else {continue;};
-            for (index,line) in content.lines().enumerate().filter(|(_,line)|line.to_lowercase().contains(&needle)).take(limit) {
-                matches.push((100,json!({"path":path,"kind":"literal","line":index+1,
-                    "name":line.trim().chars().take(180).collect::<String>()})));
-            }
-        }
-    }
-    matches.sort_by(|(a,left),(b,right)|b.cmp(a)
-        .then_with(||left["path"].as_str().cmp(&right["path"].as_str()))
-        .then_with(||left["line"].as_u64().cmp(&right["line"].as_u64())));
-    matches.dedup_by(|(_,a),(_,b)|a==b);
-    matches.truncate(limit);
-    let matches=matches.into_iter().map(|(_,row)|row).collect::<Vec<_>>();
-    Ok(json!({"query":query,"indexId":index_id,"indexedFiles":meta["files"],"matchCount":matches.len(),"matches":matches}))
 }
 
 async fn replace_text(

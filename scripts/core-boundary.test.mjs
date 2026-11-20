@@ -40,7 +40,7 @@ test('non-core jobs and tools are dispatched through feature registries',()=>{
  const tools=read('src/engine/tools.rs');
  assert.match(tools,/features::registry::definitions/);
  assert.match(tools,/integrations::registry::definitions/);
- assert.doesNotMatch(tools,/tool\("(?:memory_store|memory_search|web_search|http_fetch)"/);
+ assert.doesNotMatch(tools,/tool\("(?:memory_store|memory_search|web_search|http_fetch|code_search)"/);
  assert.doesNotMatch(tools,/async fn (?:http_fetch|web_search)\(/);
  assert.match(read('src/integrations/network.rs'),/pub\(crate\) async fn http_fetch/);
  assert.match(read('src/features/cognition/tools.rs'),/pub fn definitions/);

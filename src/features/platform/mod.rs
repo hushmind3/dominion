@@ -9,3 +9,5 @@ pub mod policy;
 pub mod preflight_fixture;
 pub mod vault_rotation;
 pub mod wake;
+
+pub mod code_search;
