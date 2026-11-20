@@ -2,7 +2,7 @@
 //!
 //! Exit status is 0 by default even when findings exist. Pass `--strict` to
 //! fail a pipeline on the first unjustified construct. Paths default to `.`.
-#[path = "../engine/unsafe_audit.rs"]
+#[path = "../engine/services/operations/unsafe_audit.rs"]
 #[allow(dead_code)]
 mod unsafe_audit;
 
