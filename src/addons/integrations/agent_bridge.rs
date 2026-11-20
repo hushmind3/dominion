@@ -47,15 +47,26 @@ fn final_answer(kind:ExternalAgent,raw:&str)->Result<String,String>{
         ExternalAgent::Claude=>{
             let parsed:Value=serde_json::from_str(raw)
                 .map_err(|_|"Claude CLI 출력 형식이 변경되었습니다.")?;
-            if parsed["is_error"]==true{return Err("Claude Agent 실행이 실패했습니다.".into());}
+            // Headless JSON includes a terminal result envelope. Do not
+            // accept intermediate or failed outputs as completed evidence.
+            if parsed["type"]!="result"||parsed["is_error"]==true
+                ||parsed["subtype"].as_str().is_some_and(|v|v!="success"){
+                return Err("Claude Agent 실행이 정상 종료되지 않았습니다.".into());
+            }
             parsed["result"].as_str().map(str::to_string)
         }
         ExternalAgent::Qwen=>{
             let parsed:Value=serde_json::from_str(raw)
                 .map_err(|_|"Qwen CLI 출력 형식이 변경되었습니다.")?;
-            parsed.as_array().and_then(|rows|rows.iter().rev()
-                .find(|row|row["type"]=="result"&&row["is_error"]!=true))
-                .and_then(|row|row["result"].as_str().map(str::to_string))
+            // --output-format json returns a full event array. The LAST
+            // terminal result is authoritative: searching backward for an
+            // earlier success can misreport a later failed turn as complete.
+            let terminal=parsed.as_array().and_then(|rows|rows.iter().rev()
+                .find(|row|row["type"]=="result"));
+            if terminal.is_some_and(|row|row["is_error"]==true){
+                return Err("Qwen Agent 최종 실행 결과가 실패했습니다.".into());
+            }
+            terminal.and_then(|row|row["result"].as_str().map(str::to_string))
         }
         ExternalAgent::Codex=>{
             let mut output=None;
@@ -228,5 +239,17 @@ mod tests{
             "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"not final\"}}\n").is_err());
         assert!(final_answer(ExternalAgent::Claude,
             r#"{"type":"result","result":"fake","is_error":true}"#).is_err());
+        assert!(final_answer(ExternalAgent::Claude,
+            r#"{"type":"assistant","result":"unconfirmed"}"#).is_err());
+        assert!(final_answer(ExternalAgent::Claude,
+            r#"{"type":"result","subtype":"error_max_turns","result":"partial","is_error":false}"#).is_err());
+        assert_eq!(final_answer(ExternalAgent::Claude,
+            r#"{"type":"result","subtype":"success","result":"verified","is_error":false}"#).unwrap(),
+            "verified");
+        assert!(final_answer(ExternalAgent::Qwen,
+            r#"[{"type":"result","result":"old success","is_error":false},
+                {"type":"result","result":"new failure","is_error":true}]"#).is_err());
+        assert!(final_answer(ExternalAgent::Qwen,
+            r#"[{"type":"assistant","result":"not completed"}]"#).is_err());
     }
 }
