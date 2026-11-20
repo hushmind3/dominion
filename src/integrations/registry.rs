@@ -47,6 +47,7 @@ pub async fn dispatch_job(
 )->Option<Result<Value,String>>{
  match kind {
   "discord" => Some(crate::integrations::channels::discord::run(ctx,job).await),
+  "external_agent" => Some(crate::integrations::agent_bridge::run(ctx,job).await),
   _=>None,
  }
 }

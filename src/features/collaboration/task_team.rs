@@ -17,6 +17,9 @@ const MAX_CONCURRENT_WORKERS:usize=3;
 #[serde(rename_all="snake_case")]
 pub enum Mode { Read,Write }
 impl Default for Mode {fn default()->Self{Self::Read}}
+#[derive(Clone,Copy,Debug,Serialize,Deserialize,PartialEq,Eq,Default)]
+#[serde(rename_all="snake_case")]
+pub enum WorkerRuntime {#[default] Native,Codex,Claude}
 #[derive(Clone,Debug,Serialize,Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 pub struct Task {
@@ -24,6 +27,7 @@ pub struct Task {
     pub prompt:String,
     #[serde(default)] pub depends_on:Vec<String>,
     #[serde(default)] pub mode:Mode,
+    #[serde(default)] pub runtime:WorkerRuntime,
     #[serde(default)] pub agent_id:Option<String>,
     #[serde(default)] pub provider_id:Option<String>,
     #[serde(default)] pub model:Option<String>,
@@ -70,6 +74,12 @@ impl Team {
                 task.model.as_ref().is_some_and(|v|v.is_empty()||v.len()>256)||
                 task.allowed_tools.len()>16||task.checks.len()>16 {
                 return Err("Invalid Team Task ID, instruction or budget".into());
+            }
+            if task.runtime!=WorkerRuntime::Native &&
+                (task.mode!=Mode::Read||!task.allowed_tools.is_empty()
+                    ||!task.checks.is_empty()||task.provider_id.is_some()
+                    ||task.agent_id.is_some()) {
+                return Err(format!("External Task {} must be read-only without native tool grants",task.id));
             }
             if task.checks.iter().any(|v|
                 serde_json::from_value::<dominion_agent_sdk::Criterion>(v.clone()).is_err()){
@@ -120,6 +130,7 @@ fn input(task:&Task,parent:&str)->Value{
     }else{task.allowed_tools.clone()};
     let mut input=json!({
         "prompt":task.prompt,"parentRunId":parent,"teamTaskId":task.id,
+        "bridgeRuntime":task.runtime,
         "teamMode":task.mode,"allowedTools":allowed,
         "toolsEnabled":true,"toolsExecutionEnabled":true,
         "requireEvidence":task.mode==Mode::Write,
@@ -144,7 +155,8 @@ pub fn project(state:&AppState,parent:&Value)->Value{
             let id=child_id(parent["id"].as_str().unwrap_or(""),&task.id);
             let child=state.store.get("job",&id);
             children.push(json!({
-                "taskId":task.id,"mode":task.mode,"dependsOn":task.depends_on,
+                "taskId":task.id,"mode":task.mode,"runtime":task.runtime,
+                "dependsOn":task.depends_on,
                 "agentId":task.agent_id,"childJobId":id,
                 "status":child.as_ref().map(|c|&c["status"]),
                 "executionId":child.as_ref().map(|c|&c["nativeExecutionId"]),
@@ -252,7 +264,8 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
             ctx.checkpoint(json!({"teamState":{"contractVersion":1,
                 "phase":"dispatching","activeChildJobId":id,
                 "taskCount":team.tasks.len()}}))?;
-            let Some(child)=jobs::enqueue_once(&ctx.state,&id,"prompt",input(task,parent))
+            let kind=if task.runtime==WorkerRuntime::Native{"prompt"}else{"external_agent"};
+            let Some(child)=jobs::enqueue_once(&ctx.state,&id,kind,input(task,parent))
             else{return Err(format!("Team child {id} conflicts with a prior immutable job"));};
             let status=child["status"].as_str().unwrap_or("");
             if status=="queued" {jobs::start_now(ctx.state.clone(),id.clone());}
@@ -275,10 +288,12 @@ mod tests {
     use super::*;
     fn sample()->Team{
         Team{goal:"Implement and verify".into(),max_parallel:3,tasks:vec![
-            Task{id:"investigate".into(),prompt:"Inspect source".into(),mode:Mode::Read,
+            Task{id:"investigate".into(),prompt:"Inspect source".into(),
+                runtime:WorkerRuntime::Native,mode:Mode::Read,
                 depends_on:vec![],agent_id:None,provider_id:None,model:None,
                 allowed_tools:vec![],checks:vec![]},
-            Task{id:"write".into(),prompt:"Apply approved patch".into(),mode:Mode::Write,
+            Task{id:"write".into(),prompt:"Apply approved patch".into(),
+                runtime:WorkerRuntime::Native,mode:Mode::Write,
                 depends_on:vec!["investigate".into()],agent_id:None,
                 provider_id:None,model:None,allowed_tools:vec![],checks:vec![]},
         ]}
@@ -311,6 +326,16 @@ mod tests {
         team.tasks[0].allowed_tools=vec!["workspace_read".into()];
         team.validate().unwrap();
         team.tasks[1].allowed_tools=vec!["mcp__danger".into()];
+        assert!(team.validate().is_err());
+    }
+    #[test] fn external_workers_cannot_grant_native_effects(){
+        let mut team=sample();
+        team.tasks[0].runtime=WorkerRuntime::Codex;
+        team.validate().unwrap();
+        team.tasks[0].mode=Mode::Write;
+        assert!(team.validate().is_err());
+        team.tasks[0].mode=Mode::Read;
+        team.tasks[0].allowed_tools.push("workspace_write".into());
         assert!(team.validate().is_err());
     }
     #[test] fn immutable_child_id_is_scoped_to_parent(){

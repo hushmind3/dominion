@@ -8,6 +8,7 @@ pub mod skills;
 pub mod registry;
 pub mod network;
 pub mod local_tools;
+pub mod agent_bridge;
 use crate::state::AppState;
 use std::sync::Arc;
 

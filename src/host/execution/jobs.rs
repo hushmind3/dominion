@@ -179,7 +179,8 @@ pub fn recover(state: &AppState) {
         let attempts=job["attempts"].as_u64().unwrap_or(0);
         let flagged=[
             "/inFlight","/promptState/inFlight","/nativeInFlight",
-            "/roomState/inFlight","/workflowState/inFlight","/discordState/inFlight"
+            "/roomState/inFlight","/workflowState/inFlight","/discordState/inFlight",
+            "/bridgeState/inFlight"
         ].iter().any(|path|{
             if *path=="/workflowState/inFlight"
                 && job.pointer(path)==Some(&json!(true)){
