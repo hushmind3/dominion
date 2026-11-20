@@ -637,3 +637,55 @@ fn chat_fails_over_from_native_api_to_compat_provider_in_one_turn() {
     );
 }
 
+
+
+/// Real HTTP/SSE failover through the Rust gateway: do not send a model's
+/// forbidden tool protocol to a fallback endpoint just because it is online.
+#[test]
+fn failover_skips_incompatible_local_model_and_selects_declared_text_tools(){
+    let _serial=serial();
+    let (fallback_port,requests)=scripted_provider(|body|{
+        assert_eq!(body["model"],"capability-compatible");
+        assert!(body.get("tools").is_none(),"compat model received native tool schema");
+        vec![json!({"choices":[{"delta":{"content":"호환 모델 답변"},"finish_reason":"stop"}]})]
+    });
+    let app=TestApp::new(fallback_port,"compat");
+    for provider in app.get("/api/providers").as_array().cloned().unwrap_or_default(){
+        if let Some(id)=provider["id"].as_str(){
+            app.delete(&format!("/api/providers/{id}"));
+        }
+    }
+    let primary=app.post("/api/providers",&json!({
+        "name":"primary-unreachable","baseUrl":"http://127.0.0.1:1/v1",
+        "model":"primary","enabled":true,"toolMode":"native"
+    }));
+    let endpoint=format!("http://127.0.0.1:{fallback_port}/v1");
+    let incompatible=app.post("/api/providers",&json!({
+        "name":"local-no-tools","baseUrl":endpoint,"model":"capability-denied",
+        "enabled":true,"toolMode":"compat",
+        "capabilities":{"text":true,"nativeToolCalls":false,"textToolCalls":false}
+    }));
+    assert!(incompatible["id"].is_string());
+    let compatible=app.post("/api/providers",&json!({
+        "name":"local-text-tools","baseUrl":endpoint,"model":"capability-compatible",
+        "enabled":true,"toolMode":"compat",
+        "capabilities":{"text":true,"nativeToolCalls":false,"textToolCalls":true}
+    }));
+    let agent=app.post("/api/agents",&json!({
+        "name":"model-fallback-probe","systemPrompt":"KEEP_AGENT_IDENTITY",
+        "providerId":primary["id"]
+    }));
+    let stream=app.chat(&json!({
+        "input":"workspace_list 도구로 작업 환경을 확인해",
+        "agentId":agent["id"],"providerId":primary["id"],
+        "toolsEnabled":true,"autoLearning":false
+    }));
+    assert!(stream.contains("호환 모델 답변"),"{stream}");
+    let captured=requests.lock().unwrap();
+    assert!(!captured.is_empty());
+    assert!(captured.iter().all(|body|
+        body["model"]=="capability-compatible"&&body.get("tools").is_none()));
+    let executions=app.get("/api/executions");
+    assert!(executions.as_array().unwrap().iter().any(|run|
+        run["effectiveProviderId"]==compatible["id"]));
+}
