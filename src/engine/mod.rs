@@ -4,7 +4,14 @@
 pub mod addons;
 pub mod core;
 pub use addons::{browser,bridge,channel_adapter,discord,github_work,google_work,mcp,telegram};
-pub use core::{TurnStats,run_quiet_outcome,run_quiet_resume,run_quiet_with_stats,run_quiet,run_room_quiet};
+pub use core::{TurnStats,run_quiet_outcome,run_quiet_with_stats,run_quiet};
+// Optional services preserve the public engine API without living in core.
+#[path = "services/automation/turn_resume.rs"]
+mod turn_resume;
+pub use turn_resume::run_quiet_resume;
+#[path = "services/conversation/room_worker.rs"]
+mod room_worker;
+pub use room_worker::run_room_quiet;
 #[cfg(test)]
 use core::collect_tool_event;
 

@@ -9,7 +9,10 @@ const chat=source('src/engine/services/conversation/chat/mod.rs');
 test('core entrypoint owns natural language execution, not product services',()=>{
  const core=source('src/engine/core/mod.rs');
  assert.match(core,/pub async fn run_quiet_outcome/);
- assert.match(core,/pub async fn run_quiet_resume/);
+ assert.doesNotMatch(core,/pub async fn run_quiet_resume/);
+ assert.doesNotMatch(core,/pub async fn run_room_quiet/);
+ assert.match(source('src/engine/services/automation/turn_resume.rs'),/pub async fn run_quiet_resume/);
+ assert.match(source('src/engine/services/conversation/room_worker.rs'),/pub async fn run_room_quiet/);
  assert.doesNotMatch(engine,/pub async fn run_quiet_outcome/);
  assert.match(engine,/pub use core::/);
  assert.match(engine,/#\[path = "services\/conversation\/chat\/mod.rs"\]/);
