@@ -245,7 +245,7 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
       {probes[selected.id]&&<div role="status" aria-live="polite" className={'rounded-xl border p-3 text-xs leading-5 '+(probes[selected.id].status==='verified'?'border-emerald-200 bg-emerald-50 text-emerald-800':probes[selected.id].status==='unverified'?'border-amber-200 bg-amber-50 text-amber-900':'border-[#D8E5E6] bg-[#F3FAFA] text-[#42656B]')}>
        <strong className="block text-[12px]">{probes[selected.id].status==='verified'?t('conn.probeVerified'):probes[selected.id].status==='checking'?t('conn.dlg.diagnosing'):t('conn.probeUnverified')}</strong>
        <span className="mt-1 block break-words">{probes[selected.id].message}</span>
-       {probes[selected.id].checkedAt&&<span className="mt-1 block opacity-70">{t('conn.probeCheckedAt',{time:new Date(probes[selected.id].checkedAt).toLocaleString()})}</span>}
+       {probes[selected.id].checkedAt&&<span className="mt-1 block opacity-70">{t('conn.probeCheckedAt',{time:new Date(probes[selected.id].checkedAt||'').toLocaleString()})}</span>}
        <span className="mt-1 block opacity-80">{t('conn.probeIsNotDelivery')}</span>
       </div>}
       <div className="flex flex-wrap items-center gap-2 border-t border-[#EFE8DD] pt-4">
