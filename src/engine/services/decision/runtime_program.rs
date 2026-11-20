@@ -1131,11 +1131,17 @@ pub(super) fn execute_nodes<'a>(
                             }
                             if paused{break;}
                         }
-                        checkpoint["pendingOperationIds"]=json!(
-                            children.iter().filter(|child|child["id"].as_str()
+                        // Compute against the immutable checkpoint first;
+                        // then store the pending IDs. This avoids aliasing an
+                        // indexed mutable JSON assignment with a checkpoint
+                        // read and preserves unfinished nodes after a pause.
+                        let remaining=children.iter()
+                            .filter(|child|child["id"].as_str()
                                 .is_some_and(|id|!crate::engine::program::checkpoint_skip_completed(
                                     &checkpoint,id)))
-                                .map(|child|child["id"].clone()).collect::<Vec<_>>());
+                            .map(|child|child["id"].clone())
+                            .collect::<Vec<_>>();
+                        checkpoint["pendingOperationIds"]=json!(remaining);
                         if used_parallel_waves{
                             checkpoint["parallelMode"]=json!("dependency_waves");
                         }
