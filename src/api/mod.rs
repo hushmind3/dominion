@@ -2,7 +2,6 @@ mod response;
 #[cfg(test)]
 mod tests;
 pub mod algorithms;
-pub mod rsi;
 pub mod translation;
 pub mod settings;
 pub mod improvements;
@@ -33,7 +32,6 @@ pub mod models;
 pub mod oauth;
 pub mod personas;
 pub mod rooms;
-pub mod video;
 
 use crate::state::AppState;
 use axum::{
@@ -46,14 +44,6 @@ use axum::{
 };
 use serde_json::json;
 use tower_http::{cors::CorsLayer, services::ServeDir};
-
-async fn retired_capability()->impl IntoResponse {
-    (StatusCode::GONE,Json(json!({
-        "error":"내장 영상·RSI 생성 및 자동 채택 기능은 종료됐습니다.",
-        "replacement":"사용자 지시형 작업과 연결 채널(MCP)을 사용하세요.",
-        "historyPreserved":true
-    })))
-}
 
 pub fn router(state: AppState) -> Router {
     let mut router = Router::new()
@@ -94,25 +84,6 @@ pub fn router(state: AppState) -> Router {
         .route("/api/run-wakes", get(system::run_wakes))
         .route("/api/experiment-requests", get(system::experiment_requests))
         .route("/api/optimizers", get(experiments::optimizers))
-        .route("/api/rsi", get(rsi::list).post(retired_capability))
-        .route("/api/rsi/start", post(retired_capability))
-        .route("/api/rsi/issues", post(retired_capability))
-        .route("/api/rsi/issues/:id", get(rsi::issue))
-        .route("/api/rsi/evaluation-profiles", get(rsi::evaluation_profiles))
-        .route("/api/rsi/signals", get(rsi::signals))
-        .route("/api/rsi/index", get(rsi::index))
-        .route("/api/rsi/inspect", post(retired_capability))
-        .route("/api/rsi/campaigns", get(rsi::campaigns))
-        .route("/api/rsi/campaigns/:id/choose", post(retired_capability))
-        .route("/api/rsi/campaigns/:id/apply", post(retired_capability))
-        .route("/api/rsi/campaigns/:id", get(rsi::campaign))
-        .route("/api/rsi/campaigns/:id/verify", get(retired_capability))
-        .route("/api/rsi/:id", get(rsi::one))
-        .route("/api/rsi/:id/evaluate", post(retired_capability))
-        .route("/api/rsi/:id/apply", post(retired_capability))
-        .route("/api/rsi/:id/compare", post(retired_capability))
-        .route("/api/rsi/:id/decide", post(retired_capability))
-        .route("/api/rsi/:id/deployment", post(retired_capability))
         .route("/api/algorithms", get(algorithms::list).post(algorithms::register))
         .route("/api/algorithms/evaluate", get(algorithms::evaluate))
         .route("/api/algorithms/evaluations", get(algorithms::evaluations))
@@ -298,34 +269,6 @@ pub fn router(state: AppState) -> Router {
         .route("/api/oauth/:id/browser-open", post(oauth::browser_open))
         .route("/api/oauth/:id/callback", get(oauth::callback))
         .route("/api/oauth/:id", axum::routing::delete(oauth::disconnect))
-        .route("/api/youtube/status", get(compat::youtube_status))
-        .route("/api/youtube/uploads", get(compat::youtube_uploads))
-        .route("/api/youtube/uploads/:id", get(video::job))
-        .route("/api/youtube/:action", post(retired_capability))
-        .route("/api/video/status", get(video::status))
-        .route(
-            "/api/video/config",
-            get(video::get_config).post(retired_capability),
-        )
-        .route("/api/video/outputs", get(video::outputs_handler))
-        .route("/api/video/locations", get(retired_capability))
-        .route("/api/video/models", get(retired_capability))
-        .route("/api/video/catalog", get(retired_capability))
-        .route("/api/video/models/:id/download", post(retired_capability))
-        .route("/api/video/models/downloads", get(retired_capability))
-        .route("/api/video/files", get(video::outputs_handler))
-        .route("/api/video/jobs/:id", get(video::job))
-        .route("/api/video/jobs/:id/cancel", post(retired_capability))
-        .route(
-            "/api/video/jobs",
-            get(video::list_jobs).post(retired_capability),
-        )
-        .route("/api/video/jobs/:id/upload", post(retired_capability))
-        .route("/api/video/jobs/:id/content", get(video::content))
-        .route("/api/video/jobs/:id/reveal", post(retired_capability))
-        .route("/api/video/open-models", post(retired_capability))
-        .route("/api/video/workflows", get(retired_capability))
-        .route("/api/video/:action", post(retired_capability))
         .route("/api/system/pick-folder", post(compat::pick_folder))
         .route("/api/channels/catalog", get(channels::catalog_handler))
         .route("/api/channels", get(channels::list).post(channels::save))
