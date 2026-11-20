@@ -390,6 +390,10 @@ fn integration_members(
     Ok(workers)
 }
 pub async fn integrate(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
+    if !ctx.tools_enabled||!ctx.tools_execution_enabled||ctx.state.is_cancelled(ctx.session_id){
+        return Err("취소되었거나 도구 권한이 없는 세션은 팀 패치를 통합할 수 없습니다.".into());
+    }
+    let generation=ctx.state.cancellation_generation(ctx.session_id);
     let id=args["jobId"].as_str().ok_or("팀 작업 ID가 없습니다.")?;
     let team=ctx.store.get("job",id).ok_or("팀 작업이 없습니다.")?;
     if team["kind"]!="team"||team["input"]["sessionId"]!=ctx.session_id
@@ -405,6 +409,14 @@ pub async fn integrate(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
     let workers=integration_members(ctx.store,&team,ctx.session_id)?;
     let mut out=Vec::new();
     for worker in &workers{
+        // A STOP between reviewed worker patches must not launch another
+        // mutation under a newer session generation.
+        if ctx.state.is_cancelled(ctx.session_id)
+            ||ctx.state.cancellation_generation(ctx.session_id)!=generation {
+            return Ok(json!({"teamId":id,"status":"needs_review",
+                "outcomeUnknown":!out.is_empty(),"integrated":out,
+                "reason":"parent_cancelled_before_next_patch"}));
+        }
         let child_id=worker["id"].as_str().ok_or("Worker ID가 없습니다.")?;
         if worker["integratedAt"].is_string(){
             out.push(json!({"jobId":child_id,"alreadyIntegrated":true}));continue;
@@ -426,6 +438,12 @@ pub async fn integrate(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
                 "integrated":out,"unresolved":result}));
         }
         out.push(result);
+    }
+    if ctx.state.is_cancelled(ctx.session_id)
+        ||ctx.state.cancellation_generation(ctx.session_id)!=generation {
+        return Ok(json!({"teamId":id,"status":"needs_review",
+            "outcomeUnknown":!out.is_empty(),"integrated":out,
+            "reason":"parent_cancelled_before_team_commit"}));
     }
     let prior=team["status"].clone();
     let saved=ctx.store.patch_if("job",id,"status",&prior,
@@ -475,6 +493,28 @@ mod tests{
         let mut corrupt=worker.clone();
         corrupt["input"]["sessionId"]=json!("other-session");
         assert!(verified_result(&state,&corrupt).is_err());
+    }
+    #[tokio::test]
+    async fn team_integration_refuses_cancelled_or_tool_disabled_parent(){
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-team-cancel-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg=crate::config::Config{port:0,data_dir:dir.clone(),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(cfg.clone(),
+            crate::db::Store::open(&cfg.db_path()).unwrap(),
+            crate::vault::Vault::open(&cfg.key_path()));
+        state.store.put("job",&json!({"id":"team","kind":"team","status":"needs_review",
+            "input":{"sessionId":"owner"},
+            "result":{"gaps":[],"pendingIntegrationJobs":[]}})).unwrap();
+        let make_context=|tools_enabled|ToolContext{workspace:&cfg.workspace,
+            store:&state.store,state:&state,session_id:"owner",agent_id:None,
+            tools_enabled,tools_execution_enabled:true};
+        assert!(integrate(&make_context(false),&json!({"jobId":"team"})).await.is_err());
+        state.cancel_session("owner");
+        assert!(integrate(&make_context(true),&json!({"jobId":"team"})).await.is_err());
+        assert_eq!(state.store.get("job","team").unwrap()["status"],"needs_review");
+        let _=std::fs::remove_dir_all(dir);
     }
     #[test]
     fn team_merge_preflights_all_children_before_any_parent_mutation(){
