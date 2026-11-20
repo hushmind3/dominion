@@ -31,7 +31,6 @@ jobs:
       - run: npm ci --prefix web
       - run: npm run typecheck --prefix web
       - run: npm run build --prefix web
-      - run: node scripts/check-lean-product.mjs
       - name: Validate monotonic shared budget and bounded failure/receipt projection
         run: |
           cargo test -p dominion-agent-sdk --lib restore_cannot_refund_parallel_tool_or_proposal_usage

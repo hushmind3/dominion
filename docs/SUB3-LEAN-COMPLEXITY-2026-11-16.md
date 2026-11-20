@@ -26,9 +26,9 @@ The standalone YouTube upload OAuth provider and its requested upload/readonly p
 
 ## Regression and release gate
 
-`scripts/check-lean-product.mjs` asserts the **absence of removed source/routes/tools** and presence of retained core chat, memory, MCP, SDK, authorization, archived-job safety, indexed workers and nonmedia dependencies.
+The former source-wide forbidden-term scanner was removed rather than retained as a feature blockade. Rust and frontend tests remain responsible for actual live behavior, including chat, tools, SDK, recovery and persistence.
 
-`.github/workflows/ci.yml`: manually dispatched Windows/macOS release-stage verification, including the TypeScript GUI/SDK and lean architectural gate; Linux is not a target. Ordinary development tests are scoped Rust development-profile tests. `sub3-product-acceptance.yml` and `sub3-rust-sdk-check.yml`: real agent, chat, recover, immutable tool evidence, API and provider regressions. **A green workflow belongs only to the exact HEAD it tested.**
+`.github/workflows/ci.yml`: manually dispatched Windows/macOS release-stage verification, including the TypeScript GUI/SDK and executable product tests; Linux is not a target. Ordinary development tests are scoped Rust development-profile tests. `sub3-product-acceptance.yml` and `sub3-rust-sdk-check.yml`: real agent, chat, recover, immutable tool evidence, API and provider regressions. **A green workflow belongs only to the exact HEAD it tested.**
 
 Historical SQLite/job content is not deleted; existing audio/video files in a user's data directory are not removed by upgrading this source branch. They are simply no longer created by the built-in engine.
 

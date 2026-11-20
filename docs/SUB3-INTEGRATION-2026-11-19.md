@@ -21,7 +21,7 @@
 - [Sub3 Rust SDK — passed](https://github.com/hushmind3/dominion-rust/actions/runs/44499399570), source `536447c` (later code change affects only a group-room regression assertion).
 - [Sub3 product Rust + frontend + TypeScript SDK — passed](https://github.com/hushmind3/dominion-rust/actions/runs/44499894159), source `affd870`.
 - Expanded the product Rust suite with `engine::rooms::tests`, `api::providers::tests` and `api::cli_oauth::tests`, plus `dominion-sdk` Rust client tests in the SDK workflow. This caught a stale test assumption: a deliberately tiny conversation target must keep required owner/agent/tool evidence and report `room-required-evidence-over-soft-target`, not the older `native-work-context` value. The test now checks the actual policy, required-over-budget accounting and completed tool receipt.
-- All tracked source files are checked for retired-domain identifier reintroduction. Both scoped workflows use Node 24-compatible GitHub Actions; frontend additionally runs TypeScript SDK type and HTTP transport tests.
+- The obsolete source-wide forbidden-identifier scanner and its frontend counterpart were deleted. Scoped workflows exercise Rust execution, API, TypeScript and UI tests directly.
 - These are automated tests, **not** end-user desktop launch on Windows/macOS, production OAuth payment certification, or an actual 9-person live 27B provider throughput test.
 - `.github/workflows/ci.yml` is a separately dispatched full release gate and was not triggered.
 
@@ -31,7 +31,7 @@
 - API `src/api/mod.rs`, `src/api/providers.rs`, `src/api/cli_oauth.rs`.
 - Persistence `src/db.rs`; job admission and retiring legacy work `src/engine/jobs.rs`.
 - Execution `crates/dominion-agent-sdk/src/lib.rs`, `src/engine/chat/codex_ws.rs`, `src/engine/chat/runtime/program.rs`, `src/engine/program.rs`.
-- CI `.github/workflows/sub3-product-acceptance.yml`, `.github/workflows/sub3-rust-sdk-check.yml`, `scripts/check-lean-product.mjs`.
+- CI `.github/workflows/sub3-product-acceptance.yml`, `.github/workflows/sub3-rust-sdk-check.yml`.
 
 No claims of complete automatic domain-general task success, charged-token savings, or absence of bugs outside these exercised boundaries.
 

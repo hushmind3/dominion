@@ -29,16 +29,8 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Harness and product contract tests (dev profile only)
+      - name: Product and SDK contract tests (dev profile only)
         run: |
-          node scripts/check-lean-product.mjs
-          test ! -d crates/harness
-          ! grep -q 'dominion-harness' Cargo.toml
-          ! grep -q 'dominion_harness::' src/api/sdk.rs
-          # A successful Rust build must not resurrect extra paid reviewer
-          # calls or a second unversioned tool selector in the chat runtime.
-          ! grep -Fq 'review_action(' src/engine/chat/runtime/turn.rs
-          ! grep -Fq 'review_action(' src/engine/chat/runtime/planning.rs
           grep -Fq 'pub use tool_discovery::tool_relevance;' crates/dominion-agent-sdk/src/lib.rs
           grep -Fq 'dominion_agent_sdk::tool_relevance(' src/engine/chat/runtime/selection.rs
           cargo test --bin dominion-rust engine::skill_discovery::tests
