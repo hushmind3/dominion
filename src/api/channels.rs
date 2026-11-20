@@ -367,6 +367,48 @@ mod tests {
         let _=std::fs::remove_dir_all(dir);
     }
 
+    #[tokio::test]
+    async fn review_delivery_is_explicit_scoped_and_never_resends() {
+        let (state,dir)=test_state();
+        for id in ["a","b"] {
+            state.store.put("channel",&json!({"id":id,"kind":"slack","enabled":false})).unwrap();
+        }
+        for (id,binding) in [("review-a","a"),("review-b","b")] {
+            state.store.put("channel_outbox",&json!({
+                "id":id,"bindingId":binding,"status":"needs_review",
+                "content":"Do not leak the entire original content","error":"uncertain send",
+                "errorAt":"2026-11-20T08:30:00Z"
+            })).unwrap();
+        }
+        let resp=delivery_reviews(State(state.clone()),Path("a".into())).await;
+        assert_eq!(resp.status(),StatusCode::OK);
+        let body=axum::body::to_bytes(resp.into_body(),usize::MAX).await.unwrap();
+        let list:Value=serde_json::from_slice(&body).unwrap();
+        assert_eq!(list["total"],1);
+        assert_eq!(list["items"][0]["id"],"review-a");
+        let foreign=reconcile_delivery(State(state.clone()),Path(("a".into(),"review-b".into())),
+            Json(json!({"resolution":"confirmed_delivered"}))).await;
+        assert_eq!(foreign.status(),StatusCode::CONFLICT);
+        assert_eq!(state.store.get("channel_outbox","review-b").unwrap()["status"],"needs_review");
+        let first=reconcile_delivery(State(state.clone()),Path(("a".into(),"review-a".into())),
+            Json(json!({"resolution":"confirmed_not_delivered"}))).await;
+        assert_eq!(first.status(),StatusCode::OK);
+        let stored=state.store.get("channel_outbox","review-a").unwrap();
+        assert_eq!(stored["status"],"cancelled");
+        assert_eq!(stored["ownerResolution"],"confirmed_not_delivered");
+        assert!(stored["resolvedAt"].as_str().is_some());
+        assert_eq!(stored["content"],"Do not leak the entire original content");
+        let repeated=reconcile_delivery(State(state.clone()),Path(("a".into(),"review-a".into())),
+            Json(json!({"resolution":"confirmed_delivered"}))).await;
+        assert_eq!(repeated.status(),StatusCode::CONFLICT,
+            "an operator cannot accidentally double-settle an external side effect");
+        assert_eq!(state.store.get("channel_outbox","review-a").unwrap()["status"],"cancelled");
+        let done=delivery_reviews(State(state.clone()),Path("a".into())).await;
+        let bytes=axum::body::to_bytes(done.into_body(),usize::MAX).await.unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap()["total"],0);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn catalog_exposes_only_implemented_drivers() {
         let entries = catalog();
@@ -732,6 +774,58 @@ pub async fn remove(State(state): State<AppState>, Path(id): Path<String>) -> Js
         .bus
         .emit(json!({"type":"record","kind":"channel","removed":id}));
     Json(json!({"ok":true}))
+}
+
+/// Only expose owner-reviewable uncertain effects; keep the original
+/// message in the durable outbox and omit unrelated channels.
+pub async fn delivery_reviews(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    if state.store.get("channel",&id).is_none(){
+        return error(StatusCode::NOT_FOUND,"채널 연결을 찾을 수 없습니다.");
+    }
+    let mut reviews=state.store.all("channel_outbox").into_iter()
+        .filter(|row|row["bindingId"].as_str()==Some(id.as_str())&&row["status"]=="needs_review")
+        .collect::<Vec<_>>();
+    reviews.sort_by(|a,b|{
+        let time_a=a["errorAt"].as_str().or_else(||a["updatedAt"].as_str()).unwrap_or("");
+        let time_b=b["errorAt"].as_str().or_else(||b["updatedAt"].as_str()).unwrap_or("");
+        time_b.cmp(time_a).then_with(||b["id"].as_str().cmp(&a["id"].as_str()))
+    });
+    let total=reviews.len();
+    let items=reviews.into_iter().take(20).map(|row|json!({
+        "id":row["id"],"messageId":row["messageId"],"partIndex":row["partIndex"],
+        "error":row["error"],"errorAt":row["errorAt"],"updatedAt":row["updatedAt"],
+        "preview":row["content"].as_str().unwrap_or("").chars().take(320).collect::<String>(),
+    })).collect::<Vec<_>>();
+    Json(json!({"total":total,"items":items})).into_response()
+}
+
+pub async fn reconcile_delivery(
+    State(state):State<AppState>,
+    Path((binding_id,delivery_id)):Path<(String,String)>,
+    Json(body):Json<Value>,
+)->Response{
+    let Some(outcome)=body["resolution"].as_str()else{
+        return error(StatusCode::BAD_REQUEST,"전송 확인 결과를 선택하세요.");
+    };
+    let confirmed=match outcome{
+        "confirmed_delivered"=>true,
+        "confirmed_not_delivered"=>false,
+        _=>return error(StatusCode::BAD_REQUEST,"지원하지 않는 전송 확인 결과입니다."),
+    };
+    if state.store.get("channel",&binding_id).is_none(){
+        return error(StatusCode::NOT_FOUND,"연결된 채널이 존재하지 않습니다.");
+    }
+    match state.store.reconcile_channel_outbox(&binding_id,&delivery_id,confirmed){
+        Ok(record)=>{
+            state.store.audit("channel.delivery.reconciled",json!({
+                "channelId":binding_id,"deliveryId":delivery_id,
+                "resolution":outcome,"automaticResend":false,
+            }));
+            state.bus.record("channel_outbox",&record);
+            Json(json!({"ok":true,"id":delivery_id,"resolution":outcome})).into_response()
+        }
+        Err(message)=>error(StatusCode::CONFLICT,message),
+    }
 }
 
 pub async fn diagnose(State(state): State<AppState>, Path(id): Path<String>) -> Response {

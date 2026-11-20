@@ -519,6 +519,37 @@ impl Store {
         self.get(kind, &id)
     }
 
+    /// Atomically settle a disputed outbound effect. The owner explicitly
+    /// identifies the observed outcome. No external send or cursor rewind
+    /// happens as a consequence of reconciling this receipt.
+    pub fn reconcile_channel_outbox(
+        &self,binding_id:&str,delivery_id:&str,confirmed_delivered:bool
+    )->Result<Value,String>{
+        let mut conn=self.conn.lock().map_err(|error|error.to_string())?;
+        let tx=conn.transaction().map_err(|error|error.to_string())?;
+        let record:Option<Value>=tx.query_row(
+            "SELECT data,id,created_at,updated_at FROM records WHERE kind='channel_outbox' AND id=?1",
+            params![delivery_id],record_from_row,
+        ).optional().map_err(|error|error.to_string())?;
+        let mut row=record.ok_or("전송 검토 기록을 찾을 수 없습니다.")?;
+        if row["bindingId"].as_str()!=Some(binding_id){
+            return Err("다른 채널의 전송 기록은 처리할 수 없습니다.".into());
+        }
+        if row["status"]!="needs_review"{
+            return Err("이미 처리되었거나 검토 대상이 아닌 전송 기록입니다.".into());
+        }
+        row["status"]=json!(if confirmed_delivered{"sent"}else{"cancelled"});
+        row["ownerResolution"]=json!(if confirmed_delivered{"confirmed_delivered"}else{"confirmed_not_delivered"});
+        row["resolvedAt"]=json!(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos,true));
+        let changed=tx.execute(
+            "UPDATE records SET data=?1,updated_at=datetime('now') WHERE kind='channel_outbox' AND id=?2 AND json_extract(data,'$.bindingId')=?3 AND json_extract(data,'$.status')='needs_review'",
+            params![row.to_string(),delivery_id,binding_id],
+        ).map_err(|error|error.to_string())?;
+        if changed!=1{return Err("전송 상태가 변경되었습니다. 새로고침 후 다시 확인하세요.".into());}
+        tx.commit().map_err(|error|error.to_string())?;
+        Ok(row)
+    }
+
     pub fn save_channel(&self, value: &Value, secret: Option<(&str, &str)>) -> Option<Value> {
         let mut conn = self.conn.lock().ok()?;
         let tx = conn.transaction().ok()?;

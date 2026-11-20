@@ -256,6 +256,8 @@ pub fn router(state: AppState) -> Router {
                 .delete(channels::remove),
         )
         .route("/api/channels/:id/diagnose", post(channels::diagnose))
+        .route("/api/channels/:id/delivery/reviews",get(channels::delivery_reviews))
+        .route("/api/channels/:id/delivery/:delivery_id/reconcile",post(channels::reconcile_delivery))
         .route("/api/executions", get(executions::list))
         .route("/api/executions/active", get(executions::active_executions))
         .route("/api/experience", get(experience::list))
