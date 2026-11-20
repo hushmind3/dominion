@@ -159,7 +159,7 @@ pub async fn remove(State(state): State<AppState>, OriginalUri(uri): OriginalUri
 pub async fn action(
     State(state): State<AppState>,
     OriginalUri(uri): OriginalUri,
-    Json(body): Json<Value>,
+    Json(_body): Json<Value>,
 ) -> Response {
     let kind = kind_from_uri(&uri);
     let id = id_from_uri(&uri).unwrap_or_default();
