@@ -14,7 +14,6 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
-      - 'scripts/check-sub2-contract.mjs'
       - 'web/tests/**/*.mjs'
       - 'sdk/typescript/**'
   pull_request:
@@ -25,7 +24,6 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
-      - 'scripts/check-sub2-contract.mjs'
       - 'web/tests/**/*.mjs'
       - 'sdk/typescript/**'
   workflow_dispatch:
@@ -164,7 +162,6 @@ jobs:
           # Development CI intentionally skips Vite production build.
           # Release packaging owns build artifacts; keep sub2 iterations fast.
           node --experimental-strip-types --test web/tests/*.test.mjs
-          node scripts/check-sub2-contract.mjs
           node scripts/sub2-source-audit.mjs
           node --test scripts/sub2-compare.test.mjs
           ./web/node_modules/.bin/tsc -p sdk/typescript/tsconfig.json

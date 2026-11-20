@@ -6,7 +6,6 @@
 - [English product README](../README.md)
 - [Active Rust architecture](../ENGINE.md)
 - [Development CI](../.github/workflows/ci.yml)
-- [Source and frontend contract gate](../scripts/check-sub2-contract.mjs)
 - [Executable source duplicate audit](../scripts/sub2-source-audit.mjs)
 - [TypeScript SDK](../sdk/typescript/README.md)
 - [Rust execution kernel](../crates/dominion-agent-kernel/src/lib.rs)
