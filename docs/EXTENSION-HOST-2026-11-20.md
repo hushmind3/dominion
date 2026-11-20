@@ -142,3 +142,19 @@ module entrypoint. This preserves all visibility and `super::` references
 without placing implementation files in the native execution directory.
 The paths are enforced by the runtime architecture guard. The kernel and
 SQLite/API schemas are unchanged.
+
+## Further core slimming (2026-11-20)
+
+Nine more implementation modules moved from `src/engine/` into categorized add-ons:
+- `src/addons/knowledge/compact.rs`
+- `src/addons/strategies/goal_control.rs`
+- `src/addons/strategies/obligation_repair.rs`
+- `src/addons/strategies/program.rs`
+- `src/addons/strategies/reasoning.rs`
+- `src/addons/integrations/delegation_worktree.rs`
+- `src/addons/operations/jobs.rs`
+- `src/addons/operations/wake.rs`
+- `src/addons/operations/job_control.rs`
+
+The app's `src/engine/mod.rs` retains compatibility exports temporarily. The
+standalone `crates/dominion-core` still owns the only model/tool execution loop.

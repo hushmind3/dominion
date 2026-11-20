@@ -125,7 +125,7 @@ if(!recentBaseline||
 if(/pub async fn run_quiet_with_stats\(/.test(modules))
   throw Error('Unused quiet-turn evidence wrapper reintroduced')
 const store=readFileSync(path.join(root,'src/db.rs'),'utf8')
-const jobs=readFileSync(path.join(root,'src/engine/jobs.rs'),'utf8')
+const jobs=readFileSync(path.join(root,'src/addons/operations/jobs.rs'),'utf8')
 const approval=readFileSync(path.join(root,'src/engine/chat/approval.rs'),'utf8')
 if(!store.includes('pub fn pending_approvals(')||!approval.includes('store.pending_approvals('))
   throw Error('Indexed pending-approval expiry was bypassed')

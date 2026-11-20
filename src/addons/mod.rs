@@ -22,6 +22,9 @@ pub mod room_knowledge;
 #[path = "knowledge/skills.rs"]
 pub mod skills;
 
+#[path = "knowledge/compact.rs"]
+pub mod compact;
+
 // strategies
 #[path = "strategies/adaptation/mod.rs"]
 pub mod adaptation;
@@ -47,6 +50,18 @@ pub mod policy_patch;
 pub mod preflight_fixture;
 #[path = "strategies/procedure.rs"]
 pub mod procedure;
+
+#[path = "strategies/goal_control.rs"]
+pub mod goal_control;
+
+#[path = "strategies/obligation_repair.rs"]
+pub mod obligation_repair;
+
+#[path = "strategies/program.rs"]
+pub mod program;
+
+#[path = "strategies/reasoning.rs"]
+pub mod reasoning;
 
 // integrations
 #[path = "integrations/attachments.rs"]
@@ -86,6 +101,9 @@ pub mod rooms;
 #[path = "integrations/telegram.rs"]
 pub mod telegram;
 
+#[path = "integrations/delegation_worktree.rs"]
+pub mod delegation_worktree;
+
 // operations
 #[path = "operations/backup_keys.rs"]
 pub mod backup_keys;
@@ -95,4 +113,9 @@ pub mod maintenance;
 pub mod remote_backup;
 #[path = "operations/vault_rotation.rs"]
 pub mod vault_rotation;
-
+#[path = "operations/jobs.rs"]
+pub mod jobs;
+#[path = "operations/wake.rs"]
+pub mod wake;
+#[path = "operations/job_control.rs"]
+pub mod job_control;
