@@ -122,6 +122,18 @@ over 100 turns**. These are wire-traffic results, **not** an API-provider
 billed-token or price-reduction claim. See the
 [reproducible benchmark](benchmark/PRIVATE-CHAT-WIRE-2026-11-20.md).
 
+### Optional backend extensions, independent of the native kernel
+
+The native Rust kernel owns session history, execution/checkpoint journals,
+model calls, approval and verification. MCP servers, long-term memory,
+skills and messaging channels are integrated only through the
+[backend extension host](src/engine/extensions/mod.rs), with fresh tool-call
+admission after discovery. Disabling memory never deletes session transcripts;
+disabling channels does not disable normal chat. No frontend navigation changes.
+
+See the [extension boundary and API contract](docs/EXTENSION-HOST-2026-11-20.md)
+for scoped policy, `/api/extensions/runtime`, session controls and tests.
+
 ### Native execution contracts and lean model rounds
 
 The native Codex WebSocket chain now invalidates `previous_response_id`
