@@ -793,6 +793,51 @@ mod tests {
     }
 
     #[test]
+    fn committed_execution_receipts_reach_next_speaker_as_scoped_workboard() {
+        let state=state();
+        state.store.put("room",&json!({"id":"r","agentIds":["a"],
+            "contextBudgetTokens":2000})).unwrap();
+        message(&state,"owner-board","user","실제 작업 증거를 공유하세요");
+        state.store.put("execution",&json!({"id":"work-exec","sessionId":"room:r",
+            "agentId":"a","status":"completed"})).unwrap();
+        state.store.put("execution_operation",&json!({
+            "id":"work-op","runId":"work-exec","sessionId":"room:r",
+            "tool":"workspace_write",
+            "arguments":{"path":"src/actual.rs","content":"PRIVATE_TOOL_PAYLOAD"},
+            "status":"completed","effectState":"verified",
+            "toolReceipt":{"verified":true}
+        })).unwrap();
+        state.store.write_message(&json!({"id":"peer-board","session_id":"room:r",
+            "role":"assistant","agent_id":"a",
+            "content":"Unverified peer success claim","tool_calls":[],
+            "metadata":{"authorKind":"agent","replyToMessageId":"owner-board",
+                "executionId":"work-exec"}})).unwrap();
+        let request=TurnRequest::from_value(&json!({
+            "input":"실제 작업 증거를 공유하세요","agentId":"a","toolsEnabled":false
+        })).unwrap();
+        let compiled=compile(&state,&request,"room:r","owner-board",&[],&[]).unwrap();
+        let frame=compiled.history.iter().find(|row|
+            row["_dominion_frame"].as_str().is_some_and(|value|value.starts_with("workboard:"))
+        ).expect("Host-backed workboard must reach the model input");
+        let content=frame["content"].as_str().unwrap();
+        assert!(content.contains("\"operationId\":\"work-op\""));
+        assert!(content.contains("\"verifiedEffect\":true"));
+        assert!(content.contains("\"artifactPath\":\"src/actual.rs\""));
+        assert!(!content.contains("Unverified peer success claim"));
+        assert!(!content.contains("PRIVATE_TOOL_PAYLOAD"));
+        assert_eq!(compiled.accounting["workboardContributions"],1);
+        assert!(compiled.accounting["workboardTokens"].as_u64().unwrap()>0);
+        // A fresh owner message has its own empty handoff, even though the
+        // old transcript and verified operations remain available for lookup.
+        message(&state,"next-board","user","이제 새 작업");
+        let next=compile(&state,&request,"room:r","next-board",&[],&[]).unwrap();
+        assert_eq!(next.accounting["workboardContributions"],0);
+        assert!(!next.history.iter().any(|row|
+            row["_dominion_frame"].as_str().is_some_and(|value|value.starts_with("workboard:"))));
+        crate::test_support::cleanup_dir(&state.config.data_dir);
+    }
+
+    #[test]
     fn model_call_component_accounting_is_private_disjoint_and_reconciles() {
         let messages=vec![
             json!({"role":"system","content":"SYSTEM_PERSONA_SECRET"}),
