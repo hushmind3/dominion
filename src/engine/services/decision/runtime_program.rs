@@ -1042,8 +1042,6 @@ pub(super) fn execute_nodes<'a>(
                     // Resolve every dependency and writer conflict before ANY
                     // branch touches the host tool gateway or workspace.
                     let schedule=dominion_agent_loop::task_team::schedule(&children)?;
-                    let ordered_children=schedule.ordered().into_iter()
-                        .map(|i|children[i].clone()).collect::<Vec<_>>();
                     let child_ids = children
                         .iter()
                         .map(|child| json!(child["id"]))

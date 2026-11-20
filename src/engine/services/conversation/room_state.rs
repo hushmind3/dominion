@@ -543,6 +543,52 @@ mod tests {
     }
 
     #[test]
+    fn one_hundred_turn_room_reader_cursors_survive_process_restart_without_cross_agent_reads(){
+        let (state,dir)=state();
+        for step in 0..105{
+            let owner_id=format!("long-owner-{step}");
+            let owner=state.store.write_message(&json!({
+                "id":owner_id,"session_id":"room:r","role":"user",
+                "content":format!("turn {step}"),"agent_id":null,
+                "metadata":{"authorKind":"owner","roomId":"r"},
+            })).unwrap();
+            state.bus.message(&owner);
+            for agent_id in ["a","b"]{
+                let reader=unread_for(&state,"r","room:r",agent_id).unwrap();
+                assert!(reader.unread.as_deref().unwrap_or("")
+                    .contains(&owner_id),"step {step}: {agent_id}");
+                let msg_id=format!("reply-{step}-{agent_id}");
+                let saved=state.store.write_message(&json!({
+                    "id":msg_id,"session_id":"room:r","role":"assistant",
+                    "agent_id":agent_id,"content":format!("observed {step}"),
+                    "metadata":{"authorKind":"agent","replyToMessageId":owner_id},
+                })).unwrap();
+                state.bus.message(&saved);
+                let ack=acknowledge_read(&state,"r","room:r",agent_id,
+                    &owner_id,&msg_id,reader.through).unwrap();
+                assert_eq!(ack["readCursor"],reader.through);
+            }
+        }
+        let cursor_a=state.store.get("room_agent_cursor",&cursor_id("r","a")).unwrap();
+        let cursor_b=state.store.get("room_agent_cursor",&cursor_id("r","b")).unwrap();
+        assert!(cursor_b["readCursor"].as_u64().unwrap()>
+            cursor_a["readCursor"].as_u64().unwrap());
+        let last_b=cursor_b["readCursor"].as_u64().unwrap();
+        drop(state);
+        let config=Config{port:0,data_dir:dir.clone(),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let store=Store::open(&config.db_path()).unwrap();
+        let restarted=AppState::new(config,store,Vault::open(&dir.join("key")));
+        let now=restarted.store.get("room_agent_cursor",&cursor_id("r","b")).unwrap();
+        assert_eq!(now["readCursor"].as_u64().unwrap(),last_b);
+        let pending=unread_for(&restarted,"r","room:r","a").unwrap();
+        assert!(pending.unread.as_deref().unwrap_or("").contains("reply-104-b"));
+        assert!(pending.through>=last_b);
+        drop(restarted);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn reader_cursor_is_durable_owner_scoped_and_does_not_ack_messages_arriving_during_inference(){
         let (state,dir)=state();
         let source=state.store.write_message(&owner("owner-1","new request")).unwrap();
