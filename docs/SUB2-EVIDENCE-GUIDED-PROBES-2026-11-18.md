@@ -3,7 +3,7 @@ Date: 2026-11-18 | Branch: dominion-sub2
 
 ## What changed
 
-This is a **live tool-dispatch change**, not a new SDK, a renamed strategy, or an always-on RSI process.
+This is a **live tool-dispatch change**, not a new SDK, a renamed strategy, or a background campaign runner.
 
 Old failure path: failed tool -> one model response with hypotheses/interventions -> weighted intervention choice -> dispatch -> record.
 
