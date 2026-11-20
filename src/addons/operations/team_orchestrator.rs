@@ -378,6 +378,44 @@ pub async fn integrate(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[tokio::test]
+    async fn team_aggregates_only_committed_native_worker_messages(){
+        let dir=std::env::temp_dir().join(format!("dominion-team-proof-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg=crate::config::Config{port:0,data_dir:dir.clone(),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(cfg.clone(),
+            crate::db::Store::open(&cfg.db_path()).unwrap(),
+            crate::vault::Vault::open(&cfg.key_path()));
+        state.store.put("session",&json!({"id":"worker-session"})).unwrap();
+        state.store.put("execution",&json!({"id":"run",
+            "sessionId":"worker-session","agentId":"a","status":"completed"})).unwrap();
+        let message=state.store.write_message(&json!({
+            "session_id":"worker-session","role":"assistant","agent_id":"a",
+            "content":"Inspected source and recorded result",
+            "metadata":{"executionId":"run","authorKind":"agent"}
+        })).unwrap();
+        let worker=state.store.put("job",&json!({
+            "id":"worker","kind":"prompt","status":"completed",
+            "input":{"teamStepId":"inspect","delegationProfile":"general",
+                "parentSessionId":"owner","agentId":"a","sessionId":"worker-session"},
+            "result":{"messageId":message["id"]}
+        })).unwrap();
+        assert_eq!(verified_result(&state,&worker).unwrap()["evidenceLevel"],"agent_report");
+        let team=state.store.put("job",&json!({
+            "id":"team","kind":"team","status":"running",
+            "input":{"sessionId":"owner","parentGeneration":state.cancellation_generation("owner"),
+                "goal":"Inspect source","childJobIds":["worker"]}
+        })).unwrap();
+        let ctx=JobContext::new(state.clone(),"team".into());
+        let result=run(&ctx,&team).await.unwrap();
+        assert_eq!(result["status"],"completed");
+        assert_eq!(result["nodes"][0]["stepId"],"inspect");
+        assert_eq!(result["pendingIntegrationJobs"],json!([]));
+        let mut corrupt=worker.clone();
+        corrupt["input"]["sessionId"]=json!("other-session");
+        assert!(verified_result(&state,&corrupt).is_err());
+    }
     #[test]
     fn rejects_cyclic_foreign_and_unverified_proposals(){
         let roster=vec![json!({"id":"a"}),json!({"id":"b"})];

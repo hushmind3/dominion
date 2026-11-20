@@ -398,6 +398,49 @@ mod tests {
         (state, source)
     }
     #[tokio::test]
+    async fn verifier_inherits_only_frozen_upstream_patch_in_own_worktree() {
+        let (state,source)=fixture().await;
+        let first=prepare(&state,&source,"team-impl").await.unwrap();
+        let second=prepare(&state,&source,"team-verify").await.unwrap();
+        let impl_path=Path::new(first["path"].as_str().unwrap());
+        let verify_path=Path::new(second["path"].as_str().unwrap());
+        std::fs::write(impl_path.join("target.txt"),"implemented\n").unwrap();
+        state.store.put("session",&json!({"id":"impl-session",
+            "delegationWorkspace":first})).unwrap();
+        state.store.put("session",&json!({"id":"verify-session",
+            "delegationProfile":"verification","delegationWorkspace":second})).unwrap();
+        let implementation=json!({"id":"team-impl","status":"completed",
+            "input":{"sessionId":"impl-session","parentSessionId":"owner",
+                "teamJobId":"team","delegationProfile":"implementation"}});
+        state.store.put("job",&implementation).unwrap();
+        freeze_result(&state,&implementation).await.unwrap();
+        let verifier=json!({"id":"team-verify","kind":"prompt","status":"running",
+            "input":{"sessionId":"verify-session","parentSessionId":"owner",
+                "teamJobId":"team","delegationProfile":"verification",
+                "dependsOnJobIds":["team-impl"]}});
+        state.store.put("job",&verifier).unwrap();
+        let context=crate::engine::jobs::JobContext::new(
+            state.clone(),"team-verify".into());
+        hydrate_team_verifier(&context,&verifier).await.unwrap();
+        assert_eq!(std::fs::read_to_string(verify_path.join("target.txt")).unwrap(),"implemented\n");
+        assert_eq!(std::fs::read_to_string(source.join("target.txt")).unwrap(),"original\n");
+        assert!(state.store.get("job","team-verify").unwrap()["dependenciesHydratedAt"].is_string());
+        assert_eq!(state.store.get("job","team-verify").unwrap()["dependencyHydrationInFlight"],false);
+        std::fs::write(impl_path.join("target.txt"),"tampered after freeze\n").unwrap();
+        // A new verifier cannot inherit a modified upstream artifact.
+        let tampered=prepare(&state,&source,"team-tamper").await.unwrap();
+        state.store.put("session",&json!({"id":"tamper-session",
+            "delegationProfile":"verification","delegationWorkspace":tampered})).unwrap();
+        let verify2=json!({"id":"team-tamper","kind":"prompt","status":"running",
+            "input":{"sessionId":"tamper-session","parentSessionId":"owner",
+                "teamJobId":"team","delegationProfile":"verification",
+                "dependsOnJobIds":["team-impl"]}});
+        state.store.put("job",&verify2).unwrap();
+        let context2=crate::engine::jobs::JobContext::new(state.clone(),"team-tamper".into());
+        assert!(hydrate_team_verifier(&context2,&verify2).await.is_err());
+    }
+
+    #[tokio::test]
     async fn child_patch_stays_isolated_until_approved_integration_and_cannot_replay() {
         let (state, source) = fixture().await;
         let workspace = prepare(&state, &source, "child-job").await.unwrap();

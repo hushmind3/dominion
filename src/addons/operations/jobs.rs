@@ -766,6 +766,27 @@ mod tests {
     }
 
     #[test]
+    fn team_parallelism_never_overclaims_worker_slots(){
+        let state=temp_state();
+        for i in 0..3 {
+            state.store.put("job",&json!({
+                "id":format!("w{i}"),"kind":"prompt","status":"queued",
+                "input":{"teamJobId":"team","teamMaxParallel":2,
+                    "delegation":true,"parentSessionId":"owner"}
+            })).unwrap();
+        }
+        let a=next_queued(&state).unwrap();
+        let b=next_queued(&state).unwrap();
+        assert_ne!(a["id"],b["id"]);
+        assert!(next_queued(&state).is_none());
+        let first=a["id"].as_str().unwrap();
+        state.store.patch_if("job",first,"status",&json!("running"),
+            &json!({"status":"completed"})).unwrap();
+        let c=next_queued(&state).unwrap();
+        assert!(c["id"]!=a["id"]&&c["id"]!=b["id"]);
+    }
+
+    #[test]
     fn terminal_claim_rejects_cancelled_and_already_completed_jobs(){
         let state=temp_state();
         let job=enqueue(&state,"prompt",json!({"sessionId":"s","prompt":"work"})).unwrap();
