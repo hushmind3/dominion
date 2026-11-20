@@ -27,6 +27,11 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
         Ok(team)=>team,Err(e)=>return error(StatusCode::BAD_REQUEST,e),
     };
     for task in &team.tasks {
+        if task.runtime!=task_team::WorkerRuntime::Native
+            && std::env::var("DOMINION_EXTERNAL_AGENTS").ok().as_deref()!=Some("1"){
+            return error(StatusCode::BAD_REQUEST,
+                "External Team workers require explicit DOMINION_EXTERNAL_AGENTS=1 opt-in");
+        }
         if let Some(id)=task.agent_id.as_deref() {
             if state.store.get("agent",id).is_none(){
                 return error(StatusCode::BAD_REQUEST,

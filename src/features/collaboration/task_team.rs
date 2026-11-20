@@ -4,7 +4,6 @@
 //! Read workers run concurrently; writers serialize under a durable workspace
 //! lease shared between independent Task Teams.
 use crate::engine::jobs::{self,JobContext};
-use crate::host::execution::lease::LeaseGuard;
 use crate::state::AppState;
 use serde::{Deserialize,Serialize};
 use serde_json::{json,Value};
@@ -291,10 +290,8 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
     let parent=job["id"].as_str().ok_or("Team job has no durable ID")?;
     ctx.checkpoint(json!({"teamState":{"contractVersion":1,"phase":"scheduling",
         "taskCount":team.tasks.len(),"maxParallel":team.max_parallel}}))?;
-    let writer_scope=format!("task-team-writer:{}",
-        ctx.state.config.workspace.to_string_lossy());
-    let mut writer_lease:Option<LeaseGuard>=None;
-    let mut writer_id:Option<String>=None;
+    // Ownership of the workspace write lease belongs to the actual native
+    // child worker. A recovered supervisor never releases a live child's lock.
     loop {
         if let Err(reason)=ctx.ensure_running() {
             cancel_children(&ctx.state,parent,&team.tasks);
@@ -321,12 +318,9 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
                 }
             }
         }
-        if writer_id.as_ref().is_some_and(|id|
-            ctx.state.store.get("job",id).is_some_and(|child|
-                !matches!(child["status"].as_str(),Some("running"|"queued")))){
-            writer_id=None;
-            writer_lease=None;
-        }
+        let writer_active=rows.iter().any(|(task,row)|task.mode==Mode::Write
+            && row.as_ref().is_some_and(|child|
+                matches!(child["status"].as_str(),Some("running"|"queued"))));
         if !errors.is_empty() {
             cancel_children(&ctx.state,parent,&team.tasks);
             return Ok(json!({"status":"needs_review",
@@ -345,13 +339,10 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
             if row.is_some()||active>=team.max_parallel {continue;}
             if !task.depends_on.iter().all(|id|completed.contains(id.as_str())) {continue;}
             if task.mode==Mode::Write {
-                // Writers neither overlap with this team's readers nor with
-                // a writer from any other team in the same workspace.
-                if active>0||writer_lease.is_some(){continue;}
-                let Some(lease)=LeaseGuard::acquire(&ctx.state,&writer_scope)
-                else{continue;};
-                writer_lease=Some(lease);
-            }else if writer_lease.is_some() {continue;}
+                // Team-local ordering: the native worker separately acquires
+                // its own durable workspace lease before executing effects.
+                if active>0 {continue;}
+            }else if writer_active {continue;}
             let id=child_id(parent,&task.id);
             // Persist intent first; enqueue_once prevents duplicate workers
             // when a supervisor restarts across this boundary.
@@ -365,7 +356,6 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
             else{return Err(format!("Team child {id} conflicts with a prior immutable job"));};
             let status=child["status"].as_str().unwrap_or("");
             if status=="queued" {jobs::start_now(ctx.state.clone(),id.clone());}
-            if task.mode==Mode::Write {writer_id=Some(id.clone());}
             active+=1;
             started.push(id);
             if task.mode==Mode::Write {break;}
@@ -465,6 +455,29 @@ mod tests {
         assert!(next["prompt"].as_str().unwrap().contains("read-1"));
         assert!(!next.to_string().contains("SECRET_SHOULD_NOT_LEAK"));
         assert_eq!(next["parentRunId"],"lead");
+    }
+
+    #[test] fn dependency_lookup_requires_same_parent_and_never_leaks_tool_arguments(){
+        let team=sample();
+        let dir=std::env::temp_dir().join(format!("dominion-team-dep-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=crate::config::Config{port:0,data_dir:dir.clone(),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        let id=child_id("lead",&team.tasks[0].id);
+        state.store.put("job",&json!({"id":id,"kind":"prompt",
+            "status":"completed","input":{"parentRunId":"lead","teamTaskId":"investigate"},
+            "result":{"status":"completed","answer":"Located source",
+                "receipts":[{"id":"receipt-a","tool":"workspace_read","success":true,
+                    "arguments":{"secret":"DONT_SEND_ME"}}]}})).unwrap();
+        let evidence=dependency_observations(&state,"lead",&team,&team.tasks[1]).unwrap();
+        assert_eq!(evidence["observations"][0]["childJobId"],id);
+        assert_eq!(evidence["observations"][0]["evidenceGrade"],"native_observed");
+        assert!(!evidence.to_string().contains("DONT_SEND_ME"));
+        assert!(dependency_observations(&state,"another-lead",&team,&team.tasks[1]).is_err());
+        crate::test_support::cleanup_dir(dir);
     }
     #[test] fn immutable_child_id_is_scoped_to_parent(){
         assert_ne!(child_id("lead-a","research"),child_id("lead-b","research"));

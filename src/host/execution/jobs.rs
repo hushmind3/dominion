@@ -490,9 +490,20 @@ async fn run_job(state: AppState, job: Value) {
             "finishedAt":chrono::Utc::now().to_rfc3339()}));
         return;
     }
+    // Durable writer ownership is held by the ACTUAL child worker, not a
+    // supervisor that can crash and leave this job still running. Competing
+    // workspace writers defer without starting their model or any tool effect.
+    let is_team_writer=kind=="prompt"&&job["input"]["teamMode"]=="write";
+    let writer_lease=if is_team_writer {
+        crate::host::execution::lease::LeaseGuard::acquire(
+            &state,&format!("task-team-writer:{}",
+                state.config.workspace.to_string_lossy()))
+    }else{None};
     // Only the language-to-action executor runs in the core job worker.
     // Optional job families attach through the host composition boundary.
-    let result = match kind.as_str() {
+    let result=if is_team_writer&&writer_lease.is_none(){
+        Err("deferred: workspace writer lease is held by another worker".into())
+    }else{match kind.as_str() {
         "prompt" => run_prompt(&context, &job).await,
         "resume" => run_resume(&context, &job).await,
         other => match crate::features::dispatch_job(&context,&job,other).await {
@@ -502,7 +513,7 @@ async fn run_job(state: AppState, job: Value) {
                 None => Err(format!("지원하지 않는 작업 종류입니다: {other}")),
             }
         },
-    };
+    }};
 
     match result {
         Ok(result) => {
