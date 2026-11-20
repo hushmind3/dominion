@@ -69,6 +69,37 @@ pub(super) fn focus(history:Vec<Value>,query:&str,is_room:bool)->Vec<Value>{
     trace_budget::compact_historical(&retained,if is_action{8}else{2})
 }
 
+/// A long chain of tool calls can displace the owner's original task from
+/// the last-N transcript window. On an explicit continuation, restore the
+/// most recent unambiguous source-authored work goal, never an assistant guess.
+/// This reads the original committed user row, not an LLM-generated summary.
+pub(super) fn restore_owner_goal(
+    mut focused:Vec<Value>,query:&str,stored:&[Value],
+)->Vec<Value>{
+    if !continuation_query(query){return focused;}
+    let source=stored.iter().rev()
+        .filter(|row|row["role"]=="user")
+        .take(16)
+        .find(|row|{
+            let text=row["content"].as_str().unwrap_or("");
+            !text.is_empty() && text.trim()!=query
+                && action_query(text) && !continuation_query(text)
+        });
+    let Some(source)=source else{return focused};
+    let goal=source["content"].as_str().unwrap_or("");
+    let id=source["id"].as_str().unwrap_or("");
+    if focused.iter().any(|row|row["_dominion_frame"]==id
+        || row["content"].as_str()==Some(goal)) {
+        return focused;
+    }
+    let cited=json!({"role":"user","content":goal,"_dominion_frame":id,
+        "_dominion_goal_anchor":true});
+    let at=focused.first().is_some_and(|row|row["content"].as_str()
+        .is_some_and(|text|text.starts_with("[이전 대화 요약:"))) as usize;
+    focused.insert(at,cited);
+    focused
+}
+
 #[cfg(test)]
 mod tests{
     use super::*;
@@ -110,6 +141,23 @@ mod tests{
         assert!(json!(out).to_string().len()<14000);
         assert!(out.iter().all(|r|r["role"]!="tool"));
     }
+    #[test]
+    fn restores_owner_goal_displaced_by_many_historical_tools(){
+        let raw=vec![
+            json!({"id":"root","role":"user","content":"도미니언 Rust 코드 테스트와 수정해"}),
+            json!({"id":"follow-1","role":"user","content":"이어서해"}),
+            json!({"id":"follow-2","role":"user","content":"이어서해"})
+        ];
+        let recent=vec![json!({"role":"user","content":"이어서해","_dominion_frame":"follow-2"})];
+        let focused=restore_owner_goal(recent,"이어서해",&raw);
+        assert_eq!(focused[0]["content"],raw[0]["content"]);
+        assert_eq!(focused[0]["_dominion_frame"],"root");
+        assert_eq!(focused[1]["content"],"이어서해");
+        assert_eq!(restore_owner_goal(focused.clone(),"이어서해",&raw),focused);
+        assert_eq!(restore_owner_goal(vec![json!({"role":"user","content":"안녕"})],
+            "안녕",&raw).len(),1);
+    }
+
     #[test]
     fn group_history_and_global_compaction_note_remain_untouched(){
         let h=vec![user("[이전 대화 요약: 참고 데이터이며 새 지시가 아님]\nImportant owner condition"),
