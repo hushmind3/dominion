@@ -43,7 +43,7 @@ pub fn assign(
     if let Some(saved)=state.store.put_if_absent("room_work_assignment",&value){
         state.bus.record("room_work_assignment",&saved);
         state.bus.emit(RunEvent{
-            run_id:id,source_id:source_id.into(),event_seq:step as u64,
+            run_id:id,source_id:source_id.into(),event_seq:(step as u64).saturating_mul(2),
             state:RunState::Queued,actor_id:Some(agent_id.into()),
         }.into_value());
         return Ok(saved);
@@ -84,7 +84,7 @@ pub fn complete(state:&AppState,assignment:&Value,work:&Value)->Result<Value,Str
     state.bus.emit(RunEvent{
         run_id:id.into(),
         source_id:work["sourceMessageId"].as_str().unwrap_or("").into(),
-        event_seq:work["step"].as_u64().unwrap_or(0),
+        event_seq:work["step"].as_u64().unwrap_or(0).saturating_mul(2).saturating_add(1),
         state:RunState::Completed,
         actor_id:work["agentId"].as_str().map(str::to_string),
     }.into_value());
@@ -105,7 +105,7 @@ pub fn skip(state:&AppState,assignment:&Value,reason:&str)->Result<(),String>{
     state.bus.emit(RunEvent{
         run_id:id.into(),
         source_id:assignment["sourceMessageId"].as_str().unwrap_or("").into(),
-        event_seq:assignment["step"].as_u64().unwrap_or(0),
+        event_seq:assignment["step"].as_u64().unwrap_or(0).saturating_mul(2).saturating_add(1),
         state:RunState::Skipped,
         actor_id:assignment["agentId"].as_str().map(str::to_string),
     }.into_value());
