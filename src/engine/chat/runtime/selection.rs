@@ -238,6 +238,16 @@ pub(super) fn select_chat_tools(
             .or_else(||algorithm["variant"].as_str())==Some("all")
         && algorithm["ownerActivated"]!=true));
     if legacy_full_default && definitions.len()>18 {
+        // Keep a compact set of useful read probes even when a request does
+        // not contain a keyword such as "read" or "search". A model may
+        // autonomously inspect context before answering; eliminating every
+        // direct tool here would break legitimate existing agent behavior.
+        if !room_tool_request(query) {
+            return definitions.into_iter().filter(|definition|matches!(
+                tool_name(definition),
+                "workspace_list" | "workspace_read" | "memory_search" | "web_search"
+            )).collect();
+        }
         return select_room_tools(definitions,query,
             &std::collections::HashSet::new(),false);
     }
@@ -347,7 +357,9 @@ mod room_catalog_cache_tests {
         }
         let default=json!({"source":"builtin","implementation":"all"});
         let casual=select_chat_tools(tools.clone(),"안녕하세요",&default);
-        assert!(casual.is_empty(),"casual questions should not receive 33 full schemas");
+        assert_eq!(casual.iter().map(tool_name).collect::<Vec<_>>(),
+            vec!["workspace_read","web_search"],
+            "preserve spontaneous read/search ability without sending 33 full schemas");
         let searching=select_chat_tools(tools.clone(),"웹 검색해 주세요",&default);
         assert!(searching.len()<=8);
         assert!(searching.iter().any(|row|tool_name(row)=="web_search"));
