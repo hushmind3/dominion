@@ -12,7 +12,7 @@ DOMINION의 첫 화면은 채팅이다. 모델을 연결하고 작업을 맡기�
 | 로컬 모델 | 선택한 로컬 실행기와 다운로드한 모델. 예: Ollama 제공자 등록. API 사용료는 없지만 컴퓨터 자원과 전력은 사용 |
 | 네이티브 설치 파일 직접 만들기 | 위 개발 환경과 [Tauri의 OS별 사전 요구사항](https://v2.tauri.app/start/prerequisites/) |
 
-Rust와 Node.js는 완성된 데스크톱 앱의 일반 채팅 실행에 필요한 별도 런타임이 아니다. **자기 소스를 수정·빌드·검증하려면 개발 환경이 필요하다.** SQLite는 Rust 바이너리에 포함되므로 별도 DB 서버를 설치하지 않는다. 현재 자동 RSI 평가기는 Node.js로 실행하며 Bash·WSL·Python을 요구하지 않는다.
+Rust와 Node.js는 완성된 데스크톱 앱의 일반 채팅 실행에 필요한 별도 런타임이 아니다. **자기 소스를 수정·빌드·검증하려면 개발 환경이 필요하다.** SQLite는 Rust 바이너리에 포함되므로 별도 DB 서버를 설치하지 않는다.
 
 다운로드: [Git](https://git-scm.com/downloads/), [Rust/rustup](https://rust-lang.org/tools/install/), [Node.js](https://nodejs.org/en/download), [Ollama](https://ollama.com/download).
 
@@ -64,4 +64,4 @@ Windows에서 소스 반영 후 실행 중인 서버를 종료하고 `npm run bu
 
 기본 소스 실행의 로컬 데이터는 `runtime/` 아래에 있다. 키·개인 대화·실패 원문을 공개 레포나 홍보 자료에 넣지 않는다. 검증된 코드 계보와 익명화된 집계만 공유한다.
 
-[시스템 자기개선 계약과 실증 범위](RSI-MAIN-INTEGRATION-2026-11-12.md), [평가 프로필 확장](../rsi/evaluations/README.md)을 함께 확인한다.
+최신 실행·검증 경로는 [엔진 구조](../ENGINE.md)와 [개발 CI](../.github/workflows/ci.yml)를 참조한다.
