@@ -144,6 +144,19 @@ impl Store {
                  created_at TEXT NOT NULL DEFAULT (datetime('now'))
              );
              CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, created_at);
+             -- Structured, receipt-derived room collaboration. Not a chat copy.
+             CREATE TABLE IF NOT EXISTS room_work_receipts(
+                 message_id TEXT PRIMARY KEY,
+                 room_id TEXT NOT NULL,
+                 session_id TEXT NOT NULL,
+                 source_message_id TEXT NOT NULL,
+                 agent_id TEXT NOT NULL,
+                 execution_id TEXT NOT NULL,
+                 summary TEXT NOT NULL,
+                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
+             );
+             CREATE INDEX IF NOT EXISTS idx_room_work_source
+                 ON room_work_receipts(room_id,session_id,source_message_id,created_at DESC,message_id DESC);
              CREATE TABLE IF NOT EXISTS audit(
                  id TEXT PRIMARY KEY,
                  event TEXT NOT NULL,
@@ -591,6 +604,63 @@ impl Store {
         let rows = stmt.query_map([task_id], record_from_row)
             .map_err(|error| error.to_string())?;
         rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+    }
+
+    /// Append one immutable evidence summary for a completed room agent turn.
+    /// The message ID is the idempotency key across worker restarts. No model
+    /// output or raw tool payload is stored in this structured board.
+    pub fn publish_room_work_receipt(&self, value:&Value) -> Result<bool,String> {
+        let field=|name:&str| -> Result<&str,String> {
+            let v=value[name].as_str().ok_or_else(||format!("room board missing {name}"))?;
+            if v.trim().is_empty()||v.len()>256{return Err(format!("invalid room board {name}"));}
+            Ok(v)
+        };
+        let room=field("roomId")?;
+        let session=field("sessionId")?;
+        let source=field("sourceMessageId")?;
+        let message=field("messageId")?;
+        let agent=field("agentId")?;
+        let execution=field("executionId")?;
+        let summary=value["summary"].as_object()
+            .ok_or("room board summary must be an object")?;
+        let receipts=summary.get("receipts").and_then(Value::as_array)
+            .ok_or("room board receipts must be an array")?;
+        if receipts.is_empty()||receipts.len()>12 {return Err("room board receipt count out of bounds".into());}
+        let serialized=Value::Object(summary.clone()).to_string();
+        if serialized.len()>8_192{return Err("room board summary exceeds 8192 bytes".into());}
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let changed=conn.execute(
+            "INSERT INTO room_work_receipts(
+                room_id,session_id,source_message_id,message_id,agent_id,execution_id,summary
+             ) VALUES(?1,?2,?3,?4,?5,?6,?7)
+             ON CONFLICT(message_id) DO NOTHING",
+            params![room,session,source,message,agent,execution,serialized]
+        ).map_err(|e|e.to_string())?;
+        Ok(changed==1)
+    }
+
+    /// Read the current owner's work board with an indexed, bounded query.
+    /// It cannot retrieve another room, session, owner message or in-flight
+    /// operation, even if a peer injects an unrelated identifier into text.
+    pub fn room_work_receipts(
+        &self, room:&str,session:&str,source:&str,limit:usize
+    )->Result<Vec<Value>,String>{
+        if limit==0{return Ok(Vec::new());}
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT message_id,agent_id,execution_id,summary
+               FROM room_work_receipts
+              WHERE room_id=?1 AND session_id=?2 AND source_message_id=?3
+              ORDER BY created_at DESC,message_id DESC LIMIT ?4"
+        ).map_err(|e|e.to_string())?;
+        let values=stmt.query_map(params![room,session,source,limit.min(16) as i64],|row|{
+            let summary:String=row.get(3)?;
+            Ok(json!({"messageId":row.get::<_,String>(0)?,
+                "agentId":row.get::<_,String>(1)?,
+                "executionId":row.get::<_,String>(2)?,
+                "summary":serde_json::from_str::<Value>(&summary).unwrap_or(Value::Null)}))
+        }).map_err(|e|e.to_string())?;
+        values.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 
     /// Repeated effect checks must not parse the entire historical tool journal.
@@ -1807,6 +1877,43 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let store = Store::open(&dir.join("dominion.sqlite")).unwrap();
         (store, dir)
+    }
+
+    #[test]
+    fn room_work_board_is_immutable_scoped_indexed_and_bounded() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for i in 0..22 {
+            let entry=json!({"roomId":"r","sessionId":"room:r",
+                "sourceMessageId":"owner","messageId":format!("m{i:02}"),
+                "agentId":"a","executionId":format!("exec{i}"),
+                "summary":{"receipts":[{"id":format!("op{i}"),"tool":"workspace_read"}]}});
+            assert!(store.publish_room_work_receipt(&entry).unwrap());
+            assert!(!store.publish_room_work_receipt(&entry).unwrap());
+        }
+        let foreign=json!({"roomId":"other","sessionId":"room:other",
+            "sourceMessageId":"owner","messageId":"foreign","agentId":"z",
+            "executionId":"other-run","summary":{"receipts":[{"id":"secret"}]}});
+        store.publish_room_work_receipt(&foreign).unwrap();
+        let newer=json!({"roomId":"r","sessionId":"room:r",
+            "sourceMessageId":"new-owner","messageId":"later","agentId":"a",
+            "executionId":"later-run","summary":{"receipts":[{"id":"later-op"}]}});
+        store.publish_room_work_receipt(&newer).unwrap();
+        let rows=store.room_work_receipts("r","room:r","owner",7).unwrap();
+        assert_eq!(rows.len(),7);
+        assert!(rows.iter().all(|v|v["messageId"]!="foreign"&&v["messageId"]!="later"));
+        assert!(store.room_work_receipts("other","room:r","owner",10).unwrap().is_empty());
+        assert!(store.room_work_receipts("r","room:r","owner",0).unwrap().is_empty());
+        let plan:String=store.conn.lock().unwrap().query_row(
+            "EXPLAIN QUERY PLAN SELECT message_id,agent_id,execution_id,summary
+             FROM room_work_receipts
+             WHERE room_id='r' AND session_id='room:r' AND source_message_id='owner'
+             ORDER BY created_at DESC,message_id DESC LIMIT 6",
+            [],|row|row.get(3)
+        ).unwrap();
+        assert!(plan.contains("idx_room_work_source"),"{plan}");
+        let invalid=json!({"roomId":"r","sessionId":"room:r","sourceMessageId":"owner",
+            "messageId":"bad","agentId":"a","executionId":"x","summary":{"receipts":[]}});
+        assert!(store.publish_room_work_receipt(&invalid).is_err());
     }
 
     #[test]
