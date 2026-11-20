@@ -9,7 +9,7 @@
 ## Change
 - `Store::patch_if` now performs compare+patch inside SQLite `TransactionBehavior::Immediate`, including multi-process access to the same on-disk DB.
 - New `Store::checkpoint_running_job` rejects stale attempts, cancelled/terminal jobs and identity/cancellation-field overwrites. The existing nested `videoState` compatibility merge remains, while the narrow deferred path may return a running attempt to queued with its attempt refund.
-- `JobContext` captures `attempts` once at worker claim, and uses the same store primitive for every progress and terminal checkpoint. New tasks, Money jobs, room jobs and SDK-created prompt jobs share the same host policy.
+- `JobContext` captures `attempts` once at worker claim, and uses the same store primitive for every progress and terminal checkpoint. Native prompt jobs, room jobs and SDK-created tasks share the same host policy.
 - `cancel_job` commits cancellation before signalling the live session, and accurately returns HTTP conflict through the existing adapter on lost CAS races.
 - Test job fixture now claims running before invoking the native worker, matching actual dispatcher behavior.
 
