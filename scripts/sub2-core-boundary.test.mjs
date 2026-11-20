@@ -10,7 +10,8 @@ test('core entrypoint owns natural language execution, not product services',()=
  const core=source('src/engine/core/mod.rs');
  assert.match(core,/pub async fn run_with_events/);
  assert.match(core,/pub trait ExecutionPort/);
- assert.doesNotMatch(core,/AppState|use super::chat/);
+ const imports=core.split('\n').filter(line=>line.trimStart().startsWith('use ')).join('\n');
+ assert.doesNotMatch(imports,/AppState|chat|mcp|memory|jobs|models/);
  assert.match(source('src/engine/services/automation/turn_quiet.rs'),/impl core::ExecutionPort for ChatPort/);
  assert.doesNotMatch(core,/pub async fn run_quiet_resume/);
  assert.doesNotMatch(core,/pub async fn run_room_quiet/);
