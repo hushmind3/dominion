@@ -23,7 +23,7 @@ pub(super) fn tool_is_read_only(name: &str) -> bool {
     matches!(
         name,
         "workspace_list" | "workspace_read" | "workspace_read_range" | "file_list" | "file_read"
-            | "web_search" | "http_fetch" | "memory_search"
+            | "web_search" | "http_fetch" | "http_document_read" | "memory_search"
             | "task_status" | "task_result" | "account_status" | "github_file_read"
             | "github_repositories"
     )
@@ -133,7 +133,7 @@ pub(super) fn select_room_tools(
         ),
         (
             &["검색", "웹", "http", "url", "fetch", "search"],
-            &["web_search", "http_fetch"],
+            &["web_search", "http_fetch", "http_document_read"],
         ),
         (
             &["메모리", "memory", "기억해둬", "기억해 둬", "저장해"],
