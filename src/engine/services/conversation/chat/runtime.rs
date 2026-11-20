@@ -39,6 +39,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use super::{budget,capability,context,continuity,protocol,room_context,tool_schedule,trace_budget};
 mod turn_body;
 mod finalize;
+mod preflight;
 #[path = "../../decision/runtime_program.rs"]
 mod program;
 mod observations;

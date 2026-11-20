@@ -251,3 +251,14 @@ test('room workers use bounded Tokio JoinSet and remain private to the existing 
  assert.match(sessionApi,/room_worker/);
  assert.doesNotMatch(source('crates/dominion-turn-core/src/lib.rs'),/room_parallel/);
 });
+
+test('owner ingress and acceptance preflight are outside the model loop',()=>{
+ const runtime=source('src/engine/services/conversation/chat/runtime/turn_body.rs');
+ const setup=source('src/engine/services/conversation/chat/runtime/preflight.rs');
+ assert.match(runtime,/super::preflight::prepare\(/);
+ assert.match(setup,/pub\(super\) fn prepare\(/);
+ assert.match(setup,/attachments::validate_ids/);
+ assert.match(setup,/acceptance\.demoted/);
+ assert.match(setup,/episode::attach_source/);
+ assert.doesNotMatch(setup,/stream_completion|dispatch_tool_call|run_program/);
+});
