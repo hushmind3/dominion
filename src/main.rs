@@ -5,6 +5,7 @@ mod config;
 mod db;
 mod engine;
 mod events;
+mod features;
 mod integrations;
 mod migrations;
 mod platform;

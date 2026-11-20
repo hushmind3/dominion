@@ -4,9 +4,9 @@
 use crate::state::AppState;
 use dominion_sdk::harness::Snapshot;
 use serde_json::{json,Value};
-use super::native_evidence::digest;
+use crate::engine::native_evidence::digest;
 #[cfg(test)]
-use super::native_evidence::{artifact_witness,action_witness};
+use crate::engine::native_evidence::{artifact_witness,action_witness};
 #[cfg(test)]
 use sha2::{Digest,Sha256};
 use std::collections::{BTreeMap,BTreeSet};
