@@ -31,7 +31,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Product and SDK contract tests (dev profile only)
         run: |
-          grep -Fq 'Kernel,tool_relevance,tool_relevance_with_schema};' crates/dominion-agent-sdk/src/lib.rs
+          grep -Fq 'Kernel,ReActLoop,tool_relevance,tool_relevance_with_schema};' crates/dominion-agent-sdk/src/lib.rs
           grep -Fq 'dominion_agent_sdk::tool_relevance(' src/conversation/chat/runtime/selection.rs
           cargo test --bin dominion-rust integrations::skills::discovery::tests
           cargo test --bin dominion-rust conversation::chat::runtime::capability::tests

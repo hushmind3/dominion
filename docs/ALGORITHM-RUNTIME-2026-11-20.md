@@ -8,27 +8,37 @@ A model-loop SDK that directly owns runtime admission, natural-language intent r
 ## Dependency direction
 
 ```text
-           natural language / source user request
-                            |
-                       Product host
-                   src/host/ + API
-                            |
-                dominion-agent-sdk  <----- model/tool/journal host ports
-                 |              |
-                 v              v
-       dominion-agent-runtime  dominion-agent-algorithms
-              ^                      |
-              +----------------------+
+User / API / session / provider / channels
+                   |
+         src/host/execution/  (select profile + loop)
+                   |
+             AgentLoop trait  (core contract)
+                   |
+       +-----------+-----------+
+       |                       |
+  Algorithms                Runtime
+  agent_loop.rs          contracts.rs
+  ReActLoop              Model/Tools/Evidence/Journal
+  context/plan           budget, scheduler
+  tool ranking           acceptance/dispatch
+       |                       ^
+       +-----------------------+
+                   |
+             SDK facade
+     (stable re-export for API clients)
 ```
 
-**Runtime never imports Algorithms or SDK; Algorithms imports Runtime shared types; SDK composes both.** The Rust host uses the same public SDK facade and continues to own SQLite-backed Journal, approvals, model transports, cancellation and execution effects. No DB code or dependencies enter the independent crates.
+The **dependency direction** is `algorithms → runtime` and `sdk → algorithms + runtime`. `runtime` never imports the algorithms or SDK crates. `AgentLoop` and the basic `AgentPorts` capability contract are defined in `runtime/contracts.rs`; the actual 760-line ReAct-compatible orchestration, replanning and model-turn workflow live in `algorithms/agent_loop.rs`. The SDK's `lib.rs` only re-exports the stable names (13 lines). Host-owned DB/Journal, credentials and channels remain separate from all three crates.
 
-| Crate | Owned responsibilities | Explicit non-responsibilities |
+| Crate | Responsibility | Must not contain |
 | --- | --- | --- |
-| `dominion-agent-runtime` | BudgetLedger, ModelTokenBudget, common Strategy/Action/Receipt/ToolSpec contracts, dependency-aware scheduler, bounded JSON-schema admission | Prompt wording, task intent, tool relevance, SQLite, network, model |
-| `dominion-agent-algorithms` | AgentAlgorithm trait, StandardAlgorithm, lexical/tool-schema relevance, progressive tool disclosure, compact model context, evidence-derived failure guidance | Effect permission, write-ahead enforcement, SQLite, external tool I/O |
-| `dominion-agent-sdk` | Existing Kernel run/resume facade, checkpointed model/tool turn coordination, owner acceptance, evidence reconciliation, trait ports | DB backend, UI menus, algorithm implementation ownership |
-| `src/host/` and `src/storage/` | Durable journal adapter, authorization, SQLite, migrations, runtime account state | Portable algorithm design |
+| `dominion-agent-runtime` | Model/Tools/Evidence/Journal and AgentLoop traits; approved contracts, budgets, safe dispatch/acceptance, durable snapshot types | Agent turn loops, prompts, memory DB, provider SDKs |
+| `dominion-agent-algorithms` | ReActLoop / Kernel turn orchestration, profile prompts, compaction, tool ranking, replanning, failure guidance, offline replay | Database, direct frontend routes, privileged network credentials |
+| `dominion-agent-sdk` | Stable re-export facade preserving existing public APIs | New implementations, parallel agent loops, host data stores |
+| `src/host/` | Choose version-pinned algorithm, bind Loop+Ports, enforce host permissions and durable job identity | Model planning algorithms |
+| `src/storage/` | SQLite persistence, vault, migrations | Model reasoning and workflow policy |
+
+This is a **compiled Rust trait and crate boundary**, not sandbox isolation: a new agent-loop implementation is trusted Rust code and can call the host's supplied ports. Untrusted plugin loops require an additional WASM/process isolation and capability validation layer. We have not installed WASM or shipped a user-facing loop marketplace.
 
 ## Policy injection contract
 
@@ -74,7 +84,9 @@ For the existing native SDK compatibility endpoint:
 
 The default when omitted is `standard-v1`. The allowlist lives under `src/features/cognition/profiles.rs`, not inside the Rust execution kernel. `focused-v1` uses shorter model plans and a compact context view for non-VerifyFirst jobs; both profiles share the same durable effect admission and approval rules.
 
-The job record pins `nativeAlgorithm: {format, id, revision}` before any provider/model call. The SDK snapshot separately pins `algorithmId` before any model invocation or external tool call. On recovery, either an ID/revision change or a snapshot mismatch fails closed instead of silently switching policies. A preexisting, unpinned snapshot can resume only with the original default profile. Increment the immutable revision when algorithm semantics change; this is an explicit implementation revision, **not a source-code-derived cryptographic hash**.
+The job record pins `nativeAlgorithm: {format, id, revision}` before any provider/model call. The trusted runtime SDK snapshot separately pins `algorithmId` before any model invocation or external tool call. On recovery, either an ID/revision change or a snapshot mismatch fails closed instead of silently switching policies. A preexisting, unpinned snapshot can resume only with the original default profile. Increment the immutable revision when algorithm semantics change; this is an explicit implementation revision, **not a source-code-derived cryptographic hash**.
+
+The host now invokes `ReActLoop` through the runtime's `AgentLoop::execute(AgentPorts, request, checkpoint)` trait. Replacing the loop implementation is now a compile-time extension point independent of policy profile selection; no second production loop has been introduced.
 
 The TypeScript SDK exposes `AlgorithmId` on both `jobs.create` and `nativeRuns.start`; SDK run responses expose `algorithmId` and `algorithmRevision`. No new UI tab, menu, permanent memory or global runtime setting is created.
 

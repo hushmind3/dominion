@@ -34,8 +34,10 @@ test('intelligence owns policy and tool scoring; SDK receives it by injection',(
  const runner=read('src/host/execution/native_agent.rs');
  assert.match(profiles,/Pinned agent algorithm ID or implementation revision changed/);
  assert.match(runner,/profiles::for_job\(job\)/);
- assert.match(runner,/run_with_algorithm\(request,selected.algorithm\)/);
- assert.match(runner,/resume_with_algorithm\(request,saved,selected.algorithm\)/);
+ assert.match(runner,/ReActLoop\{policy:selected.algorithm\}/);
+ assert.match(runner,/agent_loop\.execute\(/);
+ assert.match(read('crates/dominion-agent-runtime/src/contracts.rs'),/pub trait AgentLoop/);
+ assert.match(loop,/impl AgentLoop for ReActLoop/);
  assert.match(loop,/algorithm\.planner_instructions/);
  assert.match(loop,/algorithm\.select_tools/);
  assert.match(loop,/algorithm\.project_context/);

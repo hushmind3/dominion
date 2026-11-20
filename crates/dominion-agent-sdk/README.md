@@ -1,6 +1,6 @@
 # DOMINION Rust Native Agent SDK
 
-The independent **`dominion-agent-sdk`** crate owns budgeted model/tool execution, plan/decision snapshots, tool authorization contracts, bounded JSON Schema validation, durable receipts, independent acceptance checks and fail-closed crash/recovery behavior. It is not a built-in media renderer or an autonomous self-improving RSI engine.
+The independent **`dominion-agent-sdk`** crate is a compatibility facade. `dominion-agent-runtime` owns budgeted execution contracts, Journal/Snapshot, schema checks and durable dispatch; `dominion-agent-algorithms` owns the agent loop, ReAct orchestration, context ranking, and replay. The host supplies providers, permissions and SQLite. It is not a built-in media renderer or an autonomous self-improving RSI engine.
 
 ## Recovery authority and bounded history
 
@@ -20,4 +20,4 @@ Run `cargo test -p dominion-agent-sdk`. See [lean product architecture](../../..
 
 ## Execution ownership (2026-11-20)
 
-The SDK crate is now **a compatibility facade only**. `dominion-agent-runtime` owns the secure execution contracts, tool call dispatch, budgets, checkpoints and acceptance. `dominion-agent-algorithms` owns the actual versioned model/agent run loop, plus planning, tool ranking, context projection, failure guidance, and offline replay. The product host supplies Model/Tools/Evidence/Journal ports. Existing `dominion_agent_sdk::{Kernel,RunRequest,Snapshot,...}` imports and `run_with_algorithm()` continue unchanged. No UI or database is linked to the portable crates.
+The SDK crate is now **a compatibility facade only**. A core `AgentLoop` trait connects trusted loop implementations in Algorithms to the host without a new engine or UI. `dominion-agent-runtime` owns the secure execution contracts, tool call dispatch, budgets, checkpoints and acceptance. `dominion-agent-algorithms` owns the actual versioned model/agent run loop, plus planning, tool ranking, context projection, failure guidance, and offline replay. The product host supplies Model/Tools/Evidence/Journal ports. Existing `dominion_agent_sdk::{Kernel,RunRequest,Snapshot,...}` imports and `run_with_algorithm()` continue unchanged. No UI or database is linked to the portable crates.
