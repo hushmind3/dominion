@@ -9,7 +9,7 @@ mod reasoning_controls_tests {
     fn explicit_thinking_off_never_inherits_agent_or_provider_effort() {
         for kind in ["openai","local","codex"] {
             let (effort, thinking)=resolve_reasoning_effort(
-                None,Some(false),Some("high"),Some("max"),kind);
+                None,Some(false),Some("high"),Some(false),Some("max"),kind);
             assert_eq!(thinking,Some(false));
             assert_eq!(effort.as_deref(),if kind=="codex"{Some("none")}else{None});
         }
@@ -18,21 +18,37 @@ mod reasoning_controls_tests {
     #[test]
     fn explicit_effort_none_wins_even_against_inherited_thinking() {
         let (effort, thinking)=resolve_reasoning_effort(
-            Some("none"),Some(true),Some("high"),Some("max"),"deepseek");
+            Some("none"),Some(true),Some("high"),Some(false),Some("max"),"deepseek");
         assert_eq!(effort,None);
         assert_eq!(thinking,Some(false));
     }
 
     #[test]
+    fn saved_effort_wins_over_legacy_agent_thinking_false() {
+        let (effort, thinking)=resolve_reasoning_effort(
+            None,None,Some("ultra"),Some(false),Some("high"),"codex");
+        assert_eq!(effort.as_deref(),Some("ultra"));
+        assert_eq!(thinking,Some(true));
+        let (effort, thinking)=resolve_reasoning_effort(
+            None,None,Some(""),Some(false),Some("high"),"codex");
+        assert_eq!(effort.as_deref(),Some("high"));
+        assert_eq!(thinking,Some(true));
+    }
+
+    #[test]
     fn automatic_inheritance_only_when_user_does_not_override() {
         let (effort, thinking)=resolve_reasoning_effort(
-            None,None,Some("low"),Some("high"),"openai");
+            None,None,Some("low"),None,Some("high"),"openai");
         assert_eq!(effort.as_deref(),Some("low"));
-        assert_eq!(thinking,None);
+        assert_eq!(thinking,Some(true));
         let (effort, thinking)=resolve_reasoning_effort(
-            Some("medium"),Some(true),Some("high"),Some("max"),"openai");
+            Some("medium"),Some(true),Some("high"),Some(false),Some("max"),"openai");
         assert_eq!(effort.as_deref(),Some("medium"));
         assert_eq!(thinking,Some(true));
+        let (effort, thinking)=resolve_reasoning_effort(
+            None,None,None,Some(false),None,"deepseek");
+        assert_eq!(effort,None);
+        assert_eq!(thinking,Some(false));
     }
 }
 
