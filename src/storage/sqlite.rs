@@ -760,6 +760,145 @@ impl Store {
         self.get("execution", &execution_id)
     }
 
+    /// Claim a remote compute-only task under the same SQLite transaction as
+    /// stale-lease reconciliation. An expired paid inference is NEVER queued
+    /// again: its outcome is unknown and must be reviewed by the owner.
+    pub fn claim_remote_task(&self,worker:&str)->Result<Option<Value>,String>{
+        let now=chrono::Utc::now().timestamp_millis();
+        let mut conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e|e.to_string())?;
+        let expired={
+            let mut stmt=tx.prepare(
+                "SELECT data FROM records WHERE kind='remote_task'
+                 AND json_extract(data,'$.status')='running'
+                 AND CAST(json_extract(data,'$.leaseExpiresAtMs') AS INTEGER)<=?1"
+            ).map_err(|e|e.to_string())?;
+            let rows=stmt.query_map([now],|r|r.get::<_,String>(0))
+                .map_err(|e|e.to_string())?;
+            rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?
+        };
+        for raw in expired {
+            let mut item:Value=serde_json::from_str(&raw).map_err(|e|e.to_string())?;
+            item["status"]=json!("needs_review");
+            item["phase"]=json!("needs_review");
+            item["reviewReason"]=json!("Remote lease expired with unknown model/effect outcome; no auto replay");
+            item["finishedAt"]=json!(chrono::Utc::now().to_rfc3339());
+            upsert_tx(&tx,"remote_task",&item)?;
+        }
+        let raw:Option<String>=tx.query_row(
+            "SELECT data FROM records WHERE kind='remote_task'
+             AND json_extract(data,'$.status')='queued'
+             ORDER BY json_extract(data,'$.queuedAt'),id LIMIT 1",
+            [],|r|r.get(0)
+        ).optional().map_err(|e|e.to_string())?;
+        let Some(raw)=raw else {tx.commit().map_err(|e|e.to_string())?;return Ok(None);};
+        let mut item:Value=serde_json::from_str(&raw).map_err(|e|e.to_string())?;
+        let id=item["id"].as_str().ok_or("Remote task missing ID")?.to_string();
+        let lease=uuid::Uuid::new_v4().to_string();
+        let attempt=item["attempts"].as_u64().unwrap_or(0).saturating_add(1);
+        item["status"]=json!("running");
+        item["phase"]=json!("running");
+        item["workerId"]=json!(worker);
+        item["leaseId"]=json!(lease);
+        item["attempts"]=json!(attempt);
+        item["leaseExpiresAtMs"]=json!(now.saturating_add(180_000));
+        item["startedAt"]=json!(chrono::Utc::now().to_rfc3339());
+        upsert_tx(&tx,"remote_task",&item)?;
+        tx.commit().map_err(|e|e.to_string())?;
+        Ok(Some(json!({
+            "taskId":id,"leaseId":lease,"attempt":attempt,
+            "prompt":item["prompt"],"maxTokens":item["maxTokens"],
+            "capability":"text_inference"
+        })))
+    }
+
+    /// Heartbeat extends only the same still-live remote attempt.
+    pub fn heartbeat_remote_task(&self,id:&str,worker:&str,lease:&str)
+        ->Result<bool,String>{
+        let now=chrono::Utc::now().timestamp_millis();
+        let mut conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e|e.to_string())?;
+        let raw:Option<String>=tx.query_row(
+            "SELECT data FROM records WHERE kind='remote_task' AND id=?1",
+            [id],|r|r.get(0)).optional().map_err(|e|e.to_string())?;
+        let Some(raw)=raw else{return Ok(false)};
+        let mut item:Value=serde_json::from_str(&raw).map_err(|e|e.to_string())?;
+        if item["status"]!="running" || item["workerId"]!=worker ||
+            item["leaseId"]!=lease ||
+            item["leaseExpiresAtMs"].as_i64().unwrap_or(0)<=now {
+            return Ok(false);
+        }
+        item["leaseExpiresAtMs"]=json!(now.saturating_add(180_000));
+        upsert_tx(&tx,"remote_task",&item)?;
+        tx.commit().map_err(|e|e.to_string())?;
+        Ok(true)
+    }
+
+    /// One terminal receipt from the exact worker+lease, never authority for
+    /// native workspace effects. This result remains externally unverified.
+    pub fn finish_remote_task(&self,id:&str,worker:&str,lease:&str,
+        status:&str,answer:&str,usage:&Value)->Result<Option<Value>,String>{
+        if !matches!(status,"completed"|"needs_review") {
+            return Err("Invalid remote terminal status".into());
+        }
+        if answer.chars().count()>16_384||usage.to_string().len()>2048 {
+            return Err("Remote receipt exceeds bounds".into());
+        }
+        let now=chrono::Utc::now().timestamp_millis();
+        let mut conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e|e.to_string())?;
+        let raw:Option<String>=tx.query_row(
+            "SELECT data FROM records WHERE kind='remote_task' AND id=?1",
+            [id],|r|r.get(0)).optional().map_err(|e|e.to_string())?;
+        let Some(raw)=raw else{return Ok(None)};
+        let mut item:Value=serde_json::from_str(&raw).map_err(|e|e.to_string())?;
+        if item["workerId"]!=worker || item["leaseId"]!=lease{
+            return Ok(None);
+        }
+        if matches!(item["status"].as_str(),Some("completed"|"needs_review")){
+            // A lost HTTP acknowledgement can safely be repeated; the old
+            // committed receipt stays the only result.
+            return Ok(Some(item));
+        }
+        if item["status"]!="running"||
+            item["leaseExpiresAtMs"].as_i64().unwrap_or(0)<=now{
+            return Ok(None);
+        }
+        item["status"]=json!(status);
+        item["phase"]=json!(status);
+        item["result"]=json!({"answer":answer,"usage":usage,
+            "verified":false,"evidenceGrade":"remote_unverified"});
+        item["finishedAt"]=json!(chrono::Utc::now().to_rfc3339());
+        upsert_tx(&tx,"remote_task",&item)?;
+        tx.commit().map_err(|e|e.to_string())?;
+        Ok(Some(item))
+    }
+
+    /// Owner cancellation revokes a live lease in one transaction; any late
+    /// model result is rejected even when the HTTP response arrives afterward.
+    pub fn cancel_remote_task(&self,id:&str)->Result<Option<Value>,String>{
+        let mut conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e|e.to_string())?;
+        let raw:Option<String>=tx.query_row(
+            "SELECT data FROM records WHERE kind='remote_task' AND id=?1",
+            [id],|r|r.get(0)).optional().map_err(|e|e.to_string())?;
+        let Some(raw)=raw else{return Ok(None)};
+        let mut item:Value=serde_json::from_str(&raw).map_err(|e|e.to_string())?;
+        if !matches!(item["status"].as_str(),Some("queued"|"running")){
+            return Ok(None);
+        }
+        item["status"]=json!("cancelled");
+        item["phase"]=json!("cancelled");
+        item["finishedAt"]=json!(chrono::Utc::now().to_rfc3339());
+        upsert_tx(&tx,"remote_task",&item)?;
+        tx.commit().map_err(|e|e.to_string())?;
+        Ok(Some(item))
+    }
+
     /// Compare-and-patch inside an IMMEDIATE SQLite transaction. Competing
     /// processes cannot simultaneously read an old status and both claim it.
     /// The same operation is used for cancellation, job claims and recovery.
@@ -2582,6 +2721,57 @@ mod tests {
         let _=std::fs::remove_dir_all(dir);
     }
 
+    #[test]
+    fn remote_claim_is_unique_and_terminal_receipts_are_fenced(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for id in ["remote:one","remote:two"]{
+            store.put("remote_task",&json!({"id":id,"kind":"remote_inference",
+                "status":"queued","prompt":"Summarize","maxTokens":200,
+                "queuedAt":id,"attempts":0})).unwrap();
+        }
+        let one=store.claim_remote_task("worker-a").unwrap().unwrap();
+        let two=store.claim_remote_task("worker-b").unwrap().unwrap();
+        assert_ne!(one["taskId"],two["taskId"]);
+        assert!(store.claim_remote_task("worker-c").unwrap().is_none());
+        let id=one["taskId"].as_str().unwrap();
+        let lease=one["leaseId"].as_str().unwrap();
+        assert!(!store.heartbeat_remote_task(id,"worker-b",lease).unwrap());
+        assert!(store.finish_remote_task(id,"worker-b",lease,"completed",
+            "forged",&json!({})).unwrap().is_none());
+        assert!(store.heartbeat_remote_task(id,"worker-a",lease).unwrap());
+        let saved=store.finish_remote_task(id,"worker-a",lease,"completed",
+            "true result",&json!({"total_tokens":8})).unwrap().unwrap();
+        assert_eq!(saved["status"],"completed");
+        assert_eq!(saved["result"]["verified"],false);
+        assert_eq!(saved["result"]["answer"],"true result");
+        let repeat=store.finish_remote_task(id,"worker-a",lease,"completed",
+            "different result",&Value::Null).unwrap().unwrap();
+        assert_eq!(repeat["result"]["answer"],"true result");
+        let second=two["taskId"].as_str().unwrap();
+        let second_lease=two["leaseId"].as_str().unwrap();
+        store.cancel_remote_task(second).unwrap().unwrap();
+        assert!(store.finish_remote_task(second,"worker-b",second_lease,
+            "completed","late",&Value::Null).unwrap().is_none());
+    }
+    #[test]
+    fn expired_remote_lease_requires_owner_review_and_cannot_replay(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.put("remote_task",&json!({"id":"remote:expired","status":"queued",
+            "prompt":"Inference","maxTokens":80,"queuedAt":"1"})).unwrap();
+        let claim=store.claim_remote_task("w").unwrap().unwrap();
+        let task=claim["taskId"].as_str().unwrap();
+        let lease=claim["leaseId"].as_str().unwrap();
+        store.patch_if("remote_task",task,"status",&json!("running"),
+            &json!({"leaseExpiresAtMs":0})).unwrap();
+        assert!(store.claim_remote_task("other").unwrap().is_none());
+        let saved=store.get("remote_task",task).unwrap();
+        assert_eq!(saved["status"],"needs_review");
+        let late=store.finish_remote_task(task,"w",lease,"completed",
+            "late",&Value::Null).unwrap().unwrap();
+        assert_eq!(late["status"],"needs_review");
+        assert!(late["result"].is_null());
+        assert_eq!(store.get("remote_task",task).unwrap()["status"],"needs_review");
+    }
     #[test]
     fn id_guarded_legacy_compare_and_patch_remains_compatible(){
         let store=Store::open(std::path::Path::new(":memory:")).unwrap();
