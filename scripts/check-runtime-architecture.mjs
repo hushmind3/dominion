@@ -27,6 +27,7 @@ for(const p of [
   'src/features/collaboration/task_team.rs',
   'src/integrations/mcp/modern.rs',
   'src/integrations/mcp/tests.rs',
+  'scripts/mcp-echo-modern-server.mjs',
   'src/integrations/agent_bridge.rs',
   'src/api/remote_workers.rs',
   'src/host/execution/remote_worker.rs',
@@ -93,7 +94,12 @@ has('src/integrations/mcp.rs',
 has('src/integrations/mcp/modern.rs',
   ['2026-07-28','io.modelcontextprotocol/protocolVersion',
    'io.modelcontextprotocol/clientCapabilities','Mcp-Method',
-   'Mcp-Name','Mcp-Param-','validate_tool_schema']);
+   'Mcp-Name','Mcp-Param-','validate_tool_schema',
+   'pub(super) fn envelope','advertised_legacy_version']);
+has('src/integrations/mcp.rs',
+  ['modern::envelope(&plain)','session.request_tool','protocolMode']);
+has('scripts/mcp-echo-modern-server.mjs',
+  ['server/discover','2026-07-28','tools/list','tools/call']);
 const mcpRoot=text('src/integrations/mcp.rs').split('\n').length;
 assert.ok(mcpRoot<900,'MCP transport must keep protocol and tests in separate modules');
 has('src/integrations/agent_bridge.rs',['run_codex','run_claude','run_qwen']);
