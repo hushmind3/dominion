@@ -135,12 +135,12 @@ fn target_root(state: &AppState, format: &str, repo: &str) -> PathBuf {
     }
 }
 
-fn find_lms_key(repo: &str) -> Option<String> {
+async fn find_lms_key(repo: &str) -> Option<String> {
     let lms = lms_bin()?;
-    let output = std::process::Command::new(lms)
-        .args(["ls", "--json"])
-        .output()
-        .ok()?;
+    let mut command = tokio::process::Command::new(lms);
+    command.args(["ls", "--json"]);
+    let output = crate::integrations::local_tools::run_command(
+        &mut command, Duration::from_secs(15)).await.ok()?;
     if !output.status.success() {
         return None;
     }
@@ -1769,7 +1769,7 @@ pub async fn load(state: &AppState, id: &str, context: u64) -> Result<Value, Str
         if mlx_runtime_python(state).is_some() {
             return load_mlx_standalone(state, id, repo, context).await;
         }
-        let key = find_lms_key(repo).ok_or(
+        let key = find_lms_key(repo).await.ok_or(
             "MLX 실행기가 없습니다. 모델 관리에서 MLX 실행기를 설치하거나 LM Studio를 설치하세요.",
         )?;
         return load_lmstudio(state, id, &key, context).await;
@@ -2807,7 +2807,7 @@ async fn download_worker(state: AppState, job_id: String) {
         files[index]["downloaded"] = json!(downloaded);
     }
     let installed_id = if format == "mlx" {
-        find_lms_key(&repo)
+        find_lms_key(&repo).await
             .map(|key| format!("lms:{key}"))
             .unwrap_or_else(|| format!("mlx:{repo}"))
     } else {

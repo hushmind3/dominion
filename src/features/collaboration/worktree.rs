@@ -15,9 +15,10 @@ fn id_for(parent:&str,task:&str)->String{
     format!("team-worktree-{:x}",digest)
 }
 async fn git(cwd:&Path,args:&[&str])->Result<String,String>{
+    let mut command=Command::new("git");
+    command.arg("-C").arg(cwd).args(args).kill_on_drop(true);
     let output=tokio::time::timeout(GIT_TIMEOUT,
-        Command::new("git").arg("-C").arg(cwd).args(args)
-            .stdin(Stdio::null()).kill_on_drop(true).output())
+        crate::integrations::local_tools::run_command(&mut command,GIT_TIMEOUT))
         .await.map_err(|_|"Git worktree operation timed out".to_string())?
         .map_err(|e|format!("Git worktree unavailable: {e}"))?;
     if output.stdout.len()>16_384 || output.stderr.len()>16_384{
