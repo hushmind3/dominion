@@ -37,6 +37,15 @@ fn provider(id: &str) -> Option<&'static Provider> {
     PROVIDERS.iter().find(|provider| provider.id == id)
 }
 
+fn oauth_client() -> Result<reqwest::Client,String> {
+    reqwest::Client::builder()
+        // OAuth exchanges put authorization codes, refresh tokens and client
+        // secrets in the POST body. Do not forward them through a 307/308.
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error|format!("OAuth HTTP client initialization failed: {error}"))
+}
+
 /// Shared authority check for account listings and OAuth dispatch.
 /// Persisted records of retired integrations are never displayable accounts.
 pub fn is_supported_provider(id: &str) -> bool {
@@ -283,7 +292,7 @@ pub async fn callback(
         .remove_secret(&format!("oauth-state:{state_token}"));
 
     let (client_id, client_secret) = client_credentials(state, id)?;
-    let client = reqwest::Client::new();
+    let client = oauth_client()?;
     let mut form = vec![
         ("client_id", client_id),
         ("client_secret", client_secret),
@@ -458,7 +467,7 @@ pub async fn fresh_access_token(state: &AppState, id: &str) -> Result<String, St
         .ok_or("인증이 만료되었습니다. 계정을 다시 연결하세요.")?;
     let provider = provider(id).ok_or("지원하지 않는 OAuth 제공자입니다.")?;
     let (client_id, client_secret) = client_credentials(state, id)?;
-    let response = reqwest::Client::new()
+    let response = oauth_client()?
         .post(provider.token)
         .form(&[
             ("client_id", client_id.as_str()),
@@ -521,10 +530,11 @@ fn parse_workspace_credentials(text:&str)->Result<(String,String,String),String>
 pub async fn adopt_cli_grant(state:&AppState,source:&str)->Result<Value,String>{
     match source {
         "github"=>{
+            let client=oauth_client()?;
             let token=cli_output("gh",&["auth","token","--hostname","github.com"]).await?
                 .trim().to_string();
             if token.len()<12||token.len()>8192{return Err("GitHub CLI token is invalid".into());}
-            let response=reqwest::Client::new()
+            let response=client
                 .get("https://api.github.com/user").bearer_auth(&token)
                 .header("User-Agent","DOMINION").timeout(Duration::from_secs(15))
                 .send().await.map_err(|_|"GitHub account validation failed")?;
@@ -552,11 +562,12 @@ pub async fn adopt_cli_grant(state:&AppState,source:&str)->Result<Value,String>{
             Ok(json!({"provider":"github","account":name,"connected":true}))
         }
         "google_workspace"=>{
+            let client=oauth_client()?;
             let exported=cli_output("gws",&["auth","export","--unmasked"]).await?;
             let (id,secret,refresh)=parse_workspace_credentials(&exported)?;
             // Validate the actual grant by refreshing it. Merely finding a
             // gws credentials file is not proof of Workspace API permission.
-            let response=reqwest::Client::new()
+            let response=client
                 .post("https://oauth2.googleapis.com/token")
                 .form(&[("client_id",id.as_str()),("client_secret",secret.as_str()),
                          ("refresh_token",refresh.as_str()),("grant_type","refresh_token")])
@@ -570,7 +581,7 @@ pub async fn adopt_cli_grant(state:&AppState,source:&str)->Result<Value,String>{
                 .ok_or("Google refreshed access token missing")?.to_string();
             // Inspect the provider's actual scope report; never infer grants
             // from the application's requested scope list.
-            let introspection=reqwest::Client::new()
+            let introspection=client
                 .get("https://oauth2.googleapis.com/tokeninfo")
                 .query(&[("access_token",access.as_str())])
                 .timeout(Duration::from_secs(15)).send().await
@@ -582,7 +593,7 @@ pub async fn adopt_cli_grant(state:&AppState,source:&str)->Result<Value,String>{
                 .map_err(|_|"Google OAuth permission response invalid")?;
             let scopes=details["scope"].as_str().filter(|s|!s.is_empty())
                 .ok_or("Google did not report granted scopes")?.to_string();
-            let profile=reqwest::Client::new()
+            let profile=client
                 .get("https://www.googleapis.com/oauth2/v3/userinfo")
                 .bearer_auth(&access).timeout(Duration::from_secs(15))
                 .send().await.map_err(|_|"Google identity lookup failed")?;
