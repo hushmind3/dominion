@@ -6,7 +6,12 @@ use serde_json::{json, Value};
 /// One identity prefix per bot, shared by private chat, rooms and channels.
 /// Conversation-specific instructions follow this prefix, never precede it.
 pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec<Value>){
-    let mut text=String::from("DOMINION 지속 에이전트. 정체성과 개인 경험은 에이전트 ID에 속하며 대화 장소가 바뀌어도 유지한다. 실제 권한과 도구는 현재 실행 경계에 따른다.");
+    let mut text=if request.agent_id.is_none() && !request.tools_enabled
+        && !request.tools_execution_enabled {
+        String::from("DOMINION 대화형 AI입니다. 사용자의 질문에 자연스럽게 답하십시오. 이번 대화에는 도구나 외부 실행 권한이 없습니다.")
+    } else {
+        String::from("DOMINION 지속 에이전트. 정체성과 개인 경험은 에이전트 ID에 속하며 대화 장소가 바뀌어도 유지한다. 실제 권한과 도구는 현재 실행 경계에 따른다.")
+    };
     let mut items=Vec::new();
     if let Some(agent)=request.agent_id.as_deref().and_then(|id|state.store.get("agent",id)) {
         text.push_str(&format!("\n활성 에이전트: {} (id: {}).",agent["name"].as_str().unwrap_or(""),agent["id"].as_str().unwrap_or("")));
@@ -159,10 +164,15 @@ pub(super) fn system_prompt_with_manifest_at(
         let (prompt,items)=identity_prefix(state,request);
         (prompt,String::new(),items)
     };
-    prompt.push_str(
-        "\n당신은 Rust 엔진에서 동작하는 에이전트형 AI 작업 공간 DOMINION입니다. \
-         사용자가 다른 언어로 쓰지 않는 한 한국어로 답하십시오.",
-    );
+    if request.agent_id.is_none() && !request.tools_enabled
+        && !request.tools_execution_enabled {
+        prompt.push_str("\n당신은 사용자의 일반 대화를 돕는 AI 어시스턴트입니다. 사용자의 언어로 대답하십시오.");
+    } else {
+        prompt.push_str(
+            "\n당신은 Rust 엔진에서 동작하는 에이전트형 AI 작업 공간 DOMINION입니다. \
+             사용자가 다른 언어로 쓰지 않는 한 한국어로 답하십시오.",
+        );
+        }
     if request.tools_enabled && request.tools_execution_enabled {
         prompt.push_str(" 작업에 필요하면 사용 가능한 도구를 사용하십시오. 도구 결과를 정확히 보고하십시오.");
     } else {
