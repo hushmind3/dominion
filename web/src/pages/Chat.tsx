@@ -122,6 +122,27 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   });
  };
  const stream=useRef<AbortController|null>(null);
+ const streamBuffer=useRef({text:'',reasoning:'',frame:0});
+ const clearStreamBuffer=()=>{
+  const pending=streamBuffer.current;
+  if(pending.frame)cancelAnimationFrame(pending.frame);
+  pending.frame=0;pending.text='';pending.reasoning='';
+ };
+ const flushStreamBuffer=()=>{
+  const pending=streamBuffer.current;
+  if(pending.frame)cancelAnimationFrame(pending.frame);
+  pending.frame=0;
+  const text=pending.text,reasoning=pending.reasoning;
+  pending.text='';pending.reasoning='';
+  if(text)setLive(previous=>previous+text);
+  if(reasoning)setThought(previous=>previous+reasoning);
+ };
+ const queueStreamDelta=(kind:'text'|'reasoning',delta:string)=>{
+  if(!delta)return;
+  const pending=streamBuffer.current;
+  pending[kind]+=delta;
+  if(!pending.frame)pending.frame=requestAnimationFrame(flushStreamBuffer);
+ };
  const activeTurnSession=useRef<string|undefined>(undefined);
  const stoppingRef=useRef(false);
  const [stopping,setStopping]=useState(false);
@@ -140,7 +161,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const [moreBelow,setMoreBelow]=useState(false);
  const {scrollRef,onScroll,jumpDown}=useTranscriptScroll(current,transcriptRevision,setMoreBelow);
  const modelPanel=useAnchoredPanel(modelMenu,()=>setModelMenu(false),380);
- useEffect(()=>()=>stream.current?.abort(),[]);
+ useEffect(()=>()=>{stream.current?.abort();clearStreamBuffer()},[]);
  useEffect(()=>{if(window.innerWidth<768)return;try{localStorage.setItem('dominion.chat.sidebar',showHistory?'1':'0')}catch{}},[showHistory]);
  useEffect(()=>{
   if(!active)return;
@@ -238,7 +259,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   const controller=stream.current;
   if(!id){
    if(controller){
-    controller.abort();stream.current=null;
+    controller.abort();stream.current=null;clearStreamBuffer();
     setBusy(false);setLive('');setThought('');setToolStatus('');setTurnSession(undefined);
     setCommandInfo(t('chat.stopped'));
    }else setError(t('chat.cmd.noSessionStop'));
@@ -248,7 +269,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   try{
    const outcome=await post<{cancelled:boolean;stopped:boolean}>('/api/sessions/'+encodeURIComponent(id)+'/cancel',{});
    if(!outcome.stopped)throw Error(t('chat.stopPending'));
-   controller?.abort();
+   controller?.abort();clearStreamBuffer();
    if(stream.current===controller){
     stream.current=null;activeTurnSession.current=undefined;
     setBusy(false);setLive('');setThought('');setLiveApproval(null);
@@ -348,6 +369,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   if(!providerId){setError(t('chat.err.connectApi'));return;}
   if(!model){setError(t('chat.err.pickModel'));return;}
   const controller=new AbortController();
+  clearStreamBuffer();
   stream.current=controller;
   activeTurnSession.current=current;
   setTurnSession(current);setSavedMessageId(undefined);
@@ -397,9 +419,9 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     reasoningLanguage:reasoningKo?'ko':'original',reasoningEffort:effectiveReasoningEffort||undefined,thinking:selectedProvider?.kind==='codex'?(effectiveReasoningEffort==='none'?false:canDisableThinking?effectiveThinkingEnabled:undefined):effectiveThinkingEnabled,
    },event=>{
     if(controller.signal.aborted||stoppingRef.current||stream.current!==controller)return;
-    if(event.type==='assistant_saved'){setSavedMessageId(event.messageId);refresh('/api/sessions',...(id?['/api/sessions/'+encodeURIComponent(id)+'/messages']:[]));}
-    if(event.type==='text')setLive(old=>old+event.text);
-    if(event.type==='reasoning')setThought(old=>old+event.text);
+    if(event.type==='assistant_saved'){flushStreamBuffer();setSavedMessageId(event.messageId);refresh('/api/sessions',...(id?['/api/sessions/'+encodeURIComponent(id)+'/messages']:[]));}
+    if(event.type==='text')queueStreamDelta('text',event.text);
+    if(event.type==='reasoning')queueStreamDelta('reasoning',event.text);
     if(event.type==='approval'){setLiveApproval({id:event.id,tool:event.tool,args:event.args,sessionId:id!,status:'pending'});void approvals.reload();}
     if(event.type==='tool_start'){setLiveApproval(null);setToolStatus(t('chat.tool.running',{name:event.name}));}
     if(event.type==='tool_end')setToolStatus(t('chat.tool.done',{name:event.name}));
@@ -411,6 +433,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    if(!controller.signal.aborted&&view.current===id)setError(translateError((e as Error).message));
   }finally{
    if(stream.current===controller){
+    flushStreamBuffer();
     stream.current=null;activeTurnSession.current=undefined;
     refresh('/api/sessions',...(id?['/api/sessions/'+encodeURIComponent(id)+'/messages']:[]));
     setBusy(false);setLiveApproval(null);setToolStatus('');
