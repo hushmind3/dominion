@@ -98,11 +98,17 @@ export interface TeamTask {
   agentId?:string;providerId?:string;model?:string;
   allowedTools?:string[];checks?:unknown[];
 }
+export interface RemoteTask {
+  id:string;status:string;phase:string;workerId?:string;
+  result?:{answer?:string;usage?:unknown;verified?:false;evidenceGrade?:string};
+  queuedAt?:string;startedAt?:string;finishedAt?:string;
+  evidenceGrade?:string;
+}
 export interface TeamRequest {
   goal:string;tasks:TeamTask[];maxParallel?:number;maxReadRetries?:number;
 }
 export interface TeamChild {
-  taskId:string;mode:'read'|'write';runtime:'native'|'codex'|'claude'|'qwen';
+  taskId:string;mode:'read'|'write';runtime:'native'|'codex'|'claude'|'qwen'|'remote';
   isolation:'shared'|'worktree';dependsOn:string[];childJobId:string;
   status:string|null;executionId?:string|null;verified:boolean;
   evidenceGrade?:string|null;worktree?:unknown;answerExcerpt?:string|null;
@@ -204,6 +210,15 @@ export class Dominion{
     catch{throw new DominionStreamError('Expected JSON response: '+path);}
   }
   readonly health=()=>this.request<{ok:boolean;engine:string;runtime:string}>('GET','/api/health');
+  readonly remoteWorkers={
+    submit:(prompt:string,options:{parentRunId?:string;maxTokens?:number}={})=>
+      this.request<{id:string;runId:string;status:string;sourceJournal:string}>(
+        'POST','/api/remote/tasks',{prompt,...options}),
+    list:()=>this.request<RemoteTask[]>('GET','/api/remote/tasks'),
+    get:(taskId:string)=>this.request<RemoteTask>('GET','/api/remote/tasks/'+id(taskId)),
+    cancel:(taskId:string)=>this.request<{id:string;status:string}>(
+      'POST','/api/remote/tasks/'+id(taskId)+'/cancel',{})
+  };
   readonly status=()=>this.request<Record<string,unknown>>('GET','/api/status');
   readonly agents={
     list:()=>this.request<Agent[]>('GET','/api/agents'),

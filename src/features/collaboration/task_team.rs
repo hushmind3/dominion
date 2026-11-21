@@ -18,7 +18,7 @@ pub enum Mode { Read,Write }
 impl Default for Mode {fn default()->Self{Self::Read}}
 #[derive(Clone,Copy,Debug,Serialize,Deserialize,PartialEq,Eq,Default)]
 #[serde(rename_all="snake_case")]
-pub enum WorkerRuntime {#[default] Native,Codex,Claude,Qwen}
+pub enum WorkerRuntime {#[default] Native,Codex,Claude,Qwen,Remote}
 #[derive(Clone,Copy,Debug,Serialize,Deserialize,PartialEq,Eq,Default)]
 #[serde(rename_all="snake_case")]
 pub enum Isolation {#[default] Shared,Worktree}
@@ -83,6 +83,10 @@ impl Team {
                         .all(|c|c.is_ascii_alphanumeric()||c==b'-'||c==b'_'))||
                 task.allowed_tools.len()>16||task.checks.len()>16 {
                 return Err("Invalid Team Task ID, instruction or budget".into());
+            }
+            if task.runtime==WorkerRuntime::Remote &&
+                (task.resume_id.is_some()||task.prompt.len()>16_384){
+                return Err("Remote worker accepts one fresh bounded text-inference task".into());
             }
             if task.runtime==WorkerRuntime::Native&&task.resume_id.is_some(){
                 return Err("Native SDK jobs resume from their own durable checkpoint, not an external session".into());
@@ -549,6 +553,19 @@ mod tests {
         team.tasks[0].allowed_tools=vec!["workspace_read".into()];
         team.validate().unwrap();
         team.tasks[1].allowed_tools=vec!["mcp__danger".into()];
+        assert!(team.validate().is_err());
+    }
+    #[test] fn remote_worker_is_read_only_without_host_tools_or_replay(){
+        let mut team=fixture();
+        team.tasks[0].runtime=WorkerRuntime::Remote;
+        team.validate().unwrap();
+        team.tasks[0].mode=Mode::Write;
+        assert!(team.validate().is_err());
+        team.tasks[0].mode=Mode::Read;
+        team.tasks[0].allowed_tools=vec!["workspace_read".into()];
+        assert!(team.validate().is_err());
+        team.tasks[0].allowed_tools.clear();
+        team.tasks[0].resume_id=Some("session-old".into());
         assert!(team.validate().is_err());
     }
     #[test] fn qwen_read_worker_can_join_dependency_graph_but_cannot_write(){

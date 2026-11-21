@@ -101,6 +101,82 @@ pub async fn run_cli(_args:&[String])->Result<(),String>{
         }
     }
 }
+/// Dispatch a verified text-only Team child through the same durable
+/// remote-task ledger. A restart does not create another paid inference.
+pub async fn run_team_read(ctx:&crate::engine::jobs::JobContext,job:&Value)
+    ->Result<Value,String>{
+    if std::env::var("DOMINION_REMOTE_WORKERS").ok().as_deref()!=Some("1"){
+        return Err("needs_review: remote worker gateway is disabled".into());
+    }
+    if job["kind"]!="external_agent"
+        ||job["input"]["bridgeRuntime"]!="remote"
+        ||job["input"]["teamMode"]!="read"
+        ||job["input"]["parentRunId"].as_str().is_none()
+        ||job["input"]["teamTaskId"].as_str().is_none() {
+        return Err("needs_review: invalid read-only remote Team binding".into());
+    }
+    let prompt=job["input"]["prompt"].as_str().filter(|s|
+        !s.trim().is_empty()&&s.len()<=16_384)
+        .ok_or("needs_review: remote prompt exceeds bound")?;
+    let child_id=job["id"].as_str().ok_or("Missing Team child ID")?;
+    let remote_id=format!("remote-{child_id}");
+    if remote_id.len()>200{return Err("Remote Team task identity too long".into());}
+    if let Some(existing)=ctx.state.store.get("remote_task",&remote_id){
+        if existing["prompt"]!=prompt ||existing["teamChildJobId"]!=child_id ||
+            existing["parentRunId"]!=job["input"]["parentRunId"] {
+            return Err("needs_review: remote replay binding changed".into());
+        }
+    }else{
+        ctx.ensure_running()?;
+        let ticket=json!({
+            "id":remote_id,"kind":"remote_inference","status":"queued","phase":"queued",
+            "prompt":prompt,"maxTokens":2048,"attempts":0,
+            "queuedAt":chrono::Utc::now().to_rfc3339(),
+            "capability":"text_inference","evidenceGrade":"remote_unverified",
+            "teamChildJobId":child_id,
+            "parentRunId":job["input"]["parentRunId"],
+            "teamTaskId":job["input"]["teamTaskId"]
+        });
+        ctx.state.store.put("remote_task",&ticket)
+            .ok_or("Cannot persist remote Team dispatch")?;
+        ctx.state.bus.record("remote_task",&ticket);
+    }
+    let started=std::time::Instant::now();
+    loop{
+        if ctx.ensure_running().is_err(){
+            let _=ctx.state.store.cancel_remote_task(&remote_id);
+            return Err("cancelled: remote Team parent no longer owns execution".into());
+        }
+        let Some(saved)=ctx.state.store.get("remote_task",&remote_id) else{
+            return Err("needs_review: remote task disappeared".into());
+        };
+        match saved["status"].as_str(){
+            Some("completed")=>{
+                let answer=saved["result"]["answer"].as_str().unwrap_or("");
+                if answer.is_empty(){return Err("needs_review: remote answer is empty".into());}
+                return Ok(json!({"status":"completed","answer":answer,
+                    "remoteTaskId":remote_id,"evidenceGrade":"external_unverified",
+                    "verified":false,
+                    "usage":saved["result"]["usage"]}));
+            },
+            Some("needs_review")=>return Ok(json!({
+                "status":"needs_review","remoteTaskId":remote_id,
+                "reason":saved["reviewReason"],
+                "evidenceGrade":"external_unverified","verified":false
+            })),
+            Some("cancelled")=>return Err("cancelled: remote task stopped".into()),
+            Some("queued"|"running")=>{},
+            _=>return Err("needs_review: unexpected remote task status".into())
+        }
+        if started.elapsed()>Duration::from_secs(12*60){
+            // A hung remote lease is a reviewable external outcome, not a
+            // license to enqueue another model request.
+            return Ok(json!({"status":"needs_review","remoteTaskId":remote_id,
+                "reason":"Remote Team result pending beyond supervisor budget"}));
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+}
 #[cfg(test)]
 mod tests{
     use super::*;

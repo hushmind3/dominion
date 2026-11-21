@@ -234,6 +234,21 @@ impl Dominion {
         self.post(&["api","task-teams",team,"worktrees",task,"promote"],
             json!({"confirm":true,"expectedDiffSha256":expected_diff_sha256})).await
     }
+    /// Owner-only read-only inference delegation to an opt-in remote worker.
+    pub async fn remote_submit(&self,prompt:&str,max_tokens:u64)
+        ->Result<Value,Error>{
+        self.post(&["api","remote","tasks"],
+            json!({"prompt":prompt,"maxTokens":max_tokens})).await
+    }
+    pub async fn remote_tasks(&self)->Result<Vec<Value>,Error>{
+        self.get(&["api","remote","tasks"]).await
+    }
+    pub async fn remote_task(&self,id:&str)->Result<Value,Error>{
+        self.get(&["api","remote","tasks",id]).await
+    }
+    pub async fn cancel_remote_task(&self,id:&str)->Result<Value,Error>{
+        self.post(&["api","remote","tasks",id,"cancel"],json!({})).await
+    }
     pub async fn rooms(&self) -> Result<Vec<Value>, Error> { self.get(&["api", "rooms"]).await }
     /// Paginate committed Room events and each member's durable read cursor.
     pub async fn room_events(&self,room_id:&str,after:u64,limit:usize)

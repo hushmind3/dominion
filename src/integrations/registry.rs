@@ -47,6 +47,8 @@ pub async fn dispatch_job(
 )->Option<Result<Value,String>>{
  match kind {
   "discord" => Some(crate::integrations::channels::discord::run(ctx,job).await),
+  "external_agent" if job["input"]["bridgeRuntime"]=="remote"=>
+      Some(crate::host::execution::remote_worker::run_team_read(ctx,job).await),
   "external_agent" => Some(crate::integrations::agent_bridge::run(ctx,job).await),
   _=>None,
  }
