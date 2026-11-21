@@ -52,15 +52,15 @@ pub(crate) fn plan(
                 && m["tool_calls"].as_array().is_none_or(Vec::is_empty)))
             && m["id"].as_str().is_some_and(|id|!id.is_empty())
     }).collect::<Vec<_>>();
-    // The first turn establishes a baseline at the latest committed room
-    // record. Historical messages are still searchable by the existing
-    // relevance ranker; they are not newly delivered to a joining agent.
-    // Later turns use the saved anchor to deliver a contiguous unread prefix.
+    // First delivery includes the triggering owner message through the
+    // mandatory room-context frame. Only acknowledge that trigger, never
+    // later peer messages that the new agent did not receive as required
+    // unread input. The next turn will drain those messages normally.
+    // History before the trigger remains available to the recall ranker.
     if previous.is_none() {
         return Ok(Window {
             required_indices:Vec::new(),
-            through_message_id:unread.last()
-                .and_then(|(_,m)|m["id"].as_str()).map(str::to_string),
+            through_message_id:Some(source_id.to_string()),
             previous_message_id:None,
             unread_remaining:0,
             oversized_first_unread:false,
@@ -106,7 +106,7 @@ mod tests {
             .collect::<Vec<_>>();
         let a=plan(&messages,"room:one","a","m0",None).unwrap();
         assert!(a.required_indices.is_empty(),"bootstrap uses existing context ranker");
-        assert_eq!(a.through_message_id.as_deref(),Some("m10"));
+        assert_eq!(a.through_message_id.as_deref(),Some("m0"));
         let cursor=checkpoint("room:one","a","m0","m0");
         let b=plan(&messages,"room:one","a","m0",Some(&cursor)).unwrap();
         assert_eq!(b.required_indices,vec![1,2,3,4]);
@@ -118,7 +118,7 @@ mod tests {
         assert_eq!(again.through_message_id.as_deref(),Some("m8"));
         let other=plan(&messages,"room:one","b","m0",None).unwrap();
         assert!(other.required_indices.is_empty());
-        assert_eq!(other.through_message_id.as_deref(),Some("m10"));
+        assert_eq!(other.through_message_id.as_deref(),Some("m0"));
     }
     #[test]
     fn cursors_fail_closed_for_other_sessions_and_missing_anchors(){
@@ -191,6 +191,26 @@ mod tests {
         assert!(plan(&transcript,"room:other","agent-a","owner",Some(&a)).is_err());
     }
     #[test]
+    fn joining_agent_does_not_ack_peer_messages_after_the_owner_trigger(){
+        let messages=vec![
+            msg("ancient","assistant","room:one","unrelated prior task"),
+            msg("trigger","user","room:one","new owner task"),
+            msg("peer-one","assistant","room:one","first peer observation"),
+            msg("peer-two","assistant","room:one","second peer observation"),
+        ];
+        let first=plan(&messages,"room:one","new-agent","trigger",None).unwrap();
+        assert_eq!(first.through_message_id.as_deref(),Some("trigger"));
+        assert!(first.required_indices.is_empty());
+        let receipt=checkpoint("room:one","new-agent","trigger","trigger");
+        let following=plan(&messages,"room:one","new-agent","trigger",Some(&receipt)).unwrap();
+        assert_eq!(following.required_indices,vec![2,3]);
+        assert_eq!(following.through_message_id.as_deref(),Some("peer-two"));
+        assert_eq!(following.unread_remaining,0);
+        let committed=checkpoint("room:one","new-agent","trigger","peer-two");
+        assert!(plan(&messages,"room:one","new-agent","trigger",Some(&committed))
+            .unwrap().required_indices.is_empty());
+    }
+    #[test]
     fn joining_a_long_room_does_not_pin_unrelated_ancient_speech(){
         let mut messages=(0..100).map(|i|msg(&format!("ancient-{i}"),
             "assistant","room:one","unrelated old history")).collect::<Vec<_>>();
@@ -198,7 +218,7 @@ mod tests {
         messages.push(msg("peer","assistant","room:one","reply on this task"));
         let window=plan(&messages,"room:one","new-agent","current",None).unwrap();
         assert!(window.required_indices.is_empty());
-        assert_eq!(window.through_message_id.as_deref(),Some("peer"));
+        assert_eq!(window.through_message_id.as_deref(),Some("current"));
         assert_eq!(window.unread_remaining,0);
         assert!(!window.required_indices.contains(&0));
     }
