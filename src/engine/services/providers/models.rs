@@ -11,6 +11,28 @@ const PROVIDER_ID: &str = "dominion-native";
 const MODEL_KIND: &str = "model_job";
 const EXTERNAL_KIND: &str = "external_model";
 const MAX_LLAMA_RELEASE_ARCHIVE_BYTES:u64=1024*1024*1024;
+const MAX_MLX_LOG_TAIL_BYTES:u64=64*1024;
+
+fn mlx_log_tail(path:&Path)->String{
+    use std::io::{Read,Seek,SeekFrom};
+    let Ok(mut file)=std::fs::File::open(path) else{return String::new();};
+    let Ok(length)=file.metadata().map(|metadata|metadata.len()) else{return String::new();};
+    let start=length.saturating_sub(MAX_MLX_LOG_TAIL_BYTES);
+    if file.seek(SeekFrom::Start(start)).is_err(){return String::new();}
+    let mut bytes=Vec::with_capacity((length-start) as usize);
+    if file.take(MAX_MLX_LOG_TAIL_BYTES).read_to_end(&mut bytes).is_err(){
+        return String::new();
+    }
+    String::from_utf8_lossy(&bytes)
+        .lines()
+        .rev()
+        .take(6)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 async fn bounded_response_bytes(
     mut response:reqwest::Response,
@@ -1700,16 +1722,7 @@ async fn load_mlx_from_dir(
                 .and_then(|child| child.try_wait().ok().flatten())
         };
         if let Some(status) = exited {
-            let tail = std::fs::read_to_string(&log_path)
-                .unwrap_or_default()
-                .lines()
-                .rev()
-                .take(6)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect::<Vec<_>>()
-                .join("\n");
+            let tail = mlx_log_tail(&log_path);
             let message = format!("MLX 실행기가 종료되었습니다 (exit {status}): {tail}");
             {
                 let mut guard = runtime().lock().unwrap();
