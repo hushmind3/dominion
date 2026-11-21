@@ -24,6 +24,10 @@ pub struct AppState {
     pub cancelled: Arc<Mutex<HashSet<String>>>,
     /// Sessions currently executing. Prevents two turns racing on one history.
     pub active: Arc<Mutex<HashSet<String>>>,
+    /// Automatic context compaction, keyed by session. The value is the
+    /// admission time: a running or recently failed attempt blocks a second
+    /// model call, while a successful one clears the entry.
+    pub auto_compact: Arc<Mutex<HashMap<String, std::time::Instant>>>,
     /// Coordinates checked and unchecked writes to the same canonical path.
     pub file_mutations: FileMutations,
     pub principle_learning: Arc<Mutex<()>>,
@@ -51,6 +55,7 @@ impl AppState {
             approvals: Arc::new(Mutex::new(HashMap::new())),
             cancelled: Arc::new(Mutex::new(HashSet::new())),
             active: Arc::new(Mutex::new(HashSet::new())),
+            auto_compact: Arc::new(Mutex::new(HashMap::new())),
             file_mutations: Arc::new(Mutex::new(HashMap::new())),
             principle_learning: Arc::new(Mutex::new(())),
             policy_settlement: Arc::new(Mutex::new(())),
@@ -200,6 +205,28 @@ impl AppState {
         SessionGuard {
             state: self.clone(),
             id: session_id.to_string(),
+        }
+    }
+
+    /// Admits one automatic compaction per session. A previous attempt still
+    /// inside `cooldown` (running, or failed) keeps the slot taken.
+    pub fn begin_auto_compact(&self, session_id: &str, cooldown: std::time::Duration) -> bool {
+        let mut guard = self.auto_compact.lock().unwrap();
+        if guard
+            .get(session_id)
+            .is_some_and(|started| started.elapsed() < cooldown)
+        {
+            return false;
+        }
+        guard.insert(session_id.to_string(), std::time::Instant::now());
+        true
+    }
+
+    /// Success frees the slot; a failure keeps the timestamp so the provider
+    /// is not retried on every following turn.
+    pub fn finish_auto_compact(&self, session_id: &str, succeeded: bool) {
+        if succeeded {
+            self.auto_compact.lock().unwrap().remove(session_id);
         }
     }
 }

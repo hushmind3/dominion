@@ -1373,6 +1373,19 @@ impl Store {
         Some((saved_message, saved_record))
     }
 
+    /// Cheap admission check for automatic compaction: never materialize a
+    /// long transcript merely to learn that it is too short to summarize.
+    pub fn message_count(&self, session_id: &str) -> usize {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM messages WHERE session_id=?1",
+            [session_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|count| count.max(0) as usize)
+        .unwrap_or(0)
+    }
+
     pub fn messages(&self, session_id: &str) -> Vec<Value> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = match conn.prepare(

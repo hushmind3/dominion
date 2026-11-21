@@ -321,6 +321,11 @@ async fn run_turn_with_policy(
     crate::addons::runtime_hooks::after_turn(
         state,&request,&session_id,&execution_id,&result,
     );
+    if result.is_ok() {
+        // Older messages become a checkpoint before the next turn reads them.
+        // The work runs in the background; this turn's answer is already done.
+        crate::engine::compact::spawn_auto(state, &session_id);
+    }
     result
 }
 
