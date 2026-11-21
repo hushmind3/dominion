@@ -57,7 +57,7 @@ export function TeamActivity(){
  // Lead machine. Show their advertised IDs without forging local models.
  const remoteOnly=[...new Set(workers.filter(node=>node.online)
   .flatMap(node=>node.agents||[]))].filter(id=>id.length>0&&
-   !runnable.some(agent=>agent.id===id)).slice(0,64)
+   !agents.value.some(agent=>agent.id===id)).slice(0,64)
  const workerChoices=[
   ...runnable.map(agent=>({id:agent.id,name:agent.name,remoteOnly:false})),
   ...remoteOnly.map(id=>({id,name:id,remoteOnly:true}))
