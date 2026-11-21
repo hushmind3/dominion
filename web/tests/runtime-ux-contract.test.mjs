@@ -430,3 +430,13 @@ test('streaming and persisted assistant replies share the same width and message
  assert.match(chat,/chat-message-body relative min-w-0 flex-1/)
  assert.match(css,/\.page-chat \.chat-message--assistant>\.chat-message-body\{max-width:760px;min-width:0\}/)
 })
+
+test('chat error alerts can be dismissed even when failure comes from transcript or learning jobs',()=>{
+ const chat=source('src/pages/Chat.tsx')
+ assert.match(chat,/const alertMessage=error\|\|transcript\.error\|\|translateError\(job\.error\|\|''\)/)
+ assert.match(chat,/const visibleAlert=alertMessage&&!\(dismissedError\?\.session===current&&dismissedError\.message===alertMessage\)/)
+ assert.match(chat,/\{visibleAlert&&<div role="alert"/)
+ assert.match(chat,/aria-label="오류 닫기"/)
+ assert.match(chat,/setDismissedError\(\{session:current,message:visibleAlert\}\)/)
+ assert.match(chat,/setBusy\(true\);setDismissedError\(undefined\);setError\(''\)/)
+})
