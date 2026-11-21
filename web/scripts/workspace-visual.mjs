@@ -138,6 +138,18 @@ async function mock(route){
    checkpoint:{...item.checkpoint,pendingCall:null}}:item)
   return send(route,sdkRuns.find(item=>item.id===id))
  }
+ if(n==='/api/sdk/runs/sdk-ux-1/events'&&m==='GET'){
+  const before=Number(url.searchParams.get('before'))
+  const limit=Number(url.searchParams.get('limit'))
+  assert.equal(limit,40,'Native event pagination remains bounded')
+  assert.ok(before===80||before===40,'Unexpected older-event page cursor')
+  const from=Math.max(0,before-limit)
+  return send(route,{from,to:before,total:87,nextBefore:from||null,
+   events:Array.from({length:before-from},(_,i)=>({
+    kind:i===0&&before===80?'OLDEST_PAGE_MARKER':'historical_'+(from+i),
+    detail:{seq:from+i}
+   }))})
+ }
  if(n.startsWith('/api/sdk/runs/')&&m==='GET'){
   requests.sdkDetailReads++
   const id=n.slice('/api/sdk/runs/'.length)
@@ -349,6 +361,15 @@ try{
  assert.equal(await page.getByText(/이전 80단계는 요약에서 생략/).count(),1)
  assert.equal(await history.getByText('verification_pending').count(),1,
   'Previously recorded owner-visible steps must be reopenable')
+ await page.getByRole('button',{name:'이전 저장 기록 불러오기'}).click()
+ const olderEvents=page.getByRole('list',{name:'이전 저장 실행 기록'})
+ await olderEvents.getByText('OLDEST_PAGE_MARKER').waitFor({timeout:8000})
+ assert.equal(await olderEvents.locator('li').count(),40)
+ await page.getByRole('button',{name:'더 이전 단계 불러오기'}).click()
+ await olderEvents.getByText('historical_0').waitFor({timeout:8000})
+ assert.equal(await olderEvents.locator('li').count(),80)
+ assert.equal(await page.getByRole('button',{name:'더 이전 단계 불러오기'}).count(),0,
+  'No more history pages remain after receiving the earliest persisted entry')
  assert.equal(await page.getByRole('button',{name:'최근 단계만'}).getAttribute('aria-expanded'),'true')
  await page.getByRole('button',{name:'최근 단계만'}).click()
  assert.equal(await history.getByText('verification_pending').count(),0)
