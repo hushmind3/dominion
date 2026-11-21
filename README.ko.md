@@ -1,4 +1,4 @@
-# DOMINION
+# 도미니언 러스트
 
 [English](README.md) · [전체 아키텍처](ARCHITECTURE.md) · [하네스 계약](docs/HARNESS.md) · [Rust SDK](sdk/rust/README.md) · [TypeScript SDK](sdk/typescript/README.md) · [서브3 최신 통합 점검](docs/SUB3-INTEGRATION-2026-11-19.md)
 
