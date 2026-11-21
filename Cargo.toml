@@ -22,7 +22,7 @@ reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], defau
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 async-stream = "0.3"
-chacha20poly1305 = "0.10"
+chacha20poly1305 = { version = "0.10", features = ["stream"] }
 rand = "0.8"
 base64 = "0.22"
 sha2 = "0.10"

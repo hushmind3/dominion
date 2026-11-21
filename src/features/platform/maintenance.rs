@@ -1,5 +1,6 @@
 //! Scheduled maintenance: bounded database backups.
 use crate::state::AppState;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -73,18 +74,22 @@ pub fn create_snapshot(state: &AppState) -> Result<PathBuf, String> {
     let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
     let temp = directory.join(format!(".backup-{id}.tmp"));
     let _cleanup = RemoveFileOnDrop(temp.clone());
-    state.store.backup_to(&temp)?;
-    let bytes = std::fs::read(&temp).map_err(|error| error.to_string())?;
+    let database_len = state.store.backup_to(&temp)?;
     let ring = crate::engine::backup_keys::KeyRing::load_or_create(&state.config.data_dir)?;
     // The snapshot carries the vault key that its provider secrets were sealed
     // with, so restoring an older snapshot remains decryptable after rotation.
-    let mut container = b"DOMVAULT1".to_vec();
-    container.extend_from_slice(&state.vault.primary_key());
-    container.extend_from_slice(&bytes);
-    let sealed = ring.encrypt(&container)?;
+    let mut prefix = b"DOMVAULT1".to_vec();
+    prefix.extend_from_slice(&state.vault.primary_key());
+    let plaintext_len = database_len.checked_add(prefix.len() as u64)
+        .ok_or_else(|| "backup size overflow".to_string())?;
+    let mut plaintext = std::io::Cursor::new(prefix)
+        .chain(std::fs::File::open(&temp).map_err(|error| error.to_string())?);
     let staged = directory.join(format!(".backup-{id}.enc.tmp"));
     let _staged_cleanup = RemoveFileOnDrop(staged.clone());
-    std::fs::write(&staged, &sealed).map_err(|error| error.to_string())?;
+    let mut encrypted = std::fs::File::create(&staged).map_err(|error| error.to_string())?;
+    let encrypted_len = ring.encrypt_reader(&mut plaintext, plaintext_len, &mut encrypted)?;
+    encrypted.sync_all().map_err(|error| error.to_string())?;
+    drop(encrypted);
     let path = directory.join(format!("dominion-{stamp}-{id}.sqlite.enc"));
     std::fs::rename(&staged, &path).map_err(|error| error.to_string())?;
     if let Some(offsite) = offsite_directory() {
@@ -98,7 +103,7 @@ pub fn create_snapshot(state: &AppState) -> Result<PathBuf, String> {
         "backup.encrypted",
         serde_json::json!({
             "path": path.to_string_lossy(),
-            "bytes": sealed.len(),
+            "bytes": encrypted_len,
             "offsite": offsite_directory().map(|dir| dir.to_string_lossy().to_string()),
         }),
     );

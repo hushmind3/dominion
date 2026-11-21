@@ -1,12 +1,13 @@
 //! H10 versioned backup keys and rotation.
 //!
-//! Backups carry their key version in a `DOMBAK2` envelope. Rotation creates a
+//! Backups use authenticated `DOMBAK2` envelopes for existing files and
+//! chunked `DOMBAK3` envelopes for bounded-memory writes. Rotation creates a
 //! new key, re-encrypts every existing `.enc` backup atomically, and only then
 //! makes the new version active. Old keys are removed only after a successful
 //! re-encryption unless the caller explicitly retains them.
 use crate::state::AppState;
 use chacha20poly1305::{
-    aead::{Aead, KeyInit},
+    aead::{stream::{DecryptorBE32, EncryptorBE32}, Aead, KeyInit, Payload},
     ChaCha20Poly1305, Nonce,
 };
 use rand::RngCore;
@@ -16,7 +17,10 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 const MAGIC: &[u8; 7] = b"DOMBAK2";
+const STREAM_MAGIC: &[u8; 7] = b"DOMBAK3";
 const KEY_LEN: usize = 32;
+const STREAM_CHUNK_BYTES: usize = 1024 * 1024;
+const STREAM_HEADER_BYTES: usize = 7 + 4 + 7 + 8;
 
 #[derive(Clone)]
 pub struct KeyRing {
@@ -127,8 +131,65 @@ impl KeyRing {
         self.encrypt_with(self.active, plaintext)
     }
 
+    /// Writes a version 3 backup envelope with authenticated 1 MiB chunks.
+    /// Peak working memory is bounded independently of the snapshot size.
+    pub fn encrypt_reader(
+        &self,
+        reader: &mut impl Read,
+        plaintext_len: u64,
+        writer: &mut impl Write,
+    ) -> Result<u64, String> {
+        let key = self.keys.get(&self.active)
+            .ok_or_else(|| format!("backup key version {} is missing", self.active))?;
+        let mut nonce_bytes = [0u8; 7];
+        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        let nonce = chacha20poly1305::aead::generic_array::GenericArray::clone_from_slice(&nonce_bytes);
+        let mut header = STREAM_MAGIC.to_vec();
+        header.extend_from_slice(&self.active.to_le_bytes());
+        header.extend_from_slice(&nonce_bytes);
+        header.extend_from_slice(&plaintext_len.to_le_bytes());
+        writer.write_all(&header).map_err(|error| error.to_string())?;
+
+        let mut encryptor = EncryptorBE32::from_aead(Self::cipher(key), &nonce);
+        let chunk_count = if plaintext_len == 0 {
+            1
+        } else {
+            (plaintext_len - 1) / STREAM_CHUNK_BYTES as u64 + 1
+        };
+        if chunk_count > u32::MAX as u64 {
+            return Err("backup exceeds the streaming encryption limit".into());
+        }
+        let mut buffer = vec![0u8; STREAM_CHUNK_BYTES];
+        let mut remaining = plaintext_len;
+        let mut written = header.len() as u64;
+        while remaining > STREAM_CHUNK_BYTES as u64 {
+            let length = STREAM_CHUNK_BYTES;
+            reader.read_exact(&mut buffer[..length]).map_err(|error| error.to_string())?;
+            let payload = Payload { msg: &buffer[..length], aad: &header };
+            let ciphertext = encryptor.encrypt_next(payload)
+                .map_err(|_| "backup encryption failed".to_string())?;
+            writer.write_all(&ciphertext).map_err(|error| error.to_string())?;
+            written = written.checked_add(ciphertext.len() as u64)
+                .ok_or_else(|| "backup size overflow".to_string())?;
+            remaining -= length as u64;
+        }
+        let length = remaining as usize;
+        reader.read_exact(&mut buffer[..length]).map_err(|error| error.to_string())?;
+        let ciphertext = encryptor.encrypt_last(Payload { msg: &buffer[..length], aad: &header })
+            .map_err(|_| "backup encryption failed".to_string())?;
+        writer.write_all(&ciphertext).map_err(|error| error.to_string())?;
+        written = written.checked_add(ciphertext.len() as u64)
+            .ok_or_else(|| "backup size overflow".to_string())?;
+        let mut extra = [0u8; 1];
+        if reader.read(&mut extra).map_err(|error| error.to_string())? != 0 {
+            return Err("backup source grew while it was being encrypted".into());
+        }
+        writer.flush().map_err(|error| error.to_string())?;
+        Ok(written)
+    }
+
     pub fn is_versioned(data: &[u8]) -> bool {
-        data.starts_with(MAGIC)
+        data.starts_with(MAGIC) || data.starts_with(STREAM_MAGIC)
     }
 
     pub fn is_versioned_file(path: &Path) -> std::io::Result<bool> {
@@ -142,10 +203,13 @@ impl KeyRing {
             }
             read += count;
         }
-        Ok(read == MAGIC.len() && &prefix == MAGIC)
+        Ok(read == prefix.len() && (&prefix == MAGIC || &prefix == STREAM_MAGIC))
     }
 
     pub fn decrypt(&self, data: &[u8]) -> Option<Vec<u8>> {
+        if data.starts_with(STREAM_MAGIC) {
+            return self.decrypt_stream(data);
+        }
         if data.len() < MAGIC.len() + 4 + 12 + 16 || !Self::is_versioned(data) {
             return None;
         }
@@ -153,6 +217,58 @@ impl KeyRing {
         let key = self.keys.get(&version)?;
         let nonce = Nonce::from_slice(&data[11..23]);
         Self::cipher(key).decrypt(nonce, &data[23..]).ok()
+    }
+
+    fn decrypt_stream(&self, data: &[u8]) -> Option<Vec<u8>> {
+        if data.len() < STREAM_HEADER_BYTES {
+            return None;
+        }
+        let version = u32::from_le_bytes(data[7..11].try_into().ok()?);
+        let key = self.keys.get(&version)?;
+        let nonce = chacha20poly1305::aead::generic_array::GenericArray::clone_from_slice(&data[11..18]);
+        let plaintext_len = u64::from_le_bytes(data[18..26].try_into().ok()?);
+        let chunk_count = if plaintext_len == 0 {
+            1
+        } else {
+            (plaintext_len - 1) / STREAM_CHUNK_BYTES as u64 + 1
+        };
+        if chunk_count > u32::MAX as u64 {
+            return None;
+        }
+        let capacity = usize::try_from(plaintext_len).ok()?;
+        let tag_bytes = (chunk_count as usize).checked_mul(16)?;
+        let expected_len = STREAM_HEADER_BYTES.checked_add(capacity)?.checked_add(tag_bytes)?;
+        if data.len() != expected_len {
+            return None;
+        }
+        let header = &data[..STREAM_HEADER_BYTES];
+        let mut decryptor = DecryptorBE32::from_aead(Self::cipher(key), &nonce);
+        let mut plaintext = Vec::with_capacity(capacity);
+        let mut remaining = plaintext_len;
+        let mut offset = STREAM_HEADER_BYTES;
+        while remaining > STREAM_CHUNK_BYTES as u64 {
+            let length = STREAM_CHUNK_BYTES;
+            let encrypted_len = length.checked_add(16)?;
+            let encrypted = &data[offset..offset.checked_add(encrypted_len)?];
+            let payload = Payload { msg: encrypted, aad: header };
+            let chunk = decryptor.decrypt_next(payload).ok()?;
+            if chunk.len() != length {
+                return None;
+            }
+            plaintext.extend_from_slice(&chunk);
+            remaining -= length as u64;
+            offset += encrypted_len;
+        }
+        let length = remaining as usize;
+        let encrypted_len = length.checked_add(16)?;
+        let encrypted = &data[offset..offset.checked_add(encrypted_len)?];
+        let chunk = decryptor.decrypt_last(Payload { msg: encrypted, aad: header }).ok()?;
+        if chunk.len() != length {
+            return None;
+        }
+        plaintext.extend_from_slice(&chunk);
+        offset += encrypted_len;
+        (offset == data.len()).then_some(plaintext)
     }
 }
 
