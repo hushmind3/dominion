@@ -23,7 +23,9 @@ concurrency:
 
 jobs:
   rust:
-    runs-on: macos-latest
+    # Pure Rust kernel/API checks: use the fast Linux runner. Tauri macOS and
+    # Windows packaging have separate release workflows.
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
