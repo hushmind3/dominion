@@ -282,6 +282,26 @@ fn claim(state:&AppState,body:&Value,now:i64)->Result<Value,String>{
     }
     Ok(json!({"task":null}))
 }
+/// A cancelled Lead terminates unclaimed tasks and requests native
+/// cancellation on every in-flight remote Worker. The claim remains fenced:
+/// a worker must report its actual local terminal state before settlement.
+pub fn cancel_team(state:&AppState,team_id:&str){
+    for task in state.store.all("remote_task"){
+        if task["teamId"]!=team_id {continue;}
+        let Some(id)=task["id"].as_str()else{continue;};
+        let saved=match task["status"].as_str(){
+            Some("queued")=>state.store.patch_if("remote_task",id,"status",
+                &json!("queued"),&json!({"status":"cancelled",
+                    "cancelRequested":true,"error":"lead session cancelled"})),
+            Some("running")=>state.store.patch_if_all_merge("remote_task",id,&[
+                ("status",&task["status"]),("leaseId",&task["leaseId"]),
+            ],&json!({"cancelRequested":true}),&[]),
+            _=>None,
+        };
+        if let Some(saved)=saved{state.bus.record("remote_task",&saved);}
+    }
+}
+
 fn owned_lease<'a>(
     state:&AppState,body:&'a Value,now:i64,
 )->Result<(String,Vec<(&'static str,Value)>),String>{
@@ -312,7 +332,8 @@ fn renew(state:&AppState,body:&Value,now:i64)->Result<Value,String>{
     let saved=state.store.patch_if_all_merge("remote_task",&id,&refs,
         &json!({"leaseUntilMs":now+LEASE_MS,"lastHeartbeatMs":now}),&[])
         .ok_or("Remote worker lease changed during renewal")?;
-    Ok(json!({"taskId":id,"leaseUntilMs":saved["leaseUntilMs"],"renewed":true}))
+    Ok(json!({"taskId":id,"leaseUntilMs":saved["leaseUntilMs"],"renewed":true,
+        "cancelRequested":saved["cancelRequested"]==true}))
 }
 fn settle(state:&AppState,body:&Value,now:i64)->Result<Value,String>{
     let task_id=body["taskId"].as_str().ok_or("taskId required")?;
