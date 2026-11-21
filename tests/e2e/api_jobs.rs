@@ -968,6 +968,8 @@ fn explicit_direct_chat_does_not_inherit_a_saved_session_agent() {
     let system=wire[0]["messages"][0]["content"].as_str().unwrap();
     assert!(system.contains("일반 대화를 돕는"), "{system}");
     assert!(!system.contains("작업 공간 루트:"), "{system}");
+    assert!(system.contains("현재 날짜:"), "{system}");
+    assert!(!system.contains("workspace_write"),"{system}");
 }
 
 #[test]
