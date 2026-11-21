@@ -150,7 +150,7 @@ export function ModelHub(){
  const openPreset=(preset:ProviderPreset)=>{setEdit(null);setIntegration(preset.integration);setFreePreset(Boolean(preset.free&&preset.auth==='none'));setPresetMode(true);setName(preset.name);setBaseUrl(preset.baseUrl);setKind(preset.kind);setLocal(preset.local);setApiKey('');setModelId('');setDefaultModel('');setDefaultEffort('');setReflection(false);setRpm(preset.requestsPerMinute?String(preset.requestsPerMinute):'');setAccountId('');setVision(false);setTestResult(null);setError('');setModal(true)}
  const goProvider=providers.value.find(p=>p.integration==='opencode-go'||p.baseUrl.includes('opencode.ai/zen/go')||p.baseUrl.includes('opencode.ai/inference/go'))
  const connectOpencodeGo=()=>{if(goProvider)open(goProvider);else openPreset(opencodeGoPreset)}
- const migratingHyperbolic=Boolean(edit?.name==='Hyperbolic'&&updatedProviderEndpoint(edit)===baseUrl.trim())
+ const migratingHyperbolic=Boolean(edit&&edit.name==='Hyperbolic'&&updatedProviderEndpoint(edit)===baseUrl.trim())
  const needsNewKey=presetMode&&!freePreset&&(!local||integration==='freellmapi')||migratingHyperbolic
  const testConnection=async()=>{
   if(testBusy||!baseUrl.trim())return
