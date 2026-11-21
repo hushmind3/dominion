@@ -97,6 +97,14 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const [modelMenu,setModelMenu]=useState(false),[installed,setInstalled]=useState<InstalledModel[]>([]),[modelsLoading,setModelsLoading]=useState(false),[runtime,setRuntime]=useState<Runtime>({status:'idle'}),[modelBusy,setModelBusy]=useState(''),[unloading,setUnloading]=useState(false),[learning,setLearning]=useState(false),[menuError,setMenuError]=useState('');
  const [slashOpen,setSlashOpen]=useState(false),[slashActive,setSlashActive]=useState(0),[commandInfo,setCommandInfo]=useState('');
  const inputRef=useRef<HTMLTextAreaElement>(null);
+ // Refit restored and newly typed drafts; a session switch does not emit an
+ // input event and can otherwise leave multiline drafts visually clipped.
+ useLayoutEffect(()=>{
+  const el=inputRef.current;
+  if(!el)return;
+  el.style.height='auto';
+  el.style.height=Math.min(el.scrollHeight,180)+'px';
+ },[current,input]);
  const imageInputRef=useRef<HTMLInputElement>(null);
  const [pendingImages,setPendingImages]=useState<PendingImage[]>([]);
  const [uploading,setUploading]=useState(false);
@@ -392,6 +400,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   setBusy(true);setError('');setCommandInfo('');setLive('');setThought('');setSlashOpen(false);setToolStatus('');
   jumpDown();
   let id=current;
+  let streamStarted=false;
   try{
    if(!id){
     const session=await post<ChatSession>('/api/sessions',{title:t('chat.sessionTitle'),agentId:agentMode?agentId:undefined,
@@ -427,6 +436,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      setUploading(false);
     }
    }
+   streamStarted=true;
    await streamChat({
     sessionId:id,agentId:agentMode?agentId:undefined,directChat:!agentMode,
     providerId:agentMode?manual?.providerId:providerId,model:agentMode?manual?.model:model,input:text,
@@ -445,7 +455,14 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     if(event.type==='error')throw Error(event.message);
    },controller.signal);
   }catch(e){
-   if(!controller.signal.aborted&&view.current===id)setError(translateError((e as Error).message));
+   if(!controller.signal.aborted&&view.current===id){
+    // Failed uploads or request preparation never wrote the owner turn.
+    // Restore it without overwriting anything typed while the upload ran.
+    // Once the stream starts, its accepted/persisted state is unknown and
+    // blind restoration would invite duplicate tool actions on retry.
+    if(!streamStarted)setInput(previous=>previous.trim()?previous:text);
+    setError(translateError((e as Error).message));
+   }
   }finally{
    if(stream.current===controller){
     flushStreamBuffer();
