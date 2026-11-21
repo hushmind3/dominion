@@ -88,3 +88,28 @@ Workers on different PCs have distinct local filesystems. The protocol returns b
 - Existing UI / TypeScript SDK type checks are unchanged.
 
 The included Rust test exercises an actual localhost TCP HTTP registration-claim-renew-settle cycle against persistent SQLite, plus stale ownership, writer consent and expiry. Operational testing with 2 physical PCs, model/API credentials, native approvals and long-running sessions still requires real hardware and connections. No release/installer build was performed in this iteration.
+
+
+## P3 cross-machine remote Writer artifact transfer and approved merge
+
+Remote Task Team nodes may opt into a bounded set of UTF-8 source artifacts. A remote Writer can return files as real SHA-256 checked receipts, and the Lead can apply them to its own workspace through the existing approved Rust multi-file patch executor, **not** by accepting an assistant-written claim that files changed on the coordinator.
+
+Example native Lead DAG node:
+
+    {"id":"remote-change","agentId":"configured-remote-agent",
+     "remoteWorkerId":"worker-b","readOnly":false,
+     "prompt":"Edit src/example.rs and provide the requested native artifact",
+     "artifactPaths":["src/example.rs"]}
+
+Flow:
+
+1. The coordinator resolves and freezes the local base SHA-256 for every named path when it commits the remote task. The remote node can run only with explicit Writer opt-in and the existing per-tool policy.
+2. The worker includes only listed non-symlink files (up to 8 files, 64 KiB each), UTF-8 bytes and SHA-256 in its terminal receipt. Arbitrary paths, Git internals, environment files and path traversal are refused.
+3. The coordinator checks every artifact ID, path, size and actual SHA-256 against the fixed approved manifest; it stores bytes as an explicitly remote-reported observation.
+4. team_status({teamId}) shows artifactApplyStatus=pending and exact paths. It does not silently sync files or mistake remote agent's native verification for local merge verification.
+5. After ordinary Dominion user approval, the owning Lead runs team_remote_apply({teamId,remoteTaskId}). The Rust tool holds the native workspace mutex and SQLite Writer lease, compares every coordinator file's current SHA-256 against the frozen base, stages a multi-file Codex-style patch through the existing tools_patch executor, verifies final SHA-256, records the originating run ID, and marks the receipt applied.
+6. If the coordinator's files changed, or the patch result is unknown, the tool returns a conflict or needs_review; no silent overwrite or automatic rerun is permitted. A second successful application returns the saved receipt, not a second write.
+
+Line-based native patches require UTF-8 LF source and outputs with preserved final newline, or an empty file; unsupported line ending conversions are rejected during preflight. Remote file changes remain distinct from remote task model success and from any Git commit. Applying artifacts never implicitly publishes a repository.
+
+CI runs cargo test --lib engine::tools::remote_artifacts::tests in addition to native remote/Team tests. These tests cover frozen base hashes, path confinement, a real local file application, durable applied state and idempotency.
