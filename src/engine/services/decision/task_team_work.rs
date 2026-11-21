@@ -316,7 +316,7 @@ pub fn finish_team(
         "observedFailures":failures,
         "evidenceVerified":verified,
     });
-    if let Some(saved)=state.store.put_if_absent("task_team_result",&result){
+    if let Some(saved)=state.store.put_team_result_if_parent_running(&result){
         state.bus.record("task_team_result",&saved);
         return Ok(saved);
     }
@@ -438,6 +438,28 @@ mod tests{
         assert_eq!(result["observedFailures"],1);
         assert_eq!(result["evidenceVerified"],false);
         assert_eq!(result["members"][0]["verified"],false);
+        drop(state);let _=std::fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn cancelled_parent_cannot_publish_a_late_completed_team_result(){
+        let (state,dir)=state();
+        let node=json!({"id":"write","type":"call_tool","tool":"workspace_write"});
+        let assigned=assign(&state,"s","run-a","r1","team",0,&node).unwrap();
+        let running=claim(&state,&assigned).unwrap();
+        state.store.put("execution_operation",&json!({
+            "id":"completed-op","runId":"run-a","sessionId":"s",
+            "startedAt":chrono::Utc::now().to_rfc3339(),
+            "tool":"workspace_write","callId":"program-write-late",
+            "status":"completed","toolReceipt":{"verified":true},
+            "effectState":"verified"
+        })).unwrap();
+        let checkpoint=json!({"completedOperationIds":["write"]});
+        let settled=settle(&state,&running,&node,&checkpoint).unwrap();
+        state.store.patch_if("execution","run-a","status",&json!("running"),
+            &json!({"status":"cancelled","phase":"cancelled"})).unwrap();
+        assert!(finish_team(&state,&[settled],&checkpoint).is_err(),
+            "a cancelled parent cannot create a new successful team result");
+        assert!(state.store.all("task_team_result").is_empty());
         drop(state);let _=std::fs::remove_dir_all(dir);
     }
     #[test]

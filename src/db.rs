@@ -943,6 +943,47 @@ impl Store {
         Some(work)
     }
 
+    /// Create a completed Task Team result only while the exact parent
+    /// execution still owns the run. The parent status check and insertion
+    /// share a single IMMEDIATE SQLite transaction: cancellation cannot race
+    /// between a read-only parent check and publishing a successful team.
+    pub fn put_team_result_if_parent_running(&self, result: &Value) -> Option<Value> {
+        let id = result["id"].as_str().filter(|id| !id.is_empty())?;
+        let execution_id = result["executionId"].as_str().filter(|id| !id.is_empty())?;
+        let session_id = result["sessionId"].as_str().filter(|id| !id.is_empty())?;
+        if result["kind"] != "program_task_team" || result["status"] != "completed"
+            || result["programRevision"].as_str().is_none_or(str::is_empty)
+            || result["teamNodeId"].as_str().is_none_or(str::is_empty)
+        {
+            return None;
+        }
+        let mut conn = self.conn.lock().ok()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).ok()?;
+        let parent = tx.query_row(
+            "SELECT data,id,created_at,updated_at FROM records WHERE kind='execution' AND id=?1",
+            [execution_id], record_from_row,
+        ).ok()?;
+        if parent["status"] != "running" || parent["sessionId"] != session_id
+            || parent["cancelRequested"] == true
+            || matches!(parent["phase"].as_str(),
+                Some("cancelled" | "interrupted" | "failed" | "succeeded"))
+        {
+            return None;
+        }
+        if tx.execute(
+            "INSERT OR IGNORE INTO records(kind,id,data) VALUES('task_team_result',?1,?2)",
+            params![id, result.to_string()],
+        ).ok()? != 1 {
+            return None;
+        }
+        let saved = tx.query_row(
+            "SELECT data,id,created_at,updated_at FROM records WHERE kind='task_team_result' AND id=?1",
+            [id], record_from_row,
+        ).ok()?;
+        tx.commit().ok()?;
+        Some(saved)
+    }
+
     pub fn patch_records(&self, kind: &str, ids: &[String], patch: &Value) -> Option<Vec<Value>> {
         let patch = patch.as_object()?;
         let mut conn = self.conn.lock().unwrap();
