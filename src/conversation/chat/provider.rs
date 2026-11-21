@@ -2095,6 +2095,20 @@ async fn stream_anthropic_once(
                 }
                 "content_block_start" => {
                     let content = &piece["content_block"];
+                    if content["type"].as_str() == Some("text") {
+                        // Native and Chat must expose a complete initial text
+                        // block even if the provider omits text_delta frames.
+                        let text=content["text"].as_str().unwrap_or("");
+                        if !text.is_empty() {
+                            completion.first_delta_ms.get_or_insert(started.elapsed().as_millis() as u64);
+                            completion.content.push_str(text);
+                            if tools.is_empty(){
+                                let _=tx.send(json!({"type":"text","text":text}));
+                            }else{
+                                stream_visible_text(tx,text,&mut text_pending,&mut in_text_tool_call);
+                            }
+                        }
+                    }
                     if content["type"].as_str() == Some("tool_use") {
                         let index = piece["index"].as_u64().unwrap_or(0) as usize;
                         let initial = content.get("input").cloned().unwrap_or_else(|| json!({}));
@@ -3134,7 +3148,13 @@ mod tests {
             let selected=request["model"].as_str().unwrap_or("");
             let mut events=vec![json!({"type":"message_start",
                 "message":{"usage":{"input_tokens":7,"output_tokens":0}}})];
-            if selected=="orphan-tool-delta" {
+            if selected=="valid-initial-text" {
+                events.extend([
+                    json!({"type":"content_block_start","index":0,
+                        "content_block":{"type":"text","text":"initial-only"}}),
+                    json!({"type":"content_block_stop","index":0}),
+                ]);
+            }else if selected=="orphan-tool-delta" {
                 events.push(json!({"type":"content_block_delta","index":0,
                     "delta":{"type":"input_json_delta","partial_json":"{}"}}));
             }else if selected=="valid-text"||selected=="no-stop"||selected=="max-tokens" {
@@ -3213,7 +3233,8 @@ mod tests {
                 .err().expect("Unsettled Anthropic call must never authorize an effect");
             assert!(error.contains(expected),"{name}: {error}");
         }
-        for (name,tool) in [("valid-text",false),("valid-tool",true)] {
+        for (name,tool) in [("valid-text",false),("valid-initial-text",false),
+            ("valid-tool",true)] {
             let provider=ProviderRef{id:name.into(),name:"Anthropic mock".into(),
                 base_url:format!("http://{addr}"),api_key:"test".into(),
                 model:name.into(),tool_mode:"native".into(),
@@ -3224,7 +3245,9 @@ mod tests {
                 &messages,&[],&request,"anthropic-finish",&tx,false).await.unwrap();
             assert_eq!(!reply.tool_calls.is_empty(),tool);
             if tool {assert_eq!(reply.tool_calls[0].id,"tool-1");}
-            else {assert_eq!(reply.content,"partial");}
+            else {assert_eq!(reply.content,if name=="valid-initial-text" {
+                "initial-only"
+            }else{"partial"});}
         }
         server.abort();
         crate::test_support::cleanup_dir(root);
