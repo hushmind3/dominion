@@ -107,6 +107,29 @@ async fn permission(
     });
     Ok(())
 }
+/// 2026 Codex App Server and ACP streams can multiplex notifications.
+/// A response id only identifies the outbound RPC; unsolicited model events
+/// must also belong to the exact session that this worker admitted.
+fn session_event_matches(
+    kind:ExternalAgent,method:&str,params:&Value,active:Option<&str>,
+)->Result<bool,String>{
+    let correlation=match kind {
+        ExternalAgent::CodexServer
+            if matches!(method,"item/agentMessage/delta"|"item/completed"
+                |"turn/completed"|"turn/failed") =>
+                Some(params["threadId"].as_str().ok_or(
+                    "Codex 실행 이벤트에 threadId가 없습니다.")?),
+        ExternalAgent::QwenAcp if method=="session/update" =>
+            Some(params["sessionId"].as_str().ok_or(
+                "ACP 실행 이벤트에 sessionId가 없습니다.")?),
+        _=>params["threadId"].as_str().or_else(||params["sessionId"].as_str()),
+    };
+    Ok(match correlation{
+        Some(session)=>active==Some(session),
+        None=>true, // Non-session lifecycle events may precede thread/start.
+    })
+}
+
 fn append_answer(answer:&mut String,text:&str){
     if answer.len()>=MAX_TEXT{return;}
     let remain=MAX_TEXT-answer.len();
@@ -213,12 +236,20 @@ async fn run_with_command(
                     let msg:Value=serde_json::from_str(&line)
                         .map_err(|_|"외부 에이전트 RPC JSON 형식이 올바르지 않습니다.")?;
                     if let Some(method)=msg["method"].as_str(){
+                        let params=&msg["params"];
+                        if !session_event_matches(kind,method,params,agent_session.as_deref())? {
+                            if msg.get("id").is_some() {
+                                return Err("다른 외부 Agent 세션의 권한 요청을 거부했습니다.".into());
+                            }
+                            // Never stream, persist or accept a foreign response
+                            // as this worker's result or final completion.
+                            continue;
+                        }
                         if msg.get("id").is_some() {
                             permission(context,kind,&writer,session,parent_execution,
                                 external_id,&msg).await?;
                             continue;
                         }
-                        let params=&msg["params"];
                         let text=if !is_acp {
                             match method {
                                 "item/agentMessage/delta"=>params["delta"].as_str(),
@@ -359,22 +390,27 @@ if kind=='codex':
     assert recv()['method']=='thread/start'
     send({'id':2,'result':{'thread':{'id':'123e4567-e89b-12d3-a456-426614174000'}}})
     assert recv()['method']=='turn/start'
-    send({'method':'item/agentMessage/delta','params':{'delta':'Codex result'}})
-    send({'method':'turn/completed','params':{'turn':{'status':'completed'}}})
+    send({'method':'item/agentMessage/delta','params':{'threadId':'foreign-thread','delta':'FOREIGN'}})
+    send({'method':'item/agentMessage/delta','params':{'threadId':'123e4567-e89b-12d3-a456-426614174000','delta':'Codex result'}})
+    send({'method':'turn/completed','params':{'threadId':'foreign-thread','turn':{'status':'completed'}}})
+    send({'method':'turn/completed','params':{'threadId':'123e4567-e89b-12d3-a456-426614174000','turn':{'status':'completed'}}})
 else:
     assert recv()['method']=='session/new'
     send({'jsonrpc':'2.0','id':2,'result':{'sessionId':'qwen-mock-1'}})
     assert recv()['method']=='session/prompt'
     send({'jsonrpc':'2.0','id':17,'method':'session/request_permission',
-        'params':{'options':[{'optionId':'allow','name':'Allow'}]}})
+        'params':{'sessionId':'qwen-mock-1','options':[{'optionId':'allow','name':'Allow'}]}})
     voted=recv()
     assert voted['id']==17 and voted['result']['outcome']['optionId']=='allow'
     # A thinking chunk MUST NOT enter the final public answer.
     send({'jsonrpc':'2.0','method':'session/update',
-        'params':{'update':{'sessionUpdate':'agent_thought_chunk',
+        'params':{'sessionId':'qwen-mock-1','update':{'sessionUpdate':'agent_thought_chunk',
             'content':{'type':'text','text':'private thought'}}}})
     send({'jsonrpc':'2.0','method':'session/update',
-        'params':{'update':{'sessionUpdate':'agent_message_chunk',
+        'params':{'sessionId':'foreign-session','update':{'sessionUpdate':'agent_message_chunk',
+            'content':{'type':'text','text':'FOREIGN ANSWER'}}}})
+    send({'jsonrpc':'2.0','method':'session/update',
+        'params':{'sessionId':'qwen-mock-1','update':{'sessionUpdate':'agent_message_chunk',
             'content':{'type':'text','text':'ACP final answer'}}}})
     send({'jsonrpc':'2.0','id':3,'result':{'stopReason':'end_turn'}})
 "#;
@@ -420,6 +456,30 @@ else:
                 &&e["method"].as_str().is_some()));
         }
         let _=std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn protocol_notifications_are_strictly_bound_to_admitted_agent_session(){
+        let thread="thread-1";
+        let owned=json!({"threadId":thread,"delta":"answer"});
+        let foreign=json!({"threadId":"thread-2","delta":"spoofed"});
+        for method in ["item/agentMessage/delta","item/completed","turn/completed","turn/failed"]{
+            assert!(session_event_matches(
+                ExternalAgent::CodexServer,method,&owned,Some(thread)).unwrap());
+            assert!(!session_event_matches(
+                ExternalAgent::CodexServer,method,&foreign,Some(thread)).unwrap());
+            assert!(session_event_matches(
+                ExternalAgent::CodexServer,method,&json!({}),Some(thread)).is_err());
+        }
+        let acp=json!({"sessionId":"acp-1","update":{"sessionUpdate":"agent_message_chunk"}});
+        assert!(session_event_matches(ExternalAgent::QwenAcp,
+            "session/update",&acp,Some("acp-1")).unwrap());
+        assert!(!session_event_matches(ExternalAgent::QwenAcp,
+            "session/update",&acp,Some("acp-2")).unwrap());
+        assert!(session_event_matches(ExternalAgent::QwenAcp,
+            "session/update",&json!({}),Some("acp-1")).is_err());
+        assert!(session_event_matches(ExternalAgent::CodexServer,
+            "thread/started",&json!({}),None).unwrap());
     }
 
     #[test]
