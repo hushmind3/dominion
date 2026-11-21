@@ -403,10 +403,17 @@ pub async fn maintenance_status(State(state): State<AppState>) -> Json<Value> {
 pub async fn maintenance(
     State(state): State<AppState>,
     Json(body): Json<Value>,
-) -> Json<Value> {
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let _restore_guard=state.restore_guard.lock().await;
+    if crate::engine::restore_transaction::pending(&state.config.data_dir) {
+        return (axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error":"restore recovery pending; restart required"}))
+        ).into_response();
+    }
     let enabled = body["enabled"].as_bool().unwrap_or(false);
     state.set_maintenance(enabled);
-    Json(json!({"maintenance": enabled}))
+    Json(json!({"maintenance": enabled})).into_response()
 }
 
 /// Restores an encrypted backup while maintenance mode is explicit. The
