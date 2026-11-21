@@ -1,7 +1,7 @@
 /** Pure SSE invalidation map. Unknown events do not invalidate the whole UI. */
-export type RefreshScope = {targets:string[];sessions:string[];rooms:string[]}
+export type RefreshScope = {targets:string[];sessions:string[];rooms:string[];resync?:boolean}
 type BusRow = Record<string,unknown>
-export type BusChange = {type?:string;kind?:string;record?:BusRow;message?:BusRow;approval?:BusRow;sessionId?:string;roomId?:string;jobId?:string;runKind?:string;runId?:string;sourceMessageId?:string;agentId?:string;eventSeq?:number;schemaVersion?:number}
+export type BusChange = {type?:string;kind?:string;record?:BusRow;message?:BusRow;approval?:BusRow;sessionId?:string;roomId?:string;jobId?:string;runKind?:string;runId?:string;sourceMessageId?:string;agentId?:string;eventSeq?:number;schemaVersion?:number;resyncRequired?:boolean}
 const field=(row:BusRow|undefined,name:string):string|undefined=>{
  const value=row?.[name]
  return typeof value==='string'&&value.length>0?value:undefined
@@ -13,6 +13,11 @@ const child=(row:BusRow|undefined,name:string):BusRow|undefined=>{
 const encoded=(value:string)=>encodeURIComponent(value)
 
 export function classifyRefreshEvent(event:BusChange):RefreshScope {
+ // A bounded journal can expire while the tab is disconnected. Its gap
+ // receipt must resynchronize all mounted data consumers, including the
+ // selected Room transcript, rather than silently leaving stale results.
+ if(event.type==='event_gap' && event.resyncRequired===true)
+  return {targets:['*'],sessions:[],rooms:[],resync:true}
  const targets=new Set<string>(), sessions=new Set<string>(), rooms=new Set<string>()
  const add=(...routes:string[])=>routes.forEach(route=>targets.add(route))
  const row=event.record
@@ -88,16 +93,17 @@ export function matchesRefreshTarget(endpoint:string|undefined,targets:readonly 
 }
 
 export function matchesRoomRefresh(scope:RefreshScope,roomId:string,sessionId?:string):boolean {
- return scope.rooms.includes(roomId)||
+ return scope.resync===true||scope.rooms.includes(roomId)||
   (Boolean(sessionId)&&scope.sessions.includes(sessionId!))
 }
 
 /** Combine bursts into one deterministic scope; no per-event network fetch. */
 export function mergeRefreshScopes(base:RefreshScope,next:RefreshScope):RefreshScope {
  return {
-  targets:[...new Set([...base.targets,...next.targets])],
+  targets:base.targets.includes('*')||next.targets.includes('*')?['*']:[...new Set([...base.targets,...next.targets])],
   sessions:[...new Set([...base.sessions,...next.sessions])],
-  rooms:[...new Set([...base.rooms,...next.rooms])]
+  rooms:[...new Set([...base.rooms,...next.rooms])],
+  ...(base.resync||next.resync?{resync:true}:{})
  }
 }
 export const emptyRefreshScope=():RefreshScope=>({targets:[],sessions:[],rooms:[]})
