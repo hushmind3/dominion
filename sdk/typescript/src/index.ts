@@ -78,6 +78,32 @@ export interface RunView {
  attempt:number|null;sessionId:string|null;providerId:string|null;model:string|null;
  startedAt:string|null;finishedAt:string|null;sourceJournal:'job'|'execution';
 }
+/** Native workers execute inside the shared Rust kernel; external bridge workers
+ * remain independent read-only runtimes and never mint native tool receipts. */
+export interface TeamTask {
+  id:string;prompt:string;dependsOn?:string[];
+  mode?:'read'|'write';runtime?:'native'|'codex'|'claude'|'qwen';
+  isolation?:'shared'|'worktree';resumeId?:string;
+  agentId?:string;providerId?:string;model?:string;
+  allowedTools?:string[];checks?:unknown[];
+}
+export interface TeamRequest {
+  goal:string;tasks:TeamTask[];maxParallel?:number;maxReadRetries?:number;
+}
+export interface TeamChild {
+  taskId:string;mode:'read'|'write';runtime:'native'|'codex'|'claude'|'qwen';
+  isolation:'shared'|'worktree';dependsOn:string[];childJobId:string;
+  status:string|null;executionId?:string|null;verified:boolean;
+  evidenceGrade?:string|null;worktree?:unknown;answerExcerpt?:string|null;
+}
+export interface TeamView {
+  id:string;kind:'team';status:string;goal:string;maxParallel:number;
+  maxReadRetries:number;tasks:TeamChild[];result:unknown;
+  error?:string|null;createdAt?:string|null;teamState?:unknown;
+}
+export interface WorktreePreview {
+  diffSha256:string;files:unknown[];[key:string]:unknown;
+}
 export interface Approval extends RecordItem {status:string;sessionId?:string;tool?:string;args?:unknown}
 export interface EngineEvent {seq:number;type:string;kind?:string;record?:RecordItem;removed?:string;approval?:Approval;runRef?:RunRef|null;runState?:RunView|null;[key:string]:unknown}
 export interface ChatEvent {type:string;[key:string]:unknown}
@@ -198,6 +224,22 @@ export class Dominion{
   /** Canonical read-only lifecycle across Chat, Room, Team and native jobs. */
   readonly runs={
     get:(runId:string)=>this.request<RunView>('GET','/api/runs/'+id(runId))
+  };
+  /** Task Team is a durable DAG supervisor, not another model execution loop. */
+  readonly taskTeams={
+    list:()=>this.request<TeamView[]>('GET','/api/task-teams'),
+    create:(plan:TeamRequest)=>this.request<TeamView>('POST','/api/task-teams',plan),
+    get:(teamId:string)=>this.request<TeamView>('GET','/api/task-teams/'+id(teamId)),
+    cancel:(teamId:string)=>this.request<TeamView>('POST','/api/task-teams/'+id(teamId)+'/cancel',{}),
+    bridges:()=>this.request<unknown>('GET','/api/task-teams/bridges'),
+    retry:(teamId:string)=>this.request<{newTeamId:string;retryOf:string;freshRun:true;status:string;team:TeamView}>(
+      'POST','/api/task-teams/'+id(teamId)+'/retry',{confirm:true}),
+    preview:(teamId:string,taskId:string)=>this.request<WorktreePreview>('GET',
+      '/api/task-teams/'+id(teamId)+'/worktrees/'+id(taskId)+'/preview'),
+    /** Stages an exact, owner-reviewed Git patch; it does not commit or push. */
+    promote:(teamId:string,taskId:string,expectedDiffSha256:string)=>this.request<unknown>('POST',
+      '/api/task-teams/'+id(teamId)+'/worktrees/'+id(taskId)+'/promote',
+      {confirm:true,expectedDiffSha256})
   };
   readonly nativeRuns={
     list:()=>this.request<NativeRun[]>('GET','/api/sdk/runs'),
