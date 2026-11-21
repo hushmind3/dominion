@@ -157,6 +157,8 @@ jobs:
           cargo test --lib engine::chat::runtime::harness_tool_selection_tests::external_harness_is_reachable_only_when_delegation_is_in_core
           cargo test --lib engine::chat::runtime::outcome_tests::nested_team_revision_failure_blocks_dependent_writer_and_parent_completion
           cargo test --lib engine::task_team_work::tests
+          cargo test --lib engine::tools::team::tests
+          cargo test --lib engine::tools::room_peer::tests
           cargo test --lib engine::chat::runtime::outcome_tests::real_task_team_dag_persists_worker_claims_and_correlates_actual_tool_receipts
           cargo test --lib engine::resource_lock::tests
           cargo test --lib engine::effect::tests::external_harness_is_always_effectful
