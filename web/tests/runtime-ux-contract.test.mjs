@@ -490,3 +490,12 @@ test('interrupted assistant output remains readable and copyable',()=>{
  assert.match(chat,/aria-label="중단된 답변 복사"/)
  assert.match(chat,/navigator\.clipboard\.writeText\(live\)/)
 })
+
+test('idempotency also protects real agent write tools, not only model-only chat',()=>{
+ const sourceE2e=source('../tests/e2e/http_execution.rs')
+ assert.match(sourceE2e,/fn duplicate_client_turn_id_cannot_repeat_a_real_agent_file_write/)
+ assert.match(sourceE2e,/"name":"workspace_write"/)
+ assert.match(sourceE2e,/calls_before=requests\.lock\(\)\.unwrap\(\)\.len\(\)/)
+ assert.match(sourceE2e,/assert_eq!\(requests\.lock\(\)\.unwrap\(\)\.len\(\),calls_before\)/)
+ assert.match(sourceE2e,/assert!\(!duplicate\.contains\("assistant_saved"\)/)
+})
