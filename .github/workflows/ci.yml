@@ -50,6 +50,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Native infrastructure contracts (dev profile)
         run: cargo test --locked -p dominion-core --lib
+      - name: Remote worker binary and lease broker contracts
+        run: |
+          cargo check --locked --bin dominion-worker
+          cargo test --locked --bin dominion-rust api::remote_workers::tests
       - name: Versioned Chat/Room/SDK execution correlation (dev profile)
         run: cargo test --locked --bin dominion-rust events::tests
       - name: Isolated agent-loop algorithm regressions (dev profile)
