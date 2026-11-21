@@ -59,6 +59,13 @@ fn pending(state:&AppState,job:&Value)->Option<Value>{
         a["id"].as_str().is_some_and(|approval|
             state.approvals.lock().unwrap().contains_key(approval)))
 }
+/// The receipt is an actual kernel record; show its identity and status
+/// without returning tool input arguments, raw file contents or secret output.
+fn project_tool_receipt(receipt:&Value)->Value{
+    json!({"id":receipt["id"],"tool":receipt["tool"],
+        "success":receipt["success"],"step":receipt["step"]})
+}
+
 /// One owner-facing projection for both the bounded run snapshot and
 /// explicitly requested historical pages; raw event journal is never changed.
 fn project_run_event(event:&Value)->Value{
@@ -164,10 +171,7 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
     // receipt is evidence of dispatch, NOT independent acceptance verification.
     let all_receipts=snapshot["receipts"].as_array();
     let tool_receipts=all_receipts.map(|receipts|receipts.iter().rev().take(40).rev()
-        .map(|receipt|json!({
-            "id":receipt["id"],"tool":receipt["tool"],
-            "success":receipt["success"],"step":receipt["step"]
-        })).collect::<Vec<_>>()).unwrap_or_default();
+        .map(project_tool_receipt).collect::<Vec<_>>()).unwrap_or_default();
     let omitted_receipts=all_receipts.map(|receipts|
         receipts.len().saturating_sub(tool_receipts.len())).unwrap_or(0);
     // Only the host-sealed owner acceptance witness is eligible here.
@@ -282,6 +286,30 @@ pub async fn events(
     Json(json!({"events":events,"total":total,"from":start,"to":end,
         "earliestAvailable":earliest,"eventsDropped":earliest,
         "nextBefore":if start==earliest {Value::Null}else{json!(start)}})).into_response()
+}
+
+/// Page verified kernel dispatch receipts without exposing arguments or
+/// inventing external acceptance evidence. This is read-only and scoped to
+/// the exact owner-visible Native panel run.
+pub async fn receipts(
+    State(state):State<AppState>,Path(id):Path<String>,Query(page):Query<EventPageQuery>
+)->Response{
+    let Some(job)=prompt_job(&state,&id) else {
+        return error(StatusCode::NOT_FOUND,"자동 작업 기록을 찾지 못했습니다.");
+    };
+    let rows=job["nativeState"]["receipts"].as_array();
+    let total=rows.map(Vec::len).unwrap_or(0);
+    let end=page.before.unwrap_or(total);
+    let limit=page.limit.unwrap_or(40);
+    if end>total || limit==0 || limit>40 {
+        return error(StatusCode::BAD_REQUEST,
+            "도구 영수증 페이지의 커서 또는 요청 개수가 유효하지 않습니다.");
+    }
+    let start=end.saturating_sub(limit);
+    let receipts=rows.map(|items|items[start..end].iter()
+        .map(project_tool_receipt).collect::<Vec<_>>()).unwrap_or_default();
+    Json(json!({"receipts":receipts,"total":total,"from":start,"to":end,
+        "nextBefore":if start==0 {Value::Null}else{json!(start)}})).into_response()
 }
 
 /// Reopen only a settled, host-witnessed UTF-8 artifact. The sealed digest
@@ -988,6 +1016,45 @@ mod tests{
             Query(EventPageQuery{before:Some(100),limit:Some(40)}))
             .await.status(),StatusCode::BAD_REQUEST);
         assert_eq!(events(State(state.clone()),Path("other-menu".into()),
+            Query(EventPageQuery{before:None,limit:None}))
+            .await.status(),StatusCode::NOT_FOUND);
+        let _=std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn native_tool_receipt_history_pages_are_scoped_and_argument_free(){
+        let (state,root)=temporary_state();
+        let complete=(0..93).map(|i|json!({
+            "id":format!("call-{i}"),"tool":if i%2==0{"workspace_read"}else{"shell_exec"},
+            "success":i%2==0,"step":i,
+            "arguments":{"apiKey":"DO_NOT_DISCLOSE"},"result":{"private":"SECRET_CONTENT"}
+        })).collect::<Vec<_>>();
+        state.store.put("job",&json!({"id":"receipts-run","kind":"prompt",
+            "status":"completed","input":{"prompt":"inspect","clientSurface":"native_agent_panel"},
+            "nativeState":{"receipts":complete}})).unwrap();
+        let page=receipts(State(state.clone()),Path("receipts-run".into()),
+            Query(EventPageQuery{before:None,limit:None})).await;
+        assert_eq!(page.status(),StatusCode::OK);
+        let value:Value=serde_json::from_slice(&to_bytes(page.into_body(),
+            1024*1024).await.unwrap()).unwrap();
+        assert_eq!(value["total"],93);
+        assert_eq!(value["from"],53);
+        assert_eq!(value["to"],93);
+        assert_eq!(value["nextBefore"],53);
+        assert_eq!(value["receipts"][0]["id"],"call-53");
+        assert_eq!(value["receipts"][39]["id"],"call-92");
+        assert!(!value.to_string().contains("DO_NOT_DISCLOSE"));
+        assert!(!value.to_string().contains("SECRET_CONTENT"));
+        let older=receipts(State(state.clone()),Path("receipts-run".into()),
+            Query(EventPageQuery{before:Some(53),limit:Some(40)})).await;
+        let older:Value=serde_json::from_slice(&to_bytes(older.into_body(),
+            1024*1024).await.unwrap()).unwrap();
+        assert_eq!(older["from"],13);
+        assert_eq!(older["receipts"][0]["id"],"call-13");
+        assert_eq!(receipts(State(state.clone()),Path("receipts-run".into()),
+            Query(EventPageQuery{before:Some(94),limit:None}))
+            .await.status(),StatusCode::BAD_REQUEST);
+        assert_eq!(receipts(State(state.clone()),Path("missing".into()),
             Query(EventPageQuery{before:None,limit:None}))
             .await.status(),StatusCode::NOT_FOUND);
         let _=std::fs::remove_dir_all(root);
