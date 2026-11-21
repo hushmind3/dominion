@@ -66,7 +66,9 @@ has('src/conversation/chat/runtime/resume_safety_tests.rs',
   ['paid_model_unknown_is_not_relaunched','unknown_tool_operation_blocks_resume']);
 has('src/features/providers/native_stream.rs',
   ['native_chat_supports_final_message_only_without_duplication',
-   'native_chat_does_not_replay_message_when_delta_already_arrived']);
+   'native_chat_does_not_replay_message_when_delta_already_arrived',
+   'pub(crate) fn validate_anthropic_stop_reason']);
+has('src/conversation/chat/provider.rs',['validate_anthropic_stop_reason(reason)?']);
 has('web/e2e/sub3-native-live.mjs',
   ['SUB3_VERIFIED','nativeState','chromium.launch','await page.reload']);
 has('crates/dominion-agent-algorithms/src/harness.rs',
