@@ -26,6 +26,11 @@ function goToLead(sessionId?:string){
  if(sessionId)window.location.hash='#/chat?session='+encodeURIComponent(sessionId)
 }
 const active=(status:string)=>status==='running'||status==='queued'||status==='launching'||status==='assigned'
+const artifactLabel=(status:string,en:boolean)=>({
+ pending:en?'Awaiting approval':'승인 대기',applying:en?'Applying':'적용 중',
+ applied:en?'Applied':'적용 완료',rejected:en?'Rejected':'거절됨',
+ needs_review:en?'Needs review':'검토 필요',blocked:en?'Blocked':'차단됨'
+} as Record<string,string>)[status]||status
 
 /** One native operator surface within the existing Activity page, not a new menu. */
 export function TeamActivity(){
@@ -193,7 +198,7 @@ export function TeamActivity(){
          </span>
          {task.verified&&<CheckCircle2 size={14} className="text-emerald-600" aria-label={en?'Verified':'검증됨'}/>}
          <StatusPill status={task.status}/>
-         {task.artifactApplyStatus&&task.artifactApplyStatus!=='not_required'&&<span className={'rounded-md px-2 py-0.5 text-[10px] '+(task.artifactApplyStatus==='applied'?'bg-emerald-50 text-emerald-700':'bg-amber-50 text-amber-800')}>{en?'Files: ':'산출물: '}{task.artifactApplyStatus}</span>}
+         {task.artifactApplyStatus&&task.artifactApplyStatus!=='not_required'&&<span className={'rounded-md px-2 py-0.5 text-[10px] '+(task.artifactApplyStatus==='applied'?'bg-emerald-50 text-emerald-700':'bg-amber-50 text-amber-800')}>{en?'Files: ':'산출물: '}{artifactLabel(task.artifactApplyStatus,en)}</span>}
          {task.remoteTaskId&&task.artifactApplyStatus==='pending'&&<Button size="sm" variant="secondary" disabled={Boolean(busy)} onClick={()=>void openReview(team.id,task.remoteTaskId!)}><GitMerge size={12}/>{en?'Review diff':'파일 변경 검토'}</Button>}
          {task.error&&<p className="w-full break-words text-rose-600">{task.error}</p>}
         </div>)}
