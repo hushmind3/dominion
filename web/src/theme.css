@@ -166,3 +166,7 @@
 .chat-session-search input::placeholder{color:#A99B8B}
 .chat-session-search button{display:grid;place-items:center;border:0;border-radius:5px;background:transparent;color:#948575;padding:3px}
 .chat-session-search button:hover{background:#F2E9DF}
+
+/* Keep file drops inside the Chat composer; never navigate to a local file. */
+.conversation-composer.chat-composer-drop{outline:2px dashed #B8855D;outline-offset:-3px;background:#FFF8EC}
+.conversation-composer.chat-composer-drop .conversation-composer-input{background:transparent}

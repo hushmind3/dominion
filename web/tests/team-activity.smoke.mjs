@@ -314,6 +314,19 @@ try{
     return button?.getAttribute('aria-pressed')==='true';
   },null,{timeout:10000});
   assert.equal(await page.getByRole('button',{name:'에이전트 실행'}).getAttribute('aria-pressed'),'true');
+  // Clipboard images/text files should become staged attachments without
+  // accidentally submitting a message or replacing typed text.
+  await chatInput.fill('대화 초안 유지')
+  await chatInput.evaluate(input=>{
+    const dt=new DataTransfer()
+    dt.items.add(new File(['pasted-note'],'pasted.txt',{type:'text/plain'}))
+    input.dispatchEvent(new ClipboardEvent('paste',{
+      bubbles:true,cancelable:true,clipboardData:dt
+    }))
+  })
+  await page.getByText('pasted.txt',{exact:true}).waitFor({timeout:10000})
+  assert.equal(await chatInput.inputValue(),'대화 초안 유지')
+  await page.getByRole('button',{name:'pasted.txt 첨부 취소'}).click()
   await page.getByRole('button',{name:'대화 목록 펼치기'}).click();
   const historySearch=page.getByRole('searchbox',{name:'대화 목록 검색'});
   await historySearch.fill('independent');

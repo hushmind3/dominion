@@ -6,7 +6,7 @@ import {TokenUsage} from '../components/TokenUsage'
 import {MarkdownMessage} from '../components/MarkdownMessage'
 import {createPortal} from 'react-dom'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
-import {FormEvent,useEffect,useMemo,useRef,useState,type KeyboardEvent} from 'react'
+import {FormEvent,useEffect,useMemo,useRef,useState,type ClipboardEvent,type DragEvent,type KeyboardEvent} from 'react'
 import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Paperclip,Plus,Power,RefreshCw,Search,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
 import {Agent,Approval,ChatMessage,ChatSession,Provider,get,post,resolveApproval,streamChat,koreanReasoningEnabled} from '../api'
 import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
@@ -165,6 +165,16 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const canDisableThinking=selectedProvider?.kind!=='codex'||reasoningOptions(selectedModel,true).includes('none');
  const setRoute=(providerId:string,model:string)=>setOverride({scope:current,providerId,model});
  useEffect(()=>{if(!current){setOverride(undefined);setAgentChoice(undefined)}},[initialAgent,initialProvider,initialModel]);
+ const [isDropping,setIsDropping]=useState(false)
+ const handleFileDrop=(event:DragEvent<HTMLFormElement>)=>{
+  event.preventDefault();setIsDropping(false)
+  addFiles(event.dataTransfer.files)
+ }
+ const handleClipboardFiles=(event:ClipboardEvent<HTMLTextAreaElement>)=>{
+  if(event.clipboardData.files.length===0)return
+  event.preventDefault()
+  addFiles(event.clipboardData.files)
+ }
  const [sessionFilter,setSessionFilter]=useState('')
  const filteredSessions=sessions.value.filter(session=>!session.roomId
   && session.title.toLocaleLowerCase('ko').includes(sessionFilter.trim().toLocaleLowerCase('ko')))
@@ -590,7 +600,10 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     <TeamRunStrip sessionId={current} active={active} onDraft={draft=>{setInput(draft);setSlashOpen(false);inputRef.current?.focus({preventScroll:true})}}/>
     <div className="relative">
     {slashOpen&&<SlashMenu items={slashItems} active={slashActive} onChoose={chooseSlash}/>}
-    <form onSubmit={send} className="conversation-composer">
+    <form onSubmit={send} className={'conversation-composer'+(isDropping?' chat-composer-drop':'')}
+     onDragOver={event=>{if(Array.from(event.dataTransfer.types).includes('Files')){event.preventDefault();setIsDropping(true)}}}
+     onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node))setIsDropping(false)}}
+     onDrop={handleFileDrop}>
      <div className="chat-execution-mode" role="group" aria-label="채팅 실행 방식">
       <Button type="button" className="chat-execution-mode-option" aria-pressed={executionMode==='chat'} disabled={busy} onClick={()=>setExecutionMode('chat')}><MessageCircle size={14}/> 일반 대화</Button>
       <Button type="button" className="chat-execution-mode-option" aria-pressed={executionMode==='agent'} disabled={busy} onClick={()=>setExecutionMode('agent')}><TerminalSquare size={14}/> 에이전트 실행</Button>
@@ -598,7 +611,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      </div>
      {draftFiles.length>0&&<div className="chat-file-drafts" aria-label="첨부 대기 파일">{draftFiles.map((file,i)=><span key={i} className="chat-file-chip"><Paperclip size={13}/><span title={file.name}>{file.name}</span><small>{formatDraftBytes(file.size)}</small><button type="button" aria-label={file.name+' 첨부 취소'} disabled={busy} onClick={()=>removeFile(i)}><X size={13}/></button></span>)}</div>}
      <input ref={fileInputRef} type="file" className="sr-only" multiple accept="image/png,image/jpeg,image/webp,image/gif,.txt,.md,.csv,.ts,.tsx,.js,.mjs,.json,.py,.rs,.yaml,.yml,.xml,.html,.css,.log,.sql" aria-label="첨부 파일 선택" disabled={busy} onChange={e=>{addFiles(e.currentTarget.files);e.currentTarget.value=''}}/>
-     <TextArea ref={inputRef} rows={1} placeholder={t("chat.inputPlaceholder")} value={input} onChange={e=>{const next=e.target.value;setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n'));setSlashActive(0);const el=e.currentTarget;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,180)+'px'}} onKeyDown={appendKey} aria-controls="dominion-slash-menu" aria-expanded={slashOpen} className="conversation-composer-input"/>
+     <TextArea ref={inputRef} rows={1} placeholder={t("chat.inputPlaceholder")} value={input} onChange={e=>{const next=e.target.value;setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n'));setSlashActive(0);const el=e.currentTarget;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,180)+'px'}} onKeyDown={appendKey} onPaste={handleClipboardFiles} aria-controls="dominion-slash-menu" aria-expanded={slashOpen} className="conversation-composer-input"/>
      <div className="chat-composer-controls conversation-composer-controls">
       <div className="chat-composer-options conversation-composer-options">
        <Button type="button" variant="ghost" disabled={busy} className="chat-file-add" title="이미지 또는 텍스트 파일 첨부" onClick={()=>fileInputRef.current?.click()}><Paperclip size={15}/><span className="hidden sm:inline">첨부</span></Button>
