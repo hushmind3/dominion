@@ -40,11 +40,12 @@ where F:FnMut(&str,&str)->Vec<Value> {
             || message["tool_calls"].as_array().is_some_and(|v|!v.is_empty()) {continue;}
         let Some(agent_id)=message["agent_id"].as_str().filter(|id|roster.contains(id)) else {continue;};
         let Some(message_id)=message["id"].as_str().filter(|id|!id.is_empty()) else {continue;};
-        if !seen.insert(agent_id.to_string()) {continue;}
+        if seen.contains(agent_id) {continue;}
         let Some(execution_id)=message["metadata"]["executionId"].as_str().filter(|id|!id.is_empty()) else {continue;};
         let mut operations=resolve(execution_id,agent_id).into_iter().rev()
             .filter(|op|op["runId"].as_str()==Some(execution_id)
                 && op["sessionId"].as_str().is_none_or(|s|s==session_id)
+                && op["agentId"].as_str().is_none_or(|a|a==agent_id)
                 && op["status"]=="completed"
                 && op["id"].as_str().is_some_and(|id|!id.is_empty())
                 && op["tool"].as_str().is_some_and(|name|!name.is_empty()))
@@ -62,6 +63,9 @@ where F:FnMut(&str,&str)->Vec<Value> {
                 })
             }).collect::<Vec<_>>();
         if operations.is_empty() {continue;}
+        // An empty or unbound newer answer cannot hide the last real
+        // receipt-backed contribution from this same participant.
+        seen.insert(agent_id.to_string());
         operations.reverse();
         contributions.push(json!({
             "agentId":agent_id, "messageId":message_id,
@@ -137,6 +141,32 @@ mod tests {
         assert!(ops[1]["artifactPath"].is_null());
         assert_eq!(ops[2]["artifactPath"],"src/public.rs");
         assert!(!board.to_string().contains("secret"));
+    }
+    #[test]
+    fn empty_newest_answer_cannot_shadow_a_prior_receipt_backed_contribution(){
+        let records=vec![
+            msg("a","room:one","owner","verified-run","verified-answer"),
+            msg("a","room:one","owner","empty-run","unverified-answer"),
+        ];
+        let board=project("room:one","owner",&roster(),&records,|run,_|{
+            if run=="verified-run"{
+                vec![op("receipt","verified-run","room:one","src/verified.rs","verified",true)]
+            }else{vec![]}
+        }).unwrap();
+        assert_eq!(board["contributions"][0]["messageId"],"verified-answer");
+        assert_eq!(board["contributions"][0]["operations"][0]["operationId"],"receipt");
+    }
+    #[test]
+    fn foreign_agent_operation_cannot_be_claimed_as_a_scoped_handoff(){
+        let records=vec![msg("a","room:one","owner","run","answer")];
+        let mut foreign=op("foreign","run","room:one","src/foreign.rs","verified",true);
+        foreign["agentId"]=json!("b");
+        let mut genuine=op("genuine","run","room:one","src/own.rs","verified",true);
+        genuine["agentId"]=json!("a");
+        let board=project("room:one","owner",&roster(),&records,|_,_|vec![foreign.clone(),genuine.clone()]).unwrap();
+        let ops=board["contributions"][0]["operations"].as_array().unwrap();
+        assert_eq!(ops.len(),1);
+        assert_eq!(ops[0]["operationId"],"genuine");
     }
     #[test]
     fn workboard_is_bounded_and_keeps_latest_committed_per_agent(){
