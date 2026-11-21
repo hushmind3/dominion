@@ -261,3 +261,7 @@ ProgramIR의 기존 `parallel` 노드에 `dependsOn` 형제 ID를 정식 지원�
 ## 2026-11-21 P0: 에이전트와 프로세스 간 Workspace Writer 임대
 
 기존 `resource_lock`의 프로세스 내부 mutex에 SQLite `LeaseGuard`를 결합했습니다. 일반 Chat·Room·Task Team·SDK에서 공통 `tools::execute`를 통과하는 변경 도구는 동일 작업 공간의 writer 임대를 독점한 뒤에만 실행합니다. 하위 에이전트 위임에는 잠금을 유지하지 않아 교착을 피합니다. 10초 안에 임대를 얻지 못하거나 세션이 취소되면 도구를 시작하지 않습니다. 임대는 heartbeat를 갱신하며, 서로 독립된 SQLite 연결 2개로 동일 작업 공간의 동시 writer 차단을 테스트합니다.
+
+### P0: 중첩 실패의 실행 전파 회귀 검증
+
+실제 제품의 ProgramIR을 통해 존재하지 않는 파일을 읽는 하위 작업(`onFailure=revise`)과 그 결과에 의존해 파일을 생성하는 writer를 실행하는 테스트를 추가했습니다. 자식 실패는 상위 Team까지 전파되어 writer를 호출하지 않고, 부모 완료 ID를 발급하지 않으며, 체크포인트에는 `needs_revision`을 기록해야 합니다. Chat·Room·SDK의 공통 Tool Gateway를 그대로 사용합니다.
