@@ -4,8 +4,9 @@ import {get,post,type Provider} from '../../api'
 import {formatDateTime,useLocale} from '../../i18n'
 import {Action,Notice,Panel,Subheading} from '../../components/UI'
 import {StatusPill} from '../../components/StatusPill'
+import {RemoteWorkersPanel,type RemoteAvailability} from './RemoteWorkers'
 
-type Runtime='native'|'codex'|'claude'|'qwen'
+type Runtime='native'|'codex'|'claude'|'qwen'|'remote'
 type Mode='read'|'write'
 type Draft={
  id:string;prompt:string;runtime:Runtime;mode:Mode;isolation:'shared'|'worktree';
@@ -14,7 +15,8 @@ type Draft={
 }
 type TeamTask={taskId:string;mode:Mode;runtime:Runtime;isolation:string;
  dependsOn:string[];status?:string|null;verified?:boolean; evidenceGrade?:string|null;
- answerExcerpt?:string;worktree?:{id?:string;status?:string;mergeStatus?:string}|null}
+ answerExcerpt?:string;observedOperations?:{operationId?:string;tool?:string;success?:boolean}[];
+ worktree?:{id?:string;status?:string;mergeStatus?:string}|null}
 type Team={id:string;goal:string;status:string;tasks:TeamTask[];error?:string|null;
  createdAt?:string;teamState?:{phase?:string}}
 type Preview={taskId:string;diffSha256:string;files:string[];
@@ -32,7 +34,10 @@ const apiPath=(id:string,task?:string)=>'/api/task-teams/'+encodeURIComponent(id
 export function TaskTeamsPanel({providers}:{providers:Provider[]}){
  const en=useLocale()==='en'
  const t=(ko:string,english:string)=>en?english:ko
- const [open,setOpen]=useState(false),[editing,setEditing]=useState(false)
+ const [open,setOpen]=useState(true),[editing,setEditing]=useState(false)
+ const [remoteAvailability,setRemoteAvailability]=useState<RemoteAvailability>({
+  enabled:false,online:0,loaded:false
+ })
  const [goal,setGoal]=useState(''),[steps,setSteps]=useState<Draft[]>([draft('inspect')])
  const [parallel,setParallel]=useState(2),[retries,setRetries]=useState(0)
  const [teams,setTeams]=useState<Team[]>([]),[selected,setSelected]=useState('')
@@ -66,18 +71,27 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
   while(seen.has('step_'+i))i++
   const next=draft('step_'+i)
   next.mode=mode;next.isolation=mode==='write'?'worktree':'shared'
-  if(steps.length)next.dependsOn=[steps[steps.length-1].id]
+  // Independent reads can actually execute in parallel. A writer waits for
+  // all predecessors rather than accidentally racing their observations.
+  if(mode==='write')next.dependsOn=steps.map(step=>step.id)
   setSteps(rows=>[...rows,next])
  }
  const invalid=(()=>{
   if(!goal.trim())return t('팀 목표를 입력하세요.','Enter a team goal.')
-  if(!steps.length||steps.some(v=>!v.prompt.trim()))return t('모든 작업 지시문이 필요합니다.','All worker instructions are required.')
+  if(!steps.length||steps.some(v=>!v.prompt.trim() && steps.length>1))
+   return t('여러 작업을 만들 때는 각 Worker의 지시문이 필요합니다.','Give each worker instructions when adding multiple tasks.')
   if(new Set(steps.map(v=>v.id)).size!==steps.length)return t('작업 ID가 중복됩니다.','Duplicate task IDs.')
+  if(steps.some(step=>new TextEncoder().encode(step.prompt.trim()||goal.trim()).length>
+   (step.runtime==='remote'?16384:32000)))
+   return t('작업 지시문의 UTF-8 용량 제한을 초과했습니다.','Worker prompt exceeds the UTF-8 size limit.')
   for(const step of steps){
    if(step.mode==='write'&&!step.checkPath.trim())return t('수정 작업에 파일 검증 경로가 필요합니다.','Write jobs require an artifact check.')
    if(step.runtime!=='native'){
     if(step.mode==='write')return t('외부 실행기는 읽기 전용입니다.','External runtimes are read-only.')
-    if(!bridges[step.runtime]?.enabled||!bridges[step.runtime]?.binaryAvailable)
+    if(step.runtime==='remote'){
+     if(!remoteAvailability.enabled)return t('원격 게이트웨이를 먼저 활성화하세요.','Enable the remote gateway first.')
+     if(remoteAvailability.online===0)return t('온라인 원격 워커가 없습니다.','No remote worker is online.')
+    }else if(!bridges[step.runtime]?.enabled||!bridges[step.runtime]?.binaryAvailable)
      return t('외부 CLI를 활성화하고 설치하세요.','Enable and install the external CLI.')
    }
    if(step.resumeId&& !/^[A-Za-z0-9_-]{4,128}$/.test(step.resumeId))
@@ -90,11 +104,12 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
   setBusy(true);setError('');setNotice('')
   try{
    const tasks=steps.map(step=>{
-    const item:Record<string,unknown>={id:step.id,prompt:step.prompt.trim(),
+    const item:Record<string,unknown>={id:step.id,
+     prompt:step.prompt.trim()||goal.trim(),
      mode:step.mode,runtime:step.runtime,isolation:step.isolation,dependsOn:step.dependsOn}
     if(step.providerId&&step.runtime==='native')item.providerId=step.providerId
-    if(step.model.trim())item.model=step.model.trim()
-    if(step.resumeId.trim()&&step.runtime!=='native')item.resumeId=step.resumeId.trim()
+    if(step.model.trim()&&step.runtime!=='remote')item.model=step.model.trim()
+    if(step.resumeId.trim()&&step.runtime!=='native'&&step.runtime!=='remote')item.resumeId=step.resumeId.trim()
     if(step.mode==='write')item.checks=[step.checkText.trim()?
      {type:'file_contains',path:step.checkPath.trim(),contains:step.checkText.trim()}:
      {type:'file_exists',path:step.checkPath.trim()}]
@@ -164,8 +179,8 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
    {notice&&<p className="text-[12px] text-emerald-700" role="status">{notice}</p>}
    {editing&&<Panel className="p-4 sm:p-5">
     <p className="mb-4 text-[12px] text-[#746A5F]">{t(
-     '조사 Worker는 병렬 실행됩니다. 파일 수정은 별도 Git Worktree를 권장합니다.',
-     'Read workers run concurrently. Use isolated Git worktrees for edits.')}</p>
+     '목표를 입력하고 바로 실행하거나 조사·수정 Worker를 추가하세요. 독립 조사 작업은 병렬 실행되고 파일 수정은 Git Worktree로 격리할 수 있습니다.',
+     'Enter a goal to run one worker, or add investigation and editing workers. Independent research runs in parallel; edits can use isolated Git worktrees.')}</p>
     <label className="grid gap-1 text-[12px] font-semibold">{t('팀 목표','Team goal')}
      <textarea className={field} rows={2} maxLength={16000} value={goal}
       onChange={e=>setGoal(e.target.value)}/></label>
@@ -201,6 +216,7 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
          <option value="native">DOMINION Rust</option>
          <option value="codex">Codex</option><option value="claude">Claude Code</option>
          <option value="qwen">Qwen Code</option>
+         <option value="remote">{t('원격 장치 · 텍스트 추론','Remote device · text inference')}</option>
         </select></label>
        <label className="grid gap-1 text-[11px]">{t('작업공간','Workspace')}
         <select className={field} value={step.isolation}
@@ -211,6 +227,8 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
       </div>
       <label className="mt-3 grid gap-1 text-[11px]">{t('작업 지시문','Worker instructions')}
        <textarea className={field} maxLength={32000} rows={2}
+        placeholder={steps.length===1?t('생략하면 팀 목표를 사용합니다.','Leave empty to use the team goal.'):
+         t('이 Worker가 맡을 구체적인 작업','Specify this worker’s responsibility')}
         value={step.prompt} onChange={e=>patch(step.id,{prompt:e.target.value})}/></label>
       {step.runtime==='native'?<label className="mt-3 grid gap-1 text-[11px]">
        {t('모델 제공자','Model provider')}
@@ -220,14 +238,22 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
         {providers.filter(p=>p.enabled).map(p=><option key={p.id} value={p.id}>
          {p.name}{p.model?' · '+p.model:''}</option>)}
        </select></label>:<p className="mt-3 text-[11px] text-[#746A5F]">
-       {step.runtime}: {bridges[step.runtime]?.enabled&&bridges[step.runtime]?.binaryAvailable?
+       {step.runtime}: {step.runtime==='remote'?
+        t('독립 실행 장치의 읽기 전용 추론','Remote text-only reasoning'):
+        bridges[step.runtime]?.enabled&&bridges[step.runtime]?.binaryAvailable?
         t('CLI 설치 감지 · 인증은 별도','CLI detected · authentication unverified'):
         t('CLI가 비활성화됐거나 설치되지 않았습니다.','CLI disabled or unavailable')}</p>}
+      {step.runtime==='remote'&&<p className="mt-2 text-[11px] text-[#746A5F]">
+       {remoteAvailability.online>0?
+        t('온라인 워커 '+remoteAvailability.online+'대 · 별도 장치 모델 사용 · 외부 추론 결과는 독립 검증 전',
+         remoteAvailability.online+' worker(s) online · uses each device model · results are unverified'):
+        t('아래 원격 장치에서 연결 상태를 확인하세요.','Check remote device status below.')}
+      </p>}
       <details className="mt-3 text-[11px]">
        <summary className="cursor-pointer text-[#746A5F]">{t('모델 · 의존성 · 세션 설정','Model · dependencies · session')}</summary>
-       <label className="mt-2 grid gap-1">{t('모델 ID (선택)','Model ID (optional)')}
-        <input className={field} value={step.model} onChange={e=>patch(step.id,{model:e.target.value})}/></label>
-       {step.runtime!=='native'&&<label className="mt-2 grid gap-1">
+       {step.runtime!=='remote'&&<label className="mt-2 grid gap-1">{t('모델 ID (선택)','Model ID (optional)')}
+        <input className={field} value={step.model} onChange={e=>patch(step.id,{model:e.target.value})}/></label>}
+       {step.runtime!=='native'&&step.runtime!=='remote'&&<label className="mt-2 grid gap-1">
         {t('기존 세션 ID (선택)','Resume session ID (optional)')}
         <input className={field} value={step.resumeId} onChange={e=>patch(step.id,{resumeId:e.target.value})}/></label>}
        {steps.slice(0,index).length>0&&<fieldset className="mt-2">
@@ -249,10 +275,10 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
       </div>}
      </div>)}
     </div>
-    <div className="mt-3 flex gap-2">
-     <button className={btn} type="button" disabled={busy||steps.length>=8}
+    <div className="mt-3 flex flex-wrap gap-2">
+     <button className={btn} type="button" disabled={busy||steps.length>=12}
       onClick={()=>add('read')}><Plus size={12} className="mr-1 inline"/>{t('조사 Worker','Read worker')}</button>
-     <button className={btn} type="button" disabled={busy||steps.length>=8}
+     <button className={btn} type="button" disabled={busy||steps.length>=12}
       onClick={()=>add('write')}><Plus size={12} className="mr-1 inline"/>{t('수정 Worker','Write worker')}</button>
     </div>
     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#EFE9DF] pt-3">
@@ -285,7 +311,21 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
         <small className="break-all text-[10px] text-[#8A8176]">{details.id}</small></div>
        <StatusPill status={details.status}/>
       </div>
-      <p className="my-2 text-[11px] text-[#8A8176]">{t('진행 단계','Phase')}: {details.teamState?.phase||'—'}</p>
+      <div className="my-3 rounded-lg border border-[#E7E0D5] bg-[#FCFAF7] p-3">
+       <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+        <span className="font-semibold">{t('작업 진행','Task progress')}</span>
+        <span>{details.tasks?.filter(task=>task.status==='completed').length||0} /
+         {details.tasks?.length||0} {t('완료','completed')}</span>
+       </div>
+       <progress className="mt-2 h-2 w-full accent-[#A4583E]"
+        max={Math.max(details.tasks?.length||0,1)}
+        value={details.tasks?.filter(task=>task.status==='completed').length||0}
+        aria-label={t('완료된 Worker 수','Completed workers')}/>
+       <p className="mt-1 text-[10px] text-[#82796D]">
+        {t('진행 단계','Phase')}: {details.teamState?.phase||'—'} ·
+        {t(' 증거는 작업 완료와 별도로 검증됩니다.',' Evidence is checked separately from task completion.')}
+       </p>
+      </div>
       <div className="flex flex-wrap gap-2">
        {active.has(details.status)&&<button className={btn} type="button" disabled={busy} onClick={()=>void act('cancel')}>
         <Square size={13} className="mr-1 inline"/>{t('취소','Cancel')}</button>}
@@ -306,6 +346,17 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
          {t('검증','Evidence')}: {task.evidenceGrade||'—'}
          {task.verified&&<ShieldCheck size={13} className="ml-2 inline text-emerald-600"/>}</p>
         {task.answerExcerpt&&<p className="mt-2 whitespace-pre-wrap break-words text-[11px]">{task.answerExcerpt}</p>}
+        {Boolean(task.observedOperations?.length)&&<details className="mt-2 rounded-lg bg-[#FCFAF7] p-2 text-[11px]">
+         <summary className="cursor-pointer font-semibold text-[#746A5F]">
+          {t('실제 도구 실행 근거','Observed tool receipts')} · {task.observedOperations?.length}</summary>
+         <ul className="mt-2 space-y-1">
+          {task.observedOperations?.map((operation,index)=><li key={operation.operationId||index}
+           className="break-all text-[#746A5F]">{operation.tool||'tool'} · {operation.operationId||'—'}</li>)}
+         </ul>
+        </details>}
+        {task.evidenceGrade==='external_unverified'&&<p className="mt-1 text-[10px] text-amber-800">
+         {t('외부 모델의 응답이며 파일 변경 검증이 아닙니다.','External model result; not verified file changes.')}
+        </p>}
         {task.worktree?.id&&<div className="mt-2 flex flex-wrap items-center gap-2">
          <GitBranch size={13}/><small>{task.worktree.status} · {task.worktree.mergeStatus||'pending'}</small>
          {details.status==='completed'&&task.mode==='write'&&task.worktree.mergeStatus!=='applied'&&
@@ -333,6 +384,7 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
      </>}
     </Panel>
    </div>
+   <RemoteWorkersPanel onAvailability={setRemoteAvailability}/>
   </div>}
  </div>
 }
