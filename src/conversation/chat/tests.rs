@@ -179,7 +179,7 @@ fn failed_commands_signals_and_mcp_errors_are_not_successes() {
 }
 
 #[test]
-fn cancelled_execution_finalizes_unknown_tool_outcomes() {
+fn cancelled_execution_keeps_unknown_tool_outcomes_in_review() {
     let state = temp_state();
     state
         .store
@@ -196,7 +196,7 @@ fn cancelled_execution_finalizes_unknown_tool_outcomes() {
     );
     assert_eq!(
         state.store.get("execution", "e").unwrap()["status"],
-        "cancelled"
+        "needs_review"
     );
     let operation = state.store.get("execution_operation", "op").unwrap();
     assert_eq!(operation["status"], "interrupted");

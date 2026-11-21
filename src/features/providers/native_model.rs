@@ -1064,6 +1064,7 @@ mod tests {
                 }else{
                     (StatusCode::OK,Json(json!({"content":[{
                         "type":"text","text":"settled without cache"}],
+                        "stop_reason":"end_turn",
                         "usage":{"input_tokens":25,"output_tokens":5}})))
                 }
             }
@@ -1110,6 +1111,7 @@ mod tests {
                     rows.len()
                 };
                 Json(json!({"content":[{"type":"text","text":"done"}],
+                    "stop_reason":"end_turn",
                     "usage":{"input_tokens":30,"output_tokens":9,
                         "cache_creation_input_tokens":if index==1{500}else{0},
                         "cache_read_input_tokens":if index==2{500}else{0}}}))

@@ -6,9 +6,9 @@ fn common_participant_state_follows_provider_and_protocol_changes() {
     let _serial=serial();
     let (port,requests)=scripted_provider(|body| {
         if body["input"].is_array() {
-            vec![json!({"type":"response.output_text.delta","delta":"COMMON_LOGICAL_42"}),json!({"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":5,"total_tokens":105}}})]
+            vec![json!({"type":"response.output_text.delta","delta":"COMMON_LOGICAL_42"}),json!({"type":"response.completed","response":{"status":"completed","output":[],"usage":{"input_tokens":100,"output_tokens":5,"total_tokens":105}}})]
         } else if !body["system"].is_null() {
-            vec![json!({"type":"message_start","message":{"usage":{"input_tokens":100,"output_tokens":0}}}),json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"COMMON_LOGICAL_42"}}),json!({"type":"message_delta","usage":{"output_tokens":5}}),json!({"type":"message_stop"})]
+            vec![json!({"type":"message_start","message":{"usage":{"input_tokens":100,"output_tokens":0}}}),json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"COMMON_LOGICAL_42"}}),json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}),json!({"type":"message_stop"})]
         } else {
             vec![json!({"choices":[{"delta":{"content":"COMMON_LOGICAL_42"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":5,"total_tokens":105}})]
         }
@@ -52,7 +52,7 @@ fn strict_provider_cache_rejection_is_learned_and_keeps_the_same_conversation() 
                 return vec![json!({"_testHttpStatus":400,"body":{"error":{"param":field,"message":format!("Unsupported parameter: {field}")}}})];
             }
             if !body["system"].is_null() {
-                vec![json!({"type":"message_start","message":{"usage":{"input_tokens":30}}}),json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"state kept"}}),json!({"type":"message_delta","usage":{"output_tokens":3}}),json!({"type":"message_stop"})]
+                vec![json!({"type":"message_start","message":{"usage":{"input_tokens":30}}}),json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"state kept"}}),json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}),json!({"type":"message_stop"})]
             } else {
                 vec![json!({"choices":[{"delta":{"content":"state kept"},"finish_reason":"stop"}],"usage":{"prompt_tokens":30,"completion_tokens":3,"total_tokens":33}})]
             }
@@ -63,10 +63,11 @@ fn strict_provider_cache_rejection_is_learned_and_keeps_the_same_conversation() 
         let session=app.post("/api/sessions",&json!({"title":"strict provider","agentId":agent["id"]}));
         let mut participant=Value::Null;
         for index in 0..2 {
-            let stream=app.chat(&json!({"sessionId":session["id"],"agentId":agent["id"],"input":"안녕","toolsEnabled":false,"autoLearning":false}));
+            let stream=app.chat(&json!({"sessionId":session["id"],"agentId":agent["id"],"input":"앞서 진행한 작업의 상태를 이어서 알려줘.","toolsEnabled":false,"autoLearning":false}));
             assert!(stream.contains("state kept"),"{kind}: {stream}");
             let rows=app.get(&format!("/api/sessions/{}/messages",session["id"].as_str().unwrap()));
-            let last=rows.as_array().unwrap().iter().rev().find(|row|row["role"]=="assistant").unwrap();
+            let last=rows.as_array().unwrap().iter().rev().find(|row|row["role"]=="assistant")
+                .unwrap_or_else(||panic!("{kind} assistant message missing; stream={stream}; rows={rows}"));
             let continuity=&last["metadata"]["continuity"];
             if index==0 {participant=continuity["participantId"].clone();}
             assert_eq!(continuity["participantId"],participant);
@@ -85,7 +86,7 @@ fn room_bot_continuity_is_distinct_and_survives_an_engine_restart() {
     let _serial=serial();
     let (port,requests)=scripted_provider(|_|vec![
         json!({"type":"response.output_text.delta","delta":"MY_BOT_PREVIOUS_ANSWER_42"}),
-        json!({"type":"response.completed","response":{"usage":{"input_tokens":200,"input_tokens_details":{"cached_tokens":128},"output_tokens":10,"total_tokens":210}}}),
+        json!({"type":"response.completed","response":{"status":"completed","output":[],"usage":{"input_tokens":200,"input_tokens_details":{"cached_tokens":128},"output_tokens":10,"total_tokens":210}}}),
     ]);
     let app=TestApp::new(port,"native");
     let provider=app.post("/api/providers",&json!({"name":"continuity","kind":"codex","baseUrl":format!("http://127.0.0.1:{port}/codex"),"accountId":"fixture-account","apiKey":"fixture-only","enabled":true,"model":"fixture-model"}));
@@ -140,7 +141,7 @@ fn nine_room_participants_keep_actual_request_prefix_across_sliding_windows_and_
     let _serial=serial();
     let (port,requests)=scripted_provider(|_|vec![
         json!({"type":"response.output_text.delta","delta":"인사했습니다."}),
-        json!({"type":"response.completed","response":{"usage":{"input_tokens":200,"output_tokens":5,"total_tokens":205}}}),
+        json!({"type":"response.completed","response":{"status":"completed","output":[],"usage":{"input_tokens":200,"output_tokens":5,"total_tokens":205}}}),
     ]);
     let mut app=TestApp::new(port,"native");
     let provider=app.post("/api/providers",&json!({"name":"prefix fixture","kind":"codex","baseUrl":format!("http://127.0.0.1:{port}/codex"),"accountId":"fixture-account","apiKey":"fixture-only","enabled":true,"model":"fixture-model"}));
@@ -194,7 +195,7 @@ fn codex_effort_survives_agent_bulk_chat_override_and_room_selection() {
     let _serial = serial();
     let (port, requests) = scripted_provider(|_| vec![
         json!({"type":"response.output_text.delta","delta":"확인했습니다."}),
-        json!({"type":"response.completed","response":{"usage":{"input_tokens":30,"output_tokens":5,"total_tokens":35}}}),
+        json!({"type":"response.completed","response":{"status":"completed","output":[],"usage":{"input_tokens":30,"output_tokens":5,"total_tokens":35}}}),
     ]);
     let app = TestApp::new(port,"native");
     let provider = app.post("/api/providers", &json!({"name":"Codex test","kind":"codex","baseUrl":format!("http://127.0.0.1:{port}/codex"),"accountId":"test-account","apiKey":"test-only","enabled":true,"model":"catalog-model","reasoningEffort":"high"}));
@@ -1080,7 +1081,11 @@ for line in sys.stdin:
     if "id" not in message:
         continue
     method = message.get("method")
-    if method == "initialize":
+    if method == "server/discover":
+        print(json.dumps({"jsonrpc":"2.0","id":message["id"],
+            "error":{"code":-32601,"message":"Method not found"}}), flush=True)
+        continue
+    elif method == "initialize":
         result = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "fake", "version": "1.0"}}
     elif method == "tools/list":
         result = {"tools": [{"name": "search_issues", "description": "Search GitHub issues and pull requests", "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}]}

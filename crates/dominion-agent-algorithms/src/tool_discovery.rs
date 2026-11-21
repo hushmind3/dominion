@@ -43,8 +43,8 @@ pub fn needed(catalog:&HashMap<String,ToolSpec>)->bool {
 }
 // Relevance/ranking lives in the replaceable intelligence crate; the Rust
 // dispatcher still owns the allowed catalog and the discovery permission fence.
-use crate::ranking::{tool_relevance,tool_relevance_with_schema};
-#[cfg(test)] use crate::ranking::schema_relevance;
+use crate::ranking::tool_relevance_with_schema;
+#[cfg(test)] use crate::ranking::{schema_relevance,tool_relevance};
 fn score(spec:&ToolSpec, query:&str)->i32{
  tool_relevance_with_schema(&spec.name,&spec.description,&spec.schema,query)
 }

@@ -461,8 +461,16 @@ pub(crate) fn finalize_execution(
     // unacknowledged tool effect is NOT definitive, even after owner cancel.
     // Keep the write-ahead barrier and expose the explicit manual-review phase.
     let unresolved_model=record["kernelState"]["modelInFlight"]==true;
+    let journal_operations=state.store.execution_operations_recent(execution_id)
+        .unwrap_or_else(|_|state.store.all("execution_operation").into_iter()
+            .filter(|operation|operation["runId"].as_str()==Some(execution_id))
+            .collect());
     let unresolved_tool=record["kernelState"]["inFlight"].as_array()
-        .is_some_and(|actions|!actions.is_empty());
+        .is_some_and(|actions|!actions.is_empty())
+        || journal_operations.iter().any(|operation|
+            operation["status"]=="running"
+                ||operation["outcomeUnknown"]==true
+                ||operation["effectState"]=="effect_unknown");
     let unresolved=unresolved_model||unresolved_tool;
     if unresolved {
         record["status"]=json!("needs_review");

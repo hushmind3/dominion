@@ -554,7 +554,7 @@ fn parallel_reads_combination_executes_independent_reads_in_one_round() {
 }
 
 #[test]
-fn parallel_reads_answer_malformed_arguments_so_no_tool_call_is_orphaned() {
+fn malformed_tool_arguments_fail_closed_without_dispatch() {
     let _serial = serial();
     let (port, _) = scripted_provider(|request| {
         let messages = request["messages"].as_array().cloned().unwrap_or_default();
@@ -587,7 +587,12 @@ fn parallel_reads_answer_malformed_arguments_so_no_tool_call_is_orphaned() {
         &json!({"force": true}),
     );
     let stream = app.chat(&json!({"input":"one.txt를 읽어","autoLearning":false}));
-    assert!(stream.contains("malformed-read-was-answered"), "{stream}");
+    assert!(stream.contains("완성되지 않은 도구 인수"), "{stream}");
+    let execution = app.get("/api/executions")[0].clone();
+    assert_eq!(execution["status"].as_str(), Some("needs_review"), "{execution}");
+    assert_eq!(execution["kernelState"]["modelInFlight"], true,
+        "malformed output cannot release an uncertain paid-call fence");
+    assert_eq!(execution["toolCalls"], 0, "malformed calls never dispatch");
 }
 
 #[test]

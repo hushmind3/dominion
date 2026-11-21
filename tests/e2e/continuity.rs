@@ -129,7 +129,7 @@ fn scripted_websocket_provider() -> (u16, Arc<Mutex<Vec<Value>>>) {
                         let answer = format!("WEBSOCKET_ANSWER_{count}");
                         let events = [
                             json!({"type":"response.output_text.delta","delta":answer}),
-                            json!({"type":"response.completed","response":{
+                            json!({"type":"response.completed","response":{"status":"completed",
                                 "id":id,
                                 "output":[{"type":"message","role":"assistant",
                                     "content":[{"type":"output_text","text":answer}]}],
@@ -209,7 +209,7 @@ fn scripted_codex_tool_provider() -> (u16, Arc<Mutex<Vec<Value>>>) {
                             });
                             vec![
                                 json!({"type":"response.output_item.done","item":call.clone()}),
-                                json!({"type":"response.completed","response":{
+                                json!({"type":"response.completed","response":{"status":"completed",
                                     "id":id,
                                     "output":[call],
                                     "usage":{"input_tokens":40,
@@ -221,7 +221,7 @@ fn scripted_codex_tool_provider() -> (u16, Arc<Mutex<Vec<Value>>>) {
                             let answer = "웹소켓 도구 실행 완료";
                             vec![
                                 json!({"type":"response.output_text.delta","delta":answer}),
-                                json!({"type":"response.completed","response":{
+                                json!({"type":"response.completed","response":{"status":"completed",
                                     "id":id,
                                     "output":[{"type":"message","role":"assistant",
                                         "content":[{"type":"output_text","text":answer}]}],
@@ -345,7 +345,7 @@ fn codex_http_fallback_executes_a_structured_tool_call() {
         if has_output {
             return vec![
                 json!({"type":"response.output_text.delta","delta":"HTTP 도구 완료"}),
-                json!({"type":"response.completed","response":{
+                json!({"type":"response.completed","response":{"status":"completed",
                     "id":"resp_http_tool_2",
                     "output":[{"type":"message","role":"assistant",
                         "content":[{"type":"output_text","text":"HTTP 도구 완료"}]}],
@@ -362,7 +362,7 @@ fn codex_http_fallback_executes_a_structured_tool_call() {
         });
         vec![
             json!({"type":"response.output_item.done","item":call.clone()}),
-            json!({"type":"response.completed","response":{
+            json!({"type":"response.completed","response":{"status":"completed",
                 "id":"resp_http_tool_1",
                 "output":[call],
                 "usage":{"input_tokens":40,"output_tokens":5,"total_tokens":45}
@@ -521,7 +521,7 @@ fn codex_receives_uploaded_image_and_file_contents() {
     let _serial = serial();
     let (port, requests) = scripted_provider(|_| vec![
         json!({"type":"response.output_text.delta","delta":"ATTACHMENTS_RECEIVED"}),
-        json!({"type":"response.completed","response":{}}),
+        json!({"type":"response.completed","response":{"status":"completed","output":[]}}),
     ]);
     let app = TestApp::new(port, "native");
     let provider = app.post("/api/providers", &json!({
