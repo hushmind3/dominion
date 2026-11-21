@@ -1,6 +1,6 @@
 # 도미니언 — 자체 Rust 자율 에이전트 플랫폼
 
-[English](README.md) · [실행 구조](docs/HARNESS.md) · [Rust SDK](sdk/rust/README.md) · [TypeScript SDK](sdk/typescript/README.md) · [서브3 최신 통합 점검](docs/SUB3-INTEGRATION-2026-11-19.md)
+[English](README.md) · [전체 아키텍처](ARCHITECTURE.md) · [하네스 계약](docs/HARNESS.md) · [Rust SDK](sdk/rust/README.md) · [TypeScript SDK](sdk/typescript/README.md) · [서브3 최신 통합 점검](docs/SUB3-INTEGRATION-2026-11-19.md)
 
 **도미니언(DOMINION)**은 로컬·외부 AI 모델을 연결해 코드 수정, 파일·셸·웹/MCP 작업, 검증, 승인, 중단 및 복구를 수행하는 **사용자 통제형 Rust 실행 플랫폼**입니다. 단순한 채팅 UI가 아니라 실제 작업과 결과 증거를 SQLite에 남기는 실행 제품을 목표로 합니다.
 
