@@ -20,6 +20,8 @@ impl FailureGuidance {
             "failedTool":self.tool,"observedFailure":self.category,
             "errorExcerpt":self.error_excerpt,
             "suggestedNextInspection":self.next_probe,
+            "candidateInspectionTools":self.probe_tools,
+            "toolHintsAreNotPermission":true,
             "diagnosisStatus":if self.verification_pending_after_edit {
                 "source_changed_recheck_pending"
             } else { "rule_based_observation_not_verified_cause" }})
@@ -148,6 +150,8 @@ mod tests{
             assert_eq!(result.category,expected);
             assert_eq!(result.model_view()["diagnosisStatus"],
                 "rule_based_observation_not_verified_cause");
+            assert_eq!(result.model_view()["toolHintsAreNotPermission"],true);
+            assert_eq!(result.model_view()["candidateInspectionTools"],json!(result.probe_tools));
             assert!(result.model_view().to_string().len()<900);
         }
     }
@@ -161,6 +165,8 @@ mod tests{
         assert_eq!(hint.category,"compiler_diagnostic");
         assert_eq!(hint.model_view()["diagnosisStatus"],"source_changed_recheck_pending");
         assert!(hint.probe_tools.is_empty());
+        assert_eq!(hint.model_view()["candidateInspectionTools"],json!([]),
+            "After a real edit, the planner should propose verification");
         let verified=Receipt{id:"green".into(),tool:"shell_exec".into(),
             arguments:json!({}),success:true,result:json!({"exitCode":0}),step:3};
         assert!(latest(&[
