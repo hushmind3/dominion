@@ -40,7 +40,9 @@ impl Config {
             .unwrap_or_else(|| PathBuf::from("."));
 
         Self {
-            port: env_or("DOMINION_PORT", "4317").parse().unwrap_or(4317),
+            // Sub2 keeps a distinct local owner API from the main 4317 service.
+// An explicit DOMINION_PORT always wins (tests and packaging included).
+port: env_or("DOMINION_PORT", "4321").parse().unwrap_or(4321),
             data_dir,
             web_dir,
             workspace,
