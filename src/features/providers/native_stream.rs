@@ -12,6 +12,15 @@ const MAX_TOTAL_BYTES:usize=32*1024*1024;
 const MAX_NATIVE_CALLS:usize=80;
 const MAX_ARGUMENT_BYTES:usize=1024*1024;
 
+/// Shared Anthropic terminal vocabulary. A truncated or paused tool reply
+/// cannot authorize an effect or an assistant success in either Host.
+pub(crate) fn validate_anthropic_stop_reason(reason:&str)->Result<(),String>{
+    match reason {
+        "end_turn"|"tool_use"=>Ok(()),
+        _=>Err(format!("Anthropic generation stopped without a settled turn: {reason}")),
+    }
+}
+
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub(crate) enum Wire {Chat,Anthropic,Codex}
 
@@ -315,10 +324,8 @@ impl Assembler {
             }
             "message_delta"=>{
                 if let Some(reason)=event["delta"]["stop_reason"].as_str(){
-                    match reason {
-                        "end_turn"|"tool_use"=>self.anthropic_stop=Some(reason.into()),
-                        _=>return Err(format!("Anthropic native generation stopped: {reason}")),
-                    }
+                    validate_anthropic_stop_reason(reason)?;
+                    self.anthropic_stop=Some(reason.into());
                 }
                 if let Some(output)=event["usage"]["output_tokens"].as_u64(){
                     self.output_tokens=Some(output);
@@ -446,6 +453,16 @@ mod tests {
     fn encode(value:Value)->Vec<u8> {
         format!("data: {}\r\n\r\n",value).into_bytes()
     }
+    #[test]
+    fn native_and_chat_share_closed_anthropic_stop_reasons(){
+        assert!(validate_anthropic_stop_reason("end_turn").is_ok());
+        assert!(validate_anthropic_stop_reason("tool_use").is_ok());
+        for reason in ["max_tokens","pause_turn","refusal",""] {
+            assert!(validate_anthropic_stop_reason(reason).is_err(),
+                "Only a complete Anthropic model turn may authorize tools");
+        }
+    }
+
     #[test]
     fn native_chat_duplicate_finish_is_idempotent_until_done_and_preserves_usage() {
         // Cloudflare/OpenAI-compatible streams may send a repeated stop or
