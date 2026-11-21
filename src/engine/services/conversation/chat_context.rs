@@ -791,7 +791,7 @@ mod tests {
         assert!(!light.prompt.contains("사용 가능한 도구"));
         assert!(light.dynamic_context.is_empty());
         let clean=TurnRequest::from_value(&json!({"input":"안녕"})).unwrap();
-        let estimated=super::room_context::estimate(
+        let estimated=super::super::room_context::estimate(
             &lightweight_chat_prompt(&state,&clean).prompt);
         assert!(estimated<100,"basic greeting should use tens of system tokens: {estimated}");
         let _=std::fs::remove_dir_all(dir);
