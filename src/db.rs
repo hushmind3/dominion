@@ -2311,7 +2311,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    #[te
     #[test]
     fn remote_queue_uses_indexed_fifo_and_skips_closed_remote_history(){
         let root=std::env::temp_dir().join(format!("dominion-remote-index-{}",
