@@ -111,7 +111,7 @@ pub(super) fn preserve_reflection_history(messages: Vec<Value>) -> (Vec<Value>, 
     (out, filled)
 }
 
-pub(super) fn cached_prompt_tokens(usage: &Value) -> Option<u64> {
+pub(in crate::engine::chat) fn cached_prompt_tokens(usage: &Value) -> Option<u64> {
     usage.pointer("/prompt_tokens_details/cached_tokens").and_then(Value::as_u64)
         .or_else(|| usage.pointer("/input_tokens_details/cached_tokens").and_then(Value::as_u64))
         .or_else(|| usage["prompt_cache_hit_tokens"].as_u64())
