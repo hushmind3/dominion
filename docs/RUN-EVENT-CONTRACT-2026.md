@@ -91,3 +91,27 @@ answer; private thinking updates remain excluded. This exercises the
 transport without claiming the paid vendor CLI or account was installed
 on GitHub's runner. Vendor-installed smoke testing still needs an
 authenticated host and is separately documented.
+
+## Per-room RoomEvent journal (architecture.md §5)
+
+A room owns an append-only `room_events` table with its own, strictly
+monotonic `(room_id,seq)`. The typed v1 contract carries `roomId`, `seq`,
+`eventId` (the immutable message ID), `author`, `replyTo`, `originRun`,
+`kind` and `createdAt`. Owner posts are inserted in the same SQLite
+transaction as the owner message and dispatch job, or as a direct legacy
+owner message insert. A speaker reply is inserted in the same transaction
+as its participant cursor advance, **after** the source/agent/provenance
+checks pass. Duplicate delivery cannot allocate a second event sequence.
+
+`GET /api/rooms/:id/events?after=120&limit=100` pages the persistent
+room-local cursor after restart; `DominionAgentClient.getRoomEvents()`
+consumes this without changing the existing messages UI. The existing
+`room_agent_read` response also includes `eventSeq` while its older
+`sourceCursor`/`replyCursor` remain message rowids for compatibility.
+
+**IMPORTANT:** the RoomEvent `seq` is scoped to ONE room and is not the
+global `event_log.seq` carried by SSE/RunEvent. Neither cursor may be used
+as a substitute for the other. Room metadata cannot be trusted to rebind
+a message to another transcript. Historical messages predating this journal
+are still readable via `/api/rooms/:id/messages`; unknown old read
+positions are not fabricated into event records.

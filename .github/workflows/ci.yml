@@ -50,6 +50,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Native infrastructure contracts (dev profile)
         run: cargo test --locked -p dominion-core --lib
+      - name: Durable RoomEvent journal and cursor replay
+        run: cargo test --locked --bin dominion-rust db::room_events::tests
       - name: Remote worker binary and lease broker contracts
         run: |
           cargo check --locked --bin dominion-worker

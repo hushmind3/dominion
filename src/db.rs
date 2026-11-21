@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 mod sdk_sources;
 mod room_cursor;
+mod room_events;
 mod team_dag;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,6 +147,22 @@ impl Store {
                  created_at TEXT NOT NULL DEFAULT (datetime('now'))
              );
              CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, created_at);
+             -- Append-only RoomEvent facts with room-local sequence. This
+             -- is distinct from the global event_log SSE cursor.
+             CREATE TABLE IF NOT EXISTS room_events(
+                 room_id TEXT NOT NULL,
+                 seq INTEGER NOT NULL,
+                 event_id TEXT NOT NULL,
+                 author TEXT NOT NULL,
+                 reply_to TEXT,
+                 origin_run TEXT,
+                 kind TEXT NOT NULL,
+                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                 PRIMARY KEY(room_id,seq),
+                 UNIQUE(room_id,event_id)
+             );
+             CREATE INDEX IF NOT EXISTS idx_room_event_delivery
+                 ON room_events(room_id,seq);
              -- Per-room participant progress is independent of the shared
              -- transcript and cannot be inferred from model output.
              CREATE TABLE IF NOT EXISTS room_agent_read_cursors(
@@ -1281,9 +1298,12 @@ impl Store {
     }
 
     pub fn write_message(&self, message: &Value) -> Option<Value> {
-        let conn = self.conn.lock().unwrap();
-        let id = insert_message(&conn, message)?;
-        query_message(&conn, &id)
+        let mut conn = self.conn.lock().unwrap();
+        let tx=conn.transaction().ok()?;
+        let id=insert_message(&tx,message)?;
+        let saved=query_message(&tx,&id)?;
+        tx.commit().ok()?;
+        Some(saved)
     }
 
     pub fn message(&self, id: &str) -> Option<Value> {
@@ -1899,6 +1919,20 @@ fn insert_message(conn: &Connection, message: &Value) -> Option<String> {
     conn.execute("INSERT INTO messages(id,session_id,role,content,reasoning,agent_id,tool_calls,tool_call_id,metadata) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![
         id,session_id,role,message["content"].as_str().unwrap_or(""),message["reasoning"].as_str().unwrap_or(""),message["agent_id"].as_str(),calls,message["tool_call_id"].as_str(),metadata.to_string()
     ]).ok()?;
+    // Only actual owner messages in a room-bound transcript create a root
+    // room event. This runs in the caller's message/job SQLite transaction.
+    if role=="user"&&metadata["authorKind"]=="owner" {
+        let room=conn.query_row(
+            "SELECT json_extract(data,'$.roomId') FROM records
+             WHERE kind='session' AND id=?1",
+            [session_id],|row|row.get::<_,Option<String>>(0)
+        ).optional().ok()?.flatten();
+        if let Some(room_id)=room {
+            room_events::insert_room_event(
+                conn,&room_id,session_id,&id,"owner_message"
+            ).ok()?;
+        }
+    }
     Some(id)
 }
 

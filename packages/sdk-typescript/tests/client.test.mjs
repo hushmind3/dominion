@@ -119,3 +119,19 @@ test('remote lease reconciliation is explicit and never reports verified work', 
   assert.match(seen[0].url,/\/api\/remote\/reconcile$/);
   assert.equal(seen[0].method,'POST');
 });
+
+test('room cursor is scoped to the room and never aliases global SSE position', async () => {
+  const visited=[];
+  const client=new DominionAgentClient({fetch:async url=>{
+    visited.push(String(url));
+    return new Response(JSON.stringify({schemaVersion:1,roomId:'room/a',
+      after:120,nextAfter:122,hasMore:false,
+      events:[{schemaVersion:1,roomId:'room/a',seq:122,eventId:'agent-reply',
+        author:'agent-a',replyTo:'owner',originRun:'native-exec',
+        kind:'agent_reply',createdAt:'2026-11-21'}]}),{status:200});
+  }});
+  const page=await client.getRoomEvents('room/a',{after:120,limit:50});
+  assert.equal(page.nextAfter,122);
+  assert.equal(page.events[0].originRun,'native-exec');
+  assert.match(visited[0],/\/api\/rooms\/room%2Fa\/events\?after=120&limit=50$/);
+});

@@ -298,6 +298,30 @@ pub async fn one(State(state): State<AppState>, Path(id): Path<String>) -> Respo
     response(room(&state, &id))
 }
 
+#[derive(serde::Deserialize,Default)]
+pub struct RoomEventCursor {
+    pub after:Option<u64>,
+    pub limit:Option<usize>,
+}
+/// Event cursor is per-room. Existing transcript/messages and global SSE
+/// APIs retain their own identity/cursor contracts.
+pub async fn events(
+    State(state):State<AppState>,Path(id):Path<String>,
+    Query(cursor):Query<RoomEventCursor>,
+)->Response{
+    response((|| {
+        room(&state,&id)?;
+        let after=cursor.after.unwrap_or(0);
+        let limit=cursor.limit.unwrap_or(100).clamp(1,500);
+        let mut events=state.store.room_events(&id,after,limit+1).map_err(failed)?;
+        let has_more=events.len()>limit;
+        events.truncate(limit);
+        let next_after=events.last().map(|row|row.seq).unwrap_or(after);
+        Ok(json!({"schemaVersion":1,"roomId":id,"after":after,
+            "nextAfter":next_after,"hasMore":has_more,"events":events}))
+    })())
+}
+
 pub async fn messages(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     response((|| {
         room(&state, &id)?;

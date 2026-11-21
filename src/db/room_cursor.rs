@@ -99,6 +99,13 @@ impl Store {
             params![room_id,session_id,agent_id,owner_id,reply_id,
                 owner_row,reply_row,selected_json]
         ).map_err(|e|e.to_string())?;
+        if changed==1 {
+            // Reply delivery and the participant cursor become visible
+            // atomically; retries cannot allocate a second room event.
+            super::room_events::insert_room_event(
+                &tx,room_id,session_id,reply_id,"agent_reply"
+            )?;
+        }
         tx.commit().map_err(|e|e.to_string())?;
         Ok(changed==1)
     }
@@ -110,7 +117,9 @@ impl Store {
         let conn=self.conn.lock().map_err(|e|e.to_string())?;
         conn.query_row(
             "SELECT source_message_id,reply_message_id,source_rowid,reply_rowid,
-                    selected_message_ids,updated_at
+                    selected_message_ids,updated_at,
+                    (SELECT seq FROM room_events
+                     WHERE room_id=?1 AND event_id=reply_message_id)
                FROM room_agent_read_cursors
               WHERE room_id=?1 AND session_id=?2 AND agent_id=?3",
             params![room_id,session_id,agent_id],|row|{
@@ -122,7 +131,8 @@ impl Store {
                     "replyCursor":row.get::<_,i64>(3)?,
                     "selectedMessageIds":serde_json::from_str::<Value>(&selected)
                         .unwrap_or_else(|_|json!([])),
-                    "updatedAt":row.get::<_,String>(5)?}))
+                    "updatedAt":row.get::<_,String>(5)?,
+                    "eventSeq":row.get::<_,Option<i64>>(6)?}))
             }
         ).optional().map_err(|e|e.to_string())
     }

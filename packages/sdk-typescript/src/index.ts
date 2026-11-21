@@ -58,6 +58,27 @@ export interface RemoteJobRequest {
   maxRounds?: number;
 }
 
+/** Room-local committed delivery facts; seq is NOT the global SSE seq. */
+export interface RoomEvent {
+  schemaVersion: number;
+  roomId: string;
+  seq: number;
+  eventId: string;
+  author: string;
+  replyTo: string | null;
+  originRun: string | null;
+  kind: 'owner_message' | 'agent_reply';
+  createdAt: string;
+}
+export interface RoomEventPage {
+  schemaVersion: number;
+  roomId: string;
+  after: number;
+  nextAfter: number;
+  hasMore: boolean;
+  events: RoomEvent[];
+}
+
 export interface RunEventsOptions {
   after?: number;
   limit?: number;
@@ -216,6 +237,19 @@ export class DominionAgentClient {
   }
   getRun(id: string, signal?: AbortSignal): Promise<AgentRun> {
     return this.request('GET', `/api/sdk/runs/${encodeURIComponent(id)}`, undefined, signal);
+  }
+
+  /** Durable room-local event cursor, independently of global run seq. */
+  getRoomEvents(
+    roomId: string, options: RunEventsOptions = {}, signal?: AbortSignal,
+  ): Promise<RoomEventPage> {
+    const params = new URLSearchParams();
+    if (options.after !== undefined) params.set('after', String(options.after));
+    if (options.limit !== undefined) params.set('limit', String(options.limit));
+    const query = params.toString();
+    return this.request('GET',
+      `/api/rooms/${encodeURIComponent(roomId)}/events${query ? `?${query}` : ''}`,
+      undefined, signal);
   }
 
   /** Replay a durable, execution-scoped timeline without guessing a job/room ID. */
