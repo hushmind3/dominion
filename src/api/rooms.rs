@@ -309,6 +309,43 @@ pub async fn messages(State(state): State<AppState>, Path(id): Path<String>) -> 
     })())
 }
 
+/// Committed per-Room event stream plus each agent's durable readCursor.
+pub async fn events(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<HashMap<String,String>>,
+)->Response{
+    response((||{
+        let config=room(&state,&id)?;
+        let session=rooms::ensure_room_session(&state,&id).map_err(bad)?;
+        let session_id=session["id"].as_str()
+            .ok_or_else(||failed("Room session ID missing"))?;
+        let after=query.get("after").map(|s|s.parse::<u64>())
+            .transpose().map_err(|_|bad("Invalid Room event cursor"))?
+            .unwrap_or(0);
+        let limit=query.get("limit").map(|s|s.parse::<usize>())
+            .transpose().map_err(|_|bad("Invalid Room event limit"))?
+            .unwrap_or(100).clamp(1,200);
+        let mut rows=state.store.room_events(session_id,after,limit+1)
+            .map_err(failed)?;
+        let has_more=rows.len()>limit;
+        rows.truncate(limit);
+        let next_cursor=rows.last().and_then(|v|v["seq"].as_u64()).unwrap_or(after);
+        let bindings=config["agentIds"].as_array().into_iter().flatten()
+            .filter_map(Value::as_str).map(|agent|{
+                let key=crate::features::collaboration::room_cursor::binding_id(
+                    session_id,agent);
+                let saved=state.store.get("room_read_cursor",&key);
+                json!({"roomId":id,"agentId":agent,"sessionId":session_id,
+                    "readCursor":saved.as_ref()
+                        .and_then(|c|c["throughSeq"].as_u64()).unwrap_or(0),
+                    "state":"bound"})
+            }).collect::<Vec<_>>();
+        Ok(json!({"roomId":id,"sessionId":session_id,"events":rows,
+            "nextCursor":next_cursor,"hasMore":has_more,"bindings":bindings}))
+    })())
+}
+
 pub async fn system_prompt(
     State(state): State<AppState>,
     Path(id): Path<String>,

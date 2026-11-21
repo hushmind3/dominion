@@ -62,7 +62,7 @@ pub(crate) fn plan(
             required_indices:Vec::new(),
             through_message_id:Some(source_id.to_string()),
             previous_message_id:None,
-            unread_remaining:0,
+            unread_remaining:unread.len().saturating_sub(1),
             oversized_first_unread:false,
         });
     }
@@ -219,7 +219,7 @@ mod tests {
         let window=plan(&messages,"room:one","new-agent","current",None).unwrap();
         assert!(window.required_indices.is_empty());
         assert_eq!(window.through_message_id.as_deref(),Some("current"));
-        assert_eq!(window.unread_remaining,0);
+        assert_eq!(window.unread_remaining,1);
         assert!(!window.required_indices.contains(&0));
     }
 

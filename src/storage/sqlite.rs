@@ -131,6 +131,35 @@ impl Store {
                  created_at TEXT NOT NULL DEFAULT (datetime('now'))
              );
              CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, created_at);
+             -- An ordered RoomEvent is committed by the same SQLite INSERT
+             -- that creates its source message, including owner and agents.
+             CREATE TABLE IF NOT EXISTS room_events(
+                 session_id TEXT NOT NULL,
+                 seq INTEGER NOT NULL,
+                 event_id TEXT NOT NULL UNIQUE,
+                 author TEXT NOT NULL,
+                 reply_to TEXT,
+                 origin_run TEXT,
+                 kind TEXT NOT NULL,
+                 PRIMARY KEY(session_id,seq)
+             );
+             CREATE TRIGGER IF NOT EXISTS room_events_message_commit
+             AFTER INSERT ON messages WHEN NEW.session_id LIKE 'room:%'
+             BEGIN
+                 INSERT INTO room_events(session_id,seq,event_id,author,reply_to,origin_run,kind)
+                 VALUES(
+                     NEW.session_id,
+                     (SELECT COALESCE(MAX(seq),0)+1 FROM room_events
+                      WHERE session_id=NEW.session_id),
+                     NEW.id,COALESCE(NULLIF(NEW.agent_id,''),'owner'),
+                     json_extract(NEW.metadata,'$.replyToMessageId'),
+                     COALESCE(json_extract(NEW.metadata,'$.executionId'),
+                              json_extract(NEW.metadata,'$.jobId')),
+                     CASE WHEN NEW.role='user' THEN 'owner_message'
+                          WHEN NEW.role='assistant' THEN 'agent_message'
+                          ELSE 'message' END
+                 );
+             END;
              CREATE TABLE IF NOT EXISTS audit(
                  id TEXT PRIMARY KEY,
                  event TEXT NOT NULL,
@@ -213,6 +242,22 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_algorithm_kind_lookup
                  ON records(json_extract(data,'$.kind'),id)
                  WHERE kind='algorithm';",
+        )?;
+        // Backfill pre-trigger transcripts once. The new trigger covers every
+        // later writer without a process-local room counter.
+        conn.execute_batch(
+            "INSERT OR IGNORE INTO room_events(
+                 session_id,seq,event_id,author,reply_to,origin_run,kind)
+             SELECT session_id,
+                    ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY rowid),
+                    id,COALESCE(NULLIF(agent_id,''),'owner'),
+                    json_extract(metadata,'$.replyToMessageId'),
+                    COALESCE(json_extract(metadata,'$.executionId'),
+                             json_extract(metadata,'$.jobId')),
+                    CASE WHEN role='user' THEN 'owner_message'
+                         WHEN role='assistant' THEN 'agent_message'
+                         ELSE 'message' END
+             FROM messages WHERE session_id LIKE 'room:%';"
         )?;
         // Older databases predate reasoning/tool columns.
         for (column, decl) in [
@@ -1067,7 +1112,13 @@ impl Store {
         }
         let inserted=insert_message(&tx,message)
             .ok_or("Room answer could not be persisted")?;
-        upsert_tx(&tx,"room_read_cursor",cursor)?;
+        let delivered_seq:i64=tx.query_row(
+            "SELECT seq FROM room_events WHERE session_id=?1 AND event_id=?2",
+            params![session,through],|r|r.get(0)
+        ).map_err(|e|format!("Room read anchor has no event sequence: {e}"))?;
+        let mut persisted_cursor=cursor.clone();
+        persisted_cursor["throughSeq"]=json!(delivered_seq);
+        upsert_tx(&tx,"room_read_cursor",&persisted_cursor)?;
         let saved=query_message(&tx,&inserted).ok_or("Persisted room answer unavailable")?;
         tx.commit().map_err(|e|e.to_string())?;
         Ok(saved)
@@ -1127,6 +1178,32 @@ impl Store {
             Err(_) => return Vec::new(),
         };
         rows.filter_map(|row| row.ok()).collect()
+    }
+
+    /// Bounded per-room sequence lookup: reconstructable after restart and
+    /// independent of timestamp ties, provider tokens and SSE delivery.
+    pub fn room_events(&self,session_id:&str,after:u64,limit:usize)
+        ->Result<Vec<Value>,String>{
+        let Some(room_id)=session_id.strip_prefix("room:").filter(|s|!s.is_empty())
+            else{return Err("Not a Room session".into());};
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT seq,event_id,author,reply_to,origin_run,kind
+             FROM room_events WHERE session_id=?1 AND seq>?2
+             ORDER BY seq ASC LIMIT ?3"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map(params![
+            session_id,after.min(i64::MAX as u64) as i64,limit.clamp(1,501) as i64
+        ],|r|{
+            let seq:i64=r.get(0)?;
+            Ok(json!({"version":1,"roomId":room_id,"sessionId":session_id,
+                "seq":seq as u64,"eventId":r.get::<_,String>(1)?,
+                "author":r.get::<_,String>(2)?,
+                "replyTo":r.get::<_,Option<String>>(3)?,
+                "originRun":r.get::<_,Option<String>>(4)?,
+                "kind":r.get::<_,String>(5)?}))
+        }).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 
     /// Error-preserving variant for model-context assembly. A database failure
@@ -2404,6 +2481,43 @@ mod tests {
             "agent_id":"a","metadata":{"authorKind":"agent","replyToMessageId":"owner"}});
         assert!(store.write_room_answer_with_cursor(&invalid,&cursor("peer")).is_err());
         assert_eq!(store.messages("room:a").len(),before);
+    }
+
+    #[test]
+    fn room_events_commit_150_messages_in_order_and_survive_restart(){
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-room-events-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file=dir.join("events.sqlite");
+        let store=Store::open(&file).unwrap();
+        for i in 0..150 {
+            let room=if i%3==0 {"room:a"}else{"room:b"};
+            store.write_message(&json!({
+                "id":format!("event-{i}"),"session_id":room,
+                "role":if i%3==0 {"user"}else{"assistant"},
+                "content":format!("record {i}"),
+                "agent_id":if i%3==0 {Value::Null}else{json!("b")},
+                "metadata":{"authorKind":if i%3==0 {"owner"}else{"agent"},
+                            "executionId":"original-run"}
+            })).unwrap();
+        }
+        for (room,total) in [("room:a",50),("room:b",100)]{
+            let events=store.room_events(room,0,150).unwrap();
+            assert_eq!(events.len(),total);
+            for (index,e) in events.iter().enumerate(){
+                assert_eq!(e["seq"],index+1);
+                assert_eq!(e["sessionId"],room);
+                assert_eq!(e["originRun"],"original-run");
+            }
+            assert_eq!(store.room_events(room,25,150).unwrap().len(),total-25);
+        }
+        assert!(store.room_events("private",0,100).is_err());
+        drop(store);
+        let again=Store::open(&file).unwrap();
+        assert_eq!(again.room_events("room:a",0,150).unwrap().len(),50);
+        assert_eq!(again.room_events("room:b",0,150).unwrap().len(),100);
+        drop(again);
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]

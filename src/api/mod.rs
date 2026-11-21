@@ -185,6 +185,7 @@ pub fn router(state: AppState) -> Router {
             "/api/rooms/:id/messages",
             get(rooms::messages).post(rooms::send_message),
         )
+        .route("/api/rooms/:id/events", get(rooms::events))
         .route("/api/rooms/:id/state", get(rooms::state))
         .route("/api/rooms/:id/knowledge", get(rooms::knowledge))
         .route("/api/rooms/:id/system-prompt", get(rooms::system_prompt))
