@@ -792,6 +792,9 @@ fn context_block_from_records(store: &Store, memories: Vec<Value>)
                 "id": id,
                 "type": memory["type"],
                 "scope": memory["scope"],
+                // Provenance is host-side evidence, never billed model text.
+                "sourceSessionId": memory["sessionId"],
+                "sourceAuthorKey": memory["sourceAuthorKey"],
                 "revision": memory["revision"]
                     .as_str()
                     .map(str::to_string)
@@ -1292,9 +1295,13 @@ mod tests {
         );
         let found = retrieve(&db, &actor, "기본 언어", 10);
         assert_eq!(found.len(), 2);
-        assert!(context_block(&db, &actor, "기본 언어")
-            .unwrap()
-            .contains("외부 참가자"));
+        // The model sees only the surviving owner preference. A superseded
+        // external correction must not reappear through context assembly, and
+        // internal provenance stays out of the billed prompt.
+        let block = context_block(&db, &actor, "기본 언어").unwrap();
+        assert!(block.contains("Rust"), "owner preference must win: {block}");
+        assert!(!block.contains("Python"), "superseded external value leaked: {block}");
+        assert!(!block.contains("sourceSessionId"), "internal provenance was billed: {block}");
     }
 
     #[test]
@@ -1342,8 +1349,16 @@ mod tests {
             let target=scope(&db,session,"a");
             assert!(recallable(&db,&saved,&target));
             assert!(retrieve(&db,&target,"장기기억",10).iter().any(|record|record["id"]==saved["id"]));
-            let context=context_block(&db,&target,"장기기억").unwrap();
-            assert!(context.contains("sourceSessionId") && context.contains("room-s1"));
+            // Cross-room recall keeps provenance in the host-side manifest so
+            // the UI and audit can say where a memory came from, while the
+            // billed prompt stays free of internal session IDs.
+            let (context,manifest)=context_block_with_manifest(&db,&target,"장기기억");
+            let context=context.unwrap();
+            assert!(!context.contains("room-s1"),
+                "internal session id reached the model: {context}");
+            assert!(manifest.iter().any(|item|
+                item["id"]==saved["id"]&&item["sourceSessionId"]=="room-s1"),
+                "provenance missing from manifest: {manifest:?}");
         }
         assert!(retrieve(&db,&scope(&db,"room-s2","b"),"장기기억",10).is_empty());
         let target=scope(&db,"room-s2","a");
