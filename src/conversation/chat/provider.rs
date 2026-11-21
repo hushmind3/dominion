@@ -890,6 +890,17 @@ async fn stream_completion_once_body(
     request:&TurnRequest,session_id:&str,tx:&UnboundedSender<Value>,convert_native_history:bool,
     continuity:&mut Value,
 ) -> Result<Completion,String> {
+    // Re-evaluate the exact endpoint at the network boundary: an automatic
+    // fallback or model switch cannot bypass the first provider's capability
+    // checks. The same Gateway owns negotiation, not each wire adapter.
+    if let Some(record)=state.store.get("provider",&provider.id){
+        let route=crate::engine::gateway::route_from_provider(
+            state,&record,Some(&provider.model))?;
+        if provider.kind!="cli"{route.capabilities.require_streaming()?;}
+        if !tools.is_empty()&&provider.tool_mode=="native"{
+            route.capabilities.require_native_tools()?;
+        }
+    }
     if provider.kind == "cli" {
         let started=std::time::Instant::now();
         let source=provider.base_url.strip_prefix("cli://").ok_or("CLI 제공자 주소가 올바르지 않습니다.")?;
