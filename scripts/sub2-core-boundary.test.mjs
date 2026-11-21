@@ -435,3 +435,16 @@ test('nested ProgramIR revisions cannot be swallowed by parent DAG waves',()=>{
  assert.match(runtime,/if paused \|\| failure\.is_some\(\)/);
  assert.match(runtime,/if failure\.is_none\(\)\{failure=frame\.failure;\}/);
 });
+
+test('ProgramIR Task Team requires durable claimed worker and committed tool evidence',()=>{
+ const team=source('src/engine/services/decision/task_team_work.rs');
+ const runtime=source('src/engine/services/decision/runtime_program.rs');
+ assert.match(team,/pub fn assign\(/);
+ assert.match(team,/pub fn claim\(/);
+ assert.match(team,/pub fn settle\(/);
+ assert.match(team,/execution_operations\(execution\)/);
+ assert.match(team,/task_team_work/);
+ assert.match(runtime,/let team_assignments=if persist/);
+ assert.match(runtime,/claim_team_child/);
+ assert.match(runtime,/settle_team_child/);
+});
