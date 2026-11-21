@@ -50,7 +50,7 @@ println!("engine={status:?}, job={}", saved.status);
 }
 ```
 
-The real Rust client supports jobs, wait/cancel/steering, approvals, rooms, sessions, health, SSE chat, stored events, as defined in [`src/lib.rs`](src/lib.rs). Some calls need a configured model or permission. `with_admin_token` supports server installations that require an admin token.
+The real Rust client supports jobs, wait/cancel/steering, approvals, rooms, sessions, health, SSE chat, stored events, and `native_run_events(id, before, limit)` / `native_run_receipts(id, before, limit)` for read-only, owner-scoped paging (1–40 entries per request). Earlier event rows may fall outside the bounded in-job window; the response reports `eventsDropped`, while kernel tool receipts are independently persisted and omit tool arguments and raw outputs. See [`src/lib.rs`](src/lib.rs). Some calls need a configured model or permission. `with_admin_token` supports server installations that require an admin token.
 
 ## Integrated product execution
 
