@@ -908,8 +908,8 @@ pub(super) async fn run_turn_body(
         }
         let (mut completion, selected_provider) = completion_result?;
         if let Some(model_record)=state.store.get("provider",&selected_provider.id){
-            let negotiated=crate::engine::gateway::negotiate_capabilities(
-                &model_record,&selected_provider.model,
+            let negotiated=crate::engine::gateway::negotiate_capabilities_for_endpoint(
+                &model_record,&selected_provider.model,&selected_provider.base_url,
                 crate::engine::gateway::ModelRequirements{
                     tools:!round_tools.is_empty(),
                     vision:!request.attachment_ids.is_empty(),
