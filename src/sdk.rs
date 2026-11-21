@@ -90,21 +90,13 @@ impl Dominion {
         engine::algorithms::seed(&self.state);
         engine::jobs::start(self.state.clone());
         engine::maintenance::start(self.state.clone());
-        // A power loss can interrupt copying an eight-megabyte immutable
-        // source into a new private Chat. The fork remains unpublished until
-        // every message/file is committed; reclaim abandoned copies under
-        // the same durable source lease, without a second runtime/daemon.
-        let fork_state=self.state.clone();
-        tokio::spawn(async move {
-            let mut cadence=tokio::time::interval(Duration::from_secs(5*60));
-            loop {
-                cadence.tick().await;
-                if !fork_state.maintenance_mode() {
-                    crate::api::sessions::recover_stale_pending_forks_at(
-                        &fork_state,chrono::Utc::now());
-                }
-            }
-        });
+        // Reclaim abandoned unpublished file copies on startup. Periodic
+        // cleanup reuses the existing backup maintenance loop instead of
+        // introducing another timer or background daemon.
+        if !self.state.maintenance_mode(){
+            crate::api::sessions::recover_stale_pending_forks_at(
+                &self.state,chrono::Utc::now());
+        }
         engine::discord::start(self.state.clone());
         engine::telegram::start(self.state.clone());
         let refresh_state=self.state.clone();
