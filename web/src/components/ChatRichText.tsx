@@ -26,6 +26,15 @@ function inlineParts(text:string):ReactNode[]{
  return parts
 }
 
+function pipeCells(line:string):string[]{
+ return line.trim().replace(/^\||\|$/g,'').split('|').map(cell=>cell.trim())
+}
+
+function isTableDivider(line:string):boolean {
+ const cells=pipeCells(line)
+ return cells.length>1&&cells.every(cell=>/^:?-{3,}:?$/.test(cell))
+}
+
 function renderBlocks(text:string):ReactNode[]{
  const lines=text.replace(/\r\n?/g,'\n').split('\n')
  const blocks:ReactNode[]=[]
@@ -45,6 +54,25 @@ function renderBlocks(text:string):ReactNode[]{
     <pre className="max-w-full overflow-x-auto p-4 text-[13px] leading-6 text-[#F5F5F5]"><code className="font-mono whitespace-pre">{body.join('\n')}</code></pre>
    </div>)
    continue
+  }
+  if(i+1<lines.length&&line.includes('|')&&isTableDivider(lines[i+1])){
+   const headers=pipeCells(line)
+   i+=2
+   const rows:string[][]=[]
+   while(i<lines.length&&lines[i].trim()&&lines[i].includes('|')){
+    rows.push(pipeCells(lines[i++]))
+   }
+   blocks.push(<div key={blocks.length} className="my-4 max-w-full overflow-x-auto rounded-xl border border-[#E3DBD0]">
+    <table className="w-full min-w-[360px] border-collapse text-left text-[14px] leading-6">
+     <thead className="bg-[#F5F0E8]"><tr>{headers.map((cell,j)=><th key={j} scope="col" className="border-b border-[#E3DBD0] px-3 py-2 font-semibold text-[#3A342D]">{inlineParts(cell)}</th>)}</tr></thead>
+     <tbody>{rows.map((row,j)=><tr key={j} className="even:bg-[#FAF8F3]">{headers.map((_,k)=><td key={k} className="border-b border-[#EEE8DF] px-3 py-2 align-top">{inlineParts(row[k]||'')}</td>)}</tr>)}</tbody>
+    </table>
+   </div>)
+   continue
+  }
+  if(/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)){
+   blocks.push(<hr key={blocks.length} className="my-5 border-0 border-t border-[#E3DBD0]"/>)
+   i++;continue
   }
   const heading=line.match(/^(#{1,4})\s+(.+)$/)
   if(heading){
