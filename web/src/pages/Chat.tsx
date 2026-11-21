@@ -8,7 +8,7 @@ import {AttachmentLink} from '../components/AttachmentLink'
 import {createPortal} from 'react-dom'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormEvent,useEffect,useMemo,useRef,useState,type ClipboardEvent,type DragEvent,type KeyboardEvent} from 'react'
-import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Paperclip,Plus,Power,RefreshCw,Search,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
+import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Globe2,Paperclip,Plus,Power,RefreshCw,Search,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
 import {Agent,Approval,ChatMessage,ChatSession,Provider,get,post,resolveApproval,streamChat,koreanReasoningEnabled} from '../api'
 import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
@@ -43,6 +43,15 @@ function supportedChatFile(file:File):boolean{
 const chatDraftPrefix='dominion.chat.draft.v1:'
 type ChatExecutionMode='chat'|'agent'
 const chatModePrefix='dominion.chat.execution-mode.v1:'
+const chatWebPrefix='dominion.chat.web-search.v1:'
+function readChatWeb(scope:string):boolean{
+ try{return sessionStorage.getItem(chatWebPrefix+scope)==='1'}
+ catch{return false}
+}
+function storeChatWeb(scope:string,enabled:boolean){
+ try{sessionStorage.setItem(chatWebPrefix+scope,enabled?'1':'0')}
+ catch{/* Storage may be blocked by the browser. */}
+}
 function readChatMode(scope:string,fallback:ChatExecutionMode='chat'):ChatExecutionMode{
  try{
   const saved=sessionStorage.getItem(chatModePrefix+scope)
@@ -110,6 +119,15 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   modeValues.current[draftScope]=mode
   storeChatMode(draftScope,mode)
   redrawMode(revision=>revision+1)
+ }
+ const webChoice=useRef<Record<string,boolean>>({})
+ const [,redrawWeb]=useState(0)
+ const webSearchEnabled=Object.hasOwn(webChoice.current,draftScope)
+  ?webChoice.current[draftScope]:readChatWeb(draftScope)
+ const setWebSearchEnabled=(enabled:boolean)=>{
+  webChoice.current[draftScope]=enabled
+  storeChatWeb(draftScope,enabled)
+  redrawWeb(revision=>revision+1)
  }
  // Keep an unsent owner request recoverable when a provider/network turn
  // fails, without replacing anything the owner typed during that attempt.
@@ -480,6 +498,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     }
     modeValues.current[id]=executionMode
     storeChatMode(id,executionMode)
+    webChoice.current[id]=webSearchEnabled
+    storeChatWeb(id,webSearchEnabled)
     activeTurnSession.current=id;
     if(view.current===current){
      onSession(id);setTurnSession(id);
@@ -507,6 +527,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    if(inputRef.current)inputRef.current.style.height='';
    await streamChat({
     sessionId:id,requestId,conversationMode:executionMode,
+    webSearch:executionMode==='chat'&&webSearchEnabled,
     agentId:executionMode==='agent'?agentId:undefined,
     providerId:executionMode==='chat'?providerId:manual?.providerId,
     model:executionMode==='chat'?model:manual?.model,input:text,attachmentIds,
@@ -625,7 +646,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      <div className="chat-execution-mode" role="group" aria-label="채팅 실행 방식">
       <Button type="button" className="chat-execution-mode-option" aria-pressed={executionMode==='chat'} disabled={busy} onClick={()=>setExecutionMode('chat')}><MessageCircle size={14}/> 일반 대화</Button>
       <Button type="button" className="chat-execution-mode-option" aria-pressed={executionMode==='agent'} disabled={busy} onClick={()=>setExecutionMode('agent')}><TerminalSquare size={14}/> 에이전트 실행</Button>
-      <span className="chat-execution-mode-hint">{executionMode==='chat'?'도구 사용 없이 모델과 대화':'파일·도구·MCP 작업 가능'}</span>
+      <span className="chat-execution-mode-hint">{executionMode==='chat'?(webSearchEnabled?'공개 웹 검색만 허용':'도구 사용 없이 모델과 대화'):'파일·도구·MCP 작업 가능'}</span>
      </div>
      {draftFiles.length>0&&<div className="chat-file-drafts" aria-label="첨부 대기 파일">{draftFiles.map((file,i)=><span key={i} className="chat-file-chip"><Paperclip size={13}/><span title={file.name}>{file.name}</span><small>{formatDraftBytes(file.size)}</small><button type="button" aria-label={file.name+' 첨부 취소'} disabled={busy} onClick={()=>removeFile(i)}><X size={13}/></button></span>)}</div>}
      <input ref={fileInputRef} type="file" className="sr-only" multiple accept="image/png,image/jpeg,image/webp,image/gif,.txt,.md,.csv,.ts,.tsx,.js,.mjs,.json,.py,.rs,.yaml,.yml,.xml,.html,.css,.log,.sql" aria-label="첨부 파일 선택" disabled={busy} onChange={e=>{addFiles(e.currentTarget.files);e.currentTarget.value=''}}/>
@@ -633,6 +654,10 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      <div className="chat-composer-controls conversation-composer-controls">
       <div className="chat-composer-options conversation-composer-options">
        <Button type="button" variant="ghost" disabled={busy} className="chat-file-add" title="이미지 또는 텍스트 파일 첨부" onClick={()=>fileInputRef.current?.click()}><Paperclip size={15}/><span className="hidden sm:inline">첨부</span></Button>
+        {executionMode==='chat'&&<Button type="button" variant="ghost" disabled={busy}
+         className="chat-web-search-toggle" aria-pressed={webSearchEnabled}
+         title={webSearchEnabled?'공개 웹 검색 사용 중':'공개 웹에서 검색하고 출처 확인'}
+         onClick={()=>setWebSearchEnabled(!webSearchEnabled)}><Globe2 size={14}/>웹 검색</Button>}
        {executionMode==='agent'&&<ExecutionPermissions active={active} open={permissionOpen} onOpenChange={open=>{setPermissionOpen(open);if(open){setShowSettings(false);setModelMenu(false)}}} onError={setError} onChanged={label=>setCommandInfo(t('chat.perm.changed',{label}))}/>}
 
        <ReasoningSelect value={reasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} model={selectedModel} requireCatalog={selectedProvider?.kind==='codex'} defaultLabel={executionMode==='agent'&&activeAgent?.reasoningEffort?`에이전트 설정 (${activeAgent.reasoningEffort})`:t('chat.reasoningAuto')} className="chat-reasoning !h-7 !w-auto !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-[#5C544A]"/>
