@@ -199,6 +199,12 @@ test('native run wait returns at approval/recovery instead of hanging for comple
   await assert.rejects(()=>sdk.nativeRuns.wait('r',{signal:cancelled.signal}),error=>error.name==='AbortError');
   assert.equal(reads,2,'aborted waits must not send a request');
 });
+test('native wait treats needs_review as an actionable state',async()=>{
+  const sdk=new Dominion({fetch:async()=>reply({
+    id:'needs-review',instruction:'Apply patch',status:'needs_review'})});
+  const run=await sdk.nativeRuns.wait('needs-review',{timeoutMs:100});
+  assert.equal(run.status,'needs_review');
+});
 test('native wait exposes manual recovery and does not infer task success',async()=>{
   const sdk=new Dominion({fetch:async()=>reply({id:'r2',instruction:'Edit',status:'in_doubt'})});
   assert.equal((await sdk.nativeRuns.wait('r2',{timeoutMs:100})).status,'in_doubt');
