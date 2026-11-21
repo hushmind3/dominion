@@ -313,6 +313,10 @@ pub async fn create_backup(State(state): State<AppState>) -> axum::response::Res
                 "path": path.to_string_lossy(),
                 "bytes": bytes,
                 "encrypted": true,
+                // DOMVAULT1 encrypts SQLite + secret key. Uploads are separate
+                // immutable files, and this envelope currently omits them.
+                "attachmentsIncluded": false,
+                "currentAttachmentCount": state.store.count("attachment"),
                 "remote": remote.map(|report| json!({
                     "attempted": true,
                     "uploaded": report.uploaded,
@@ -419,6 +423,7 @@ pub async fn list_backups(State(state): State<AppState>) -> Json<Value> {
                         "path": path.to_string_lossy(),
                         "bytes": bytes,
                         "encrypted": path.extension().and_then(|value| value.to_str()) == Some("enc"),
+                        "attachmentsIncluded": false,
                         "modifiedAt": modified,
                     }))
                 })
