@@ -15,9 +15,9 @@ const permissionCopy:Record<PermissionMode,{label:LocaleKey;detail:LocaleKey}>={
 }
 /** Shared by direct and group chat; changing modes never changes policy by itself. */
 export function ExecutionPermissions({open,onOpenChange,onError,onChanged,active=true}:{open:boolean;onOpenChange:(open:boolean)=>void;onError:(error:string)=>void;onChanged?:(label:string)=>void;active?:boolean}){
- useLocale()
+ const locale=useLocale()
  const [permissionMode,setPermissionMode]=useState<PermissionMode>('request'),[permissionBusy,setPermissionBusy]=useState(false)
- const permissionPanel=useAnchoredPanel(open,()=>onOpenChange(false),300,'top')
+ const permissionPanel=useAnchoredPanel(open,()=>onOpenChange(false),340,'top')
  useEffect(()=>{
   if(!active)return
   const controller=new AbortController()
@@ -51,7 +51,41 @@ export function ExecutionPermissions({open,onOpenChange,onError,onChanged,active
  }
  const activePermission=permissionCopy[permissionMode]
  return <div className="relative">
-        <Button type="button" variant="ghost" ref={permissionPanel.trigger} onClick={()=>onOpenChange(!open)} className={'chat-permission inline-flex !h-7 items-center gap-1.5 !rounded-md !border-0 !px-2 !py-0 text-[11px] font-semibold '+(permissionMode==='full'?'!bg-amber-50 text-amber-700 hover:!bg-amber-100':'!bg-[#FAF7F1] text-[#5C544A] hover:!bg-[#F3EEE5]')} title={t(activePermission.detail)} aria-expanded={open}>{permissionMode==='full'?<ShieldAlert size={13}/>:<ShieldCheck size={13}/>} <span className="truncate">{t(activePermission.label)}</span> <ChevronDown size={11}/></Button>
-        {open&&permissionPanel.position&&createPortal(<div ref={permissionPanel.panel} style={permissionPanel.position} className="z-[80] max-w-full overflow-y-auto overscroll-contain rounded-xl border border-[#E7E0D5] bg-white p-1.5 shadow-xl"><div className="px-2 py-1.5"><strong className="text-[11px] text-[#4A443C]">{t('chat.permissions')}</strong><p className="text-[10px] text-[#9C9388]">{t('chat.permissionsDesc')}</p></div>{(['request','workspace','full'] as PermissionMode[]).map(mode=><Button type="button" variant="ghost" key={mode} disabled={permissionBusy} onClick={()=>void changePermission(mode)} className={'flex w-full items-start gap-2 !justify-start !border-0 rounded-lg px-2 py-2 text-left hover:bg-[#FAF7F1] '+(permissionMode===mode?'bg-[#FAF7F1]':'')}><span className={'mt-0.5 grid size-4 shrink-0 place-items-center rounded-full border '+(permissionMode===mode?'border-[#C96442] bg-[#C96442] text-white':'border-[#D8CFC2]')}>{permissionMode===mode&&<Check size={11}/>}</span><span className="min-w-0 flex-1"><strong className={'block text-[11px] '+(mode==='full'?'text-amber-700':'text-[#4A443C]')}>{t(permissionCopy[mode].label)}</strong><small className="block text-[10px] leading-4 text-[#9C9388]">{t(permissionCopy[mode].detail)}</small></span></Button>)}</div>,document.body)}
+  <Button type="button" variant="ghost" ref={permissionPanel.trigger} onClick={()=>onOpenChange(!open)}
+   className={'chat-permission inline-flex !min-h-9 items-center gap-2 !rounded-lg !border-0 !px-3 !text-[12px] font-semibold '+(permissionMode==='full'?'!bg-amber-50 text-amber-700 hover:!bg-amber-100':'!bg-[#FAF7F1] text-[#5C544A] hover:!bg-[#F3EEE5]')}
+   title={t(activePermission.detail)} aria-label={t('chat.permissions')+': '+t(activePermission.label)} aria-expanded={open} aria-haspopup="dialog">
+   {permissionMode==='full'?<ShieldAlert size={16}/>:<ShieldCheck size={16}/>}
+   <span className="truncate">{t(activePermission.label)}</span><ChevronDown size={14}/>
+  </Button>
+  {open&&permissionPanel.position&&createPortal(
+   <div ref={permissionPanel.panel} style={permissionPanel.position} role="dialog" aria-label={t('chat.permissions')}
+    className="z-[80] max-w-full overflow-y-auto overscroll-contain rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-3 shadow-xl">
+    <div className="border-b border-[#EAE2D6] px-2 pb-3">
+     <h3 className="text-[15px] font-bold text-[#3A342D]">{t('chat.permissions')}</h3>
+     <p className="mt-1 text-[12px] leading-5 text-[#81766A]">{t('chat.permissionsDesc')}</p>
+    </div>
+    <div className="space-y-1 pt-2">
+     {(['request','workspace','full'] as PermissionMode[]).map(mode=>
+      <Button type="button" variant="ghost" key={mode} disabled={permissionBusy}
+       aria-pressed={permissionMode===mode} onClick={()=>void changePermission(mode)}
+       className={'flex w-full !min-h-16 items-start gap-3 !justify-start rounded-xl !border-0 px-3 py-3 text-left hover:bg-[#F3EEE5] focus-visible:outline-2 focus-visible:outline-offset-2 '+(permissionMode===mode?'!bg-[#F8F1E8]':'')}>
+       <span className={'mt-1 grid size-5 shrink-0 place-items-center rounded-full border '+(permissionMode===mode?'border-[#C96442] bg-[#C96442] text-white':'border-[#D8CFC2]')}>
+        {permissionMode===mode&&<Check size={13}/>}
+       </span>
+       <span className="min-w-0 flex-1">
+        <strong className={'block text-[13px] '+(mode==='full'?'text-amber-700':'text-[#4A443C]')}>
+         {t(permissionCopy[mode].label)}
+        </strong>
+        <small className="mt-1 block text-[12px] leading-5 text-[#81766A]">
+         {t(permissionCopy[mode].detail)}
+        </small>
+       </span>
+       {permissionMode===mode&&<span className="shrink-0 text-[11px] font-bold text-[#A4583E]">
+        {locale==='ko'?'현재 설정':'Active'}
+       </span>}
+      </Button>
+     )}
+    </div>
+   </div>,document.body)}
  </div>
 }
