@@ -26,6 +26,19 @@ type LearningJob=JobState & {result?:LearningResult}
 type ModelOverride={scope?:string;providerId:string;model:string}
 type InstalledModel={id:string;repo:string;label:string;format:string;bytes:number;source?:string}
 type Runtime={status:string;id?:string;name?:string;model?:string;error?:string}
+const chatDraftPrefix='dominion.chat.draft.v1:'
+function readChatDraft(scope:string):string{
+ try{
+  const text=sessionStorage.getItem(chatDraftPrefix+scope)
+  return text&&text.length<=64000?text:''
+ }catch{return ''}
+}
+function storeChatDraft(scope:string,text:string){
+ try{
+  if(text)sessionStorage.setItem(chatDraftPrefix+scope,text)
+  else sessionStorage.removeItem(chatDraftPrefix+scope)
+ }catch{/* Private mode or quota may reject browser storage. */}
+}
 const formatBytes=(bytes:number)=>{
  const gb=Number(bytes||0)/1024/1024/1024
  return gb>=1?gb.toFixed(1)+' GB':Math.max(0,Math.round(Number(bytes||0)/1024/1024))+' MB'
@@ -43,7 +56,22 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const [serverUsage,setServerUsage]=useState(0);
  const [usageBreakdown,setUsageBreakdown]=useState<SessionUsageBreakdown>();
  const approvals=useRemote<Approval[]>('/api/approvals',[],active);
- const [input,setInput]=useState('');
+ // Composer state belongs to its exact conversation, not the current tab's
+ // last displayed textarea. Switching Chat sessions cannot transplant an
+ // unfinished owner instruction into another run.
+ const draftScope=current||'new'
+ const draftValues=useRef<Record<string,string>>({})
+ const [,redrawDraft]=useState(0)
+ const input=Object.hasOwn(draftValues.current,draftScope)
+  ?draftValues.current[draftScope]:readChatDraft(draftScope)
+ const setInput=(update:string|((previous:string)=>string))=>{
+  const before=Object.hasOwn(draftValues.current,draftScope)
+   ?draftValues.current[draftScope]:readChatDraft(draftScope)
+  const value=typeof update==='function'?update(before):update
+  draftValues.current[draftScope]=value
+  storeChatDraft(draftScope,value)
+  redrawDraft(revision=>revision+1)
+ };
  const [agentChoice,setAgentChoice]=useState<{scope?:string;id:string}>();
  const [override,setOverride]=useState<ModelOverride>();
  const defaultAgent=agents.value.find(agent=>agent.id==='default')||agents.value.find(agent=>agent.name==='기본값')||agents.value.find(agent=>agent.id==='general');
@@ -194,7 +222,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   if(window.innerWidth<768)setShowHistory(false);
  };
  const resetLocal=()=>{
-  onSession(undefined);setAgentChoice(undefined);setOverride(undefined);setInput('');
+  onSession(undefined);setAgentChoice(undefined);setOverride(undefined);
+  // Keep the prior conversation's unsent text under its original scope.
   setError('');setCommandInfo('');setSlashOpen(false);
   if(window.innerWidth<768)setShowHistory(false);
   inputRef.current?.focus({preventScroll:true});
