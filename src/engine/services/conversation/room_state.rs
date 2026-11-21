@@ -225,7 +225,7 @@ pub(crate) fn conversation_context(
     // snapshot below. Model-visible status depends only on semantic results.
     // Repeating owner requests with the same room outcome must not turn an
     // unchanged prefix into a newly billable observation per participant.
-    let mut text=String::from("[방 공통 상태: 확정된 이전 응답과 실행 기록 기준] ");
+    let mut text=String::from("[방 공통 상태 스냅샷: 기록 당시 확정된 응답과 실행 기준. 이후 스냅샷이 있으면 최신 기록이 우선함] ");
     if previous.is_some() {
         text.push_str(&format!("직전 요청 응답 {}/{}명. 미응답: {}.",
             responded.len(),members.len(),

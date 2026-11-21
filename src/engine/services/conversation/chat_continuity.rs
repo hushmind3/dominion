@@ -201,17 +201,13 @@ pub(crate) fn project(
         .any(|old| old["key"] == new["key"] && old["message"] != new["message"])) {
         reason = Some("source_changed");
     }
-    // A changed room-wide observation supersedes the old one. The previous
-    // response count or work status is historical, not a second current fact.
-    // Rotate the snapshot on this boundary, while stable observations reuse
-    // their exact prior frame (and remain prefix-cache candidates).
-    let current_shared=fresh.iter().filter_map(|frame|frame["key"].as_str())
-        .find(|key|key.starts_with("room-shared:"));
-    if reason.is_none() && current_shared.is_some_and(|current| frames.iter()
-        .any(|frame|frame["key"].as_str().is_some_and(|old|
-            old.starts_with("room-shared:") && old!=current))) {
-        reason=Some("room_snapshot_rotated");
-    }
+    // Room response counts and work progress are event-time observations,
+    // not revocations of earlier evidence. An updated room-shared frame is
+    // appended after the previously committed transcript. Replacing the old
+    // prefix on every round defeats real provider prefix reuse and discards
+    // the exact earlier model view. Each snapshot is explicitly labelled
+    // historical and later snapshots take precedence; a real revoked owner
+    // fact still triggers context_evidence_changed above.
     let mut reused = frames.len();
     if reason.is_none() {
         append_unseen_frames(&mut frames,&fresh);
@@ -582,7 +578,7 @@ mod tests {
     }
 
     #[test]
-    fn semantically_stable_room_state_reuses_one_frame_and_changed_state_rotates(){
+    fn semantically_stable_room_state_reuses_one_frame_and_changed_state_appends(){
         let root=std::env::temp_dir().join(format!("dominion-room-status-cache-{}",uuid::Uuid::new_v4()));
         let state=state(&root);
         state.store.put("session",&json!({"id":"room:r","roomId":"r"}));
@@ -610,9 +606,15 @@ mod tests {
         assert!(json!(stable_wire).to_string().contains("I remember the previous turn"));
         let changed=vec![system("owner-2"),shared("changed"),owner("owner-2")];
         let (changed_wire,_)=project(&state,&provider,&changed,&[],"room:r",&mut second_plan);
-        assert_eq!(second_plan["workingView"]["rebaseReason"],"room_snapshot_rotated");
+        assert!(second_plan["workingView"]["rebaseReason"].is_null(),
+            "historical status updates must not reset committed provider prefixes");
+        assert_eq!(&changed_wire[..stable_wire.len()],stable_wire.as_slice(),
+            "a later status observation must append after the original wire prefix");
         assert_eq!(changed_wire.iter().filter(|m|m["content"]=="confirmed room state changed").count(),1);
-        assert!(!json!(changed_wire).to_string().contains("confirmed room state stable"));
+        assert_eq!(changed_wire.iter().filter(|m|m["content"]=="confirmed room state stable").count(),1);
+        assert!(changed_wire.iter().position(|m|m["content"]=="confirmed room state changed")
+            > changed_wire.iter().position(|m|m["content"]=="confirmed room state stable"));
+        assert_eq!(second_plan["workingView"]["appendedFrames"],1);
         drop(state); std::fs::remove_dir_all(root).unwrap();
     }
 
