@@ -2,6 +2,52 @@
 use super::*;
 
 #[test]
+fn real_http_restore_failure_keeps_rotated_key_and_secret_after_restart(){
+    let _serial=serial();
+    let (provider_port,_) = scripted_provider(|_|vec![
+        json!({"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]})
+    ]);
+    let root=temp_root();
+    let app=TestApp::from_root(provider_port,"native",root.clone(),&[]);
+    let provider=app.post("/api/providers",&json!({
+        "name":"restore-key-test","baseUrl":format!("http://127.0.0.1:{provider_port}/v1"),
+        "model":"mock","apiKey":"restore-secret-test","enabled":true
+    }));
+    assert_eq!(provider["hasKey"],true);
+    let backup=app.post("/api/system/backup",&json!({}));
+    assert_eq!(backup["ok"],true,"{backup}");
+    app.post("/api/system/maintenance",&json!({"enabled":true}));
+    let rotated=app.post("/api/system/secret-key/rotate",&json!({"keepOld":false}));
+    assert_eq!(rotated["ok"],true,"{rotated}");
+    let data_dir=root.join("runtime");
+    let rotated_key=std::fs::read(data_dir.join("secret.key")).unwrap();
+    assert_eq!(rotated_key.len(),32);
+    let stage=data_dir.join("dominion.restore.tmp");
+    std::fs::create_dir(&stage).unwrap();
+    let attempted=app.client.post(format!("{}/api/system/restore",app.base))
+        .json(&json!({"confirm":true,"path":backup["path"]}))
+        .send().unwrap();
+    assert_eq!(attempted.status(),reqwest::StatusCode::INTERNAL_SERVER_ERROR);
+    let failure:Value=attempted.json().unwrap();
+    assert_eq!(failure["restored"],false,"{failure}");
+    assert_eq!(std::fs::read(data_dir.join("secret.key")).unwrap(),rotated_key);
+    let store=dominion_rust::db::Store::open(&data_dir.join("dominion.sqlite")).unwrap();
+    let vault=dominion_rust::vault::Vault::open(&data_dir.join("secret.key"));
+    let encrypted=store.all_secrets();
+    assert!(!encrypted.is_empty(),"test must prove at least one encrypted secret");
+    assert!(encrypted.iter().all(|(_,ciphertext)|vault.open_secret(ciphertext).is_some()));
+    drop(store);
+    drop(app);
+    // Force a real second process. Startup must repair any pending rollback
+    // marker before accepting sessions or provider credential reads.
+    let restarted=TestApp::from_root(provider_port,"native",root.clone(),&[]);
+    assert_eq!(restarted.get("/api/health")["runtime"],"rust");
+    assert_eq!(std::fs::read(data_dir.join("secret.key")).unwrap(),rotated_key);
+    assert!(restarted.get("/api/providers").as_array().unwrap().len()>=1);
+    assert!(!data_dir.join(".restore-pending").exists());
+}
+
+#[test]
 fn scheduled_backup_uploads_to_a_remote_target() {
     let _serial = serial();
     let (provider_port, _) = scripted_provider(|_| {
