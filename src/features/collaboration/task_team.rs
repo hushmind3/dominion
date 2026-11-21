@@ -148,7 +148,11 @@ pub fn child_id(parent:&str,task:&str)->String {
 }
 fn input(task:&Task,parent:&str)->Value{
     let defaults=if task.mode==Mode::Read {READ_TOOLS}else{WRITE_TOOLS};
-    let allowed=if task.allowed_tools.is_empty(){
+    let allowed=if task.runtime!=WorkerRuntime::Native {
+        // Remote/CLI workers have no authority to invoke host tools. The
+        // read-only transcript travels as data, never as a tool grant.
+        Vec::new()
+    }else if task.allowed_tools.is_empty(){
         defaults.iter().map(|s|s.to_string()).collect::<Vec<_>>()
     }else{task.allowed_tools.clone()};
     let mut input=json!({

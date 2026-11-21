@@ -378,6 +378,16 @@ mod tests {
             "/api/runs/a%2Fb");
     }
     #[test]
+    fn remote_tasks_and_run_ids_use_owner_scoped_existing_rest_routes(){
+        let client=Dominion::local();
+        assert_eq!(client.url(&["api","remote","tasks","remote:a/b"]).unwrap().path(),
+            "/api/remote/tasks/remote%3Aa%2Fb");
+        assert_eq!(client.url(&["api","remote","tasks","remote:a/b","cancel"])
+            .unwrap().path(),"/api/remote/tasks/remote%3Aa%2Fb/cancel");
+        assert_eq!(client.url(&["api","runs","remote:a/b"]).unwrap().path(),
+            "/api/runs/remote%3Aa%2Fb");
+    }
+    #[test]
     fn team_review_routes_remain_scoped_to_task_ids(){
         let client=Dominion::local();
         let path=client.url(&["api","task-teams","lead/a","worktrees",

@@ -176,6 +176,29 @@ test('Task Team SDK uses native DAG routes and explicit worktree review',async()
   assert.deepEqual(JSON.parse(calls[5].init.body),
     {confirm:true,expectedDiffSha256:'a'.repeat(64)});
 });
+test('remote inference SDK uses owner paths and preserves unverified evidence',async()=>{
+  const calls=[];
+  const sdk=new Dominion({adminToken:'owner-token',fetch:async(url,init)=>{
+    calls.push({url,init});
+    if(url.includes('/api/remote/tasks/remote%3Aa%2Fb')&&init.method==='GET')
+      return reply({id:'remote:a/b',status:'completed',
+        result:{answer:'remote observation',verified:false,
+          evidenceGrade:'remote_unverified'}});
+    return reply({id:'remote:a/b',status:'queued'});
+  }});
+  await sdk.remoteWorkers.submit('Inspect architecture',{maxTokens:768});
+  const result=await sdk.remoteWorkers.get('remote:a/b');
+  await sdk.remoteWorkers.cancel('remote:a/b');
+  await sdk.remoteWorkers.list();
+  assert.equal(result.result.verified,false);
+  assert.deepEqual(calls.map(c=>new URL(c.url).pathname),[
+    '/api/remote/tasks','/api/remote/tasks/remote%3Aa%2Fb',
+    '/api/remote/tasks/remote%3Aa%2Fb/cancel','/api/remote/tasks'
+  ]);
+  assert.deepEqual(JSON.parse(calls[0].init.body),
+    {prompt:'Inspect architecture',maxTokens:768});
+  assert.equal(calls[0].init.headers['X-Dominion-Token'],'owner-token');
+});
 test('native approval conflict is never turned into optimistic success',async()=>{
   const sdk=new Dominion({fetch:async()=>reply({error:'Approval expired'},409)});
   await assert.rejects(()=>sdk.nativeRuns.approve('n1','expired'),error=>

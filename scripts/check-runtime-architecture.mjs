@@ -21,6 +21,8 @@ for(const p of [
   'src/features/collaboration/room_cursor.rs',
   'src/features/collaboration/task_team.rs',
   'src/integrations/agent_bridge.rs',
+  'src/api/remote_workers.rs',
+  'src/host/execution/remote_worker.rs',
   'src/storage/sqlite.rs',
   'src/api/rooms.rs',
   'sdk/typescript/src/index.ts',
@@ -45,6 +47,11 @@ has('src/storage/sqlite.rs',
    'write_room_answer_with_cursor','"throughSeq"','pub fn patch_if_all']);
 has('src/features/collaboration/task_team.rs',['depends_on','WorkerRuntime','cancel_children']);
 has('src/integrations/agent_bridge.rs',['run_codex','run_claude','run_qwen']);
+has('src/api/remote_workers.rs',['gateway_router','worker_authorized',
+  'worker_claim','worker_complete','owner_create']);
+has('src/host/execution/remote_worker.rs',['run_cli','run_team_read']);
+has('src/storage/sqlite.rs',['claim_remote_task','finish_remote_task',
+  'heartbeat_remote_task','cancel_remote_task']);
 has('src/api/rooms.rs',['pub async fn events']);
 has('sdk/typescript/src/index.ts',['readonly runs=','readonly taskTeams=','events:(roomId:string,after=0']);
 has('sdk/rust/src/lib.rs',['pub async fn get_run','pub async fn create_task_team','pub async fn room_events']);

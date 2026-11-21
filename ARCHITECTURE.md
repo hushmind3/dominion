@@ -151,7 +151,7 @@ Preserve existing navigation and API surfaces. Operations/Task Teams are present
 | External Codex/Claude/Qwen AgentBridge | Independent scoped read-only external sessions, host observations not native receipts | Implemented |
 | Long-term correction / strategy evidence | Source-grounded memory and bounded strategy-evaluation modules | Existing implementation |
 | React/Tauri/SQLite durable source | Existing UI and REST/SSE contracts, local-first Host and Tauri sidecar | Existing implementation |
-| Distributed remote Gateway/Worker | Original architecture makes this conditional on multi-device demand | Out of scope |
+| Distributed remote Gateway/Worker | Opt-in loopback-only authenticated gateway, outbound HTTPS/tunnel worker CLI, text-only remote Task Team worker, lease CAS/unknown-outcome review | Implemented for read-only inference; remote workspace writes intentionally not authorized |
 
 The original document says not to rename/recreate crates merely for labels. The
 current names `dominion-agent-runtime`, `dominion-agent-algorithms` and

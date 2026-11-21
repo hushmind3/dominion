@@ -191,6 +191,64 @@ pub async fn owner_cancel(State(state):State<AppState>,Path(id):Path<String>)->R
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn remote_http_roundtrip_requires_token_and_fences_owner_cancel(){
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-remote-http-{}",uuid::Uuid::new_v4()));
+        let config=crate::config::Config{port:0,data_dir:dir.clone(),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        let token=format!("test-{}-{}",uuid::Uuid::new_v4(),uuid::Uuid::new_v4());
+        let previous_enabled=std::env::var("DOMINION_REMOTE_WORKERS").ok();
+        let previous_token=std::env::var("DOMINION_REMOTE_WORKER_TOKEN").ok();
+        std::env::set_var("DOMINION_REMOTE_WORKERS","1");
+        std::env::set_var("DOMINION_REMOTE_WORKER_TOKEN",&token);
+        let listener=tokio::net::TcpListener::bind(("127.0.0.1",0)).await.unwrap();
+        let address=listener.local_addr().unwrap();
+        let server=tokio::spawn(axum::serve(listener,gateway_router(state.clone()))
+            .into_future());
+        let client=reqwest::Client::new();
+        let base=format!("http://{address}");
+        let rejected=client.post(format!("{base}/v1/worker/claim"))
+            .json(&json!({"workerId":"w"})).send().await.unwrap();
+        assert_eq!(rejected.status(),StatusCode::UNAUTHORIZED);
+        let owner=owner_create(State(state.clone()),
+            Json(json!({"prompt":"Remote text reasoning"}))).await;
+        assert_eq!(owner.status(),StatusCode::ACCEPTED);
+        let body=axum::body::to_bytes(owner.into_body(),8192).await.unwrap();
+        let ticket:Value=serde_json::from_slice(&body).unwrap();
+        let id=ticket["id"].as_str().unwrap();
+        let claim=client.post(format!("{base}/v1/worker/claim"))
+            .header("x-dominion-worker-token",&token)
+            .json(&json!({"workerId":"w"})).send().await.unwrap();
+        assert!(claim.status().is_success());
+        let claim:Value=claim.json().await.unwrap();
+        assert_eq!(claim["task"]["taskId"],id);
+        let lease=claim["task"]["leaseId"].as_str().unwrap();
+        let fake=client.post(format!("{base}/v1/worker/complete"))
+            .header("x-dominion-worker-token",&token)
+            .json(&json!({"workerId":"forged","taskId":id,
+                "leaseId":lease,"status":"completed","answer":"fake"}))
+            .send().await.unwrap();
+        assert_eq!(fake.status(),StatusCode::CONFLICT);
+        let cancelled=owner_cancel(State(state.clone()),Path(id.into())).await;
+        assert_eq!(cancelled.status(),StatusCode::OK);
+        let late=client.post(format!("{base}/v1/worker/complete"))
+            .header("x-dominion-worker-token",&token)
+            .json(&json!({"workerId":"w","taskId":id,
+                "leaseId":lease,"status":"completed","answer":"late"}))
+            .send().await.unwrap();
+        assert_eq!(late.status(),StatusCode::CONFLICT);
+        assert_eq!(state.store.get("remote_task",id).unwrap()["status"],"cancelled");
+        server.abort();
+        match previous_enabled{Some(v)=>std::env::set_var("DOMINION_REMOTE_WORKERS",v),
+            None=>std::env::remove_var("DOMINION_REMOTE_WORKERS")}
+        match previous_token{Some(v)=>std::env::set_var("DOMINION_REMOTE_WORKER_TOKEN",v),
+            None=>std::env::remove_var("DOMINION_REMOTE_WORKER_TOKEN")}
+        let _=std::fs::remove_dir_all(dir);
+    }
     #[test]
     fn worker_identity_rejects_path_and_metacharacters(){
         assert!(worker_id(&json!({"workerId":"workstation-1"})).is_ok());
