@@ -325,7 +325,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   const runId=run.id
   const boundary=run.checkpoint?.toolReceiptsOmitted??0
   const requestEpoch=++receiptPageEpoch.current
-  const existing=olderReceipts?.runId===runId&&olderReceipts.boundary===boundary
+  const existing=olderReceipts?.runId===runId&&olderReceipts?.boundary===boundary
    ?olderReceipts:null
   const before=existing?existing.nextBefore:boundary
   if(!before)return
