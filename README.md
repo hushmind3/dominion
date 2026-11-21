@@ -141,6 +141,10 @@ This is **module ownership, independent runtime/intelligence crates, and portabl
 
 The version-pinned Rust agent loop rechecks **cancellation and owner directive changes immediately after durable write-ahead intent persistence** and before calling a paid model, an authorized tool, or an owner-required verification command. If a correction arrives at that fence before execution begins, the pending intent is cleared in the journal; cancelled runs stop, while corrected tasks replan from the updated owner instruction. Tool calls that have already begun still require their normal durable receipt or explicit review if their outcome is uncertain. Regression tests in `crates/dominion-agent-sdk/tests/kernel_replanning.rs` cover model/tool/acceptance cancellation and tool-dispatch correction. This does not claim instant cancellation of already-running provider or tool calls.
 
+## Room delivery and evidence continuity (sub3, 2026-11-21)
+
+The Room read cursor now bootstraps at the **current owner message** rather than at the last peer message visible in the first compilation. This prevents a newly participating agent from acknowledging peer messages it did not receive as required unread input. Subsequent turns drain only the remaining committed messages in contiguous, bounded windows; the cursor is still persisted atomically with the answer, and historical content remains available to indexed recall. The Room workboard also retains the latest **receipt-backed** contribution per agent when a newer reply has no scoped operations, and excludes an operation explicitly attributed to a different agent. Added regressions cover joining-agent delivery, empty newer replies, and cross-agent receipt contamination. No React navigation or extra runtime loop is introduced. Focused CI tests: `features::collaboration::room_cursor::tests` and `features::collaboration::workboard::tests`.
+
 ## Development verification
 
 Routine changes: run *focused Rust development-profile tests*, not a blanket release build.
