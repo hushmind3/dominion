@@ -55,9 +55,11 @@ sandbox admission, and never forwards the coordinator's worker token to the
 native SDK. Approval and uncertain effect states are returned for owner review,
 not silently accepted. All decisions are journalled by the coordinator.
 
-This protocol provides useful remote SDK execution but does **not** ship
-workspace contents, add multi-host write transactions, or claim trusted
-cross-host verification. Workers use independent local workspaces.
+By default the protocol transfers native SDK reports only. The optional
+Git patch courier below can ship a bounded tracked-file diff for owner review.
+It does **not** ship arbitrary workspace contents, add multi-host write
+transactions, auto-merge changes or claim trusted cross-host verification.
+Workers retain independent local workspaces.
 
 ## Lead/Worker Team DAG remote research dispatch
 
