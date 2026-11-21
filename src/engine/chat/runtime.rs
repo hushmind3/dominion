@@ -400,6 +400,13 @@ async fn run_turn_body(
             }))
             .ok_or("사용자 메시지를 저장할 수 없습니다.")?;
         state.bus.message(&user_message);
+        // A stable message ID is the authoritative acknowledgment of owner
+        // persistence. UI must not infer it from repeated text or stream timing.
+        let _ = tx.send(json!({
+            "type":"owner_saved",
+            "sessionId":session_id,
+            "messageId":user_message["id"],
+        }));
         crate::engine::episode::attach_source(
             state,
             task_id,
