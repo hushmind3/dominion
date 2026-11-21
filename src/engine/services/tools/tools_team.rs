@@ -221,14 +221,15 @@ fn dependency_context(
 async fn launch(ctx:&ToolContext<'_>,team_id:&str,node:&Value,nodes:&[Value])->Result<Value,String>{
     let current=member(ctx,team_id,node)?;
     if current["status"]!="assigned"{return Ok(current);}
+    // Validate and freeze real predecessor results BEFORE reserving the
+    // launch slot. A missing source must not leave a phantom running worker.
+    let sources=dependency_context(ctx,team_id,node,nodes)?;
     let id=current["id"].as_str().ok_or("Team task ID missing")?;
     let claim=ctx.store.patch_if("managed_team_task",id,"status",
         &json!("assigned"),&json!({"status":"launching",
             "launchStartedMs":chrono::Utc::now().timestamp_millis()}));
     let Some(claim)=claim else{return member(ctx,team_id,node);};
     ctx.state.bus.record("managed_team_task",&claim);
-    // Assemble trusted provenance before starting any real child effects.
-    let sources=dependency_context(ctx,team_id,node,nodes)?;
     let prompt=format!("{}{}",node["prompt"].as_str().unwrap_or(""),sources);
     let delegated=delegate(ctx,&json!({
         "agentId":node["agentId"],"prompt":prompt,
