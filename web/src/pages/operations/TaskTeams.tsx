@@ -211,8 +211,11 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
          <option value="write">{t('파일 수정','Write')}</option></select></label>
        <label className="grid gap-1 text-[11px]">{t('실행 엔진','Runtime')}
         <select className={field} disabled={step.mode==='write'} value={step.runtime}
-         onChange={e=>patch(step.id,{runtime:e.target.value as Runtime,
-          providerId:'',resumeId:'',model:''})}>
+         onChange={e=>{
+          const runtime=e.target.value as Runtime
+          patch(step.id,{runtime,providerId:'',resumeId:'',model:'',
+           isolation:runtime==='remote'?'shared':step.isolation})
+         }}>
          <option value="native">DOMINION Rust</option>
          <option value="codex">Codex</option><option value="claude">Claude Code</option>
          <option value="qwen">Qwen Code</option>
@@ -220,6 +223,7 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
         </select></label>
        <label className="grid gap-1 text-[11px]">{t('작업공간','Workspace')}
         <select className={field} value={step.isolation}
+         disabled={step.runtime==='remote'}
          onChange={e=>patch(step.id,{isolation:e.target.value as Draft['isolation']})}>
          <option value="shared">{t('공유','Shared')}</option>
          <option value="worktree">{t('Git Worktree 격리','Isolated Git worktree')}</option>
