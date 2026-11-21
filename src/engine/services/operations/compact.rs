@@ -116,7 +116,7 @@ pub async fn run(
     if !response.status().is_success() {
         return Err(format!("모델 호출 실패: HTTP {}", response.status()));
     }
-    let value: Value = response.json().await.map_err(|error| error.to_string())?;
+    let value = crate::engine::gateway::read_http_response_json(response, 16 * 1024 * 1024).await?;
     crate::engine::gateway::record_usage(
         state,
         &route,

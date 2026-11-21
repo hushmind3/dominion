@@ -12,10 +12,10 @@ const MODEL_KIND: &str = "model_job";
 const EXTERNAL_KIND: &str = "external_model";
 const MAX_LLAMA_RELEASE_ARCHIVE_BYTES:u64=1024*1024*1024;
 
-async fn bounded_response_json(
+async fn bounded_response_bytes(
     mut response:reqwest::Response,
     limit:usize,
-)->Result<Value,String>{
+)->Result<Vec<u8>,String>{
     if response.content_length().is_some_and(|length|length>limit as u64){
         return Err(format!("모델 서비스 응답이 {limit} 바이트 한도를 초과했습니다."));
     }
@@ -26,6 +26,14 @@ async fn bounded_response_json(
         }
         bytes.extend_from_slice(&chunk);
     }
+    Ok(bytes)
+}
+
+async fn bounded_response_json(
+    response:reqwest::Response,
+    limit:usize,
+)->Result<Value,String>{
+    let bytes=bounded_response_bytes(response,limit).await?;
     serde_json::from_slice(&bytes).map_err(|error|error.to_string())
 }
 
@@ -1717,7 +1725,7 @@ async fn load_mlx_from_dir(
             .await
         {
             if response.status().is_success() {
-                if let Ok(value) = response.json::<Value>().await {
+                if let Ok(value) = bounded_response_json(response, 1024 * 1024).await {
                     if let Some(served) = value["data"]
                         .as_array()
                         .and_then(|models| models.first())
@@ -1860,7 +1868,7 @@ pub async fn load(state: &AppState, id: &str, context: u64) -> Result<Value, Str
             .await
         {
             if response.status().is_success()
-                && response.json::<Value>().await.is_ok_and(|data| {
+                && bounded_response_json(response, 1024 * 1024).await.is_ok_and(|data| {
                     data["data"].as_array().is_some_and(|models| models.iter().any(|model| model["id"] == id))
                 })
             {
@@ -1986,7 +1994,9 @@ async fn load_lmstudio(
             .await
         {
             if response.status().is_success() {
-                let value: Value = response.json().await.unwrap_or_else(|_| json!({}));
+                let value = bounded_response_json(response, 1024 * 1024)
+                    .await
+                    .unwrap_or_else(|_| json!({}));
                 if !value["data"].as_array().is_some_and(|items| {
                     items.iter().any(|item| item["id"].as_str() == Some(served.as_str()))
                 }) {
@@ -2212,10 +2222,9 @@ pub async fn details(repo: &str) -> Result<Value, String> {
         .timeout(Duration::from_secs(5))
         .send().await
     {
-        Ok(response) if response.status().is_success()
-            && response.content_length().unwrap_or(0) <= 1_048_576 => {
-            response.bytes().await.ok()
-                .map(|bytes| String::from_utf8_lossy(&bytes[..bytes.len().min(64_000)]).into_owned())
+        Ok(response) if response.status().is_success() => {
+            bounded_response_bytes(response, 1024 * 1024).await.ok()
+                .map(|bytes| String::from_utf8_lossy(&bytes).chars().take(64_000).collect())
                 .unwrap_or_default()
         }
         _ => String::new(),

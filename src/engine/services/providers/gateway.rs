@@ -22,6 +22,45 @@ pub fn provider_http_client()->&'static reqwest::Client{
         .build().expect("provider HTTP client configuration is valid"))
 }
 
+/// Read a remote response without allowing an unknown or dishonest length
+/// header to grow the body buffer beyond the caller's limit.
+pub async fn read_http_response_limited(
+    mut response: reqwest::Response,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(format!("원격 응답이 {limit} 바이트 한도를 초과했습니다."));
+    }
+    let mut bytes = Vec::with_capacity(
+        response
+            .content_length()
+            .unwrap_or(0)
+            .min(limit as u64) as usize,
+    );
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        if bytes.len().saturating_add(chunk.len()) > limit {
+            return Err(format!("원격 응답이 {limit} 바이트 한도를 초과했습니다."));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+pub async fn read_http_response_json(
+    response: reqwest::Response,
+    limit: usize,
+) -> Result<Value, String> {
+    let bytes = read_http_response_limited(response, limit).await?;
+    serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+}
+
 /// A resolved provider + model pair. `base_url` never has a trailing slash.
 #[derive(Clone, Debug)]
 pub struct Route {

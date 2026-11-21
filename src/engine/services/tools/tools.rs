@@ -1906,8 +1906,8 @@ async fn web_search(query:&str)->Result<Value,String>{
             }else if !status.is_success(){
                 primary_error=format!("DuckDuckGo HTTP {status}");
             }else{
-                match response.bytes().await {
-                    Ok(bytes) if bytes.len()<=1024*1024=>{
+                match crate::engine::gateway::read_http_response_limited(response, 1024 * 1024).await {
+                    Ok(bytes)=>{
                         let html=String::from_utf8_lossy(&bytes);
                         let results=ddg_html_results(&html);
                         if !results.is_empty(){
@@ -1917,7 +1917,6 @@ async fn web_search(query:&str)->Result<Value,String>{
                             "DuckDuckGo anti-bot challenge".into()
                         }else{"DuckDuckGo returned no parseable links".into()};
                     }
-                    Ok(_)=>primary_error="DuckDuckGo search page exceeded 1 MiB".into(),
                     Err(error)=>primary_error=format!("DuckDuckGo body: {error}"),
                 }
             }
@@ -1937,11 +1936,9 @@ async fn web_search(query:&str)->Result<Value,String>{
     if !response.status().is_success(){
         return Err(format!("web_search failed: {primary_error}; Bing RSS HTTP {}",response.status()));
     }
-    let bytes=response.bytes().await.map_err(|error|
-        format!("web_search failed: {primary_error}; Bing RSS body: {error}"))?;
-    if bytes.len()>1024*1024{
-        return Err(format!("web_search failed: {primary_error}; Bing RSS response exceeded 1 MiB"));
-    }
+    let bytes=crate::engine::gateway::read_http_response_limited(response, 1024 * 1024)
+        .await.map_err(|error|
+            format!("web_search failed: {primary_error}; Bing RSS body: {error}"))?;
     let results=bing_rss_results(&String::from_utf8_lossy(&bytes));
     if results.is_empty(){
         return Err(format!("web_search failed: {primary_error}; Bing RSS returned no parseable results"));
