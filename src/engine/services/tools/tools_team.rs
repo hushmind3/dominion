@@ -19,6 +19,11 @@ fn live_job(status:&str)->bool{
 fn finished_job(status:&str)->bool{
     matches!(status,"completed"|"failed"|"cancelled"|"needs_review"|"interrupted")
 }
+/// A remote completion is not an applied coordinator workspace mutation.
+fn remote_artifacts_unmerged(task:&Value)->bool{
+    task["artifactPaths"].as_array().is_some_and(|paths|!paths.is_empty())
+        && task["artifactApplyStatus"]!="applied"
+}
 fn plan(nodes:&[Value])->Result<Vec<Vec<usize>>,String>{
     if nodes.is_empty()||nodes.len()>MAX_TEAM_NODES{
         return Err("Team requires 1..8 agent tasks".into());
@@ -112,12 +117,11 @@ fn summary(ctx:&ToolContext<'_>,team:&Value)->Result<Value,String>{
         }else{None};
         let remote=row["remoteTaskId"].as_str()
             .and_then(|id|ctx.store.get("remote_task",id));
-        if remote.as_ref().is_some_and(|task|
-            task["artifactPaths"].as_array().is_some_and(|paths|!paths.is_empty())
-            && task["artifactApplyStatus"]!="applied"){
-            // A remote native Job can be verified while the coordinator's
-            // workspace still has none of the claimed file changes.
+        if status=="completed" && remote.as_ref().is_some_and(remote_artifacts_unmerged){
+            // A verified remote Job may still have no coordinator file effect.
+            // Until explicit Lead approval, the team must pause for review.
             verified=false;
+            blocked=true;
         }
         let excerpt=remote.as_ref().and_then(|v|v["answer"].as_str())
             .or_else(||observed.as_ref().and_then(|v|v["content"].as_str()))
@@ -286,6 +290,9 @@ fn dependency_context(
             let result=crate::remote::task_status(ctx.state,remote_id)?;
             if result["status"]!="completed"{
                 return Err("Remote predecessor no longer has a completed receipt".into());
+            }
+            if remote_artifacts_unmerged(&result){
+                return Err("Remote predecessor artifacts require explicit Lead approval before dependent work".into());
             }
             let excerpt=result["answer"].as_str().unwrap_or("")
                 .chars().take(1300).collect::<String>();
@@ -476,7 +483,13 @@ pub(super) async fn execute(
                     _=>return Err("Unknown team task status".into()),
                 }
             }
-            if all_done {break;}
+            if all_done {
+                // Stop between dependency waves while remote file changes
+                // await approval. Later agents must not read stale files.
+                let checkpoint=summary(ctx,&team)?;
+                if checkpoint["status"]=="needs_review"{return Ok(checkpoint);}
+                break;
+            }
             if !wait || Instant::now()>=deadline{return summary(ctx,&team);}
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
@@ -572,6 +585,21 @@ mod tests{
         ];
         assert_eq!(plan(&tasks).unwrap(),vec![vec![0],vec![1],vec![2]]);
         assert!(plan(&[json!({"id":"bad/id","agentId":"a","prompt":"x"})]).is_err());
+    }
+    #[test]
+    fn remote_writer_receipt_requires_an_approved_merge_before_dependents(){
+        let pending=json!({"status":"completed","artifactPaths":["src/lib.rs"],
+            "artifactApplyStatus":"pending"});
+        assert!(remote_artifacts_unmerged(&pending));
+        let applying=json!({"status":"completed","artifactPaths":["src/lib.rs"],
+            "artifactApplyStatus":"applying"});
+        assert!(remote_artifacts_unmerged(&applying));
+        let applied=json!({"status":"completed","artifactPaths":["src/lib.rs"],
+            "artifactApplyStatus":"applied"});
+        assert!(!remote_artifacts_unmerged(&applied));
+        let no_files=json!({"status":"completed","artifactPaths":[],
+            "artifactApplyStatus":"not_required"});
+        assert!(!remote_artifacts_unmerged(&no_files));
     }
     #[test]
     fn no_more_than_four_read_only_workers_share_a_wave(){

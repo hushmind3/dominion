@@ -452,16 +452,22 @@ fn settle(state:&AppState,body:&Value,now:i64)->Result<Value,String>{
     if !matches!(status,"completed"|"failed"|"cancelled"|"needs_review"|"interrupted"){
         return Err("Native job is not terminal".into());
     }
+    // Freeze cancellation alongside the lease in the SQLite settlement CAS.
+    // A late successful worker cannot complete a cancelled Lead's task.
+    let authoritative=state.store.get("remote_task",&id)
+        .ok_or("Remote task disappeared during settlement")?;
+    let cancel_requested=authoritative["cancelRequested"]==true;
+    let accepted_success=status=="completed" && !cancel_requested;
     let agent_job_id=body["localJobId"].as_str()
         .filter(|s|valid_id(s)).ok_or("localJobId required")?;
     let answer=body["answer"].as_str().unwrap_or("")
         .chars().take(2_000).collect::<String>();
     let verification=body["verification"].clone();
     let paths=task_paths(state,&id)?;
-    let artifacts=if status=="completed"{
+    let artifacts=if accepted_success{
         validate_received_artifacts(&paths,&body["artifacts"])?
     }else{vec![]};
-    let verified=status=="completed" && body["verified"]==true;
+    let verified=accepted_success && body["verified"]==true;
     let telemetry=if body["usage"].is_object(){
         let mut data=serde_json::Map::new();
         for field in ["calls","promptTokens","completionTokens","totalTokens",
@@ -471,20 +477,25 @@ fn settle(state:&AppState,body:&Value,now:i64)->Result<Value,String>{
         }
         Value::Object(data)
     }else{Value::Null};
-    let refs=owned.iter().map(|(k,v)|(*k,v)).collect::<Vec<_>>();
+    let mut refs=owned.iter().map(|(k,v)|(*k,v)).collect::<Vec<_>>();
+    refs.push(("cancelRequested",&authoritative["cancelRequested"]));
     let saved=state.store.patch_if_all_merge("remote_task",&id,&refs,
         &json!({
-            "status":if status=="completed"{"completed"}else{"needs_review"},
+            "status":if accepted_success{"completed"}else{"needs_review"},
             "localJobId":agent_job_id,
             "reportedJobStatus":status,
             "answer":answer,
             "verification":verification,
             "artifacts":artifacts,
-            "artifactApplyStatus":if paths.is_empty(){"not_required"}else{"pending"},
+            "artifactApplyStatus":if !accepted_success{"blocked"}
+                else if paths.is_empty(){"not_required"}else{"pending"},
             "verified":verified,"evidenceOrigin":"remote_worker_reported",
             "operationCount":body["operationCount"].as_u64().unwrap_or(0).min(100),
             "usage":telemetry,
-            "completedAtMs":now,"outcomeUnknown":status!="completed",
+            "completedAtMs":now,"outcomeUnknown":!accepted_success,
+            "error":if cancel_requested{
+                "lead cancelled before remote settlement; inspect possible native effects"
+            }else{""},
         }),&[]).ok_or("Remote task lease changed during settlement")?;
     publish_task(state,&saved);
     Ok(json!({"taskId":id,"status":saved["status"],"verified":verified}))
@@ -667,6 +678,40 @@ mod tests{
         expire(&state,now+LEASE_MS+2);
         assert_eq!(state.store.get("remote_task","write-1").unwrap()["status"],"needs_review");
         assert!(settle(&state,&request,now+LEASE_MS+3).is_err());
+        drop(state);let _=std::fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn cancelled_lead_never_accepts_late_worker_success_or_its_artifacts(){
+        let (state,dir)=state();
+        let epoch=uuid::Uuid::new_v4().to_string();
+        register(&state,&json!({"workerId":"n-cancel","workerEpoch":epoch,
+            "agents":["coder"],"allowWrites":true})).unwrap();
+        state.store.put("remote_task",&json!({
+            "id":"task-cancel","teamId":"team-cancel","workerId":"n-cancel",
+            "agentId":"coder","status":"queued","readOnly":false,
+            "artifactPaths":["src/main.rs"],"createdAtMs":1,
+        })).unwrap();
+        let now=now_ms();
+        let claimed=claim(&state,&json!({
+            "workerId":"n-cancel","workerEpoch":epoch
+        }),now).unwrap();
+        cancel_team(&state,"team-cancel");
+        let report=json!({
+            "workerId":"n-cancel","workerEpoch":epoch,
+            "taskId":"task-cancel","leaseId":claimed["task"]["leaseId"],
+            "localJobId":"local-cancel","jobStatus":"completed","verified":true,
+            "artifacts":[{"path":"src/main.rs","content":"unapproved write",
+                "sha256":"untrusted"}],
+        });
+        let response=settle(&state,&report,now+1).unwrap();
+        assert_eq!(response["status"],"needs_review");
+        assert_eq!(response["verified"],false);
+        let stored=state.store.get("remote_task","task-cancel").unwrap();
+        assert_eq!(stored["verified"],false);
+        assert_eq!(stored["outcomeUnknown"],true);
+        assert_eq!(stored["artifactApplyStatus"],"blocked");
+        assert_eq!(stored["artifacts"],json!([]));
+        assert!(settle(&state,&report,now+2).unwrap()["replayed"]==true);
         drop(state);let _=std::fs::remove_dir_all(dir);
     }
     #[test]
