@@ -634,6 +634,12 @@ pub(super) fn render_history(
         }
     }
     let mut remaining = crate::engine::attachments::MAX_TOTAL;
+    // Select source excerpts using the latest owner question, not only the
+    // original caption ("please see attached") that accompanied the file.
+    // This is retrieval, not a rewrite of the stored owner message.
+    let latest_question = window.iter().rev()
+        .find(|message| message["role"] == "user")
+        .and_then(|message| message["content"].as_str()).unwrap_or("");
     let mut index = 0;
     while index < window.len() {
         let message = &window[index];
@@ -751,10 +757,16 @@ pub(super) fn render_history(
                         .is_some_and(|id| selected_files.contains(id))
                 });
             }
-            let content = crate::engine::attachments::content(
+            let selection_query = format!(
+                "{} {}",
+                latest_question.chars().take(600).collect::<String>(),
+                content.chars().take(300).collect::<String>()
+            );
+            let content = crate::engine::attachments::content_for_question(
                 state,
                 session_id,
                 &content,
+                &selection_query,
                 &metadata,
                 &mut remaining,
             );
@@ -819,6 +831,36 @@ mod tests {
         let estimated=super::super::room_context::estimate(
             &lightweight_chat_prompt(&state,&clean).prompt);
         assert!(estimated<100,"basic greeting should use tens of system tokens: {estimated}");
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn followup_question_recovers_middle_of_prior_large_attachment() {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let (state, dir) = state();
+        state.store.put("session",&json!({"id":"files","title":"evidence follow-up"}));
+        let mut document = String::new();
+        for row in 0..320 {
+            if row == 150 {
+                document.push_str("승계 임계값을 결정한 원문은 91점과 2회 검증입니다.\n");
+            } else {
+                document.push_str(&format!("일반 문서 {row}: {}\n", "반복 항목 ".repeat(30)));
+            }
+        }
+        let file = crate::engine::attachments::upload(&state, &json!({
+            "sessionId":"files", "name":"long-policy.txt",
+            "data":STANDARD.encode(document.as_bytes())
+        })).unwrap();
+        let old = json!({"id":"old","role":"user","session_id":"files",
+            "content":"첨부한 문서를 읽어줘","metadata":{"attachments":[file]}});
+        let new = json!({"id":"followup","role":"user","session_id":"files",
+            "content":"중간 승계 임계값을 결정한 원문을 찾아줘"});
+        let history = render_history(&state, "files", None, &[old, new], vec![]);
+        let excerpt = history[0]["content"][1]["text"].as_str().unwrap();
+        assert!(excerpt.contains("91점"), "{excerpt}");
+        assert!(excerpt.contains("L151 C"), "original file position must survive retrieval");
+        assert_eq!(history[0]["content"][0]["text"], "첨부한 문서를 읽어줘");
+        assert_eq!(history[1]["content"], "중간 승계 임계값을 결정한 원문을 찾아줘");
         let _=std::fs::remove_dir_all(dir);
     }
 
