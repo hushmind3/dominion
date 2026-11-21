@@ -90,6 +90,14 @@ impl<'a,A:AgentLoop+?Sized> Harness<'a,A>{
     }
     pub fn workflow(&self)->&'static str{self.algorithm.name()}
 
+    /// All hosts use the same core scheduling decision for starting the next
+    /// model turn. Streaming and durable effects stay host callbacks; neither
+    /// Chat nor the SDK owns a separate provider-round limit anymore.
+    pub fn next_round(&self,finished:bool,cancelled:bool)
+        -> Result<Option<usize>, &'static str>{
+        self.driver.next_model_round(finished,cancelled)
+    }
+
     /// Decide a whole model response, with exactly the provider's real tool
     /// IDs. No tool authority is reserved yet: Chat may first commit the
     /// assistant proposal and then persist precise rejected-call feedback.
@@ -147,7 +155,8 @@ impl<'a,A:AgentLoop+?Sized> Harness<'a,A>{
     )->Result<PortRunResult,String>{
     let mut rounds=0usize;
     let mut dispatched=0usize;
-    loop{
+    while self.next_round(false,model.cancelled()||tools.cancelled())
+        .map_err(str::to_string)?.is_some() {
         let response:ModelResponse=self.request_model(
             model.cancelled()||tools.cancelled(),
             model.complete(history,visible_tools),
@@ -209,6 +218,7 @@ impl<'a,A:AgentLoop+?Sized> Harness<'a,A>{
             }
         }
     }
+    Err("model round limit exceeded".into())
     }
 }
 
@@ -313,6 +323,29 @@ mod tests{
         assert_eq!(answer.step(),Step::Answer);
         assert_eq!(answer.call_count(),0);
         assert!(harness.admit_prepared(&answer,&visible,true).is_ok());
+    }
+
+    #[test]
+    fn host_round_gate_reuses_exact_driver_limits_and_stop_rules(){
+        struct Safe;
+        impl AgentLoop for Safe{
+            fn name(&self)->&'static str{"safe"}
+            fn after_model(&mut self,observation:RoundObservation)->Step{
+                if observation.proposed_calls==0{Step::Answer}
+                else{Step::Execute{calls:observation.proposed_calls}}
+            }
+        }
+        let mut driver=Driver::new(1,2);
+        let mut policy=Safe;
+        let mut harness=Harness::new(&mut driver,&mut policy);
+        assert_eq!(harness.next_round(false,false),Ok(Some(0)));
+        assert_eq!(harness.next_round(true,false),Ok(None));
+        assert_eq!(harness.next_round(false,true),Err("execution cancelled"));
+        let result=std::future::ready(Ok::<_,String>("mock-model"));
+        // Model invocation itself consumes a round, not the scheduling probe.
+        let _=tokio::runtime::Builder::new_current_thread().enable_all()
+            .build().unwrap().block_on(harness.request_model(false,result)).unwrap();
+        assert_eq!(harness.next_round(false,false),Ok(None));
     }
 
     #[test]
