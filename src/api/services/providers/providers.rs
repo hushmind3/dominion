@@ -1807,9 +1807,9 @@ async fn codex_models_live(
     // Query the full account catalog first with a generic compatibility
     // version, then retry with the installed CLI's version.
     let mut versions = vec!["99.0.0".to_string()];
-    let cli_version = tokio::time::timeout(Duration::from_secs(3),
-        tokio::process::Command::new("codex").arg("--version").output()
-    ).await.ok().and_then(Result::ok)
+    let cli_version = crate::engine::cli_accounts::run_cli_bounded(
+        std::path::PathBuf::from("codex"),&["--version"],Duration::from_secs(3),
+    ).await.ok()
         .and_then(|output|String::from_utf8(output.stdout).ok())
         .and_then(|stdout|stdout.split_whitespace()
             .find(|part|part.chars().next().is_some_and(|c|c.is_ascii_digit()))

@@ -11,7 +11,7 @@ use tokio::io::{AsyncRead,AsyncReadExt};
 const MAX_CLI_OUTPUT_BYTES:usize=64*1024;
 
 #[derive(Debug)]
-enum CliOutputError { Spawn, Timeout, OutputLimit, Io }
+pub(crate) enum CliOutputError { Spawn, Timeout, OutputLimit, Io }
 
 async fn capture_cli_pipe<R:AsyncRead+Unpin>(mut pipe:R)->Result<(Vec<u8>,bool),CliOutputError>{
     let mut bytes=Vec::new();
@@ -27,7 +27,7 @@ async fn capture_cli_pipe<R:AsyncRead+Unpin>(mut pipe:R)->Result<(Vec<u8>,bool),
     Ok((bytes,exceeded))
 }
 
-async fn run_cli_bounded(
+pub(crate) async fn run_cli_bounded(
     executable:std::path::PathBuf,
     args:&[&str],
     limit:Duration,
