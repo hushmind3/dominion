@@ -29,6 +29,7 @@ fn private(path:&Path)->Result<(),String>{
     let _=path;
     Ok(())
 }
+pub fn pending(dir:&Path)->bool{dir.join(MARKER).exists()}
 fn paths(dir:&Path)->(PathBuf,PathBuf,PathBuf){
     (dir.join(MARKER),dir.join(OLD_DB),dir.join(OLD_KEY))
 }
