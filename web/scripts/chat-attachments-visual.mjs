@@ -87,6 +87,11 @@ async function mock(route){
    body:events.map(event=>'data: '+JSON.stringify(event)+'\n\n').join('')
   })
  }
+ if(pathname==='/api/attachments/attachment-2/content'&&method==='GET'){
+  return route.fulfill({
+   status:200,contentType:'image/png',body:photo
+  })
+ }
  if(pathname==='/api/attachments/attachment-1/content'&&method==='GET'){
   downloaded++
   return route.fulfill({
@@ -133,6 +138,13 @@ try{
  const item=await download
  assert.equal(item.suggestedFilename(),'owner-note.txt')
  assert.equal(downloaded,1)
+ await owner.first().getByRole('button',{name:'photo.png'}).click()
+ const preview=page.getByRole('dialog',{name:'이미지 미리보기'})
+ await preview.waitFor({timeout:15000})
+ assert.equal(await preview.locator('img').getAttribute('alt'),'photo.png')
+ assert.ok(await preview.locator('img').evaluate(image=>image.complete&&image.naturalWidth>0))
+ await preview.getByRole('button',{name:'닫기'}).click()
+ await preview.waitFor({state:'detached'})
  await page.reload({waitUntil:'domcontentloaded'})
  await page.locator('[data-role="user"]').first().waitFor()
  assert.equal(await page.locator('[data-role="user"]').count(),1)

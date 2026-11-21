@@ -643,6 +643,8 @@ const ko = {
   'chat.stopped': '모델 실행이 중단됐습니다. 이 대화에서 계속 입력할 수 있습니다.',
   'chat.stopPending': '서버가 아직 실행 종료를 확인하지 못했습니다. 다시 중단을 누르세요.',
   'chat.usedMemories': '참고한 기억 {count}개',
+  'chat.previewImage': '이미지 미리보기',
+  'chat.closePreview': '닫기',
   'chat.attachFiles': '파일 첨부',
   'chat.fileOnlyPrompt': '첨부 파일을 확인해 주세요.',
   'chat.fileSlashError': '슬래시 명령에는 파일 첨부를 보낼 수 없습니다.',

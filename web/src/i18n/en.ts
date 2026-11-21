@@ -644,6 +644,8 @@ const en: Record<LocaleKey, string> = {
   'chat.stopped': 'The model run was stopped. You can continue this conversation.',
   'chat.stopPending': 'The server has not yet confirmed that the turn stopped. Try Stop again.',
   'chat.usedMemories': 'Memories referenced: {count}',
+  'chat.previewImage': 'Preview image',
+  'chat.closePreview': 'Close preview',
   'chat.attachFiles': 'Attach files',
   'chat.fileOnlyPrompt': 'Please review the attached files.',
   'chat.fileSlashError': 'Remove attachments before running a slash command.',

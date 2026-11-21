@@ -3,12 +3,13 @@ import {ExecutionPermissions} from '../components/ExecutionPermissions'
 import {ConversationSwitch} from '../components/WorkspaceShell'
 import {TokenUsage} from '../components/TokenUsage'
 import {ChatRichText} from '../components/ChatRichText'
+import {ChatAttachment} from '../components/ChatAttachment'
 import {base64File,mergeChatFiles,type ChatFileDraft} from '../utils/chatAttachments'
 import {createPortal} from 'react-dom'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormEvent,useEffect,useMemo,useRef,useState,type KeyboardEvent} from 'react'
 import {ArrowRight,ArrowUp,BrainCircuit,FileText,Paperclip,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
-import {Agent,Approval,ChatMessage,ChatSession,Provider,attachmentBlob,get,post,resolveApproval,streamChat,koreanReasoningEnabled} from '../api'
+import {Agent,Approval,ChatMessage,ChatSession,Provider,get,post,resolveApproval,streamChat,koreanReasoningEnabled} from '../api'
 import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
 import {ModelPicker} from '../components/ModelPicker'
@@ -569,7 +570,6 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
 }
 function Message({message,agentName,showReasoning}:{message:ChatMessage;agentName?:string;showReasoning?:boolean}){
  const [open,setOpen]=useState(true)
- const [downloadError,setDownloadError]=useState('')
  const human=message.role==='user'
  const files=(human&&Array.isArray(message.metadata?.attachments)?message.metadata.attachments:[])
   .filter((item):item is {id:string;name:string;isImage?:boolean}=>!!item&&typeof item==='object'
@@ -585,17 +585,7 @@ function Message({message,agentName,showReasoning}:{message:ChatMessage;agentNam
    {!human&&<div className="chat-message-label mb-2 flex items-center gap-2 font-bold text-[#4A443C]">{agentName||'DOMINION'}<TokenUsage usage={message.metadata?.usage} className="ml-auto rounded border border-[#E7DDCC] bg-[#F7F1E6] px-1.5 py-0.5 text-[9px] font-medium text-[#8A775F]"/></div>}
    {!human&&showReasoning&&message.reasoning&&<details className="mb-3 max-h-56 overflow-y-auto rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-[11px] leading-5 text-[#7C7469]" open={open}><summary className="cursor-pointer select-none" onClick={e=>{e.preventDefault();setOpen(v=>!v)}}><BrainCircuit size={14} className="inline"/> {t('chat.reasoningProcess',{count:message.reasoning.length.toLocaleString()} )} <ChevronRight size={13} className="inline"/></summary><div className="mt-2 whitespace-pre-wrap">{message.reasoning}</div></details>}
    <div className={'chat-message-text min-w-0 whitespace-pre-wrap break-words '+(human?'chat-message-text--user':'chat-message-text--assistant')}>{human?message.content:(message.content?<ChatRichText content={message.content}/>:message.tool_calls?.length?t('chat.toolRequest'):'')}</div>
-   {files.length>0&&<div className="mt-2 flex flex-wrap gap-1.5">{files.map(file=><button key={file.id}
-    type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-[#D6C8B7] bg-white px-2 py-1 text-[11px] text-[#4A443C] hover:border-[#A94E30]"
-    title={t('chat.downloadAttachment',{name:file.name})} onClick={async()=>{
-     try{
-      const blob=await attachmentBlob(file.id)
-      const url=URL.createObjectURL(blob),link=document.createElement('a')
-      link.href=url;link.download=file.name;link.click()
-      window.setTimeout(()=>URL.revokeObjectURL(url),1000)
-     }catch{setDownloadError(t('chat.fileDownloadFailed'))}
-    }}><FileText size={12}/><span className="max-w-[180px] truncate">{file.name}</span></button>)}</div>}
-   {downloadError&&<div role="status" className="mt-1 text-xs text-rose-700">{downloadError}</div>}
+   {files.length>0&&<div className="mt-2 flex flex-wrap gap-1.5">{files.map(file=><ChatAttachment key={file.id} file={file}/>)}</div>}
    {usedMemories.length>0&&<details className="chat-message-memories mt-2 rounded-lg border border-[#E7E0D5] bg-[#FAF7F1] px-3 py-2 text-[11px] leading-5 text-[#665D51]">
     <summary className="cursor-pointer select-none font-medium">{t('chat.usedMemories',{count:usedMemories.length})}</summary>
     <div className="mt-2 grid gap-2">{usedMemories.map(item=><div key={item.id} className="break-words border-t border-[#E7E0D5] pt-2 whitespace-pre-wrap">{item.text}</div>)}</div>

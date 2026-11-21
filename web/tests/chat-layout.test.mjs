@@ -104,3 +104,12 @@ test('basic chat attaches local files to the real session and model request',()=
  assert.match(attachments,/MAX_CHAT_TOTAL_BYTES=24\*1024\*1024/)
  assert.match(attachments,/MAX_CHAT_FILES=8/)
 })
+
+test('stored images have authenticated byte-backed previews with URL cleanup',()=>{
+ const src=readFileSync(root+'src/components/ChatAttachment.tsx','utf8')
+ assert.match(chat,/<ChatAttachment key=\{file\.id\} file=\{file\}\/>/)
+ assert.match(src,/attachmentBlob\(file\.id\)/)
+ assert.match(src,/DialogBackdrop onDismiss=\{close\}/)
+ assert.match(src,/URL\.revokeObjectURL/)
+ assert.doesNotMatch(src,/window\.alert/)
+})
