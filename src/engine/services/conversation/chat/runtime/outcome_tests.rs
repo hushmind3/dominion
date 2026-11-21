@@ -69,6 +69,74 @@ use super::*;
     }
 
     #[tokio::test]
+    async fn real_task_team_dag_persists_worker_claims_and_correlates_actual_tool_receipts(){
+        let (state,dir)=state();
+        state.store.put("policy",&json!({"id":"default","autoApproveAll":true})).unwrap();
+        state.store.put("execution",&json!({
+            "id":"exec-team-ledger","sessionId":"s-team-ledger",
+            "status":"running","taskId":"exec-team-ledger",
+            "request":"write then inspect"
+        })).unwrap();
+        let session=json!({"id":"s-team-ledger"});
+        let request=TurnRequest{
+            session_id:Some("s-team-ledger".into()),request_id:None,
+            input:"write then inspect".into(),attachment_ids:Vec::new(),
+            agent_id:None,provider_id:None,model:None,
+            tools_enabled:true,tools_execution_enabled:true,
+            thinking:None,reasoning_effort:None,reasoning_language:None,
+            auto_learning:false,system_override:None,task_id:None,
+            parent_task_id:None,task_revision:None,verification_owner:None,
+        };
+        let program=json!({"revision":"team-ledger-r1",
+            "nodes":[{"id":"team","type":"parallel","nodes":[
+                {"id":"create","type":"call_tool","tool":"workspace_write",
+                    "inputs":{"path":"team-ledger.txt","content":"REAL"}},
+                {"id":"inspect","type":"call_tool","tool":"workspace_read",
+                    "dependsOn":["create"],
+                    "inputs":{"path":"team-ledger.txt"}}
+            ]}]
+        });
+        let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+        let metrics=std::sync::Mutex::new(Metrics::default());
+        let mut budget=super::super::budget::BudgetLedger::new(
+            MAX_ROUNDS,MAX_TOOL_CALLS,MAX_ELAPSED);
+        let mut op_seq=0;
+        run_program(&state,&tx,&session,&request,"s-team-ledger",
+            "exec-team-ledger",&program,&metrics,&mut budget,&mut op_seq,
+            state.cancellation_generation("s-team-ledger")).await
+            .expect("real DAG writes and inspects");
+        assert_eq!(std::fs::read_to_string(dir.join("team-ledger.txt")).unwrap(),"REAL");
+        let rows=state.store.all("task_team_work");
+        assert_eq!(rows.len(),2,"every actual child has one durable claim");
+        let operations=state.store.execution_operations("exec-team-ledger").unwrap();
+        assert_eq!(operations.len(),2);
+        for row in &rows{
+            assert_eq!(row["status"],"completed");
+            assert_eq!(row["attempt"],1);
+            let receipt=row["evidence"]["operationId"].as_str().unwrap();
+            assert!(operations.iter().any(|o|
+                o["id"]==receipt && o["status"]=="completed"
+                    && o["runId"]=="exec-team-ledger"),
+                "team completion must cite a real committed tool operation");
+            assert_eq!(row["evidence"]["kind"],"tool_completed_observed");
+        }
+        let author=rows.iter().find(|r|r["nodeId"]=="create").unwrap();
+        assert_eq!(author["nodeType"],"call_tool");
+        let before=state.store.all("task_team_work").len();
+        assert_eq!(before,2);
+        drop(state);
+        let config=Config{port:0,data_dir:dir.clone(),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let restarted=AppState::new(config.clone(),
+            Store::open(&config.db_path()).unwrap(),Vault::open(&config.key_path()));
+        assert_eq!(restarted.store.all("task_team_work").len(),before);
+        assert!(restarted.store.all("task_team_work").iter()
+            .all(|row|row["status"]=="completed"));
+        drop(restarted);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
     async fn nested_team_revision_failure_blocks_dependent_writer_and_parent_completion(){
         let (state,dir)=state();
         state.store.put("policy",&json!({"id":"default","autoApproveAll":true}));
