@@ -150,3 +150,22 @@ P3 원문은 "실제 다중 기기 요구가 생길 때 도입"하는 조건부 
 ### 검증 경계
 
 실제 루프백 HTTP(TCP)+SQLite 테스트, Rust lease/epoch/cancel 테스트, SDK typed SSE/구조 계약 테스트를 CI에 포함했습니다. 서로 다른 물리 컴퓨터, 실제 네트워크 복구, 원격 모델 인증, 비공개 터널, OS 설치 프로그램은 별도의 운영 E2E 검증 대상입니다. 클라우드 모델/계정 과금용 Cloudflare Gateway와 원격 실행 제어면은 동일한 기능으로 취급하지 않습니다.
+
+## 10. 2026-11-22 실사용 후속 개선 (서브2 전용)
+
+대화·첨부·실행·복구·CLI/SDK를 **실제 기존 제품 경로에 수정**했습니다. 이 항목은 설계 변경이 아니라 소스 커밋에 연결된 최신 상태입니다.
+
+- **독립 포트 경계**: `Config::from_env` Rust 기본 4321, `web/vite.config.ts` 개발 프록시 4321, 공용 TypeScript SDK 기본 4321로 통일. 명시적 `DOMINION_PORT`·`DOMINION_API_URL`·SDK `baseUrl`은 그대로 우선합니다. main:4317을 무심코 제어하는 개발 동선을 막습니다.
+- **실제 과거 첨부 자료 복원**: 32k 선두 자르기 대신 질문 관련 중간 원문과 문서 앞/뒤를 선택하고 L/C 원본 위치를 남깁니다. 한 줄짜리 대형 JSON도 UTF-8 1,400자 창으로 탐색합니다. 역사적 파일의 제목을 지칭하면 최신 스크린샷보다 해당 파일을 우선 선택하고, Chat history focus에서도 선택된 출처를 유지합니다. 모델에 전송하는 실제 텍스트와 base64 이미지 바이트를 예산에 반영합니다. SQLite의 전체 파일 원본은 변경하지 않습니다.
+- **Room 문맥 경량화**: 9명 그룹의 장기 기록을 매 발언마다 전부 디코딩하지 않고, SQLite의 최근 기록 쿼리에서 유효한 owner 출처만 필터링합니다. 압축 커서는 같은 세션의 유효한 참가자 행에만 적용되며, bot 발언을 owner 확정 요약으로 승격시키지 않습니다.
+- **첨부 생명주기**: Room 초기화는 미전송 글을 보존하고 과거 Room 세션의 파일 ID·재전송 nonce를 제거합니다. 개인 Chat 삭제/지우기는 실행 중인 Job·Team·DB lease를 확인한 뒤 파일 바이트/메타데이터와 대화 기록을 함께 정리합니다. 다른 세션·Room의 기록은 보존하며, 원본이 삭제되어도 복제된 Chat은 **별도 새 파일 ID와 실제 복사한 바이트**로 계속 읽을 수 있습니다.
+- **Fork 완결성**: Chat 복제가 실제 파일까지 성공한 뒤에만 UI 세션 목록에 공개됩니다. 중간 실패 시 새 파일·메시지를 정리합니다. 파일 삭제 오류가 나면 추후 점검 가능한 비공개 pending 레코드를 유지합니다. 강제 종료로 남은 pending 복제의 자동 청소는 아직 구현되지 않았습니다.
+- **공용 SDK 정합성**: Rust SSE의 `error → done`을 실패로 전달하고 유료 POST를 중복 발송하지 않습니다. 정확한 `requestId` 중지와 서버의 durable `cancel-status`, private session 삭제를 같은 Rust API에 연결했습니다.
+
+### 출발·제출/검증 경계
+
+- 이 회차의 출발 기준은 `dominion-sub2`의 2026-11-21 HEAD `d41aa7bbda85f87df39dd9250785d06e2208a411`입니다. 서브2에서만 수정하며 메인·서브3·서브4로 자동 이식하지 않습니다.
+- 주요 회귀: `cargo test --lib api::sessions::deletion_tests`, `cargo test --lib engine::chat::context::tests`, `cargo test --lib engine::chat::context_window::tests`, `cargo test --lib engine::task_team_work::tests`, `./web/node_modules/.bin/tsc -p sdk/typescript/tsconfig.json`, `node --test sdk/typescript/tests/sdk.test.mjs`, `node web/tests/team-activity.smoke.mjs`, `node web/tests/room-model-routing.smoke.mjs`.
+- GitHub Actions에서 여러 차례 프런트 타입·빌드·SDK와 Chromium fixture 성공을 관찰했습니다. 연속 커밋으로 오래 걸리는 macOS Rust 실행은 취소된 회차가 있으므로, 최신 **제출 SHA의 전체 CI·실모델·실기기 통과라고 주장하지 않습니다**. 각 커밋 SHA에 대응하는 Actions 원문으로 판정해야 합니다.
+- 로컬 4321 검증자는 제출한 Rust/프런트 빌드 SHA가 실제 서버와 일치함을 먼저 확인합니다. 긴 파일의 중간 원문 재질문, 다른 세션의 파일 차단, Chat 복제 후 원본 삭제, Room 재설정 후 초안 유지와 오래된 파일 불사용, 중지 후 늦은 결과·초안·영수증을 확인합니다.
+- 후속 남은 구현: 강제 중단된 pending-fork의 안전한 복구/수거, 오래된 데이터베이스와 서로 다른 OS의 실제 호환 회귀, 오래 끊긴 실모델/원격 Worker 유료 호출의 독립 검증 및 같은 조건의 비용·지연 비교.
