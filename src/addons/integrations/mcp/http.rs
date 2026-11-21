@@ -25,15 +25,6 @@ fn modern_params(mut params: Value) -> Value {
     params
 }
 
-/// Encode transport routing values according to MCP's 2026 header-sentinel rule.
-fn header_value(raw:&str)->String{
-    let plain = !raw.is_empty() && raw.trim()==raw && raw.bytes().all(|byte|byte>=32&&byte<=126)
-        && !(raw.starts_with("=?base64?")&&raw.ends_with("?="));
-    if plain {return raw.to_string();}
-    use base64::Engine as _;
-    format!("=?base64?{}?=",base64::engine::general_purpose::STANDARD.encode(raw.as_bytes()))
-}
-
 const MAX_SSE_EVENT_BYTES: usize = 2 * 1024 * 1024;
 
 /// A request-scoped SSE stream can remain open after its JSON-RPC response.
