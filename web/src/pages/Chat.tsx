@@ -14,6 +14,7 @@ import {ModelPicker} from '../components/ModelPicker'
 import {ReasoningSelect,reasoningOptions} from '../components/ReasoningSelect'
 import {useProviderModels} from '../hooks/useProviderModels'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
+import {useChatDraft} from '../hooks/useChatDraft'
 import {useAnchoredPanel} from '../hooks/useAnchoredPanel'
 import {useJob,jobFinished,type JobState} from '../hooks/useJob'
 import {t,useLocale,type LocaleKey} from '../i18n'
@@ -46,7 +47,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   cacheUnknownCalls?:number;estimatedCalls?:number}
  const [serverUsage,setServerUsage]=useState<SessionUsage>({});
  const approvals=useRemote<Approval[]>('/api/approvals',[],active);
- const [input,setInput]=useState('');
+ const [input,setInput]=useChatDraft(current);
  const [modeChoice,setModeChoice]=useState<{scope?:string;mode:ChatMode}>()
  const mode:ChatMode=(modeChoice&&modeChoice.scope===current?modeChoice.mode:undefined)??
   (selectedSession?.mode==='agent'||(!selectedSession?.mode&&Boolean(selectedSession?.agentId))||(!current&&Boolean(initialAgent))?'agent':'chat')
@@ -87,6 +88,12 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const [modelMenu,setModelMenu]=useState(false),[installed,setInstalled]=useState<InstalledModel[]>([]),[modelsLoading,setModelsLoading]=useState(false),[runtime,setRuntime]=useState<Runtime>({status:'idle'}),[modelBusy,setModelBusy]=useState(''),[unloading,setUnloading]=useState(false),[learning,setLearning]=useState(false),[menuError,setMenuError]=useState('');
  const [slashOpen,setSlashOpen]=useState(false),[slashActive,setSlashActive]=useState(0),[commandInfo,setCommandInfo]=useState('');
  const inputRef=useRef<HTMLTextAreaElement>(null);
+ useEffect(()=>{
+  const el=inputRef.current
+  if(!el)return
+  el.style.height='auto'
+  el.style.height=Math.min(el.scrollHeight,180)+'px'
+ },[current]);
  const stream=useRef<AbortController|null>(null);
  const activeTurnSession=useRef<string|undefined>(undefined);
  const stoppingRef=useRef(false);
@@ -209,7 +216,10 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   if(window.innerWidth<768)setShowHistory(false);
  };
  const resetLocal=()=>{
-  onSession(undefined);setAgentChoice(undefined);setOverride(undefined);setModeChoice(undefined);setInput('');
+  // Keep the old conversation's unsent draft. A second New action on an
+  // already-new conversation intentionally clears that new draft.
+  if(!current)setInput('');
+  onSession(undefined);setAgentChoice(undefined);setOverride(undefined);setModeChoice(undefined);
   setError('');setCommandInfo('');setSlashOpen(false);
   if(window.innerWidth<768)setShowHistory(false);
   inputRef.current?.focus({preventScroll:true});

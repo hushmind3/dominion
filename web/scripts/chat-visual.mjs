@@ -23,6 +23,7 @@ const original=[
   '## 서식 있는 답변\n**굵은 글씨**와 `inline code`\n\n- 첫 항목\n- 두 번째 항목\n\n| 이름 | 값 |\n| --- | --- |\n| 테스트 | 1 |\n\n```ts\nconst answer = 42\n```\n\n[참고](https://example.com) <img src=x onerror=alert(1)>'}
 ]
 const session={id:'chat-ui',title:'기본 채팅 UI 점검',mode:'chat',agentId:null,providerId:'mock-chat',model:'mock-native'}
+const secondSession={...session,id:'other-ui',title:'초안 분리 검증'}
 const provider={id:'mock-chat',name:'Mock Chat',kind:'openai',enabled:true,model:'mock-native',baseUrl:'http://127.0.0.1:9/v1'}
 const agent={id:'default',name:'기본값',providerId:'mock-chat',model:'mock-native'}
 let messages=structuredClone(original)
@@ -36,8 +37,9 @@ async function mock(route){
  if(n==='/api/providers')return json(route,[provider])
  if(n==='/api/agents')return json(route,[agent])
  if(n==='/api/approvals')return json(route,[])
- if(n==='/api/sessions'&&m==='GET')return json(route,[session])
+ if(n==='/api/sessions'&&m==='GET')return json(route,[session,secondSession])
  if(n==='/api/sessions/chat-ui/messages')return json(route,messages)
+ if(n==='/api/sessions/other-ui/messages')return json(route,[])
  if(n==='/api/sessions/chat-ui/usage')return json(route,{totalTokens:42,calls:2,promptTokens:30,completionTokens:12})
  if(n==='/api/status')return json(route,{agents:1,providers:1,executions:0,jobs:0})
  if(n==='/api/model-library/runtime')return json(route,{status:'idle'})
@@ -154,6 +156,20 @@ try{
   await page.waitForFunction(()=>document.querySelectorAll('[data-role="user"][data-pending="true"]').length===0,null,{timeout:15000})
   assert.equal(await page.locator('[data-role="assistant"]').count(),2,'Partial output must not masquerade as a persisted assistant message')
   assert.equal(await page.locator('.chat-message--assistant').count(),3,'Interrupted partial output must stay visibly separate')
+  // An incomplete message is a draft belonging to one conversation, never
+  // a clipboard of text carried into the next owner's session.
+  const input=page.locator('.conversation-composer-input')
+  await input.fill('첫 번째 대화에만 남는 임시 글')
+  await page.goto(base+'/#/chat?session=other-ui',{waitUntil:'domcontentloaded'})
+  await page.getByRole('combobox',{name:'대화 실행 모드'}).waitFor()
+  assert.equal(await input.inputValue(),'','Another conversation must start with its own draft')
+  await input.fill('두 번째 대화의 독립적인 초안')
+  await page.reload({waitUntil:'domcontentloaded'})
+  await page.getByRole('combobox',{name:'대화 실행 모드'}).waitFor()
+  assert.equal(await input.inputValue(),'두 번째 대화의 독립적인 초안','Draft must survive refresh')
+  await page.goto(base+'/#/chat?session=chat-ui',{waitUntil:'domcontentloaded'})
+  await page.getByRole('combobox',{name:'대화 실행 모드'}).waitFor()
+  assert.equal(await input.inputValue(),'첫 번째 대화에만 남는 임시 글','Original draft must return without leaking')
   assert.deepEqual(pageErrors,[],'React failed at '+width)
   await page.close()
  }

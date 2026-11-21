@@ -59,3 +59,13 @@ test('partial model text stays visible after an incomplete unsaved response',()=
  assert.match(chat,/if\(!saved&&!unsavedFailure\)\{setLive\(''\);setThought\(''\);\}/)
  assert.match(chat,/if\(unsavedFailure\)setStreamInterrupted\(true\)/)
 })
+
+test('chat drafts are tab-local and scoped to the current conversation',()=>{
+ const hook=readFileSync(root+'src/hooks/useChatDraft.ts','utf8')
+ assert.match(chat,/useChatDraft\(current\)/)
+ assert.match(hook,/const keyOf=\(sessionId\?:string\)=>PREFIX\+\(sessionId\|\|'new'\)/)
+ assert.match(hook,/sessionStorage\.getItem/)
+ assert.match(hook,/sessionStorage\.setItem/)
+ assert.match(hook,/current\.key===key\?current\.text:read\(key\)/)
+ assert.match(chat,/if\(!current\)setInput\(''\)/)
+})
