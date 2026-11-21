@@ -173,7 +173,7 @@ mod tests{
         h.push(json!({"role":"assistant","content":"","tool_calls":[{
             "id":"create-once","type":"function",
             "function":{"name":"workspace_write",
-                "arguments":"{\\"path\\":\\"empty-once.md\\",\\"content\\":\\"\\"}"}}]}));
+                "arguments":r#"{"path":"empty-once.md","content":""}"#}}]}));
         h.push(json!({"role":"tool","tool_call_id":"create-once",
             "content":"{\"written\":true,\"path\":\"empty-once.md\"}"}));
         h.push(assistant("파일을 만들었습니다: empty-once.md"));
