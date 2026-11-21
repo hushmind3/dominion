@@ -461,6 +461,9 @@ pub(super) async fn execute(
         read_team(ctx,id)?
     }else{create(ctx,args,run_id)?};
     let team_id=team["id"].as_str().ok_or("Team ID missing")?;
+    if team["status"]!="running" || team["cancelRequested"]==true{
+        return Err("Team is stopped or finalized; cannot restart".into());
+    }
     let nodes=team["tasks"].as_array().ok_or("Team DAG missing")?;
     let waves=team["waves"].as_array().ok_or("Team schedule missing")?;
     let wait=args["wait"].as_bool().unwrap_or(true);
@@ -471,6 +474,10 @@ pub(super) async fn execute(
         // A writer gets an exclusive wave. A read-only wave can launch
         // multiple real job workers BEFORE awaiting their results.
         loop {
+            if ctx.store.get("managed_team",team_id).is_none_or(|saved|
+                saved["status"]!="running" || saved["cancelRequested"]==true){
+                return Err("Managed team stopped before next work admission".into());
+            }
             if ctx.state.is_cancelled(ctx.session_id){
                 crate::remote::cancel_team(ctx.state,team_id);
                 return Err(format!("Lead cancelled; durable team {team_id} remains inspectable"));

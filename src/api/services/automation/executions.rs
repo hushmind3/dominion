@@ -51,13 +51,14 @@ fn team_activity_view(team:&Value, members:&[Value], remote_tasks:&[Value])->Val
                 .map(|s|s.chars().take(240).collect::<String>()),
         }));
     }
-    let status=if blocked{"needs_review"}else if all_done{"completed"}
-        else if team["status"]=="cancelled"{"cancelled"}else{"running"};
+    let status=if team["status"]=="cancelled"{"cancelled"}
+        else if blocked{"needs_review"}else if all_done{"completed"}else{"running"};
     json!({
         "id":id,"status":status,"leadSessionId":team["leadSessionId"],
         "leadAgentId":team["leadAgentId"],
         "createdAt":team["createdAt"],"updatedAt":team["updatedAt"],
-        "verified":all_done && !blocked && tasks.iter().all(|t|t["verified"]==true),
+        "verified":all_done && !blocked && status=="completed"
+            && tasks.iter().all(|t|t["verified"]==true),
         "pendingRemoteArtifactTaskIds":pending_artifacts,
         "tasks":tasks,
     })
@@ -79,6 +80,8 @@ pub async fn team_activity(State(state):State<AppState>)->Json<Value>{
                 && heartbeat>0 && now.saturating_sub(heartbeat)<=90_000,
             "allowWrites":node["allowWrites"]==true,
             "agentCount":node["agents"].as_array().map_or(0,Vec::len),
+            "agents":node["agents"],
+            "lastHeartbeatMs":node["lastHeartbeatMs"],
         })
     }).collect::<Vec<Value>>();
     workers.sort_by(|a,b|a["id"].as_str().cmp(&b["id"].as_str()));
@@ -87,6 +90,7 @@ pub async fn team_activity(State(state):State<AppState>)->Json<Value>{
         "teams":teams.iter().take(30).map(|team|
             team_activity_view(team,&members,&remote_tasks)).collect::<Vec<_>>(),
         "remoteWorkers":workers,
+        "remoteConfigured":crate::remote::control_plane_configured(),
     }))
 }
 

@@ -11,6 +11,8 @@ pub mod settings;
 pub mod improvements;
 #[path = "services/automation/executions.rs"]
 pub mod executions;
+#[path = "services/automation/team_controls.rs"]
+pub mod team_controls;
 #[path = "services/automation/tasks.rs"]
 pub mod tasks;
 #[path = "services/evaluation/experience.rs"]
