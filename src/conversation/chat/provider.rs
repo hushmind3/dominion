@@ -1614,6 +1614,11 @@ fn append_codex_stream_calls(
 )->Result<(),String>{
     for item in output {
         if item["type"]!="function_call" {continue;}
+        // A terminal event can include a tool item that was itself truncated.
+        // Never persist or dispatch it as a complete host operation.
+        if item["status"].as_str().is_some_and(|status|status!="completed") {
+            return Err("Codex returned an incomplete function_call item".into());
+        }
         let normalized=codex_function_call_item(item)
             .ok_or("Codex returned an incomplete function_call item")?;
         let id=normalized["call_id"].as_str().unwrap_or("");
@@ -2999,6 +3004,10 @@ mod tests {
             "type":"function_call","call_id":"call-2",
             "name":"workspace_read","arguments":"[1]"
         })]).is_err(),"Malformed tool arguments cannot reach host dispatch");
+        assert!(append_codex_stream_calls(&mut calls,&[json!({
+            "type":"function_call","status":"incomplete","call_id":"call-3",
+            "name":"workspace_read","arguments":"{}"
+        })]).is_err(),"Incomplete Codex item must never become a tool receipt");
         assert!(append_codex_stream_calls(&mut calls,&[json!({
             "type":"function_call","name":"workspace_read","arguments":"{}"
         })]).is_err(),"Missing call identity must not be synthesized");
