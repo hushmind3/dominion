@@ -335,6 +335,32 @@ mod tests{
    "issue number")>0);
  }
  #[test]
+ fn korean_github_tasks_disclose_right_connector_without_a_paid_search_turn(){
+  let mut c=catalog();
+  for (name,description) in [
+    ("github_work_read","Read GitHub issues, branches and pull requests"),
+    ("google_workspace_read","Read Gmail, Calendar and Drive resources"),
+    ("cloudflare_deploy","Deploy Cloudflare Workers"),
+  ] {
+    c.insert(name.into(),ToolSpec{name:name.into(),
+      description:description.into(),schema:json!({"type":"object","properties":{
+        "operation":{"type":"string"}}}),read_only:true});
+  }
+  let picked=select(&c,"깃허브에서 열린 풀리퀘스트를 조사해","",
+       None,&[],&[]);
+  assert!(picked.iter().any(|s|s.name=="github_work_read"));
+  assert!(!picked.iter().any(|s|s.name=="google_workspace_read"));
+  assert!(!picked.iter().any(|s|s.name=="cloudflare_deploy"));
+  assert!(picked.len()<=VISIBLE);
+  let search_result=search(&json!({"query":"깃허브 풀리퀘스트","limit":3}),&c).unwrap();
+  assert_eq!(search_result["matches"][0]["name"],"github_work_read");
+  assert!(picked.iter().all(|s|c.contains_key(&s.name)));
+  // A hint cannot grant a connector absent from the owner-authorized set.
+  c.remove("github_work_read");
+  assert!(!select(&c,"깃허브에서 열린 풀리퀘스트","",None,&[],&[])
+    .iter().any(|s|s.name=="github_work_read"));
+ }
+ #[test]
  fn small_catalog_stays_fully_visible_without_new_discovery_rounds(){
   let mut c=HashMap::new();
   for key in ["read","write"] {

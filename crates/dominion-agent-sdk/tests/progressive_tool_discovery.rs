@@ -132,3 +132,98 @@ async fn discovery_is_local_durable_and_promotes_only_owner_allowed_schemas(){
   && r.tool=="mcp__archive_publish"&&r.success),
   "the bridge must store the real invoked tool, not a synthetic wrapper");
 }
+
+// A Korean owner request must expose its service-specific read-only connector
+// on the first native model turn, execute through the REAL Rust kernel and
+// preserve its receipt, not require an extra paid discovery/planning call.
+struct KoreanConnectorHost;
+impl Tools for KoreanConnectorHost {
+ fn definitions(&self)->Vec<ToolSpec>{
+  let mut catalog=(0..75).map(|i|ToolSpec{
+   name:format!("mcp__generic_{i:03}"),
+   description:"Unrelated operation".into(),
+   schema:json!({"type":"object","properties":{"value":{"type":"string"}}}),
+   read_only:false
+  }).collect::<Vec<_>>();
+  catalog.push(ToolSpec{
+   name:"github_work_read".into(),
+   description:"Read connected GitHub repositories, issues and pull requests".into(),
+   schema:json!({"type":"object","properties":{
+    "operation":{"type":"string","enum":["issues"]}},
+    "required":["operation"],"additionalProperties":false}),
+   read_only:true
+  });
+  catalog.push(ToolSpec{
+   name:"google_workspace_read".into(),
+   description:"Read Gmail, Calendar and Drive content".into(),
+   schema:json!({"type":"object"}),read_only:true
+  });
+  catalog
+ }
+ fn execute<'a>(&'a self, action:&'a Action)->BoxFuture<'a,Result<Value,String>>{
+  Box::pin(async move {
+   if action.tool!="github_work_read"{return Err("Wrong service selected".into())}
+   Ok(json!({"issues":[11,22]}))
+  })
+ }
+}
+struct KoreanConnectorModel {
+ calls:AtomicUsize,
+}
+impl Model for KoreanConnectorModel {
+ fn complete<'a>(&'a self,_:&'a str,_:&'a str)
+   ->BoxFuture<'a,Result<ModelReply,String>>{
+  Box::pin(async{Err("Unexpected JSON fallback".into())})
+ }
+ fn supports_native_tools(&self)->bool{true}
+ fn complete_with_tools<'a>(&'a self,_:&'a str,_:&'a str,
+  specs:&'a [ToolSpec], receipts:&'a [Receipt])
+  ->BoxFuture<'a,Result<ModelTurn,String>>{
+  Box::pin(async move {
+   let turn=self.calls.fetch_add(1,Ordering::SeqCst);
+   assert!(specs.len()<=13);
+   assert!(specs.iter().any(|s|s.name=="github_work_read"),
+      "Korean Github task must expose GitHub immediately");
+   assert!(!specs.iter().any(|s|s.name=="google_workspace_read"));
+   let decision=match turn {
+    0=>Decision{plan:vec!["Read issue list".into()],
+      actions:vec![Action{id:"read-issues".into(),tool:"github_work_read".into(),
+       arguments:json!({"operation":"issues"}),depends_on:vec![]}],answer:None},
+    1=>{
+     assert!(receipts.iter().any(|r|r.id=="read-issues"&&r.success
+       &&r.result["issues"]==json!([11,22])));
+     Decision{plan:vec![],actions:vec![],
+       answer:Some("확인된 이슈는 11번과 22번입니다.".into())}
+    },
+    _=>return Err("Extra model call was unnecessary".into())
+   };
+   Ok(ModelTurn{reply:ModelReply{
+     content:String::new(),input_tokens:Some(40),output_tokens:Some(20)},
+     decision:Some(decision)})
+  })
+ }
+}
+#[tokio::test]
+async fn korean_github_request_finishes_in_two_model_turns_with_real_receipt() {
+ let host=KoreanConnectorHost;
+ let model=KoreanConnectorModel{calls:AtomicUsize::new(0)};
+ let journal=Durable::default();
+ let tools=host.definitions().into_iter().map(|s|s.name).collect::<Vec<_>>();
+ let kernel=Kernel{model:&model,tools:&host,evidence:&NoFileEvidence,journal:&journal};
+ let request=RunRequest{
+  id:"korean-github-owner".into(),
+  instruction:"깃허브에서 열린 이슈들을 확인하고 번호를 정리해 주세요".into(),
+  owner_instructions:String::new(),
+  strategy:Strategy::LowCost,
+  limits:Limits{max_steps:4,max_model_calls:4,max_tool_calls:8,
+    max_estimated_tokens:50000,max_parallel_reads:2,max_result_chars:1200},
+  allowed_tools:tools,checks:vec![],require_evidence:true
+ };
+ let done=kernel.run(request).await.unwrap();
+ assert!(matches!(done.status,Status::Completed),"{done:?}");
+ assert_eq!(done.answer.as_deref(),Some("확인된 이슈는 11번과 22번입니다."));
+ assert_eq!(model.calls.load(Ordering::SeqCst),2);
+ assert!(done.receipts.iter().any(|r|r.tool=="github_work_read"&&r.success));
+ assert!(!done.receipts.iter().any(|r|r.tool=="dominion_tool_search"),
+   "Relevant connector should not cost a separate discovery turn");
+}

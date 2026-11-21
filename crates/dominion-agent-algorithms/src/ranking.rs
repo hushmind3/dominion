@@ -28,6 +28,28 @@ fn enrich(text:&str)->String {
   ("브라우저"," browser control"),
   ("영상"," video render"),
   ("위임"," delegate task"),
+  // Korean requests use postpositions and native service names. Surface the
+  // matching authorized connector in the FIRST planning turn, without an
+  // embedding call or a synthetic grant of execution authority.
+  ("깃허브"," github repository issue pull request branch commit"),
+  ("깃헙"," github repository issue pull request branch"),
+  ("기트허브"," github repository issue pull request"),
+  ("레포지토리"," github repository"),
+  ("리포지토리"," github repository"),
+  ("풀리퀘스트"," github pull request"),
+  ("풀 리퀘스트"," github pull request"),
+  ("이메일"," gmail email message inbox"),
+  ("메일"," gmail email message inbox"),
+  ("받은편지함"," gmail email inbox"),
+  ("구글 드라이브"," google drive file"),
+  ("구글드라이브"," google drive file"),
+  ("구글 문서"," google docs document"),
+  ("구글독스"," google docs document"),
+  ("캘린더"," calendar event schedule"),
+  ("회의 일정"," calendar event schedule"),
+  ("일정 등록"," calendar event schedule"),
+  ("클라우드플레어"," cloudflare worker dns"),
+  ("레일웨이"," railway deploy application"),
   ("代码"," code workspace read replace"),
   ("修复"," fix file replace shell"),
   ("搜索"," search web http"),
@@ -49,8 +71,10 @@ pub fn tool_relevance(name:&str,description:&str,query:&str)->i32{
  if !name.is_empty() && query.contains(&name){s+=32}
  for token in tokens {
   if name_words.contains(&token){s+=12}
-  else if name.contains(&token){s+=7}
-  else if desc.contains(&token){s+=2}
+  // Two-character abbreviations like PR and CI must match entire tokens.
+  // Substring scoring on "pr" accidentally promoted prompt/provider tools.
+  else if token.chars().count()>=3 && name.contains(&token){s+=7}
+  else if token.chars().count()>=3 && desc.contains(&token){s+=2}
  }
  s
 }
@@ -90,4 +114,41 @@ pub fn tool_relevance_with_schema(
  name:&str,description:&str,schema:&Value,query:&str
 )->i32{
  tool_relevance(name,description,query).saturating_add(schema_relevance(schema,query))
+}
+
+#[cfg(test)]
+mod localization_tests {
+    use super::*;
+    #[test]
+    fn korean_owner_service_names_resolve_to_authorized_metadata() {
+        assert!(tool_relevance("github_work_read",
+            "Read GitHub issues and pull requests",
+            "깃허브에서 열린 풀리퀘스트 목록을 조사해 주세요") >
+            tool_relevance("google_workspace_read",
+            "Read Gmail and Drive documents",
+            "깃허브에서 열린 풀리퀘스트 목록을 조사해 주세요"));
+        assert!(tool_relevance("google_workspace_read",
+            "Search connected Gmail messages",
+            "이메일 받은편지함에서 지난 답장을 찾아줘") >
+            tool_relevance("github_work_read",
+            "Read GitHub issues", "이메일 받은편지함에서 지난 답장을 찾아줘"));
+        assert!(tool_relevance("google_workspace_read",
+            "Calendar events from connected Google services",
+            "캘린더에 회의 일정 등록해") >
+            tool_relevance("github_work_read",
+            "Read GitHub issues", "캘린더에 회의 일정 등록해"));
+        assert!(tool_relevance("cloudflare_deploy",
+            "Cloudflare Worker deployments",
+            "클라우드플레어에서 배포 결과 봐줘") >
+            tool_relevance("railway_deploy",
+            "Railway deployment", "클라우드플레어에서 배포 결과 봐줘"));
+    }
+
+    #[test]
+    fn short_pr_abbreviation_does_not_select_unrelated_prefix_tools() {
+        assert_eq!(tool_relevance("prompt_response",
+            "Send a provider prompt", "PR"), 0);
+        assert!(tool_relevance("github_pr_read",
+            "Read pull requests", "PR") > 0);
+    }
 }
