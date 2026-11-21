@@ -249,9 +249,14 @@ pub(super) async fn run(
                         stage=1;
                         if !is_acp{notify(&writer,kind,"initialized",json!({})).await?;}
                         if is_acp{
-                            request(&writer,kind,2,if resume.is_some(){"session/load"}else{"session/new"},
-                                json!({"cwd":workspace.to_string_lossy(),"mcpServers":[],
-                                    "sessionId":resume})).await?;
+                            let (method,params)=if let Some(id)=resume{
+                                ("session/load",json!({"cwd":workspace.to_string_lossy(),
+                                    "mcpServers":[],"sessionId":id}))
+                            }else{
+                                ("session/new",json!({"cwd":workspace.to_string_lossy(),
+                                    "mcpServers":[]}))
+                            };
+                            request(&writer,kind,2,method,params).await?;
                         }else{
                             let method=if resume.is_some(){"thread/resume"}else{"thread/start"};
                             let params=if let Some(id)=resume{
@@ -284,8 +289,7 @@ pub(super) async fn run(
                             })).await?;
                         }
                     }else if id==Some(3)&&stage==2&&is_acp{
-                        if !matches!(msg["result"]["stopReason"].as_str(),
-                            Some("end_turn"|"max_tokens")) {
+                        if msg["result"]["stopReason"]!="end_turn" {
                             return Err("ACP 작업이 정상적으로 끝나지 않았습니다.".into());
                         }
                         if answer.trim().is_empty(){
