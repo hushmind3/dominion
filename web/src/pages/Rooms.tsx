@@ -122,7 +122,7 @@ function RoomSettings({value,onChange,agents,providers,disabled=false}:{value:Ro
   <FormField label="대화 문맥 목표 (토큰)" hint="동적 대화·기억 선택의 목표값입니다. 페르소나·공통 지시는 압축하지 않으며 이 값보다 커질 수 있습니다."><TextInput type="number" min={2000} max={1000000} value={value.contextBudgetTokens} onChange={e=>onChange({...value,contextBudgetTokens:Math.min(1000000,Math.max(2000,Number(e.target.value)||2000))})} disabled={disabled}/></FormField>
   <FormField label={t('rooms.reasoning')} hint={t('rooms.reasoningHint')}><ReasoningSelect value={value.reasoningEffort} onChange={reasoningEffort=>onChange({...value,reasoningEffort})} defaultLabel={t('rooms.reasoningDefault')} disabled={disabled}/></FormField>
   <label className="room-setting-check"><input type="checkbox" checked={value.autoLearning} onChange={e=>onChange({...value,autoLearning:e.target.checked})} disabled={disabled}/><span><strong>{t('rooms.autoLearn')}</strong><small>{t('rooms.autoLearnDesc')}</small></span></label>
-  <RoomModelPicker value={value.models} onChange={models=>onChange({...value,models})} providers={providers} disabled={disabled}/>
+  <RoomModelPicker value={value.models} onChange={models=>onChange({...value,models})} providers={providers} agents={agents} disabled={disabled}/>
   <div className="room-model-plan" aria-label={t('rooms.routeTitle')}>
    <strong>{t('rooms.routeTitle')}</strong>
    <small>{t('rooms.routePreview')}</small>
@@ -136,7 +136,7 @@ function RoomSettings({value,onChange,agents,providers,disabled=false}:{value:Ro
 }
 
 
-function RoomModelPicker({value,onChange,providers,disabled=false}:{value:RoomModel[];onChange:(models:RoomModel[])=>void;providers:Provider[];disabled?:boolean}){
+function RoomModelPicker({value,onChange,providers,agents,disabled=false}:{value:RoomModel[];onChange:(models:RoomModel[])=>void;providers:Provider[];agents:Agent[];disabled?:boolean}){
  useLocale()
  const available=providers.filter(provider=>provider.enabled!==false)
  const [providerChoice,setProviderChoice]=useState('')
@@ -160,7 +160,16 @@ function RoomModelPicker({value,onChange,providers,disabled=false}:{value:RoomMo
  const effortOf=(model:string)=>value.find(item=>item.providerId===providerId&&item.model===model)?.reasoningEffort||''
  const setEffort=(model:string,effort:string)=>onChange(value.map(item=>item.providerId===providerId&&item.model===model?{...item,reasoningEffort:effort||undefined}:item))
  const toggle=(model:string)=>onChange(has(providerId,model)?value.filter(item=>!(item.providerId===providerId&&item.model===model)):[...value,{providerId,model}])
- const models=(catalog[providerId]||[]).filter(item=>item.id)
+ // Not every compatible endpoint implements /models. Keep the provider's
+ // configured model and real participant model IDs selectable on failure;
+ // do not invent catalog entries or silently change the selected provider.
+ const configured=[available.find(p=>p.id===providerId)?.model,
+  ...agents.filter(agent=>agent.providerId===providerId).map(agent=>agent.model)]
+  .filter((id):id is string=>Boolean(id?.trim()))
+ const models=[...(catalog[providerId]||[]).filter(item=>item.id)]
+ for(const id of configured){
+  if(!models.some(item=>item.id===id))models.push({id,name:id})
+ }
  const picked=value.filter(item=>item.providerId===providerId).length
  return <div className="room-model-picker">
   <div className="room-roster-heading"><strong>{t('rooms.models')}</strong><span>{t('rooms.modelsSelected',{count:value.length})}</span></div>
@@ -172,7 +181,7 @@ function RoomModelPicker({value,onChange,providers,disabled=false}:{value:RoomMo
   </div>
   {loading&&<p className="room-note">{t('rooms.modelsLoading')}</p>}
   {error&&<p className="room-message-error">{translateError(error)}</p>}
-  {!loading&&!error&&<div className="room-model-list">{models.map(item=>{const checked=has(providerId,item.id);return <div key={item.id} className={'room-model-option '+(checked?'checked':'')}><label className="room-model-check"><input type="checkbox" checked={checked} onChange={()=>toggle(item.id)} disabled={disabled}/><span>{item.name||item.id}</span></label>{checked&&<ReasoningSelect className="room-model-effort" value={effortOf(item.id)} onChange={effort=>setEffort(item.id,effort)} model={item} requireCatalog={available.find(provider=>provider.id===providerId)?.kind==='codex'} defaultLabel={t('rooms.models.effortDefault')} disabled={disabled}/>}{checked&&<Check size={13}/>}</div>})}{!models.length&&<p className="room-note">{t('rooms.modelsEmpty')}</p>}</div>}
+  {!loading&&<div className="room-model-list">{models.map(item=>{const checked=has(providerId,item.id);return <div key={item.id} className={'room-model-option '+(checked?'checked':'')}><label className="room-model-check"><input type="checkbox" checked={checked} onChange={()=>toggle(item.id)} disabled={disabled}/><span>{item.name||item.id}</span></label>{checked&&<ReasoningSelect className="room-model-effort" value={effortOf(item.id)} onChange={effort=>setEffort(item.id,effort)} model={item} requireCatalog={available.find(provider=>provider.id===providerId)?.kind==='codex'} defaultLabel={t('rooms.models.effortDefault')} disabled={disabled}/>}{checked&&<Check size={13}/>}</div>})}{!models.length&&<p className="room-note">{t('rooms.modelsEmpty')}</p>}</div>}
   <small className="room-note">{t('rooms.modelsHint')}</small>
  </div>
 }

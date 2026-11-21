@@ -724,6 +724,68 @@ fn room_runs_on_an_explicitly_selected_local_runtime() {
 }
 
 #[test]
+fn parallel_room_keeps_each_agents_model_when_automatic_rotation_is_disabled() {
+    let _serial=serial();
+    let (port,requests)=scripted_provider(|request| {
+        let chosen=request["model"].as_str().unwrap_or("missing");
+        vec![json!({"choices":[{"delta":{"content":format!("REAL_ROUTE:{chosen}")},
+            "finish_reason":"stop"}],
+            "usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}})]
+    });
+    let app=TestApp::new(port,"compat");
+    let provider=app.post("/api/providers",&json!({
+        "name":"independent model routing","kind":"openai",
+        "baseUrl":format!("http://127.0.0.1:{port}/v1"),
+        "model":"provider-default","enabled":true,"toolMode":"compat"
+    }));
+    let a=app.post("/api/agents",&json!({
+        "name":"Alpha","systemPrompt":"Alpha","providerId":provider["id"],
+        "model":"speaker-alpha"
+    }));
+    let b=app.post("/api/agents",&json!({
+        "name":"Beta","systemPrompt":"Beta","providerId":provider["id"],
+        "model":"speaker-beta"
+    }));
+    let room=app.post("/api/rooms",&json!({
+        "name":"parallel personal routes","agentIds":[a["id"],b["id"]],
+        "routingMode":"discussion","executionMode":"parallel_readonly",
+        "rounds":1,"maxTurns":2,"toolsEnabled":false,
+        "autoLearning":false,"autoModels":false,"models":[]
+    }));
+    let room_id=room["id"].as_str().unwrap();
+    let sent=app.post(&format!("/api/rooms/{room_id}/messages"),
+        &json!({"input":"두 사람 모두 서로 독립적으로 대답하세요",
+            "clientMessageId":"parallel-independent-models"}));
+    let job_id=sent["jobId"].as_str().unwrap();
+    let deadline=Instant::now()+Duration::from_secs(20);
+    loop {
+        let job=app.get(&format!("/api/jobs/{job_id}"));
+        if matches!(job["status"].as_str(),Some("completed"|"failed")){
+            assert_eq!(job["status"],"completed","{job}");
+            break;
+        }
+        assert!(Instant::now()<deadline,"{job}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let logged=requests.lock().unwrap();
+    let mut actual=logged.iter().filter_map(|row|row["model"].as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(actual,vec!["speaker-alpha","speaker-beta"],
+        "explicitly disabled autoModels cannot rotate participants onto one another's models");
+    drop(logged);
+    let rows=app.get(&format!("/api/rooms/{room_id}/messages"));
+    let replies=rows.as_array().unwrap().iter().filter(|r|r["role"]=="assistant")
+        .collect::<Vec<_>>();
+    assert_eq!(replies.len(),2,"both participant replies must be committed");
+    for reply in replies{
+        let model=reply["metadata"]["usage"]["model"].as_str().unwrap_or("");
+        assert!(matches!(model,"speaker-alpha"|"speaker-beta"),"{reply}");
+        assert_eq!(reply["content"],format!("REAL_ROUTE:{model}"),"{reply}");
+    }
+}
+
+#[test]
 fn social_room_exchanges_spend_no_learning_model_call() {
     let _serial = serial();
     let (port, requests) = scripted_provider(|request| {

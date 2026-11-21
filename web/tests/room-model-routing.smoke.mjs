@@ -45,7 +45,9 @@ try{
    // Initial RoomModelPicker mount occurs BEFORE provider discovery resolves.
    await providerGate;
    response=[{id:'fixture',name:'Fixture Provider',model:'agent-default',
-    enabled:true,kind:'openai',baseUrl:'http://127.0.0.1/v1'}];
+    enabled:true,kind:'openai',baseUrl:'http://127.0.0.1/v1'},
+    {id:'offline',name:'Offline Catalog',model:'configured-only-model',
+     enabled:true,kind:'openai',baseUrl:'http://127.0.0.1/unavailable'}];
   }
   if(pathname==='/api/agents')response=[
    {id:'lead',name:'Lead A',providerId:'fixture',model:'agent-default',enabled:true},
@@ -54,6 +56,11 @@ try{
   if(pathname==='/api/providers/fixture/models'){
    selectedModelRequest=true;
    response=[{id:'owner-picked-model',name:'Owner-picked model'}];
+  }
+  if(pathname==='/api/providers/offline/models'){
+   await route.fulfill({status:502,contentType:'application/json',
+    body:JSON.stringify({error:'catalog offline'})});
+   return;
   }
   if(pathname==='/api/rooms'){
    if(route.request().method()==='POST'){
@@ -102,6 +109,19 @@ try{
  assert.ok(routes.every(text=>text.includes('owner-picked-model')),JSON.stringify(routes));
  assert.ok(await page.getByText('recorded-model',{exact:true}).first().isVisible(),
   'each saved reply must expose its ACTUAL model, not just the configured route');
+ // The configured model remains selectable when /models is not available.
+ await page.getByRole('button',{name:'모델 변경',exact:true}).click();
+ await page.getByLabel('모델 제공자 선택').selectOption('offline');
+ await page.getByText('configured-only-model',{exact:true}).first()
+  .waitFor({state:'visible',timeout:10000});
+ await page.locator('.room-model-check input[type="checkbox"]').first().check();
+ await page.getByRole('button',{name:'변경 저장',exact:true}).click();
+ await page.waitForFunction(()=>Boolean(document.querySelector('.room-route-bar')
+  ?.textContent?.includes('configured-only-model')),{timeout:10000});
+ assert.equal(saved.models.length,2);
+ const changedRoutes=await page.locator('.room-route-bar-items > span').allTextContents();
+ assert.ok(changedRoutes[0].includes('owner-picked-model'),JSON.stringify(changedRoutes));
+ assert.ok(changedRoutes[1].includes('configured-only-model'),JSON.stringify(changedRoutes));
  const sizes=await page.evaluate(()=>({screen:innerWidth,body:document.documentElement.scrollWidth}));
  assert.ok(sizes.body<=sizes.screen+2,'Room model UI overflows mobile: '+JSON.stringify(sizes));
  assert.deepEqual(errors,[],'Room runtime errors');
