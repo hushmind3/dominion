@@ -872,7 +872,7 @@ async fn plain_chat_refuses_model_tool_calls_without_executing_any_tool() {
             "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
             json!({"choices":[{"delta":{"tool_calls":[{
                 "index":0,"id":"forged-call","type":"function",
-                "function":{"name":"shell_exec","arguments":"{\\"command\\":\\"touch denied.txt\\"}"}
+                "function":{"name":"shell_exec","arguments":r#"{"command":"touch denied.txt"}"#}
             }]}}]}),
             json!({"choices":[{"delta":{},"finish_reason":"tool_calls"}],
                 "usage":{"prompt_tokens":6,"completion_tokens":2,"total_tokens":8}})
