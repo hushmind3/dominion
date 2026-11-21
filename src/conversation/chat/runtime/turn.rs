@@ -717,15 +717,17 @@ pub(super) async fn run_turn_body(
     // Shared native/streaming Harness admission clock. BudgetLedger still
     // settles actual tool/model usage; the cursor controls turn iteration.
     let mut drive=dominion_agent_sdk::HarnessDrive::new(max_rounds)?;
-    while !finished {
-        let cancelled=state.is_cancelled(session_id)
-            ||state.cancellation_generation(session_id)!=generation;
-        let round=match drive.admit(cancelled,0,usize::MAX){
-            dominion_agent_sdk::DriveAdmission::Next(round)=>round,
-            dominion_agent_sdk::DriveAdmission::Cancelled=>
-                return Err("실행이 중단되었습니다.".into()),
-            dominion_agent_sdk::DriveAdmission::Exhausted=>break,
-        };
+    dominion_agent_sdk::runtime::harness_steps!(
+        'steps: drive,
+        running = !finished,
+        cancelled = state.is_cancelled(session_id)
+            ||state.cancellation_generation(session_id)!=generation,
+        calls = metrics.lock().unwrap().model_calls as usize,
+        limit = max_rounds,
+        on_cancel = {
+            return Err("실행이 중단되었습니다.".into());
+        },
+        |round| {
         let Some(budget_round) = budget.next_round() else { break; };
         debug_assert_eq!(round,budget_round);
         if budget.expired() {
@@ -1666,7 +1668,8 @@ pub(super) async fn run_turn_body(
                 }
             }
         }
-    }
+        }
+    );
 
     if !finished {
         if acceptance_passed {

@@ -76,6 +76,30 @@ where F:FnOnce()->Fut,Fut:std::future::Future<Output=Result<T,String>>
         Err(error)=>Ok(ModelAttempt::Uncertain(error)),
     }
 }
+/// The only step-loop implementation for native ReAct and streamed Chat.
+/// Adapters supply their policy-specific turn body and cancellation settlement,
+/// while admission ordering and the execution clock stay in one Rust source.
+#[macro_export]
+macro_rules! harness_steps {
+    (
+        $label:lifetime : $drive:ident,
+        running = $running:expr,
+        cancelled = $cancelled:expr,
+        calls = $calls:expr,
+        limit = $limit:expr,
+        on_cancel = $on_cancel:block,
+        |$step:ident| $body:block
+    ) => {
+        $label: while $running {
+            let $step=match $drive.admit($cancelled,$calls,$limit){
+                $crate::DriveAdmission::Next(next)=>next,
+                $crate::DriveAdmission::Cancelled=>$on_cancel,
+                $crate::DriveAdmission::Exhausted=>break $label,
+            };
+            $body
+        }
+    };
+}
 #[cfg(test)]
 mod tests{
     use super::*;
@@ -96,6 +120,22 @@ mod tests{
         assert_eq!(drive.completed_steps(),0);
         assert_eq!(drive.admit(false,0,1),DriveAdmission::Next(0));
         assert_eq!(drive.completed_steps(),1);
+    }
+    #[test]fn both_loop_styles_share_one_control_flow_source(){
+        let mut drive=HarnessDrive::new(8).unwrap();
+        let mut seen=Vec::new();
+        let mut running=true;
+        harness_steps!('steps:drive,running=running,
+            cancelled=false,calls=seen.len(),limit=8,
+            on_cancel={panic!("should not cancel")},
+            |step|{
+                seen.push(step);
+                if step==0{continue 'steps;}
+                if step==2{running=false;}
+            }
+        );
+        assert_eq!(seen,vec![0,1,2]);
+        assert_eq!(drive.completed_steps(),3);
     }
     #[test]fn resume_rejects_impossible_checkpoints(){
         assert!(HarnessDrive::resume(5,6).is_err());

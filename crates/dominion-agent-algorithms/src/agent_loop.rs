@@ -174,18 +174,18 @@ impl Kernel<'_> {
         self.journal.save(&run)?;
         let mut drive=runtime::HarnessDrive::resume(
             request.limits.max_steps,run.step)?;
-        'steps: loop {
-            let step=match drive.admit(
-                self.journal.cancelled(&request.id),run.model_calls,
-                request.limits.max_model_calls){
-                runtime::DriveAdmission::Next(step)=>step,
-                runtime::DriveAdmission::Cancelled=>{
-                    run.stop(Status::Cancelled,"Owner cancelled execution");
-                    self.journal.save(&run)?;
-                    return Ok(run);
-                },
-                runtime::DriveAdmission::Exhausted=>break,
-            };
+        runtime::harness_steps!(
+            'steps: drive,
+            running = true,
+            cancelled = self.journal.cancelled(&request.id),
+            calls = run.model_calls,
+            limit = request.limits.max_model_calls,
+            on_cancel = {
+                run.stop(Status::Cancelled,"Owner cancelled execution");
+                self.journal.save(&run)?;
+                return Ok(run);
+            },
+            |step| {
             run.step = step + 1;
             // Compact only the model's view. Full receipts remain durable
             // and can be searched/retrieved by internal read-only tools.
@@ -637,7 +637,8 @@ impl Kernel<'_> {
                     continue 'steps;
                 }
             }
-        }
+            }
+        );
         run.stop(Status::NeedsReview, "Step, model or decision-repair limit reached");
         self.journal.save(&run)?;
         Ok(run)
