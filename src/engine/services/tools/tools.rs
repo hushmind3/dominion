@@ -1868,7 +1868,9 @@ fn bing_rss_results(xml:&str)->Vec<Value>{
         if results.iter().any(|row:&Value|row["url"]==url){continue}
         let snippet=rss_tag(item,"description").unwrap_or_default()
             .chars().take(360).collect::<String>();
-        results.push(json!({"title":title,"url":url,"snippet":snippet}));
+        let published=rss_tag(item,"pubDate").unwrap_or_default();
+        results.push(json!({"title":title,"url":url,"snippet":snippet,
+            "published":published}));
         if results.len()>=10{break}
     }
     results
@@ -2042,7 +2044,8 @@ mod tests {
         let xml=r#"<?xml version="1.0"?><rss version="2.0"><channel>
             <item><title><![CDATA[2026 &amp; Rust developments]]></title>
               <link>https://example.org/news?q=rust&amp;date=2026</link>
-              <description><![CDATA[Latest <b>reliable</b> release.]]></description></item>
+              <description><![CDATA[Latest <b>reliable</b> release.]]></description>
+              <pubDate>Sun, 22 Nov 2026 10:00:00 GMT</pubDate></item>
             <item><title>Dangerous</title><link>javascript:alert(1)</link></item>
             <item><title>Duplicate</title><link>https://example.org/news?q=rust&amp;date=2026</link></item>
         </channel></rss>"#;
@@ -2051,6 +2054,7 @@ mod tests {
         assert_eq!(results[0]["title"],"2026 & Rust developments");
         assert_eq!(results[0]["url"],"https://example.org/news?q=rust&date=2026");
         assert_eq!(results[0]["snippet"],"Latest reliable release.");
+        assert_eq!(results[0]["published"],"Sun, 22 Nov 2026 10:00:00 GMT");
         assert!(ddg_html_results("HTTP 202 Bot challenge").is_empty(),
             "provider challenges cannot masquerade as real results");
     }
