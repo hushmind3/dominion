@@ -8,6 +8,8 @@ use std::{collections::HashMap,path::{Path as FilePath,PathBuf},process::Stdio,s
 use tokio::{io::{AsyncRead,AsyncReadExt,AsyncWriteExt},process::{ChildStdin,Command},sync::{Mutex,oneshot}};
 use super::response::error;
 
+const MAX_GEMINI_CREDENTIAL_BYTES: u64 = 256 * 1024;
+
 #[derive(Deserialize,Default)]
 pub struct StartBody { #[serde(default)] provider:Option<String> }
 #[derive(Deserialize)]
@@ -96,8 +98,14 @@ async fn import_cli_github(state:&AppState)->Result<(),String>{
 /// Check CLI-owned authentication without reading or copying OAuth secrets.
 pub(super) async fn credential_verified(source:&str)->bool{
     if source=="gemini"{
-        return home().and_then(|h|std::fs::read(h.join(".gemini/oauth_creds.json")).ok())
-            .and_then(|raw|serde_json::from_slice::<Value>(&raw).ok())
+        let Some(path)=home().map(|h|h.join(".gemini/oauth_creds.json"))else{return false;};
+        let Ok(file)=tokio::fs::File::open(path).await else{return false;};
+        let mut raw=Vec::new();
+        if file.take(MAX_GEMINI_CREDENTIAL_BYTES+1).read_to_end(&mut raw).await.is_err()
+            || raw.len() as u64>MAX_GEMINI_CREDENTIAL_BYTES{
+            return false;
+        }
+        return serde_json::from_slice::<Value>(&raw).ok()
             .is_some_and(|v|v["access_token"].as_str().is_some()||v["refresh_token"].as_str().is_some());
     }
     let name=match source{"claude"=>"claude","opencode"=>"opencode","github"=>"gh",_=>return false};
