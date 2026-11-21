@@ -32,6 +32,7 @@ fn annotated_headers(schema:&Value,args:&Value)->Result<Vec<(String,String)>,Str
         headers:&mut Vec<(String,String)>,annotations:&mut usize,depth:usize)->Result<(),String>{
         if depth>16{return Err("MCP x-mcp-header schema nesting too deep".into());}
         if let Some(annotation)=schema.get("x-mcp-header"){
+            if depth==0{return Err("MCP x-mcp-header cannot annotate schema root".into());}
             *annotations+=1;
             let suffix=annotation.as_str().filter(|v|valid_header_name(v))
                 .ok_or("Invalid MCP x-mcp-header name")?;
@@ -74,6 +75,22 @@ fn annotated_headers(schema:&Value,args:&Value)->Result<Vec<(String,String)>,Str
     }
     if headers.len()>64{return Err("Too many MCP tool routing headers".into());}
     Ok(headers)
+}
+
+/// Only an HTTP transport-level rejection without a recognized modern
+/// JSON-RPC error demonstrates a legacy endpoint. Never fall back after auth,
+/// server failure, timeout or a modern error with a protocol diagnostic.
+pub(super) fn legacy_http_probe_rejection(error:&str)->bool{
+    let recognized_status=["400 Bad Request","404 Not Found","405 Method Not Allowed"]
+        .iter().any(|status|error.starts_with(&format!("MCP HTTP {status}:")));
+    if !recognized_status{return false;}
+    let body=error.split_once(": ").map(|(_,body)|body).unwrap_or("");
+    if let Ok(value)=serde_json::from_str::<Value>(body){
+        if value["jsonrpc"]=="2.0" && value["error"]["code"].is_number(){
+            return false;
+        }
+    }
+    true
 }
 
 /// An invalid annotated tool is omitted from tools/list, rather than silently
@@ -140,6 +157,15 @@ mod tests {
             json!({"type":"object","properties":{"a":{"x-mcp-header":"Bad\rHeader","type":"string"}}}),
             json!({"type":"object","properties":{"a":{"x-mcp-header":"X","type":"number"}}})
         ]{assert!(validate_tool_schema(&schema).is_err());}
+    }
+    #[test]
+    fn modern_jsonrpc_error_is_not_evidence_for_legacy_fallback(){
+        assert!(legacy_http_probe_rejection("MCP HTTP 404 Not Found: not found"));
+        assert!(legacy_http_probe_rejection("MCP HTTP 400 Bad Request: old handler"));
+        assert!(!legacy_http_probe_rejection(
+            "MCP HTTP 404 Not Found: {\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32601}}"));
+        assert!(!legacy_http_probe_rejection("MCP HTTP 401 Unauthorized: auth required"));
+        assert!(!legacy_http_probe_rejection("MCP HTTP 500 Internal Server Error: offline"));
     }
     #[test]
     fn modern_header_escapes_spaces_unicode_newlines_and_sentinel(){
