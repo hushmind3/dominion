@@ -21,6 +21,8 @@ type SdkRun = {
  } | null
 }
 const running = new Set(['queued', 'running'])
+// Refusing a tool call is not the same as stopping its entire task.
+const cancellable = new Set(['queued', 'running', 'awaiting_approval'])
 const stopPolling = new Set(['completed','failed','cancelled','exhausted','denied'])
 const stateNames:Record<string,[string,string]>={
  queued:['대기 중','Queued'], running:['작업 진행 중','Working'],
@@ -347,7 +349,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     {status==='needs_review'&&<p role="status" className="mt-2 text-[11px] text-[#8A4C16]">{en?'The server requires review. No paid call or uncertain effect will be replayed automatically.':'서버가 검토를 요구하고 있습니다. 결과가 불분명한 유료 호출이나 변경 작업은 자동으로 재실행하지 않습니다.'}</p>}
     {run.error&&<p className="mt-2 text-[11px] text-[#A54027]">{run.error}</p>}
     <div className="mt-3 flex gap-2">
-     {running.has(status)&&<button type="button" disabled={busy} onClick={()=>void action('cancel')} className="flex min-h-11 items-center gap-1 rounded-lg border border-[#E7E0D5] px-4 py-2 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2">
+     {cancellable.has(status)&&<button type="button" disabled={busy} onClick={()=>void action('cancel')} className="flex min-h-11 items-center gap-1 rounded-lg border border-[#E7E0D5] px-4 py-2 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2">
       <Square size={13}/>{en?'Stop':'중단'}
      </button>}
      {canResume&&<button type="button" disabled={busy} onClick={()=>void action('resume')} className="flex min-h-11 items-center gap-1 rounded-lg border border-[#E7E0D5] px-4 py-2 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2">

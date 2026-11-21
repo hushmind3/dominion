@@ -701,6 +701,34 @@ mod tests{
         let _=std::fs::remove_dir_all(root);
     }
     #[tokio::test]
+    async fn cancelling_an_approval_wait_cannot_authorize_its_stale_tool_call(){
+        let (state,root)=temporary_state();
+        state.store.put("job",&json!({"id":"cancel-pending","kind":"prompt",
+            "status":"running","sessionId":"cancel-session",
+            "input":{"prompt":"Write a file","clientSurface":"native_agent_panel"}})).unwrap();
+        state.store.put("approval",&json!({"id":"pending-tool-1",
+            "status":"pending","sessionId":"cancel-session","runId":"cancel-pending",
+            "tool":"workspace_write","args":{"path":"never-run.txt"}})).unwrap();
+        let (sender,_receiver)=tokio::sync::oneshot::channel();
+        state.approvals.lock().unwrap().insert("pending-tool-1".into(),sender);
+        let pre=project(&state,&state.store.get("job","cancel-pending").unwrap());
+        assert_eq!(pre["status"],"awaiting_approval");
+        let stopped=cancel(State(state.clone()),Path("cancel-pending".into())).await;
+        assert_eq!(stopped.status(),StatusCode::OK);
+        let body:Value=serde_json::from_slice(
+            &to_bytes(stopped.into_body(),1024*1024).await.unwrap()).unwrap();
+        assert_eq!(body["status"],"cancelled");
+        assert!(body["checkpoint"]["pendingCall"].is_null());
+        assert_eq!(state.store.get("job","cancel-pending").unwrap()["cancelRequested"],true);
+        assert_eq!(approve(State(state.clone()),Path("cancel-pending".into()),
+            Json(json!({"callId":"pending-tool-1"}))).await.status(),
+            StatusCode::CONFLICT,"cancelled run must never accept a late approval");
+        assert_eq!(deny(State(state.clone()),Path("cancel-pending".into()),
+            Json(json!({"callId":"pending-tool-1"}))).await.status(),StatusCode::CONFLICT);
+        let _=std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn owner_can_refuse_one_exact_live_native_tool_without_approving_others(){
         let (state,root)=temporary_state();
         state.store.put("job",&json!({"id":"deny-job","kind":"prompt",

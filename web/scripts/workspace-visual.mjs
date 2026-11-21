@@ -105,6 +105,12 @@ async function mock(route){
    checkpoint:{rounds:0,toolCalls:0}}
   sdkRuns=[item,...sdkRuns];return send(route,item,202)
  }
+ if(n.startsWith('/api/sdk/runs/')&&n.endsWith('/cancel')&&m==='POST'){
+  const id=n.slice('/api/sdk/runs/'.length,-'/cancel'.length)
+  sdkRuns=sdkRuns.map(item=>item.id===id?{...item,status:'cancelled',
+   checkpoint:{...item.checkpoint,pendingCall:null}}:item)
+  return send(route,sdkRuns.find(item=>item.id===id))
+ }
  if(n.startsWith('/api/sdk/runs/')&&n.endsWith('/deny')&&m==='POST'){
   const id=n.split('/')[4],callId=body().callId
   const current=sdkRuns.find(item=>item.id===id)
@@ -288,6 +294,21 @@ try{
  assert.equal(await uncertain.getByText('확인할 파일: src/broken-file.rs').count(),1)
  assert.equal(await uncertain.getByText('비밀값을 포함한 인수는 숨깁니다.',{exact:false}).count(),1)
  await screenshot(page,'1440-native-manual-recovery.png')
+ // A run awaiting a tool approval is still cancellable: refusal of ONE
+ // call and cancellation of the entire job are distinct owner actions.
+ sdkRuns[0]={...sdkRuns[0],status:'awaiting_approval',
+  checkpoint:{...sdkRuns[0].checkpoint,uncertainAction:null,
+   pendingCall:{id:'stop-pending-2',name:'workspace_write',
+    arguments:{path:'src/stop.rs'}}}}
+ await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
+ await page.getByRole('button',{name:'이 작업 1회 승인'}).waitFor({timeout:8000})
+ await page.getByRole('button',{name:'중단',exact:true}).click()
+ await page.getByText('중단됨',{exact:true}).waitFor({timeout:8000})
+ assert.equal(sdkRuns[0].status,'cancelled',
+  'stop during tool approval must cancel the entire run')
+ assert.equal(await page.getByRole('button',{name:'이 작업 1회 승인'}).count(),0,
+  'cancelled run must not retain its approval action')
+ await screenshot(page,'1440-native-cancel-at-approval.png')
  // Team composer and remote worker use backend contracts, no fake completion.
  await open(page,'activity')
  const team=page.locator('[aria-label="작업 팀"]')
