@@ -83,7 +83,7 @@ test('Rust / event journal / TypeScript SDK agree on run lifecycle',()=>{
   const state=source('crates/dominion-turn-core/src/run_state.rs');
   const events=source('src/events.rs');
   const sdk=source('sdk/typescript/src/index.ts');
-  for(const kind of ['execution','job','room_work_assignment','task_team_work']){
+  for(const kind of ['execution','job','room_work_assignment','task_team_work','managed_team','managed_team_task']){
     assert.ok(state.includes('"'+kind+'"'),`Rust missing ${kind}`);
     assert.ok(sdk.includes("'"+kind+"'"),`SDK missing ${kind}`);
   }
@@ -106,4 +106,26 @@ test('architecture is documented at code-level locations, not old core path',()=
     'src/engine/services/providers/gateway.rs','src/engine/services/conversation/room_state.rs',
     'src/db.rs','src/events.rs','sdk/typescript/',
   ])assert.ok(design.includes(location),`missing documented boundary ${location}`);
+});
+
+test('new autonomous collaboration tools route into native Rust jobs and durable Room cursors',()=>{
+  const toolGateway=source('src/engine/services/tools/tools.rs');
+  const team=source('src/engine/services/tools/tools_team.rs');
+  const mailbox=source('src/engine/services/tools/tools_room_peer.rs');
+  const room=source('src/engine/services/conversation/room_state.rs');
+  const events=source('src/events.rs');
+  const sdk=source('sdk/typescript/src/index.ts');
+  for(const tool of ['team_execute','team_status','room_peer_send','room_peer_inbox',
+    'external_harness_sessions']){
+    assert.ok(toolGateway.includes('"'+tool+'"'),'tool not reachable: '+tool);
+  }
+  assert.match(team,/task_team::schedule/);
+  assert.match(team,/delegate\(ctx/);
+  assert.match(team,/ctx\.state\.bus\.record\("managed_team_task"/);
+  assert.match(mailbox,/ctx\.store\.put_if_absent\("room_peer_mail"/);
+  assert.match(room,/event\["kind"\]=="room_peer_mail"/);
+  assert.match(room,/acknowledge_peer_mail/);
+  assert.match(events,/kind=="managed_team_task"/);
+  assert.match(sdk,/'managed_team_task'/);
+  assert.ok(!exists('src/engine/core/mod.rs'));
 });
