@@ -33,6 +33,24 @@ async function mock(route){
  if(path==='/api/memories'&&method==='GET')return json(route,memories)
  if(path==='/api/agents')return json(route,[])
  if(path==='/api/status')return json(route,{jobs:0,agents:0,providers:0})
+ if(path==='/api/memories/learned-evidence/correct'&&method==='POST'){
+  const body=JSON.parse(request.postData()||'{}')
+  assert.deepEqual(body,{
+   expectedText:'원본 채팅에서 배운 내용',
+   text:'주인이 직접 정정한 사실'
+  })
+  const original=memories.find(m=>m.id==='learned-evidence')
+  original.status='superseded'
+  original.supersededBy='corrected-learned-evidence'
+  const replacement={
+   id:'corrected-learned-evidence',text:body.text,
+   scope:'session',status:'active',source:'user',
+   sessionId:'source-session',importance:.8,retrievalEligible:true,
+   supersedes:original.id
+  }
+  memories.push(replacement)
+  return json(route,{original,memory:replacement})
+ }
  if(path==='/api/memories/owner-memory/edit'&&method==='POST'){
   const body=JSON.parse(request.postData()||'{}')
   edits.push(body)
@@ -69,8 +87,9 @@ try{
  await page.goto(url+'/#/memory',{waitUntil:'domcontentloaded'})
  await page.getByText('버스로 이동하는 것을 선호합니다.',{exact:true}).waitFor()
  assert.equal(await page.getByText('원본 채팅에서 배운 내용',{exact:true}).count(),1)
- assert.equal(await page.getByRole('button',{name:'기억 수정'}).count(),1,
-  'Learned evidence cannot be rewritten as an owner-authored memory')
+ assert.equal(await page.getByRole('button',{name:'기억 수정'}).count(),1)
+ assert.equal(await page.getByRole('button',{name:'기억 정정'}).count(),1,
+  'Learned evidence must be correctable without overwriting its source')
  await page.getByRole('button',{name:'기억 수정'}).click()
  const editor=page.getByRole('textbox',{name:'기억 수정'})
  await editor.fill('지하철로 이동하는 것을 선호합니다.')
@@ -91,8 +110,19 @@ try{
   'A conflict must not discard the owner draft')
  assert.equal(memories[0].text,'다른 요청의 최신 수정')
  await page.getByRole('button',{name:'취소'}).click()
+ await page.getByRole('button',{name:'기억 정정'}).click()
+ await page.getByText('원본 근거는 유지하고 새로운 사용자 정정 기억을 저장합니다.',{exact:true}).waitFor()
+ await page.getByRole('textbox',{name:'기억 정정'}).fill('주인이 직접 정정한 사실')
+ await page.getByRole('button',{name:'기억 저장'}).last().click()
+ await page.getByText('주인이 직접 정정한 사실',{exact:true}).waitFor()
+ await page.getByText('기억을 정정했습니다.',{exact:true}).waitFor()
+ assert.equal(memories.find(m=>m.id==='learned-evidence').status,'superseded')
+ assert.equal(memories.find(m=>m.id==='corrected-learned-evidence').supersedes,'learned-evidence')
+ assert.equal(await page.getByText('원본 채팅에서 배운 내용',{exact:true}).count(),0,
+  'Superseded evidence must not be displayed as current knowledge')
  await page.reload({waitUntil:'domcontentloaded'})
  await page.getByText('다른 요청의 최신 수정',{exact:true}).waitFor()
+ await page.getByText('주인이 직접 정정한 사실',{exact:true}).waitFor()
  assert.deepEqual(pageErrors,[],'Memory editor should not throw in React')
  assert.equal(edits.length,2)
  console.log('Sub3 memory owner edit + stale conflict + learned evidence isolation: PASS')

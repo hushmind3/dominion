@@ -338,6 +338,46 @@ mod memory_edit_tests{
         }));
         assert_eq!(empty.status(),StatusCode::BAD_REQUEST);
     }
+
+    #[test]
+    fn owner_correction_atomically_supersedes_learned_evidence_in_original_scope(){
+        let state=state();
+        state.store.put("memory",&json!({
+            "id":"learned","text":"자동 추출한 낡은 사실","status":"active",
+            "scope":"session","sessionId":"session-A","agentId":"agent-A",
+            "partitionKey":"local","source":"learn","sourceMessageIds":["owner-1"],
+            "evidenceQuote":"원본 근거는 그대로"
+        })).unwrap();
+        let result=correct_derived_memory(&state,"learned",&json!({
+            "expectedText":"자동 추출한 낡은 사실",
+            "text":"주인이 정정한 최신 사실"
+        }));
+        assert_eq!(result.status(),StatusCode::OK);
+        let old=state.store.get("memory","learned").unwrap();
+        assert_eq!(old["status"],"superseded");
+        assert_eq!(old["sourceMessageIds"][0],"owner-1");
+        assert_eq!(old["evidenceQuote"],"원본 근거는 그대로");
+        let new_id=old["supersededBy"].as_str().unwrap();
+        let replacement=state.store.get("memory",new_id).unwrap();
+        assert_ne!(replacement["id"],old["id"]);
+        assert_eq!(replacement["text"],"주인이 정정한 최신 사실");
+        assert_eq!(replacement["source"],"user");
+        assert_eq!(replacement["scope"],"session");
+        assert_eq!(replacement["sessionId"],"session-A");
+        assert_eq!(replacement["agentId"],"agent-A");
+        assert_eq!(replacement["partitionKey"],"local");
+        assert_eq!(replacement["supersedes"],"learned");
+        assert!(replacement["sourceMessageIds"].is_null(),
+            "A new owner correction may not borrow old provenance");
+        let stale=correct_derived_memory(&state,"learned",&json!({
+            "expectedText":"자동 추출한 낡은 사실","text":"또 다른 수정"
+        }));
+        assert_eq!(stale.status(),StatusCode::CONFLICT);
+        assert_eq!(state.store.all("memory").len(),2,
+            "Two stale corrections must not publish competing active facts");
+        assert!(crate::engine::memory::retrieval_eligible(&replacement));
+        assert!(!crate::engine::memory::retrieval_eligible(&old));
+    }
 }
 
 
