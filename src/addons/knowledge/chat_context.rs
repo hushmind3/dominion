@@ -111,6 +111,8 @@ pub(super) fn system_prompt_with_manifest_at(
     let private = !state.store.get("session",session_id)
         .is_some_and(|session|session["roomId"].is_string());
     let social = private && super::context_engine::is_social_turn(query);
+    let skip_optional_context = social ||
+        (private && super::context_engine::is_generic_capabilities_turn(query));
     // A user-edited full system prompt replaces the built-in narrative for
     // private chat only. Empty string is intentional (zero static prompt).
     // Runtime permission checks and tool admission remain in Rust.
@@ -153,7 +155,7 @@ pub(super) fn system_prompt_with_manifest_at(
     } else {String::new()};
     let mut items = Vec::new();
     items.append(&mut identity_items);
-    if !social && crate::engine::extensions::enabled(
+    if !skip_optional_context && crate::engine::extensions::enabled(
         state,session_id,request.agent_id.as_deref(),
         crate::engine::extensions::Extension::Memory
     ) {
@@ -167,7 +169,7 @@ pub(super) fn system_prompt_with_manifest_at(
         }
     }
     }
-    if !social {
+    if !skip_optional_context {
     if let Some((context, mut context_items, watermark)) =
         context_block_with_manifest(
             state, session_id, request.agent_id.as_deref(), query, improvements, execution_id,
@@ -818,6 +820,39 @@ mod tests {
             "an explicitly provided large current message must be preserved");
         drop(state);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn standalone_capability_question_does_not_bill_unrelated_growth_and_skills() {
+        let (state, dir) = state();
+        state.store.put("session", &json!({"id":"private:capabilities"})).unwrap();
+        state.store.put("agent_growth", &json!({
+            "id":"a", "agentId":"a", "runs":3,
+            "guidance":[{"id":"failure:a:old","text":"STALE_TOOL_FAILURE_MEMORY",
+                "confidence":0.9,"revision":"v1"}]
+        })).unwrap();
+        state.store.put("skill", &json!({
+            "id":"capability-skill", "scope":"global", "name":"할수있냐",
+            "description":"IRRELEVANT_INSTALLED_SKILL",
+            "instructions":"IRRELEVANT_INSTALLED_SKILL_INSTRUCTIONS",
+            "enabled":true, "status":"active"
+        })).unwrap();
+        let request=TurnRequest::from_value(&json!({
+            "input":"뭐할수있냐", "agentId":"a",
+            "toolsEnabled":true,"toolsExecutionEnabled":true
+        })).unwrap();
+        let generic=system_prompt_with_manifest_at(
+            &state,&request,"private:capabilities","뭐할수있냐",None,None);
+        assert!(generic.dynamic_context.is_empty(),"{}",generic.dynamic_context);
+        let explicit=system_prompt_with_manifest_at(
+            &state,&request,"private:capabilities","할수있냐 스킬을 보여줘",None,None);
+        assert!(explicit.dynamic_context.contains("IRRELEVANT_INSTALLED_SKILL"),
+            "explicit skill request must still retrieve relevant knowledge");
+        let task=system_prompt_with_manifest_at(
+            &state,&request,"private:capabilities","그 작업으로 뭘 할 수 있어?",None,None);
+        assert!(task.dynamic_context.contains("STALE_TOOL_FAILURE_MEMORY"),
+            "a referential follow-up must retain its task context");
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]
