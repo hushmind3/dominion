@@ -137,6 +137,7 @@ pub(crate) struct Assembler {
     cached_read_tokens:Option<u64>,
     cached_write_tokens:Option<u64>,
     anthropic_stop:Option<String>,
+    anthropic_started:bool,
     codex_response:Option<Value>,
 }
 impl Assembler {
@@ -145,7 +146,7 @@ impl Assembler {
             calls:BTreeMap::new(),blocks:BTreeMap::new(),closed:BTreeSet::new(),
             prompt_tokens:None,output_tokens:None,
             cached_read_tokens:None,cached_write_tokens:None,
-            anthropic_stop:None,codex_response:None}
+            anthropic_stop:None,anthropic_started:false,codex_response:None}
     }
     pub(crate) fn feed(&mut self,packet:Packet)->Result<Vec<Update>,String>{
         if self.done{return Err("Native stream delivered events after terminal completion".into());}
@@ -288,6 +289,12 @@ impl Assembler {
     fn anthropic(&mut self,event:&Value,updates:&mut Vec<Update>)->Result<(),String>{
         match event["type"].as_str().unwrap_or("") {
             "message_start"=>{
+                // A gateway must never splice a fresh model response into
+                // an unfinished one: tool fragments and usage would mix.
+                if self.anthropic_started {
+                    return Err("Duplicate Anthropic message_start in a single turn".into());
+                }
+                self.anthropic_started=true;
                 let usage=&event["message"]["usage"];
                 self.prompt_tokens=usage["input_tokens"].as_u64();
                 self.cached_read_tokens=usage["cache_read_input_tokens"].as_u64();
@@ -825,6 +832,21 @@ mod tests {
         ] {stream.feed(Packet::Data(item)).unwrap();}
         let final_message=stream.finish().unwrap();
         assert_eq!(final_message["content"][0]["text"],"Hello 🧠");
+    }
+
+    #[test]
+    fn native_anthropic_rejects_spliced_message_start_without_reinterpreting_tools(){
+        let mut assembler=Assembler::new(Wire::Anthropic);
+        assembler.feed(Packet::Data(json!({"type":"message_start",
+            "message":{"usage":{"input_tokens":10}}}))).unwrap();
+        assembler.feed(Packet::Data(json!({"type":"content_block_start",
+            "index":0,"content_block":{"type":"tool_use","id":"pending-tool",
+                "name":"workspace_write","input":{}}}))).unwrap();
+        let error=assembler.feed(Packet::Data(json!({"type":"message_start",
+            "message":{"usage":{"input_tokens":2}}}))).unwrap_err();
+        assert!(error.contains("Duplicate Anthropic message_start"));
+        assert!(assembler.finish().is_err(),
+            "Tool fragments may never be dispatched from a spliced stream");
     }
 
     #[test]
