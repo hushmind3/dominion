@@ -119,7 +119,7 @@ One owner request enters the Rust API, is compiled into a scoped task,
 passes through provider selection and a bounded model/tool loop, then
 persists results, approvals, tool receipts and verification status in SQLite.
 A model-generated success message **does not** replace independent completion
- evidence in agent mode. Direct chat answers without attempting external
+evidence in agent mode. Direct chat answers without attempting external
 actions or marking them verified. Mutating tools and deferred/discovered MCP tools pass the same
 permission, schema, cancellation and effect journal gates.
 
