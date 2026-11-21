@@ -68,19 +68,26 @@ fn bounded_contract_intent(input: &str) -> String {
 /// The owner instruction, not an archived research objective, defines the task.
 fn task_input<'a>(_session:&Value,input:&'a str)->&'a str {input}
 
-/// Resolve explicit, agent and provider controls once before any model call.
-/// A none effort or thinking=false cannot be replaced by a stored default.
+/// Resolve turn, agent and provider settings without confusing a saved
+/// legacy thinking=false with a per-turn off request. Explicit per-turn off
+/// wins; otherwise an explicit/saved effort tier wins over legacy booleans.
 fn resolve_reasoning_effort(
     explicit_effort: Option<&str>,
-    thinking: Option<bool>,
+    requested_thinking: Option<bool>,
     agent_effort: Option<&str>,
+    agent_thinking: Option<bool>,
     provider_effort: Option<&str>,
     provider_kind: &str,
 ) -> (Option<String>, Option<bool>) {
-    if thinking == Some(false) || explicit_effort == Some("none") {
+    let effort = [explicit_effort, agent_effort, provider_effort]
+        .into_iter().flatten().find(|value| !value.is_empty());
+    if requested_thinking == Some(false) || effort == Some("none") {
         return ((provider_kind == "codex").then(|| "none".to_string()), Some(false));
     }
-    (explicit_effort.or(agent_effort).or(provider_effort).map(str::to_string), thinking)
+    if let Some(effort) = effort {
+        return (Some(effort.to_string()), requested_thinking.or(Some(true)));
+    }
+    (None, requested_thinking.or(agent_thinking))
 }
 
 
@@ -202,15 +209,13 @@ async fn run_turn_with_policy(
         Some(state.store.get("agent", id)
             .ok_or_else(||format!("에이전트를 찾을 수 없습니다: {id}"))?)
     } else { None };
-    if request.thinking.is_none() {
-        request.thinking = agent.as_ref().and_then(|value|value["thinking"].as_bool());
-    }
     let provider = select_provider(state, &request, &session)?;
     let provider_settings = state.store.get("provider", &provider.id);
     let (effort, thinking) = resolve_reasoning_effort(
         request.reasoning_effort.as_deref(),
         request.thinking,
         agent.as_ref().and_then(|value|value["reasoningEffort"].as_str()),
+        agent.as_ref().and_then(|value|value["thinking"].as_bool()),
         provider_settings.as_ref().and_then(|value|value["reasoningEffort"].as_str()),
         &provider.kind,
     );
