@@ -18,7 +18,7 @@ npm test
 import { Dominion } from '@dominion/sdk';
 
 const dominion = new Dominion({
-  baseUrl: 'http://127.0.0.1:4317',
+  baseUrl: 'http://127.0.0.1:4321',
   // token: process.env.DOMINION_ADMIN_TOKEN,
 });
 
