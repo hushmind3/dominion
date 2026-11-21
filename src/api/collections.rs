@@ -159,7 +159,7 @@ pub async fn remove(State(state): State<AppState>, OriginalUri(uri): OriginalUri
 pub async fn action(
     State(state): State<AppState>,
     OriginalUri(uri): OriginalUri,
-    Json(_body): Json<Value>,
+    Json(body): Json<Value>,
 ) -> Response {
     let kind = kind_from_uri(&uri);
     let id = id_from_uri(&uri).unwrap_or_default();
@@ -172,6 +172,59 @@ pub async fn action(
         .to_string();
 
     match (kind.as_str(), action.as_str()) {
+        ("memory", "correct") => {
+            let Some(text)=body["text"].as_str().map(str::trim)
+                .filter(|text|!text.is_empty()&&text.chars().count()<=16_000) else {
+                return (StatusCode::BAD_REQUEST,
+                    Json(json!({"error":"기억 수정 내용은 1~16,000자여야 합니다."}))).into_response();
+            };
+            let now=chrono::Utc::now().to_rfc3339();
+            let new_id=uuid::Uuid::new_v4().to_string();
+            let mut corrected=Value::Null;
+            let old=state.store.mutate_record("memory",&id,Value::Null,|previous|{
+                if !crate::engine::memory::retrieval_eligible(previous){
+                    return Err("비활성 또는 만료된 기억은 수정할 수 없습니다.".into());
+                }
+                if previous["text"].as_str().is_some_and(|old|old.trim()==text){
+                    return Err("기존 기억과 내용이 동일합니다.".into());
+                }
+                let mut revision=previous.clone();
+                revision["id"]=json!(new_id);
+                revision["text"]=json!(text);
+                revision["status"]=json!("active");
+                revision["source"]=json!("user");
+                revision["verification"]=json!("owner_correction");
+                revision["supersedes"]=json!(id);
+                revision["createdAt"]=json!(now);
+                revision["updatedAt"]=json!(now);
+                revision["lastUsedAt"]=Value::Null;
+                revision["sourceMessageIds"]=json!([]);
+                revision["evidenceQuote"]=Value::Null;
+                revision["sourceRole"]=json!("owner");
+                revision["sourceAuthors"]=json!([]);
+                revision["sourceAuthorKey"]=json!("owner");
+                if let Some(map)=revision.as_object_mut(){
+                    for field in ["supersededBy","archiveReason","forgetReason","learnedAt","retrievalEligible"]{
+                        map.remove(field);
+                    }
+                }
+                revision["revision"]=json!(crate::engine::memory::content_revision(&revision));
+                previous["status"]=json!("superseded");
+                previous["supersededBy"]=json!(new_id);
+                previous["archiveReason"]=json!("owner_correction");
+                previous["revision"]=json!(crate::engine::memory::content_revision(previous));
+                corrected=revision.clone();
+                Ok(vec![("memory".into(),revision)])
+            });
+            match old{
+                Ok(previous)=>{
+                    state.bus.record("memory",&previous);
+                    state.bus.record("memory",&corrected);
+                    Json(json!({"previous":previous,"record":corrected})).into_response()
+                },
+                Err(message)=>(StatusCode::BAD_REQUEST,Json(json!({"error":message}))).into_response(),
+            }
+        },
         ("skill", "export") => match state.store.get("skill", &id) {
             Some(skill) => Json(skill).into_response(),
             None => (
