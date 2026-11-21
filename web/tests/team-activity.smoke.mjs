@@ -64,7 +64,14 @@ try{
       {id:'chat-one',title:'Conversation One',agentId:'lead',providerId:'fixture',model:'fixture'},
       {id:'chat-two',title:'Conversation Two',agentId:'lead',providerId:'fixture',model:'fixture'}
     ];
-    if(path.endsWith('/messages'))response=[];
+    if(path.endsWith('/messages'))response=path==='/api/sessions/chat-one/messages'?[
+      {id:'owner-layout',session_id:'chat-one',role:'user',
+       content:'내 질문은 오른쪽 말풍선에 표시되어야 합니다.',
+       created_at:'2026-11-22 00:00:00'},
+      {id:'assistant-layout',session_id:'chat-one',role:'assistant',
+       content:'답변은 왼쪽에서 편하게 읽을 수 있어야 합니다.',
+       agent_id:'lead',created_at:'2026-11-22 00:00:01'}
+    ]:[];
     if(path.endsWith('/usage'))response={totalTokens:0};
     if(path==='/api/model-library/runtime')response={status:'idle'};
     if(path==='/api/health')response={branch:'dominion-sub2',commit:'fixture'};
@@ -137,6 +144,23 @@ try{
   await page.goto(address+'/#/chat?session=chat-one',{waitUntil:'domcontentloaded'});
   const chatInput=page.locator(inputSelector);
   await chatInput.waitFor({timeout:10000});
+  await page.locator('[data-message][data-role="user"]').waitFor({timeout:10000});
+  const chatLayout=await page.locator('[data-message]').evaluateAll(rows=>rows.map(row=>{
+    const body=row.querySelector('.chat-turn-body')?.getBoundingClientRect();
+    const text=row.querySelector('.chat-turn-text');
+    return {role:row.getAttribute('data-role'),left:body?.left||0,
+      right:body?.right||0,width:body?.width||0,
+      fontSize:parseFloat(text?getComputedStyle(text).fontSize:'0')};
+  }));
+  const owner=chatLayout.find(item=>item.role==='user');
+  const assistant=chatLayout.find(item=>item.role==='assistant');
+  assert.ok(owner&&assistant,JSON.stringify(chatLayout));
+  assert.ok(owner.left>assistant.left+40,
+    'owner message must be on the right of assistant: '+JSON.stringify(chatLayout));
+  assert.ok(owner.right<=390&&owner.width<390,
+    'owner bubble must not overflow mobile: '+JSON.stringify(chatLayout));
+  assert.ok(assistant.fontSize>=15&&owner.fontSize>=15,
+    'chat content must be comfortably readable: '+JSON.stringify(chatLayout));
   await chatInput.fill('첫 번째 대화에서만 보낼 미완성 지시');
   await page.evaluate(()=>{window.location.hash='#/chat?session=chat-two'});
   await page.waitForFunction(selector=>document.querySelector(selector)?.value==='',
