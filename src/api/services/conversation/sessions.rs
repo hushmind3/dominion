@@ -463,6 +463,19 @@ mod deletion_tests {
     }
 
     #[tokio::test]
+    async fn incomplete_fork_is_hidden_from_list_until_commit() {
+        let (state,root)=fixture();
+        state.store.put("session",&json!({"id":"pending-fork","forkPending":true}));
+        state.store.put("session",&json!({"id":"completed-fork","forkPending":false}));
+        let listing=list_sessions(State(state.clone())).await.0;
+        assert!(listing.as_array().unwrap().iter()
+            .all(|session|session["id"]!="pending-fork"));
+        assert!(listing.as_array().unwrap().iter()
+            .any(|session|session["id"]=="completed-fork"));
+        let _=std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn clearing_private_chat_revokes_uploaded_file_bytes_but_retains_session() {
         let (state, root) = fixture();
         state.store.put("session",&json!({"id":"source","title":"long running chat"}));
@@ -520,6 +533,9 @@ mod deletion_tests {
         let fork:Value = serde_json::from_slice(&body).unwrap();
         let fork_id = fork["id"].as_str().expect("new fork ID");
         assert_ne!(fork_id,"original");
+        assert_eq!(fork["forkPending"],false);
+        assert!(list_sessions(State(state.clone())).await.0.as_array().unwrap()
+            .iter().any(|row|row["id"]==fork_id));
         let fork_messages = state.store.messages(fork_id);
         assert_eq!(fork_messages.len(),2);
         let first = &fork_messages[0]["metadata"]["attachments"][0];
