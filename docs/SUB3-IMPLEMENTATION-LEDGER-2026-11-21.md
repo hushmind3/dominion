@@ -108,3 +108,65 @@ legacy `initialize` call was rejected. **This does not prove** the Rust client
 or complete integrated MCP suite passed. An actual `cargo check`, GitHub
 Actions result, and public-server interoperability result have not been
 obtained in this authoring environment.
+
+## v6.1 audit: product binary and test compilation P0
+
+The updated `DOMINION-INSTRUCTIONS-20261121-v6.1` audit captured two
+source-level Rust compile blockers at baseline `d46c07e`:
+
+1. `src/conversation/chat/runtime/turn.rs` referenced the removed
+   `pure_chat_greeting` variable in capability-bridge admission. The existing
+   `lightweight_chat` classification now owns this gate; owner-activated
+   discovery still admits the bridge.
+2. The malformed Anthropic stream test used `unwrap_err()` on
+   `Result<Completion,String>`, imposing a missing `Completion: Debug`
+   requirement. It now checks `.err().expect(...)` without exposing
+   internal `Completion` or dropping the rejection test.
+
+The CI now separates product binary compilation from test-only compilation:
+`cargo check --locked --bin dominion-rust`,
+`cargo test --locked --workspace --no-run`, followed by all-target checks.
+
+### Running executable identity
+
+Before this correction, `/api/health` could report a moving source checkout
+SHA that belonged to a *different* version from the already running process.
+`build.rs` now embeds the Git commit and tracked dirty state at compile time,
+watches the worktree HEAD and branch ref for recompilation, and preserves
+explicit `DOMINION_RELEASE_*` provenance. The runtime never substitutes
+checkout HEAD for a missing embedded revision. `/api/health` retains
+`commit` for existing clients and adds `binaryBuildSha`; `identitySource`
+is `embedded-build`, `embedded-release`, or `unavailable`.
+An E2E regression calls the actual binary and checks this contract.
+
+Neither an embedded SHA alone nor a passing HTTP status is proof that a
+developer's local running process is the latest submitted GitHub SHA. A local
+verifier must compare `binaryBuildSha`, build watcher success records,
+checkout SHA, PID and process start time before attributing work to a revision.
+
+### Execution responsibility mapping (Sub3)
+
+| Role | Exact implementation | Entry → decision → effect | Authority / persistence | Verification |
+| --- | --- | --- | --- | --- |
+| Core | `crates/dominion-agent-runtime/src/contracts.rs::Snapshot`, `src/drive.rs::dispatch_model_turn` | Model intent fence and completion settlement | Host `Journal` persists durable state; Core specifies budget/cancel constraints | `drive.rs` tests |
+| Harness, Native | `crates/dominion-agent-algorithms/src/agent_loop.rs::Kernel::run_from`, `ReActLoop::execute` | Native run → model/tool/verification iteration | `src/host/execution/native_agent.rs::run` binds host journal, approval, toolbox | Native SDK/Host regressions |
+| Harness, Chat | `src/conversation/chat/runtime/turn.rs::run_turn_body`, `src/conversation/chat/runtime.rs::run_turn_with_policy` | Chat turn → independent upper orchestration with shared paid-generation and tool-dispatch primitives | Product Host SQLite execution, owner approval and SSE | Chat outcome/provider/HTTP fixtures |
+| Strategy | `src/conversation/chat/runtime/selection.rs::select_chat_tools`, `crates/dominion-agent-algorithms/src/agent_loop.rs::ReActLoop` | Relevant tool selection and model decision strategy | Must not bypass Host effect admission | Tool-selection and algorithm tests |
+| Host | `src/host/execution/native_agent.rs::run`, `src/conversation/chat/provider.rs::stream_completion_once`, `src/storage/sqlite.rs::Store` | Providers, tool calls, approval, durable evidence | Local owner/API/SQLite and exact call IDs | SDK API, Host security, Rust HTTP E2E |
+
+The Chat and Native upper model/tool loops are **not yet a single
+orchestration body**. This mapping is intended to make the remaining
+convergence measurable rather than infer it from SDK structure.
+
+### Validation at this handoff
+
+- Source/GitHub file edits and expected content hashes: committed on
+  `dominion-sub3`.
+- Rust/Cargo, full workspace test compilation, new health HTTP E2E and
+  GitHub Actions result: **not executed/confirmed in this authoring session**.
+- Local app port `4322`: **not accessed**. Do not claim the GitHub source SHA
+  matches an already running binary.
+- Next gate: fetch CI job diagnostics for this exact submitted SHA, fix
+  any compilation errors without removing tests, and run the healthy
+  `cargo test --locked --test e2e web_api::health_reports_running_binary_identity_instead_of_moving_checkout_head -- --exact`
+  before extending unrelated features.
