@@ -1,8 +1,22 @@
 use crate::{engine,state::AppState};
-use axum::{extract::{Path,State},http::StatusCode,response::{IntoResponse,Response},Json};
+use axum::{extract::{Path,Query,State},http::StatusCode,response::{IntoResponse,Response},Json};
+use std::collections::HashMap;
 use serde_json::{json,Value};
 use super::response::error;
-pub async fn list(State(state):State<AppState>)->Json<Value>{Json(json!(state.store.all("job")))}
+pub async fn list(State(state):State<AppState>,Query(query):Query<HashMap<String,String>>)->Response{
+    if let Some(session_id)=query.get("sessionId"){
+        if session_id.is_empty()||session_id.len()>256{
+            return error(StatusCode::BAD_REQUEST,"작업 세션 ID가 올바르지 않습니다.");
+        }
+        let limit=query.get("limit").and_then(|v|v.parse::<usize>().ok())
+            .unwrap_or(128).clamp(1,256);
+        return match state.store.session_job_overview(session_id,limit){
+            Ok(rows)=>Json(json!(rows)).into_response(),
+            Err(message)=>error(StatusCode::INTERNAL_SERVER_ERROR,&message),
+        };
+    }
+    Json(json!(state.store.all("job"))).into_response()
+}
 pub async fn one(State(state):State<AppState>,Path(id):Path<String>)->Response{match state.store.get("job",&id){Some(j)=>Json(j).into_response(),None=>error(StatusCode::NOT_FOUND,"작업을 찾을 수 없습니다.")}}
 /// Client requests describe work, never mutable runtime status or evidence.
 pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Response{
@@ -146,5 +160,39 @@ mod external_resume_ui_tests {
             Json(json!({"prompt":"inspect another file"}))).await;
         assert_eq!(response.status(),StatusCode::CONFLICT);
         assert_eq!(state.store.all("job").len(),1);
+    }
+}
+
+
+#[cfg(test)]
+mod scoped_listing_tests {
+    use super::*;
+    #[tokio::test]
+    async fn scoped_listing_retains_team_roots_children_and_legacy_unfiltered_api(){
+        let root=std::env::temp_dir().join(format!("dominion-jobs-scoped-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=crate::config::Config{port:0,data_dir:root.clone(),
+            web_dir:root.join("web"),workspace:root.clone()};
+        let state=AppState::new(config.clone(),crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        for (id,session,parent) in [("team","owner",None),("child","worker",Some("owner")),
+            ("foreign","other",None)] {
+            state.store.put("job",&json!({"id":id,"kind":"team",
+                "input":{"sessionId":session,"parentSessionId":parent}})).unwrap();
+        }
+        let scoped=list(State(state.clone()),Query(HashMap::from([
+            ("sessionId".into(),"owner".into())
+        ]))).await;
+        assert_eq!(scoped.status(),StatusCode::OK);
+        let body=axum::body::to_bytes(scoped.into_body(),1024*1024).await.unwrap();
+        let rows:Value=serde_json::from_slice(&body).unwrap();
+        assert_eq!(rows.as_array().unwrap().len(),2);
+        assert!(!rows.as_array().unwrap().iter().any(|j|j["id"]=="foreign"));
+        let all=list(State(state.clone()),Query(HashMap::new())).await;
+        let body=axum::body::to_bytes(all.into_body(),1024*1024).await.unwrap();
+        let rows:Value=serde_json::from_slice(&body).unwrap();
+        assert_eq!(rows.as_array().unwrap().len(),3);
+        drop(state);
+        let _=std::fs::remove_dir_all(root);
     }
 }

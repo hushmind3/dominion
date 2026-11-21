@@ -94,6 +94,7 @@ jobs:
         run: |
           cargo test --locked --bin dominion-rust addons::team_dag::tests
           cargo test --locked --bin dominion-rust db::team_dag::tests
+          cargo test --locked --bin dominion-rust api::jobs::scoped_listing_tests
           cargo test --locked --bin dominion-rust addons::jobs::tests::dependency_scheduler
       - name: Model capability negotiation and endpoint tool-mode contracts (dev profile)
         run: |
