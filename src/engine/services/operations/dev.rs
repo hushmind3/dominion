@@ -4,16 +4,75 @@
 //! rebuilds and restarts a macOS source install that the LaunchAgent owns.
 use crate::state::AppState;
 use serde_json::{json, Value};
+use std::collections::VecDeque;
+use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 
 const CONFIG_KIND: &str = "dev_config";
 const CONFIG_ID: &str = "default";
+const MAX_BUILD_OUTPUT_TAIL_BYTES: usize = 256 * 1024;
+const MAX_BUILD_LOG_LINE_CHARS: usize = 2048;
 
 static UPDATING: AtomicBool = AtomicBool::new(false);
+
+async fn read_output_tail(mut pipe: impl AsyncRead + Unpin) -> io::Result<Vec<u8>> {
+    let mut tail = VecDeque::with_capacity(MAX_BUILD_OUTPUT_TAIL_BYTES);
+    let mut buffer = [0u8; 8192];
+    loop {
+        let count = pipe.read(&mut buffer).await?;
+        if count == 0 {
+            return Ok(tail.into_iter().collect());
+        }
+        let chunk = &buffer[..count];
+        if count >= MAX_BUILD_OUTPUT_TAIL_BYTES {
+            tail.clear();
+            tail.extend(&chunk[count - MAX_BUILD_OUTPUT_TAIL_BYTES..]);
+            continue;
+        }
+        let overflow = tail.len().saturating_add(count).saturating_sub(MAX_BUILD_OUTPUT_TAIL_BYTES);
+        tail.drain(..overflow);
+        tail.extend(chunk);
+    }
+}
+
+async fn command_output_tail(
+    command: &mut Command,
+    timeout: Duration,
+) -> Result<Output, String> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let stdout = child.stdout.take().ok_or("build stdout is unavailable")?;
+    let stderr = child.stderr.take().ok_or("build stderr is unavailable")?;
+    let result = tokio::time::timeout(timeout, async {
+        let (status, stdout, stderr) = tokio::try_join!(
+            child.wait(),
+            read_output_tail(stdout),
+            read_output_tail(stderr),
+        )?;
+        Ok::<_, io::Error>(Output { status, stdout, stderr })
+    })
+    .await;
+    match result {
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(error)) => {
+            let _ = child.kill().await;
+            Err(error.to_string())
+        }
+        Err(_) => {
+            let _ = child.kill().await;
+            Err(format!("command timed out after {} seconds", timeout.as_secs()))
+        }
+    }
+}
 
 pub fn installation_running() -> bool {
     UPDATING.load(Ordering::Acquire)
@@ -243,16 +302,16 @@ async fn update_source(state: &AppState) -> Result<(Vec<String>, Value), (Vec<St
         if let Some(path) = toolchain_path() {
             command.env("PATH", path);
         }
-        let output = tokio::time::timeout(Duration::from_secs(seconds), command.output()).await;
-        let output = match output {
-            Ok(Ok(output)) => output,
-            Ok(Err(e)) => return Err((logs, format!("{program} 실행 실패: {e}"))),
-            Err(_) => return Err((logs, format!("{program} 실행 제한 시간을 초과했습니다."))),
+        let output = match command_output_tail(&mut command, Duration::from_secs(seconds)).await {
+            Ok(output) => output,
+            Err(error) => return Err((logs, format!("{program} 실행 실패: {error}"))),
         };
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         for output in [&stdout[..], &stderr[..]] {
-            let mut recent = output.lines().rev().take(45).map(str::to_string).collect::<Vec<_>>();
+            let mut recent = output.lines().rev().take(45).map(|line| {
+                line.chars().take(MAX_BUILD_LOG_LINE_CHARS).collect::<String>()
+            }).collect::<Vec<_>>();
             recent.reverse();
             logs.extend(recent);
         }
