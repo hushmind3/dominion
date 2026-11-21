@@ -113,7 +113,11 @@ pub fn latest_failure_hint(state: &AppState, task_id: &str) -> Option<String> {
     };
     let latest = executions
         .into_iter()
-        .filter(|execution| execution["failureClass"].as_str().is_some())
+        .filter(|execution| {
+            execution["failureClass"].as_str().is_some_and(|class| !class.is_empty())
+                && !matches!(execution["taskOutcome"].as_str(),
+                    Some("answered_unverified" | "succeeded" | "cancelled"))
+        })
         .max_by_key(|execution| {
             execution["startedAt"]
                 .as_str()
@@ -398,6 +402,13 @@ mod tests {
             "recoveryHint":"matching hint", "startedAt":"2026-11-18T11:00:00Z"
         }));
         assert_eq!(state.store.executions_for_task("task").unwrap().len(), 2);
+        // Old finalizers stored a failureClass on an otherwise completed
+        // chat-only answer. Later timestamps must not poison the next replan.
+        state.store.put("execution", &json!({
+            "id":"legacy-chat", "taskId":"task", "status":"completed",
+            "taskOutcome":"answered_unverified", "failureClass":"execution_error",
+            "recoveryHint":"stale false failure", "startedAt":"2026-11-19T12:00:00Z"
+        }));
         assert!(latest_failure_hint(&state, "task").unwrap().contains("matching hint"));
         assert!(latest_failure_hint(&state, "other-task").unwrap().contains("foreign hint"));
         assert!(latest_failure_hint(&state, "missing").is_none());
