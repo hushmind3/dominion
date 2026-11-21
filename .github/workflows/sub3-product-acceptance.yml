@@ -187,6 +187,8 @@ jobs:
         run: node web/scripts/chat-visual.mjs
       - name: Verify owner Memory editing, evidence protection and conflict UX
         run: node web/scripts/memory-edit-visual.mjs
+      - name: Verify Home private-conversation counts and owner-review actions
+        run: node web/scripts/home-dashboard-visual.mjs
       - name: Attach real browser screenshots and UX reports
         if: always()
         uses: actions/upload-artifact@v4

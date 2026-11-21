@@ -51,7 +51,7 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
     className="shrink-0 text-[12px]"><ArrowRight size={14}/>
     {locale==='en'?'Set up models':'모델 연결하기'}</Button>
   </section>}
-  {attention.length>0&&<section role="status" aria-label={t('dashboard.attention')}
+  {attention.length>0&&<section role="status" data-home-attention aria-label={t('dashboard.attention')}
    className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-[#E3CFB9] bg-[#FFF9EF] px-4 py-3">
    <Activity size={18} className="text-[#92673C]"/>
    <div className="min-w-0 flex-1 text-[12px] text-[#5C544A]"><strong className="block">{t('dashboard.attention')}</strong>
@@ -59,7 +59,7 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
    <Button type="button" variant="secondary" className="text-xs" onClick={()=>navigate('activity')}>
     {t('dashboard.reviewJobs')} <ArrowRight size={13}/></Button>
   </section>}
-  <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{metrics.map(m=>{const Icon=m.icon;return <Button type="button" key={m.name} onClick={()=>navigate(m.page)} className="flex min-h-24 flex-col items-start rounded-xl border border-[#E7E0D5] bg-white p-4 text-left transition-colors hover:border-[#D8CFC2]"><span className="flex w-full items-center justify-between text-[11px] text-[#7C7469]">{t(m.name as any)}<Icon size={16} className="text-[#A79C8E]"/></span><strong className="mt-4 text-[23px] font-bold leading-none tabular-nums text-[#24211D]">{m.value}</strong></Button>})}</div>
+  <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{metrics.map(m=>{const Icon=m.icon;return <Button type="button" key={m.name} data-dashboard-metric={m.page} onClick={()=>navigate(m.page)} className="flex min-h-24 flex-col items-start rounded-xl border border-[#E7E0D5] bg-white p-4 text-left transition-colors hover:border-[#D8CFC2]"><span className="flex w-full items-center justify-between text-[11px] text-[#7C7469]">{t(m.name as any)}<Icon size={16} className="text-[#A79C8E]"/></span><strong className="mt-4 text-[23px] font-bold leading-none tabular-nums text-[#24211D]">{m.value}</strong></Button>})}</div>
   <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(270px,.72fr)]">
    <section className="rounded-xl border border-[#E7E0D5] bg-white">
     <div className="border-b border-[#F0EAE1] px-4 py-3"><h2 className="text-[13px] font-bold">{t('dashboard.runNow')}</h2><p className="mt-1 text-[11px] text-[#8A8176]">{t('dashboard.runNow.desc')}</p></div>

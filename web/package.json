@@ -26,7 +26,8 @@
     "dist:windows": "node ../scripts/build-desktop.mjs --bundles nsis,msi",
     "test:sub3-browser": "node e2e/sub3-native-live.mjs",
     "test:sub3-chat-visual": "node scripts/chat-visual.mjs",
-    "test:sub3-memory-visual": "node scripts/memory-edit-visual.mjs"
+    "test:sub3-memory-visual": "node scripts/memory-edit-visual.mjs",
+    "test:sub3-home-visual": "node scripts/home-dashboard-visual.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.0",
