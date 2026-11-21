@@ -81,9 +81,12 @@ pub fn create_snapshot(state: &AppState) -> Result<PathBuf, String> {
             std::fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;
     }
     let temp = private.join(format!("snapshot-{}.sqlite", uuid::Uuid::new_v4()));
-    let _cleanup=PlaintextSnapshot(temp.clone());
+    let cleanup=PlaintextSnapshot(temp.clone());
     state.store.backup_to(&temp)?;
     let bytes = std::fs::read(&temp).map_err(|error| error.to_string())?;
+    // Plaintext is no longer needed once read; erase it before key lookup or
+    // encryption can fail or a slow offsite transfer begins.
+    drop(cleanup);
     let ring = crate::engine::backup_keys::KeyRing::load_or_create(&state.config.data_dir)?;
     // The snapshot carries the vault key that its provider secrets were sealed
     // with, so restoring an older snapshot remains decryptable after rotation.
@@ -95,7 +98,7 @@ pub fn create_snapshot(state: &AppState) -> Result<PathBuf, String> {
         "dominion-{stamp}-{}.sqlite.enc",uuid::Uuid::new_v4().simple()
     ));
     std::fs::write(&path, &sealed).map_err(|error| error.to_string())?;
-    // _cleanup is kept alive through all subsequent fallible operations.
+
     if let Some(offsite) = offsite_directory() {
         std::fs::create_dir_all(&offsite).map_err(|error| error.to_string())?;
         std::fs::copy(&path, offsite.join(path.file_name().unwrap_or_default()))
