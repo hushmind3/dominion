@@ -6,7 +6,7 @@ pub(super) fn begin_tools<'a>(
         _ctx: &'a mut Context<'_>,
     ) -> BoxFuture<'a, Result<usize, String>> {
         Box::pin(async move {
-            let mut completion = turn.completion.take().ok_or("모델 응답이 없습니다.")?;
+            let mut completion = turn.model_round.completion.take().ok_or("모델 응답이 없습니다.")?;
 
             let mut seen_ids = std::collections::HashSet::new();
             for call in completion.tool_calls.iter_mut() {
@@ -61,7 +61,7 @@ pub(super) fn begin_tools<'a>(
                 .unwrap_or("as-written");
             // Native provider calls retain their declared order. Effects are barriers;
             // the shared Rust kernel only batches adjacent independent observations.
-            turn.round_calls = completion.tool_calls.clone();
+            turn.tool_round.round_calls = completion.tool_calls.clone();
             if ordering_kernel == "read-first"
                 && turn
                     .round_calls
@@ -81,15 +81,15 @@ pub(super) fn begin_tools<'a>(
                 turn.request.agent_id.as_deref(),
                 Some(turn.execution_id),
             );
-            turn.parallel_reads = combination
+            turn.tool_round.parallel_reads = combination
                 .as_ref()
                 .and_then(|algorithm| algorithm["implementation"].as_str())
                 == Some("parallel-reads");
-            turn.dispatched = std::collections::HashMap::new();
-            turn.ordering_used = false;
-            turn.ordering_ok = true;
+            turn.tool_round.dispatched = std::collections::HashMap::new();
+            turn.tool_round.ordering_used = false;
+            turn.tool_round.ordering_ok = true;
 
-            Ok(turn.round_calls.len())
+            Ok(turn.tool_round.round_calls.len())
         })
     }
 
@@ -103,11 +103,11 @@ pub(super) fn prepare_tool<'a>(
                 return Ok(false);
             }
 
-            let call = turn.round_calls[call_index].clone();
+            let call = turn.tool_round.round_calls[call_index].clone();
 
             // A disconnected SSE client must not stop work already promised by
             // the model; explicit cancel and budgets remain the stop signals.
-            if !turn.dispatched.contains_key(&call_index) && !turn.budget.charge_proposal() {
+            if !turn.tool_round.dispatched.contains_key(&call_index) && !turn.budget.charge_proposal() {
                 return Err(format!(
                     "도구 제안 예산({}회)을 초과했습니다.",
                     turn.max_tools.saturating_mul(2)
@@ -355,9 +355,9 @@ pub(super) fn prepare_tool<'a>(
                 }));
             }
 
-            turn.prepared_arguments = arguments;
-            turn.prepared_key = call_key;
-            turn.completed_operations = completed_operations;
+            turn.tool_round.prepared_arguments = arguments;
+            turn.tool_round.prepared_key = call_key;
+            turn.tool_round.completed_operations = completed_operations;
             Ok(true)
         })
     }
@@ -371,10 +371,10 @@ pub(super) fn dispatch_tool<'a>(
             let round = ctx.round;
             let metrics = turn.metrics;
             let max_tools = turn.max_tools;
-            let call = turn.round_calls[call_index].clone();
-            let arguments = turn.prepared_arguments.clone();
+            let call = turn.tool_round.round_calls[call_index].clone();
+            let arguments = turn.tool_round.prepared_arguments.clone();
             let (result, ok, tool_content) =
-                if let Some(result) = turn.dispatched.remove(&call_index) {
+                if let Some(result) = turn.tool_round.dispatched.remove(&call_index) {
                     result?
                 } else {
                     if !turn.budget.charge_tool() {
@@ -382,9 +382,9 @@ pub(super) fn dispatch_tool<'a>(
                         return Err(format!("도구 호출 제한({max_tools}회)을 초과했습니다."));
                     }
                     let mut end = call_index + 1;
-                    if turn.parallel_reads && tool_is_read_only(&call.name) {
+                    if turn.tool_round.parallel_reads && tool_is_read_only(&call.name) {
                         let candidate_end = dominion_core::hosted::read_batch_end(
-                            &turn.round_calls,
+                            &turn.tool_round.round_calls,
                             call_index,
                             4,
                             |call| {
@@ -393,14 +393,14 @@ pub(super) fn dispatch_tool<'a>(
                             },
                         );
                         while end < candidate_end {
-                            let next = &turn.round_calls[end];
+                            let next = &turn.tool_round.round_calls[end];
                             if !parallel_read_admitted(
                                 next,
                                 &turn.session,
-                                &turn.round_tools,
+                                &turn.model_round.round_tools,
                                 &turn.strategy_candidates,
                                 &turn.request.input,
-                                &turn.completed_operations,
+                                &turn.tool_round.completed_operations,
                             ) || !turn.budget.can_execute_tool()
                             {
                                 break;
@@ -417,7 +417,7 @@ pub(super) fn dispatch_tool<'a>(
                         let parsed = if index == call_index {
                             arguments.clone()
                         } else {
-                            serde_json::from_str(&turn.round_calls[index].arguments)
+                            serde_json::from_str(&turn.tool_round.round_calls[index].arguments)
                                 .map_err(|error| format!("도구 인수 해석 실패: {error}"))?
                         };
                         prepared.push((index, turn.op_seq, parsed));
@@ -428,8 +428,8 @@ pub(super) fn dispatch_tool<'a>(
                     let actions = prepared
                         .iter()
                         .map(|(index, _, args)| dominion_core::hosted::Action {
-                            id: format!("{round}:{}", turn.round_calls[*index].id),
-                            tool: turn.round_calls[*index].name.clone(),
+                            id: format!("{round}:{}", turn.tool_round.round_calls[*index].id),
+                            tool: turn.tool_round.round_calls[*index].name.clone(),
                             arguments: args.clone(),
                             depends_on: vec![],
                         })
@@ -443,10 +443,10 @@ pub(super) fn dispatch_tool<'a>(
                         execution_id: turn.execution_id,
                         metrics,
                         prepared: &prepared,
-                        calls: &turn.round_calls,
+                        calls: &turn.tool_round.round_calls,
                         round,
                         compat: turn.provider.tool_mode == "compat",
-                        definitions: &turn.round_tools,
+                        definitions: &turn.model_round.round_tools,
                     };
                     let results = dominion_core::hosted::dispatch_batch(
                         &mut ctx.snapshot,
@@ -466,7 +466,7 @@ pub(super) fn dispatch_tool<'a>(
                         );
                     }
                     for ((index, _, _), result) in prepared.into_iter().zip(results) {
-                        turn.dispatched.insert(index, result);
+                        turn.tool_round.dispatched.insert(index, result);
                     }
                     let observed = turn
                         .dispatched
@@ -497,9 +497,9 @@ pub(super) fn observe_tool<'a>(
     ) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move {
             let round = ctx.round;
-            let call = turn.round_calls[call_index].clone();
-            let arguments = turn.prepared_arguments.clone();
-            let call_key = turn.prepared_key.clone();
+            let call = turn.tool_round.round_calls[call_index].clone();
+            let arguments = turn.tool_round.prepared_arguments.clone();
+            let call_key = turn.tool_round.prepared_key.clone();
             let (result, ok, tool_content) = observed;
             if turn.owner_changed()? {
                 turn.messages
@@ -507,9 +507,9 @@ pub(super) fn observe_tool<'a>(
                 return Ok(());
             }
 
-            turn.ordering_used = true;
+            turn.tool_round.ordering_used = true;
             if !ok {
-                turn.ordering_ok = false;
+                turn.tool_round.ordering_ok = false;
             }
             crate::addons::runtime_hooks::mark_signal(
                 turn.state,
@@ -686,12 +686,12 @@ pub(super) fn verify_tools<'a>(
         Box::pin(async move {
             let round = ctx.round;
 
-            if turn.ordering_used {
+            if turn.tool_round.ordering_used {
                 crate::addons::runtime_hooks::mark_signal(
                     turn.state,
                     turn.execution_id,
                     "execution.ordering",
-                    turn.ordering_ok,
+                    turn.tool_round.ordering_ok,
                 );
             }
             // Check acceptance after the tool round, not only when the model
