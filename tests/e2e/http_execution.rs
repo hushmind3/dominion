@@ -245,6 +245,56 @@ fn direct_chat_answers_without_agent_tools_or_action_execution() {
 }
 
 
+
+#[test]
+fn chat_mode_switch_removes_and_restores_agent_persona_without_losing_history() {
+    let _serial = serial();
+    let (port, calls) = scripted_provider(|_| {
+        vec![json!({"choices":[{"delta":{"content":"답변했습니다."},"finish_reason":"stop"}]})]
+    });
+    let app = TestApp::new(port, "native");
+    let agent = app.post("/api/agents", &json!({
+        "name":"switch-agent","systemPrompt":"AGENT_PERSONA_MUST_ONLY_RUN_IN_AGENT_MODE"
+    }));
+    let agent_id = agent["id"].as_str().unwrap();
+    let session = app.post("/api/sessions", &json!({"title":"switch","agentId":agent_id}));
+    let id = session["id"].as_str().unwrap();
+
+    let agent_first = app.chat(&json!({
+        "sessionId":id,"agentId":agent_id,"input":"첫 번째 인사",
+        "toolsEnabled":false,"autoLearning":false
+    }));
+    assert!(agent_first.contains("assistant_saved"), "{agent_first}");
+    let plain = app.chat(&json!({
+        "sessionId":id,"agentId":agent_id,"input":"두 번째 인사",
+        "directChat":true,"toolsEnabled":true,"autoLearning":true
+    }));
+    assert!(plain.contains("assistant_saved"), "{plain}");
+    let state = app.get(&format!("/api/sessions/{id}"));
+    assert_eq!(state["chatMode"], "chat");
+    assert!(state["agentId"].is_null());
+
+    let agent_again = app.chat(&json!({
+        "sessionId":id,"agentId":agent_id,"input":"세 번째 인사",
+        "toolsEnabled":false,"autoLearning":false
+    }));
+    assert!(agent_again.contains("assistant_saved"), "{agent_again}");
+    let state = app.get(&format!("/api/sessions/{id}"));
+    assert_eq!(state["chatMode"], "agent");
+    assert_eq!(state["agentId"], agent_id);
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 3);
+    let system = |index:usize|calls[index]["messages"][0]["content"]
+        .as_str().unwrap_or("").to_string();
+    assert!(system(0).contains("AGENT_PERSONA_MUST_ONLY_RUN_IN_AGENT_MODE"));
+    assert!(!system(1).contains("AGENT_PERSONA_MUST_ONLY_RUN_IN_AGENT_MODE"));
+    assert!(system(2).contains("AGENT_PERSONA_MUST_ONLY_RUN_IN_AGENT_MODE"));
+    let messages = app.get(&format!("/api/sessions/{id}/messages"));
+    assert_eq!(messages.as_array().unwrap().len(), 6);
+}
+
+
 #[test]
 fn ordinary_chat_accepts_real_tool_evidence() {
     let _serial = serial();
