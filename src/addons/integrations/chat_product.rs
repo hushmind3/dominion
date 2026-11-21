@@ -652,7 +652,7 @@ impl MainTurn<'_> {
             "promptTokens": self.prompt_tokens_total,
             "cachedPromptTokens": if self.cache_reporting_complete { json!(self.cached_prompt_tokens_total) } else { Value::Null },
             "uncachedPromptTokens": if self.cache_reporting_complete { json!(self.prompt_tokens_total.saturating_sub(self.cached_prompt_tokens_total)) } else { Value::Null },
-            "completionTokens": self.model_round.completion_tokens_total,
+            "completionTokens": self.completion_tokens_total,
             "totalTokens": self.total_tokens,
             "estimated": self.usage_estimated,
             "providerId": self.provider.id,
