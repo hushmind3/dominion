@@ -46,6 +46,56 @@ fn private_transcript_has_pending_work(state: &AppState, id: &str) -> bool {
         })
 }
 
+/// Recover partial file-backed forks abandoned by a killed process. A normal
+/// in-flight fork holds the source's durable session lease, so a sweeper can
+/// never race its file copies. Skip fresh entries to tolerate slow drives and
+/// never infer ownership for legacy pending records without a source ID.
+/// Returns the number of abandoned fork sessions fully removed.
+pub(crate) fn recover_stale_pending_forks_at(
+    state: &AppState,
+    now: chrono::DateTime<chrono::Utc>,
+) -> usize {
+    let mut recovered = 0;
+    for fork in state.store.all("session").into_iter()
+        .filter(|row| row["forkPending"] == true)
+    {
+        let (Some(id), Some(source)) = (
+            fork["id"].as_str(),
+            fork["forkSourceSessionId"].as_str(),
+        ) else { continue };
+        if id == source || source.is_empty() { continue }
+        let Some(created) = fork["createdAt"].as_str()
+            .and_then(|raw| chrono::NaiveDateTime::parse_from_str(
+                raw, "%Y-%m-%d %H:%M:%S").ok())
+            .map(|naive|naive.and_utc())
+        else { continue };
+        if now.signed_duration_since(created) < chrono::Duration::minutes(15) {
+            continue;
+        }
+        let Some(_source_lease) = engine::lease::LeaseGuard::acquire(state,source)
+            else { continue };
+        let Some(_fork_lease) = engine::lease::LeaseGuard::acquire(state,id)
+            else { continue };
+        // Another process may have completed the fork before either lease.
+        let still_pending = state.store.get("session",id)
+            .is_some_and(|row|row["forkPending"]==true
+                && row["forkSourceSessionId"]==source);
+        if !still_pending { continue }
+        if engine::attachments::purge_session(state,id).is_err() {
+            state.store.audit("chat.fork_recovery_failed",
+                json!({"forkId":id,"sourceSessionId":source}));
+            continue;
+        }
+        state.store.clear_messages(id);
+        if state.store.remove("session",id) {
+            state.store.audit("chat.fork_abandoned_recovered",
+                json!({"forkId":id,"sourceSessionId":source}));
+            recovered += 1;
+        }
+    }
+    recovered
+}
+
 pub async fn delete_session(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let Some(session) = state.store.get("session", &id) else {
         return error(StatusCode::NOT_FOUND, "세션을 찾을 수 없습니다.");
@@ -218,6 +268,7 @@ pub async fn fork_session(State(state): State<AppState>, Path(id): Path<String>)
     // Publishing it before all referenced file bytes are copied lets another
     // tab answer with only half a transcript.
     fork["forkPending"] = json!(true);
+    fork["forkSourceSessionId"] = json!(id);
     let Some(fork) = state.store.put("session", &fork) else {
         return error(StatusCode::INTERNAL_SERVER_ERROR, "대화 복제 세션을 저장하지 못했습니다.");
     };
