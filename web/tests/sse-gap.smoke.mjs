@@ -39,10 +39,10 @@ try{
    if(sseConnections===1){
     await gapGate;
     await route.fulfill({status:200,contentType:'text/event-stream',
-     body:'id: 0\\ndata: '+JSON.stringify({type:'event_gap',resyncRequired:true,
-      reason:'cursor_ahead_of_journal'})+'\\n\\n'});
+     body:'id: 0\ndata: '+JSON.stringify({type:'event_gap',resyncRequired:true,
+      reason:'cursor_ahead_of_journal'})+'\n\n'});
    }else{
-    await route.fulfill({status:200,contentType:'text/event-stream',body:': idle\\n\\n'});
+    await route.fulfill({status:200,contentType:'text/event-stream',body:': idle\n\n'});
    }
    return;
   }
