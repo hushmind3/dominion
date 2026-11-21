@@ -19,12 +19,22 @@ fn key(workspace:&Path,name:&str,args:&Value)->Option<String>{
         "workspace_apply_patch"|"shell_exec"|"terminal_exec"|"external_harness_run" =>
             Some(format!("workspace:{prefix}")),
         "file_write"=>{
-            let target=args["path"].as_str()?;
+            // Absolute file_write is an alias for workspace_write whenever
+            // its destination resolves inside this workspace. Previously it
+            // used an unrelated parent-directory lock, permitting a shell
+            // command and file_write to modify the SAME source concurrently.
+            let Some(target)=args["path"].as_str() else {
+                return Some("global:unresolved-file-write".to_string());
+            };
             let path=Path::new(target);
-            // Unknown/outside absolute paths serialize conservatively.
             let parent=path.parent().unwrap_or(Path::new("."));
-            let root=parent.canonicalize().unwrap_or_else(|_|parent.to_path_buf());
-            Some(format!("external:{}",root.to_string_lossy()))
+            match parent.canonicalize(){
+                Ok(root) if root.starts_with(&canonical)=>Some(format!("workspace:{prefix}")),
+                Ok(root)=>Some(format!("external:{}",root.to_string_lossy())),
+                // Missing or unresolvable parent directories must not fall
+                // through without a writer lock.
+                Err(_)=>Some("global:unresolved-file-write".to_string()),
+            }
         },
         "browser_control"=>Some("global:browser".to_string()),
         "github_api"=>Some("global:github-write-potential".to_string()),
@@ -72,6 +82,7 @@ pub async fn acquire(workspace:&Path,name:&str,args:&Value)->Option<Guard>{
 #[cfg(test)]
 mod tests{
     use super::*;
+    use serde_json::json;
     use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
     #[tokio::test]
     async fn same_workspace_mutations_serialize_but_other_workspaces_overlap(){
@@ -122,6 +133,45 @@ mod tests{
             .await.unwrap().is_none());
         drop(one);drop(two);
         let _=std::fs::remove_dir_all(dir);
+    }
+    #[tokio::test]
+    async fn absolute_file_write_inside_workspace_shares_writer_lease_with_shell(){
+        let dir=std::env::temp_dir().join(format!("writer-alias-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("nested")).unwrap();
+        let file=json!({"path":dir.join("nested").join("work.rs").to_string_lossy()});
+        assert_eq!(key(&dir,"file_write",&file),key(&dir,"shell_exec",&Value::Null));
+        assert_eq!(key(&dir,"file_write",&file),key(&dir,"workspace_apply_patch",&Value::Null));
+        assert!(key(&dir,"file_write",&Value::Null).is_some());
+        let config=crate::config::Config{port:0,data_dir:dir.clone(),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let one=crate::state::AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        let two=crate::state::AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        let first=acquire_durable(&one,&dir,"workspace_write",&Value::Null,"a")
+            .await.unwrap().unwrap();
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(250),
+            acquire_durable(&two,&dir,"file_write",&file,"b")).await.is_err());
+        drop(first);
+        let next=acquire_durable(&two,&dir,"file_write",&file,"b")
+            .await.unwrap().unwrap();
+        drop(next);
+        drop(one);drop(two);
+        let _=std::fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn outside_file_write_uses_independent_external_scope(){
+        let root=std::env::temp_dir().join(format!("writer-root-{}",uuid::Uuid::new_v4()));
+        let external=std::env::temp_dir().join(format!("writer-other-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&external).unwrap();
+        let foreign=json!({"path":external.join("different.txt").to_string_lossy()});
+        assert_ne!(key(&root,"file_write",&foreign),key(&root,"workspace_write",&Value::Null));
+        assert!(key(&root,"file_write",&foreign).unwrap().starts_with("external:"));
+        let _=std::fs::remove_dir_all(root);
+        let _=std::fs::remove_dir_all(external);
     }
     #[test]
     fn resource_keys_match_workspace_scope_without_crossing_into_browser(){
