@@ -2,6 +2,32 @@ use crate::state::AppState;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
+const MAX_SKILL_METADATA_BYTES: usize = 64 * 1024;
+
+fn read_skill_prefix(path: &Path) -> Option<String> {
+    use std::io::Read;
+
+    let file = std::fs::File::open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(MAX_SKILL_METADATA_BYTES + 1);
+    file.take((MAX_SKILL_METADATA_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let truncated = bytes.len() > MAX_SKILL_METADATA_BYTES;
+    bytes.truncate(MAX_SKILL_METADATA_BYTES);
+    match String::from_utf8(bytes) {
+        Ok(text) => Some(text),
+        Err(error) if truncated && error.utf8_error().error_len().is_none() => {
+            let valid = error.utf8_error().valid_up_to();
+            String::from_utf8(error.into_bytes()[..valid].to_vec()).ok()
+        }
+        Err(_) => None,
+    }
+}
+
 /// Skill catalog: scans SKILL.md trees and installs a copy into the data dir.
 /// No Node process is involved; this is plain Rust filesystem work.
 pub fn roots(state: &AppState) -> Vec<(String, PathBuf)> {
@@ -79,7 +105,7 @@ fn frontmatter(text: &str) -> (String, String) {
 }
 
 fn item(path: &Path, source: &str) -> Option<Value> {
-    let text = std::fs::read_to_string(path).ok()?;
+    let text = read_skill_prefix(path)?;
     let (mut name, description) = frontmatter(&text);
     if name.is_empty() {
         name = path
@@ -156,8 +182,8 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
 
 fn install(state: &AppState, source_dir: &Path) -> Result<Value, String> {
     let skill_file = source_dir.join("SKILL.md");
-    let text = std::fs::read_to_string(&skill_file)
-        .map_err(|error| format!("SKILL.md 읽기 실패: {error}"))?;
+    let text = read_skill_prefix(&skill_file)
+        .ok_or_else(|| "SKILL.md를 읽을 수 없습니다.".to_string())?;
     let (mut name, description) = frontmatter(&text);
     if name.is_empty() {
         name = source_dir

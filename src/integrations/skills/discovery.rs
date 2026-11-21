@@ -133,7 +133,12 @@ pub fn read_resource(store:&Store,scope:&MemoryScope,id:&str,relative:&str)
     }
     let size=std::fs::metadata(&file).map_err(|error|error.to_string())?.len();
     if size>65_536 {return Err("Skill resource exceeds the 64 KiB read bound".into())}
-    let content=std::fs::read_to_string(file)
+    use std::io::Read;
+    let mut bytes=Vec::with_capacity(65_537);
+    std::fs::File::open(file).map_err(|error|error.to_string())?
+        .take(65_537).read_to_end(&mut bytes).map_err(|error|error.to_string())?;
+    if bytes.len()>65_536 {return Err("Skill resource exceeds the 64 KiB read bound".into())}
+    let content=String::from_utf8(bytes)
         .map_err(|error|format!("Skill resource must be readable UTF-8: {error}"))?;
     Ok(json!({
         "id":skill["id"],"resource":relative,
