@@ -154,3 +154,20 @@ test('P3 remote Rust control plane and outbound native Worker reuse existing Har
   assert.match(team,/crate::remote::visible_workers/);
   assert.match(sdk,/'remote_task'/);
 });
+
+test('P3 remote Writer file artifacts go through explicit owner approval and existing patch executor',()=>{
+  const native=source('src/engine/services/tools/tools_remote_artifacts.rs');
+  const remote=source('src/remote.rs');
+  const worker=source('src/remote_worker.rs');
+  const tools=source('src/engine/services/tools/tools.rs');
+  const lock=source('src/engine/services/operations/resource_lock.rs');
+  for(const token of ['artifactBases','artifactPaths','digest','validate_received_artifacts'])assert.ok(remote.includes(token));
+  assert.match(worker,/collect_artifacts/);
+  assert.match(native,/patch::apply/);
+  assert.match(native,/artifactApplyStatus/);
+  assert.match(native,/expectedSha256/);
+  assert.match(native,/remote artifact/);
+  assert.match(tools,/"team_remote_apply"/);
+  assert.match(tools,/\|\s*"team_remote_apply"/);
+  assert.match(lock,/"team_remote_apply"/);
+});
