@@ -3,6 +3,11 @@
 use super::super::*;
 pub(super) fn routes()->Router<AppState>{
     Router::<AppState>::new()
+        .route("/api/algorithms",get(algorithm_controls::list)
+            .post(algorithm_controls::register))
+        .route("/api/algorithms/:id/activate",
+            post(algorithm_controls::activate))
+        .route("/api/synergy",get(algorithm_controls::statistics))
         .route("/api/benchmark/strategies", post(benchmark::seed_strategy))
         .route("/api/benchmark/experiments", post(benchmark::record_experiment))
         .route("/api/benchmark/policies", post(benchmark::register_policy))
