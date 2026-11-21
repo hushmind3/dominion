@@ -62,14 +62,18 @@ const mock=createServer(async(req,res)=>{
   try{body=JSON.parse(raw)}catch{res.writeHead(400).end();return}
   requests.push(body)
   const history=body.messages||[]
-  const isWriter=JSON.stringify(history).includes('sub3-smoke.txt')
+  const historyText=JSON.stringify(history)
+  const isWriter=historyText.includes('sub3-smoke.txt')||
+    historyText.includes('sub3-deny.txt')
+  const targetFile=historyText.includes('sub3-deny.txt')?
+    'sub3-deny.txt':'sub3-smoke.txt'
   const hasToolReceipt=history.some(msg=>msg.role==='tool')
   let result
   if(isWriter&&!hasToolReceipt){
     result={choices:[{index:0,finish_reason:'tool_calls',message:{
       role:'assistant',content:'',tool_calls:[{id:'sub3-workspace-once',
         type:'function',function:{name:'workspace_write',
-          arguments:JSON.stringify({path:'sub3-smoke.txt',content:'SUB3_VERIFIED'})}}]
+          arguments:JSON.stringify({path:targetFile,content:'SUB3_VERIFIED'})}}]
     }}]}
   } else {
     result={choices:[{index:0,finish_reason:'stop',message:{
@@ -137,6 +141,12 @@ try {
   assert.equal(writer.checkpoint?.pendingCall?.name,'workspace_write')
   assert.ok(!existsSync(path.join(workspace,'sub3-smoke.txt')),
     'Write was executed before approval')
+  await page.reload({waitUntil:'domcontentloaded'})
+  await page.getByRole('button',
+    {name:/이 작업 1회 승인|Approve this action only/}).waitFor()
+  const stillPending=await httpJson(`${base}/api/sdk/runs/${writer.id}`)
+  assert.equal(stillPending.checkpoint.pendingCall.id,
+    writer.checkpoint.pendingCall.id,'Approval target changed across refresh')
   await page.getByRole('button',{name:/이 작업 1회 승인|Approve this action only/}).click()
   const finished=await poll('Writer completion',async()=>{
     const run=await httpJson(`${base}/api/sdk/runs/${writer.id}`)
@@ -153,7 +163,24 @@ try {
   await page.reload({waitUntil:'domcontentloaded'})
   const afterRefresh=await httpJson(`${base}/api/sdk/runs/${writer.id}`)
   assert.equal(afterRefresh.phase,'succeeded')
-  console.log('Sub3 native Chromium + Rust HTTP + approval + durable receipt: PASS')
+  // A denied exact approval cannot be re-used to authorize the rejected write.
+  await page.locator('#sdk-goal').fill('sub3-deny.txt 파일에 SUB3_VERIFIED를 작성해 주세요.')
+  await page.getByRole('button',{name:/작업 시작|Start task/}).click()
+  const deniedTarget=await poll('Writer denial target',async()=>{
+    const jobs=await httpJson(`${base}/api/sdk/runs`)
+    const run=jobs.find(job=>job.instruction.includes('sub3-deny.txt'))
+    return {done:run?.status==='awaiting_approval',value:run}
+  })
+  const rejectedCall=deniedTarget.checkpoint.pendingCall.id
+  await page.getByRole('button',{name:/이 도구 실행 거부|Refuse this action/}).click()
+  const stale=await fetch(`${base}/api/sdk/runs/${deniedTarget.id}/approve`,{
+    method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({callId:rejectedCall})
+  })
+  assert.equal(stale.status,409,'A refused approval was silently reused')
+  assert.ok(!existsSync(path.join(workspace,'sub3-deny.txt')),
+    'The denied write changed the workspace')
+  console.log('Sub3 native Chromium + Rust HTTP + approve/deny + durable receipt: PASS')
 } finally {
   await browser?.close().catch(()=>{})
   if(child?.exitCode===null){
