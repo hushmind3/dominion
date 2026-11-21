@@ -1,7 +1,8 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-const apiTarget=process.env.DOMINION_API_URL||'http://127.0.0.1:4317'
+// Keep the sub2 browser dev server on its own Rust runtime, not main:4317.
+const apiTarget=process.env.DOMINION_API_URL||'http://127.0.0.1:4321'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
