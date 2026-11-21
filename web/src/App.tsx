@@ -5,6 +5,7 @@ import {Component,lazy,Suspense,useCallback,useEffect,useLayoutEffect,useState,t
 import {get} from './api'
 import {classifyRefreshEvent,emptyRefreshScope,mergeRefreshScopes} from './refreshEvents'
 import {WorkspaceSidebar,SettingsHeader,navigation,type PageId} from './components/WorkspaceShell'
+import {WorkspaceSearch} from './components/WorkspaceSearch'
 const HomePage=lazy(()=>import('./pages/Home').then(module=>({default:module.HomePage})))
 const CapabilitiesPage=lazy(()=>import('./pages/Capabilities').then(module=>({default:module.CapabilitiesPage})))
 const MemoryPage=lazy(()=>import('./pages/Memory').then(module=>({default:module.MemoryPage})))
@@ -102,6 +103,7 @@ export default function App(){
  const [visited,setVisited]=useState(()=>({chat:locationState().page!=='rooms',rooms:locationState().page==='rooms'}))
  const [chatDraft,setChatDraft]=useState(0)
  const [settingsNav,setSettingsNav]=useState(()=>{try{return localStorage.getItem('dominion.settings.nav')!=='0'}catch{return true}})
+ const [searchOpen,setSearchOpen]=useState(false)
  const toggleSettingsNav=useCallback(()=>setSettingsNav(open=>{const next=!open;try{localStorage.setItem('dominion.settings.nav',next?'1':'0')}catch{}return next}),[])
  const settingsOpen=page!=='chat'&&page!=='rooms'
  const [online,setOnline]=useState(false)
@@ -204,13 +206,17 @@ export default function App(){
   }
   const shortcuts=(e:KeyboardEvent)=>{
    if((e.metaKey||e.ctrlKey)&&e.key===','){e.preventDefault();navigate('settings')}
+   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){
+    e.preventDefault()
+    setSearchOpen(value=>!value)
+   }
   }
   window.addEventListener('keydown',shortcuts)
   return()=>{mounted=false;clearInterval(poll);clearTimeout(refreshTimer);clearTimeout(statusTimer);clearTimeout(approvalsTimer);stream.close();window.removeEventListener('keydown',shortcuts)}
  },[navigate])
  return <OwnerProfileProvider><div className="h-dvh overflow-hidden bg-[#FFFDF9] font-sans text-[#24211D]">
   <ContextMenu/>
-  <main inert={settingsOpen} className="h-dvh min-w-0">
+  <main inert={settingsOpen||searchOpen} className="h-dvh min-w-0">
    {visited.chat&&<div hidden={mode!=='chat'} className="h-full page-chat"><PageLoadBoundary><Suspense fallback={<div role="status" className="p-8 text-sm text-[#7C7469]">대화 불러오는 중…</div>}>
     <ChatPage key={chatDraft} active={mode==='chat'&&!settingsOpen} sessionId={chatRoute.session} initialAgent={chatRoute.agent} initialProvider={chatRoute.provider} initialModel={chatRoute.model} onSession={id=>{
      setChatRoute(previous=>({...previous,session:id}))
@@ -223,7 +229,8 @@ export default function App(){
   {settingsOpen&&<DialogBackdrop onDismiss={closeSettings}><div role="dialog" aria-modal="true" aria-label="설정" className="workspace-settings relative h-[calc(100dvh-40px)] w-full max-w-[1440px] overflow-hidden rounded-2xl border border-[#E7E0D5] bg-[#F6F3EC] shadow-2xl">
    <WorkspaceSidebar settingsOnly page={page} open collapsed={false} online={online} running={running} pending={pending} onNavigate={navigate} onNewChat={()=>navigate('chat')} onClose={closeSettings} navOpen={settingsNav} onToggleNav={toggleSettingsNav}/>
    <div className={'workspace-settings-main flex h-full min-w-0 flex-col '+(settingsNav?'ml-[216px]':'ml-14')}>
-    <SettingsHeader page={page} online={online} build={engineBuild} onClose={closeSettings}/>
+    <SettingsHeader page={page} online={online} build={engineBuild}
+     onSearch={()=>setSearchOpen(true)} onClose={closeSettings}/>
     <div className="workspace-settings-content min-h-0 flex-1 overflow-y-auto">
      <PageLoadBoundary key={page}><Suspense fallback={<div role="status" className="p-8 text-sm text-[#7C7469]">화면 불러오는 중…</div>}>
       {page==='home'&&<HomePage navigate={navigate}/>}
@@ -238,5 +245,6 @@ export default function App(){
     </div>
    </div>
   </div></DialogBackdrop>}
+  {searchOpen&&<WorkspaceSearch onNavigate={navigate} onDismiss={()=>setSearchOpen(false)}/>}
  </div></OwnerProfileProvider>
 }
