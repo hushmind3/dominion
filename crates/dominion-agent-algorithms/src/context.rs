@@ -279,6 +279,10 @@ pub fn project(receipts:&[Receipt], strategy:Strategy, max_result_chars:usize)
     let digest=json!({
         "totalOperations":receipts.len(),
         "failedOperations":receipts.iter().filter(|r|!r.success).count(),
+        "failedToolExecutions":receipts.iter()
+            .filter(|r|!r.success && r.result["skipped"]!=true).count(),
+        "skippedDependencies":receipts.iter()
+            .filter(|r|r.result["skipped"]==true).count(),
         "operationCounts":by_tool,
         "touchedPaths":paths.into_iter().collect::<Vec<_>>(),
         "olderObservationsOmitted":recent_start.saturating_sub(history_index.len()),
@@ -370,6 +374,9 @@ mod tests {
             "Skipped dependent actions are already in the index, not root diagnoses");
         assert_eq!(projected.digest["failedOperations"],9,
             "No persisted evidence is deleted by model-context filtering");
+        assert_eq!(projected.digest["failedToolExecutions"],1);
+        assert_eq!(projected.digest["skippedDependencies"],8,
+            "Dependent skips must not be misreported as independent tool failures");
     }
 
     #[test]
