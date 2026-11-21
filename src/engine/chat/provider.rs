@@ -248,20 +248,32 @@ fn merge_final_chat_message(
 ) -> Result<(String, String), String> {
     let mut new_text = String::new();
     let mut new_reasoning = String::new();
-    if completion.content.is_empty() {
-        if let Some(text) = message["content"].as_str().filter(|text| !text.is_empty()) {
-            completion.content.push_str(text);
-            new_text.push_str(text);
+    if let Some(text) = message["content"].as_str().filter(|text| !text.is_empty()) {
+        // Some relays send delta prefixes and later a complete message.
+        // Append only a proven missing suffix, never replay an old prefix.
+        let suffix = if completion.content.is_empty() {
+            Some(text)
+        } else {
+            text.strip_prefix(completion.content.as_str())
+        };
+        if let Some(suffix) = suffix.filter(|value| !value.is_empty()) {
+            completion.content.push_str(suffix);
+            new_text.push_str(suffix);
         }
     }
-    if completion.reasoning.is_empty() {
-        if let Some(text) = message["reasoning_content"]
-            .as_str()
-            .or_else(|| message["reasoning"].as_str())
-            .filter(|text| !text.is_empty())
-        {
-            completion.reasoning.push_str(text);
-            new_reasoning.push_str(text);
+    if let Some(text) = message["reasoning_content"]
+        .as_str()
+        .or_else(|| message["reasoning"].as_str())
+        .filter(|text| !text.is_empty())
+    {
+        let suffix = if completion.reasoning.is_empty() {
+            Some(text)
+        } else {
+            text.strip_prefix(completion.reasoning.as_str())
+        };
+        if let Some(suffix) = suffix.filter(|value| !value.is_empty()) {
+            completion.reasoning.push_str(suffix);
+            new_reasoning.push_str(suffix);
         }
     }
     if calls.iter().all(|call| call.name.is_empty()) {
@@ -1144,11 +1156,10 @@ async fn stream_completion_once_body(
                 final_message = Some(message.clone());
             }
             if let Some(reason) = piece["choices"][0]["finish_reason"].as_str() {
-                if reason == "content_filter" {
-                    return Err("모델 응답이 콘텐츠 필터로 중단되었습니다.".into());
-                }
-                // Small/local models often hit the token limit. Keep the partial
-                // answer instead of failing the whole turn.
+                // Keep both the partial content and any final usage receipt.
+                // A length/content_filter terminal is not a verified answer:
+                // the product host records the usage before surfacing failure.
+                completion.finish_reason = Some(reason.to_string());
                 terminated = true;
             }
             let Some(delta) = piece
@@ -2149,6 +2160,22 @@ mod final_chat_message_tests {
         assert!(reasoning.is_empty());
         assert_eq!(completion.content, "streamed");
         assert_eq!(calls[0].id, "id");
+    }
+
+    #[test]
+    fn full_final_snapshot_appends_only_the_missing_suffix() {
+        let mut completion=Completion::default();
+        completion.content="partial".into();
+        completion.reasoning="think".into();
+        let mut calls=Vec::new();
+        let (text,reasoning)=merge_final_chat_message(
+            &mut completion,&mut calls,
+            &json!({"content":"partial text","reasoning_content":"thinking"})).unwrap();
+        assert_eq!(text," text");
+        assert_eq!(reasoning,"ing");
+        assert_eq!(completion.content,"partial text");
+        assert_eq!(completion.reasoning,"thinking");
+        assert!(calls.is_empty());
     }
 
     #[test]
