@@ -50,7 +50,8 @@ fn plan(nodes:&[Value])->Result<Vec<Vec<usize>>,String>{
             crate::engine::verification::validate_criteria(&node["successCriteria"])?;
         }
         converted.push(json!({
-            "id":id,"dependsOn":node["dependsOn"],
+            "id":id,"dependsOn":node["dependsOn"].as_array()
+                .cloned().unwrap_or_default(),
             "type":if node["readOnly"]==false {"delegate"} else {"observe"}
         }));
     }
