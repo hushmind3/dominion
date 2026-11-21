@@ -561,28 +561,16 @@ pub async fn restore_backup(
         )
             .into_response();
     }
-    if let Some(key) = embedded_key {
-        if let Err(error) = state.vault.restore_primary(key) {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("secret key 복원 실패: {error}")})),
-            )
-                .into_response();
-        }
-    }
-    if let Err(error) = state.store.replace_database(&bytes) {
+    // DB and vault key form one crash-recoverable restore transaction.
+    // A failure in DB staging, key installation or schema migration must
+    // never advertise a successful restore of only one half of the pair.
+    if let Err(error) = crate::engine::restore_transaction::restore(
+        &state, &bytes, embedded_key,
+    ) {
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": error})),
-        )
-            .into_response();
-    }
-    if let Err(error) = crate::migrations::run(&state) {
-        return (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("복구 후 마이그레이션 실패: {error}")})),
-        )
-            .into_response();
+            Json(json!({"error":error,"restored":false})),
+        ).into_response();
     }
     state.store.audit(
         "system.restored",
