@@ -42,6 +42,7 @@ pub(super) struct Catalog{
     pub discovery:Vec<Value>,
     pub progressive_enabled:bool,
     pub simple_creation_target:Option<std::path::PathBuf>,
+    pub lightweight_only:bool,
     pub is_room:bool,
 }
 
@@ -210,7 +211,7 @@ pub(super) async fn prepare(
     tool_definitions=canonical_tool_definitions(tool_definitions);
     Ok(Catalog{
         definitions:tool_definitions,discovery:discovery_catalog,
-        progressive_enabled,simple_creation_target,is_room,
+        progressive_enabled,simple_creation_target,lightweight_only,is_room,
     })
 }
 
