@@ -520,7 +520,10 @@ mod tests{
         assert_eq!(job["input"]["checks"][0]["type"],"tool_succeeded");
         assert_eq!(job["input"]["checks"][0]["tool"],"shell_exec");
         assert_eq!(job["input"]["checks"][0]["contains"],"cargo test --workspace");
-        let Json(listed)=list(State(state.clone())).await;
+        let listed=list(State(state.clone())).await;
+        assert_eq!(listed.status(),StatusCode::OK);
+        let listed:Value=serde_json::from_slice(&to_bytes(
+            listed.into_body(),1024*1024).await.unwrap()).unwrap();
         assert_eq!(listed[0]["id"],id);
         assert_eq!(one(State(state.clone()),Path(id.into())).await.status(),StatusCode::OK);
         let stopped=cancel(State(state.clone()),Path(id.into())).await;
@@ -607,7 +610,7 @@ mod tests{
         for i in 0..70 {
             state.store.put("job",&json!({"id":format!("native-{i:03}"),
                 "kind":"prompt","status":"completed",
-                "queuedAt":format!("2026-11-21T12:{i:02}:00Z"),
+                "queuedAt":format!("2026-11-21T12:{:02}:{:02}Z",i/60,i%60),
                 "input":{"prompt":format!("step {i}"),
                     "clientSurface":"native_agent_panel"}})).unwrap();
             state.store.put("job",&json!({"id":format!("hidden-{i:03}"),
@@ -867,7 +870,6 @@ mod tests{
         state.store.put("execution_operation",&json!({"id":"race-op",
             "runId":"race-job","status":"interrupted","outcomeUnknown":true,
             "tool":"workspace_write","args":{"path":"a.txt"}})).unwrap();
-        let job=state.store.get("job","race-job").unwrap();
         let conditions=vec![
             ("job","race-job","status",json!("needs_review")),
             ("job","race-job","attempts",json!(2)),

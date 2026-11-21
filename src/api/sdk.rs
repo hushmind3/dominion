@@ -224,7 +224,11 @@ mod tests {
         assert!(state.store.get("sdk_run",id).is_none());
         assert_eq!(one(State(state.clone()),Path(id.into())).await.status(),StatusCode::OK);
         assert_eq!(list(State(state.clone())).await.0.as_array().unwrap().len(),1);
-        assert!(sdk_runs::list(State(state.clone())).await.0.as_array().unwrap().is_empty());
+        let native_list=sdk_runs::list(State(state.clone())).await;
+        assert_eq!(native_list.status(),StatusCode::OK);
+        let list_body=to_bytes(native_list.into_body(),1024*1024).await.unwrap();
+        let native_rows:Value=serde_json::from_slice(&list_body).unwrap();
+        assert!(native_rows.as_array().unwrap().is_empty());
         if let Some(session)=job["sessionId"].as_str(){state.cancel_session(session);}
         let _=std::fs::remove_dir_all(root);
     }
