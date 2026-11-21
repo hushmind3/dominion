@@ -2,6 +2,69 @@
 use super::*;
 
 #[test]
+fn shared_agent_empty_and_reset_prompts_match_real_provider_wire() {
+    let _serial=serial();
+    let (port, requests)=scripted_provider(|_|vec![json!({
+        "choices":[{"delta":{"content":"prompt-ack"},"finish_reason":"stop"}],
+        "usage":{"prompt_tokens":32,"completion_tokens":3,"total_tokens":35}
+    })]);
+    let app=TestApp::new(port,"native");
+    let agent=app.post("/api/agents",&json!({
+        "name":"prompt-agent","systemPrompt":"AGENT_BASE_PERSONA"
+    }));
+    let agent_id=agent["id"].as_str().unwrap();
+    let session=app.post("/api/sessions",&json!({
+        "title":"prompt wire comparison","agentId":agent_id
+    }));
+    let session_id=session["id"].as_str().unwrap();
+    let send=|app:&TestApp|app.chat(&json!({
+        "sessionId":session_id,"agentId":agent_id,"input":"안녕",
+        "toolsEnabled":false,"autoLearning":false,"thinking":false
+    }));
+    let last_wire=||{
+        requests.lock().unwrap().last().unwrap()["messages"][0]["content"]
+            .as_str().unwrap().to_string()
+    };
+    let common=app.post("/api/settings/system-prompt/override",
+        &json!({"prompt":"GLOBAL_PROMPT_SENTINEL"}));
+    assert_eq!(common["overrideActive"],true);
+    let preview=app.get("/api/settings/system-prompt/preview?input=%EC%95%88%EB%85%95&toolsEnabled=false");
+    assert_eq!(preview["systemPrompt"],"GLOBAL_PROMPT_SENTINEL");
+    assert!(send(&app).contains("prompt-ack"));
+    assert_eq!(last_wire(),preview["systemPrompt"]);
+
+    let agent_saved=app.post("/api/settings/system-prompt/override",
+        &json!({"agentId":agent_id,"prompt":"AGENT_OVERRIDE_SENTINEL"}));
+    assert_eq!(agent_saved["overrideActive"],true);
+    let scoped_preview=app.get(&format!(
+        "/api/settings/system-prompt/preview?input=%EC%95%88%EB%85%95&toolsEnabled=false&agentId={agent_id}"));
+    assert_eq!(scoped_preview["effectiveOverrideScope"],"agent");
+    assert!(send(&app).contains("prompt-ack"));
+    assert_eq!(last_wire(),scoped_preview["systemPrompt"]);
+    assert_eq!(last_wire(),"AGENT_OVERRIDE_SENTINEL");
+
+    let empty=app.post("/api/settings/system-prompt/override",
+        &json!({"agentId":agent_id,"prompt":""}));
+    assert_eq!(empty["overrideActive"],true);
+    assert!(send(&app).contains("prompt-ack"));
+    assert_eq!(last_wire(),"","empty override must not resurrect default persona");
+
+    let reset_agent=app.post("/api/settings/system-prompt/override",
+        &json!({"agentId":agent_id,"prompt":null}));
+    assert_eq!(reset_agent["overrideActive"],false);
+    assert!(send(&app).contains("prompt-ack"));
+    assert_eq!(last_wire(),"GLOBAL_PROMPT_SENTINEL");
+
+    let reset_common=app.post("/api/settings/system-prompt/override",
+        &json!({"prompt":null}));
+    assert_eq!(reset_common["overrideActive"],false);
+    assert!(send(&app).contains("prompt-ack"));
+    assert!(last_wire().contains("DOMINION"),
+        "reset must recover generated built-in identity");
+    assert_eq!(requests.lock().unwrap().len(),5);
+}
+
+#[test]
 fn private_chat_selects_one_current_context_and_evicts_old_long_input() {
     let _serial=serial();
     let (port,requests)=scripted_provider(|_|vec![json!({
