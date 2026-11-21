@@ -10,7 +10,32 @@ use serde_json::{json, Value};
 
 /// Safe, compact projections for the existing Activity UI.
 /// Never return a managed Team's prompt, system instructions or remote source bytes.
-fn team_activity_view(team:&Value, members:&[Value], remote_tasks:&[Value])->Value{
+fn prior_team_wave_pending(team:&Value,plan:&[Value],members:&[Value],
+    remote_tasks:&[Value],node_id:&str)->bool{
+    let Some(node_index)=plan.iter().position(|node|node["id"]==node_id)else{return false;};
+    let Some(waves)=team["waves"].as_array()else{return false;};
+    let Some(current_wave)=waves.iter().position(|wave|wave.as_array()
+        .is_some_and(|indices|indices.iter().any(|i|i.as_u64()==Some(node_index as u64))))
+        else{return false;};
+    waves.iter().take(current_wave).any(|wave|wave.as_array().into_iter().flatten().any(|index|{
+        let Some(node)=index.as_u64().and_then(|i|plan.get(i as usize))else{return true;};
+        let row=members.iter().find(|row|row["teamId"]==team["id"]
+            && row["nodeId"]==node["id"]);
+        row.is_none_or(|row|{
+            if row["status"]!="completed"{return true;}
+            let Some(remote_id)=row["remoteTaskId"].as_str()else{return false;};
+            remote_tasks.iter().find(|task|task["id"]==remote_id
+                && task["teamId"]==team["id"]).is_some_and(|task|
+                task["artifactPaths"].as_array().is_some_and(|paths|!paths.is_empty())
+                    &&task["artifactApplyStatus"]!="applied")
+        })
+    }))
+}
+
+/// Every operator status is projected from stored worker/approval/lease
+/// state, never inferred from assistant prose or a frontend-local timer.
+fn team_activity_view(team:&Value, members:&[Value], remote_tasks:&[Value],
+    workers:&[Value],approvals:&[Value])->Value{
     let id=team["id"].as_str().unwrap_or("");
     let plan=team["tasks"].as_array().cloned().unwrap_or_default();
     let mut blocked=false;
@@ -30,6 +55,27 @@ fn team_activity_view(team:&Value, members:&[Value], remote_tasks:&[Value])->Val
         let apply=remote.and_then(|t|t["artifactApplyStatus"].as_str());
         let has_artifacts=remote.is_some_and(|t|
             t["artifactPaths"].as_array().is_some_and(|p|!p.is_empty()));
+        let remote_worker=node["remoteWorkerId"].as_str();
+        let worker_online=remote_worker.is_none_or(|worker_id|workers.iter()
+            .any(|worker|worker["id"]==worker_id && worker["online"]==true));
+        let pending_approval=row.and_then(|r|r["workerSessionId"].as_str())
+            .is_some_and(|worker_session|approvals.iter().any(|approval|
+                approval["sessionId"]==worker_session && approval["status"]=="pending"));
+        let waiting_predecessors=status=="assigned"
+            && prior_team_wave_pending(team,&plan,members,remote_tasks,node_id);
+        let approval_state=if !has_artifacts{Value::Null}else{json!(match apply{
+            Some("pending")=>"awaiting_review",
+            Some("applying"|"applied")=>"approved",
+            Some("rejected")=>"rejected",
+            _=>"unresolved",
+        })};
+        let display_state=if team["status"]=="cancelled"{"cancelled"}
+            else if pending_approval{"approval_pending"}
+            else if has_artifacts && apply==Some("pending"){"file_review_pending"}
+            else if has_artifacts && apply==Some("applying"){"applying_files"}
+            else if matches!(status,"assigned"|"running"|"launching") && !worker_online{"offline"}
+            else if waiting_predecessors{"waiting_predecessors"}
+            else{status};
         if status=="completed" && has_artifacts && apply!=Some("applied"){
             blocked=true;
             if apply==Some("pending"){
@@ -42,7 +88,14 @@ fn team_activity_view(team:&Value, members:&[Value], remote_tasks:&[Value])->Val
             "status":status,
             "readOnly":node["readOnly"]!=false,
             "dependsOn":node["dependsOn"].as_array().cloned().unwrap_or_default(),
-            "verified":row.is_some_and(|r|r["verified"]==true),
+            "verified":row.is_some_and(|r|r["verified"]==true)
+                && (!has_artifacts || apply==Some("applied")),
+            "displayState":display_state,
+            "pendingApproval":pending_approval,
+            "workerOnline":worker_online,
+            "waitingPredecessors":waiting_predecessors,
+            "artifactApprovalState":approval_state,
+            "artifactApplied":has_artifacts && apply==Some("applied"),
             "remoteWorkerId":node["remoteWorkerId"],
             "remoteTaskId":remote_id,
             "artifactApplyStatus":apply,
@@ -60,6 +113,9 @@ fn team_activity_view(team:&Value, members:&[Value], remote_tasks:&[Value])->Val
         "verified":all_done && !blocked && status=="completed"
             && tasks.iter().all(|t|t["verified"]==true),
         "pendingRemoteArtifactTaskIds":pending_artifacts,
+        "resumeAvailable":status=="running" && tasks.iter().all(|t|
+            t["pendingApproval"]!=true && t["displayState"]!="offline")
+            && pending_artifacts.is_empty(),
         "tasks":tasks,
     })
 }
@@ -72,6 +128,8 @@ pub async fn team_activity(State(state):State<AppState>)->Json<Value>{
         .cmp(a["createdAt"].as_str().unwrap_or("")));
     let members=state.store.all("managed_team_task");
     let remote_tasks=state.store.all("remote_task");
+    let approvals=state.store.all("approval").into_iter()
+        .filter(|approval|approval["status"]=="pending").collect::<Vec<_>>();
     let now=chrono::Utc::now().timestamp_millis();
     let mut workers=state.store.all("remote_worker").into_iter().map(|node|{
         let heartbeat=node["lastHeartbeatMs"].as_i64().unwrap_or(0);
@@ -88,7 +146,7 @@ pub async fn team_activity(State(state):State<AppState>)->Json<Value>{
     workers.truncate(64);
     Json(json!({
         "teams":teams.iter().take(30).map(|team|
-            team_activity_view(team,&members,&remote_tasks)).collect::<Vec<_>>(),
+            team_activity_view(team,&members,&remote_tasks,&workers,&approvals)).collect::<Vec<_>>(),
         "remoteWorkers":workers,
         "remoteConfigured":crate::remote::control_plane_configured(),
     }))
@@ -207,6 +265,34 @@ pub async fn execution_operations(
 mod team_activity_tests{
     use super::*;
     #[test]
+    fn team_ui_uses_real_worker_heartbeats_dependencies_and_pending_approvals(){
+        let team=json!({"id":"team","status":"running","tasks":[
+            {"id":"research","agentId":"a","remoteWorkerId":"remote-a","readOnly":true},
+            {"id":"write","agentId":"b","readOnly":false,"dependsOn":["research"]}],
+            "waves":[[0],[1]]});
+        let members=vec![
+            json!({"teamId":"team","nodeId":"research","status":"running","workerSessionId":"s-1"}),
+            json!({"teamId":"team","nodeId":"write","status":"assigned"})
+        ];
+        let offline=vec![json!({"id":"remote-a","online":false})];
+        let view=team_activity_view(&team,&members,&[],&offline,&[]);
+        assert_eq!(view["tasks"][0]["displayState"],"offline");
+        assert_eq!(view["tasks"][1]["displayState"],"waiting_predecessors");
+        assert_eq!(view["resumeAvailable"],false);
+        let online=vec![json!({"id":"remote-a","online":true})];
+        let approvals=vec![json!({"sessionId":"s-1","status":"pending"})];
+        let view=team_activity_view(&team,&members,&[],&online,&approvals);
+        assert_eq!(view["tasks"][0]["displayState"],"approval_pending");
+        assert_eq!(view["tasks"][1]["waitingPredecessors"],true);
+        assert_eq!(view["resumeAvailable"],false);
+        let mut settled=members.clone();
+        settled[0]["status"]=json!("completed");
+        let view=team_activity_view(&team,&settled,&[],&online,&[]);
+        assert_eq!(view["tasks"][1]["waitingPredecessors"],false);
+        assert_eq!(view["resumeAvailable"],true);
+    }
+
+    #[test]
     fn remote_pending_merge_blocks_completion_without_exposing_prompts_or_source(){
         let team=json!({"id":"team-1","leadSessionId":"s1",
             "leadAgentId":"lead","status":"running",
@@ -218,15 +304,20 @@ mod team_activity_tests{
         let remote=vec![json!({"id":"task-1","teamId":"team-1",
             "artifactPaths":["src/lib.rs"],"artifactApplyStatus":"pending",
             "artifacts":[{"path":"src/lib.rs","content":"SECRET_SOURCE"}]})];
-        let visible=team_activity_view(&team,&members,&remote);
+        let online=vec![json!({"id":"worker-b","online":true})];
+        let visible=team_activity_view(&team,&members,&remote,&online,&[]);
         assert_eq!(visible["status"],"needs_review");
         assert_eq!(visible["pendingRemoteArtifactTaskIds"],json!(["task-1"]));
         assert_eq!(visible["verified"],false);
         assert!(!visible.to_string().contains("SECRET_"));
         let mut applied=remote;
         applied[0]["artifactApplyStatus"]=json!("applied");
-        let done=team_activity_view(&team,&members,&applied);
+        let done=team_activity_view(&team,&members,&applied,&online,&[]);
         assert_eq!(done["status"],"completed");
+        assert_eq!(visible["tasks"][0]["artifactApprovalState"],"awaiting_review");
+        assert_eq!(done["tasks"][0]["artifactApprovalState"],"approved");
+        assert_eq!(done["tasks"][0]["artifactApplied"],true);
+        assert_eq!(done["tasks"][0]["verified"],true);
         assert_eq!(done["verified"],true);
     }
 }
