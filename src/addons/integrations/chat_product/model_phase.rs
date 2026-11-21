@@ -1,6 +1,11 @@
 //! MainTurn model preparation, completion and verification.
 use super::*;
 
+// A zero tool budget forbids tools; it must not forbid the model's first answer.
+fn tool_budget_exhausted(used: usize, limit: usize) -> bool {
+    limit > 0 && used >= limit
+}
+
 pub(super) fn prepare_model<'a>(
         turn: &'a mut MainTurn<'_>,
         _ctx: &'a mut Context<'_>,
@@ -21,7 +26,7 @@ pub(super) fn prepare_model<'a>(
             if turn.started_at.elapsed() > turn.elapsed_limit {
                 return Err("실행 시간 제한(10분)을 초과했습니다.".into());
             }
-            if turn.max_tools > 0 && turn.metrics.lock().unwrap().tool_calls as usize >= turn.max_tools {
+            if tool_budget_exhausted(turn.metrics.lock().unwrap().tool_calls as usize, turn.max_tools) {
                 mark_budget_exhausted(turn.state, turn.execution_id);
                 return Err(format!("도구 호출 제한({max_tools}회)을 초과했습니다."));
             }
@@ -648,3 +653,16 @@ pub(super) fn verify<'a>(turn: &'a mut MainTurn<'_>, ctx: &'a mut Context<'_>) -
         })
     }
 
+
+#[cfg(test)]
+mod direct_chat_budget_tests {
+    use super::tool_budget_exhausted;
+
+    #[test]
+    fn zero_tool_budget_allows_model_answer_but_never_a_tool_call() {
+        assert!(!tool_budget_exhausted(0, 0));
+        assert!(!tool_budget_exhausted(1, 0));
+        assert!(!tool_budget_exhausted(0, 1));
+        assert!(tool_budget_exhausted(1, 1));
+    }
+}
