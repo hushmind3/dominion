@@ -21,7 +21,7 @@ pub(super) fn prepare_model<'a>(
             if turn.started_at.elapsed() > turn.elapsed_limit {
                 return Err("실행 시간 제한(10분)을 초과했습니다.".into());
             }
-            if turn.metrics.lock().unwrap().tool_calls as usize >= turn.max_tools {
+            if turn.max_tools > 0 && turn.metrics.lock().unwrap().tool_calls as usize >= turn.max_tools {
                 mark_budget_exhausted(turn.state, turn.execution_id);
                 return Err(format!("도구 호출 제한({max_tools}회)을 초과했습니다."));
             }
@@ -88,7 +88,7 @@ pub(super) fn prepare_model<'a>(
             }
             turn.model_round.model_started = std::time::Instant::now();
             turn.model_round.model_offset_ms = turn.turn_started.elapsed().as_millis() as u64;
-            turn.model_round.round_tools = if turn.force_final {
+            turn.model_round.round_tools = if turn.force_final || turn.max_tools == 0 {
                 Vec::new()
             } else {
                 turn.tool_definitions.clone()
