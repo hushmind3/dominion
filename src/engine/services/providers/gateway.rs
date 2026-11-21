@@ -66,67 +66,99 @@ pub struct ModelRequirements{
     pub vision:bool,
     pub reasoning:bool,
 }
+/// The selected *endpoint* may have different abilities than the model's
+/// default route. Only explicitly declared false values deny a feature:
+/// older custom local adapters can still run with unknown capability data.
 pub fn supports_requirements(
     provider:&Value,model_id:&str,required:ModelRequirements,
 )->bool{
-    let base=&provider["capabilities"];
-    let model=&provider["modelCapabilities"][model_id];
-    let supported=|keys:&[&str]|->bool{
-        for key in keys{
-            if model[*key].as_bool()==Some(false){return false;}
-            if model[*key].as_bool()==Some(true){return true;}
-        }
-        for key in keys{
-            if base[*key].as_bool()==Some(false){return false;}
-            if base[*key].as_bool()==Some(true){return true;}
+    supports_requirements_for_endpoint(provider,model_id,
+        provider["baseUrl"].as_str().unwrap_or(""),required)
+}
+pub fn supports_requirements_for_endpoint(
+    provider:&Value,model_id:&str,endpoint:&str,required:ModelRequirements,
+)->bool{
+    let layers=[
+        &provider["endpointCapabilities"][endpoint][model_id],
+        &provider["modelCapabilities"][model_id],
+        &provider["capabilities"],
+    ];
+    let feature=|keys:&[&str]|->bool{
+        for layer in layers{
+            for key in keys{
+                if let Some(value)=layer[*key].as_bool(){return value;}
+            }
         }
         true
     };
-    supported(&["text"]) &&
-        (!required.tools || supported(&["toolCalling","tools"])) &&
-        (!required.vision || supported(&["vision","images"])) &&
-        (!required.reasoning || supported(&["reasoningSupported","thinking"]))
+    feature(&["text"])
+        && (!required.tools||feature(&["toolCalling","tools"]))
+        && (!required.vision||feature(&["vision","images"]))
+        && (!required.reasoning||feature(&["reasoningSupported","thinking"]))
 }
-
-/// Versioned capability negotiation for one concrete model and endpoint.
-/// Unknown is represented by JSON null with source=unknown, never reported
-/// as confirmed support. Capability declarations at model scope override
-/// provider defaults; the admission verdict remains backward-compatible with
-/// legacy custom local endpoints that do not expose a capability catalog.
-pub fn negotiate_capabilities(
-    provider:&Value,model_id:&str,required:ModelRequirements,
+/// Versioned, source-addressed endpoint negotiation. No model name heuristics
+/// or guessed price/cache savings. This reports actual selected endpoint
+/// features but does not imply successful live API/provider negotiation.
+pub fn negotiate_capabilities_for_endpoint(
+    provider:&Value,model_id:&str,endpoint:&str,required:ModelRequirements,
 )->Value{
-    let base=&provider["capabilities"];
-    let model=&provider["modelCapabilities"][model_id];
-    let resolve=|keys:&[&str]|->Value{
-        for key in keys{
-            if let Some(value)=model[*key].as_bool(){
-                return json!({"supported":value,"source":"model","key":key});
-            }
-        }
-        for key in keys{
-            if let Some(value)=base[*key].as_bool(){
-                return json!({"supported":value,"source":"provider","key":key});
+    let layers=[
+        ("endpoint",&provider["endpointCapabilities"][endpoint][model_id]),
+        ("model",&provider["modelCapabilities"][model_id]),
+        ("provider",&provider["capabilities"]),
+    ];
+    let bool_feature=|keys:&[&str]|->Value{
+        for (source,layer) in layers{
+            for key in keys{
+                if let Some(value)=layer[*key].as_bool(){
+                    return json!({"supported":value,"source":source,"key":key});
+                }
             }
         }
         json!({"supported":null,"source":"unknown"})
     };
+    let numeric=|keys:&[&str]|->Value{
+        for (source,layer) in layers{
+            for key in keys{
+                if let Some(value)=layer[*key].as_u64(){
+                    return json!({"value":value,"source":source,"key":key});
+                }
+            }
+        }
+        json!({"value":null,"source":"unknown"})
+    };
     json!({
-        "schemaVersion":1,
+        "schemaVersion":2,
         "providerId":provider["id"],
         "modelId":model_id,
+        "endpointId":endpoint,
         "protocol":provider["kind"],
         "local":is_local_provider(provider),
         "features":{
-            "text":resolve(&["text"]),
-            "tools":resolve(&["toolCalling","tools"]),
-            "vision":resolve(&["vision","images"]),
-            "reasoning":resolve(&["reasoningSupported","thinking"])
+            "text":bool_feature(&["text"]),
+            "tools":bool_feature(&["toolCalling","tools"]),
+            "vision":bool_feature(&["vision","images"]),
+            "reasoning":bool_feature(&["reasoningSupported","thinking"]),
+            "parallelToolCalls":bool_feature(&["parallelToolCalls","parallel_tool_calls"]),
+            "promptCache":bool_feature(&["promptCache","promptCaching"]),
+            "streaming":bool_feature(&["streaming"]),
+        },
+        "limits":{
+            "contextWindow":numeric(&["contextWindow","contextTokens"]),
+            "maxOutputTokens":numeric(&["maxOutputTokens"]),
         },
         "required":{"tools":required.tools,"vision":required.vision,
                     "reasoning":required.reasoning},
-        "admitted":supports_requirements(provider,model_id,required)
+        "admitted":supports_requirements_for_endpoint(provider,model_id,endpoint,required),
     })
+}
+/// Compatibility entrypoint for older clients, but endpoint-specific
+/// capabilities always take precedence when the provider declares them.
+pub fn negotiate_capabilities(
+    provider:&Value,model_id:&str,required:ModelRequirements,
+)->Value{
+    negotiate_capabilities_for_endpoint(provider,model_id,
+        provider["baseUrl"].as_str().unwrap_or(""),required)
 }
 
 /// A provider may explicitly declare `capabilities.text=false`; absence means
@@ -750,6 +782,36 @@ mod sub2_capability_tests {
         assert!(supports_requirements(&provider,"unknown",ModelRequirements{
             tools:true,..Default::default()
         }));
+    }
+    #[test]
+    fn endpoint_overrides_model_catalog_without_granting_unknown_features(){
+        let provider=json!({
+            "id":"local","kind":"openai","baseUrl":"http://127.0.0.1:8080/v1",
+            "capabilities":{"toolCalling":true,"streaming":true,"promptCache":false},
+            "modelCapabilities":{"qwen":{"toolCalling":true,"contextWindow":32768}},
+            "endpointCapabilities":{
+                "http://127.0.0.1:8080/v1":{
+                    "qwen":{"toolCalling":false,"contextWindow":8192,"streaming":false}
+                },
+                "http://127.0.0.1:8090/v1":{
+                    "qwen":{"toolCalling":true,"contextWindow":65536,"parallelToolCalls":true}
+                }
+            }
+        });
+        let required=ModelRequirements{tools:true,..Default::default()};
+        let local=negotiate_capabilities_for_endpoint(&provider,"qwen",
+            "http://127.0.0.1:8080/v1",required);
+        assert_eq!(local["admitted"],false);
+        assert_eq!(local["features"]["tools"]["source"],"endpoint");
+        assert_eq!(local["limits"]["contextWindow"]["value"],8192);
+        assert_eq!(local["features"]["streaming"]["supported"],false);
+        let alternate=negotiate_capabilities_for_endpoint(&provider,"qwen",
+            "http://127.0.0.1:8090/v1",required);
+        assert_eq!(alternate["admitted"],true);
+        assert_eq!(alternate["limits"]["contextWindow"]["value"],65536);
+        assert_eq!(alternate["features"]["parallelToolCalls"]["supported"],true);
+        assert_eq!(alternate["features"]["promptCache"]["source"],"provider");
+        assert!(alternate["features"]["vision"]["supported"].is_null());
     }
     #[test]
     fn negotiation_records_model_overrides_and_unknown_capabilities_without_fake_grants(){
