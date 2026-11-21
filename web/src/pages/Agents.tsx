@@ -44,6 +44,17 @@ import {
   useRemote,
 } from "../components/UI";
 import { t, useLocale } from "../i18n";
+// Preserve an in-progress persona form across navigation/refresh in this tab.
+const AGENT_DRAFT_KEY='dominion.agent.unsavedEditor'
+const readAgentDraft=():Partial<Agent>|null=>{
+ try{
+  const source=sessionStorage.getItem(AGENT_DRAFT_KEY)
+  if(!source||source.length>120_000)return null
+  const parsed=JSON.parse(source)
+  return parsed&&typeof parsed==='object'&&!Array.isArray(parsed)
+   &&typeof parsed.name==='string'?parsed as Partial<Agent>:null
+ }catch{return null}
+}
 const accents = [
   "#5979e8",
   "#9067d9",
@@ -56,7 +67,7 @@ export function AgentsPage() {
   useLocale();
   const agents = useRemote<Agent[]>("/api/agents", []),
     providers = useRemote<Provider[]>("/api/providers", []);
-  const [edit, setEdit] = useState<Partial<Agent> | null>(null),
+  const [edit, setEdit] = useState<Partial<Agent> | null>(readAgentDraft),
     [error, setError] = useState(""), [saving, setSaving] = useState(false);
   const [showPersonaImport,setShowPersonaImport]=useState(false);
   const [bulk, setBulk] = useState(false),
@@ -66,6 +77,14 @@ export function AgentsPage() {
     [bulkEffort, setBulkEffort] = useState(""),
     [bulkBusy, setBulkBusy] = useState(false),
     [bulkNotice, setBulkNotice] = useState("");
+  useEffect(()=>{
+    try{
+      if(edit){
+        const encoded=JSON.stringify(edit)
+        if(encoded.length<=120_000)sessionStorage.setItem(AGENT_DRAFT_KEY,encoded)
+      }else sessionStorage.removeItem(AGENT_DRAFT_KEY)
+    }catch{/* Storage disabled/full must not block editing. */}
+  },[edit])
   const enabledProviders = providers.value.filter(p => p.enabled !== false);
   const editProvider = enabledProviders.find(p => p.id === edit?.providerId);
   const editModels = useProviderModels(edit?.providerId || "");
