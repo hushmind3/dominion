@@ -41,6 +41,17 @@ pub async fn delete_session(State(state): State<AppState>, Path(id): Path<String
     let running = state.active.lock().unwrap().contains(&id)
         || state.store.all("execution").iter().any(|run| {
             run["sessionId"].as_str() == Some(id.as_str()) && run["status"] == "running"
+        })
+        || state.store.all("job").iter().any(|job| {
+            matches!(job["status"].as_str(), Some("queued" | "running"))
+                && ["/sessionId", "/input/sessionId", "/input/parentSessionId",
+                    "/goalState/sessionId", "/roomState/sessionId",
+                    "/workflowState/sessionId"].iter().any(|path| {
+                    job.pointer(path).and_then(Value::as_str) == Some(id.as_str())
+                })
+        })
+        || state.store.all("managed_team").iter().any(|team| {
+            team["leadSessionId"] == id && team["status"] == "running"
         });
     if running {
         return error(StatusCode::CONFLICT, "실행 중인 대화입니다. 중지 완료 후 삭제하세요.");
@@ -355,6 +366,12 @@ mod deletion_tests {
         assert_eq!(busy.status(), StatusCode::CONFLICT);
         assert!(state.store.get("session", "active").is_some());
         state.end_session("active");
+        state.store.put("job", &json!({
+            "id":"pending", "status":"queued", "input":{"sessionId":"active"}
+        }));
+        let pending = delete_session(State(state.clone()), Path("active".into())).await;
+        assert_eq!(pending.status(), StatusCode::CONFLICT);
+        state.store.remove("job", "pending");
         let group = delete_session(State(state.clone()), Path("group".into())).await;
         assert_eq!(group.status(), StatusCode::CONFLICT);
         assert!(state.store.get("session", "group").is_some());
