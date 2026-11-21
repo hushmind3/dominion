@@ -44,10 +44,10 @@ async fn pick_path(directory: bool) -> Response {
     } else {
         vec!["zenity", "--file-selection", "--file-filter=GGUF | *.gguf"]
     };
-    let output = tokio::process::Command::new(command[0])
-        .args(&command[1..])
-        .output()
-        .await;
+    let mut picker = tokio::process::Command::new(command[0]);
+    picker.args(&command[1..]);
+    let output = crate::integrations::local_tools::run_command(
+        &mut picker, std::time::Duration::from_secs(600)).await;
     match output {
         Ok(output) if output.status.success() => {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
