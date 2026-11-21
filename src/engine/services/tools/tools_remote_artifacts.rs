@@ -86,7 +86,7 @@ fn build_patch(workspace:&Path,record:&Value)->Result<String,String>{
     if patch.len()>512*1024 {return Err("Remote changes exceed native patch limits".into());}
     Ok(patch)
 }
-pub(super) async fn apply(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
+pub(super) async fn apply(ctx:&ToolContext<'_>,args:&Value,run_id:&str)->Result<Value,String>{
     let team_id=args["teamId"].as_str().filter(|s|!s.is_empty()).ok_or("teamId required")?;
     let task_id=args["remoteTaskId"].as_str().filter(|s|!s.is_empty())
         .ok_or("remoteTaskId required")?;
@@ -111,7 +111,7 @@ pub(super) async fn apply(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String
     let claimed=ctx.store.patch_if("remote_task",task_id,
         "artifactApplyStatus",&json!("pending"),&json!({
             "artifactApplyStatus":"applying","artifactApplyClaimedAt":chrono::Utc::now().to_rfc3339(),
-            "artifactApplyRunId":args["runId"],
+            "artifactApplyRunId":run_id,
         })).ok_or("Remote artifact was claimed concurrently")?;
     ctx.state.bus.record("remote_task",&claimed);
     let result=patch::apply(ctx.workspace,&changes).await;
