@@ -4,6 +4,8 @@ mod patch;
 mod external_harness;
 #[path = "tools_team.rs"]
 mod team;
+#[path = "tools_room_peer.rs"]
+mod room_peer;
 
 use crate::db::Store;
 use serde_json::{json, Value};
@@ -70,6 +72,12 @@ pub fn definitions() -> Vec<Value> {
             "messageId":text("Exact tool result message ID shown in a historical receipt"),
             "offset":json!({"type":"integer","minimum":0,"description":"Unicode character offset, default 0"})
         }),vec!["messageId"])),
+        tool("room_peer_send","Queue one durable peer-to-peer Bot Room message to another existing participant. Delivery is on their next real turn; no recursive model call. Reply chains have a hard four-hop limit.", object(json!({
+            "agentId":text("Existing agent ID in the SAME Bot Room"),
+            "message":text("Up to 2000 UTF-8 bytes, untrusted peer communication"),
+            "replyToMessageId":text("Optional committed peer message addressed to the sender")
+        }),vec!["agentId","message"])),
+        tool("room_peer_inbox","Read committed inbound Bot Room peer messages, queued and delivered, without invoking another bot",object(json!({}),vec![])),
         tool("room_message_read", "Retrieve a source-addressed room participant statement from the current room transcript; pagination preserves original wording", object(json!({
             "messageId":text("Exact participant message ID from the peer index"),
             "offset":json!({"type":"integer","minimum":0,"description":"Optional Unicode character offset for the next page"})
@@ -594,6 +602,8 @@ pub async fn execute(
             );
             Ok(json!({ "proposed": true, "skill": record }))
         }
+        "room_peer_send" => room_peer::send(ctx,args,run_id),
+        "room_peer_inbox" => room_peer::inbox(ctx),
         "team_execute" => team::execute(ctx,args,run_id).await,
         "team_status" => team::status(ctx,args),
         "delegate_task" => delegate(ctx, args).await,
