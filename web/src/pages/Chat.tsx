@@ -134,7 +134,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   index>lastSeenOwnerIndex&&message.role==='user'&&message.content===optimisticOwner.content));
  const showOptimisticOwner=Boolean(optimisticOwner?.sessionId===current&&!ownerReceived&&(busy||savedMessageId));
  const slashItems=slashOpen?slashCandidates(input,agents.value,models):[];
- const transcriptRevision=JSON.stringify([messages.at(-1)?.id,messages.length,viewingTurn?live.length:0,viewingTurn?thought.length:0,viewingTurn?toolStatus:'',approval?.id]);
+ const transcriptRevision=JSON.stringify([messages.at(-1)?.id,messages.length,showOptimisticOwner,busy&&viewingTurn,viewingTurn?live.length:0,viewingTurn?thought.length:0,viewingTurn?toolStatus:'',approval?.id]);
  const usageRevision=JSON.stringify([messages.at(-1)?.id,messages.length]);
  useEffect(()=>{if(!current){setServerUsage(0);return}let alive=true;get<{totalTokens?:number}>('/api/sessions/'+encodeURIComponent(current)+'/usage').then(usage=>{if(alive)setServerUsage(Number(usage.totalTokens)||0)}).catch(()=>{});return()=>{alive=false}},[current,usageRevision])
  const [moreBelow,setMoreBelow]=useState(false);
