@@ -85,6 +85,9 @@ try{
       await route.fulfill({status:200,contentType:'text/event-stream',body:': smoke\n\n'});
       return;
     }
+    if(path==='/api/attachments'){
+      response={id:'attachment-fixture',name:'note.txt',size:15,supportedForModel:'text'};
+    }
     if(path==='/api/chat'){
       if(route.request().postDataJSON()?.input==='실패한 요청 복구'){
         await route.fulfill({status:503,contentType:'application/json',
@@ -278,8 +281,26 @@ try{
   assert.equal(agentRoute.agentId,'separate');
   assert.equal(agentRoute.providerId,undefined);
   assert.equal(agentRoute.model,undefined);
+  await page.evaluate(()=>{window.location.hash='#/chat?session=chat-two'});
+  await page.locator('input[aria-label="첨부 파일 선택"]').setInputFiles({
+    name:'note.txt',mimeType:'text/plain',buffer:Buffer.from('hello from chat')
+  });
+  await page.getByText('note.txt',{exact:true}).waitFor({timeout:10000});
+  await chatInput.fill('첨부 파일을 읽어줘');
+  const uploadSeen=page.waitForRequest(request=>
+    new URL(request.url()).pathname==='/api/attachments');
+  const attachedChatSeen=page.waitForRequest(request=>
+    new URL(request.url()).pathname==='/api/chat');
+  await chatInput.press('Enter');
+  const uploadBody=(await uploadSeen).postDataJSON();
+  assert.equal(uploadBody.sessionId,'chat-two');
+  assert.equal(uploadBody.name,'note.txt');
+  assert.equal(uploadBody.data,Buffer.from('hello from chat').toString('base64'));
+  const attachedChat=(await attachedChatSeen).postDataJSON();
+  assert.deepEqual(attachedChat.attachmentIds,['attachment-fixture']);
+  assert.equal(attachedChat.input,'첨부 파일을 읽어줘');
   assert.deepEqual(errors,[], 'Chat/Team React runtime errors');
-  console.log('PASS Chromium direct and agent route isolation, modes, failed send draft recovery');
+  console.log('PASS Chromium route isolation, safe Markdown, attachment upload/send contract');
 }finally{
   await browser?.close();
   server.kill('SIGTERM');

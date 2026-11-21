@@ -7,7 +7,7 @@ import {MarkdownMessage} from '../components/MarkdownMessage'
 import {createPortal} from 'react-dom'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormEvent,useEffect,useMemo,useRef,useState,type KeyboardEvent} from 'react'
-import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
+import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Paperclip,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
 import {Agent,Approval,ChatMessage,ChatSession,Provider,get,post,resolveApproval,streamChat,koreanReasoningEnabled} from '../api'
 import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
@@ -26,6 +26,19 @@ type LearningJob=JobState & {result?:LearningResult}
 type ModelOverride={scope?:string;providerId:string;model:string}
 type InstalledModel={id:string;repo:string;label:string;format:string;bytes:number;source?:string}
 type Runtime={status:string;id?:string;name?:string;model?:string;error?:string}
+type PendingFile=File
+type UploadedFile={id:string;sessionId:string}
+const maxFileBytes=8*1024*1024,maxTotalBytes=24*1024*1024,maxFileCount=8
+async function fileToBase64(file:File):Promise<string>{
+ const data=new Uint8Array(await file.arrayBuffer())
+ let binary=''
+ for(let at=0;at<data.length;at+=32768)binary+=String.fromCharCode(...data.subarray(at,at+32768))
+ return btoa(binary)
+}
+function supportedChatFile(file:File):boolean{
+ return /^(?:image\/(?:png|jpeg|gif|webp)|text\/|application\/(?:json|xml))/.test(file.type)||
+  /\.(?:txt|md|csv|ts|tsx|js|mjs|json|py|rs|yaml|yml|xml|html|css|log|sql)$/i.test(file.name)
+}
 const chatDraftPrefix='dominion.chat.draft.v1:'
 type ChatExecutionMode='chat'|'agent'
 const chatModePrefix='dominion.chat.execution-mode.v1:'
@@ -103,6 +116,29 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   storeChatDraft(scope,text)
   redrawDraft(revision=>revision+1)
  }
+ const fileDrafts=useRef<Record<string,PendingFile[]>>({})
+ const uploadedFiles=useRef<WeakMap<File,UploadedFile>>(new WeakMap())
+ const [,redrawFiles]=useState(0)
+ const draftFiles=fileDrafts.current[draftScope]||[]
+ const addFiles=(selection:FileList|null)=>{
+  if(!selection)return
+  const next=[...draftFiles]
+  for(const file of Array.from(selection)){
+   if(!supportedChatFile(file)){setError('이미지(PNG/JPG/WEBP/GIF) 또는 텍스트 파일만 첨부할 수 있습니다.');continue}
+   if(file.size>maxFileBytes){setError('파일 한 개는 최대 8MiB입니다.');continue}
+   if(next.some(item=>item.name===file.name&&item.size===file.size&&item.lastModified===file.lastModified))continue
+   if(next.length>=maxFileCount||next.reduce((sum,item)=>sum+item.size,0)+file.size>maxTotalBytes){
+    setError('첨부는 최대 8개, 합계 24MiB까지 가능합니다.');break
+   }
+   next.push(file)
+  }
+  fileDrafts.current[draftScope]=next
+  redrawFiles(value=>value+1)
+ }
+ const removeFile=(at:number)=>{
+  fileDrafts.current[draftScope]=draftFiles.filter((_,i)=>i!==at)
+  redrawFiles(value=>value+1)
+ }
  const [agentChoice,setAgentChoice]=useState<{scope?:string;id:string}>();
  const [override,setOverride]=useState<ModelOverride>();
  const defaultAgent=agents.value.find(agent=>agent.id==='default')||agents.value.find(agent=>agent.name==='기본값')||agents.value.find(agent=>agent.id==='general');
@@ -138,6 +174,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const [permissionOpen,setPermissionOpen]=useState(false);
  const [modelMenu,setModelMenu]=useState(false),[installed,setInstalled]=useState<InstalledModel[]>([]),[modelsLoading,setModelsLoading]=useState(false),[runtime,setRuntime]=useState<Runtime>({status:'idle'}),[modelBusy,setModelBusy]=useState(''),[unloading,setUnloading]=useState(false),[learning,setLearning]=useState(false),[menuError,setMenuError]=useState('');
  const [slashOpen,setSlashOpen]=useState(false),[slashActive,setSlashActive]=useState(0),[commandInfo,setCommandInfo]=useState('');
+ const fileInputRef=useRef<HTMLInputElement>(null);
  const inputRef=useRef<HTMLTextAreaElement>(null);
  const stream=useRef<AbortController|null>(null);
  const activeTurnSession=useRef<string|undefined>(undefined);
@@ -370,7 +407,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   setSlashOpen(false);void executeCommand(item.command);
  };
  const send=async(e?:FormEvent)=>{
-  e?.preventDefault();const text=input.trim();if(!text)return;
+  e?.preventDefault();const text=input.trim();const filesToSend=[...draftFiles];if(!text&&!filesToSend.length)return;
   if(text.startsWith('/')){
    if(busy&&text!=='/stop')return;
    await executeCommand(text);return;
@@ -397,6 +434,11 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     });
     if(controller.signal.aborted)return;
     id=session.id;
+    if(filesToSend.length){
+     fileDrafts.current[id]=filesToSend
+     delete fileDrafts.current.new
+     redrawFiles(value=>value+1)
+    }
     modeValues.current[id]=executionMode
     storeChatMode(id,executionMode)
     activeTurnSession.current=id;
@@ -407,20 +449,37 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     }
     void sessions.reload();
    }
+   const attachmentIds:string[]=[]
+   for(const file of filesToSend){
+    if(controller.signal.aborted)return
+    const reused=uploadedFiles.current.get(file)
+    if(reused?.sessionId===id){attachmentIds.push(reused.id);continue}
+    const uploaded=await post<{id:string}>('/api/attachments',{
+     sessionId:id,name:file.name,mimeType:file.type||'application/octet-stream',
+     data:await fileToBase64(file)
+    })
+    if(controller.signal.aborted)return
+    uploadedFiles.current.set(file,{id:uploaded.id,sessionId:id!})
+    attachmentIds.push(uploaded.id)
+   }
    setInput(previous=>previous.trim()===text?'':previous);
    if(inputRef.current)inputRef.current.style.height='';
    await streamChat({
     sessionId:id,conversationMode:executionMode,
     agentId:executionMode==='agent'?agentId:undefined,
     providerId:executionMode==='chat'?providerId:manual?.providerId,
-    model:executionMode==='chat'?model:manual?.model,input:text,
+    model:executionMode==='chat'?model:manual?.model,input:text,attachmentIds,
     toolsEnabled:executionMode==='agent'&&toolsEnabled,
     toolsExecutionEnabled:executionMode==='agent'&&toolsEnabled,
     autoLearning:executionMode==='agent'&&autoLearn,
     reasoningLanguage:reasoningKo?'ko':'original',reasoningEffort:reasoningEffort||undefined,thinking:selectedProvider?.kind==='codex'?(reasoningEffort==='none'?false:canDisableThinking?thinkingEnabled:undefined):thinkingEnabled,
    },event=>{
     if(controller.signal.aborted||stoppingRef.current||stream.current!==controller)return;
-    if(event.type==='assistant_saved'){saved=true;setSavedMessageId(event.messageId);refresh('/api/sessions',...(id?['/api/sessions/'+encodeURIComponent(id)+'/messages']:[]));}
+    if(event.type==='assistant_saved'){
+     saved=true;setSavedMessageId(event.messageId)
+     if(id&&filesToSend.length){fileDrafts.current[id]=[];redrawFiles(value=>value+1)}
+     refresh('/api/sessions',...(id?['/api/sessions/'+encodeURIComponent(id)+'/messages']:[]))
+    }
     if(event.type==='text')setLive(old=>old+event.text);
     if(event.type==='reasoning')setThought(old=>old+event.text);
     if(event.type==='approval'){setLiveApproval({id:event.id,tool:event.tool,args:event.args,sessionId:id!,status:'pending'});void approvals.reload();}
@@ -523,9 +582,12 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
       <Button type="button" className="chat-execution-mode-option" aria-pressed={executionMode==='agent'} disabled={busy} onClick={()=>setExecutionMode('agent')}><TerminalSquare size={14}/> 에이전트 실행</Button>
       <span className="chat-execution-mode-hint">{executionMode==='chat'?'도구 사용 없이 모델과 대화':'파일·도구·MCP 작업 가능'}</span>
      </div>
+     {draftFiles.length>0&&<div className="chat-file-drafts" aria-label="첨부 대기 파일">{draftFiles.map((file,i)=><span key={i} className="chat-file-chip"><Paperclip size={13}/><span title={file.name}>{file.name}</span><small>{formatBytes(file.size)}</small><button type="button" aria-label={file.name+' 첨부 취소'} disabled={busy} onClick={()=>removeFile(i)}><X size={13}/></button></span>)}</div>}
+     <input ref={fileInputRef} type="file" className="sr-only" multiple accept="image/png,image/jpeg,image/webp,image/gif,.txt,.md,.csv,.ts,.tsx,.js,.mjs,.json,.py,.rs,.yaml,.yml,.xml,.html,.css,.log,.sql" aria-label="첨부 파일 선택" disabled={busy} onChange={e=>{addFiles(e.currentTarget.files);e.currentTarget.value=''}}/>
      <TextArea ref={inputRef} rows={1} placeholder={t("chat.inputPlaceholder")} value={input} onChange={e=>{const next=e.target.value;setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n'));setSlashActive(0);const el=e.currentTarget;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,180)+'px'}} onKeyDown={appendKey} aria-controls="dominion-slash-menu" aria-expanded={slashOpen} className="conversation-composer-input"/>
      <div className="chat-composer-controls conversation-composer-controls">
       <div className="chat-composer-options conversation-composer-options">
+       <Button type="button" variant="ghost" disabled={busy} className="chat-file-add" title="이미지 또는 텍스트 파일 첨부" onClick={()=>fileInputRef.current?.click()}><Paperclip size={15}/><span className="hidden sm:inline">첨부</span></Button>
        {executionMode==='agent'&&<ExecutionPermissions active={active} open={permissionOpen} onOpenChange={open=>{setPermissionOpen(open);if(open){setShowSettings(false);setModelMenu(false)}}} onError={setError} onChanged={label=>setCommandInfo(t('chat.perm.changed',{label}))}/>}
 
        <ReasoningSelect value={reasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} model={selectedModel} requireCatalog={selectedProvider?.kind==='codex'} defaultLabel={executionMode==='agent'&&activeAgent?.reasoningEffort?`에이전트 설정 (${activeAgent.reasoningEffort})`:t('chat.reasoningAuto')} className="chat-reasoning !h-7 !w-auto !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-[#5C544A]"/>
@@ -535,7 +597,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
       <div className="ml-auto flex items-center gap-2">
        <span className="hidden text-[10px] text-[#9C9388] sm:inline">{t('chat.enterHint')}</span>
        {busy?<Button className="conversation-composer-send !bg-rose-600 hover:!bg-rose-700" type="button" onClick={()=>void stopChat()} disabled={stopping} title={stopping?t('chat.stopping'):t('chat.stop')} aria-label={stopping?t('chat.stopping'):t('chat.stop')}>{stopping?<LoaderCircle size={18} className="animate-spin"/>:<Square size={18} fill="currentColor"/>}</Button>
-       :<Button className="conversation-composer-send" disabled={stopping||Boolean(selectedSession?.roomId)||(Boolean(current)&&sessions.loading)||!input.trim()} type="submit" title={t('chat.send')}><ArrowUp size={19}/></Button>}
+       :<Button className="conversation-composer-send" disabled={stopping||Boolean(selectedSession?.roomId)||(Boolean(current)&&sessions.loading)||(!input.trim()&&!draftFiles.length)} type="submit" title={t('chat.send')}><ArrowUp size={19}/></Button>}
       </div>
      </div>
     </form></div>
@@ -546,12 +608,14 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
 function Message({message,agentName,showReasoning}:{message:ChatMessage;agentName?:string;showReasoning?:boolean}){
  const [open,setOpen]=useState(true)
  const human=message.role==='user'
+ const attached=(Array.isArray(message.metadata?.attachments)?message.metadata.attachments:[]) as {id:string;name:string;size?:number;isImage?:boolean}[]
  return <div className={'chat-turn '+(human?'chat-turn-owner':'chat-turn-assistant')} data-message data-role={message.role}>
   {!human&&<div className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#A94E30]"><Sparkles size={17}/></div>}
   <div className="chat-turn-body">
    {!human&&<div className="chat-turn-byline">{agentName||'DOMINION'}<TokenUsage usage={message.metadata?.usage} className="ml-auto rounded border border-[#E7DDCC] bg-[#F7F1E6] px-1.5 py-0.5 text-[9px] font-medium text-[#8A775F]"/></div>}
    {showReasoning&&message.reasoning&&<details className="mb-3 max-h-56 overflow-y-auto rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-[11px] leading-5 text-[#7C7469]" open={open}><summary className="cursor-pointer select-none" onClick={e=>{e.preventDefault();setOpen(v=>!v)}}><BrainCircuit size={14} className="inline"/> {t('chat.reasoningProcess',{count:message.reasoning.length.toLocaleString()})} <ChevronRight size={13} className="inline"/></summary><div className="mt-2 whitespace-pre-wrap">{message.reasoning}</div></details>}
-   <div className="chat-turn-text">{human?message.content:<MarkdownMessage text={message.content||(!human&&message.tool_calls?.length?t('chat.toolRequest'):'')}/>}</div>
+   {(message.content||!human)&&<div className="chat-turn-text">{human?message.content:<MarkdownMessage text={message.content||(!human&&message.tool_calls?.length?t('chat.toolRequest'):'')}/>}</div>}
+   {human&&attached.length>0&&<div className="chat-saved-attachments">{attached.map(file=><a key={file.id} href={'/api/attachments/'+encodeURIComponent(file.id)+'/content'} target="_blank" rel="noopener noreferrer"><Paperclip size={13}/><span>{file.name}</span></a>)}</div>}
    {!human&&message.content&&<Button className="chat-turn-copy inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] text-[#7C7469] hover:bg-[#F3EEE5]" onClick={()=>void navigator.clipboard.writeText(message.content)} title={t('chat.copy')}><Copy size={14}/></Button>}
   </div>
  </div>

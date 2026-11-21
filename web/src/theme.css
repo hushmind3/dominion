@@ -145,3 +145,16 @@
 .md-message th{background:#F4EEE5;font-weight:700}
 .md-message tr:nth-child(2n) td{background:#FBF8F2}
 .md-message-raw{white-space:pre-wrap}
+
+/* Composer attachments are scoped to the selected private conversation. */
+.chat-file-add{display:inline-flex!important;align-items:center;gap:5px!important;font-size:12px!important;border:0!important;padding:5px 9px!important;color:#766B5F!important}
+.chat-file-add:hover{background:#F5EEE7!important}
+.chat-file-drafts{display:flex;flex-wrap:wrap;gap:6px;padding:5px 13px 8px;max-height:106px;overflow-y:auto}
+.chat-file-chip{display:inline-flex;align-items:center;gap:5px;max-width:100%;border:1px solid #E5D9CB;border-radius:9px;padding:5px 8px;background:#FBF7EF;color:#685B4E;font-size:12px}
+.chat-file-chip>span{min-width:0;max-width:170px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.chat-file-chip small{font-size:10px;color:#A09689}
+.chat-file-chip button{display:inline-flex;align-items:center;justify-content:center;border:0;background:transparent;color:#897C6D;padding:2px;border-radius:4px}
+.chat-file-chip button:hover{background:#F0E7DC}
+.chat-saved-attachments{display:flex;justify-content:flex-end;gap:5px;flex-wrap:wrap;margin-top:6px}
+.chat-saved-attachments a{display:inline-flex;align-items:center;gap:5px;max-width:100%;border:1px solid #E6D9CA;background:#F4EEE4;border-radius:9px;padding:7px 10px;text-decoration:none;color:#675746;font-size:12px;overflow-wrap:anywhere}
+.chat-saved-attachments a:hover{background:#EAE0D4}
