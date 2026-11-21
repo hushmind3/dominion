@@ -170,7 +170,7 @@ mod tests{
         assert_eq!(journal.seen.lock().unwrap().len(),1);
         run.model_calls+=1;
         run.model_in_flight=false;
-        journal.save(&run).unwrap();
+        crate::Journal::save(&journal,&run).unwrap();
         assert_eq!(journal.seen.lock().unwrap()[1].model_calls,1);
     }
     #[test] fn failed_paid_call_stays_unknown_and_owner_change_never_dispatches(){
