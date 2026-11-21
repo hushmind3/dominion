@@ -553,6 +553,19 @@ pub fn start_now(state: AppState, job_id: String) {
     });
 }
 
+/// A Lead's textual reply is not proof that a native managed DAG exists.
+/// Only a Team committed under this exact job ID can satisfy the UI task.
+fn verify_team_ui_completion(state:&AppState,job:&Value,result:Value)->Value{
+    if job["input"]["uiSource"]!="team_activity"{return result;}
+    if state.store.all("managed_team").iter().any(|team|
+        team["uiOwnerJobId"]==job["id"]
+        && team["leadSessionId"]==job["sessionId"]){
+        return result;
+    }
+    json!({"status":"needs_review",
+        "reason":"Lead returned without committing a native Team DAG; no Worker execution was verified",
+        "leadJobId":job["id"],"leadSessionId":job["sessionId"]})
+}
 async fn run_job(state: AppState, job: Value) {
     let job_id = job
         .get("id")
@@ -591,6 +604,7 @@ async fn run_job(state: AppState, job: Value) {
 
     match result {
         Ok(result) => {
+            let result=verify_team_ui_completion(&state,&job,result);
             let status = result
                 .get("status")
                 .and_then(Value::as_str)
@@ -1194,6 +1208,20 @@ mod tests {
         assert_eq!(saved["result"],"latest");
     }
 
+    #[test]
+    fn ui_team_start_must_commit_real_team_before_success(){
+        let state=temp_state();
+        let job=state.store.put("job",&json!({"id":"lead-1",
+            "sessionId":"lead-session","input":{"uiSource":"team_activity"}})).unwrap();
+        let answer=json!({"messageId":"text-only-answer"});
+        assert_eq!(verify_team_ui_completion(&state,&job,answer.clone())["status"],"needs_review");
+        state.store.put("managed_team",&json!({"id":"native-team",
+            "leadSessionId":"lead-session","uiOwnerJobId":"other-job"})).unwrap();
+        assert_eq!(verify_team_ui_completion(&state,&job,answer.clone())["status"],"needs_review");
+        state.store.put("managed_team",&json!({"id":"native-team",
+            "leadSessionId":"lead-session","uiOwnerJobId":"lead-1"})).unwrap();
+        assert_eq!(verify_team_ui_completion(&state,&job,answer.clone()),answer);
+    }
     #[test]
     fn cancelled_attempt_cannot_store_terminal_success(){
         let state=temp_state();
