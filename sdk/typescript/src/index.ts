@@ -15,6 +15,10 @@ export interface Job extends RecordItem {
 export interface Execution extends RecordItem { status: string; sessionId?: string; startedAt?: string; finishedAt?: string }
 export interface Agent extends RecordItem { name: string; systemPrompt?: string; providerId?: string; model?: string }
 export interface Session extends RecordItem { title: string; agentId?: string; roomId?: string; providerId?: string; model?: string; conversationMode?:'chat'|'agent' }
+/** Session-wide Stop acknowledgement. requestRecorded means a delayed POST is tombstoned. */
+export interface ChatCancellation { cancelled:boolean; running?:boolean; requestRecorded?:boolean }
+/** Durable release status: do not abort the stream solely on the Stop acknowledgement. */
+export interface ChatStopStatus { sessionId:string; stopped:boolean; active:boolean; running:boolean }
 export interface Room extends RecordItem { name: string; agentIds: string[]; sessionId?: string; rounds?: number; tokenBudget?: number }
 export interface Approval extends RecordItem { status: string; sessionId?: string; tool?: string; args?: unknown }
 export interface StreamEvent { type: string; [key: string]: unknown }
@@ -219,7 +223,16 @@ export class Dominion {
     get: (key:string,options?:RequestOptions) => this.request<Session>('GET','/api/sessions/'+id(key),undefined,options),
     messages: (key:string,options?:RequestOptions) => this.request<RecordItem[]>('GET','/api/sessions/'+id(key)+'/messages',undefined,options),
     usage: (key:string,options?:RequestOptions) => this.request<unknown>('GET','/api/sessions/'+id(key)+'/usage',undefined,options),
-    cancel: (key:string,options?:RequestOptions) => this.request<{cancelled:boolean}>('POST','/api/sessions/'+id(key)+'/cancel',{},options),
+    cancel: (key:string,options?:RequestOptions) => this.request<ChatCancellation>('POST','/api/sessions/'+id(key)+'/cancel',{},options),
+    /** Session-wide Stop plus a tombstone for this UUID, including a delayed Chat POST. */
+    cancelTurn: (key:string,requestId:string,options?:RequestOptions) => {
+      if(typeof requestId!=='string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(requestId))
+        throw new TypeError('cancelTurn requires a UUID requestId from streamChat');
+      return this.request<ChatCancellation>('POST','/api/sessions/'+id(key)+'/cancel',{requestId},options);
+    },
+    /** Poll until stopped before treating model/tool execution as released. */
+    cancelStatus: (key:string,options?:RequestOptions) =>
+      this.request<ChatStopStatus>('GET','/api/sessions/'+id(key)+'/cancel-status',undefined,options),
     fork: (key:string,options?:RequestOptions) => this.request<Session>('POST','/api/sessions/'+id(key)+'/fork',{},options),
     compact: (key:string,body:Record<string,unknown>={},options?:RequestOptions) => this.request<unknown>('POST','/api/sessions/'+id(key)+'/compact',body,options),
   };
