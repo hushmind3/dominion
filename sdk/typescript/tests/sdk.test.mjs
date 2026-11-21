@@ -127,6 +127,33 @@ test('offline replay and paired cost comparison use exact Rust read-only endpoin
   assert.equal(calls[1].init.method,'POST');
   assert.ok(calls.every(c=>c.init.headers['X-Dominion-Token']==='owner'));
 });
+test('Task Team SDK uses native DAG routes and explicit worktree review',async()=>{
+  const calls=[];
+  const sdk=new Dominion({fetch:async(url,init)=>{
+    calls.push({url,init});return reply({id:'lead',status:'queued',tasks:[]});
+  }});
+  const plan={goal:'Implement and inspect',maxParallel:2,tasks:[
+    {id:'read',prompt:'Inspect code',mode:'read',runtime:'native'},
+    {id:'write',prompt:'Make approved changes',mode:'write',
+      isolation:'worktree',dependsOn:['read']}
+  ]};
+  await sdk.taskTeams.create(plan);
+  await sdk.taskTeams.get('lead/x');
+  await sdk.taskTeams.cancel('lead/x');
+  await sdk.taskTeams.retry('lead/x');
+  await sdk.taskTeams.preview('lead/x','write/a');
+  await sdk.taskTeams.promote('lead/x','write/a','a'.repeat(64));
+  assert.deepEqual(calls.map(c=>new URL(c.url).pathname),[
+    '/api/task-teams','/api/task-teams/lead%2Fx',
+    '/api/task-teams/lead%2Fx/cancel','/api/task-teams/lead%2Fx/retry',
+    '/api/task-teams/lead%2Fx/worktrees/write%2Fa/preview',
+    '/api/task-teams/lead%2Fx/worktrees/write%2Fa/promote'
+  ]);
+  assert.deepEqual(JSON.parse(calls[0].init.body),plan);
+  assert.deepEqual(JSON.parse(calls[3].init.body),{confirm:true});
+  assert.deepEqual(JSON.parse(calls[5].init.body),
+    {confirm:true,expectedDiffSha256:'a'.repeat(64)});
+});
 test('native approval conflict is never turned into optimistic success',async()=>{
   const sdk=new Dominion({fetch:async()=>reply({error:'Approval expired'},409)});
   await assert.rejects(()=>sdk.nativeRuns.approve('n1','expired'),error=>
