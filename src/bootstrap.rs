@@ -39,6 +39,13 @@ async fn serve(mut config: Config, open_browser: bool, parent_bound: bool) -> Re
             config.data_dir.display()
         )
     })?;
+    // Finish an interrupted restore before either SQLite or the vault is
+    // opened. Never run migrations against a half-restored DB/key pair.
+    if crate::engine::restore_transaction::recover_before_open(
+        &config.db_path(),&config.key_path()
+    )? {
+        eprintln!("DOMINION recovered a previously interrupted database/key restore");
+    }
     let store = Store::open(&config.db_path()).map_err(|error| {
         format!(
             "cannot open database {}: {error}",
