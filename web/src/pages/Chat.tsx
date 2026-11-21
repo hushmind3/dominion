@@ -167,7 +167,10 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  useEffect(()=>{if(!current){setOverride(undefined);setAgentChoice(undefined)}},[initialAgent,initialProvider,initialModel]);
  const [isDropping,setIsDropping]=useState(false)
  const handleFileDrop=(event:DragEvent<HTMLFormElement>)=>{
-  event.preventDefault();setIsDropping(false)
+  setIsDropping(false)
+  if(!event.dataTransfer.files.length)return
+  // Only file drops are intercepted. Dropped text still reaches textarea.
+  event.preventDefault()
   addFiles(event.dataTransfer.files)
  }
  const handleClipboardFiles=(event:ClipboardEvent<HTMLTextAreaElement>)=>{

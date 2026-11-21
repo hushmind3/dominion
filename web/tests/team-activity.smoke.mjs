@@ -327,6 +327,14 @@ try{
   await page.getByText('pasted.txt',{exact:true}).waitFor({timeout:10000})
   assert.equal(await chatInput.inputValue(),'대화 초안 유지')
   await page.getByRole('button',{name:'pasted.txt 첨부 취소'}).click()
+  await page.locator('form.conversation-composer').evaluate(form=>{
+    const dt=new DataTransfer()
+    dt.items.add(new File(['dropped-note'],'dropped.txt',{type:'text/plain'}))
+    form.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:dt}))
+  })
+  await page.getByText('dropped.txt',{exact:true}).waitFor({timeout:10000})
+  assert.equal(await chatInput.inputValue(),'대화 초안 유지')
+  await page.getByRole('button',{name:'dropped.txt 첨부 취소'}).click()
   await page.getByRole('button',{name:'대화 목록 펼치기'}).click();
   const historySearch=page.getByRole('searchbox',{name:'대화 목록 검색'});
   await historySearch.fill('independent');
