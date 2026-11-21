@@ -64,6 +64,7 @@ pub struct RunView {
     pub status: String,
     pub terminal: bool,
     pub review_required: bool,
+    #[serde(default)] pub owner_action_required: bool,
     #[serde(default)] pub attempt: Option<u64>,
     #[serde(default)] pub session_id: Option<String>,
     #[serde(default)] pub provider_id: Option<String>,
