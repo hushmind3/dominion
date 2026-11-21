@@ -184,12 +184,15 @@ impl Assembler {
             // not incremental delta content. Treat it as a fallback, never
             // append a final copy to already-streamed text or tool fragments.
             if let Some(message)=choice.get("message") {
-                if self.text.is_empty() {
+                let delta=&choice["delta"];
+                if self.text.is_empty() &&
+                    !delta["content"].as_str().is_some_and(|content|!content.is_empty()){
                     if let Some(text)=message["content"].as_str() {
                         self.append_text(text,updates)?;
                     }
                 }
-                if self.calls.is_empty() {
+                if self.calls.is_empty() &&
+                    !delta["tool_calls"].as_array().is_some_and(|calls|!calls.is_empty()){
                     for (index,call) in message["tool_calls"].as_array()
                         .into_iter().flatten().enumerate() {
                         if index>=MAX_NATIVE_CALLS {
@@ -522,6 +525,14 @@ mod tests {
         assert!(changes.is_empty());
         text.feed(Packet::Done).unwrap();
         assert_eq!(text.finish().unwrap()["choices"][0]["message"]["content"],"one");
+
+        let mut hybrid=Assembler::new(Wire::Chat);
+        hybrid.feed(Packet::Data(json!({"choices":[{"index":0,
+            "delta":{"content":"same-frame"},"message":{"content":"same-frame"},
+            "finish_reason":"stop"}]}))).unwrap();
+        hybrid.feed(Packet::Done).unwrap();
+        assert_eq!(hybrid.finish().unwrap()["choices"][0]["message"]["content"],
+            "same-frame");
 
         let mut invalid=Assembler::new(Wire::Chat);
         assert!(invalid.feed(Packet::Data(json!({"choices":[{"index":0,
