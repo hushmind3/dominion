@@ -53,27 +53,44 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-async fn verify_get(client: &reqwest::Client, url: &str, expected: &str, expected_len: usize) -> bool {
+async fn file_sha256(path:&Path)->Result<(String,u64),String>{
+    use tokio::io::AsyncReadExt;
+    let mut file=tokio::fs::File::open(path).await.map_err(|error|error.to_string())?;
+    let mut hasher=Sha256::new();
+    let mut buffer=[0u8;64*1024];
+    let mut length=0u64;
+    loop{
+        let count=file.read(&mut buffer).await.map_err(|error|error.to_string())?;
+        if count==0{break;}
+        hasher.update(&buffer[..count]);
+        length=length.saturating_add(count as u64);
+    }
+    Ok((format!("{:x}",hasher.finalize()),length))
+}
+
+async fn verify_get(client: &reqwest::Client, url: &str, expected: &str, expected_len: u64) -> bool {
     let Ok(mut response) = client.get(url).send().await else {
         return false;
     };
     if !response.status().is_success() {
         return false;
     }
-    if response.content_length().is_some_and(|length|length!=expected_len as u64){
+    if response.content_length().is_some_and(|length|length!=expected_len){
         return false;
     }
-    let mut body=Vec::with_capacity(expected_len.min(1024*1024));
+    let mut hasher=Sha256::new();
+    let mut length=0u64;
     while let Some(chunk)=match response.chunk().await{Ok(chunk)=>chunk,Err(_)=>return false}{
-        if body.len().saturating_add(chunk.len())>expected_len{return false;}
-        body.extend_from_slice(&chunk);
+        length=length.saturating_add(chunk.len() as u64);
+        if length>expected_len{return false;}
+        hasher.update(&chunk);
     }
-    body.len()==expected_len && sha256_hex(&body)==expected
+    length==expected_len && format!("{:x}",hasher.finalize())==expected
 }
 
 pub async fn upload(path: &Path, config: &RemoteConfig) -> RemoteReport {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
+    let (checksum,expected_len) = match file_sha256(path).await {
+        Ok(result) => result,
         Err(error) => {
             return RemoteReport {
                 uploaded: false,
@@ -85,7 +102,6 @@ pub async fn upload(path: &Path, config: &RemoteConfig) -> RemoteReport {
             }
         }
     };
-    let checksum = sha256_hex(&bytes);
     let name = path
         .file_name()
         .and_then(|value| value.to_str())
@@ -111,11 +127,27 @@ pub async fn upload(path: &Path, config: &RemoteConfig) -> RemoteReport {
     let total_attempts = config.retries.saturating_add(1);
     let mut last_error = String::new();
     for attempt in 1..=total_attempts {
+        let file=match tokio::fs::File::open(path).await{
+            Ok(file)=>file,
+            Err(error)=>{
+                last_error=error.to_string();
+                break;
+            }
+        };
+        let body_stream=futures_util::stream::try_unfold(file,|mut file|async move{
+            use tokio::io::AsyncReadExt;
+            let mut chunk=vec![0u8;64*1024];
+            let count=file.read(&mut chunk).await?;
+            if count==0{return Ok::<_,std::io::Error>(None);}
+            chunk.truncate(count);
+            Ok(Some((chunk,file)))
+        });
         let mut request = client
             .put(&url)
             .header("Content-Type", "application/octet-stream")
             .header("x-dominion-sha256", &checksum)
-            .body(bytes.clone());
+            .header(reqwest::header::CONTENT_LENGTH,expected_len)
+            .body(reqwest::Body::wrap_stream(body_stream));
         if !config.token.is_empty() {
             request = request.bearer_auth(&config.token);
         }
@@ -126,7 +158,7 @@ pub async fn upload(path: &Path, config: &RemoteConfig) -> RemoteReport {
                     .get("x-dominion-sha256")
                     .and_then(|value| value.to_str().ok())
                     == Some(checksum.as_str());
-                if echoed || verify_get(&client, &url, &checksum, bytes.len()).await {
+                if echoed || verify_get(&client, &url, &checksum, expected_len).await {
                     return RemoteReport {
                         uploaded: true,
                         verified: true,
