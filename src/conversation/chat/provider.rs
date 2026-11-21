@@ -30,6 +30,32 @@ fn parse_codex_stream_event(payload: &str) -> Result<Value, String> {
         .map_err(|error| format!("Invalid Codex SSE JSON: {error}"))
 }
 
+/// Some compatible gateways deliver the complete assistant message in a
+/// terminal Chat SSE event instead of delta fragments. Validate typed calls
+/// before handing them to the host, and never duplicate earlier deltas.
+fn settled_chat_message(message: &Value) -> Result<(Option<String>,Vec<ToolCall>),String> {
+    let text=message["content"].as_str().map(str::to_string);
+    let mut calls=Vec::new();
+    for call in message["tool_calls"].as_array().into_iter().flatten() {
+        if calls.len()>=MAX_TOOL_CALLS {
+            return Err("Final Chat message exceeds the tool call limit".into());
+        }
+        let id=call["id"].as_str().filter(|id|!id.is_empty())
+            .ok_or("Final Chat tool call has no ID")?;
+        let name=call["function"]["name"].as_str().filter(|name|!name.is_empty())
+            .ok_or("Final Chat tool call has no name")?;
+        let arguments=call["function"]["arguments"].as_str()
+            .ok_or("Final Chat tool call has no JSON arguments")?;
+        let parsed:Value=serde_json::from_str(arguments)
+            .map_err(|e|format!("Invalid final Chat tool arguments: {e}"))?;
+        if !parsed.is_object() {
+            return Err("Final Chat tool arguments must be a JSON object".into());
+        }
+        calls.push(ToolCall{id:id.into(),name:name.into(),arguments:arguments.into()});
+    }
+    Ok((text,calls))
+}
+
 fn codex_settled_text(output: &[Value]) -> String {
     let mut text = String::new();
     for item in output {
@@ -1173,6 +1199,23 @@ async fn stream_completion_once_body(
                 // Small/local models often hit the token limit. Keep the partial
                 // answer instead of failing the whole turn.
                 terminated = true;
+            }
+            // Complete-message-only Chat compatibility, including a final
+            // usage-only packet with empty choices. Never append a settled
+            // body or tool call a second time after streaming its deltas.
+            if let Some(message)=piece["choices"][0].get("message") {
+                let (text,final_calls)=settled_chat_message(message)?;
+                if completion.content.is_empty() {
+                    if let Some(text)=text.filter(|text|!text.is_empty()) {
+                        completion.first_delta_ms.get_or_insert(started.elapsed().as_millis() as u64);
+                        completion.content.push_str(&text);
+                        stream_visible_text(tx,&text,&mut text_pending,&mut in_text_tool_call);
+                    }
+                }
+                if calls.is_empty() && !final_calls.is_empty() {
+                    completion.first_delta_ms.get_or_insert(started.elapsed().as_millis() as u64);
+                    calls=final_calls;
+                }
             }
             let Some(delta) = piece
                 .get("choices")
@@ -2759,6 +2802,28 @@ mod tests {
         assert!(parse_anthropic_tool_arguments("{\"path\":", &json!({})).is_err());
         assert!(parse_anthropic_tool_arguments("[1]", &json!({})).is_err());
         assert!(parse_anthropic_tool_arguments("", &json!([])).is_err());
+    }
+
+    #[test]
+    fn chat_final_message_only_supports_text_and_typed_tools_without_fake_args() {
+        let (text,calls)=settled_chat_message(&json!({
+            "role":"assistant","content":"final only",
+            "tool_calls":[{"id":"f1","function":{
+                "name":"workspace_read","arguments":"{\"path\":\"README.md\"}"
+            }}]
+        })).unwrap();
+        assert_eq!(text.as_deref(),Some("final only"));
+        assert_eq!(calls.len(),1);
+        assert_eq!(calls[0].id,"f1");
+        assert_eq!(serde_json::from_str::<Value>(&calls[0].arguments).unwrap()["path"],
+            "README.md");
+        for bad in [
+            json!({"tool_calls":[{"id":"f1","function":{"name":"read","arguments":"{broken"}}]}),
+            json!({"tool_calls":[{"id":"f1","function":{"name":"read","arguments":"[]"}}]}),
+            json!({"tool_calls":[{"id":"","function":{"name":"read","arguments":"{}"}}]})
+        ] {
+            assert!(settled_chat_message(&bad).is_err());
+        }
     }
 
     #[test]
