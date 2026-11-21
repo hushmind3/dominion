@@ -85,8 +85,10 @@
  white-space:pre-wrap;word-break:break-word;color:#342D25
 }
 .page-chat .chat-message-content--assistant{
- width:100%;white-space:pre-wrap;word-break:break-word;color:#292622
+ width:100%;white-space:normal;word-break:break-word;color:#292622
 }
+.page-chat .chat-rich-text>:first-child{margin-top:0}
+.page-chat .chat-rich-text>:last-child{margin-bottom:0}
 .page-chat .chat-message--user .chat-message-author{text-align:right}
 .page-chat .chat-message--user a{align-self:flex-end}
 @media(max-width:767px){
