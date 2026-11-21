@@ -1506,9 +1506,15 @@ mod tests {
                 .get(index)
                 .cloned()
                 .unwrap_or(json!({"content":"좋아, 주인 이야기를 기다릴게."}));
+            // Room fixtures must use the same fully settled Chat wire as
+            // real compatible providers. [DONE] by itself does not prove that
+            // a model finished the answer or a tool-call decision.
+            let reason=if delta["tool_calls"].as_array().is_some_and(|v|!v.is_empty()){
+                "tool_calls"
+            }else{"stop"};
             let stream = format!(
                 "data: {}\n\ndata: [DONE]\n\n",
-                json!({"choices":[{"delta":delta}]})
+                json!({"choices":[{"delta":delta,"finish_reason":reason}]})
             );
             ([("content-type", "text/event-stream")], stream)
         }
