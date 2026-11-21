@@ -303,7 +303,7 @@ pub async fn inspect(
         agent_protocol::run(context,kind,session_id,&workspace,prompt,
             resume_session.as_deref(),generation,parent,parent_execution.as_deref(),&id).await
     }else{
-    let execution=async{
+    async {
         let mut child=command.spawn()
             .map_err(|error|format!("외부 실행기 {binary} 시작 실패: {error}"))?;
         let mut stdout=child.stdout.take().ok_or("표준 출력 파이프를 열지 못했습니다.")?;
