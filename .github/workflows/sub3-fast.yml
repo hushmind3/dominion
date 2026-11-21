@@ -34,6 +34,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --locked --all-targets
+      - run: cargo test --locked --bin dominion-rust modern_mcp_http_uses_discovery_stateless_headers_and_live_pinned_schema
+      - run: cargo test --locked --bin dominion-rust modern_mcp_auth_failure_does_not_fall_back_to_initialize
+      - run: cargo test --locked --bin dominion-rust http_reuses_mcp_session_and_reconnects_after_credential_rotation
+      - run: cargo test --locked --bin dominion-rust stdio_reuses_one_live_mcp_process_and_rotates_on_config_change
       - run: cargo test --locked -p dominion-agent-runtime --lib
       - run: cargo test --locked -p dominion-agent-sdk --lib
       - run: cargo test --locked --bin dominion-rust unknown_paid_generation_is_needs_review_even_after_owner_cancel
@@ -41,6 +45,24 @@ jobs:
       - run: cargo test --locked --bin dominion-rust cancelled_paid_dispatch_only_relabels_as_review_with_both_durable_fences
       - run: cargo test --locked --bin dominion-rust cancelled_completed_task_never_reopens_on_unproven_review_claim
       - run: cargo test --locked --bin dominion-rust sub3_standalone_explanation_uses_zero_tool_schemas_over_real_http_sse
+
+  quality-diagnostics:
+    name: Rust format and Clippy diagnostics (migration report)
+    # This isolated job reports debt without claiming a zero-warning codebase.
+    # After the entire workspace is reformatted, remove step-level tolerance.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Workspace rustfmt
+        run: cargo fmt --all -- --check
+        continue-on-error: true
+      - name: Rust Clippy all targets
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        continue-on-error: true
 
   web:
     name: TypeScript and Vite
