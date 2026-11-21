@@ -15,6 +15,29 @@ use std::sync::atomic::{AtomicBool,Ordering};
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 
+const MAX_CDP_JSON_BYTES: usize = 2 * 1024 * 1024;
+
+async fn bounded_cdp_json(mut response: reqwest::Response) -> Result<Value, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_CDP_JSON_BYTES as u64)
+    {
+        return Err("브라우저 응답이 2 MiB 한도를 초과했습니다.".into());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| format!("브라우저 응답 읽기 실패: {error}"))?
+    {
+        if bytes.len().saturating_add(chunk.len()) > MAX_CDP_JSON_BYTES {
+            return Err("브라우저 응답이 2 MiB 한도를 초과했습니다.".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|error| format!("브라우저 JSON 응답 오류: {error}"))
+}
+
 struct Session {
     child: Child,
     port: u16,
@@ -233,17 +256,15 @@ async fn page_target(port: u16, owner_id: &str) -> Result<Value, String> {
         return Err("브라우저 탭을 사용할 작업 세션 ID가 필요합니다.".into());
     }
     let client = reqwest::Client::new();
-    let targets = client
+    let targets_response = client
         .get(format!("http://127.0.0.1:{port}/json/list"))
         .timeout(Duration::from_secs(10))
         .send()
         .await
         .map_err(|error| format!("브라우저 대상 조회 실패: {error}"))?
         .error_for_status()
-        .map_err(|error| format!("브라우저 대상 HTTP 오류: {error}"))?
-        .json::<Value>()
-        .await
-        .map_err(|error| format!("브라우저 대상 응답 오류: {error}"))?;
+        .map_err(|error| format!("브라우저 대상 HTTP 오류: {error}"))?;
+    let targets = bounded_cdp_json(targets_response).await?;
     let owned_id=session().lock().map_err(|_|"브라우저 세션 잠금 오류")?
         .as_ref().and_then(|s|s.owned_tabs.get(owner_id).cloned());
     if let Some(page)=select_owned_target(&targets,owned_id.as_deref()) {
@@ -251,17 +272,15 @@ async fn page_target(port: u16, owner_id: &str) -> Result<Value, String> {
     }
     // A lost tab is not a license to switch to another agent's first tab.
     // Create a new page and atomically assign its CDP target to this owner.
-    let created = client
+    let created_response = client
         .put(format!("http://127.0.0.1:{port}/json/new?about:blank"))
         .timeout(Duration::from_secs(10))
         .send()
         .await
         .map_err(|error| format!("브라우저 탭 생성 실패: {error}"))?
         .error_for_status()
-        .map_err(|error| format!("브라우저 탭 HTTP 오류: {error}"))?
-        .json::<Value>()
-        .await
-        .map_err(|error| format!("브라우저 탭 응답 오류: {error}"))?;
+        .map_err(|error| format!("브라우저 탭 HTTP 오류: {error}"))?;
+    let created = bounded_cdp_json(created_response).await?;
     let id=created["id"].as_str().ok_or("새 브라우저 탭 ID가 없습니다.")?;
     if !created["webSocketDebuggerUrl"].is_string() {
         return Err("브라우저 페이지 WebSocket 주소가 없습니다.".into());
