@@ -76,6 +76,21 @@ export interface RemoteWorkerEnrollment {
   worker: RemoteWorker;
   token: string;
 }
+/** Untrusted cross-host Git patch: owner-reviewed evidence, never a core receipt. */
+export interface RemoteArtifactManifest {
+  id: string;
+  jobId: string;
+  workerId: string;
+  baseCommit: string;
+  patchSha256: string;
+  patchBytes: number;
+  status: 'quarantined' | 'owner_accepted' | 'owner_rejected';
+  nativeVerified: false;
+}
+export interface RemoteArtifactInspection {
+  manifest: RemoteArtifactManifest;
+  patch: string;
+}
 
 /** Room-local committed delivery facts; seq is NOT the global SSE seq. */
 export interface RoomEvent {
@@ -264,6 +279,18 @@ export class DominionAgentClient {
   reviewRemoteJob(id: string, accept: boolean, signal?: AbortSignal): Promise<RemoteJob> {
     return this.request('POST',
       `/api/remote/jobs/${encodeURIComponent(id)}/review`,{accept},signal);
+  }
+
+  /** Read the immutable quarantined diff before deciding to accept it. */
+  getRemoteArtifact(id:string,signal?:AbortSignal):Promise<RemoteArtifactInspection> {
+    return this.request('GET',
+      `/api/remote/jobs/${encodeURIComponent(id)}/artifact`,undefined,signal);
+  }
+  /** An owner's acceptance records provenance; it never merges or executes code. */
+  reviewRemoteArtifact(id:string,accept:boolean,
+      signal?:AbortSignal):Promise<RemoteArtifactManifest> {
+    return this.request('POST',
+      `/api/remote/jobs/${encodeURIComponent(id)}/artifact/review`,{accept},signal);
   }
 
   listRuns(signal?: AbortSignal): Promise<AgentRun[]> {
