@@ -88,3 +88,28 @@ export function TeamActivity(){
   </Panel>
  </section>
 }
+
+/** In-context collaboration status inside the existing chat composer. */
+export function TeamRunStrip({sessionId,active,onDraft}:{
+ sessionId?:string;active:boolean;onDraft:(prompt:string)=>void
+}){
+ const en=useLocale()==='en'
+ const activity=useRemote<Activity>(active&&sessionId?'/api/activity/teams':null,empty)
+ const team=activity.value.teams.find(t=>t.leadSessionId===sessionId
+  && (t.status==='running'||t.status==='needs_review'))
+ if(!team)return null
+ const pending=team.pendingRemoteArtifactTaskIds.length
+ const done=team.tasks.filter(task=>task.status==='completed').length
+ const compose=()=>{
+  const instruction=pending
+   ? (en?`Inspect remote task receipts ${team.pendingRemoteArtifactTaskIds.join(', ')} for managed team ${team.id}. Summarize the file diffs, obtain explicit user approval before using team_remote_apply, then safely resume team_execute for this exact team ID.`:`팀 ${team.id}의 원격 작업 ${team.pendingRemoteArtifactTaskIds.join(', ')} 산출물을 확인하고 변경사항을 요약해 주세요. 파일 변경 전 사용자 승인을 요청하고, 승인되면 team_remote_apply로 적용한 뒤 동일한 teamId로 team_execute를 재개하세요.`)
+   : (en?`Check team_status for ${team.id}; report actual task progress and evidence, then resume the same team with team_execute only when safe.`:`팀 ${team.id}의 실제 작업 현황과 검증 증거를 team_status로 확인하고, 안전할 때만 기존 teamId로 team_execute를 이어서 진행하세요.`)
+  onDraft(instruction)
+ }
+ return <div className="mb-2 flex min-w-0 flex-wrap items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] px-3 py-2 text-[11px]" role="status" aria-label={en?'Current agent team':'현재 에이전트 팀'}>
+  <UsersRound size={14} className="shrink-0 text-[#7C7469]"/>
+  <span className="min-w-0 flex-1 text-[#5C544A]"><strong className="text-[#3A342D]">{en?'Team':'팀'} {team.id.slice(-7)}</strong> · {done}/{team.tasks.length} {en?'tasks':'작업'}{pending>0&&<span className="ml-1 font-semibold text-amber-800">· {en?'File review needed':'파일 승인 대기'} {pending}</span>}</span>
+  <StatusPill status={team.status}/>
+  <Button size="sm" variant="ghost" onClick={compose}>{pending?(en?'Prepare review':'검토 요청 작성'):(en?'Continue team':'작업 이어가기')} <ChevronRight size={13}/></Button>
+ </div>
+}

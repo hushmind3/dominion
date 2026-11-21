@@ -1,5 +1,6 @@
 import {ConversationSettings} from '../components/ConversationSettings'
 import {ExecutionPermissions} from '../components/ExecutionPermissions'
+import {TeamRunStrip} from '../components/TeamActivity'
 import {ConversationSwitch} from '../components/WorkspaceShell'
 import {TokenUsage} from '../components/TokenUsage'
 import {OwnerAvatar,useOwnerProfile} from '../components/OwnerProfile'
@@ -435,6 +436,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     {(error||transcript.error||job.error)&&<div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"><CircleHelp size={16}/>{error||transcript.error||translateError(job.error||'')}<Button onClick={()=>setError('')}><X size={14}/></Button></div>}
     {modelError&&!model&&<div className="mb-3 text-xs text-[#7C7469]">{t('chat.noModel')}: {modelError} <Button onClick={openModels}>{t('chat.manage')} <ArrowRight size={13}/></Button></div>}
     {commandInfo&&<div role="status" className="mb-3 max-h-36 overflow-auto whitespace-pre-wrap rounded-xl border border-[#EED9CC] bg-[#F7E8E1] p-3 text-xs leading-6 text-[#4A443C]">{commandInfo}</div>}
+    <TeamRunStrip sessionId={current} active={active} onDraft={draft=>{setInput(draft);setSlashOpen(false);inputRef.current?.focus({preventScroll:true})}}/>
     <div className="relative">
     {slashOpen&&<SlashMenu items={slashItems} active={slashActive} onChoose={chooseSlash}/>}
     <form onSubmit={send} className="conversation-composer">
