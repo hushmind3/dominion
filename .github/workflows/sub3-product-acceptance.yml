@@ -132,6 +132,10 @@ jobs:
           node --test scripts/integration-boundary.test.mjs
           node --test scripts/core-boundary.test.mjs
           node --test scripts/algorithm-boundary.test.mjs
+      - name: TypeScript SDK compile and remote/Room/Team HTTP contract tests
+        run: |
+          npm install --prefix sdk/typescript --no-audit --no-fund --ignore-scripts --package-lock=false
+          npm test --prefix sdk/typescript
       - name: Visual release bundle (manual workflow only)
         if: github.event_name == 'workflow_dispatch'
         run: npm run build --prefix web
