@@ -79,6 +79,11 @@ try{
       await route.fulfill({status:200,contentType:'text/event-stream',body:': smoke\n\n'});
       return;
     }
+    if(path==='/api/chat'){
+      await route.fulfill({status:200,contentType:'text/event-stream',
+        body:'data: {"type":"done"}\n\n'});
+      return;
+    }
     await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(response)});
   });
   await page.goto(address+'/#/activity',{waitUntil:'domcontentloaded'});
@@ -186,8 +191,41 @@ try{
   await page.waitForFunction(selector=>
       document.querySelector(selector)?.value==='아직 세션을 만들지 않은 새 대화 초안',
     inputSelector,{timeout:10000});
+  // Direct chat is the default, and must never inherit agent persona,
+  // tools, execution, or learning from the workspace's default agent.
+  await page.evaluate(()=>{window.location.hash='#/chat?session=chat-one'});
+  await page.getByRole('button',{name:'일반 대화'}).waitFor({timeout:10000});
+  assert.equal(await page.getByRole('button',{name:'일반 대화'}).getAttribute('aria-pressed'),'true');
+  assert.equal(await page.locator('select[aria-label="에이전트"]').count(),0);
+  await chatInput.fill('모델과 일반 대화');
+  const directRequestPromise=page.waitForRequest(request=>new URL(request.url()).pathname==='/api/chat');
+  await chatInput.press('Enter');
+  const directRequest=(await directRequestPromise).postDataJSON();
+  assert.equal(directRequest.input,'모델과 일반 대화');
+  assert.ok(!directRequest.agentId,'direct chat must omit agent identity');
+  assert.equal(directRequest.toolsEnabled,false);
+  assert.equal(directRequest.toolsExecutionEnabled,false);
+  assert.equal(directRequest.autoLearning,false);
+  assert.equal(directRequest.providerId,'fixture');
+  assert.equal(directRequest.model,'fixture');
+  await page.getByRole('button',{name:'에이전트 실행'}).click();
+  assert.equal(await page.getByRole('button',{name:'에이전트 실행'}).getAttribute('aria-pressed'),'true');
+  await chatInput.fill('에이전트 작업 요청');
+  const agentRequestPromise=page.waitForRequest(request=>new URL(request.url()).pathname==='/api/chat');
+  await chatInput.press('Enter');
+  const agentRequest=(await agentRequestPromise).postDataJSON();
+  assert.equal(agentRequest.input,'에이전트 작업 요청');
+  assert.equal(agentRequest.agentId,'lead');
+  assert.equal(agentRequest.toolsEnabled,true);
+  assert.equal(agentRequest.toolsExecutionEnabled,true);
+  await page.reload({waitUntil:'domcontentloaded'});
+  assert.equal(await page.getByRole('button',{name:'에이전트 실행'}).getAttribute('aria-pressed'),'true',
+    'explicit agent mode should survive reload for the same session');
+  await page.evaluate(()=>{window.location.hash='#/chat?session=chat-two'});
+  assert.equal(await page.getByRole('button',{name:'일반 대화'}).getAttribute('aria-pressed'),'true',
+    'unrelated conversation must not inherit another session agent mode');
   assert.deepEqual(errors,[], 'Chat/Team React runtime errors');
-  console.log('PASS Chromium Team draft / stale route and per-session Chat draft recovery');
+  console.log('PASS Chromium direct default / explicit agent opt-in / session-isolated execution mode');
 }finally{
   await browser?.close();
   server.kill('SIGTERM');
