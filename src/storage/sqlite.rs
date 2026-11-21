@@ -286,6 +286,9 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_execution_active_status
                  ON records(json_extract(data,'$.status'),updated_at DESC,id DESC)
                  WHERE kind='execution';
+             CREATE INDEX IF NOT EXISTS idx_execution_session_running
+                 ON records(json_extract(data,'$.sessionId'))
+                 WHERE kind='execution' AND json_extract(data,'$.status')='running';
              CREATE INDEX IF NOT EXISTS idx_task_episode_page
                  ON records(json_extract(data,'$.createdAt') DESC,id DESC)
                  WHERE kind='task_episode';
@@ -592,6 +595,18 @@ impl Store {
              WHERE kind='job' AND json_extract(data,'$.status') IN ('queued','running')",
             [],|row|row.get::<_,i64>(0),
         ).unwrap_or(0).max(0) as usize
+    }
+
+    /// Session cancellation polls this predicate while waiting for a running
+    /// turn to settle; avoid decoding the complete execution history each tick.
+    pub fn has_running_execution(&self,session_id:&str)->bool{
+        let conn=self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM records INDEXED BY idx_execution_session_running
+             WHERE kind='execution' AND json_extract(data,'$.sessionId')=?1
+               AND json_extract(data,'$.status')='running')",
+            [session_id],|row|row.get::<_,bool>(0),
+        ).unwrap_or(false)
     }
 
     /// One indexed startup lookup for unresolved tool effects, with a legacy

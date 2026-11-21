@@ -164,10 +164,7 @@ pub async fn fork_session(State(state): State<AppState>, Path(id): Path<String>)
 // ---------------------------------------------------------------- approvals
 
 pub async fn cancel_session(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
-    let running = state.store.all("execution").iter().any(|execution| {
-        execution.get("sessionId").and_then(|value| value.as_str()) == Some(id.as_str())
-            && execution.get("status").and_then(|value| value.as_str()) == Some("running")
-    });
+    let running = state.store.has_running_execution(&id);
     state.cancel_session(&id);
     // The acknowledgement must mean more than "a flag was written".
     // Wait for the chat turn to release its same-session lock AND durable
@@ -177,10 +174,7 @@ pub async fn cancel_session(State(state): State<AppState>, Path(id): Path<String
     let settled = tokio::time::timeout(std::time::Duration::from_secs(3), async {
         loop {
             let active = state.active.lock().unwrap().contains(&id);
-            let unfinished = state.store.all("execution").iter().any(|execution| {
-                execution["sessionId"].as_str() == Some(id.as_str())
-                    && execution["status"] == "running"
-            });
+            let unfinished = state.store.has_running_execution(&id);
             if !active && !unfinished { break; }
             tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         }
