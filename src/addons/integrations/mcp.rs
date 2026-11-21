@@ -38,7 +38,7 @@ impl McpTool {
     }
 }
 
-type Cache = Mutex<HashMap<String, (Instant, Vec<McpTool>)>>;
+type Cache = Mutex<HashMap<String, (Instant, Duration, Vec<McpTool>)>>;
 
 fn cache() -> &'static Cache {
     static CACHE: OnceLock<Cache> = OnceLock::new();
@@ -107,16 +107,18 @@ pub async fn tools(state: &AppState) -> Vec<McpTool> {
         let cache_key = format!("{id}:{namespace}");
             let cached = {
                 let guard = cache().lock().unwrap();
-                guard.get(&cache_key).and_then(|(at, tools)| {
-                    (at.elapsed() < CACHE_TTL).then(|| tools.clone())
+                guard.get(&cache_key).and_then(|(at, ttl, tools)| {
+                    (at.elapsed() < *ttl).then(|| tools.clone())
                 })
             };
             if let Some(tools) = cached { return tools; }
             match list_server(state, &server, &namespace).await {
-                Ok(tools) => {
-                    cache().lock().unwrap().insert(
-                        cache_key, (Instant::now(), tools.clone())
-                    );
+                Ok((tools, ttl)) => {
+                    if !ttl.is_zero() {
+                        cache().lock().unwrap().insert(
+                            cache_key, (Instant::now(), ttl, tools.clone())
+                        );
+                    }
                     tools
                 }
                 Err(error) => {
@@ -136,7 +138,7 @@ pub async fn tools(state: &AppState) -> Vec<McpTool> {
         .collect()
 }
 
-async fn list_server(state: &AppState, server: &Value, server_slug:&str) -> Result<Vec<McpTool>, String> {
+async fn list_server(state: &AppState, server: &Value, server_slug:&str) -> Result<(Vec<McpTool>, Duration), String> {
     let server_name = server
         .get("name")
         .and_then(|value| value.as_str())
@@ -158,13 +160,24 @@ async fn list_server(state: &AppState, server: &Value, server_slug:&str) -> Resu
         (result?, false)
     };
 
+    // In 2026, ttlMs/cacheScope are server-owned. Never reuse a modern
+    // tool catalog beyond its advertised freshness, and never invent TTL.
+    let ttl = if modern_http {
+        if matches!(result["cacheScope"].as_str(), Some("public" | "private")) {
+            Duration::from_millis(result["ttlMs"].as_u64().unwrap_or(0).min(300_000))
+        } else {
+            Duration::ZERO
+        }
+    } else {
+        CACHE_TTL
+    };
     let tools = result
         .get("tools")
         .and_then(|value| value.as_array())
         .cloned()
         .unwrap_or_default();
 
-    Ok(tools
+    let listed = tools
         .into_iter()
         .filter_map(|tool| {
             let name = tool
@@ -195,7 +208,8 @@ async fn list_server(state: &AppState, server: &Value, server_slug:&str) -> Resu
                 },
             })
         })
-        .collect())
+        .collect::<Vec<_>>();
+    Ok((listed, ttl))
 }
 
 pub async fn definitions(state: &AppState) -> Vec<Value> {
