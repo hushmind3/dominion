@@ -1,6 +1,6 @@
 # DOMINION — Rust agent execution platform
 
-[한국어 안내](README.ko.md) · [Architecture](docs/HARNESS.md) · [Rust SDK](sdk/rust/README.md) · [TypeScript SDK](sdk/typescript/README.md) · [Current integration audit](docs/SUB3-INTEGRATION-2026-11-19.md)
+[한국어 안내](README.ko.md) · [Architecture](ARCHITECTURE.md) · [Harness contract](docs/HARNESS.md) · [Rust SDK](sdk/rust/README.md) · [TypeScript SDK](sdk/typescript/README.md) · [Current integration audit](docs/SUB3-INTEGRATION-2026-11-19.md)
 
 DOMINION is a local-first AI workspace and **owner-controlled Rust agent execution system**. It connects configured local or remote models to coding tasks, files, shell commands, web/MCP tools, conversation memory, durable job records, approvals, cancellation, and evidence-based verification.
 
