@@ -200,14 +200,76 @@ async fn run_claude(ctx:&JobContext,child:&mut Child,started:Instant)->Result<Va
         "evidenceGrade":"external_unverified"}))
 }
 
+/// Qwen Code headless JSON is an ARRAY of events (system, assistant, result),
+/// not the Claude Code result OBJECT. Only a terminal successful result
+/// is accepted; assistant text alone cannot certify completion.
+fn qwen_result(value:&Value)->Result<Value,String>{
+    let events=value.as_array().ok_or("Qwen headless output is not a JSON event array")?;
+    if events.len()>4096{return Err("Qwen event count exceeded limit".into());}
+    let last=events.iter().rev().find(|event|event["type"]=="result")
+        .ok_or("Qwen returned no terminal result event")?;
+    if last["subtype"]!="success"||last["is_error"]==true{
+        return Err("Qwen reported an unsuccessful headless run".into());
+    }
+    let text=last["result"].as_str().filter(|v|!v.trim().is_empty())
+        .ok_or("Qwen returned an empty final result")?;
+    if text.chars().count()>MAX_ANSWER{
+        return Err("Qwen final answer exceeded size cap".into());
+    }
+    let session=last["session_id"].as_str().filter(|v|!v.trim().is_empty());
+    Ok(json!({"status":"completed","runtime":"qwen",
+        "sessionId":session,"answer":text,
+        "evidenceGrade":"external_unverified"}))
+}
+async fn run_qwen(ctx:&JobContext,child:&mut Child,started:Instant)->Result<Value,String>{
+    let stdout=child.stdout.take().ok_or("Qwen stdout missing")?;
+    let reader=tokio::spawn(async move{
+        let mut data=Vec::new();
+        stdout.take((MAX_LINE+1) as u64)
+            .read_to_end(&mut data).await.map_err(|e|e.to_string())?;
+        Ok::<Vec<u8>,String>(data)
+    });
+    let status=loop {
+        ensure(ctx,started)?;
+        match tokio::time::timeout(Duration::from_millis(300),child.wait()).await{
+            Ok(Ok(status))=>break status,
+            Ok(Err(error))=>return Err(error.to_string()),
+            Err(_)=>{}
+        }
+    };
+    let bytes=reader.await.map_err(|e|e.to_string())??;
+    if bytes.len()>MAX_LINE{return Err("Qwen output exceeds bound".into());}
+    if !status.success(){return Err(format!("Qwen process exited with {status}"));}
+    let json:Value=serde_json::from_slice(&bytes)
+        .map_err(|_|"Qwen output did not match JSON headless protocol")?;
+    qwen_result(&json)
+}
+fn qwen_arguments(prompt:&str,resume:Option<&str>,model:Option<&str>)->Vec<String>{
+    // Qwen's plan mode is documented as analysis-only (no write or shell).
+    // safe-mode disables user hooks/extensions/MCP that may otherwise execute
+    // independently of the agent's tool approval policy.
+    let mut args=vec!["--prompt".into(),prompt.into(),
+        "--output-format".into(),"json".into(),
+        "--approval-mode".into(),"plan".into(),
+        "--safe-mode".into(),
+        "--max-session-turns".into(),"8".into(),
+        "--max-wall-time".into(),"120".into()];
+    if let Some(model)=model{args.extend(["--model".into(),model.into()]);}
+    if let Some(id)=resume{args.extend(["--resume".into(),id.into()]);}
+    args
+}
+
 pub async fn bridge_preflight()->Value{
     // No authentication or paid call is attempted by this capability probe.
     let enabled=std::env::var("DOMINION_EXTERNAL_AGENTS")
         .ok().as_deref()==Some("1");
     let mut bridges=serde_json::Map::new();
-    for runtime in ["codex","claude"]{
-        let key=if runtime=="codex"{"DOMINION_CODEX_BINARY"}
-            else{"DOMINION_CLAUDE_BINARY"};
+    for runtime in ["codex","claude","qwen"]{
+        let key=match runtime{
+            "codex"=>"DOMINION_CODEX_BINARY",
+            "claude"=>"DOMINION_CLAUDE_BINARY",
+            _=>"DOMINION_QWEN_BINARY",
+        };
         let binary=std::env::var(key).ok().filter(|v|!v.is_empty())
             .unwrap_or_else(||runtime.into());
         let output=if enabled{
@@ -232,15 +294,18 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
         return Err("External Agent Bridge requires DOMINION_EXTERNAL_AGENTS=1".into());
     }
     let runtime=job["input"]["bridgeRuntime"].as_str()
-        .filter(|s|matches!(*s,"codex"|"claude"))
+        .filter(|s|matches!(*s,"codex"|"claude"|"qwen"))
         .ok_or("Invalid external agent runtime")?;
     if job["input"]["teamMode"]!="read"{
         return Err("External write requires a separate approval bridge".into());
     }
     let prompt=job["input"]["prompt"].as_str().filter(|s|
         !s.trim().is_empty()&&s.len()<=32_000).ok_or("External prompt missing")?;
-    let env_name=if runtime=="codex"{"DOMINION_CODEX_BINARY"}
-        else{"DOMINION_CLAUDE_BINARY"};
+    let env_name=match runtime{
+        "codex"=>"DOMINION_CODEX_BINARY",
+        "claude"=>"DOMINION_CLAUDE_BINARY",
+        _=>"DOMINION_QWEN_BINARY",
+    };
     let binary=std::env::var(env_name).ok().filter(|s|!s.is_empty())
         .unwrap_or_else(||runtime.into());
     let workspace=crate::features::collaboration::worktree::for_job(&ctx.state,job)?;
@@ -248,17 +313,22 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
     command.current_dir(&workspace)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
         .kill_on_drop(true);
-    if runtime=="codex"{command.arg("app-server");}
-    else {
-        command.args(["--print","--output-format","json",
-            "--permission-mode","plan","--tools","Read,Glob,Grep"]);
-        if let Some(model)=job["input"]["model"].as_str(){
-            command.arg("--model").arg(model);
+    match runtime {
+        "codex"=>{command.arg("app-server");},
+        "qwen"=>{command.args(qwen_arguments(prompt,
+            job["input"]["resumeId"].as_str(),
+            job["input"]["model"].as_str()));},
+        _=>{
+            command.args(["--print","--output-format","json",
+                "--permission-mode","plan","--tools","Read,Glob,Grep"]);
+            if let Some(model)=job["input"]["model"].as_str(){
+                command.arg("--model").arg(model);
+            }
+            if let Some(session)=job["input"]["resumeId"].as_str(){
+                command.arg("--resume").arg(session);
+            }
+            command.arg("--").arg(prompt);
         }
-        if let Some(session)=job["input"]["resumeId"].as_str(){
-            command.arg("--resume").arg(session);
-        }
-        command.arg("--").arg(prompt);
     }
     ctx.ensure_running()?;
     ctx.checkpoint(json!({"bridgeState":{"inFlight":true,
@@ -272,10 +342,13 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
         }
     };
     let started=Instant::now();
-    let outcome=if runtime=="codex"{
-        run_codex(ctx,&mut child,started,prompt,job["input"]["model"].as_str(),
-            &workspace,job["input"]["resumeId"].as_str()).await
-    }else{run_claude(ctx,&mut child,started).await};
+    let outcome=match runtime {
+        "codex"=>run_codex(ctx,&mut child,started,prompt,
+            job["input"]["model"].as_str(),&workspace,
+            job["input"]["resumeId"].as_str()).await,
+        "qwen"=>run_qwen(ctx,&mut child,started).await,
+        _=>run_claude(ctx,&mut child,started).await,
+    };
     let _=child.kill().await;
     match outcome{
         Ok(value)=>{
@@ -297,6 +370,37 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn qwen_cli_requires_read_only_plan_mode_and_project_scoped_resume(){
+        let args=qwen_arguments("Review project",Some("123e4567-e89b-12d3-a456-426614174000"),
+            Some("qwen3-coder-plus"));
+        assert!(args.windows(2).any(|pair|pair==["--approval-mode","plan"]));
+        assert!(args.contains(&"--safe-mode".to_string()));
+        assert!(!args.contains(&"--yolo".to_string()));
+        assert!(args.windows(2).any(|pair|pair==["--resume",
+            "123e4567-e89b-12d3-a456-426614174000"]));
+        assert!(args.windows(2).any(|pair|pair==["--model","qwen3-coder-plus"]));
+    }
+    #[test]
+    fn qwen_output_must_end_in_successful_result_not_plausible_chat_text(){
+        let response=json!([
+            {"type":"system","subtype":"session_start","session_id":"s"},
+            {"type":"assistant","message":{"content":[{"type":"text","text":"partial"}]}},
+            {"type":"result","subtype":"success","is_error":false,
+                "result":"verified analysis","session_id":"s"}
+        ]);
+        let finished=qwen_result(&response).unwrap();
+        assert_eq!(finished["status"],"completed");
+        assert_eq!(finished["answer"],"verified analysis");
+        assert_eq!(finished["sessionId"],"s");
+        assert_eq!(finished["evidenceGrade"],"external_unverified");
+        assert!(qwen_result(&json!([
+            {"type":"assistant","message":{"content":"claimed complete"}}
+        ])).is_err());
+        assert!(qwen_result(&json!([
+            {"type":"result","subtype":"error","is_error":true,"result":"no"}
+        ])).is_err());
+    }
     #[test] fn codex_notifications_do_not_promote_failed_turns(){
         let mut text=String::new();
         assert_eq!(codex_event(&json!({"method":"item/agentMessage/delta",
