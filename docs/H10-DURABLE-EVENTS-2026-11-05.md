@@ -116,6 +116,26 @@ E2E로 실제 엔진 프로세스를 사용해 두 시나리오를 실행했다.
   `DOMINION_BACKUP_KEEP` 기준으로 정리한다.
 - audit `backup.encrypted`에 경로/크기/offsite 여부를 남긴다.
 
+### 2026-11-21 복원 원자성·owner Host 경계 보강
+
+- 복원 전 임시 SQLite 스냅샷과 새 키를 검증하고, 영속 복원 마커와
+  이전 DB·키를 0600 권한의 별도 파일로 보존한다.
+- DB 교체 → 키 교체 → 마이그레이션 → WAL checkpoint/DB·키 동기화 →
+  복원 마커 제거 순서로 확정한다. 중간 오류·프로세스 종료에는 이전 쌍을
+  복구하며 기동 시 `Store::open`보다 먼저 마커를 검사한다.
+- 유지보수 중 새 Background Job을 시작하지 않고, 진행 중인 채팅/Job/
+  승인이 있으면 복원을 거부한다. 복원 미확정 마커가 남아 있으면 API를
+  503으로 차단하고 재시작 복구를 요구한다.
+- 일반 owner GET/UI는 실제 로컬 listener의 Host를 검사한다.
+  비로컬 Host 요청은 유효한 owner admin token을 요구한다. 인증된
+  원격 Worker/coordination 경로는 기존 별도 인가를 따른다.
+- 단위 회귀: `addons::restore_transaction::tests` (임시 파일 오류·
+  마이그레이션 오류·DB 교체/키 교체 직후 종료·정상 재시작·오염 스냅샷).
+  실제 HTTP E2E `live_restore_requires_maintenance_and_preserves_backup_executions`
+  에서 비로컬 Host 거부도 검증한다.
+- 별도 운영 앱의 실제 복원·브라우저 DNS rebinding 재현·장기 soak는
+  이 단위/HTTP fixture 결과만으로 검증됐다고 보지 않는다.
+
 ### Live restore + maintenance mode
 
 - `POST /api/system/maintenance {enabled}`
@@ -241,8 +261,11 @@ rotation은 **maintenance mode에서만** API로 허용된다.
 - 백업 평문은 `DOMVAULT1` + 32-byte vault key + SQLite bytes를 backup key로 암호화한다.
 - restore는 컨테이너의 vault key를 꺼내 **그 키로 secret 검증**을 먼저 수행한다.
 - 검증 실패(키 없음/불일치) 시 **409**로 중단하고 live DB/key를 건드리지 않는다.
-- 검증 성공 시 vault key를 복원(`secret.key` 교체)한 뒤 DB를 교체하므로,
-  회전 전 백업을 회전 후 복구해도 provider secret이 함께 복원된다.
+- 검증 성공 시 이전 DB·키를 별도로 보존하고 복원 저널을 영속화한다.
+  새 DB를 검증·교체한 뒤 vault key를 설치하고 마이그레이션과 WAL checkpoint,
+  DB·키 디스크 동기화까지 끝내야 완료 표식을 지운다. 도중 실패 시 이전
+  DB·키를 함께 복구하고, 종료/충돌로 표식이 남으면 다음 기동에서 복구한다.
+  따라서 회전 전 백업을 회전 후 복구해도 provider secret이 함께 복원된다.
 - legacy(컨테이너 없는) 백업은 현재 primary로 검증하며, 불가능하면 fail-safe 중단.
 
 ### API
