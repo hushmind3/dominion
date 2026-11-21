@@ -6,8 +6,63 @@ use crate::integrations::network::{public_http_url,append_http_chunk,HTTP_FETCH_
 use crate::db::Store;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::fs::File;
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
+
+const MAX_EDIT_SOURCE_BYTES: usize = 1_500_000;
+
+fn read_source_text_sync(path: &Path) -> Result<String, String> {
+    let file = File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    if !file.metadata().map_err(|error| error.to_string())?.is_file() {
+        return Err("Target is not a regular file".into());
+    }
+    let mut bytes = Vec::new();
+    file.take((MAX_EDIT_SOURCE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    if bytes.len() > MAX_EDIT_SOURCE_BYTES {
+        return Err("File is larger than 1.5 MB".into());
+    }
+    String::from_utf8(bytes).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+async fn read_source_text(path: &Path) -> Result<String, String> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || read_source_text_sync(&path))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn sha256_source_sync(path: &Path) -> Result<String, String> {
+    let mut file = File::open(path).map_err(|error| error.to_string())?;
+    if !file.metadata().map_err(|error| error.to_string())?.is_file() {
+        return Err("Target is not a regular file".into());
+    }
+    let mut buffer = [0u8; 64 * 1024];
+    let mut total = 0usize;
+    let mut hasher = Sha256::new();
+    loop {
+        let read = file.read(&mut buffer).map_err(|error| error.to_string())?;
+        if read == 0 {
+            break;
+        }
+        total = total.saturating_add(read);
+        if total > MAX_EDIT_SOURCE_BYTES {
+            return Err("File is larger than 1.5 MB".into());
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+async fn sha256_source(path: &Path) -> Result<String, String> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || sha256_source_sync(&path))
+        .await
+        .map_err(|error| error.to_string())?
+}
 
 /// Everything a tool needs in order to run. Tools are pure Rust: no Node,
 /// no sidecar process.
@@ -487,18 +542,7 @@ async fn list_dir(path: &Path,args:&Value) -> Result<Value, String> {
 }
 
 async fn read_text(path: &Path) -> Result<Value, String> {
-    let metadata = tokio::fs::metadata(path)
-        .await
-        .map_err(|error| format!("{}: {error}", path.display()))?;
-    if !metadata.is_file() {
-        return Err("Target is not a regular file".into());
-    }
-    if metadata.len() > 1_500_000 {
-        return Err("File is larger than 1.5 MB".into());
-    }
-    let text = tokio::fs::read_to_string(path)
-        .await
-        .map_err(|error| format!("{}: {error}", path.display()))?;
+    let text = read_source_text(path).await?;
     Ok(json!({ "path": path.to_string_lossy(), "content": text }))
 }
 
@@ -541,9 +585,7 @@ async fn replace_text(
     if old_text.is_empty() {
         return Err("oldText는 비어 있을 수 없습니다.".into());
     }
-    let text = tokio::fs::read_to_string(path)
-        .await
-        .map_err(|error| format!("{}: {error}", path.display()))?;
+    let text = read_source_text(path).await?;
     let occurrences = text.matches(old_text).count();
     if occurrences != 1 {
         return Ok(json!({
@@ -578,8 +620,7 @@ async fn replace_range(
     if new_text.len() > 64_000 {
         return Err("Replacement is larger than the source edit limit".into());
     }
-    let source = tokio::fs::read_to_string(path)
-        .await.map_err(|error| format!("{}: {error}", path.display()))?;
+    let source = read_source_text(path).await?;
     let digest = format!("{:x}", Sha256::digest(source.as_bytes()));
     if digest != expected_sha256 {
         return Ok(json!({"error":"Source changed since the observed range",
@@ -650,8 +691,8 @@ async fn checked_write(
             return write_text(path, content).await;
         };
         let canonical = canonical.map_err(|error| error.to_string())?;
-        let bytes = match tokio::fs::read(&canonical).await {
-            Ok(bytes) => bytes,
+        let observed = match sha256_source(&canonical).await {
+            Ok(digest) => digest,
             Err(error) => {
                 return Ok(json!({
                     "error": format!("파일을 다시 읽지 못했습니다: {error}"),
@@ -660,7 +701,6 @@ async fn checked_write(
                 }))
             }
         };
-        let observed = format!("{:x}", Sha256::digest(&bytes));
         if observed != expected {
             return Ok(json!({
                 "error": "파일이 읽은 뒤 변경되었습니다. 다시 읽고 판단하세요.",
