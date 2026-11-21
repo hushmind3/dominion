@@ -1408,6 +1408,26 @@ impl Store {
         rows.filter_map(|row| row.ok()).collect()
     }
 
+    /// Cheap idempotency admission: check only owner-message metadata inside
+    /// this session. Never deserialize the complete transcript for a retry.
+    /// CASE protects historic malformed JSON metadata from aborting chat.
+    pub fn has_owner_turn_key(&self, session_id: &str, turn_id: &str) -> Result<bool, String> {
+        let conn=self.conn.lock().map_err(|err|err.to_string())?;
+        let found:i64=conn.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM messages
+                WHERE session_id=?1 AND role='user'
+                  AND CASE WHEN json_valid(metadata) THEN
+                    json_extract(metadata,'$.authorKind')='owner'
+                    AND json_extract(metadata,'$.clientTurnId')=?2
+                  ELSE 0 END
+            )",
+            params![session_id,turn_id],
+            |row|row.get(0),
+        ).map_err(|err|err.to_string())?;
+        Ok(found!=0)
+    }
+
     /// Read only the final `limit` message tool-call columns for lazy room
     /// catalog selection. Never materialize a long session's full transcript
     /// merely to recover the tool names used in its last few turns.
@@ -2477,6 +2497,29 @@ mod tests {
         assert_eq!(merged["appliedExecutionIds"].as_array().unwrap().len(), 2);
         assert_eq!(merged["status"], "validated");
         assert!(merged.get("__counterDelta").is_none());
+    }
+
+    #[test]
+    fn scoped_owner_turn_keys_ignore_other_sessions_and_legacy_messages() {
+        let (store,dir)=temp_store();
+        let key="00000000-0000-4000-8000-000000000042";
+        assert!(!store.has_owner_turn_key("a",key).unwrap());
+        store.write_message(&json!({"session_id":"b","role":"user","content":"elsewhere",
+            "metadata":{"authorKind":"owner","clientTurnId":key}})).unwrap();
+        store.write_message(&json!({"session_id":"a","role":"assistant","content":"different role",
+            "metadata":{"clientTurnId":key}})).unwrap();
+        store.write_message(&json!({"session_id":"a","role":"user","content":"other sender",
+            "metadata":{"authorKind":"other","clientTurnId":key}})).unwrap();
+        store.write_message(&json!({"session_id":"a","role":"user","content":"old",
+            "metadata":{"authorKind":"owner"}})).unwrap();
+        assert!(!store.has_owner_turn_key("a",key).unwrap());
+        assert!(store.has_owner_turn_key("b",key).unwrap());
+        store.write_message(&json!({"session_id":"a","role":"user","content":"new",
+            "metadata":{"authorKind":"owner","clientTurnId":key}})).unwrap();
+        assert!(store.has_owner_turn_key("a",key).unwrap());
+        assert!(!store.has_owner_turn_key("a","other").unwrap());
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
