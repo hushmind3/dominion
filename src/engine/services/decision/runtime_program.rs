@@ -1016,19 +1016,14 @@ pub(super) fn execute_nodes<'a>(
                     budget = frame.budget;
                     op_seq = frame.op_seq;
                     messages.extend(frame.messages);
-                    if frame.paused {
-                        checkpoint["resolvedInputs"] = resolved.clone();
+                    if frame.paused || frame.failure.is_some() {
+                        checkpoint["resolvedInputs"]=resolved.clone();
                         if persist {
-                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                            commit_program_checkpoint(ctx.state,ctx.execution_id,&checkpoint)?;
                         }
-                        return Ok(ProgramFrame {
-                            resolved,
-                            checkpoint,
-                            budget,
-                            op_seq,
-                            messages,
-                            paused: true,
-                                failure: None,
+                        return Ok(ProgramFrame{
+                            resolved,checkpoint,budget,op_seq,messages,
+                            paused:frame.paused,failure:frame.failure,
                         });
                     }
                     mark_program_completed(&mut checkpoint, node_id);
@@ -1045,19 +1040,14 @@ pub(super) fn execute_nodes<'a>(
                     budget = frame.budget;
                     op_seq = frame.op_seq;
                     messages.extend(frame.messages);
-                    if frame.paused {
-                        checkpoint["resolvedInputs"] = resolved.clone();
+                    if frame.paused || frame.failure.is_some() {
+                        checkpoint["resolvedInputs"]=resolved.clone();
                         if persist {
-                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                            commit_program_checkpoint(ctx.state,ctx.execution_id,&checkpoint)?;
                         }
-                        return Ok(ProgramFrame {
-                            resolved,
-                            checkpoint,
-                            budget,
-                            op_seq,
-                            messages,
-                            paused: true,
-                                failure: None,
+                        return Ok(ProgramFrame{
+                            resolved,checkpoint,budget,op_seq,messages,
+                            paused:frame.paused,failure:frame.failure,
                         });
                     }
                     mark_program_completed(&mut checkpoint, node_id);
@@ -1089,6 +1079,7 @@ pub(super) fn execute_nodes<'a>(
                     .unwrap_or_else(|| "concurrent".into());
                     if parallel_mode == "sequential" || schedule.requires_serial() {
                         let mut paused = false;
+                        let mut failure=None::<Value>;
                         let mut used_parallel_waves=false;
                         for wave in &schedule.waves {
                             // Topologically ready independent reads can run
@@ -1130,11 +1121,14 @@ pub(super) fn execute_nodes<'a>(
                                                 id.as_str().unwrap_or(""));
                                         }
                                     }
-                                    mark_program_completed(&mut checkpoint,child_id);
+                                    if !frame.paused && frame.failure.is_none(){
+                                        mark_program_completed(&mut checkpoint,child_id);
+                                    }
                                     budget.merge_usage(&frame.budget);
                                     op_seq=op_seq.max(frame.op_seq);
                                     messages.extend(frame.messages);
                                     paused|=frame.paused;
+                                    if failure.is_none(){failure=frame.failure;}
                                 }
                                 op_seq=op_seq.max(reserved_until);
                                 resolved["last"]=Value::Object(wave_last);
@@ -1151,7 +1145,8 @@ pub(super) fn execute_nodes<'a>(
                                     op_seq=frame.op_seq;
                                     messages.extend(frame.messages);
                                     paused|=frame.paused;
-                                    if paused{break;}
+                                    if failure.is_none(){failure=frame.failure;}
+                                    if paused || failure.is_some(){break;}
                                 }
                             }
                             if persist {
@@ -1160,7 +1155,7 @@ pub(super) fn execute_nodes<'a>(
                                 commit_program_checkpoint(
                                     ctx.state,ctx.execution_id,&checkpoint)?;
                             }
-                            if paused{break;}
+                            if paused || failure.is_some(){break;}
                         }
                         // Compute against the immutable checkpoint first;
                         // then store the pending IDs. This avoids aliasing an
@@ -1182,16 +1177,16 @@ pub(super) fn execute_nodes<'a>(
                             else{"sequential"}
                         );}
                         checkpoint["resolvedInputs"] = resolved.clone();
-                        if paused {
-                            checkpoint["status"] = json!("paused");
+                        if paused || failure.is_some() {
+                            checkpoint["status"] = json!(
+                                if paused {"paused"}else{"needs_revision"});
                             if persist {
-                                save_program_checkpoint(
-                                    ctx.state, ctx.execution_id, &checkpoint,
-                                );
+                                commit_program_checkpoint(
+                                    ctx.state,ctx.execution_id,&checkpoint)?;
                             }
-                            return Ok(ProgramFrame {
-                                resolved, checkpoint, budget, op_seq, messages,
-                                paused: true, failure: None,
+                            return Ok(ProgramFrame{
+                                resolved,checkpoint,budget,op_seq,messages,
+                                paused,failure,
                             });
                         }
                         mark_program_completed(&mut checkpoint, node_id);
@@ -1231,6 +1226,7 @@ pub(super) fn execute_nodes<'a>(
                     }
                     let results = futures_util::future::join_all(futures).await;
                     let mut paused = false;
+                    let mut failure=None::<Value>;
                     let mut parallel_last = serde_json::Map::new();
                     for (child, result) in children.iter().zip(results.into_iter()) {
                         let frame = result?;
@@ -1256,11 +1252,14 @@ pub(super) fn execute_nodes<'a>(
                                 );
                             }
                         }
-                        mark_program_completed(&mut checkpoint, child_id);
+                        if !frame.paused && frame.failure.is_none(){
+                            mark_program_completed(&mut checkpoint, child_id);
+                        }
                         budget.merge_usage(&frame.budget);
                         op_seq = op_seq.max(frame.op_seq);
                         messages.extend(frame.messages);
                         paused |= frame.paused;
+                        if failure.is_none(){failure=frame.failure;}
                     }
                     // Gaps are deliberate: a child need not exhaust its
                     // reservation. The next operation must remain globally
@@ -1269,19 +1268,15 @@ pub(super) fn execute_nodes<'a>(
                     resolved["last"] = Value::Object(parallel_last);
                     checkpoint["pendingOperationIds"] = json!([]);
                     checkpoint["resolvedInputs"] = resolved.clone();
-                    if paused {
-                        checkpoint["status"] = json!("paused");
+                    if paused || failure.is_some() {
+                        checkpoint["status"]=json!(
+                            if paused{"paused"}else{"needs_revision"});
                         if persist {
-                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
+                            commit_program_checkpoint(ctx.state,ctx.execution_id,&checkpoint)?;
                         }
-                        return Ok(ProgramFrame {
-                            resolved,
-                            checkpoint,
-                            budget,
-                            op_seq,
-                            messages,
-                            paused: true,
-                                failure: None,
+                        return Ok(ProgramFrame{
+                            resolved,checkpoint,budget,op_seq,messages,
+                            paused,failure,
                         });
                     }
                     mark_program_completed(&mut checkpoint, node_id);
@@ -1418,24 +1413,26 @@ pub(super) fn execute_nodes<'a>(
                         budget = frame.budget;
                         op_seq = frame.op_seq;
                         messages.extend(frame.messages);
-                        iterations += 1;
-                        checkpoint["loopIterations"] = json!(iterations);
-                        checkpoint["loopProgress"][node_id] = json!(iterations);
-                        checkpoint["resolvedInputs"] = resolved.clone();
-                        if persist {
-                            save_program_checkpoint(ctx.state, ctx.execution_id, &checkpoint);
-                        }
-                        if frame.paused {
-                            checkpoint["status"] = json!("paused");
-                            return Ok(ProgramFrame {
-                                resolved,
-                                checkpoint,
-                                budget,
-                                op_seq,
-                                messages,
-                                paused: true,
-                                failure: None,
+                        // Failed/paused iterations cannot advance durable progress.
+                        if frame.paused || frame.failure.is_some(){
+                            checkpoint["status"]=json!(
+                                if frame.paused{"paused"}else{"needs_revision"});
+                            checkpoint["resolvedInputs"]=resolved.clone();
+                            if persist {
+                                commit_program_checkpoint(
+                                    ctx.state,ctx.execution_id,&checkpoint)?;
+                            }
+                            return Ok(ProgramFrame{
+                                resolved,checkpoint,budget,op_seq,messages,
+                                paused:frame.paused,failure:frame.failure,
                             });
+                        }
+                        iterations+=1;
+                        checkpoint["loopIterations"]=json!(iterations);
+                        checkpoint["loopProgress"][node_id]=json!(iterations);
+                        checkpoint["resolvedInputs"]=resolved.clone();
+                        if persist {
+                            commit_program_checkpoint(ctx.state,ctx.execution_id,&checkpoint)?;
                         }
                     }
                     mark_program_completed(&mut checkpoint, node_id);
