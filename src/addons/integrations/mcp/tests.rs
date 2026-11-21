@@ -189,3 +189,56 @@ use super::*;
         assert!(!requires_approval(&state, "mcp__echo_lab__echo"));
     }
 
+
+#[tokio::test]
+async fn modern_http_discovers_and_uses_routed_schema_headers_without_initialize() {
+    use axum::{routing::post, Json, Router, http::HeaderMap};
+    use std::sync::Arc;
+    let state=temp_state();
+    let seen=Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+    let events=seen.clone();
+    let app=Router::new().route("/mcp",post(move |headers:HeaderMap, Json(payload):Json<Value>|{
+        let events=events.clone();
+        async move {
+            let method=payload["method"].as_str().unwrap_or("");
+            let header=|name:&str|headers.get(name).and_then(|v|v.to_str().ok()).unwrap_or("").to_string();
+            events.lock().unwrap().push(json!({
+                "method":method,"version":header("MCP-Protocol-Version"),
+                "route":header("Mcp-Method"),"tool":header("Mcp-Name"),
+                "region":header("Mcp-Param-Region"),
+                "metaVersion":payload["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"]
+            }));
+            let result=match method {
+                "server/discover"=>json!({"resultType":"complete",
+                    "supportedVersions":["2026-07-28"],"capabilities":{"tools":{}}}),
+                "tools/list"=>json!({"resultType":"complete","tools":[]}),
+                "tools/call"=>json!({"resultType":"complete","content":[{"type":"text","text":"ok"}]}),
+                _=>json!({}),
+            };
+            Json(json!({"jsonrpc":"2.0","id":payload["id"],"result":result}))
+        }
+    }));
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr=listener.local_addr().unwrap();
+    let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+    let record=json!({"id":"modern-test","name":"modern-test","transport":"http","url":format!("http://{addr}/mcp")});
+    let mut session=HttpSession::open(&record,&state).await.unwrap();
+    assert!(session.modern());
+    session.request("tools/list",json!({})).await.unwrap();
+    session.set_tool_schema(json!({"type":"object","properties":{
+        "region":{"type":"string","x-mcp-header":"Region"}}}));
+    let response=session.request("tools/call",json!({
+        "name":"execute_sql","arguments":{"region":"서울"}})).await.unwrap();
+    assert_eq!(response["content"][0]["text"],"ok");
+    let history=seen.lock().unwrap();
+    assert_eq!(history.len(),3,"modern transport must not initialize");
+    assert_eq!(history[0]["method"],"server/discover");
+    for entry in history.iter(){
+        assert_eq!(entry["version"],"2026-07-28");
+        assert_eq!(entry["route"],entry["method"]);
+        assert_eq!(entry["metaVersion"],"2026-07-28");
+    }
+    assert_eq!(history[2]["tool"],"execute_sql");
+    assert_eq!(history[2]["region"],"=?base64?7ISc7Jq4?=");
+    server.abort();
+}
