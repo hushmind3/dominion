@@ -758,7 +758,8 @@ fn usage_only_stream_is_failed_but_provider_tokens_stay_accounted() {
     let stream=app.chat(&json!({"sessionId":id,"input":"안녕",
         "toolsEnabled":false,"autoLearning":false}));
     assert!(stream.contains("읽을 수 있는 답변"),"{stream}");
-    let execution=&app.get("/api/executions")[0];
+    let executions=app.get("/api/executions");
+    let execution=&executions[0];
     assert_eq!(execution["status"],"failed","{execution}");
     let call=&execution["inputContext"]["modelCallUsage"][0];
     assert_eq!(call["promptTokens"],30);
@@ -782,7 +783,8 @@ fn final_message_only_stream_becomes_one_visible_answer() {
     let app=TestApp::new(port,"native");
     let stream=app.chat(&json!({"input":"안녕","toolsEnabled":false,"autoLearning":false}));
     assert!(stream.contains("최종 본문 복원"),"{stream}");
-    let execution=&app.get("/api/executions")[0];
+    let executions=app.get("/api/executions");
+    let execution=&executions[0];
     assert_eq!(execution["status"],"completed","{execution}");
     assert_eq!(execution["inputContext"]["modelCallUsage"][0]["finishReason"],"stop");
     assert_eq!(requests.lock().unwrap().len(),1);
@@ -801,7 +803,8 @@ fn length_limited_stream_records_usage_and_never_claims_success() {
     let stream=app.chat(&json!({"sessionId":id,"input":"설명해",
         "toolsEnabled":false,"autoLearning":false}));
     assert!(stream.contains("출력 토큰 제한"),"{stream}");
-    let execution=&app.get("/api/executions")[0];
+    let executions=app.get("/api/executions");
+    let execution=&executions[0];
     assert_eq!(execution["status"],"failed","{execution}");
     assert_eq!(execution["inputContext"]["modelCallUsage"][0]["finishReason"],"length");
     assert_eq!(execution["inputContext"]["modelCallUsage"][0]["outputTokens"],9);
