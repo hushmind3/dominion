@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs'
 import {fileURLToPath} from 'node:url'
 import {
  readConversationToggle,writeConversationToggle,readConversationEffort,writeConversationEffort,
- conversationToggleKey,conversationEffortKey,conversationPreferenceEvent,
+ conversationToggleKey,conversationEffortKey,conversationPreferenceEvent,compatibleConversationEffort,
 } from '../src/conversationPreferences.ts'
 
 const root=fileURLToPath(new URL('../',import.meta.url))
@@ -88,4 +88,17 @@ test('both screens bind persisted display/thinking controls and chat wire uses e
  assert.match(shared,/localStorage\.setItem\(koreanReasoningKey/)
  assert.match(app,/reloadUpdatedUi\(\)/)
  assert.doesNotMatch(chat,/\[toolsEnabled,setToolsEnabled\]=useState\(true\)/)
+})
+
+test('model changes suppress unsupported tiers on wire without erasing stored choice',()=>{
+ storageFixture()
+ writeConversationEffort('high')
+ assert.equal(compatibleConversationEffort(readConversationEffort(),['none','low']), '')
+ assert.equal(readConversationEffort(),'high')
+ assert.equal(compatibleConversationEffort(readConversationEffort(),['none','low','high']), 'high')
+ assert.equal(compatibleConversationEffort('none',['low','medium']), '')
+ assert.equal(compatibleConversationEffort('none',['none','low']), 'none')
+ assert.equal(compatibleConversationEffort('high',[]), '')
+ assert.equal(compatibleConversationEffort('',[]), '')
+ assert.match(chat,/compatibleConversationEffort\(/)
 })

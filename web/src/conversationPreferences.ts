@@ -28,6 +28,11 @@ export function writeConversationToggle(name:ConversationToggle,value:boolean):b
   return true
  }catch{return false}
 }
+// Keep the owner's chosen tier across model switches, but only send it when
+// the current model actually declares support for that tier.
+export function compatibleConversationEffort(saved:string,supported:readonly string[]):string{
+ return saved&&!supported.includes(saved)?'':saved
+}
 export function readConversationEffort():string{
  try{
   const value=localStorage.getItem(conversationEffortKey)||''

@@ -1,5 +1,6 @@
 import {ConversationSettings} from '../components/ConversationSettings'
 import {usePersistentConversationToggle,usePersistentReasoningEffort} from '../hooks/usePersistentConversationPreference'
+import {compatibleConversationEffort} from '../conversationPreferences'
 import {ExecutionPermissions} from '../components/ExecutionPermissions'
 import {ConversationSwitch} from '../components/WorkspaceShell'
 import {TokenUsage} from '../components/TokenUsage'
@@ -81,7 +82,9 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const [reasoningEffort,setReasoningEffort]=usePersistentReasoningEffort();
  // A model without the 'none' tier cannot honor the off switch. Keep the
  // owner's stored preference so switching back does not silently erase it.
- const effectiveReasoningEffort=!canDisableThinking&&reasoningEffort==='none'?'':reasoningEffort;
+ const effectiveReasoningEffort=compatibleConversationEffort(
+  reasoningEffort,reasoningOptions(selectedModel,selectedProvider?.kind==='codex')
+ );
  const effectiveThinkingEnabled=!canDisableThinking||thinkingEnabled;
  const [permissionOpen,setPermissionOpen]=useState(false);
  const [modelMenu,setModelMenu]=useState(false),[installed,setInstalled]=useState<InstalledModel[]>([]),[modelsLoading,setModelsLoading]=useState(false),[runtime,setRuntime]=useState<Runtime>({status:'idle'}),[modelBusy,setModelBusy]=useState(''),[unloading,setUnloading]=useState(false),[learning,setLearning]=useState(false),[menuError,setMenuError]=useState('');
