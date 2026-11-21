@@ -103,9 +103,13 @@ pub(super) fn project(definitions:Vec<Value>,query:&str)->Vec<Value>{
     let mut candidates=definitions.into_iter()
         .filter(|definition|!name(definition).is_empty())
         .collect::<Vec<_>>();
-    let mut scoring=candidates.iter().enumerate().map(|(index,definition)|{
+    // An unused slot is not permission to advertise an unrelated MCP
+    // endpoint. Only stable native essentials or a positively ranked match
+    // belong in the first provider request; all others remain searchable.
+    let mut scoring=candidates.iter().enumerate().filter_map(|(index,definition)|{
         let base=if essentials.contains(&name(definition)){100}else{0};
-        (index,base+rank(definition,query,&needed))
+        let score=base+rank(definition,query,&needed);
+        (score>0).then_some((index,score))
     }).collect::<Vec<_>>();
     scoring.sort_by(|a,b|b.1.cmp(&a.1)
         .then_with(||name(&candidates[a.0]).cmp(name(&candidates[b.0]))));
@@ -256,6 +260,18 @@ mod tests{
             <serde_json::to_vec(&original).unwrap().len());
     }
     #[test]
+    fn unrelated_mcp_capabilities_never_fill_unused_initial_schema_slots(){
+        let unrelated=sample();
+        let visible=project(unrelated.clone(),"Fix src/lib.rs and run the Rust tests");
+        assert!(visible.iter().all(|item|
+            !name(item).starts_with("mcp__unrelated_")
+                && name(item)!="mcp__archive_publish"));
+        let wanted=project(unrelated,"Publish to mcp__archive_publish");
+        assert!(wanted.iter().any(|item|name(item)=="mcp__archive_publish"),
+            "an explicitly named owner-enabled endpoint remains available");
+    }
+
+    #[test]
     fn local_docs_paths_do_not_rank_cloud_schemas_in_native_discovery(){
         let mut catalog=sample();
         for name in ["google_docs_read","google_drive_search",
@@ -338,6 +354,7 @@ mod tests{
         assert!(!should_enable(18,10,false,false));
         assert!(should_enable(90,10,false,false));
         assert_eq!(project(sample()[..5].to_vec(),"anything").len(),5);
-        assert_eq!(project(sample()[..14].to_vec(),"anything").len(),INITIAL);
+        assert!(project(sample()[..14].to_vec(),"anything").is_empty(),
+            "unrelated MCP endpoints must stay in discovery, not consume provider schemas");
     }
 }
