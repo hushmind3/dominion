@@ -9,6 +9,8 @@ use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
 use std::{path::Path,time::Duration};
 use tokio::{io::AsyncReadExt,process::Command};
+#[path = "agent_protocol.rs"]
+mod agent_protocol;
 
 const MAX_PROMPT:usize=16_000;
 const MAX_STDOUT:u64=256*1024;
@@ -16,24 +18,31 @@ const MAX_STDERR:u64=12*1024;
 const MAX_ANSWER:usize=12_000;
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
-enum ExternalAgent { Codex,Claude,Qwen }
+enum ExternalAgent { Codex,Claude,Qwen,CodexServer,QwenAcp }
 impl ExternalAgent {
     fn parse(raw:&str)->Result<Self,String>{
         match raw{
             "codex"=>Ok(Self::Codex),"claude"=>Ok(Self::Claude),
             "qwen"=>Ok(Self::Qwen),
+            "codex-app-server"=>Ok(Self::CodexServer),
+            "qwen-acp"=>Ok(Self::QwenAcp),
             _=>Err("지원하지 않는 외부 Agent Bridge 실행기입니다.".into())
         }
     }
     fn key(self)->&'static str{
-        match self{Self::Codex=>"codex",Self::Claude=>"claude",Self::Qwen=>"qwen"}
+        match self{Self::Codex=>"codex",Self::Claude=>"claude",
+            Self::Qwen=>"qwen",Self::CodexServer=>"codex-app-server",
+            Self::QwenAcp=>"qwen-acp"}
     }
+    fn protocol(self)->bool{matches!(self,Self::CodexServer|Self::QwenAcp)}
     fn command(self,prompt:&str)->(&'static str,Vec<String>){
         let argv=match self{
             Self::Codex=>vec!["exec","--sandbox","read-only","--json",
                 "--skip-git-repo-check",prompt],
             Self::Claude=>vec!["-p",prompt,"--permission-mode","plan",
                 "--max-turns","12","--output-format","json"],
+            Self::CodexServer=>vec!["app-server"],
+            Self::QwenAcp=>vec!["--acp","--safe-mode","--approval-mode","plan"],
             Self::Qwen=>vec!["-p",prompt,"--safe-mode","--approval-mode","plan",
                 "--exclude-tools","shell,write,edit","--max-session-turns","12",
                 "--max-wall-time","180","--output-format","json"]
@@ -59,6 +68,8 @@ impl ExternalAgent {
                 Self::Claude|Self::Qwen=>{
                     args.extend(["--resume".into(),session.into()]);
                 }
+                Self::CodexServer|Self::QwenAcp=>{}
+            }
             }
         }
         Ok((binary,args))
@@ -78,6 +89,7 @@ fn terminal_session_id(kind:ExternalAgent,raw:&str)->Option<String>{
                 &&result["is_error"]!=true
                 &&result["subtype"].as_str().is_none_or(|v|v=="success"))
             .and_then(|result|result["session_id"].as_str().map(str::to_string)),
+        ExternalAgent::CodexServer|ExternalAgent::QwenAcp=>None,
         ExternalAgent::Qwen=>serde_json::from_str::<Value>(raw).ok()
             .and_then(|value|value.as_array().cloned())
             .and_then(|rows|rows.into_iter().rev()
@@ -140,6 +152,8 @@ fn claim_completed_session(context:&JobContext,session:&Value,
 
 fn final_answer(kind:ExternalAgent,raw:&str)->Result<String,String>{
     let result=match kind{
+        ExternalAgent::CodexServer|ExternalAgent::QwenAcp=>return Err(
+            "프로토콜 실행은 실시간 완료 이벤트로만 검증합니다.".into()),
         ExternalAgent::Claude=>{
             let parsed:Value=serde_json::from_str(raw)
                 .map_err(|_|"Claude CLI 출력 형식이 변경되었습니다.")?;
@@ -284,6 +298,10 @@ pub async fn inspect(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
+    let execution=if kind.protocol(){
+        agent_protocol::run(context,kind,session_id,&workspace,prompt,
+            resume_session.as_deref(),generation,parent,parent_execution.as_deref(),&id).await
+    }else{
     let execution=async{
         let mut child=command.spawn()
             .map_err(|error|format!("외부 실행기 {binary} 시작 실패: {error}"))?;
@@ -329,7 +347,8 @@ pub async fn inspect(
         }
         let hash=format!("{:x}",Sha256::digest(raw.as_bytes()));
         Ok::<(String,String,Option<String>),String>((answer,hash,session))
-    }.await;
+    }.await
+    };
     let mut record=context.state.store.get("external_agent_run",&id)
         .ok_or("외부 Agent 실행 기록이 사라졌습니다.")?;
     match &execution{
