@@ -1,4 +1,4 @@
-# DOMINION — Rust agent execution platform
+# DOMINION
 
 [한국어 안내](README.ko.md) · [Architecture](ARCHITECTURE.md) · [Harness contract](docs/HARNESS.md) · [Rust SDK](sdk/rust/README.md) · [TypeScript SDK](sdk/typescript/README.md) · [Current integration audit](docs/SUB3-INTEGRATION-2026-11-19.md)
 
