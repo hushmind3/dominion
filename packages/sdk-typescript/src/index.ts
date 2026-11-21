@@ -48,6 +48,8 @@ export interface RemoteJob {
   status: 'queued' | 'leased' | 'needs_review' | 'owner_accepted'
     | 'owner_rejected' | 'cancelled';
   workerId?: string;
+  targetWorkerId?: string | null;
+  requiredCapabilities?: string[];
   leaseExpiresAt?: string;
   workerReport?: Record<string, unknown>;
   nativeVerified: false;
@@ -56,6 +58,23 @@ export interface RemoteJobRequest {
   instruction: string;
   verifyCommand?: string;
   maxRounds?: number;
+  targetWorkerId?: string;
+  requiredCapabilities?: string[];
+}
+/** Worker identity is configured by the owner, not self-attested by a model. */
+export interface RemoteWorker {
+  id: string;
+  kind: 'remote_worker';
+  status: 'enabled' | 'disabled';
+  capabilities: string[];
+  protocolVersion: number;
+  registeredAt: string;
+  lastSeenAt?: string | null;
+}
+/** One-time response; neither list nor event history returns this plaintext. */
+export interface RemoteWorkerEnrollment {
+  worker: RemoteWorker;
+  token: string;
 }
 
 /** Room-local committed delivery facts; seq is NOT the global SSE seq. */
@@ -207,6 +226,21 @@ export class DominionAgentClient {
     return decoded as T;
   }
 
+  listRemoteWorkers(signal?: AbortSignal): Promise<RemoteWorker[]> {
+    return this.request('GET','/api/remote/workers',undefined,signal);
+  }
+  enrollRemoteWorker(workerId:string,capabilities:string[]=['sdk'],
+      signal?:AbortSignal):Promise<RemoteWorkerEnrollment> {
+    return this.request('POST','/api/remote/workers',{workerId,capabilities},signal);
+  }
+  rotateRemoteWorkerToken(id:string,signal?:AbortSignal):Promise<RemoteWorkerEnrollment> {
+    return this.request('POST',
+      `/api/remote/workers/${encodeURIComponent(id)}/rotate`,{},signal);
+  }
+  setRemoteWorkerEnabled(id:string,enabled:boolean,signal?:AbortSignal):Promise<RemoteWorker> {
+    return this.request('POST',
+      `/api/remote/workers/${encodeURIComponent(id)}/state`,{enabled},signal);
+  }
   /** Submit work for an explicitly connected remote DOMINION Rust SDK host. */
   createRemoteJob(input: RemoteJobRequest, signal?: AbortSignal): Promise<RemoteJob> {
     return this.request('POST','/api/remote/jobs',input,signal);
