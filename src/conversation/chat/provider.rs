@@ -2235,6 +2235,9 @@ async fn stream_anthropic_once(
                     output_tokens = piece["usage"]["output_tokens"].as_u64().unwrap_or(output_tokens);
                 }
                 "message_stop" => {
+                    if !message_started {
+                        return Err("Anthropic message_stop without message_start".into());
+                    }
                     if !blocks.is_empty() {
                         return Err("Anthropic message_stop arrived before tool_use block was closed".into());
                     }
@@ -3227,8 +3230,10 @@ mod tests {
         use axum::{routing::post,Router,Json};
         async fn model(Json(request):Json<Value>)->impl axum::response::IntoResponse {
             let selected=request["model"].as_str().unwrap_or("");
-            let mut events=vec![json!({"type":"message_start",
-                "message":{"usage":{"input_tokens":7,"output_tokens":0}}})];
+            let mut events=if selected=="missing-start" {Vec::new()} else {
+                vec![json!({"type":"message_start",
+                    "message":{"usage":{"input_tokens":7,"output_tokens":0}}})]
+            };
             if selected=="spliced-message" {
                 events.push(json!({"type":"content_block_start","index":0,
                     "content_block":{"type":"tool_use","id":"half-write",
@@ -3307,6 +3312,7 @@ mod tests {
             ("max-tokens","stopped without a settled turn"),
             ("orphan-tool-delta","no open tool block"),
             ("spliced-message","Duplicate Anthropic message_start"),
+            ("missing-start","without message_start"),
             ("end-turn-with-tool","contradicts streamed tool calls"),
             ("duplicate-call","duplicate tool call IDs"),
         ] {
