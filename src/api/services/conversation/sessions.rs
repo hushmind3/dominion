@@ -429,6 +429,66 @@ mod deletion_tests {
     }
 
     #[tokio::test]
+    async fn fork_keeps_real_attachment_bytes_and_isolates_their_lifetime() {
+        let (state, root) = fixture();
+        state.store.put("session", &json!({"id":"original","title":"source"}));
+        let file = engine::attachments::upload(&state, &json!({
+            "sessionId":"original","name":"evidence.txt",
+            "data":STANDARD.encode("verified evidence in the original source")
+        })).unwrap();
+        let source_file = file["id"].as_str().unwrap().to_owned();
+        for content in ["첨부한 문서를 확인해", "그 파일을 다시 보겠습니다"] {
+            state.store.write_message(&json!({
+                "session_id":"original","role":"user","content":content,
+                "metadata":{"attachments":[file]}
+            })).unwrap();
+        }
+        let reply = fork_session(State(state.clone()),Path("original".into())).await;
+        assert_eq!(reply.status(),StatusCode::OK);
+        let body = axum::body::to_bytes(reply.into_body(),1024*1024).await.unwrap();
+        let fork:Value = serde_json::from_slice(&body).unwrap();
+        let fork_id = fork["id"].as_str().expect("new fork ID");
+        assert_ne!(fork_id,"original");
+        let fork_messages = state.store.messages(fork_id);
+        assert_eq!(fork_messages.len(),2);
+        let first = &fork_messages[0]["metadata"]["attachments"][0];
+        let second = &fork_messages[1]["metadata"]["attachments"][0];
+        let copy_id = first["id"].as_str().unwrap();
+        assert_ne!(copy_id,source_file);
+        assert_eq!(first["id"],second["id"],"duplicate references reuse same fork-local copy");
+        assert_eq!(first["sessionId"],fork_id);
+        assert_eq!(second["sessionId"],fork_id);
+        assert_eq!(
+            engine::attachments::read(&state,copy_id).unwrap().1,
+            b"verified evidence in the original source"
+        );
+        assert!(engine::attachments::validate_ids(&state,fork_id,&[copy_id.to_string()]).is_ok());
+        let deleted = delete_session(State(state.clone()),Path("original".into())).await;
+        assert_eq!(deleted.status(),StatusCode::OK);
+        assert!(engine::attachments::read(&state,&source_file).is_err());
+        assert!(engine::attachments::read(&state,copy_id).is_ok(),
+            "deleting source must not revoke fork's own immutable copy");
+        let _=std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn fork_of_missing_file_rolls_back_both_session_and_messages() {
+        let (state, root) = fixture();
+        state.store.put("session",&json!({"id":"source","title":"source"}));
+        state.store.write_message(&json!({
+            "session_id":"source","role":"user","content":"lost file",
+            "metadata":{"attachments":[{"id":uuid::Uuid::new_v4().to_string()}]}
+        })).unwrap();
+        let before=state.store.all("session").len();
+        let reply=fork_session(State(state.clone()),Path("source".into())).await;
+        assert_eq!(reply.status(),StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(state.store.all("session").len(),before);
+        assert_eq!(state.store.all("attachment").len(),0);
+        assert_eq!(state.store.messages("source").len(),1);
+        let _=std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn deletion_refuses_active_chat_and_room_owned_transcripts() {
         let (state, root) = fixture();
         state.store.put("session", &json!({"id":"active"}));
