@@ -80,6 +80,13 @@ pub(super) fn private_tool_request(input:&str)->bool {
     if matches!(q.as_str(),"메인"|"main"|"계속"|"계속해"|"다음 단계"|"다음단계"){
         return true;
     }
+    let compact=q.chars().filter(|ch|!ch.is_whitespace()).collect::<String>();
+    let resource=["파일","폴더","코드","레포","저장소","프로젝트",
+        "깃허브","github","브랜치","커밋","로그"]
+        .iter().any(|term|q.contains(term));
+    let inspection=["읽어","읽고","열어","검토","리뷰","확인","살펴","분석",
+        "보여","진단"].iter().any(|term|q.contains(term));
+    if resource && inspection{return true;}
     [
         "검색해","검색해서","검색좀","찾아줘","찾아봐","찾아보고",
         "조사해","조사해서","조회해","웹에서","인터넷에서",
@@ -95,7 +102,8 @@ pub(super) fn private_tool_request(input:&str)->bool {
         "다운로드해","저장해","기억해둬","기억해 둬",
         "read file","write file","edit file","run tests","search the web",
         "look up","browse to","open url","deploy","install package"
-    ].iter().any(|mark|q.contains(mark))
+    ].iter().any(|mark|q.contains(mark)||compact.contains(
+        &mark.chars().filter(|ch|!ch.is_whitespace()).collect::<String>()))
 }
 #[cfg(test)]
 mod private_tool_request_tests {
@@ -109,7 +117,8 @@ mod private_tool_request_tests {
         }
         for q in ["src/main.rs 파일 읽어줘","웹에서 최신 자료 검색해줘",
             "러스트 테스트 돌려줘","메인","이어서 작업해",
-            "깃허브에서 코드 수정해"] {
+            "깃허브에서 코드 수정해","검색 좀 해줘",
+            "코드 리뷰해줘","파일 확인해"] {
             assert!(private_tool_request(q),"{q}");
         }
     }

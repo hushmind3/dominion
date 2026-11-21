@@ -658,6 +658,20 @@ fn estimate_usage(messages: &[Value], tools: &[Value], completion: &Completion) 
     )
 }
 
+/// Final provider-wire estimate is returned to the execution journal as well
+/// as the provider usage counters. The native/compat transport must not
+/// silently fall back to the pre-serialization schema estimate.
+fn finalize_usage_estimate(completion:&mut Completion,prompt:u64,output:u64)->u64{
+    let total=if completion.usage>0 {completion.usage}
+        else{prompt.saturating_add(output)};
+    if !completion.usage_exact{
+        completion.prompt_tokens=prompt;
+        completion.completion_tokens=output;
+        completion.usage=total;
+    }
+    total
+}
+
 fn fill_estimated_usage(messages:&[Value],tools:&[Value],completion:&mut Completion){
     if !completion.usage_exact {
         let(prompt,output)=estimate_usage(messages,tools,completion);
@@ -1183,11 +1197,7 @@ async fn stream_completion_once_body(
     } else {
         estimate_usage(&provider_messages, if compatible { &[] } else { tools }, &completion)
     };
-    let total_tokens = if completion.usage > 0 {
-        completion.usage
-    } else {
-        prompt_tokens + completion_tokens
-    };
+    let total_tokens=finalize_usage_estimate(&mut completion,prompt_tokens,completion_tokens);
     crate::engine::gateway::record_usage_tokens_with_cache(
         state,
         &provider.id,
@@ -2044,5 +2054,20 @@ mod wire_context_admission_tests {
         assert!(validate_wire_context(1857,Some(1024),Some(256)).is_err());
         assert!(validate_wire_context(92,Some(1024),Some(256)).is_ok());
         assert!(validate_wire_context(2000,None,Some(256)).is_ok());
+    }
+    #[test]
+    fn wire_fallback_usage_is_returned_to_execution_not_only_gateway_counters(){
+        let mut completion=Completion::default();
+        assert_eq!(finalize_usage_estimate(&mut completion,1857,45),1902);
+        assert_eq!(completion.prompt_tokens,1857);
+        assert_eq!(completion.completion_tokens,45);
+        assert_eq!(completion.usage,1902);
+        assert!(!completion.usage_exact);
+        completion.usage_exact=true;
+        completion.prompt_tokens=100;
+        completion.completion_tokens=20;
+        completion.usage=120;
+        assert_eq!(finalize_usage_estimate(&mut completion,1857,45),120);
+        assert_eq!(completion.prompt_tokens,100);
     }
 }

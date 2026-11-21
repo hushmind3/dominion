@@ -471,19 +471,24 @@ impl Host for MainTurn<'_> {
             } else {
                 self.usage_estimated = true;
                 (
-                    self.metadata["continuity"]["workingView"]["estimatedInputTokens"]
-                        .as_u64()
-                        .unwrap_or_else(|| {
-                            crate::engine::chat::room_context::input_estimate(
-                                &self.wire_messages,
-                                &self.round_tools,
-                            ) as u64
-                        }),
-                    crate::engine::chat::room_context::estimate(&format!(
-                        "{}{}",
-                        completion.content, completion.reasoning
-                    ))
-                    .max(1) as u64,
+                    if completion.prompt_tokens>0 {
+                        completion.prompt_tokens
+                    } else {
+                        self.metadata["continuity"]["workingView"]["estimatedInputTokens"]
+                            .as_u64()
+                            .unwrap_or_else(|| {
+                                crate::engine::chat::room_context::input_estimate(
+                                    &self.wire_messages,&self.round_tools,
+                                ) as u64
+                            })
+                    },
+                    if completion.completion_tokens>0 {
+                        completion.completion_tokens
+                    } else {
+                        crate::engine::chat::room_context::estimate(&format!(
+                            "{}{}",completion.content,completion.reasoning
+                        )).max(1) as u64
+                    },
                 )
             };
             self.prompt_tokens_total += call_prompt;

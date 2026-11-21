@@ -23,6 +23,12 @@ execution receipts and user-controlled workspace boundaries in the application.
 - **Model choice:** bring OpenAI / Anthropic API credentials, or connect supported
   local inference endpoints such as Ollama, llama.cpp and LM Studio.
   Explicit per-endpoint tool/text capability denials are enforced on fallback.
+- **2026 private-chat request admission:** plain greetings and informational
+  prompts avoid loading native/MCP tool schemas merely because tools are
+  enabled; explicit file/web/work actions keep the standard native admission
+  and approvals. The actual OpenAI-compatible wire request is checked against
+  declared context limits after native/compat conversion. Provider usage and
+  estimated wire usage are distinguished in execution records.
 - **Nine-plus participant rooms:** per-agent personas, stable session history,
   user-confirmed state, bounded context selection and per-call usage evidence.
   Each participant's durable read cursor records exact visible message IDs;
