@@ -185,6 +185,7 @@ pub async fn action(
             }),
         ),
         ("memory", "edit") => edit_owner_memory(&state, &id, &body),
+        ("memory", "correct") => correct_derived_memory(&state, &id, &body),
         ("skill", "export") => match state.store.get("skill", &id) {
             Some(skill) => Json(skill).into_response(),
             None => (
@@ -337,4 +338,39 @@ mod memory_edit_tests{
         }));
         assert_eq!(empty.status(),StatusCode::BAD_REQUEST);
     }
+}
+
+
+/// Owner corrections supersede a learned claim without erasing immutable
+/// source message references. The record pair is committed atomically.
+fn correct_derived_memory(state:&AppState,id:&str,body:&Value)->Response{
+    let Some(text)=body["text"].as_str()
+        .map(str::trim).filter(|text|!text.is_empty()&&text.chars().count()<=16_000)
+    else{return (StatusCode::BAD_REQUEST,Json(json!({
+        "error":"정정 내용은 1~16000자여야 합니다."
+    }))).into_response()};
+    let Some(expected)=body["expectedText"].as_str()else{
+        return (StatusCode::BAD_REQUEST,Json(json!({
+            "error":"정정할 기억의 이전 원문이 필요합니다."
+        }))).into_response();
+    };
+    let (original,replacement)=match state.store.correct_memory_with_owner(
+        id,expected,text
+    ){
+        Ok(result)=>result,
+        Err(message)=>{
+            let status=if message=="수정할 기억을 찾을 수 없습니다." {
+                StatusCode::NOT_FOUND
+            }else{StatusCode::CONFLICT};
+            return (status,Json(json!({"error":message}))).into_response();
+        }
+    };
+    state.store.audit("memory.owner_correction",json!({
+        "oldMemoryId":id,"newMemoryId":replacement["id"],
+        "oldSource":original["source"],
+        "at":replacement["correctedAt"]
+    }));
+    state.bus.record("memory",&original);
+    state.bus.record("memory",&replacement);
+    Json(json!({"original":original,"memory":replacement})).into_response()
 }

@@ -1017,6 +1017,59 @@ impl Store {
         Some(record)
     }
 
+    /// An owner correction replaces a derived memory without overwriting
+    /// its source evidence. The old lifecycle update and the owner-authored
+    /// replacement commit in ONE SQLite transaction; a stale client or two
+    /// concurrent corrections cannot publish competing current facts.
+    pub fn correct_memory_with_owner(
+        &self,id:&str,expected_text:&str,new_text:&str
+    )->Result<(Value,Value),String>{
+        let mut conn=self.conn.lock().map_err(|error|error.to_string())?;
+        let tx=conn.transaction_with_behavior(
+            rusqlite::TransactionBehavior::Immediate
+        ).map_err(|error|error.to_string())?;
+        let mut original:Value=tx.query_row(
+            "SELECT data,id,created_at,updated_at FROM records WHERE kind='memory' AND id=?1",
+            [id],record_from_row
+        ).optional().map_err(|error|error.to_string())?
+            .ok_or("수정할 기억을 찾을 수 없습니다.")?;
+        if original["status"]!="active"
+            || !matches!(original["source"].as_str(),Some("learn"|"agent"|"reflect")){
+            return Err("정정할 수 있는 활성 학습 기억이 아닙니다.".into());
+        }
+        if original["text"].as_str()!=Some(expected_text){
+            return Err("기억이 이미 변경되었습니다. 새로고침 후 다시 확인하세요.".into());
+        }
+        let timestamp=chrono::Utc::now().to_rfc3339();
+        let replacement_id=uuid::Uuid::new_v4().to_string();
+        let scope=original["scope"].as_str().unwrap_or(
+            if original["sessionId"].is_string() {"session"} else {"shared"}
+        );
+        let replacement=json!({
+            "id":replacement_id,"text":new_text,"source":"user","status":"active",
+            "scope":scope,"agentId":original["agentId"],
+            "sessionId":original["sessionId"],
+            "partitionKey":original["partitionKey"],"type":original["type"],
+            "key":original["key"],"importance":original["importance"],
+            "sourceAuthorKey":"owner",
+            "supersedes":id,"correctedAt":timestamp,
+            "originalSource":original["source"],
+        });
+        original["status"]=json!("superseded");
+        original["supersededBy"]=json!(replacement_id);
+        original["supersededAt"]=json!(timestamp);
+        tx.execute(
+            "INSERT INTO records(kind,id,data) VALUES('memory',?1,?2)",
+            params![replacement_id,replacement.to_string()]
+        ).map_err(|error|error.to_string())?;
+        tx.execute(
+            "UPDATE records SET data=?1,updated_at=datetime('now') WHERE kind='memory' AND id=?2",
+            params![original.to_string(),id]
+        ).map_err(|error|error.to_string())?;
+        tx.commit().map_err(|error|error.to_string())?;
+        Ok((original,replacement))
+    }
+
     /// Crash recovery must compare more than status. A new worker may have
     /// re-claimed the same job between the initial snapshot and this write,
     /// moving queued->running again. Attempts and owner cancellation are

@@ -26,7 +26,7 @@ export function MemoryPage(){
  const [query,setQuery]=useState(''),[text,setText]=useState(''),[scope,setScope]=useState('shared')
  const [status,setStatus]=useState('active'),[owner,setOwner]=useState('all')
  const [error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false)
- const [editing,setEditing]=useState<{id:string;text:string;expectedText:string}|null>(null)
+ const [editing,setEditing]=useState<{id:string;text:string;expectedText:string;correction:boolean}|null>(null)
  const [showRecords,setShowRecords]=useState(false)
  const [visibleLimit,setVisibleLimit]=useState(40)
  useEffect(()=>setVisibleLimit(40),[query,status,owner])
@@ -62,11 +62,11 @@ export function MemoryPage(){
   if(!editing||busy||!editing.text.trim()||editing.text.trim()===editing.expectedText)return
   setBusy(true);setError('');setNotice('')
   try{
-   await post('/api/memories/'+encodeURIComponent(editing.id)+'/edit',{
+   await post('/api/memories/'+encodeURIComponent(editing.id)+(editing.correction?'/correct':'/edit'),{
     text:editing.text.trim(),expectedText:editing.expectedText
    })
    await memories.reload()
-   setEditing(null);setNotice(t('memory.edited'))
+   setEditing(null);setNotice(t(editing.correction?'memory.corrected':'memory.edited'))
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
@@ -94,9 +94,10 @@ export function MemoryPage(){
      <SelectInput aria-label={t('memory.scopeAria')} value={owner} onChange={e=>setOwner(e.target.value)}><option value="all">{t('memory.owner.all')}</option><option value="shared">{t('memory.owner.shared')}</option><option value="session">{t('memory.owner.session')}</option>{owners.map(id=><option key={id} value={id}>{agentNames.get(id)??id}</option>)}</SelectInput>
     </div>
     <div className="flex flex-col gap-3">{filtered.slice(0,visibleLimit).map(m=><Panel key={m.id} className="min-w-0 p-4">
-     <div className="mb-2 flex flex-wrap items-center gap-2"><BookOpenText size={18}/><strong>{ownerName(m)}</strong><span className="text-xs text-[#7C7469]">{t(statusLabels[statusOf(m)] ?? 'memory.status.excluded')}</span>{m.source==='user'&&m.status==='active'&&<Button size="icon" variant="ghost" className="ml-auto" disabled={busy} onClick={()=>{setEditing({id:m.id,text:m.text,expectedText:m.text});setError('');setNotice('')}} aria-label={t('memory.edit')}><Pencil size={16}/></Button>}<Button size="icon" variant="ghost" className="ml-auto" disabled={busy} onClick={()=>void drop(m.id)} aria-label={t('memory.delete')}><Trash2 size={16}/></Button></div>
+     <div className="mb-2 flex flex-wrap items-center gap-2"><BookOpenText size={18}/><strong>{ownerName(m)}</strong><span className="text-xs text-[#7C7469]">{t(statusLabels[statusOf(m)] ?? 'memory.status.excluded')}</span>{m.status==='active'&&['user','learn','agent','reflect'].includes(m.source??'user')&&<Button size="icon" variant="ghost" className="ml-auto" disabled={busy} onClick={()=>{setEditing({id:m.id,text:m.text,expectedText:m.text,correction:m.source!=='user'});setError('');setNotice('')}} aria-label={t(m.source==='user'?'memory.edit':'memory.correct')}><Pencil size={16}/></Button>}<Button size="icon" variant="ghost" className="ml-auto" disabled={busy} onClick={()=>void drop(m.id)} aria-label={t('memory.delete')}><Trash2 size={16}/></Button></div>
      {editing?.id===m.id?<div className="grid gap-2">
-      <TextArea rows={5} aria-label={t('memory.edit')} value={editing.text} disabled={busy} onChange={e=>setEditing(previous=>previous&&previous.id===m.id?{...previous,text:e.target.value}:previous)}/>
+      <TextArea rows={5} aria-label={t(editing.correction?'memory.correct':'memory.edit')} value={editing.text} disabled={busy} onChange={e=>setEditing(previous=>previous&&previous.id===m.id?{...previous,text:e.target.value}:previous)}/>
+      {editing.correction&&<p className="text-xs leading-5 text-[#7C7469]">{t('memory.correctionNotice')}</p>}
       <div className="flex flex-wrap gap-2">
        <Button variant="primary" disabled={busy||!editing.text.trim()||editing.text.trim()===editing.expectedText} onClick={()=>void saveEdit()}><Check size={15}/>{t('memory.save')}</Button>
        <Button variant="ghost" disabled={busy} onClick={()=>setEditing(null)}><X size={15}/>{t('memory.cancel')}</Button>
