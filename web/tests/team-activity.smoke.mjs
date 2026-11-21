@@ -97,6 +97,22 @@ try{
   await page.reload({waitUntil:'domcontentloaded'});
   await page.getByText('현재 사용할 수 없는 Worker:',{exact:false}).waitFor({timeout:10000});
   assert.equal(await page.getByRole('button',{name:'Lead 작업 시작'}).isDisabled(),true);
+  await page.getByRole('button',{name:'사용 불가 Worker 제외'}).click();
+  assert.equal(await editor.inputValue(),'review stale','removing a stale Worker must preserve the prompt');
+  await page.getByRole('checkbox').first().check();
+  assert.equal(await page.getByRole('button',{name:'Lead 작업 시작'}).isEnabled(),true);
+  // A removed Lead or disconnected remote route must never silently fall back
+  // to another model or local execution after the draft is reloaded.
+  await page.evaluate(()=>sessionStorage.setItem('dominion.team.launch.draft.v1',
+    JSON.stringify({open:true,prompt:'review target',leadId:'deleted-lead',
+      workerIds:['lead'],remoteId:'worker-b'})));
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.getByText('이전에 선택한 Lead를 사용할 수 없습니다.',{exact:false})
+    .waitFor({timeout:10000});
+  assert.equal(await page.getByRole('button',{name:'Lead 작업 시작'}).isDisabled(),true);
+  assert.ok(await page.getByText('선택한 원격 장치를 사용할 수 없습니다.',{exact:false}).isVisible());
+  await page.getByRole('button',{name:'로컬 실행으로 변경'}).click();
+  assert.equal(await page.getByRole('button',{name:'Lead 작업 시작'}).isDisabled(),true);
   await page.getByRole('button',{name:'초안 지우기'}).click();
   await page.reload({waitUntil:'domcontentloaded'});
   await page.getByRole('button',{name:'팀 작업 시작',exact:true}).click();
