@@ -260,7 +260,7 @@ export class Dominion{
       const deadline=options.timeoutMs===undefined?Infinity:Date.now()+options.timeoutMs;
       const actionable=new Set([
         'completed','failed','cancelled','exhausted','denied',
-        'awaiting_approval','in_doubt','interrupted'
+        'awaiting_approval','in_doubt','interrupted','needs_review'
       ]);
       while(true){
         if(options.signal?.aborted)throw aborted();
