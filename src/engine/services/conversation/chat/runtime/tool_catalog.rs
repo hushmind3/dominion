@@ -277,7 +277,7 @@ mod lightweight_tests{
             assert!(!no_tools_required(&request(text),&session,&None),"{text}");
         }
         let attachment=TurnRequest::from_value(&json!({
-            "input":"안녕","attachmentIds":["file-1"]
+            "input":"안녕","attachmentIds":["00000000-0000-4000-8000-000000000001"]
         })).unwrap();
         assert!(!no_tools_required(&attachment,&session,&None));
         assert!(!no_tools_required(&request("안녕"),&json!({"roomId":"r"}),&None));
