@@ -7,9 +7,10 @@ Scope: `dominion-sub3` only. No changes to `main`, production Worker, D1 or paym
 | Path | Contract | Evidence |
 | --- | --- | --- |
 | `crates/dominion-agent-runtime/src/drive.rs` | A paid model call persists a generation fence before dispatch; accepted decisions and rejected paid answers settle that fence only with a durable snapshot write | Native/Chat both call the shared SDK facade; atomic/failed-save unit fixtures |
+| `src/conversation/chat/runtime/input_contract.rs` | User message persistence, immutable Room source ownership, acceptance-check freeze and demotion are extracted from the oversized Chat turn without changing their ordering | Existing source/acceptance logic, source contract gate |
 | `src/conversation/chat/runtime.rs` | Wake/resume is blocked for the same task when an old model intent, uncertain effect, or operation journal remains | `resume_safety_tests.rs`; task-index lookup rechecked under an exclusive session lease |
 | `src/conversation/chat/runtime/turn.rs` | Chat saves provider usage and model decision, rejects paid unsafe decisions before clearing the in-flight marker | `settle_rejected_chat_turn` and common SDK settlement |
-| `src/features/providers/native_stream.rs` / `src/conversation/chat/protocol.rs` | Shared SSE framing. Native also accepts final-message-only OpenAI Chat chunks, never duplicates a simultaneous delta/final body, and rejects non-object tool JSON | byte-split Unicode/SSE tests and Native terminal-message fixtures |
+| `src/features/providers/native_stream.rs` / `src/conversation/chat/protocol.rs` / `src/conversation/chat/provider.rs` | Shared SSE framing. Native accepts final-message-only Chat chunks, avoids simultaneous delta/final duplication, rejects malformed tool JSON; Chat and Native reject truncated Anthropic turn endings with the same stop-reason helper | byte-split Unicode/SSE tests, Native terminal-message fixtures, common stop-reason test |
 | `src/api/sdk_runs.rs` | API keeps legacy user-facing `status` but adds canonical `phase`; no longer labels uncertain review as a denial | API unit tests for review, fail, approve/deny callId, resume |
 | `web/src/components/NativeAgentPanel.tsx` | Exact approval call is revalidated server-side before an effect; status refreshes across focus/reconnect; mobile buttons have larger targets | optional real browser smoke |
 | `src/conversation/chat/runtime/selection.rs` | Context-free explanations and greetings skip unneeded MCP enumeration; referential/current/source requests keep authority | classifier unit tests and a real HTTP mock Chat fixture |
@@ -38,13 +39,14 @@ npx --prefix web playwright install chromium
 npm run test:sub3-browser --prefix web
 ```
 
-The browser smoke runs the actual Rust server with an isolated temporary data directory, a temporary workspace and a locally mocked provider. It checks the final-message-only protocol, a saved model decision, exact pending approval after browser reload, a real approved workspace write and successful durable receipt, followed by refusal of a separate write and rejection of its stale approval ID. It must never connect to production credentials or services.
+The browser smoke is **written but has not been executed** in this authoring environment. When run, it starts the actual Rust server with an isolated temporary data directory, a temporary workspace and a locally mocked provider. It checks the final-message-only protocol, a saved model decision, exact pending approval after browser reload, a real approved workspace write and successful durable receipt, followed by refusal of a separate write and rejection of its stale approval ID. It must never connect to production credentials or services.
 
 ## Verification truth table
 
 | Check | Current result |
 | --- | --- |
 | GitHub contents API: files committed on `dominion-sub3` | Confirmed |
+| GitHub source inspection: 12 critical module/contract references | Verified present (not compilation) |
 | Source-level architecture contract: script updated for extracted modules | Written; execution pending |
 | New Rust/API/HTTP regression suites | Written; execution pending |
 | TypeScript SDK, web typecheck, Vite build | Not executed in this authoring environment |
