@@ -300,7 +300,18 @@ impl Assembler {
                 if self.blocks.contains_key(&idx){return Err("Duplicate Anthropic block index".into());}
                 let block=&event["content_block"];
                 let entry=match block["type"].as_str() {
-                    Some("text")=>Block::Text(block["text"].as_str().unwrap_or("").into()),
+                    Some("text")=>{
+                        // Some compatible Anthropic gateways start a text block
+                        // with a nonempty body instead of sending text_delta.
+                        // Include those bytes in BOTH live progress and the
+                        // settled answer exactly once.
+                        let initial=block["text"].as_str().unwrap_or("");
+                        if initial.len()>MAX_EVENT_BYTES {
+                            return Err("Anthropic initial text exceeds 2 MiB".into());
+                        }
+                        if !initial.is_empty(){updates.push(Update::Text(initial.into()));}
+                        Block::Text(initial.into())
+                    },
                     Some("thinking"|"redacted_thinking")=>Block::Ignored,
                     Some("tool_use")=>{
                         let id=block["id"].as_str().filter(|v|!v.is_empty())
@@ -796,6 +807,24 @@ mod tests {
         stream.feed(Packet::Done).unwrap();
         let settled=stream.finish().unwrap();
         assert_eq!(settled["choices"][0]["message"]["tool_calls"][0]["id"],"call-terminal");
+    }
+
+    #[test]
+    fn native_anthropic_initial_text_is_streamed_and_settled_once() {
+        let mut stream=Assembler::new(Wire::Anthropic);
+        stream.feed(Packet::Data(json!({"type":"message_start",
+            "message":{"usage":{"input_tokens":7}}}))).unwrap();
+        let updates=stream.feed(Packet::Data(json!({"type":"content_block_start",
+            "index":0,"content_block":{"type":"text","text":"Hello 🧠"}}))).unwrap();
+        assert!(matches!(updates.as_slice(),[Update::Text(text)] if text=="Hello 🧠"));
+        for item in [
+            json!({"type":"content_block_stop","index":0}),
+            json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},
+                "usage":{"output_tokens":3}}),
+            json!({"type":"message_stop"}),
+        ] {stream.feed(Packet::Data(item)).unwrap();}
+        let final_message=stream.finish().unwrap();
+        assert_eq!(final_message["content"][0]["text"],"Hello 🧠");
     }
 
     #[test]
