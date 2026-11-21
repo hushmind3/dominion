@@ -3,6 +3,7 @@ use crate::engine::run_quiet;
 use crate::state::AppState;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 const MAX_EVENTS: usize = 200;
@@ -21,17 +22,29 @@ pub struct JobContext {
     /// tied to this attempt even if another worker requeues it later.
     attempt: u64,
     events: Arc<Mutex<Vec<Value>>>,
+    events_dropped: Arc<AtomicUsize>,
 }
 
 impl JobContext {
     pub fn new(state: AppState, job_id: String) -> Self {
-        let attempt=state.store.get("job",&job_id)
+        let previous=state.store.get("job",&job_id);
+        let attempt=previous.as_ref()
             .and_then(|j|j["attempts"].as_u64()).unwrap_or(0);
+        // Preserve the previous attempt's progress on resume. A bounded
+        // ring keeps recent diagnostics instead of freezing at first 200.
+        let mut prior=previous.as_ref().and_then(|j|j["events"].as_array())
+            .cloned().unwrap_or_default();
+        let trimmed=prior.len().saturating_sub(MAX_EVENTS);
+        if trimmed>0 {prior.drain(..trimmed);}
+        let dropped=previous.as_ref().and_then(|j|j["eventsDropped"].as_u64())
+            .and_then(|n|usize::try_from(n).ok()).unwrap_or(0)
+            .saturating_add(trimmed);
         Self {
             state,
             job_id,
             attempt,
-            events: Arc::new(Mutex::new(Vec::new())),
+            events: Arc::new(Mutex::new(prior)),
+            events_dropped: Arc::new(AtomicUsize::new(dropped)),
         }
     }
 
@@ -44,12 +57,14 @@ impl JobContext {
             "event": payload,
         }));
         let mut events = self.events.lock().unwrap();
-        if events.len() < MAX_EVENTS {
-            events.push(json!({
-                "type": event.get("type").cloned().unwrap_or(json!("event")),
-                "at": chrono::Utc::now().to_rfc3339(),
-            }));
+        if events.len()>=MAX_EVENTS {
+            events.remove(0);
+            self.events_dropped.fetch_add(1,Ordering::Relaxed);
         }
+        events.push(json!({
+            "type": event.get("type").cloned().unwrap_or(json!("event")),
+            "at": chrono::Utc::now().to_rfc3339(),
+        }));
     }
 
     /// Merge a patch into the persisted job record and notify listeners.
@@ -675,6 +690,7 @@ async fn run_job(state: AppState, job: Value) {
                 "result": result,
                 "finishedAt": chrono::Utc::now().to_rfc3339(),
                 "events": context.events.lock().unwrap().clone(),
+                "eventsDropped": context.events_dropped.load(Ordering::Relaxed),
             }),json!({ "jobId": job_id, "kind": kind }));
         }
         Err(error) => {
@@ -695,6 +711,7 @@ async fn run_job(state: AppState, job: Value) {
                 "error": error,
                 "finishedAt": chrono::Utc::now().to_rfc3339(),
                 "events": context.events.lock().unwrap().clone(),
+                "eventsDropped": context.events_dropped.load(Ordering::Relaxed),
             }),json!({ "jobId": job_id, "kind": kind, "error": error }));
         }
     }
@@ -785,6 +802,28 @@ mod tests {
         AppState::new(config, store, vault)
     }
 
+
+    #[test]
+    fn resumed_job_keeps_newest_events_and_reports_dropped_earlier_entries(){
+        let state=temp_state();
+        let existing=(0..205).map(|i|json!({"type":"old_step","seq":i}))
+            .collect::<Vec<_>>();
+        state.store.put("job",&json!({
+            "id":"bounded-history","kind":"prompt","status":"running",
+            "attempts":2,"eventsDropped":3,"events":existing
+        })).unwrap();
+        let context=JobContext::new(state,"bounded-history".into());
+        assert_eq!(context.events.lock().unwrap().len(),MAX_EVENTS);
+        assert_eq!(context.events.lock().unwrap()[0]["seq"],5);
+        assert_eq!(context.events_dropped.load(Ordering::Relaxed),8);
+        context.emit(json!({"type":"new_step"}));
+        let retained=context.events.lock().unwrap();
+        assert_eq!(retained.len(),MAX_EVENTS);
+        assert_eq!(retained[0]["seq"],6,
+            "An old attempt's first event must not hide the latest one");
+        assert_eq!(retained.last().unwrap()["type"],"new_step");
+        assert_eq!(context.events_dropped.load(Ordering::Relaxed),9);
+    }
 
     fn team_fixture(state:&AppState,lead_status:&str,child_status:&str) {
         state.store.put("job",&json!({
