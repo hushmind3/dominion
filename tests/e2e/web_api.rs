@@ -761,6 +761,27 @@ fn correction_turn_failure_still_enqueues_reflection() {
 }
 
 #[test]
+fn health_reports_running_binary_identity_instead_of_moving_checkout_head(){
+    let _serial=serial();
+    let (port,_)=scripted_provider(|_|vec![json!({
+        "choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]})]);
+    let app=TestApp::new(port,"native");
+    let health=app.get("/api/health");
+    assert_eq!(health["binaryBuildSha"],health["commit"]);
+    assert_ne!(health["identitySource"],"source-checkout",
+        "health cannot call checkout HEAD the identity of an old binary");
+    match health["identitySource"].as_str() {
+        Some("embedded-build"|"embedded-release")=>{
+            let commit=health["binaryBuildSha"].as_str().unwrap();
+            assert_eq!(commit.len(),40);
+            assert!(commit.bytes().all(|b|b.is_ascii_hexdigit()));
+        },
+        Some("unavailable")=>assert_eq!(health["binaryBuildSha"],"unknown"),
+        other=>panic!("unrecognized binary identity source: {other:?}")
+    }
+}
+
+#[test]
 fn sub3_standalone_explanation_uses_zero_tool_schemas_over_real_http_sse() {
     let _serial=serial();
     let (port, observed)=scripted_provider(|_| {
