@@ -3,7 +3,7 @@ use dominion_core::run_event::{RunEventEnvelope,RunEventRef,RunLifecycle};
 use serde_json::{json, Value};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 use tokio::sync::broadcast;
 
@@ -57,6 +57,9 @@ pub struct Bus {
     sender: broadcast::Sender<Value>,
     store: Store,
     seq: Arc<AtomicU64>,
+    /// Serializes sequence allocation, SQLite durability and live delivery.
+    /// Without this, parallel workers can broadcast seq=12 before seq=11.
+    emit_lock: Arc<Mutex<()>>,
 }
 
 impl Bus {
@@ -67,6 +70,7 @@ impl Bus {
             sender,
             store,
             seq: Arc::new(AtomicU64::new(seq)),
+            emit_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -79,10 +83,17 @@ impl Bus {
                 value["runRef"]=json!(reference);
             }
         }
-        let seq = self.seq.fetch_add(1, Ordering::SeqCst) + 1;
-        value["seq"] = json!(seq);
-        self.store.append_event(seq, &value);
-        let _ = self.sender.send(value);
+        let _guard=self.emit_lock.lock().unwrap();
+        let seq=self.seq.load(Ordering::SeqCst).saturating_add(1);
+        value["seq"]=json!(seq);
+        // A failed DB commit must never publish a non-durable event or
+        // advance the reconnect cursor past a missing row.
+        if let Err(error)=self.store.append_event(seq,&value){
+            self.store.audit("event.persist_failed",json!({"seq":seq,"error":error}));
+            return;
+        }
+        self.seq.store(seq,Ordering::SeqCst);
+        let _=self.sender.send(value);
     }
 
     pub fn record(&self, kind: &str, record: &Value) {
@@ -255,6 +266,34 @@ mod tests {
         let worker=bus.replay_run("native-worker",0,20);
         assert_eq!(worker.len(),1);
         assert_eq!(worker[0].run_ref.parent_execution_id.as_deref(),Some("native-lead"));
+    }
+    #[test]
+    fn parallel_producers_never_broadcast_a_future_cursor_before_earlier_commits(){
+        let store=store();
+        let bus=Bus::new(store.clone());
+        let mut receiver=bus.subscribe();
+        let workers=(0..6).map(|thread_id|{
+            let bus=bus.clone();
+            std::thread::spawn(move||{
+                for index in 0..40 {
+                    bus.emit(json!({"type":"concurrent","threadId":thread_id,"index":index}));
+                }
+            })
+        }).collect::<Vec<_>>();
+        for worker in workers{worker.join().unwrap();}
+        let mut seqs=Vec::new();
+        while let Ok(event)=receiver.try_recv(){
+            seqs.push(event["seq"].as_u64().unwrap());
+        }
+        assert_eq!(seqs.len(),240);
+        assert_eq!(seqs,(1..=240).collect::<Vec<_>>());
+        let durable=bus.replay(0,500);
+        assert_eq!(durable.len(),240);
+        assert_eq!(durable.iter().map(|row|row["seq"].as_u64().unwrap())
+            .collect::<Vec<_>>(),seqs);
+        let reopened=Bus::new(store);
+        reopened.emit(json!({"type":"restart"}));
+        assert_eq!(reopened.replay(240,10)[0]["seq"],241);
     }
     #[test]
     fn the_log_is_bounded_without_losing_recent_events() {

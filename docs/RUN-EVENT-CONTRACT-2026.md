@@ -53,3 +53,13 @@ API pagination/404, SDK cursor+identity and unadmitted run guard.
   not delegation of DOMINION's native tool authority to an external CLI.
 - Strategy planning returns a serialized, versioned Rust `PlanningDecision`.
   Native execution and permission ownership are unchanged.
+
+## Atomic event sequencing under concurrent workers
+
+The in-process event bus serializes three operations with one shared lock:
+assign `seq`, persist with `INSERT` (never replace a previous event), then
+broadcast. A failed SQLite write cannot increment the durable cursor or
+broadcast a false committed event. All Bus clones share this ordering lock.
+The reconnect contract is tested with 6 concurrent producers × 40 events,
+followed by process recreation. This does **not** imply multi-process writable
+SQLite event bus support; DOMINION currently uses one local Rust server.
