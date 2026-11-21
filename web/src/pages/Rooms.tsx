@@ -186,7 +186,8 @@ function RoomModelPicker({value,onChange,providers,agents,disabled=false}:{value
  </div>
 }
 
-type RoomComposerDraft={text:string;targets:string[]}
+type RoomSendAttempt={input:string;targets:string[];id:string;reasoningLanguage:'ko'|'default';reasoningEffort?:string;thinking:boolean}
+type RoomComposerDraft={text:string;targets:string[];attempt?:RoomSendAttempt}
 const roomComposerPrefix='dominion.room.composer.v1:'
 function readRoomComposer(roomId:string):RoomComposerDraft{
  const empty:RoomComposerDraft={text:'',targets:[]}
@@ -196,9 +197,24 @@ function readRoomComposer(roomId:string):RoomComposerDraft{
   const saved=JSON.parse(raw)
   if(!saved||typeof saved.text!=='string'||saved.text.length>250000
    ||!Array.isArray(saved.targets))return empty
-  return {text:saved.text,targets:[...new Set(saved.targets
+  const targets:string[]=[...new Set<string>(saved.targets
    .filter((id:unknown):id is string=>typeof id==='string'&&id.length>0)
-   .slice(0,32))]}
+   .slice(0,32))]
+  const pending=saved.attempt
+  const validPending=pending&&typeof pending.id==='string'
+   &&pending.id.length>0&&pending.id.length<=160
+   &&pending.input===saved.text.trim()
+   &&Array.isArray(pending.targets)
+   &&JSON.stringify(pending.targets)===JSON.stringify(targets)
+   &&(pending.reasoningLanguage==='ko'||pending.reasoningLanguage==='default')
+   &&typeof pending.thinking==='boolean'
+   &&(pending.reasoningEffort===undefined||typeof pending.reasoningEffort==='string')
+  const attempt:RoomSendAttempt|undefined=validPending?{
+   id:pending.id,input:pending.input,targets,
+   reasoningLanguage:pending.reasoningLanguage,
+   reasoningEffort:pending.reasoningEffort,thinking:pending.thinking
+  }:undefined
+  return {text:saved.text,targets,attempt}
  }catch{return empty}
 }
 function storeRoomComposer(roomId:string,draft:RoomComposerDraft){
@@ -210,24 +226,28 @@ function storeRoomComposer(roomId:string,draft:RoomComposerDraft){
 
 function RoomConversation({room,agents,providers,openList,showList,openSession,onSaved,onRemoved,switchMode,visibleView,openSettings}:{openSettings:()=>void;switchMode:(mode:'chat'|'rooms')=>void;visibleView:boolean;room:RoomConfig;agents:Agent[];providers:Provider[];openList:()=>void;showList:boolean;openSession:(id:string)=>void;onSaved:()=>Promise<void>;onRemoved:()=>Promise<void>}){
  useLocale()
+ const [composer,setComposer]=useState<RoomComposerDraft>(()=>readRoomComposer(room.id))
  const [messages,setMessages]=useState<ChatMessage[]>([]),[feed,setFeed]=useState<FeedState>(initialFeed)
  const messageUsageTotal=useMemo(()=>messages.reduce((sum,message)=>sum+(Number(message.metadata?.usage?.totalTokens)||0),0),[messages])
  const usageTotal=feed.usage?.totalTokens||messageUsageTotal
  const [loading,setLoading]=useState(true),[loadError,setLoadError]=useState(''),[error,setError]=useState('')
- const [showSettings,setShowSettings]=useState(false),[showReasoning,setShowReasoning]=useState(true),[reasoningKo,setReasoningKo]=useState(koreanReasoningEnabled),[thinkingEnabled,setThinkingEnabled]=useState(true),[optionsBusy,setOptionsBusy]=useState(false)
- const [reasoningEffort,setReasoningEffort]=useState(''),[permissionOpen,setPermissionOpen]=useState(false),[recipientsOpen,setRecipientsOpen]=useState(false)
+ const [showSettings,setShowSettings]=useState(false),[showReasoning,setShowReasoning]=useState(true),
+ [reasoningKo,setReasoningKo]=useState(()=>composer.attempt?composer.attempt.reasoningLanguage==='ko':koreanReasoningEnabled()),
+ [thinkingEnabled,setThinkingEnabled]=useState(()=>composer.attempt?.thinking??true),[optionsBusy,setOptionsBusy]=useState(false)
+ const [reasoningEffort,setReasoningEffort]=useState(()=>composer.attempt?.reasoningEffort||''),[permissionOpen,setPermissionOpen]=useState(false),[recipientsOpen,setRecipientsOpen]=useState(false)
  const recipientsPanel=useAnchoredPanel(recipientsOpen,()=>setRecipientsOpen(false),280,'top')
- useEffect(()=>{if(!visibleView){setRecipientsOpen(false);setPermissionOpen(false);setShowSettings(false)}else setReasoningKo(koreanReasoningEnabled())},[visibleView])
+ useEffect(()=>{if(!visibleView){setRecipientsOpen(false);setPermissionOpen(false);setShowSettings(false)}else if(!composer.attempt)setReasoningKo(koreanReasoningEnabled())},[visibleView])
  // A Room owns its unsent text and explicit recipients. Reopening another
  // Room must never transplant this draft or silently broadcast it to all.
- const [composer,setComposer]=useState<RoomComposerDraft>(()=>readRoomComposer(room.id))
  const input=composer.text,targets=composer.targets
- const setInput=(next:SetStateAction<string>)=>setComposer(prior=>({
-  ...prior,text:typeof next==='function'?next(prior.text):next
- }))
- const setTargets=(next:SetStateAction<string[]>)=>setComposer(prior=>({
-  ...prior,targets:typeof next==='function'?next(prior.targets):next
- }))
+ const setInput=(next:SetStateAction<string>)=>setComposer(prior=>{
+  const text=typeof next==='function'?next(prior.text):next
+  return {...prior,text,attempt:text===prior.text?prior.attempt:undefined}
+ })
+ const setTargets=(next:SetStateAction<string[]>)=>setComposer(prior=>{
+  const targets=typeof next==='function'?next(prior.targets):next
+  return {...prior,targets,attempt:JSON.stringify(targets)===JSON.stringify(prior.targets)?prior.attempt:undefined}
+ })
  useEffect(()=>storeRoomComposer(room.id,composer),[room.id,composer])
  const [sending,setSending]=useState(false),[stopping,setStopping]=useState(false)
  const [inspector,setInspector]=useState(false),[draft,setDraft]=useState<RoomDraft>(()=>draftOf(room)),[dirty,setDirty]=useState(false),[saving,setSaving]=useState(false),[saved,setSaved]=useState(false)
@@ -239,7 +259,7 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
  const promptDirty=Boolean(prompt&&personaDraft!==prompt.persona)
  const [learningNotice,setLearningNotice]=useState('')
  const [showActivity,setShowActivity]=useState(false),[live,setLive]=useState<LiveDraft|null>(null),[moreBelow,setMoreBelow]=useState(false)
- const inputRef=useRef<HTMLTextAreaElement>(null),approvalRef=useRef<HTMLDivElement>(null),requestInFlight=useRef(false),reloadRequested=useRef(false),dataVersion=useRef(0),mounted=useRef(true),sendAttempt=useRef<{input:string;targets:string[];id:string;reasoningLanguage:'ko'|'default';reasoningEffort?:string;thinking:boolean}|null>(null)
+ const inputRef=useRef<HTMLTextAreaElement>(null),approvalRef=useRef<HTMLDivElement>(null),requestInFlight=useRef(false),reloadRequested=useRef(false),dataVersion=useRef(0),mounted=useRef(true),sendAttempt=useRef<RoomSendAttempt|null>(composer.attempt??null)
  const activeTurnId=useRef<string|null>(null),retiredTurnIds=useRef(new Set<string>()),terminalTurnIds=useRef(new Set<string>())
  const viewActive=useRef(visibleView);viewActive.current=visibleView
  const current=feed.room||room
@@ -402,6 +422,10 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
   event?.preventDefault();if(!input.trim()||sending||staleTargets.length>0)return;setSending(true);setError('');jumpDown()
   const contents=input.trim(),recipients=[...targets]
   if(!sendAttempt.current||sendAttempt.current.input!==contents||JSON.stringify(sendAttempt.current.targets)!==JSON.stringify(recipients)||sendAttempt.current.reasoningEffort!==(reasoningEffort||undefined)||sendAttempt.current.thinking!==(reasoningEffort==='none'?false:thinkingEnabled)||sendAttempt.current.reasoningLanguage!==(reasoningKo?'ko':'default'))sendAttempt.current={input:contents,targets:recipients,id:crypto.randomUUID(),reasoningLanguage:reasoningKo?'ko':'default',reasoningEffort:reasoningEffort||undefined,thinking:reasoningEffort==='none'?false:thinkingEnabled}
+  // Persist the exact in-flight idempotency key BEFORE dispatch. If the
+  // server commits but the tab reloads before receiving 200, retrying the
+  // restored draft uses the same owner operation ID, not a second job.
+  storeRoomComposer(room.id,{...composer,attempt:sendAttempt.current})
   try{const result=await post<{room:RoomConfig;message:ChatMessage;job:Job;sessionId:string}>('/api/rooms/'+room.id+'/messages',{input:contents,...(recipients.length?{agentIds:recipients}:{}),clientMessageId:sendAttempt.current.id,reasoningLanguage:sendAttempt.current.reasoningLanguage,reasoningEffort:sendAttempt.current.reasoningEffort,thinking:sendAttempt.current.thinking});dataVersion.current+=1;setMessages(previous=>previous.some(message=>message.id===result.message.id)?previous:[...previous,result.message]);setFeed(previous=>({...previous,room:result.room,sessionId:result.sessionId,jobs:[result.job,...previous.jobs.filter(job=>job.id!==result.job.id)]}));setInput('');if(inputRef.current)inputRef.current.style.height='';setTargets([]);setRecipientsOpen(false);sendAttempt.current=null;await load();await onSaved();inputRef.current?.focus({preventScroll:true})}
   catch(e){setError((e as Error).message)}finally{setSending(false)}
  }
