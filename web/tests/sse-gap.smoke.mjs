@@ -29,7 +29,7 @@ async function waitForServer(){
 try{
  await waitForServer();
  browser=await chromium.launch({headless:true});
- const page=await browser.newPage({viewport:{width:390,height:844},locale:'ko-KR'});
+ const page=await browser.newPage({viewport:{width:1280,height:800},locale:'ko-KR'});
  const errors=[];
  page.on('pageerror',error=>errors.push(error.message));
  await page.route('**/api/**',async route=>{
