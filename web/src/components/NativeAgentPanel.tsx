@@ -51,7 +51,10 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   let alive=true
   const timer=setInterval(()=>{
    get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}`)
-    .then(next=>{if(alive)setRun(next)})
+    .then(next=>{if(alive){
+     setRun(next)
+     setRuns(rows=>rows.map(row=>row.id===next.id?next:row))
+    }})
     .catch(e=>{if(alive)setError((e as Error).message)})
   },1500)
   return()=>{alive=false;clearInterval(timer)}
