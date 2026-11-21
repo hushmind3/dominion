@@ -23,6 +23,12 @@ pub(super) async fn run_turn_body(
         state,request,session_id,execution_id,task_id,
         record_input,source_message_id,
     )?;
+    // An owner request for a real effect is not a conversational completion.
+    // Reject it before model generation when execution authority is absent;
+    // neither a fluent answer nor a learned program may forge a file write.
+    if !request.tools_execution_enabled && acceptance.is_some() {
+        return Err("도구 실행이 비활성화되어 요청한 외부 작업을 수행하지 않았습니다.".into());
+    }
     let mut acceptance_retries = 0usize;
     let mut last_repair_signature:Option<String> = None;
     let mut procedure_repairs = 0usize;
