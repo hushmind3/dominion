@@ -87,6 +87,16 @@ await dominion.streamChat({
 
 Attachment records are scoped to a real session or room; Rust enforces
 per-file (8 MiB), per-turn (8 files / 24 MiB) limits and validates image bytes.
+Large text files are stored intact. For model input, the current follow-up
+question selects bounded excerpts with original line/column locations, plus
+the document start and end; a summary or quote from an omitted section is
+not treated as verified. Base64 image payloads are accounted for at encoded
+size rather than raw-file size.
+
+`sessions.delete(sessionId)` deletes an idle **private Chat** and revokes its
+stored attachment bytes and metadata. Rust rejects deletion while a job/run is
+active or when the transcript belongs to a Room or an external channel.
+
 `attachments.content(id)` reads bytes with the same authenticated SDK client.
 Chat POST requests are never automatically retried.
 To stop an active streamed Chat turn, supply a fresh UUID as `requestId` to
