@@ -183,6 +183,43 @@ mod tests{
         assert!(build_patch(&root,&task).unwrap_err().contains("changed"));
         let _=std::fs::remove_dir_all(&root);
     }
+    #[tokio::test]
+    async fn approved_remote_source_applies_once_through_native_patch_engine(){
+        use crate::{config::Config,db::Store,vault::Vault,state::AppState};
+        let root=std::env::temp_dir().join(format!("remote-merge-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("existing.rs"),"previous\\n").unwrap();
+        let config=Config{port:0,data_dir:root.clone(),web_dir:root.join("web"),
+            workspace:root.clone()};
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        state.store.put("managed_team",&json!({
+            "id":"lead-team","leadSessionId":"lead-session"
+        })).unwrap();
+        let content="updated\\n";
+        state.store.put("remote_task",&json!({
+            "id":"remote-job","teamId":"lead-team",
+            "status":"completed","readOnly":false,
+            "artifactApplyStatus":"pending",
+            "artifactPaths":["existing.rs"],
+            "artifactBases":[{"path":"existing.rs",
+                "expectedSha256":crate::remote::digest(b"previous\\n")}],
+            "artifacts":[{"path":"existing.rs","content":content,
+                "sha256":crate::remote::digest(content.as_bytes())}]
+        })).unwrap();
+        let ctx=ToolContext{workspace:&root,store:&state.store,state:&state,
+            session_id:"lead-session",agent_id:Some("lead"),
+            tools_enabled:true,tools_execution_enabled:true};
+        let args=json!({"teamId":"lead-team","remoteTaskId":"remote-job"});
+        let result=apply(&ctx,&args,"run-owner-1").await.unwrap();
+        assert_eq!(result["status"],"applied");
+        assert_eq!(std::fs::read_to_string(root.join("existing.rs")).unwrap(),content);
+        assert_eq!(state.store.get("remote_task","remote-job").unwrap()
+            ["artifactApplyRunId"],"run-owner-1");
+        let replay=apply(&ctx,&args,"run-owner-2").await.unwrap();
+        assert_eq!(replay["alreadyApplied"],true);
+        drop(ctx);drop(state);let _=std::fs::remove_dir_all(root);
+    }
     #[test]
     fn rejects_artifact_path_escape_and_symlink_destinations(){
         assert!(!crate::remote::valid_artifact_path("../outside"));
