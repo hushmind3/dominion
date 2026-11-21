@@ -11,7 +11,8 @@ pub struct EngineOptions {
 impl EngineOptions {
     pub fn new(workspace:impl Into<PathBuf>,data_dir:impl Into<PathBuf>)->Self{
         let workspace=workspace.into();
-        Self{web_dir:workspace.join("web/dist"),workspace,data_dir:data_dir.into(),port:4317}
+        // Embedded sub2 SDK must not silently point its default to main:4317.
+        Self{web_dir:workspace.join("web/dist"),workspace,data_dir:data_dir.into(),port:4321}
     }
 }
 impl From<Config> for EngineOptions {
@@ -255,6 +256,15 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let sdk=Dominion::open(EngineOptions::new(&dir,dir.join("data"))).unwrap();
         (sdk,dir)
+    }
+    #[test]
+    fn embedded_sdk_defaults_to_sub2_port_without_stealing_main() {
+        let options=EngineOptions::new(".",std::env::temp_dir().join("sub2-sdk-port"));
+        assert_eq!(options.port,4321);
+        let config=Config{port:5279,data_dir:options.data_dir.clone(),
+            web_dir:options.web_dir.clone(),workspace:options.workspace.clone()};
+        assert_eq!(EngineOptions::from(config).port,5279,
+            "explicit Config override must remain respected");
     }
     #[test]
     fn native_client_persists_real_engine_jobs_and_events(){
