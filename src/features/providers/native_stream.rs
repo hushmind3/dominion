@@ -367,6 +367,12 @@ impl Assembler {
                     validate_anthropic_stop_reason(reason)?;
                     self.anthropic_stop=Some(reason.into());
                 }
+                // Anthropic message_delta usage is cumulative when present.
+                // A reported zero input_tokens is meaningful (cached input)
+                // and must supersede the earlier message_start estimate.
+                if let Some(input)=event["usage"]["input_tokens"].as_u64(){
+                    self.prompt_tokens=Some(input);
+                }
                 if let Some(output)=event["usage"]["output_tokens"].as_u64(){
                     self.output_tokens=Some(output);
                 }
@@ -667,6 +673,28 @@ mod tests {
         assert_eq!(anthropic["usage"]["cache_read_input_tokens"],400);
         assert_eq!(anthropic["usage"]["cache_creation_input_tokens"],100);
         assert_eq!(anthropic["usage"]["output_tokens"],15);
+    }
+
+    #[test]
+    fn native_anthropic_terminal_usage_overrides_initial_input_even_at_zero(){
+        let mut assembler=Assembler::new(Wire::Anthropic);
+        for event in [
+            json!({"type":"message_start","message":{"usage":{
+                "input_tokens":120,"cache_read_input_tokens":10,
+                "cache_creation_input_tokens":5}}}),
+            json!({"type":"content_block_start","index":0,
+                "content_block":{"type":"text","text":"cached result"}}),
+            json!({"type":"content_block_stop","index":0}),
+            json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},
+                "usage":{"input_tokens":0,"cache_read_input_tokens":75,
+                    "cache_creation_input_tokens":10,"output_tokens":3}}),
+            json!({"type":"message_stop"}),
+        ] {assembler.feed(Packet::Data(event)).unwrap();}
+        let result=assembler.finish().unwrap();
+        assert_eq!(result["usage"]["input_tokens"],0);
+        assert_eq!(result["usage"]["cache_read_input_tokens"],75);
+        assert_eq!(result["usage"]["cache_creation_input_tokens"],10);
+        assert_eq!(result["usage"]["output_tokens"],3);
     }
 
     #[test]
