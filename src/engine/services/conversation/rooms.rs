@@ -709,10 +709,11 @@ async fn run_locked(
         if let Some(note) = crate::engine::debate::guidance(&conflict_resolution) {
             request.system_override = Some(note.to_string());
         }
-        if let Some(unread)=&reader.unread{
-            request.system_override=Some(format!(
-                "{}\n{}",request.system_override.as_deref().unwrap_or(""),unread));
-        }
+        // The reader watermark is used for durable per-participant acknowledgement
+        // after the turn. Unread source references are already represented by
+        // the room context's attributed transcript/peer index. Injecting the
+        // *moving* unread window as a system override changes the bot's
+        // instructions on every round and defeats prefix reuse after restart.
         let message = match run_room_quiet(state, &request, source_id).await {
             Ok(Some(message)) => message,
             Ok(None) => return Err(format!("{name}의 응답이 비어 있습니다.")),
