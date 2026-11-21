@@ -104,9 +104,9 @@ function WorkerStep({step,job,ids,onCreated}:{step:Step;job?:Job;ids:Record<stri
   {done&&<span className="sr-only">{en?'Completed':'완료'}</span>}
  </div>
 }
-function TeamCard({team,summary,onCreated}:{team:Job;summary:Map<string,Job>;onCreated:()=>void}){
+function TeamCard({team,summary,onCreated,initiallyOpen=false}:{team:Job;summary:Map<string,Job>;onCreated:()=>void;initiallyOpen?:boolean}){
  const en=useLocale()==='en'
- const [open,setOpen]=useState(false)
+ const [open,setOpen]=useState(initiallyOpen)
  const details=useRemote<TeamSteps>(open?'/api/jobs/'+encodeURIComponent(team.id)+'/team-steps':null,
   {teamId:team.id,jobs:[],missing:[]})
  const plan=team.input?.plan||[]
@@ -183,7 +183,7 @@ export function TeamWorkflowPanel({jobs,filterSessionId}:{jobs?:Job[];filterSess
   </button>
   {expanded&&<div className="space-y-3 border-t border-[#E7E0D5] p-4">
    {jobs===undefined&&<button type="button" onClick={refresh} className="text-[11px] text-[#7C7469] underline">{en?'Refresh native jobs':'작업 기록 새로고침'}</button>}
-   {parentTeams.map(team=><TeamCard key={team.id} team={team} summary={jobMap} onCreated={refresh}/>)}
+   {parentTeams.map((team,index)=><TeamCard key={team.id} team={team} summary={jobMap} onCreated={refresh} initiallyOpen={Boolean(filterSessionId)&&index===0}/>)}
    {dependentJobs.length>0&&<section className="rounded-xl border border-[#E7E0D5] bg-[#FCFAF6] p-3">
     <h3 className="mb-2 flex items-center gap-2 text-[12px] font-bold"><GitBranch size={14}/>{en?'Dependent delegated jobs':'의존성 있는 개별 위임 작업'}</h3>
     <p className="mb-2 text-[10px] text-[#8A8176]">{en?'The arrows below represent durable sibling job dependencies, not inferred order.':'개별 위임 작업의 저장된 선행 작업 ID를 그대로 표시합니다. 화면 순서로 의존성을 추정하지 않습니다.'}</p>
