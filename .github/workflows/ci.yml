@@ -280,6 +280,7 @@ jobs:
           node --experimental-strip-types --test web/tests/model-hardware.test.mjs
           node --experimental-strip-types --test web/tests/cloud-auth-flight.test.mjs
           node --test web/tests/chat-stop-contract.test.mjs
+          node --experimental-strip-types --test web/tests/conversation-preferences.test.mjs
           node --experimental-strip-types --test web/tests/connections-ui.test.mjs
           node --test web/tests/chat-attachments.test.mjs
           node --test web/tests/runtime-ux-contract.test.mjs

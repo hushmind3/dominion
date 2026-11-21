@@ -1,4 +1,5 @@
 import {ConversationSettings} from '../components/ConversationSettings'
+import {usePersistentConversationToggle,usePersistentReasoningEffort} from '../hooks/usePersistentConversationPreference'
 import {ExecutionPermissions} from '../components/ExecutionPermissions'
 import {ConversationSwitch} from '../components/WorkspaceShell'
 import {TokenUsage} from '../components/TokenUsage'
@@ -72,16 +73,16 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const job=useJob<LearningJob>(learningJob?'/api/jobs/'+encodeURIComponent(learningJob.id):null);
  const approval=(liveApproval?.sessionId===current?liveApproval:null)||
   approvals.value.find(item=>item.sessionId===current&&item.status==='pending');
- const [error,setError]=useState(''),[busy,setBusy]=useState(false),[live,setLive]=useState(''),[thought,setThought]=useState(''),[thinking,setThinking]=useState(false),[reasoningKo,setReasoningKo]=useState(koreanReasoningEnabled),[showReasoning,setShowReasoning]=useState(true),[showSettings,setShowSettings]=useState(false),[toolsEnabled,setToolsEnabled]=useState(true),[thinkingEnabled,setThinkingEnabled]=useState(true),[reasoningEffort,setReasoningEffort]=useState(''),[autoLearn,setAutoLearn]=useState(false),[showHistory,setShowHistory]=useState(()=>{try{if(window.innerWidth<768)return false;return localStorage.getItem('dominion.chat.sidebar')!=='0'}catch{return true}}),[toolStatus,setToolStatus]=useState('');
- useEffect(()=>{
-  if(!canDisableThinking){
-   // Codex models without the none tier cannot honor an off request.
-   setReasoningEffort('');setThinkingEnabled(true);
-  }else{
-   // Supported routes keep the owner's off switch across model/session changes.
-   setReasoningEffort(previous=>previous==='none'?'none':'');
-  }
- },[providerId,model,agentId,current,canDisableThinking]);
+ const [error,setError]=useState(''),[busy,setBusy]=useState(false),[live,setLive]=useState(''),[thought,setThought]=useState(''),[thinking,setThinking]=useState(false),[reasoningKo,setReasoningKo]=useState(koreanReasoningEnabled),[showSettings,setShowSettings]=useState(false),[showHistory,setShowHistory]=useState(()=>{try{if(window.innerWidth<768)return false;return localStorage.getItem('dominion.chat.sidebar')!=='0'}catch{return true}}),[toolStatus,setToolStatus]=useState('');
+ const [showReasoning,setShowReasoning]=usePersistentConversationToggle('showReasoning');
+ const [toolsEnabled,setToolsEnabled]=usePersistentConversationToggle('toolsEnabled');
+ const [thinkingEnabled,setThinkingEnabled]=usePersistentConversationToggle('thinkingEnabled');
+ const [autoLearn,setAutoLearn]=usePersistentConversationToggle('autoLearn');
+ const [reasoningEffort,setReasoningEffort]=usePersistentReasoningEffort();
+ // A model without the 'none' tier cannot honor the off switch. Keep the
+ // owner's stored preference so switching back does not silently erase it.
+ const effectiveReasoningEffort=!canDisableThinking&&reasoningEffort==='none'?'':reasoningEffort;
+ const effectiveThinkingEnabled=!canDisableThinking||thinkingEnabled;
  const [permissionOpen,setPermissionOpen]=useState(false);
  const [modelMenu,setModelMenu]=useState(false),[installed,setInstalled]=useState<InstalledModel[]>([]),[modelsLoading,setModelsLoading]=useState(false),[runtime,setRuntime]=useState<Runtime>({status:'idle'}),[modelBusy,setModelBusy]=useState(''),[unloading,setUnloading]=useState(false),[learning,setLearning]=useState(false),[menuError,setMenuError]=useState('');
  const [slashOpen,setSlashOpen]=useState(false),[slashActive,setSlashActive]=useState(0),[commandInfo,setCommandInfo]=useState('');
@@ -368,7 +369,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    await streamChat({
     sessionId:id,agentId,providerId:manual?.providerId,model:manual?.model,input:text,
     toolsEnabled,toolsExecutionEnabled:toolsEnabled,autoLearning:autoLearn,attachmentIds,
-    reasoningLanguage:reasoningKo?'ko':'original',reasoningEffort:reasoningEffort||undefined,thinking:selectedProvider?.kind==='codex'?(reasoningEffort==='none'?false:canDisableThinking?thinkingEnabled:undefined):thinkingEnabled,
+    reasoningLanguage:reasoningKo?'ko':'original',reasoningEffort:effectiveReasoningEffort||undefined,thinking:selectedProvider?.kind==='codex'?(effectiveReasoningEffort==='none'?false:canDisableThinking?effectiveThinkingEnabled:undefined):effectiveThinkingEnabled,
    },event=>{
     if(controller.signal.aborted||stoppingRef.current||stream.current!==controller)return;
     if(event.type==='assistant_saved'){saved=true;setSavedMessageId(event.messageId);refresh('/api/sessions',...(id?['/api/sessions/'+encodeURIComponent(id)+'/messages']:[]));}
@@ -478,9 +479,9 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
        <input ref={imageInputRef} type="file" accept={ATTACH_ALLOWED.join(',')} multiple className="sr-only" aria-label={t('chat.attach')} onChange={onPickImages}/>
        <ExecutionPermissions active={active} open={permissionOpen} onOpenChange={open=>{setPermissionOpen(open);if(open){setShowSettings(false);setModelMenu(false)}}} onError={setError} onChanged={label=>setCommandInfo(t('chat.perm.changed',{label}))}/>
 
-       <ReasoningSelect value={reasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} model={selectedModel} requireCatalog={selectedProvider?.kind==='codex'} defaultLabel={activeAgent?.reasoningEffort?`에이전트 설정 (${activeAgent.reasoningEffort})`:t('chat.reasoningAuto')} className="chat-reasoning !h-7 !w-auto !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-[#5C544A]"/>
+       <ReasoningSelect value={effectiveReasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} model={selectedModel} requireCatalog={selectedProvider?.kind==='codex'} defaultLabel={activeAgent?.reasoningEffort?`에이전트 설정 (${activeAgent.reasoningEffort})`:t('chat.reasoningAuto')} className="chat-reasoning !h-7 !w-auto !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-[#5C544A]"/>
        <SelectInput aria-label={t('chat.agentAria')} value={agentId} onChange={e=>chooseAgent(e.target.value)} className="chat-agent !h-7 !w-auto !max-w-[140px] !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-[#5C544A]">{agents.value.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</SelectInput>
-       <ConversationSettings open={showSettings} onOpenChange={open=>{setShowSettings(open);if(open){setPermissionOpen(false);setModelMenu(false)}}} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={thinkingEnabled} setThinkingEnabled={setThinkingEnabled} canDisableThinking={canDisableThinking} reasoningEffort={reasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={toolsEnabled} setToolsEnabled={setToolsEnabled} autoLearn={autoLearn} setAutoLearn={setAutoLearn} learning={learning} learnDisabled={!current||Boolean(selectedSession?.roomId)||busy} onLearn={learnSession}/>
+       <ConversationSettings open={showSettings} onOpenChange={open=>{setShowSettings(open);if(open){setPermissionOpen(false);setModelMenu(false)}}} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={effectiveThinkingEnabled} setThinkingEnabled={setThinkingEnabled} canDisableThinking={canDisableThinking} reasoningEffort={effectiveReasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={toolsEnabled} setToolsEnabled={setToolsEnabled} autoLearn={autoLearn} setAutoLearn={setAutoLearn} learning={learning} learnDisabled={!current||Boolean(selectedSession?.roomId)||busy} onLearn={learnSession}/>
       </div>
       <div className="ml-auto flex items-center gap-2">
        <span className="hidden text-[10px] text-[#9C9388] sm:inline">{t('chat.enterHint')}</span>

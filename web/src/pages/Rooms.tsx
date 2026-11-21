@@ -1,4 +1,5 @@
 import {ConversationSettings} from '../components/ConversationSettings'
+import {usePersistentConversationToggle,usePersistentReasoningEffort} from '../hooks/usePersistentConversationPreference'
 import {matchesRoomRefresh,type RefreshScope} from '../refreshEvents'
 import {ExecutionPermissions} from '../components/ExecutionPermissions'
 import {createPortal} from 'react-dom'
@@ -156,8 +157,11 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
  const messageUsageTotal=useMemo(()=>messages.reduce((sum,message)=>sum+(Number(message.metadata?.usage?.totalTokens)||0),0),[messages])
  const usageTotal=feed.usage?.totalTokens||messageUsageTotal
  const [loading,setLoading]=useState(true),[loadError,setLoadError]=useState(''),[error,setError]=useState('')
- const [showSettings,setShowSettings]=useState(false),[showReasoning,setShowReasoning]=useState(true),[reasoningKo,setReasoningKo]=useState(koreanReasoningEnabled),[thinkingEnabled,setThinkingEnabled]=useState(true),[optionsBusy,setOptionsBusy]=useState(false)
- const [reasoningEffort,setReasoningEffort]=useState(''),[permissionOpen,setPermissionOpen]=useState(false),[recipientsOpen,setRecipientsOpen]=useState(false)
+ const [showSettings,setShowSettings]=useState(false),[reasoningKo,setReasoningKo]=useState(koreanReasoningEnabled),[optionsBusy,setOptionsBusy]=useState(false)
+ const [showReasoning,setShowReasoning]=usePersistentConversationToggle('showReasoning')
+ const [thinkingEnabled,setThinkingEnabled]=usePersistentConversationToggle('thinkingEnabled')
+ const [reasoningEffort,setReasoningEffort]=usePersistentReasoningEffort()
+ const [permissionOpen,setPermissionOpen]=useState(false),[recipientsOpen,setRecipientsOpen]=useState(false)
  const recipientsPanel=useAnchoredPanel(recipientsOpen,()=>setRecipientsOpen(false),280,'top')
  useEffect(()=>{if(!visibleView){setRecipientsOpen(false);setPermissionOpen(false);setShowSettings(false)}else setReasoningKo(koreanReasoningEnabled())},[visibleView])
  const [input,setInput]=useState(''),[targets,setTargets]=useState<string[]>([]),[sending,setSending]=useState(false),[stopping,setStopping]=useState(false)
