@@ -182,6 +182,8 @@ jobs:
         run: node web/scripts/workspace-visual.mjs
       - name: Exercise channel onboarding, editing and Task Team screen interactions
         run: node web/scripts/connection-visual.mjs
+      - name: Verify direct Chat layout, Markdown and follow-up at three widths
+        run: node web/scripts/chat-visual.mjs
       - name: Attach real browser screenshots and UX reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -190,4 +192,5 @@ jobs:
           path: |
             web/artifacts/workspace-visual/
             web/artifacts/connection-visual/
+            web/artifacts/chat-visual/
           if-no-files-found: warn

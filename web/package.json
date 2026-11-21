@@ -24,7 +24,8 @@
     "dist:desktop": "node ../scripts/build-desktop.mjs",
     "dist:mac": "node ../scripts/build-desktop.mjs --bundles app,dmg",
     "dist:windows": "node ../scripts/build-desktop.mjs --bundles nsis,msi",
-    "test:sub3-browser": "node e2e/sub3-native-live.mjs"
+    "test:sub3-browser": "node e2e/sub3-native-live.mjs",
+    "test:sub3-chat-visual": "node scripts/chat-visual.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.0",
