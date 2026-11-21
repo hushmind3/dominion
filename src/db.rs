@@ -1413,26 +1413,56 @@ impl Store {
             .filter(|lease| lease["status"].as_str() == Some("active"))
     }
 
-    /// Replaces the live database with a consistent snapshot. Callers must put
-    /// the engine into maintenance mode first; the connection is swapped under
-    /// the same mutex so no query observes a half-written file.
+    /// Stage and validate the entire SQLite snapshot before closing the
+    /// original connection. A failed stage or atomic rename must never leave
+    /// an empty in-memory replacement as the live application's database.
+    /// Cross-file vault-key rollback is handled by restore_transaction.
     pub fn replace_database(&self, bytes: &[u8]) -> Result<(), String> {
         let temp = self.path.with_extension("restore.tmp");
         std::fs::write(&temp, bytes).map_err(|error| error.to_string())?;
+        let checked = (|| -> Result<(), String> {
+            let candidate = Connection::open_with_flags(
+                &temp, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            ).map_err(|error| format!("restore stage invalid: {error}"))?;
+            let integrity: String = candidate.query_row(
+                "PRAGMA quick_check", [], |row| row.get(0),
+            ).map_err(|error| format!("restore stage integrity: {error}"))?;
+            if integrity != "ok" {
+                return Err(format!("restore stage integrity: {integrity}"));
+            }
+            Ok(())
+        })();
+        if let Err(error) = checked {
+            let _ = std::fs::remove_file(&temp);
+            return Err(error);
+        }
         let mut guard = self.conn.lock().map_err(|error| error.to_string())?;
-        let _ = guard.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
-        // Close the old handle before copying over the database file.
-        *guard = Connection::open_in_memory().map_err(|error| error.to_string())?;
+        let checkpoint_busy: i64 = guard.query_row(
+            "PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0),
+        ).map_err(|error| format!("restore WAL checkpoint: {error}"))?;
+        if checkpoint_busy != 0 {
+            let _ = std::fs::remove_file(&temp);
+            return Err("restore WAL checkpoint busy; original database retained".into());
+        }
+        // Keep an open, valid guard in every error path. On macOS/Linux the
+        // rename atomically replaces the old DB; there is no partial copy.
+        let parked = Connection::open_in_memory().map_err(|error| error.to_string())?;
+        let previous = std::mem::replace(&mut *guard, parked);
+        drop(previous);
         let wal = PathBuf::from(format!("{}-wal", self.path.display()));
         let shm = PathBuf::from(format!("{}-shm", self.path.display()));
-        let _ = std::fs::remove_file(wal);
-        let _ = std::fs::remove_file(shm);
-        std::fs::copy(&temp, &self.path).map_err(|error| error.to_string())?;
-        let _ = std::fs::remove_file(&temp);
-        *guard = Connection::open(&self.path).map_err(|error| error.to_string())?;
-        let _ = guard.execute_batch(
+        let _ = std::fs::remove_file(&wal);
+        let _ = std::fs::remove_file(&shm);
+        if let Err(error) = std::fs::rename(&temp, &self.path) {
+            *guard = Connection::open(&self.path).map_err(|reopen| format!(
+                "restore rename: {error}; reopen original: {reopen}"))?;
+            return Err(format!("restore rename failed; original retained: {error}"));
+        }
+        *guard = Connection::open(&self.path).map_err(|error| format!(
+            "restored database could not reopen: {error}"))?;
+        guard.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;",
-        );
+        ).map_err(|error| error.to_string())?;
         Ok(())
     }
 
