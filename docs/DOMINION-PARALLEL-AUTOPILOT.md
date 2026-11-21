@@ -25,7 +25,7 @@ python3 tools/dominion_autopilot.py --repo /Users/gim-yeonsu/dominion-rust --rou
 2. 저장소 **밖**의 `dominion-autopilot-state/worktrees/<round>/...`에 브랜치별 **분리된 detached worktree**를 만듭니다. 기본적으로 4개가 동시에 실행됩니다.
 3. 개발자는 `codex exec --sandbox workspace-write --ephemeral`로 자기 worktree에서 수정합니다. 실패·미커밋·민감 파일 수정이면 업로드를 차단하고 결과를 남깁니다. `--publish` 없이는 푸시하지 않습니다. 푸시 충돌 시 강제 푸시하지 않습니다.
 4. 심판은 별도 읽기 전용 worktree에서 `codex exec --sandbox read-only --ephemeral`로 증거를 검토합니다. CI 성공 자체에는 가점하지 않으며 측정하지 않은 실사용 성능은 추정하지 않습니다.
-5. 푸시하지 않은 검증된 로컬 커밋도 다음 회차의 시작점으로 이어갑니다. 원격 브랜치가 그 사이 서로 다른 방향으로 진행되면 자동으로 버리지 않고 해당 후보를 검토 대기로 둡니다.
+5. 푸시하지 않은 로컬 커밋도 다음 회차의 시작점으로 이어갑니다. 내용 변경이 없는 회차도 이전 커밋을 버리지 않습니다. 원격 브랜치가 그 사이 서로 다른 방향으로 진행되면 자동으로 버리지 않고 해당 후보를 검토 대기로 둡니다.
 6. `latest_feedback.json`에 저장된 브랜치별 심판 의견을 다음 회차 프롬프트에 자동 전달합니다. 사용자에게 4번씩 피드백을 복사하라고 하지 않습니다.
 7. `runs/<round>/<branch>/result.json`, `agent.log`, `judge/report.json`, `latest_round.json`을 보관해 상태를 추적할 수 있습니다.
 
@@ -35,6 +35,7 @@ python3 tools/dominion_autopilot.py --repo /Users/gim-yeonsu/dominion-rust --rou
 
 - GitHub에서 이 개발 도구를 **메인에 자동 병합하지 않습니다.** 사용자 결정 후 적용할 수 있는 별도 관리 코드입니다.
 - 출발 소스 HEAD 및 결과 SHA를 기록합니다. 다른 작업자가 동일 브랜치를 먼저 푸시하면 fast-forward 푸시만 시도하고 실패를 기록합니다.
+- 기존 감시 체크아웃에 커밋하지 않은 사용자 변경이 발견되면 해당 브랜치의 자동 푸시를 보류합니다.
 - 실수로 커밋된 `.env`, 비밀키, 로컬 SQLite 파일 등은 자동 업로드를 차단하지만 **완전한 비밀 탐지기는 아닙니다**. 자동 업로드를 켜기 전에 신뢰할 수 있는 사용자 컴퓨터에서 시험하세요.
 - 파일·실행 로그는 저장소 밖에 보관하며 읽기 전용 심판도 이 경로를 읽습니다. 평가용 데이터와 운영 데이터는 분리해야 합니다.
 - 독립 채점의 실제 100점은 **같은 모델·권한·예산·과제·빌드 SHA·산출물 검증**이 필요합니다. 이 도구는 그것이 없는 상태에서 실험 결과를 만들어내지 않습니다.
@@ -47,4 +48,4 @@ python3 tools/dominion_autopilot.py --repo /Users/gim-yeonsu/dominion-rust --rou
 python3 -m unittest discover -s tests -v
 ```
 
-로컬 가짜 Git 원격과 비대화형 모의 에이전트로 **4개 병렬 실행, 피드백 다음 회차 연결, 푸시 기본 차단, 4개 브랜치 fast-forward 푸시, 미커밋·민감 파일 자동 푸시 차단, 중복 컨트롤러 잠금**을 검증합니다. 이 모의 검사는 실제 Codex API 작업 성공률이나 실모델 비용·지연 시험이 아닙니다.
+로컬 가짜 Git 원격과 비대화형 모의 에이전트로 **4개 병렬 실행, 피드백 다음 회차 연결, 푸시 기본 차단, 4개 브랜치 fast-forward 푸시, 미커밋·민감 파일 자동 푸시 차단, 중복 컨트롤러 잠금, 중단 신호에 따른 작업 종료, 기존 로컬 커밋의 회차 간 보존, 감시 체크아웃 수작업 보호**을 검증합니다. 이 모의 검사는 실제 Codex API 작업 성공률이나 실모델 비용·지연 시험이 아닙니다.
