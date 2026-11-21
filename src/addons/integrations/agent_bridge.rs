@@ -47,7 +47,9 @@ impl ExternalAgent {
                 "--exclude-tools","shell,write,edit","--max-session-turns","12",
                 "--max-wall-time","180","--output-format","json"]
         };
-        (self.key(),argv.into_iter().map(str::to_string).collect())
+        let binary=match self{Self::CodexServer=>"codex",
+            Self::QwenAcp=>"qwen",_=>self.key()};
+        (binary,argv.into_iter().map(str::to_string).collect())
     }
     /// Opt-in continuation of a completed inspector. Never use --last:
     /// that could attach an unrelated workspace's conversation.
@@ -69,7 +71,6 @@ impl ExternalAgent {
                     args.extend(["--resume".into(),session.into()]);
                 }
                 Self::CodexServer|Self::QwenAcp=>{}
-            }
             }
         }
         Ok((binary,args))

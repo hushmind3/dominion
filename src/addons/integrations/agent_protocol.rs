@@ -61,7 +61,8 @@ async fn permission(
 )->Result<(),String>{
     let method=req["method"].as_str().unwrap_or("");
     let rpc_id=req.get("id").cloned().ok_or("server approval without RPC id")?;
-    if !approval_method(kind,method){
+    let method=method.to_owned();
+    if !approval_method(kind,&method){
         return send(writer,kind,json!({"jsonrpc":"2.0","id":rpc_id,
             "error":{"code":-32601,"message":"permission method unavailable"}})).await;
     }
@@ -93,7 +94,7 @@ async fn permission(
                 "decidedAt":chrono::Utc::now().to_rfc3339()})){
             state.bus.approval(&saved);
         }
-        let result=response_for_permission(kind,method,&options,allow);
+        let result=response_for_permission(kind,&method,&options,allow);
         let _=send(&writer,kind,json!({"jsonrpc":"2.0","id":rpc_id,"result":result})).await;
     });
     Ok(())
