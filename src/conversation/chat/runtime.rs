@@ -143,6 +143,14 @@ async fn run_turn_with_policy(
     // recovery releases, while a live owner (even across restarts) is refused.
     let _lease = crate::engine::lease::LeaseGuard::acquire(state, &session_id)
         .ok_or("다른 엔진 프로세스가 이 세션을 실행 중입니다.")?;
+    // Recheck under the session lease: two wake workers must not race
+    // between an optimistic resume check and a new model/effect dispatch.
+    if !record_input && source_message_id.is_none() {
+        let task_id=request.task_id.as_deref()
+            .filter(|id|!id.trim().is_empty())
+            .ok_or("작업 ID 없는 자동 재개는 허용되지 않습니다.")?;
+        ensure_task_resume_safe(state,task_id)?;
+    }
     if reset_cancel {
         state.clear_cancel(&session_id);
     }
