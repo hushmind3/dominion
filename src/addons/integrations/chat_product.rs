@@ -3,6 +3,9 @@
 use super::*;
 use dominion_algorithms::engine::{Context, Flow, Host, ModelDecision};
 use dominion_core::hosted::BoxFuture;
+#[path = "chat_product/round_state.rs"]
+mod round_state;
+pub(super) use round_state::{ModelRound, ToolRound};
 
 pub(super) struct MainTurn<'a> {
     pub(super) state: &'a AppState,
@@ -62,19 +65,8 @@ pub(super) struct MainTurn<'a> {
     pub(super) acceptance_passed: bool,
     pub(super) budget: super::super::budget::BudgetLedger,
     pub(super) program_finished: bool,
-    pub(super) round_tools: Vec<Value>,
-    pub(super) wire_messages: Vec<Value>,
-    pub(super) model_started: std::time::Instant,
-    pub(super) model_offset_ms: u64,
-    pub(super) completion: Option<crate::engine::chat::Completion>,
-    pub(super) round_calls: Vec<ToolCall>,
-    pub(super) parallel_reads: bool,
-    pub(super) dispatched: std::collections::HashMap<usize, Result<(Value, bool, String), String>>,
-    pub(super) ordering_used: bool,
-    pub(super) ordering_ok: bool,
-    pub(super) prepared_arguments: Value,
-    pub(super) prepared_key: String,
-    pub(super) completed_operations: Vec<Value>,
+    pub(super) model_round: ModelRound,
+    pub(super) tool_round: ToolRound,
 }
 
 /// The provider can complete a charged model call without a visible answer.
@@ -660,7 +652,7 @@ impl MainTurn<'_> {
             "promptTokens": self.prompt_tokens_total,
             "cachedPromptTokens": if self.cache_reporting_complete { json!(self.cached_prompt_tokens_total) } else { Value::Null },
             "uncachedPromptTokens": if self.cache_reporting_complete { json!(self.prompt_tokens_total.saturating_sub(self.cached_prompt_tokens_total)) } else { Value::Null },
-            "completionTokens": self.completion_tokens_total,
+            "completionTokens": self.model_round.completion_tokens_total,
             "totalTokens": self.total_tokens,
             "estimated": self.usage_estimated,
             "providerId": self.provider.id,
