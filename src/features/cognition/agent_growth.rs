@@ -90,10 +90,7 @@ pub fn record(state: &AppState, execution: &Value) -> Option<Value> {
         }
     }
     let run_id = execution["id"].as_str().unwrap_or("");
-    for operation in state.store.all("execution_operation") {
-        if operation["runId"].as_str() != Some(run_id) {
-            continue;
-        }
+    for operation in state.store.execution_operations_recent(run_id).unwrap_or_default() {
         let Some(tool) = operation["tool"].as_str() else {
             continue;
         };
