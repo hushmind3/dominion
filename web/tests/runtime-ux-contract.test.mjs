@@ -339,7 +339,7 @@ test('following mode watches transcript content height and newly submitted bubbl
   const scroll=source('src/hooks/useTranscriptScroll.ts')
   assert.match(chat,/messages\.length,showOptimisticOwner,busy&&viewingTurn/)
   assert.match(scroll,/observer\.observe\(el\.firstElementChild\)/)
-  assert.match(scroll,/new MutationObserver\(\(\)=>/)
+  assert.match(scroll,/new MutationObserver\(\(\)\s*=>/)
   assert.match(scroll,/children\.observe\(el, \{childList:true\}\)/)
   assert.match(scroll,/if \(following\.current\) el\.scrollTop = el\.scrollHeight/)
   assert.match(scroll,/return \(\) => \{ observer\.disconnect\(\);children\.disconnect\(\) \}/)
