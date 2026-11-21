@@ -365,6 +365,26 @@ pub(super) async fn execute(
     }
     Ok(result)
 }
+/// Discover eligible registered Worker identities before the Lead proposes
+/// a DAG. Never reveal another agent's system prompt, secret or credentials.
+pub(super) fn workers(ctx:&ToolContext<'_>)->Value{
+    let mut records=ctx.store.all("agent").into_iter().filter(|agent|
+        agent["enabled"]!=false && agent["disabled"]!=true
+        &&agent["id"].as_str().is_some_and(|id|!id.is_empty())
+    ).map(|agent|json!({
+        "id":agent["id"],"name":agent["name"],
+        "description":agent["description"].as_str().unwrap_or("")
+            .chars().take(280).collect::<String>(),
+        "role":agent["role"],"model":agent["model"],
+        "providerId":agent["providerId"],
+    })).collect::<Vec<_>>();
+    records.sort_by(|a,b|a["id"].as_str().cmp(&b["id"].as_str()));
+    let total=records.len();
+    records.truncate(40);
+    json!({"workers":records,"totalEligible":total,
+        "maxTeamTasks":MAX_TEAM_NODES,"maxConcurrentReaders":MAX_READERS,
+        "note":"Select actual registered agent IDs. Roles and descriptions do not grant tool permissions."})
+}
 pub(super) fn status(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
     let id=args["teamId"].as_str().filter(|s|!s.is_empty()).ok_or("teamId required")?;
     let team=read_team(ctx,id)?;
