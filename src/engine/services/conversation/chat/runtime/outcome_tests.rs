@@ -122,6 +122,13 @@ use super::*;
         }
         let author=rows.iter().find(|r|r["nodeId"]=="create").unwrap();
         assert_eq!(author["nodeType"],"call_tool");
+        let results=state.store.all("task_team_result");
+        assert_eq!(results.len(),1,"one merged parent result for the actual DAG");
+        assert_eq!(results[0]["memberCount"],2);
+        assert_eq!(results[0]["status"],"completed");
+        assert_eq!(results[0]["observedFailures"],0);
+        let execution=state.store.get("execution","exec-team-ledger").unwrap();
+        assert_eq!(execution["programCheckpoint"]["teamResultRefs"]["team"],results[0]["id"]);
         let before=state.store.all("task_team_work").len();
         assert_eq!(before,2);
         drop(state);
@@ -130,6 +137,7 @@ use super::*;
         let restarted=AppState::new(config.clone(),
             Store::open(&config.db_path()).unwrap(),Vault::open(&config.key_path()));
         assert_eq!(restarted.store.all("task_team_work").len(),before);
+        assert_eq!(restarted.store.all("task_team_result").len(),1);
         assert!(restarted.store.all("task_team_work").iter()
             .all(|row|row["status"]=="completed"));
         drop(restarted);
