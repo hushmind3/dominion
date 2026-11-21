@@ -363,8 +363,8 @@ impl SseBuffer {
         use crate::features::providers::native_stream::Packet;
         for packet in self.decoder.push(bytes)? {
             let block=match packet {
-                Packet::Data(value)=>format!("data: {}\\n\\n",value),
-                Packet::Done=>"data: [DONE]\\n\\n".to_string(),
+                Packet::Data(value)=>format!("data: {}\n\n",value),
+                Packet::Done=>"data: [DONE]\n\n".to_string(),
             };
             self.ready.push_back(block);
         }
@@ -389,11 +389,11 @@ mod shared_sse_tests {
             json!({"choices":[],"usage":{"prompt_tokens":14,
                 "completion_tokens":7,"total_tokens":21}}),
         ];
-        let mut wire=String::from(": keepalive\\r\\n\\r\\n");
+        let mut wire=String::from(": keepalive\r\n\r\n");
         for frame in &frames {
-            wire.push_str(&format!("event: message\\r\\ndata: {}\\r\\n\\r\\n",frame));
+            wire.push_str(&format!("event: message\r\ndata: {}\r\n\r\n",frame));
         }
-        wire.push_str("data: [DONE]\\n\\n");
+        wire.push_str("data: [DONE]\n\n");
         let mut chat=SseBuffer::default();
         let mut native=SseDecoder::default();
         let mut from_chat=Vec::<Value>::new();
@@ -406,7 +406,7 @@ mod shared_sse_tests {
             while let Some(block)=chat.pop().unwrap(){
                 let payload=block.lines().filter_map(|line|
                     line.strip_prefix("data:").map(str::trim_start))
-                    .collect::<Vec<_>>().join("\\n");
+                    .collect::<Vec<_>>().join("\n");
                 if payload=="[DONE]" {chat_done+=1;}
                 else {from_chat.push(serde_json::from_str(&payload).unwrap());}
             }
@@ -425,7 +425,7 @@ mod shared_sse_tests {
 
     #[test]
     fn chat_and_native_fail_closed_on_malformed_sse_json(){
-        let input=b"data: {\"choices\":[}\\n\\n";
+        let input=b"data: {\"choices\":[}\n\n";
         assert!(SseBuffer::default().push(input).is_err());
         assert!(SseDecoder::default().push(input).is_err());
     }
