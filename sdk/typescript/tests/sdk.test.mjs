@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Dominion, DominionError, StreamInterruptedError } from '../dist/index.js';
+import { Dominion, DominionError, StreamInterruptedError, ChatTurnFailedError } from '../dist/index.js';
 
 const json = (value, status = 200) =>
   new Response(JSON.stringify(value), {status, headers:{'content-type':'application/json'}});
@@ -84,6 +84,34 @@ test('chat SSE handles fragmented UTF-8 / CRLF and stops at done without replay'
   assert.deepEqual(seen.map(x=>x.type),['delta','done']);
   assert.equal(seen[0].text,'안녕');
   assert.equal(calls,1);
+});
+test('Rust in-band chat failure rejects even when transport follows with done',async()=>{
+  const seen=[];let posts=0;
+  const client=new Dominion({fetch:async(url,init)=>{
+    assert.ok(url.endsWith('/api/chat'));
+    assert.equal(init.method,'POST');
+    posts++;
+    return sse([
+      'data: {"type":"text","text":"partial model output"}\n\n',
+      'data: {"type":"error","message":"모델 전송 실패","executionId":"failed-run"}\n\n',
+      'data: {"type":"done","sessionId":"s"}\n\n',
+    ]);
+  }});
+  await assert.rejects(
+    client.streamChat({sessionId:'s',conversationMode:'chat',input:'work'},event=>seen.push(event.type)),
+    error=>error instanceof ChatTurnFailedError
+      && error.message==='모델 전송 실패'
+      && error.event.executionId==='failed-run'
+  );
+  assert.deepEqual(seen,['text','error']);
+  assert.equal(posts,1,'failed paid Chat POST must never be retried');
+});
+test('missing in-band failure message still rejects with a typed error',async()=>{
+  const client=new Dominion({fetch:async()=>sse([
+    'data: {"type":"error"}\n\n','data: {"type":"done"}\n\n'
+  ])});
+  await assert.rejects(client.streamChat({sessionId:'s',input:'work'},()=>{}),
+    error=>error instanceof ChatTurnFailedError && error.message==='Chat turn failed');
 });
 test('unexpected chat stream close is explicit failure and never repeats the POST',async()=>{
   let calls=0;
