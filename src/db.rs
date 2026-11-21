@@ -1303,8 +1303,18 @@ impl Store {
     )->Result<(Vec<Value>,bool),String>{
         let conn=self.conn.lock().unwrap();
         let checkpoint_row=if let Some(id)=checkpoint_id {
+            // A checkpoint on a bot/user automation or learning notice is
+            // not an owner-authored Room boundary. The old full-log compiler
+            // also refused those checkpoints after provenance filtering.
             conn.query_row(
-                "SELECT rowid FROM messages WHERE session_id=?1 AND id=?2 LIMIT 1",
+                "SELECT rowid FROM messages WHERE session_id=?1 AND id=?2
+                   AND (NOT json_valid(metadata) OR
+                        COALESCE(json_extract(metadata,'$.kind'),'')!='learning_report')
+                   AND (role!='user' OR (
+                        agent_id IS NULL AND
+                        CASE WHEN json_valid(metadata)
+                          THEN json_extract(metadata,'$.authorKind')
+                          ELSE NULL END='owner')) LIMIT 1",
                 rusqlite::params![session_id,id],
                 |row|row.get::<_,i64>(0)
             ).optional().map_err(|error|error.to_string())?
