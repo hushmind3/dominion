@@ -55,6 +55,16 @@ has('src/conversation/chat/protocol.rs',
   ['native_stream::SseDecoder','Packet::Data(value)','Packet::Done']);
 has('src/conversation/chat/runtime/turn.rs',
   ['settle_rejected_chat_turn','settle_rejected_model_turn']);
+has('src/conversation/chat/runtime/turn.rs',
+  ['let lightweight_chat =','(!lightweight_chat || discovery["ownerActivated"]==true)']);
+assert.ok(!text('src/conversation/chat/runtime/turn.rs').includes('pure_chat_greeting'),
+  'obsolete pure_chat_greeting reference prevents product Rust compilation');
+has('src/conversation/chat/provider.rs',
+  ['malformed Anthropic tool frame must fail']);
+assert.ok(!text('src/conversation/chat/provider.rs').includes(
+  '&messages,&[],&request,"tool-test",&tx,false).await.unwrap_err()'),
+  'opaque Completion must not require Debug just to assert a provider error');
+
 has('crates/dominion-agent-algorithms/src/agent_loop.rs',
   ['runtime::settle_rejected_model_turn','runtime::settle_model_turn']);
 has('src/api/sdk_runs.rs',['"phase":phase','"needs_review"=>"needs_review"']);
