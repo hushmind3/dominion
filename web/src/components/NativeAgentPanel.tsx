@@ -11,6 +11,8 @@ type SdkRun = {
   state?: SdkState; rounds?: number; toolCalls?: number; answer?: string;
   usage?: {prompt_tokens:number; completion_tokens:number; cached_prompt_tokens:number};
   pendingCall?: {id:string; name:string; arguments:unknown} | null;
+  nativeStream?: {stage:'receiving'; visibleTail:string;
+   pendingCalls:{id:string;name:string}[]} | null;
   uncertainAction?: {id:string; tool:string; targetPath?:string|null} | null;
   events?: {kind:string; detail:unknown}[];
   verificationChecks?: {satisfied:boolean;explanation?:string}[];
@@ -333,6 +335,22 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
        event.kind==='verified'?(en?'Result verification':'결과 검증'):event.kind}
      </p>)}
     </div>}
+    {status==='running'&&run.checkpoint?.nativeStream&&<div
+      aria-label={en?'Provisional model progress':'확정 전 모델 진행 내용'}
+      className="mt-3 min-w-0 max-w-full rounded-lg border border-[#D9DFEA] bg-[#F7F9FC] p-3">
+      <p className="text-[11px] font-semibold text-[#505F73]">
+       {en?'Model is generating · not a confirmed result':'모델 작성 중 · 확정된 결과가 아닙니다'}
+      </p>
+      {run.checkpoint.nativeStream.visibleTail&&<pre
+       className="mt-2 max-h-44 max-w-full overflow-auto whitespace-pre-wrap break-words text-[11px] text-[#394B5A]">
+       {run.checkpoint.nativeStream.visibleTail}
+      </pre>}
+      {run.checkpoint.nativeStream.pendingCalls.length>0&&<p
+       className="mt-2 break-words text-[11px] text-[#505F73]">
+       {en?'Tool calls being assembled':'조립 중인 도구 호출'}: {' '}
+       {run.checkpoint.nativeStream.pendingCalls.map(call=>call.name).join(', ')}
+      </p>}
+     </div>}
     {needsApproval&&<div className="mt-3 rounded-lg border border-[#E5C4AB] bg-white p-3">
      <div className="flex items-center gap-2 text-[12px] font-semibold"><ShieldAlert size={16}/>
       {en?'Review before allowing this action':'아래 작업을 확인하고 승인하세요'}
