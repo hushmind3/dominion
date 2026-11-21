@@ -97,7 +97,7 @@ pub async fn import_skill_repo(State(state): State<AppState>, Json(body): Json<V
         .get("repo")
         .and_then(|value| value.as_str())
         .unwrap_or("");
-    match crate::integrations::skills::catalog::import_repo(&state, repo) {
+    match crate::integrations::skills::catalog::import_repo(&state, repo).await {
         Ok(result) => Json(result).into_response(),
         Err(message) => error(StatusCode::BAD_REQUEST, &message),
     }

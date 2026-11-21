@@ -66,11 +66,11 @@ fn source_dir(state: &AppState) -> Option<PathBuf> {
 }
 
 async fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .await
+    let mut command = Command::new("git");
+    command.args(args).current_dir(dir);
+    let output = tokio::time::timeout(Duration::from_secs(20),
+        crate::integrations::local_tools::run_command(&mut command, Duration::from_secs(20)))
+        .await.map_err(|_| "Git operation timed out".to_string())?
         .map_err(|error| error.to_string())?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
@@ -118,16 +118,12 @@ pub async fn update_status(state: &AppState) -> Value {
     if !dirty.trim().is_empty() {
         return json!({"supported":false,"available":false,"local":local,"reason":"수정된 소스 파일이 있어 업데이트를 중단했습니다. 변경 내용을 보존한 채 개발 작업에서 정리하세요."});
     }
-    let remote = tokio::time::timeout(
-        Duration::from_secs(15),
-        Command::new("git")
-            .args(["ls-remote", "--exit-code", "origin", "refs/heads/main"])
-            .current_dir(&dir)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .stdin(Stdio::null())
-            .output(),
-    )
-    .await;
+    let mut remote_command = Command::new("git");
+    remote_command.args(["ls-remote", "--exit-code", "origin", "refs/heads/main"])
+        .current_dir(&dir).env("GIT_TERMINAL_PROMPT", "0");
+    let remote = tokio::time::timeout(Duration::from_secs(15),
+        crate::integrations::local_tools::run_command(&mut remote_command, Duration::from_secs(15)))
+        .await;
     match remote {
         Ok(Ok(output)) if output.status.success() => {
             let sha = String::from_utf8_lossy(&output.stdout)
@@ -243,7 +239,9 @@ async fn update_source(state: &AppState) -> Result<(Vec<String>, Value), (Vec<St
         if let Some(path) = toolchain_path() {
             command.env("PATH", path);
         }
-        let output = tokio::time::timeout(Duration::from_secs(seconds), command.output()).await;
+        let output = tokio::time::timeout(Duration::from_secs(seconds),
+            crate::integrations::local_tools::run_command(&mut command, Duration::from_secs(seconds)))
+            .await;
         let output = match output {
             Ok(Ok(output)) => output,
             Ok(Err(e)) => return Err((logs, format!("{program} 실행 실패: {e}"))),

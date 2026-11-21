@@ -246,19 +246,29 @@ pub fn import(state: &AppState, id: &str) -> Result<Value, String> {
     install(state, Path::new(dir))
 }
 
-pub fn import_repo(state: &AppState, repo: &str) -> Result<Value, String> {
+struct CloneTemp(PathBuf);
+
+impl Drop for CloneTemp {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+pub async fn import_repo(state: &AppState, repo: &str) -> Result<Value, String> {
     let repo = repo.trim();
     if !(repo.starts_with("https://") || repo.starts_with("git@")) {
         return Err("https:// 또는 git@ 저장소 URL만 지원합니다.".into());
     }
     let temp = std::env::temp_dir().join(format!("dominion-skills-{}", uuid::Uuid::new_v4()));
-    let output = std::process::Command::new("git")
-        .args(["clone", "--depth", "1", repo])
-        .arg(&temp)
-        .output()
-        .map_err(|error| error.to_string())?;
+    let _cleanup = CloneTemp(temp.clone());
+    let mut command = tokio::process::Command::new("git");
+    command.args(["clone", "--depth", "1", repo]).arg(&temp);
+    let output = crate::integrations::local_tools::run_command(
+        &mut command, std::time::Duration::from_secs(180)).await
+        .map_err(|error| format!("저장소 복제 실패: {error}"))?;
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        let message = String::from_utf8_lossy(&output.stderr);
+        return Err(message.chars().take(800).collect::<String>());
     }
 
     let mut found = Vec::new();
@@ -277,7 +287,6 @@ pub fn import_repo(state: &AppState, repo: &str) -> Result<Value, String> {
             }
         }
     }
-    let _ = std::fs::remove_dir_all(&temp);
     if added == 0 {
         return Err("저장소에서 SKILL.md를 찾지 못했습니다.".into());
     }
@@ -341,10 +350,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    #[test]
-    fn rejects_non_http_repo() {
+    #[tokio::test]
+    async fn rejects_non_http_repo() {
         let (state, dir) = temp_state();
-        assert!(import_repo(&state, "file:///etc/passwd").is_err());
+        assert!(import_repo(&state, "file:///etc/passwd").await.is_err());
         let _ = std::fs::remove_dir_all(dir);
     }
 }

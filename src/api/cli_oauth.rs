@@ -86,16 +86,19 @@ fn authorization_url(text:&str)->Option<String>{
 pub(super) async fn credential_verified(source:&str)->bool{
     if source=="github"{
         let Some(exe)=binary("gh")else{return false};
+        let mut command=Command::new(exe);
+        command.args(["auth","status","--hostname","github.com"])
+            .env_remove("GH_TOKEN").env_remove("GITHUB_TOKEN").kill_on_drop(true);
         let output=tokio::time::timeout(Duration::from_secs(8),
-            Command::new(exe).args(["auth","status","--hostname","github.com"])
-                .env_remove("GH_TOKEN").env_remove("GITHUB_TOKEN")
-                .kill_on_drop(true).output()).await;
+            crate::integrations::local_tools::run_command(&mut command,Duration::from_secs(8))).await;
         return matches!(output,Ok(Ok(output)) if output.status.success());
     }
     if source=="google_workspace"{
         let Some(exe)=binary("gws")else{return false};
+        let mut command=Command::new(exe);
+        command.args(["auth","status"]).kill_on_drop(true);
         let output=tokio::time::timeout(Duration::from_secs(8),
-            Command::new(exe).args(["auth","status"]).kill_on_drop(true).output()).await;
+            crate::integrations::local_tools::run_command(&mut command,Duration::from_secs(8))).await;
         let Ok(Ok(output))=output else{return false};
         if !output.status.success(){return false;}
         let text=String::from_utf8_lossy(&output.stdout);
@@ -110,7 +113,10 @@ pub(super) async fn credential_verified(source:&str)->bool{
     let name=match source{"claude"=>"claude","opencode"=>"opencode",_=>return false};
     let Some(exe)=binary(name)else{return false;};
     let args:&[&str]=if source=="claude"{&["auth","status"]}else{&["auth","list","--format","json"]};
-    let output=tokio::time::timeout(Duration::from_secs(5),Command::new(exe).args(args).kill_on_drop(true).output()).await;
+    let mut command=Command::new(exe);
+    command.args(args).kill_on_drop(true);
+    let output=tokio::time::timeout(Duration::from_secs(5),
+        crate::integrations::local_tools::run_command(&mut command,Duration::from_secs(5))).await;
     let Ok(Ok(output))=output else{return false;};
     if !output.status.success(){return false;}
     let Ok(value)=serde_json::from_slice::<Value>(&output.stdout)else{return false;};

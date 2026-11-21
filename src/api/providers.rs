@@ -623,10 +623,11 @@ async fn claude_cli_authenticated() -> bool {
     let binary = home_file(".local/bin/claude")
         .filter(|path| path.exists())
         .unwrap_or_else(|| std::path::PathBuf::from("claude"));
-    let status = tokio::time::timeout(
-        Duration::from_secs(4),
-        tokio::process::Command::new(binary).args(["auth", "status"]).kill_on_drop(true).output(),
-    ).await;
+    let status = tokio::time::timeout(Duration::from_secs(4), async {
+        let mut command=tokio::process::Command::new(binary);
+        command.args(["auth", "status"]).kill_on_drop(true);
+        crate::integrations::local_tools::run_command(&mut command,Duration::from_secs(4)).await
+    }).await;
     matches!(status,
         Ok(Ok(output)) if output.status.success()
             && serde_json::from_slice::<Value>(&output.stdout).ok()
@@ -1812,8 +1813,10 @@ async fn codex_models_live(
     // Query the full account catalog first with a generic compatibility
     // version, then retry with the installed CLI's version.
     let mut versions = vec!["99.0.0".to_string()];
+    let mut version_command=tokio::process::Command::new("codex");
+    version_command.arg("--version");
     let cli_version = tokio::time::timeout(Duration::from_secs(3),
-        tokio::process::Command::new("codex").arg("--version").output()
+        crate::integrations::local_tools::run_command(&mut version_command,Duration::from_secs(3))
     ).await.ok().and_then(Result::ok)
         .and_then(|output|String::from_utf8(output.stdout).ok())
         .and_then(|stdout|stdout.split_whitespace()

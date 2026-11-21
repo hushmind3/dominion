@@ -501,7 +501,8 @@ async fn cli_output(binary:&str,args:&[&str])->Result<String,String>{
     let mut command=tokio::process::Command::new(binary);
     command.args(args).kill_on_drop(true);
     if binary=="gh"{command.env_remove("GH_TOKEN").env_remove("GITHUB_TOKEN");}
-    let output=tokio::time::timeout(Duration::from_secs(15),command.output())
+    let output=tokio::time::timeout(Duration::from_secs(15),
+        crate::integrations::local_tools::run_command(&mut command,Duration::from_secs(15)))
         .await.map_err(|_|format!("{binary} credential query timed out"))?
         .map_err(|e|format!("{binary} CLI unavailable: {e}"))?;
     if !output.status.success(){

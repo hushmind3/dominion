@@ -306,9 +306,11 @@ pub async fn bridge_preflight()->Value{
         let binary=std::env::var(key).ok().filter(|v|!v.is_empty())
             .unwrap_or_else(||runtime.into());
         let output=if enabled{
-            tokio::time::timeout(Duration::from_secs(3),
-                Command::new(&binary).arg("--version")
-                    .stdin(Stdio::null()).kill_on_drop(true).output())
+            tokio::time::timeout(Duration::from_secs(3), async {
+                let mut command=Command::new(&binary);
+                command.arg("--version").kill_on_drop(true);
+                crate::integrations::local_tools::run_command(&mut command,Duration::from_secs(3)).await
+            })
                 .await.ok().and_then(Result::ok)
         }else{None};
         let available=output.as_ref().is_some_and(|o|o.status.success());
