@@ -88,7 +88,8 @@ pub fn record(state: &AppState, execution: &Value) -> Option<Value> {
             } else {
                 format!("`{class}` 실패가 {count}회 관찰되었습니다. {hint}")
             };
-            add_guidance(&mut growth, &format!("failure:{agent_id}:{class}"), &text, count);
+            add_guidance(&mut growth, &format!("failure:{agent_id}:{class}"), &text, count,
+                "failed_execution");
         }
     }
     let run_id = execution["id"].as_str().unwrap_or("");
@@ -112,6 +113,7 @@ pub fn record(state: &AppState, execution: &Value) -> Option<Value> {
                         "`{tool}` 실패가 {failures}회 관찰되었습니다. 같은 인자를 반복하지 말고 다른 도구나 더 단순한 인자를 사용하세요."
                     ),
                     failures,
+                    "failed_tool_receipt",
                 );
             }
         }
@@ -130,7 +132,7 @@ pub fn record(state: &AppState, execution: &Value) -> Option<Value> {
     Some(saved)
 }
 
-fn add_guidance(growth: &mut Value, id: &str, text: &str, evidence: u64) {
+fn add_guidance(growth: &mut Value, id: &str, text: &str, evidence: u64, basis: &str) {
     let mut guidance = growth["guidance"].as_array().cloned().unwrap_or_default();
     if let Some(existing) = guidance
         .iter_mut()
@@ -138,6 +140,7 @@ fn add_guidance(growth: &mut Value, id: &str, text: &str, evidence: u64) {
     {
         *existing = stable_guidance(id, text);
         existing["evidenceCount"] = json!(evidence);
+        existing["evidenceBasis"] = json!(basis);
         existing["confidence"] = json!(
             (evidence as f64 / growth["runs"].as_u64().unwrap_or(1).max(1) as f64)
                 .min(1.0)
@@ -145,6 +148,7 @@ fn add_guidance(growth: &mut Value, id: &str, text: &str, evidence: u64) {
     } else {
         let mut record = stable_guidance(id, text);
         record["evidenceCount"] = json!(evidence);
+        record["evidenceBasis"] = json!(basis);
         record["confidence"] = json!(
             (evidence as f64 / growth["runs"].as_u64().unwrap_or(1).max(1) as f64)
                 .min(1.0)
@@ -237,6 +241,12 @@ pub fn context_block(state: &AppState, agent_id: &str) -> Option<(String, Vec<Va
         .unwrap_or_default()
         .into_iter()
         .filter(|item| item["confidence"].as_f64().unwrap_or(0.0) >= 0.15)
+        // Legacy failure advice could be synthesized from an unverified chat.
+        // Require a modern failed-execution provenance marker before replay.
+        // Historical DB rows are preserved for inspection/migration.
+        .filter(|item| !item["id"].as_str()
+            .is_some_and(|id| id.starts_with("failure:"))
+            || item["evidenceBasis"] == "failed_execution")
         .take(3)
         .collect::<Vec<_>>();
     // Execution counters change every ordinary chat turn. They are useful
@@ -381,6 +391,27 @@ mod tests {
         assert!(result["failureClasses"].get("legacy_false_failure").is_none(),"{result}");
         assert!(result["guidance"].as_array().unwrap().is_empty(),"{result}");
         assert!(context_block(&state,"agent-a").is_none());
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn preexisting_unproven_failure_guidance_is_quarantined_without_deletion() {
+        let (state,dir)=state();
+        state.store.put("agent_growth",&json!({
+            "id":"agent-a","agentId":"agent-a","runs":9,
+            "guidance":[
+                {"id":"failure:agent-a:execution_error","revision":"legacy",
+                    "text":"STALE_FALSE_ERROR_ADVICE","confidence":0.9,"evidenceCount":9},
+                {"id":"tool:agent-a:workspace_read","revision":"legacy-tool",
+                    "text":"READ_TOOL_RECEIPT_ADVICE","confidence":0.8,"evidenceCount":3}
+            ]
+        })).unwrap();
+        let (block,_items)=context_block(&state,"agent-a").unwrap();
+        assert!(!block.contains("STALE_FALSE_ERROR_ADVICE"),"{block}");
+        assert!(block.contains("READ_TOOL_RECEIPT_ADVICE"),"{block}");
+        let durable=state.store.get("agent_growth","agent-a").unwrap();
+        assert_eq!(durable["guidance"].as_array().unwrap().len(),2,
+            "read-time quarantine must not delete historical records");
         let _=std::fs::remove_dir_all(dir);
     }
 
