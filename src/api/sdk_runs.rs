@@ -114,11 +114,17 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
     }else {Value::Null};
     let approval=awaiting.map(|a|json!({"id":a["id"],
         "name":a["tool"],"arguments":a["args"]})).unwrap_or(Value::Null);
-    let mut events=job["events"].as_array().cloned().unwrap_or_default()
-        .into_iter().map(|event|json!({
+    // List and detail responses share this projection. A large historical
+    // run must not clone thousands of complete events on every idle poll.
+    // The underlying durable job retains every event; this is a bounded view.
+    let event_rows=job["events"].as_array();
+    let events_omitted=event_rows.map(|rows|rows.len().saturating_sub(60))
+        .unwrap_or(0);
+    let mut events=event_rows.map(|rows|rows.iter().skip(events_omitted)
+        .map(|event|json!({
             "kind":event["kind"].as_str().or_else(||event["type"].as_str())
                 .unwrap_or("event"),"detail":event
-        })).collect::<Vec<_>>();
+        })).collect::<Vec<_>>()).unwrap_or_default();
     if events.is_empty() {
         // The kernel already persisted these receipts and in-flight intents
         // while running. Project their *real* progress, not synthetic timers.
@@ -231,7 +237,8 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
             "toolReceipts":tool_receipts,"toolReceiptsOmitted":omitted_receipts,
             "artifactEvidence":artifact_evidence,
             "pendingCall":approval,"uncertainAction":uncertain_action,
-            "nativeStream":stream_progress,"events":events
+            "nativeStream":stream_progress,"events":events,
+            "eventsOmitted":events_omitted
         }
     })
 }
@@ -912,6 +919,27 @@ mod tests{
             Json(json!({"callId":"deny-call"}))).await.status(),StatusCode::CONFLICT);
         crate::test_support::cleanup_dir(root);
     }
+    #[test]
+    fn native_run_history_projects_only_latest_events_without_losing_counts(){
+        let (state,root)=temporary_state();
+        let original=(0..500).map(|i|json!({
+            "kind":"tool_completed","seq":i
+        })).collect::<Vec<_>>();
+        let job=json!({"id":"many-events","kind":"prompt","status":"completed",
+            "input":{"prompt":"long project task"},
+            "events":original,"nativeState":{"status":"completed","receipts":[]}
+        });
+        let view=project(&state,&job);
+        let events=view["checkpoint"]["events"].as_array().unwrap();
+        assert_eq!(events.len(),60);
+        assert_eq!(view["checkpoint"]["eventsOmitted"],440);
+        assert_eq!(events[0]["detail"]["seq"],440);
+        assert_eq!(events[59]["detail"]["seq"],499);
+        assert_eq!(job["events"].as_array().unwrap().len(),500,
+            "Owner progress projection must not mutate the durable event journal");
+        let _=std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn native_run_projects_only_current_bounded_model_preview_without_tool_arguments(){
         let (state,root)=temporary_state();
