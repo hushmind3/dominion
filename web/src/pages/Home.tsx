@@ -26,7 +26,7 @@ export function HomePage({navigate}:{navigate:(page:Destination,sessionId?:strin
  const busy=jobs.value.filter(j=>['queued','running','planning','reviewing','repairing'].includes(j.status)).length
  const metrics=[
   {name:'dashboard.metric.chat',value:sessions.value.length,icon:MessageSquare,page:'chat' as const},
-  {name:'dashboard.metric.providers',value:providers.value.filter(p=>p.enabled).length,icon:Cpu,page:'models' as const},
+  {name:'dashboard.metric.providers',value:enabledProviders.length,icon:Cpu,page:'models' as const},
   {name:'dashboard.metric.agents',value:agents.value.length,icon:Bot,page:'agents' as const},
   {name:'dashboard.metric.jobs',value:busy,icon:Activity,page:'activity' as const}
  ]
@@ -37,8 +37,8 @@ export function HomePage({navigate}:{navigate:(page:Destination,sessionId?:strin
  ]
  return <PageContainer className="!max-w-[1200px] !py-5">
   <div className="mb-5 flex flex-wrap items-end justify-between gap-3"><div><h1 className="m-0 text-[19px] font-bold tracking-tight">{t('dashboard.title')}</h1><p className="mt-1 text-[12px] text-[#7C7469]">{t('dashboard.subtitle')}</p></div><Button type="button" variant="primary" onClick={()=>navigate('chat')} className="flex h-8 items-center gap-2 rounded-lg px-3 text-[11px] font-semibold"><MessageSquare size={14}/> {t('dashboard.openChat')} <ArrowRight size={13}/></Button></div>
-  {dashboardError&&<div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[12px] text-rose-700"><span>일부 실시간 정보를 가져오지 못했습니다: {dashboardError}</span><Button type="button" onClick={reloadDashboard} className="rounded-lg border border-rose-200 px-3 py-1.5 text-[12px] font-semibold hover:bg-white">새로고침</Button></div>}
-  {dashboardLoading&&!dashboardError&&<p role="status" className="mb-3 text-[11px] text-[#8A8176]">작업 공간 상태를 확인하는 중입니다.</p>}
+  {dashboardError&&<div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[12px] text-rose-700"><span>{t('dashboard.loadError')} {dashboardError}</span><Button type="button" onClick={reloadDashboard} className="rounded-lg border border-rose-200 px-3 py-1.5 text-[12px] font-semibold hover:bg-white">{t('dashboard.reload')}</Button></div>}
+  {dashboardLoading&&!dashboardError&&<p role="status" className="mb-3 text-[11px] text-[#8A8176]">{t('dashboard.loading')}</p>}
   <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{metrics.map(m=>{const Icon=m.icon;return <Button type="button" key={m.name} onClick={()=>navigate(m.page)} className="flex min-h-24 flex-col items-start rounded-xl border border-[#E7E0D5] bg-white p-4 text-left transition-colors hover:border-[#D8CFC2]"><span className="flex w-full items-center justify-between text-[11px] text-[#7C7469]">{t(m.name as any)}<Icon size={16} className="text-[#A79C8E]"/></span><strong className="mt-4 text-[23px] font-bold leading-none tabular-nums text-[#24211D]">{m.value}</strong></Button>})}</div>
   <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(270px,.72fr)]">
    <section className="rounded-xl border border-[#E7E0D5] bg-white">
@@ -56,7 +56,7 @@ export function HomePage({navigate}:{navigate:(page:Destination,sessionId?:strin
     <div className="m-4 mt-2 flex items-center gap-2 rounded-lg bg-[#F7F2EA] px-3 py-2 text-[11px] text-[#7C7469]"><CheckCircle2 size={14}/> {t('dashboard.note')}</div>
    </section>
   </div>
-  {recentChats.length>0&&<section className="mt-4 rounded-xl border border-[#E7E0D5] bg-white"><div className="border-b border-[#F0EAE1] px-4 py-3"><h2 className="text-[13px] font-bold">최근 대화 이어하기</h2><p className="mt-1 text-[11px] text-[#8A8176]">저장된 대화 기록에서 다시 시작합니다.</p></div><div className="grid gap-1 p-2 sm:grid-cols-2">{recentChats.map(chat=><Button key={chat.id} type="button" onClick={()=>navigate('chat',chat.id)} className="flex min-w-0 items-center gap-3 rounded-lg px-3 py-3 text-left hover:bg-[#FAF7F1]"><MessageSquare size={16} className="shrink-0 text-[#A94E30]"/><span className="min-w-0 flex-1 truncate text-[12px] font-semibold">{chat.title||'새 대화'}</span><ArrowRight size={14} className="shrink-0 text-[#A79C8E]"/></Button>)}</div></section>}
+  {recentChats.length>0&&<section className="mt-4 rounded-xl border border-[#E7E0D5] bg-white"><div className="border-b border-[#F0EAE1] px-4 py-3"><h2 className="text-[13px] font-bold">{t('dashboard.recentChats')}</h2><p className="mt-1 text-[11px] text-[#8A8176]">{t('dashboard.recentChats.desc')}</p></div><div className="grid gap-1 p-2 sm:grid-cols-2">{recentChats.map(chat=><Button key={chat.id} type="button" onClick={()=>navigate('chat',chat.id)} className="flex min-w-0 items-center gap-3 rounded-lg px-3 py-3 text-left hover:bg-[#FAF7F1]"><MessageSquare size={16} className="shrink-0 text-[#A94E30]"/><span className="min-w-0 flex-1 truncate text-[12px] font-semibold">{chat.title||t('chat.sessionTitle')}</span><ArrowRight size={14} className="shrink-0 text-[#A79C8E]"/></Button>)}</div></section>}
   <NativeAgentPanel providers={providers.value}/>
   <section className="mt-4 rounded-xl border border-[#E7E0D5] bg-white">
    <div className="flex items-center justify-between border-b border-[#F0EAE1] px-4 py-3"><h2 className="text-[13px] font-bold">{t('dashboard.recent')}</h2><Button type="button" onClick={()=>navigate('activity')} className="flex items-center gap-1 text-[11px] font-medium text-[#C96442]">{t('dashboard.recent.all')} <ArrowRight size={13}/></Button></div>
