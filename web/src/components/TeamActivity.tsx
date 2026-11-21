@@ -1,11 +1,12 @@
-import {useState} from 'react'
-import {CheckCircle2,ChevronDown,ChevronRight,GitMerge,Network,RefreshCw,UsersRound} from 'lucide-react'
-import {Button} from './Primitives'
+import {useEffect,useState} from 'react'
+import {Activity,CheckCircle2,ChevronDown,ChevronRight,ClipboardCopy,GitMerge,Network,Play,RefreshCw,RotateCcw,ShieldAlert,Square,UsersRound} from 'lucide-react'
+import {get,post,type Agent} from '../api'
+import {Button,SelectInput,TextArea,TextInput} from './Primitives'
 import {StatusPill} from './StatusPill'
-import {Panel,useRemote} from './UI'
+import {Panel,useRemote,refresh} from './UI'
 import {useLocale} from '../i18n'
 
-type Worker={id:string;online:boolean;allowWrites:boolean;agentCount:number}
+type Worker={id:string;online:boolean;allowWrites:boolean;agentCount:number;agents?:string[];lastHeartbeatMs?:number}
 type TeamTask={
  id:string;agentId?:string;status:string;readOnly:boolean;verified:boolean;
  dependsOn:string[];remoteWorkerId?:string;remoteTaskId?:string;
@@ -16,100 +17,253 @@ type Team={
  verified:boolean;createdAt?:string;updatedAt?:string;
  pendingRemoteArtifactTaskIds:string[];tasks:TeamTask[]
 }
-type Activity={teams:Team[];remoteWorkers:Worker[]}
-const empty:Activity={teams:[],remoteWorkers:[]}
-
+type ActivityData={teams:Team[];remoteWorkers:Worker[];remoteConfigured?:boolean}
+type ArtifactReview={teamId:string;remoteTaskId:string;status:string;reviewDigest:string;patch:string;files:{path:string;sha256:string}[]}
+type LeadJob={id:string;status:string;sessionId?:string;error?:string}
+const empty:ActivityData={teams:[],remoteWorkers:[],remoteConfigured:false}
+const target=(teamId:string,taskId:string)=>'/api/activity/teams/'+encodeURIComponent(teamId)+'/artifacts/'+encodeURIComponent(taskId)
 function goToLead(sessionId?:string){
- if(!sessionId)return
- // The existing App hash router owns navigation and will reuse ChatPage.
- window.location.hash='#/chat?session='+encodeURIComponent(sessionId)
+ if(sessionId)window.location.hash='#/chat?session='+encodeURIComponent(sessionId)
 }
+const active=(status:string)=>status==='running'||status==='queued'||status==='launching'||status==='assigned'
 
-/** Read-only operator view. Native approvals stay within the Lead chat/tool policy. */
+/** One native operator surface within the existing Activity page, not a new menu. */
 export function TeamActivity(){
- const lang=useLocale(),en=lang==='en'
- const {value,loading,error,reload}=useRemote<Activity>('/api/activity/teams',empty)
- const [selected,setSelected]=useState<string>('')
- const running=value.teams.filter(team=>team.status==='running').length
- const review=value.teams.filter(team=>team.status==='needs_review').length
+ const en=useLocale()==='en'
+ const activity=useRemote<ActivityData>('/api/activity/teams',empty)
+ const agents=useRemote<Agent[]>('/api/agents',[])
+ const [createOpen,setCreateOpen]=useState(false)
+ const [selected,setSelected]=useState('')
+ const [prompt,setPrompt]=useState('')
+ const [leadId,setLeadId]=useState('')
+ const [workerIds,setWorkerIds]=useState<string[]>([])
+ const [remoteId,setRemoteId]=useState('')
+ const [busy,setBusy]=useState('')
+ const [error,setError]=useState('')
+ const [notice,setNotice]=useState('')
+ const [review,setReview]=useState<ArtifactReview|null>(null)
+ const [queuedJobId,setQueuedJobId]=useState('')
+ const queued=useRemote<LeadJob>(queuedJobId?'/api/jobs/'+encodeURIComponent(queuedJobId):null,{id:'',status:''})
+ const runnable=agents.value.filter(agent=>agent.id&&agent.providerId&&agent.model&&agent.enabled!==false&&agent.disabled!==true)
+ const lead=runnable.find(agent=>agent.id===leadId)||runnable[0]
+ const workers=activity.value.remoteWorkers
+ const compatible=workers.filter(node=>node.online&&workerIds.every(id=>(node.agents||[]).includes(id)))
+ const selectedRemote=compatible.some(node=>node.id===remoteId)?remoteId:''
+ const inProgress=activity.value.teams.filter(team=>team.status==='running').length
+ const reviewCount=activity.value.teams.filter(team=>team.status==='needs_review').length
+ useEffect(()=>{
+  const timer=setInterval(()=>{if(document.visibilityState==='visible')void activity.reload()},30000)
+  return()=>clearInterval(timer)
+ },[activity.reload])
+ const toggle=(id:string,checked:boolean)=>{
+  setWorkerIds(previous=>checked?
+   previous.includes(id)||previous.length>=8?previous:[...previous,id]:
+   previous.filter(item=>item!==id))
+  setRemoteId('')
+ }
+ const reload=()=>{void activity.reload();refresh('/api/activity/teams','/api/jobs')}
+ const launch=async()=>{
+  if(!lead||!workerIds.length||!prompt.trim()||busy)return
+  setBusy('launch');setError('');setNotice('')
+  try{
+   const saved=await post<{status:string;jobId:string}>('/api/activity/teams/start',{
+    prompt:prompt.trim(),leadAgentId:lead.id,workerAgentIds:workerIds,
+    ...(selectedRemote?{remoteWorkerId:selectedRemote}:{})
+   })
+   setQueuedJobId(saved.jobId)
+   setNotice(en?'Lead job queued. The team appears once the Lead commits its native DAG.':'Lead 작업이 대기열에 등록됐습니다. Lead가 실제 작업 DAG를 생성하면 팀 목록에 나타납니다.')
+   setPrompt('');setCreateOpen(false);reload()
+  }catch(e){setError((e as Error).message)}finally{setBusy('')}
+ }
+ const control=async(team:Team,operation:'stop'|'resume')=>{
+  if(busy)return
+  if(operation==='stop'&&!window.confirm(en?'Stop this team and its active workers? In-flight effects may require review.':'이 팀과 실행 중인 Worker를 중단하시겠습니까? 진행 중이던 파일 변경은 검토가 필요할 수 있습니다.'))return
+  setBusy(operation+team.id);setError('');setNotice('')
+  try{
+   const result=await post<{status?:string}>('/api/activity/teams/'+encodeURIComponent(team.id)+'/'+operation,{})
+   setNotice(operation==='stop'?
+    (en?'Team stop requested; inspect in-flight effects.':'팀 중단 요청을 저장했습니다. 진행 중이던 작업 결과는 확인해 주세요.'):
+    (en?'Existing team execution resumed.':'기존 팀 ID로 작업을 재개했습니다.'))
+   if(operation==='resume'&&result.status==='needs_review'){
+    setNotice(en?'Team needs review before dependent work can continue.':'선행 작업을 검토해야 다음 Worker가 진행할 수 있습니다.')
+   }
+   reload()
+  }catch(e){setError((e as Error).message)}finally{setBusy('')}
+ }
+ const openReview=async(teamId:string,taskId:string)=>{
+  setBusy('review'+taskId);setError('');setReview(null)
+  try{setReview(await get<ArtifactReview>(target(teamId,taskId)))}
+  catch(e){setError((e as Error).message)}
+  finally{setBusy('')}
+ }
+ const decide=async(approve:boolean)=>{
+  if(!review||busy)return
+  const message=approve?
+   (en?'Apply exactly the reviewed remote changes to the local workspace?':'검토한 원격 파일 변경을 현재 작업 공간에 적용하시겠습니까?'):
+   (en?'Reject these remote changes without modifying local files?':'이 원격 변경을 거절하고 로컬 파일을 그대로 유지하시겠습니까?')
+  if(!window.confirm(message))return
+  const current=review
+  setBusy('decision');setError('');setNotice('')
+  try{
+   await post(target(current.teamId,current.remoteTaskId)+(approve?'/apply':'/reject'),
+    approve?{approved:true,reviewDigest:current.reviewDigest}:{rejected:true})
+   setNotice(approve?
+    (en?'Changes applied and verified. Resume the team to continue.':'파일 변경 적용과 결과 검증을 마쳤습니다. 팀 재개를 눌러 이어서 실행하세요.'):
+    (en?'Remote changes rejected; no local files were written.':'원격 변경을 거절했습니다. 로컬 파일은 수정하지 않았습니다.'))
+   setReview(null);reload()
+  }catch(e){setError((e as Error).message)}finally{setBusy('')}
+ }
+ const setup=[
+  'DOMINION_REMOTE_CLUSTER_TOKEN=<same private random token>',
+  'DOMINION_REMOTE_COORDINATOR_URL=https://your-private-controller.example',
+  'DOMINION_REMOTE_WORKER_ID=worker-b',
+  './dominion-rust remote-worker'
+ ].join('\n')
  return <section className="mt-10" aria-label={en?'Agent teams':'에이전트 작업 팀'}>
   <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
    <div className="flex min-w-0 items-center gap-2">
     <UsersRound size={17} className="text-[#7C7469]"/>
     <h3 className="m-0 text-[14px] font-bold text-[#3A342D]">{en?'Agent teams':'멀티에이전트 팀 작업'}</h3>
-    {running>0&&<span className="rounded-md bg-[#F7E8E1] px-2 py-0.5 text-[10px] text-[#A94E30]">{en?'Running':'진행'} {running}</span>}
-    {review>0&&<span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] text-amber-800">{en?'Review':'검토'} {review}</span>}
+    {inProgress>0&&<span className="rounded-md bg-[#F7E8E1] px-2 py-0.5 text-[10px] text-[#A94E30]">{en?'Running':'진행'} {inProgress}</span>}
+    {reviewCount>0&&<span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] text-amber-800">{en?'Review':'검토'} {reviewCount}</span>}
    </div>
-   <Button size="sm" variant="ghost" onClick={()=>void reload()} aria-label={en?'Refresh teams':'팀 작업 새로고침'}><RefreshCw size={13}/>{en?'Refresh':'새로고침'}</Button>
+   <div className="flex gap-2">
+    <Button size="sm" variant="secondary" onClick={()=>setCreateOpen(o=>!o)} aria-expanded={createOpen}><Play size={13}/>{en?'New team task':'팀 작업 시작'}</Button>
+    <Button size="sm" variant="ghost" onClick={reload} aria-label={en?'Refresh teams':'팀 새로고침'}><RefreshCw size={13}/></Button>
+   </div>
   </div>
+  {createOpen&&<Panel className="mb-4 space-y-3 p-4 sm:p-5">
+   <div><h4 className="m-0 text-[13px] font-semibold">{en?'Start a native Lead / Worker task':'네이티브 Lead / Worker 작업 시작'}</h4>
+    <p className="mt-1 text-[11px] text-[#8A8176]">{en?'The Lead plans and commits a real native Team; worker IDs do not create fake completed tasks.':'Lead가 실제 팀 작업을 계획하고 저장합니다. Worker 목록만 선택했다고 팀이 완료된 것으로 처리하지 않습니다.'}</p></div>
+   <TextArea rows={3} maxLength={4000} placeholder={en?'Describe the desired outcome and acceptance checks':'목표, 필요한 산출물, 성공 조건을 입력하세요.'} value={prompt} onChange={e=>setPrompt(e.target.value)}/>
+   <div className="grid gap-3 sm:grid-cols-2">
+    <label className="text-[11px] font-semibold text-[#5C544A]">{en?'Lead agent':'Lead 에이전트'}
+     <SelectInput className="mt-1" value={lead?.id||''} onChange={e=>setLeadId(e.target.value)}>
+      {!runnable.length&&<option value="">{en?'Configure an agent first':'먼저 에이전트를 설정하세요'}</option>}
+      {runnable.map(a=><option value={a.id} key={a.id}>{a.name} · {a.model}</option>)}
+     </SelectInput>
+    </label>
+    <label className="text-[11px] font-semibold text-[#5C544A]">{en?'Execution device':'Worker 실행 장치'}
+     <SelectInput className="mt-1" value={selectedRemote} onChange={e=>setRemoteId(e.target.value)}>
+      <option value="">{en?'Local Rust workers':'이 PC의 Rust Worker'}</option>
+      {compatible.map(node=><option key={node.id} value={node.id}>{node.id} · {en?'remote':'원격'}</option>)}
+     </SelectInput>
+    </label>
+   </div>
+   <div>
+    <div className="mb-1 flex items-center justify-between text-[11px] font-semibold text-[#5C544A]"><span>{en?'Worker agents (up to 8)':'Worker 에이전트 선택 (최대 8)'}</span><span>{workerIds.length}/8</span></div>
+    <div className="grid max-h-40 gap-1 overflow-y-auto rounded-xl border border-[#E7E0D5] bg-white p-2 sm:grid-cols-2">
+     {runnable.map(a=><label key={a.id} className="flex min-w-0 cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-[11px] hover:bg-[#FAF7F1]">
+      <TextInput type="checkbox" checked={workerIds.includes(a.id)} disabled={!workerIds.includes(a.id)&&workerIds.length>=8} onChange={e=>toggle(a.id,e.target.checked)}/>
+      <span className="min-w-0 truncate">{a.name} <small className="text-[#8A8176]">({a.id})</small></span>
+     </label>)}
+     {!runnable.length&&<p className="px-2 text-xs text-[#8A8176]">{en?'No runnable agents.':'실행 가능한 에이전트가 없습니다.'}</p>}
+    </div>
+   </div>
+   <div className="flex justify-end"><Button variant="primary" disabled={Boolean(busy)||!prompt.trim()||!lead||workerIds.length<1} onClick={()=>void launch()}><Play size={14}/>{busy==='launch'?(en?'Queuing…':'등록 중…'):(en?'Queue Lead task':'Lead 작업 시작')}</Button></div>
+  </Panel>}
+  {error&&<p role="alert" className="mb-3 break-words rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}
+  {notice&&<p role="status" className="mb-3 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-xs text-[#5C544A]">{notice}</p>}
+  {queuedJobId&&<div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-[#FAF7F1] p-3 text-[11px]">
+   <Activity size={14}/><span className="min-w-0 flex-1">{en?'Latest Lead job':'최근 Lead 작업'} · {queuedJobId.slice(-12)}</span><StatusPill status={queued.value.status||'queued'}/>
+   {queued.value.sessionId&&<Button size="sm" variant="ghost" onClick={()=>goToLead(queued.value.sessionId)}>{en?'Open Lead':'Lead 대화'} <ChevronRight size={13}/></Button>}
+   {active(queued.value.status)&&<Button size="sm" variant="danger" disabled={Boolean(busy)} onClick={async()=>{setBusy('cancelJob');try{await post('/api/jobs/'+encodeURIComponent(queuedJobId)+'/cancel',{});void queued.reload();reload()}catch(e){setError((e as Error).message)}finally{setBusy('')}}}><Square size={13}/>{en?'Stop':'중단'}</Button>}
+  </div>}
   <Panel className="overflow-hidden p-4 sm:p-5">
-   {error&&<p role="alert" className="mb-3 text-xs text-rose-600">{error}</p>}
-   {!value.teams.length&&<p className="py-4 text-center text-[12px] text-[#8A8176]">{loading?(en?'Loading team activity…':'팀 작업 불러오는 중…'):(en?'No managed team jobs yet. Teams created by an agent appear here.':'아직 팀 작업이 없습니다. 에이전트가 실행한 협업 작업이 여기에 나타납니다.')}</p>}
+   {!activity.value.teams.length&&<p className="py-5 text-center text-xs text-[#8A8176]">{activity.loading?(en?'Loading teams…':'팀 작업 불러오는 중…'):(en?'No saved managed teams yet.':'아직 저장된 팀 작업이 없습니다.')}</p>}
    <div className="space-y-2">
-    {value.teams.map(team=>{
+    {activity.value.teams.map(team=>{
      const open=selected===team.id
-     const pending=team.pendingRemoteArtifactTaskIds.length
      const done=team.tasks.filter(task=>task.status==='completed').length
+     const pending=team.pendingRemoteArtifactTaskIds.length
+     const width=team.tasks.length?Math.round(100*done/team.tasks.length):0
      return <div key={team.id} className="min-w-0 rounded-xl border border-[#E7E0D5] bg-white">
-      <Button variant="bare" className="flex w-full min-w-0 items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-[#FAF7F1]" aria-expanded={open} onClick={()=>setSelected(open?'':team.id)}>
+      <Button variant="bare" className="flex w-full min-w-0 items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-[#FAF7F1]" onClick={()=>{setSelected(open?'':team.id);setReview(null)}} aria-expanded={open}>
        {open?<ChevronDown size={16} className="shrink-0 text-[#8A8176]"/>:<ChevronRight size={16} className="shrink-0 text-[#8A8176]"/>}
-       <span className="min-w-0 flex-1">
-        <strong className="block truncate text-[12px] text-[#3A342D]">{team.leadAgentId||'Lead'} · {en?'Team':'팀'} {team.id.slice(-7)}</strong>
-        <small className="mt-1 block text-[11px] text-[#8A8176]">{en?'Tasks':'작업'} {done}/{team.tasks.length}{pending>0?' · '+(en?'Files awaiting review':'파일 승인 대기')+' '+pending:''}</small>
-       </span>
-       <StatusPill status={team.status}/>
+       <span className="min-w-0 flex-1"><strong className="block truncate text-[12px] text-[#3A342D]">{team.leadAgentId||'Lead'} · {en?'Team':'팀'} {team.id.slice(-9)}</strong>
+        <small className="mt-1 block text-[11px] text-[#8A8176]">{en?'Tasks':'작업'} {done}/{team.tasks.length}{pending>0?' · '+(en?'File review':'파일 승인 대기')+' '+pending:''}</small>
+        <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-[#F3EEE5]"><span className="block h-full rounded-full bg-[#C96442]" style={{width:width+'%'}}/></span>
+       </span><StatusPill status={team.status}/>
       </Button>
       {open&&<div className="border-t border-[#EFE9DF] px-3 py-3">
        <div className="space-y-2">
         {team.tasks.map(task=><div key={task.id} className="flex min-w-0 flex-wrap items-center gap-2 rounded-lg bg-[#FAF7F1] px-3 py-2 text-[11px]">
          <span className="min-w-0 flex-1"><strong className="block truncate text-[#3A342D]">{task.id} · {task.agentId||'Worker'}</strong>
-          <small className="text-[#8A8176]">{task.remoteWorkerId?'Remote · '+task.remoteWorkerId:(en?'Local':'로컬')}{task.dependsOn?.length?' · '+(en?'After':'선행')+' '+task.dependsOn.join(', '):''}</small>
+          <small className="text-[#8A8176]">{task.remoteWorkerId?'Remote · '+task.remoteWorkerId:(en?'Local':'로컬')}{task.dependsOn?.length?' · '+(en?'After ':'선행: ')+task.dependsOn.join(', '):''}</small>
          </span>
          {task.verified&&<CheckCircle2 size={14} className="text-emerald-600" aria-label={en?'Verified':'검증됨'}/>}
          <StatusPill status={task.status}/>
          {task.artifactApplyStatus&&task.artifactApplyStatus!=='not_required'&&<span className={'rounded-md px-2 py-0.5 text-[10px] '+(task.artifactApplyStatus==='applied'?'bg-emerald-50 text-emerald-700':'bg-amber-50 text-amber-800')}>{en?'Files: ':'산출물: '}{task.artifactApplyStatus}</span>}
+         {task.remoteTaskId&&task.artifactApplyStatus==='pending'&&<Button size="sm" variant="secondary" disabled={Boolean(busy)} onClick={()=>void openReview(team.id,task.remoteTaskId!)}><GitMerge size={12}/>{en?'Review diff':'파일 변경 검토'}</Button>}
          {task.error&&<p className="w-full break-words text-rose-600">{task.error}</p>}
         </div>)}
        </div>
-       {pending>0&&<div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">
-        <div className="flex items-center gap-2 font-semibold"><GitMerge size={14}/>{en?'Remote changes require Lead approval':'원격 변경 파일 승인 필요'}</div>
-        <p className="mt-1 leading-5">{en?'Return to the Lead conversation, review the remote task receipts, and approve the native team_remote_apply action before resuming dependent work.':'Lead 대화에서 원격 작업 결과를 검토한 뒤 team_remote_apply 승인을 진행해야 다음 작업을 실행할 수 있습니다.'}</p>
-        <p className="mt-1 break-all font-mono text-[10px]">{team.pendingRemoteArtifactTaskIds.join(', ')}</p>
+       {pending>0&&<p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900"><ShieldAlert size={14} className="mr-1 inline"/>{en?'Review and approve remote file changes before resuming dependents.':'원격 파일 변경을 먼저 검토·승인해야 후속 Worker가 실행됩니다.'}</p>}
+       {review&&review.teamId===team.id&&<div className="mt-3 rounded-xl border border-[#DAC9B4] bg-[#FFFDF9] p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2"><strong className="text-[12px]">{en?'Verified file diff preview':'실제 파일 변경 미리보기'}</strong>
+         <Button size="sm" variant="ghost" onClick={()=>setReview(null)}>{en?'Close':'닫기'}</Button>
+        </div>
+        <p className="mt-2 break-all font-mono text-[10px] text-[#8A8176]">{review.files.map(file=>file.path).join(' · ')}</p>
+        <p className="mt-1 break-all text-[10px] text-[#8A8176]">SHA-256: {review.reviewDigest}</p>
+        <pre className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap break-all rounded-lg bg-[#24211D] p-3 text-[11px] leading-5 text-white">{review.patch}</pre>
+        <div className="mt-3 flex flex-wrap justify-end gap-2">
+         <Button size="sm" variant="danger" disabled={Boolean(busy)} onClick={()=>void decide(false)}>{en?'Reject changes':'변경 거절'}</Button>
+         <Button size="sm" variant="primary" disabled={Boolean(busy)} onClick={()=>void decide(true)}><GitMerge size={13}/>{en?'Approve & apply':'승인 후 적용'}</Button>
+        </div>
        </div>}
-       {team.leadSessionId&&<Button size="sm" variant="secondary" className="mt-3" onClick={()=>goToLead(team.leadSessionId)}>{en?'Open Lead conversation':'Lead 대화 열기'} <ChevronRight size={13}/></Button>}
+       <div className="mt-3 flex flex-wrap gap-2">
+        {team.leadSessionId&&<Button size="sm" variant="ghost" onClick={()=>goToLead(team.leadSessionId)}>{en?'Lead conversation':'Lead 대화'} <ChevronRight size={13}/></Button>}
+        {team.status==='running'&&<Button size="sm" variant="secondary" disabled={Boolean(busy)} onClick={()=>void control(team,'resume')}><RotateCcw size={13}/>{en?'Resume':'작업 재개'}</Button>}
+        {team.status==='running'&&<Button size="sm" variant="danger" disabled={Boolean(busy)} onClick={()=>void control(team,'stop')}><Square size={13}/>{en?'Stop team':'팀 중단'}</Button>}
+       </div>
       </div>}
      </div>
     })}
    </div>
-   {value.remoteWorkers.length>0&&<div className="mt-4 border-t border-[#EFE9DF] pt-3">
-    <p className="mb-2 flex items-center gap-2 text-[11px] font-semibold text-[#5C544A]"><Network size={14}/>{en?'Remote Rust workers':'원격 Rust 작업자'}</p>
-    <div className="flex flex-wrap gap-2">{value.remoteWorkers.map(node=><span key={node.id} className="inline-flex items-center gap-1.5 rounded-lg border border-[#E7E0D5] bg-[#FAF7F1] px-2.5 py-1.5 text-[11px]"><span className={'size-1.5 rounded-full '+(node.online?'bg-emerald-500':'bg-slate-400')}/>{node.id} · {node.online?(en?'Online':'접속'):(en?'Offline':'오프라인')}{node.allowWrites?' · Writer':''}</span>)}</div>
-   </div>}
+   <div className="mt-4 border-t border-[#EFE9DF] pt-3">
+    <div className="flex flex-wrap items-center gap-2"><Network size={14} className="text-[#7C7469]"/><strong className="text-[11px] text-[#5C544A]">{en?'Remote Rust workers':'원격 Rust Worker'}</strong><span className="text-[10px] text-[#8A8176]">{activity.value.remoteConfigured?(en?'Coordinator configured':'제어면 설정됨'):(en?'Coordinator not configured':'제어면 미설정')}</span></div>
+    <div className="mt-2 flex flex-wrap gap-2">{workers.map(node=><span key={node.id} title={(node.agents||[]).join(', ')} className="inline-flex items-center gap-1.5 rounded-lg border border-[#E7E0D5] bg-[#FAF7F1] px-2.5 py-1.5 text-[11px]"><span className={'size-1.5 rounded-full '+(node.online?'bg-emerald-500':'bg-slate-400')}/>{node.id} · {node.online?(en?'Online':'접속'):(en?'Offline':'오프라인')} · {node.agentCount} {en?'agents':'에이전트'}{node.allowWrites?' · Writer':''}</span>)}</div>
+    {!workers.length&&<p className="mt-2 text-[11px] text-[#8A8176]">{en?'No registered remote devices. Local workers remain available.':'등록된 원격 장치가 없습니다. 로컬 Worker는 정상적으로 사용할 수 있습니다.'}</p>}
+    <details className="mt-3 text-[11px] text-[#7C7469]"><summary className="cursor-pointer font-semibold">{en?'Connect another PC (manual credential setup)':'다른 PC 연결 방법 · 인증 정보는 직접 설정'}</summary>
+     <p className="mt-2 leading-5">{en?'Enable the opt-in remote-only listener on the coordinator and connect the other PC over private HTTPS or encrypted overlay. Never expose the desktop API or paste cluster secrets into chat.':'리더 PC에서 원격 전용 포트를 활성화한 뒤 다른 PC가 비공개 HTTPS 또는 암호화 사설망을 통해 접속하도록 설정합니다. 데스크톱 API를 외부에 공개하지 않습니다.'}</p>
+     <pre className="mt-2 overflow-x-auto rounded-lg bg-[#FAF7F1] p-3 text-[10px]">{setup}</pre>
+     <Button size="sm" variant="ghost" onClick={()=>void navigator.clipboard.writeText(setup)}><ClipboardCopy size={12}/>{en?'Copy example':'설정 예시 복사'}</Button>
+    </details>
+   </div>
   </Panel>
  </section>
 }
 
-/** In-context collaboration status inside the existing chat composer. */
-export function TeamRunStrip({sessionId,active,onDraft}:{
+/** Active team details are shown in Chat without duplicating the Activity UI. */
+export function TeamRunStrip({sessionId,active:visible,onDraft}:{
  sessionId?:string;active:boolean;onDraft:(prompt:string)=>void
 }){
  const en=useLocale()==='en'
- const activity=useRemote<Activity>(active&&sessionId?'/api/activity/teams':null,empty)
- const team=activity.value.teams.find(t=>t.leadSessionId===sessionId
-  && (t.status==='running'||t.status==='needs_review'))
+ const activity=useRemote<ActivityData>(visible&&sessionId?'/api/activity/teams':null,empty)
+ const [busy,setBusy]=useState(false),[error,setError]=useState('')
+ const team=activity.value.teams.find(row=>row.leadSessionId===sessionId
+  && (row.status==='running'||row.status==='needs_review'))
  if(!team)return null
  const pending=team.pendingRemoteArtifactTaskIds.length
  const done=team.tasks.filter(task=>task.status==='completed').length
- const compose=()=>{
-  const instruction=pending
-   ? (en?`Inspect remote task receipts ${team.pendingRemoteArtifactTaskIds.join(', ')} for managed team ${team.id}. Summarize the file diffs, obtain explicit user approval before using team_remote_apply, then safely resume team_execute for this exact team ID.`:`팀 ${team.id}의 원격 작업 ${team.pendingRemoteArtifactTaskIds.join(', ')} 산출물을 확인하고 변경사항을 요약해 주세요. 파일 변경 전 사용자 승인을 요청하고, 승인되면 team_remote_apply로 적용한 뒤 동일한 teamId로 team_execute를 재개하세요.`)
-   : (en?`Check team_status for ${team.id}; report actual task progress and evidence, then resume the same team with team_execute only when safe.`:`팀 ${team.id}의 실제 작업 현황과 검증 증거를 team_status로 확인하고, 안전할 때만 기존 teamId로 team_execute를 이어서 진행하세요.`)
-  onDraft(instruction)
+ const action=async()=>{
+  if(pending){window.location.hash='#/activity';return}
+  if(team.status==='needs_review'){
+   onDraft((en?'Inspect the uncertain native worker results for team ':'팀의 미확정 Worker 결과를 검토하고 필요하면 안전하게 복구해 주세요. teamId: ')+team.id)
+   return
+  }
+  setBusy(true);setError('')
+  try{
+   await post('/api/activity/teams/'+encodeURIComponent(team.id)+'/resume',{})
+   void activity.reload()
+  }catch(e){setError((e as Error).message)}
+  finally{setBusy(false)}
  }
- return <div className="mb-2 flex min-w-0 flex-wrap items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] px-3 py-2 text-[11px]" role="status" aria-label={en?'Current agent team':'현재 에이전트 팀'}>
+ return <div role="status" aria-label={en?'Active agent team':'실행 중인 에이전트 팀'} className="mb-2 flex min-w-0 flex-wrap items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] px-3 py-2 text-[11px]">
   <UsersRound size={14} className="shrink-0 text-[#7C7469]"/>
-  <span className="min-w-0 flex-1 text-[#5C544A]"><strong className="text-[#3A342D]">{en?'Team':'팀'} {team.id.slice(-7)}</strong> · {done}/{team.tasks.length} {en?'tasks':'작업'}{pending>0&&<span className="ml-1 font-semibold text-amber-800">· {en?'File review needed':'파일 승인 대기'} {pending}</span>}</span>
+  <span className="min-w-0 flex-1 text-[#5C544A]"><strong>{en?'Team':'팀'} {team.id.slice(-7)}</strong> · {done}/{team.tasks.length}{pending>0&&<span className="ml-1 font-semibold text-amber-800">{en?'File review pending':'파일 검토 대기'} {pending}</span>}</span>
   <StatusPill status={team.status}/>
-  <Button size="sm" variant="ghost" onClick={compose}>{pending?(en?'Prepare review':'검토 요청 작성'):(en?'Continue team':'작업 이어가기')} <ChevronRight size={13}/></Button>
+  <Button size="sm" variant="ghost" disabled={busy} onClick={()=>void action()}>{pending?(en?'Review files':'파일 검토'):(en?'Resume':'이어가기')}<ChevronRight size={13}/></Button>
+  {error&&<p className="w-full text-rose-600">{error}</p>}
  </div>
 }
