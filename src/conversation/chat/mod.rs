@@ -39,7 +39,7 @@ mod tests;
 mod transport;
 
 pub use protocol::parse_text_tool_calls;
-pub use runtime::{run_room_turn, run_turn, run_turn_background, run_turn_resume};
+pub use runtime::{run_room_turn, run_turn, run_turn_background, run_turn_resume, run_turn_plain};
 
 /// The coordinator owns the fixture and assertions. Only aliases to the real
 /// runtime functions cross this boundary; candidate-owned test helpers cannot

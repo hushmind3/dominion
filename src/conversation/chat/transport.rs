@@ -1,5 +1,5 @@
 //! Transport event adapter. It owns no provider selection or tool execution.
-use super::{run_turn, TurnRequest};
+use super::{run_turn, run_turn_plain, TurnRequest};
 use crate::state::AppState;
 use serde_json::{json, Value};
 use tokio::sync::mpsc::UnboundedSender;
@@ -12,7 +12,10 @@ pub async fn run(state: AppState, input: Value, tx: UnboundedSender<Value>) {
         .to_string();
 
     let result = match TurnRequest::from_value(&input) {
-        Ok(request) => run_turn(&state, &request, &tx).await,
+        Ok(request) if input["mode"] == "chat" => run_turn_plain(&state, &request, &tx).await,
+        Ok(request) if input["mode"].is_null() || input["mode"] == "agent" =>
+            run_turn(&state, &request, &tx).await,
+        Ok(_) => Err("지원하지 않는 대화 모드입니다.".into()),
         Err(message) => Err(message),
     };
 

@@ -45,7 +45,17 @@ pub async fn run_turn(
     request: &TurnRequest,
     tx: &UnboundedSender<Value>,
 ) -> Result<Option<Value>, String> {
-    run_turn_with_policy(state, request, tx, true, true, None).await
+    run_turn_with_policy(state, request, tx, true, true, None, false).await
+}
+
+/// Plain model conversation shares the durable session, billing and cancel
+/// lifecycle but does not activate the agent, tool, strategy or workflow engine.
+pub async fn run_turn_plain(
+    state: &AppState,
+    request: &TurnRequest,
+    tx: &UnboundedSender<Value>,
+) -> Result<Option<Value>, String> {
+    run_turn_with_policy(state, request, tx, true, true, None, true).await
 }
 
 pub async fn run_turn_background(
@@ -53,7 +63,7 @@ pub async fn run_turn_background(
     request: &TurnRequest,
     tx: &UnboundedSender<Value>,
 ) -> Result<Option<Value>, String> {
-    run_turn_with_policy(state, request, tx, false, true, None).await
+    run_turn_with_policy(state, request, tx, false, true, None, false).await
 }
 
 /// Resume never creates a new paid-generation intent on top of a previously
@@ -92,7 +102,7 @@ pub async fn run_turn_resume(
         .filter(|id|!id.trim().is_empty())
         .ok_or("원본 작업 ID 없이 대화 실행을 자동 재개할 수 없습니다.")?;
     ensure_task_resume_safe(state,task_id)?;
-    run_turn_with_policy(state, request, tx, false, false, None).await
+    run_turn_with_policy(state, request, tx, false, false, None, false).await
 }
 
 // Shared room input is already durably stored by the owner-message API.
@@ -103,7 +113,7 @@ pub async fn run_room_turn(
     tx: &UnboundedSender<Value>,
     source_message_id: &str,
 ) -> Result<Option<Value>, String> {
-    run_turn_with_policy(state, request, tx, false, false, Some(source_message_id)).await
+    run_turn_with_policy(state, request, tx, false, false, Some(source_message_id), false).await
 }
 
 async fn run_turn_with_policy(
@@ -113,8 +123,14 @@ async fn run_turn_with_policy(
     reset_cancel: bool,
     record_input: bool,
     source_message_id: Option<&str>,
+    plain_mode: bool,
 ) -> Result<Option<Value>, String> {
     let session = ensure_session(state, request)?;
+    if plain_mode && (!record_input || source_message_id.is_some()
+        || request.task_id.is_some() || request.parent_task_id.is_some()
+        || request.verification_owner.is_some()) {
+        return Err("일반 채팅은 사용자 대화에서만 시작할 수 있습니다.".into());
+    }
     if record_input
         && (session["roomId"].is_string()
             || !session["channelContext"].is_null()
@@ -163,7 +179,16 @@ async fn run_turn_with_policy(
     }
     let generation = state.cancellation_generation(&session_id);
     let mut request = request.clone();
-    if request.agent_id.is_none() {
+    if plain_mode {
+        // The owner selected plain chat. Never inherit a saved agent or
+        // accept a forged tools/learning flag from the HTTP request.
+        request.agent_id = None;
+        request.tools_enabled = false;
+        request.tools_execution_enabled = false;
+        request.auto_learning = false;
+        request.system_override = None;
+    }
+    if !plain_mode && request.agent_id.is_none() {
         request.agent_id = session
             .get("agentId")
             .and_then(Value::as_str)
@@ -197,6 +222,9 @@ async fn run_turn_with_policy(
     // A room shares a transcript but each speaker keeps its own identity.
     if session.get("roomId").is_none() {
         session["agentId"] = json!(request.agent_id);
+        if record_input {
+            session["mode"] = json!(if plain_mode { "chat" } else { "agent" });
+        }
     }
     state
         .store
@@ -209,12 +237,16 @@ async fn run_turn_with_policy(
         request.agent_id.as_deref(),
     );
     let execution_id = uuid::Uuid::new_v4().to_string();
-    let applied_improvement_ids = crate::engine::improve::injected_ids_with_execution(
-        state, &improvement_scope, Some(&execution_id),
-    );
-    let mut strategy_candidates = crate::engine::improve::active_values_with_execution(
-        state, &improvement_scope, Some(&execution_id),
-    );
+    let applied_improvement_ids = if plain_mode { Vec::new() } else {
+        crate::engine::improve::injected_ids_with_execution(
+            state, &improvement_scope, Some(&execution_id),
+        )
+    };
+    let mut strategy_candidates = if plain_mode { Vec::new() } else {
+        crate::engine::improve::active_values_with_execution(
+            state, &improvement_scope, Some(&execution_id),
+        )
+    };
     // Derived prompts (goal iterations, room speakers) attach to the root the
     // parent lifecycle created. Only an owner-facing chat turn creates a root.
     let task_id = request.task_id.clone().unwrap_or_else(|| execution_id.clone());
@@ -298,7 +330,13 @@ async fn run_turn_with_policy(
     }
     let turn_limit=MAX_ELAPSED;
     let result = tokio::select! {
-        result = tokio::time::timeout(turn_limit, run_turn_body(state, &request, tx, &session_id, &metrics, &execution_id, &task_id, record_input, generation, source_message_id)) =>
+        result = tokio::time::timeout(turn_limit, async {
+            if plain_mode {
+                plain::run_plain_body(state, &request, tx, &session_id, &metrics, &execution_id, generation).await
+            } else {
+                run_turn_body(state, &request, tx, &session_id, &metrics, &execution_id, &task_id, record_input, generation, source_message_id).await
+            }
+        }) =>
             result.unwrap_or_else(|_| Err("설정한 실행 시간 제한을 초과했습니다.".into())),
         // A closed SSE client must not destroy work already in flight. The turn
         // keeps running in its spawned task; only an explicit cancel or the
@@ -373,6 +411,7 @@ async fn wait_cancelled(state: &AppState, session_id: &str, generation: u64) {
 // Small, cohesive Rust modules preserve the existing runtime contracts while
 // separating streaming, program execution, approvals, and finalization.
 mod input_contract;
+mod plain;
 mod turn;
 mod harness;
 mod adaptation;
