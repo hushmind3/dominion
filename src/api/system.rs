@@ -98,19 +98,15 @@ pub async fn events(
             }
             if n<500{break;}
         }
+        // A second product process can write to the SAME SQLite journal
+        // without notifying this process's in-memory broadcast channel.
+        // A lightweight durable replay tick makes those writes visible to an
+        // already connected browser, rather than only after SSE reconnect.
+        let mut durable_tick=tokio::time::interval(Duration::from_secs(2));
+        durable_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            match receiver.recv().await {
-                Ok(value) => {
-                    let seq = value["seq"].as_u64().unwrap_or(0);
-                    if seq <= last {
-                        continue;
-                    }
-                    last = seq;
-                    yield Ok(Event::default().id(seq.to_string()).data(value.to_string()));
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    // The live buffer is bounded. Replay the gap from the
-                    // durable log instead of silently dropping writes.
+            tokio::select! {
+                _=durable_tick.tick()=>{
                     loop {
                         let batch=bus.replay(last,500);
                         if batch.is_empty(){break;}
@@ -123,8 +119,23 @@ pub async fn events(
                         }
                         if n<500{break;}
                     }
+                },
+                received=receiver.recv()=>{
+                    match received {
+                        Ok(value)=>{
+                            let seq=value["seq"].as_u64().unwrap_or(0);
+                            if seq<=last{continue;}
+                            last=seq;
+                            yield Ok(Event::default().id(seq.to_string()).data(value.to_string()));
+                        },
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>{
+                            // Resume from SQLite on the next tick. Bounded
+                            // broadcast loss never becomes transcript loss.
+                            continue;
+                        },
+                        Err(_)=>break,
+                    }
                 }
-                Err(_) => break,
             }
         }
     };
