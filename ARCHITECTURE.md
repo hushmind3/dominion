@@ -71,13 +71,23 @@ reply anchor and originating run; `RoomAgentBinding` exposes independent
 `readCursor` state. `GET /api/rooms/:id/events` and both client SDKs
 provide cursor pagination without creating another UI menu or service.
 
-The portable Runtime `dispatch_fence` now checks cancellation or owner
-correction **after writing the model-call intent and before dispatch**. Both
-the native Algorithm `ReActLoop` and Chat streaming adapter call this exact
-shared boundary. Tool dispatch already uses the same SDK action scheduler
-and Host approval/receipt contracts. The upper model-decision loops still
-need streaming-safe structural consolidation before full physical P0 loop
-singletons can be claimed.
+The portable Runtime `harness_steps!` now owns the *single turn iteration
+source* for both ReActLoop (native and Team) and Chat/Room. Both adapters
+invoke `dispatch_model_turn`, the same typed, journaled paid-model admission
+operator. After write-ahead persistence, cancellation and owner correction
+are checked again; uncertain model calls remain marked in-flight. Chat/Room
+now persist their exact typed `Decision` tape, settled usage and the
+completed model call before clearing this marker. Both paths also use the
+shared SDK tool batch scheduler and Host approval/receipt contracts.
+
+The persistent global SSE clock now produces typed `RunEvent` records with
+the same committed `eventSeq` as the original event log. `RunRef`, phase
+and source journal are available in both Rust and TypeScript SDKs.
+
+The final policy-loop convergence remains: Chat's rich provider streaming,
+context/projection and repair logic is not yet an `AgentLoop::execute`
+adapter in the Algorithm crate. No legacy user-visible streaming behavior is
+removed while that difference remains.
 
 ModelGateway also now selects the exact model-specific context limit rather
 than inheriting a larger provider default; native tool compatibility remains
@@ -142,13 +152,13 @@ Preserve existing navigation and API surfaces. Operations/Task Teams are present
 | Original requirement | Sub3 implementation | Status |
 | --- | --- | --- |
 | Core/Harness/Strategies ownership | Runtime contracts + Algorithm ReActLoop + pinned host profiles; the SDK remains a facade | Structural split implemented |
-| One Run/Event identity across surfaces | `RunRef`, `RunPhase`, `RunTransition`, `/api/runs/:id`, durable SSE | Implemented |
-| One admission and receipt semantics | Shared `dispatch_fence` and `dispatch_batch`, SQLite evidence journal, CAS status/phase | Implemented in both paths |
-| One *physical upper model-turn loop* | Chat/Room still own legacy streaming loop, native job owns ReActLoop | **Not yet migrated** |
+| One Run/Event identity across surfaces | `RunRef`, `RunPhase`, `RunTransition`, typed `RunEvent` with atomic global `eventSeq`, `/api/runs/:id`, durable SSE, both SDKs | Implemented |
+| One admission and receipt semantics | Shared `harness_steps!`, `dispatch_model_turn`, `dispatch_batch`, SQLite in-flight/decision tape and evidence journal, CAS status/phase | Implemented in both paths |
+| One *physical upper model-turn loop* | Both routes now use the same Rust step-loop source and write-ahead model operator; Chat still owns separate context/protocol-specific decision flow rather than invoking `AgentLoop::execute` | **Shared execution clock/model admission complete; final policy-loop convergence pending** |
 | Room Chat / independent agent cursors | Per-room SQLite `room_events.seq`, atomic agent `throughSeq`, 150-turn coverage | Implemented |
 | Separate Task Team graph | Native/CLI workers, dependency DAG, read parallelism, writer lease, worktree owner promotion | Implemented |
 | Local/API Model Gateway | Per-model context/tool capability and pinned provider identity | Implemented |
-| External Codex/Claude/Qwen AgentBridge | Independent scoped read-only external sessions, host observations not native receipts | Implemented |
+| External Codex/Claude/Qwen AgentBridge | Independent scoped read-only external sessions, Codex JSON-RPC approval explicitly declined and audit-journaled, host observations not native receipts | Implemented in read-only mode |
 | Long-term correction / strategy evidence | Source-grounded memory and bounded strategy-evaluation modules | Existing implementation |
 | React/Tauri/SQLite durable source | Existing UI and REST/SSE contracts, local-first Host and Tauri sidecar | Existing implementation |
 | Distributed remote Gateway/Worker | Opt-in loopback-only authenticated gateway, outbound HTTPS/tunnel worker CLI, text-only remote Task Team worker, lease CAS/unknown-outcome review | Implemented for read-only inference; remote workspace writes intentionally not authorized |
@@ -181,7 +191,12 @@ Fast checks on this branch: `cargo test -p dominion-agent-runtime --lib`; `cargo
 
 ## 9. Migration boundary still required before claiming one physical model loop
 
-**Current implementation is a coherent modular monolith, but not yet a single physical upper-loop engine for Chat and SDK tasks.** A safe migration must be based on existing `AgentPorts` and journaled `RunRef` contracts:
+**Current implementation has one step clock, one paid-model write-ahead
+operator, one tool dispatch scheduler, one Run/Event identity and one durable
+Host authorization contract across both paths.** The remaining physical
+difference is Chat-specific model-decision/repair orchestration, which has not
+yet moved into the exact `AgentLoop::execute` policy interface. That migration
+must preserve the existing `AgentPorts` and journaled `RunRef` contracts:
 
 1. Extract Chat's provider streaming as a `Model` streaming port without changing tool/result wire semantics or duplicating tool dispatch.
 2. Project the Chat/Room context compiler into the common Algorithm context input; preserve persona, owner trigger, read cursor and provider-dependent prompt-cache identity.
