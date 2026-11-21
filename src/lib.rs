@@ -12,3 +12,4 @@ mod platform;
 mod state;
 mod vault;
 pub mod sdk;
+mod remote;
