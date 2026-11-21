@@ -80,7 +80,23 @@ fn verify_snapshot_attachments(state:&AppState, db_bytes:&[u8]) -> Result<(),Str
     let probe=state.config.data_dir.join(format!(
         ".verify-attachments-{}.sqlite",uuid::Uuid::new_v4()
     ));
-    fs::write(&probe,db_bytes).map_err(|e|format!("복구 검증 파일 생성 실패: {e}"))?;
+    // The decrypted staging SQLite holds private chat transcripts. Create
+    // it exclusive and owner-readable before writing any plaintext bytes.
+    let written=(||->Result<(),String>{
+        let mut file=fs::OpenOptions::new().write(true).create_new(true)
+            .open(&probe).map_err(|e|format!("복구 검증 파일 생성 실패: {e}"))?;
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&probe,fs::Permissions::from_mode(0o600))
+                .map_err(|e|format!("복구 검증 파일 접근 권한 오류: {e}"))?;
+        }
+        file.write_all(db_bytes).map_err(|e|format!("복구 검증 기록 오류: {e}"))?;
+        Ok(())
+    })();
+    if let Err(error)=written {
+        let _=fs::remove_file(&probe);
+        return Err(error);
+    }
     let result=(|| -> Result<(),String> {
         let conn=rusqlite::Connection::open_with_flags(&probe,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
