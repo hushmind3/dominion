@@ -50,24 +50,29 @@ pub async fn start(State(state):State<AppState>,Json(body):Json<Value>)->Respons
     }
     let Some(selected)=body["workerAgentIds"].as_array().filter(|a|!a.is_empty()&&a.len()<=8)
         else{return fail(StatusCode::BAD_REQUEST,"Select 1..8 worker agents");};
+    let remote_id=body["remoteWorkerId"].as_str().filter(|s|!s.trim().is_empty());
+    let advertised=remote_id.and_then(|remote_id|state.store.get("remote_worker",remote_id))
+        .and_then(|node|node["agents"].as_array().cloned()).unwrap_or_default();
     let mut worker_ids=Vec::<String>::new();
     for entry in selected{
-        let Some(id)=entry.as_str().filter(|id|!id.is_empty()&&id.len()<=80)else{
-            return fail(StatusCode::BAD_REQUEST,"Invalid worker ID");
-        };
-        let Some(agent)=state.store.get("agent",id)else{
-            return fail(StatusCode::BAD_REQUEST,"Unregistered worker agent");
-        };
-        if agent["enabled"]==false ||agent["disabled"]==true ||worker_ids.iter().any(|s|s==id){
-            return fail(StatusCode::BAD_REQUEST,"Disabled or duplicate worker");
+        let Some(id)=entry.as_str().filter(|id|!id.is_empty()&&id.len()<=80
+            && id.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'_'))
+            else{return fail(StatusCode::BAD_REQUEST,"Invalid Worker agent ID");};
+        if worker_ids.iter().any(|saved|saved==id){
+            return fail(StatusCode::BAD_REQUEST,"Worker selected twice");
+        }
+        if let Some(agent)=state.store.get("agent",id){
+            if agent["enabled"]==false ||agent["disabled"]==true{
+                return fail(StatusCode::BAD_REQUEST,"Disabled Worker agent");
+            }
+        }else if !advertised.iter().any(|advertised|advertised.as_str()==Some(id)){
+            // A remote-only Agent belongs to the other PC's local catalog,
+            // not to the Lead's database. Never accept an arbitrary ID.
+            return fail(StatusCode::BAD_REQUEST,"Worker is neither local nor advertised by the selected remote device");
         }
         worker_ids.push(id.to_string());
     }
-    let remote_id=body["remoteWorkerId"].as_str().filter(|s|!s.trim().is_empty());
     if let Some(remote_id)=remote_id{
-        let advertised=state.store.get("remote_worker",remote_id)
-            .and_then(|node|node["agents"].as_array().cloned())
-            .unwrap_or_default();
         let eligible=worker_ids.iter().filter(|id|
             advertised.iter().any(|agent|agent.as_str()==Some(id.as_str())))
             .collect::<Vec<_>>();
