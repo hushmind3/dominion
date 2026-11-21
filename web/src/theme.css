@@ -253,3 +253,7 @@
 @media(max-width:767px){
  .chat-composer-options .chat-mode{width:96px!important;font-size:11px!important}
 }
+
+/* Read-only assistant checklists retain the model's completion marks. */
+.chat-richtext .chat-task-item{list-style:none;display:flex;gap:.55em;align-items:flex-start;margin-left:-1.2em}
+.chat-richtext .chat-task-item input[type=checkbox]{width:1em;height:1em;flex-shrink:0;margin-top:.42em;accent-color:#A94E30;opacity:1}

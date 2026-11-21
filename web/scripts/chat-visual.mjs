@@ -21,7 +21,7 @@ const original=[
  {id:'owner-1',role:'user',session_id:'chat-ui',content:'표와 코드를 읽기 쉽게 보여주세요.'},
  {id:'model-1',role:'assistant',session_id:'chat-ui',
   metadata:{memoryRefs:[{id:'memory-1',text:'지하철을 선호합니다.'}]},content:
-  '## 서식 있는 답변\n**굵은 글씨**와 `inline code`\n\n- 첫 항목\n- 두 번째 항목\n\n| 이름 | 값 |\n| --- | --- |\n| 테스트 | 1 |\n\n```ts\nconst answer = 42\n```\n\n[참고](https://example.com) <img src=x onerror=alert(1)>'}
+  '## 서식 있는 답변\n**굵은 글씨**와 `inline code`\n\n- 첫 항목\n- 두 번째 항목\n\n- [x] 완료한 일\n- [ ] 남은 일\n\n| 이름 | 값 |\n| --- | --- |\n| 테스트 | 1 |\n\n```ts\nconst answer = 42\n```\n\n[참고](https://example.com) <img src=x onerror=alert(1)>'}
 ]
 const session={id:'chat-ui',title:'기본 채팅 UI 점검',mode:'chat',agentId:null,providerId:'mock-chat',model:'mock-native'}
 const secondSession={...session,id:'other-ui',title:'초안 분리 검증'}
@@ -120,6 +120,11 @@ try{
   }
   assert.equal(await page.locator('[data-role="assistant"] .chat-richtext strong').first().textContent(),'굵은 글씨')
   assert.equal(await page.locator('[data-role="assistant"] .chat-richtext table tbody tr td').last().textContent(),'1')
+  const checkboxes=page.locator('[data-role="assistant"] .chat-richtext input[type="checkbox"]')
+  assert.equal(await checkboxes.count(),2)
+  assert.equal(await checkboxes.first().isChecked(),true)
+  assert.equal(await checkboxes.last().isChecked(),false)
+  assert.equal(await checkboxes.first().isDisabled(),true)
   assert.match(await page.locator('[data-role="assistant"] .chat-code').textContent(),/const answer = 42/)
   assert.equal(await page.locator('[data-role="assistant"] img').count(),0,'Model HTML must stay literal text')
   const owner=await page.locator('[data-role="user"] .chat-message-inner').first().boundingBox()

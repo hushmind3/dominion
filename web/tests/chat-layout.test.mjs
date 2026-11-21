@@ -84,3 +84,10 @@ test('chat history is searchable without modifying or deleting stored conversati
  assert.match(chat,/className=\{'chat-history-entry/)
  assert.match(chat,/historyQuery\.trim\(\)\?t\('chat.historyNoResults'\)/)
 })
+
+test('assistant task checklists render as explicit read-only checked/unchecked boxes',()=>{
+ const rich=readFileSync(root+'src/components/ChatRichText.tsx','utf8')
+ assert.match(rich,/chat-task-item/)
+ assert.match(rich,/type="checkbox" disabled checked=/)
+ assert.match(css,/\.chat-richtext \.chat-task-item/)
+})

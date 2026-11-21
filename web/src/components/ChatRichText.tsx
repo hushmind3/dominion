@@ -87,7 +87,14 @@ export function ChatRichText({content}:{content:string}){
     const row=listItem(lines[i]);if(!row||/^\d/.test(row[1])!==ordered)break
     items.push(row[2]);i++
    }
-   const children=items.map((value,j)=><li key={j}>{inline(value,`l${start}-${j}`)}</li>)
+   const children=items.map((value,j)=>{
+    const task=/^\[([ xX])\]\s+(.+)$/.exec(value)
+    return <li key={j} className={task?'chat-task-item':undefined}>
+     {task?<><input type="checkbox" disabled checked={task[1].toLowerCase()==='x'}
+      aria-label={task[1].toLowerCase()==='x'?'Completed':'Not completed'}/>
+      <span>{inline(task[2],`l${start}-${j}`)}</span></>:inline(value,`l${start}-${j}`)}
+    </li>
+   })
    blocks.push(ordered?<ol key={start}>{children}</ol>:<ul key={start}>{children}</ul>)
    continue
   }
