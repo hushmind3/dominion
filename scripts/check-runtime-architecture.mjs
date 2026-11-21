@@ -135,6 +135,7 @@ const driver=readFileSync(path.join(root,'crates/dominion-algorithms/src/engine.
 const nativePort=readFileSync(path.join(root,'crates/dominion-core/src/runtime_port.rs'),'utf8')
 const executionEvents=readFileSync(path.join(root,'src/events.rs'),'utf8')
 if(!existsSync(path.join(root,'crates/dominion-core/src/run_event.rs'))||
+   !executionEvents.includes('reference.parent_execution_id=pick(value,"parentExecutionId")')||
    !executionEvents.includes('RunEventRef')||
    !executionEvents.includes('value["runRef"]=json!(reference)'))
   throw Error('Shared run/event identity lost typed durable correlation')
@@ -163,6 +164,8 @@ const addonIndex=readFileSync(path.join(root,'src/addons/mod.rs'),'utf8')
 const strategyPort=readFileSync(path.join(root,'crates/dominion-core/src/strategy.rs'),'utf8')
 const strategyOwner=readFileSync(path.join(root,'src/addons/strategies/turn_policy.rs'),'utf8')
 if(!strategyPort.includes('pub trait TurnStrategyPort')||
+   !strategyPort.includes('pub struct PlanningDecision')||
+   !runtime.includes('intelligence.planning_decision(')||
    !strategyOwner.includes('impl TurnStrategyPort for ScopedAlgorithms')||
    !runtime.includes('crate::addons::runtime_hooks::strategy_port(')||
    runtime.includes('ScopedAlgorithms::new(')||

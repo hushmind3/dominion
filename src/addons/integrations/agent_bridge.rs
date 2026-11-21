@@ -203,6 +203,20 @@ async fn cancelled(state:&AppState,job_id:&str,session:&str,parent:&str,epoch:u6
     }
 }
 
+
+fn bound_parent_execution(state:&AppState,worker:&Value,parent:&str)->Option<String>{
+    let team_id=worker["input"]["teamJobId"].as_str()?;
+    let team=state.store.get("job",team_id)?;
+    if team["kind"]!="team"||team["input"]["sessionId"]!=parent
+        ||worker["input"]["parentSessionId"]!=parent{
+        return None;
+    }
+    let id=team["executionId"].as_str()?;
+    state.store.get("execution",id)
+        .filter(|run|run["sessionId"]==parent)
+        .map(|_|id.to_string())
+}
+
 /// Execute an explicitly chosen external inspector in an isolated worktree.
 /// A crash with the in-flight marker is reviewed rather than replayed.
 pub async fn inspect(
@@ -251,9 +265,12 @@ pub async fn inspect(
         .map(|previous|claim_completed_session(context,&session,kind,previous))
         .transpose()?;
     let id=format!("external:{}",context.job_id);
+    let parent_execution=bound_parent_execution(&context.state,&bound_job,parent);
     let started=context.state.store.put_if_absent("external_agent_run",
         &json!({"id":id,"jobId":context.job_id,"sessionId":session_id,
             "parentSessionId":parent,"agentId":session["agentId"],
+            "executionId":parent_execution,
+            "externalRunId":id,
             "runtime":kind.key(),"policy":"isolated-read-only",
             "resumeFromJobId":resume_from_job,
             "nativeToolReceipts":false,"status":"running",
@@ -340,6 +357,34 @@ pub async fn inspect(
 #[cfg(test)]
 mod tests{
     use super::*;
+
+    #[test]
+    fn external_parent_correlation_requires_a_real_owning_lead_execution(){
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-agent-bridge-correlate-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg=crate::config::Config{port:0,data_dir:dir.clone(),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(cfg.clone(),
+            crate::db::Store::open(&cfg.db_path()).unwrap(),
+            crate::vault::Vault::open(&cfg.key_path()));
+        state.store.put("execution",&json!({"id":"lead-native",
+            "sessionId":"lead","status":"running"})).unwrap();
+        state.store.put("job",&json!({"id":"lead-team","kind":"team",
+            "executionId":"lead-native","input":{"sessionId":"lead"}})).unwrap();
+        let worker=json!({"id":"worker","input":{
+            "teamJobId":"lead-team","parentSessionId":"lead"}});
+        assert_eq!(bound_parent_execution(&state,&worker,"lead").as_deref(),
+            Some("lead-native"));
+        assert_eq!(bound_parent_execution(&state,&worker,"other"),None);
+        assert_eq!(bound_parent_execution(&state,
+            &json!({"input":{"teamJobId":"lead-team","parentSessionId":"other"}}),"lead"),None);
+        state.store.put("job",&json!({"id":"forged","kind":"team",
+            "executionId":"fake","input":{"sessionId":"lead"}})).unwrap();
+        assert_eq!(bound_parent_execution(&state,
+            &json!({"input":{"teamJobId":"forged","parentSessionId":"lead"}}),"lead"),None);
+        let _=std::fs::remove_dir_all(dir);
+    }
     #[test]
     fn completed_external_resume_claim_is_owner_agent_and_job_scoped(){
         let dir=std::env::temp_dir().join(format!(

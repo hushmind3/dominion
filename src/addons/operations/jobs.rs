@@ -599,6 +599,18 @@ async fn run_job(state: AppState, job: Value) {
     // persistence fails or the owner cancelled while the model was running.
     match context.finish_terminal(patch) {
         Ok(saved) => {
+            if saved["kind"]=="team" {
+                if let Some(native)=saved["executionId"].as_str() {
+                    state.bus.emit(json!({
+                        "type":"team_outcome","executionId":native,
+                        "jobId":job_id,"sessionId":saved["input"]["sessionId"],
+                        "status":saved["status"],
+                        "workerEvidence":saved["result"]["nodes"],
+                        "gaps":saved["result"]["gaps"],
+                        "pendingIntegrationJobs":saved["result"]["pendingIntegrationJobs"]
+                    }));
+                }
+            }
             if saved["status"]=="completed" {
                 if let Err(error)=crate::engine::delegation_worktree::freeze_result(&state,&job).await {
                     if let Some(review)=state.store.patch_if("job",&job_id,"status",
@@ -694,12 +706,31 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
     }else{
         (run_quiet(&scoped,&request).await?,None)
     };
+    let native_execution=message.as_ref()
+        .and_then(|item|item.pointer("/metadata/executionId"))
+        .and_then(Value::as_str)
+        .and_then(|id|context.state.store.get("execution",id)
+            .filter(|run|run["sessionId"]==session_id)
+            .map(|_|id.to_string()));
+    // A team child can link to its Lead native run without conflating them.
+    // There is no parent execution for independent user jobs.
+    let parent_execution=input["teamJobId"].as_str()
+        .and_then(|id|context.state.store.get("job",id))
+        .filter(|team|team["kind"]=="team"
+            &&team["input"]["sessionId"]==input["parentSessionId"])
+        .and_then(|team|team["executionId"].as_str().map(str::to_string))
+        .filter(|id|context.state.store.get("execution",id).is_some_and(|run|
+            run["sessionId"]==input["parentSessionId"]));
     let result=json!({
         "sessionId":message.as_ref().and_then(|item|item.get("session_id")),
         "messageId":message.as_ref().and_then(|item|item.get("id")),
+        "executionId":native_execution,
         "externalRunId":external_run
     });
-    context.checkpoint(json!({"promptState":{"inFlight":false,"result":result}}))?;
+    let mut checkpoint=json!({"promptState":{"inFlight":false,"result":result}});
+    if let Some(id)=&native_execution {checkpoint["executionId"]=json!(id);}
+    if let Some(id)=&parent_execution {checkpoint["parentExecutionId"]=json!(id);}
+    context.checkpoint(checkpoint)?;
     Ok(result)
 }
 

@@ -721,11 +721,27 @@ async fn run_locked(
             .ok_or("룸 응답의 실행 기록이 없습니다.")?;
         let visible_ids=committed_run["inputContext"]["selectedMessageIds"]
             .as_array().cloned().unwrap_or_default();
-        state.store.commit_room_agent_read(
+        let cursor_advanced=state.store.commit_room_agent_read(
             room_id,session_id,&agent_id,source_id,reply_id,&visible_ids,
         ).map_err(|error|format!(
             "완료된 룸 응답의 읽기 위치를 저장하지 못했습니다. 재실행 전 확인이 필요합니다: {error}"
         ))?;
+        // Only an advancing committed cursor publishes delivery. A repeated
+        // or delayed speaker must not replay an already visible reply.
+        if cursor_advanced {
+            let committed=state.store.room_agent_read(
+                room_id,session_id,&agent_id
+            )?.ok_or("룸 읽기 위치를 다시 찾지 못했습니다.")?;
+            state.bus.emit(json!({
+                "type":"room_agent_reply",
+                "roomId":room_id,"sessionId":session_id,
+                "agentId":agent_id,"jobId":context.job_id,
+                "executionId":run_id,
+                "sourceMessageId":source_id,"replyMessageId":reply_id,
+                "readCursor":committed["replyCursor"],
+                "selectedMessageIds":committed["selectedMessageIds"]
+            }));
+        }
         let evidence_count = message_evidence_count(state, &message);
         let elapsed_ms=speaker_started.elapsed().as_millis() as u64;
         let accounting = speaker_model_accounting(state, &message);

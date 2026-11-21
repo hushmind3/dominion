@@ -13,6 +13,9 @@ export interface RunEventRef {
   schemaVersion: number;
   executionId: string;
   sessionId?: string;
+  jobId?: string;
+  parentExecutionId?: string;
+  externalRunId?: string;
   taskId?: string;
   roomId?: string;
   agentId?: string;

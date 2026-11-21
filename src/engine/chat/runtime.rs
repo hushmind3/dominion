@@ -846,9 +846,14 @@ async fn run_turn_body(
             decomposition["kernel"].as_str().unwrap_or(""),
         ]),
     }));
-    let plan_requested=intelligence.needs_plan(
+    let planning_decision=intelligence.planning_decision(
         planning_policy.as_ref(),&request.input,&acceptance,subtask_count,
     );
+    let plan_requested=planning_decision.requires_plan;
+    context_items.push(json!({
+        "kind":"strategy_planning_decision",
+        "decision":planning_decision
+    }));
 
     if subtask_count > 1 && acceptance.is_some() && request.tools_enabled && request.tools_execution_enabled {
         let subtasks = decomposition["subtasks"]

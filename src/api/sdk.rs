@@ -189,6 +189,8 @@ fn public_view_indexed(state:&AppState,mut record:Value,index:&ViewIndex)->Value
             if let Some(mut reference)=RunEventRef::new(id){
                 reference.session_id=Some(session.to_owned());
                 reference.room_id=run["roomId"].as_str().map(str::to_string);
+                reference.job_id=run["jobId"].as_str().map(str::to_string);
+                reference.parent_execution_id=run["parentExecutionId"].as_str().map(str::to_string);
                 reference.task_id=run["taskId"].as_str().map(str::to_string);
                 reference.agent_id=run["agentId"].as_str().map(str::to_string);
                 reference.lifecycle=run["status"].as_str().and_then(RunLifecycle::parse);

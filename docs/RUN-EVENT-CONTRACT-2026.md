@@ -34,3 +34,22 @@ global log but cannot be retroactively attributed to an execution.
 
 Tests: Rust typed event roundtrip, per-run scoped replay across restart,
 API pagination/404, SDK cursor+identity and unadmitted run guard.
+
+## Room, Team and external worker linkage (2026-11-21)
+
+- A room speaker reply publishes `room_agent_reply` with the true native
+  `executionId` **only after** the SQLite participant read-cursor transaction
+  advances. Retries or stale readers do not produce a second delivery event.
+- Native Worker jobs save `executionId` from the committed assistant message
+  only if the referenced native execution is owned by that worker's session.
+  A `parentExecutionId` is attached only if the owning Lead team and native
+  execution both exist. No worker is merged into the Lead's execution identity.
+- The Lead/Worker coordinator emits a bounded `team_outcome` event after
+  its terminal job state transaction commits. Its `workerEvidence` points to
+  independently verified Worker receipts and does not assert patch integration.
+- External CLI inspections preserve a separate `externalRunId`; `executionId`
+  on an external receipt is set **only** to a proven owning Lead native
+  execution, and `nativeToolReceipts` remains false. This is correlation,
+  not delegation of DOMINION's native tool authority to an external CLI.
+- Strategy planning returns a serialized, versioned Rust `PlanningDecision`.
+  Native execution and permission ownership are unchanged.

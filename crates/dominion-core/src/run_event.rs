@@ -37,6 +37,15 @@ pub struct RunEventRef {
     pub execution_id:String,
     #[serde(skip_serializing_if="Option::is_none")]
     pub session_id:Option<String>,
+    /// Product job identity; it is never mistaken for the native execution.
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub job_id:Option<String>,
+    /// Lead native execution for a separately running child native worker.
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub parent_execution_id:Option<String>,
+    /// Separate external CLI run/receipt ID. Not a native execution.
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub external_run_id:Option<String>,
     #[serde(skip_serializing_if="Option::is_none")]
     pub task_id:Option<String>,
     #[serde(skip_serializing_if="Option::is_none")]
@@ -53,7 +62,8 @@ impl RunEventRef {
     pub fn new(id:&str)->Option<Self>{
         if id.trim().is_empty()||id.len()>256{return None;}
         Some(Self{schema_version:Self::SCHEMA_VERSION,
-            execution_id:id.to_string(),session_id:None,task_id:None,
+            execution_id:id.to_string(),session_id:None,
+            job_id:None,parent_execution_id:None,external_run_id:None,task_id:None,
             room_id:None,agent_id:None,source_message_id:None,
             lifecycle:None})
     }
@@ -106,6 +116,15 @@ mod tests{
         assert_eq!(serde_json::from_value::<RunEventRef>(json).unwrap(),value);
         assert!(RunLifecycle::parse("idle").is_none());
         assert!(RunEventRef::new(" ").is_none());
+        let mut linked=RunEventRef::new("native-worker").unwrap();
+        linked.job_id=Some("job-child".into());
+        linked.parent_execution_id=Some("native-lead".into());
+        linked.external_run_id=Some("external:receipt".into());
+        let payload=serde_json::to_value(&linked).unwrap();
+        assert_eq!(payload["jobId"],"job-child");
+        assert_eq!(payload["parentExecutionId"],"native-lead");
+        assert_eq!(payload["externalRunId"],"external:receipt");
+        assert_eq!(serde_json::from_value::<RunEventRef>(payload).unwrap(),linked);
         assert_eq!(serde_json::to_value(RunLifecycle::parse("awaiting_approval")).unwrap(),
             json!("awaiting_approval"));
     }
