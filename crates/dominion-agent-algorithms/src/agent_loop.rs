@@ -304,9 +304,10 @@ impl Kernel<'_> {
             let native_decision=turn.decision;
             let reply=turn.reply;
             run.model_calls += 1;
-            // Persist the fact that generation ended before deciding next actions.
-            // If this checkpoint fails, no actions are dispatched.
-            run.model_in_flight = false;
+            // Retain the paid-generation write-ahead fence until its usage AND
+            // validated decision (or explicit rejection) are committed. A
+            // crash between two saves must never re-dispatch an unrecorded
+            // model response as though it were a fresh free turn.
             let actual_tokens=reply.input_tokens
                 .unwrap_or_else(||estimate_tokens(&active_system)+estimate_tokens(&prompt))
                 .saturating_add(reply.output_tokens
@@ -320,6 +321,9 @@ impl Kernel<'_> {
             // checkpoint, but do not accept a final answer or dispatch any
             // external effect from an over-budget model turn.
             if !within_token_budget {
+                // The paid turn has been accounted for and is terminal: no
+                // decision or tool invocation can be taken from this reply.
+                run.model_in_flight = false;
                 run.stop(Status::NeedsReview,
                     "Provider-reported token usage exceeded the owner budget; no actions dispatched");
                 self.journal.save(&run)?;
@@ -334,6 +338,9 @@ impl Kernel<'_> {
                         criterion: Criterion {kind:CriterionKind::ToolSucceeded,path:None,contains:None,tool:Some("decision_parse".into())},
                         satisfied:false, explanation:error
                     }];
+                    // Persist the unsuccessful parse and charged model usage
+                    // atomically with releasing the paid-generation fence.
+                    run.model_in_flight = false;
                     self.journal.save(&run)?;
                     if invalid >= 3 { break; }
                     continue;
@@ -343,6 +350,10 @@ impl Kernel<'_> {
             // outcome, so historical failures are reproducible offline.
             // This is durable evidence, never authority to re-execute effects.
             run.decision_tape.push(decision.clone());
+            // Clearing the in-flight marker BEFORE saving this decision would
+            // allow crash recovery to issue a second paid call with no durable
+            // record of the first result. Settle both in the SAME snapshot.
+            run.model_in_flight = false;
             self.journal.save(&run)?;
             if decision.plan.len() <= 32 {
                 run.plan = decision.plan.into_iter().map(|s| s.chars().take(400).collect()).collect();
