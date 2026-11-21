@@ -2922,6 +2922,106 @@ mod tests {
         assert_eq!(codex_settled_text(&output), "안녕 반갑습니다.");
     }
 
+    #[tokio::test]
+    async fn chat_openai_sse_requires_complete_terminal_and_unambiguous_tools() {
+        use axum::{routing::post,Router,Json};
+        async fn model(Json(request):Json<Value>) -> impl axum::response::IntoResponse {
+            let model=request["model"].as_str().unwrap_or("");
+            let chunk=|delta:Value, reason:Option<&str>|json!({
+                "choices":[{"index":0,"delta":delta,"finish_reason":reason}]
+            });
+            let mut events=Vec::new();
+            match model {
+                "truncated"=>events.push(chunk(json!({"content":"incomplete"}),Some("length"))),
+                "no-terminal"=>events.push(chunk(json!({"content":"incomplete"}),None)),
+                "bad-arguments"=>events.extend([
+                    chunk(json!({"tool_calls":[{"index":0,"id":"call-a",
+                        "function":{"name":"workspace_read","arguments":"{broken"}}]}),None),
+                    chunk(json!({}),Some("tool_calls")),
+                ]),
+                "indexless-unknown"=>events.extend([
+                    chunk(json!({"tool_calls":[{"index":0,"id":"call-a",
+                        "function":{"name":"workspace_read","arguments":"{\"path\":\""}}]}),None),
+                    chunk(json!({"tool_calls":[{"id":"unknown-id",
+                        "function":{"arguments":"README.md\"}"}}]}),None),
+                    chunk(json!({}),Some("tool_calls")),
+                ]),
+                "changed-id"=>events.extend([
+                    chunk(json!({"tool_calls":[{"index":0,"id":"call-a",
+                        "function":{"name":"workspace_read","arguments":"{"}}]}),None),
+                    chunk(json!({"tool_calls":[{"index":0,"id":"call-b",
+                        "function":{"arguments":"}"}}]}),Some("tool_calls")),
+                ]),
+                "post-finish"=>events.extend([
+                    chunk(json!({"content":"one"}),Some("stop")),
+                    chunk(json!({"content":"two"}),None),
+                ]),
+                "valid-known-id"=>events.extend([
+                    chunk(json!({"tool_calls":[{"index":0,"id":"call-a",
+                        "function":{"name":"workspace_read","arguments":"{\"path\":\""}}]}),None),
+                    chunk(json!({"tool_calls":[{"id":"call-a",
+                        "function":{"name":"workspace_read","arguments":"README.md\"}"}}]}),None),
+                    chunk(json!({}),Some("tool_calls")),
+                ]),
+                _=>events.push(chunk(json!({"content":"done"}),Some("stop"))),
+            }
+            let wire=events.into_iter().map(|event|format!("data: {event}\n\n"))
+                .collect::<String>()+"data: [DONE]\n\n";
+            ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],wire)
+        }
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address=listener.local_addr().unwrap();
+        let server=tokio::spawn(async move{
+            axum::serve(listener,Router::new().route("/chat/completions",post(model))).await.unwrap();
+        });
+        let root=std::env::temp_dir().join(format!(
+            "dominion-chat-finish-contract-{}",uuid::Uuid::new_v4()));
+        let config=crate::config::Config{port:0,data_dir:root.clone(),
+            web_dir:root.join("web"),workspace:root.clone()};
+        let state=AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        let request=TurnRequest::from_value(&json!({
+            "input":"inspect","sessionId":"finish-contract","autoLearning":false
+        })).unwrap();
+        let messages=vec![json!({"role":"user","content":"inspect"})];
+        let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+        for (model,expected) in [
+            ("truncated","출력 제한"),
+            ("no-terminal","정상 완료 신호"),
+            ("bad-arguments","도구 인수"),
+            ("indexless-unknown","호출 대상을 확정"),
+            ("changed-id","호출 ID가 같은 인덱스에서 바뀌었습니다"),
+            ("post-finish","종료 이후"),
+        ] {
+            let provider=ProviderRef{id:model.into(),name:"OpenAI fixture".into(),
+                base_url:format!("http://{address}"),api_key:"test".into(),
+                model:model.into(),tool_mode:"native".into(),
+                reasoning_protocol:"openai".into(),local:false,
+                context_tokens:None,max_output_tokens:Some(256),
+                requests_per_minute:None,kind:"openai".into(),account_id:None};
+            let error=stream_completion_once(&state,&reqwest::Client::new(),&provider,
+                &messages,&[],&request,"finish-contract",&tx,false).await
+                .err().expect("Unsettled native Chat stream must fail");
+            assert!(error.contains(expected),"{model} failed for wrong reason: {error}");
+        }
+        let valid=ProviderRef{id:"valid-known-id".into(),name:"OpenAI fixture".into(),
+            base_url:format!("http://{address}"),api_key:"test".into(),
+            model:"valid-known-id".into(),tool_mode:"native".into(),
+            reasoning_protocol:"openai".into(),local:false,
+            context_tokens:None,max_output_tokens:Some(256),
+            requests_per_minute:None,kind:"openai".into(),account_id:None};
+        let result=stream_completion_once(&state,&reqwest::Client::new(),&valid,
+            &messages,&[],&request,"finish-contract",&tx,false).await.unwrap();
+        assert_eq!(result.tool_calls.len(),1);
+        assert_eq!(result.tool_calls[0].id,"call-a");
+        assert_eq!(result.tool_calls[0].name,"workspace_read");
+        assert_eq!(serde_json::from_str::<Value>(&result.tool_calls[0].arguments).unwrap(),
+            json!({"path":"README.md"}));
+        server.abort();
+        crate::test_support::cleanup_dir(root);
+    }
+
     #[test]
     fn hides_text_tool_calls_across_split_deltas() {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
