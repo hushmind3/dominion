@@ -34,7 +34,7 @@ pub(super) fn lightweight_chat_prompt(state:&AppState,request:&TurnRequest)->Pro
     let mut items=Vec::new();
     if let Some(agent)=request.agent_id.as_deref().and_then(|id|state.store.get("agent",id)){
         prompt.push_str(&format!("\n활성 에이전트: {} (id: {}).",
-            agent["name"].as_str().unwrap_or(""),agent["id"].as_str().unwrap_or(""));
+            agent["name"].as_str().unwrap_or(""),agent["id"].as_str().unwrap_or("")));
         if let Some(persona)=agent["systemPrompt"].as_str().filter(|s|!s.trim().is_empty()){
             prompt.push_str("\n에이전트 지침:\n");prompt.push_str(persona);
             items.push(json!({"kind":"persona","id":agent["id"],
