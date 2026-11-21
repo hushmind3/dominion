@@ -47,6 +47,21 @@ pub(super) fn acceptance_repair(
 }
 
 
+/// Only an actual failed attempt contributes a failure class or recovery hint.
+/// A normal unverified answer and a cancellation must not train the next turn
+/// to treat an ordinary conversation as a repeated error. Clear stale fields
+/// if a terminal attempt is reclassified during finalization.
+fn update_failure_details(record: &mut Value, operations: &[Value], outcome: TaskOutcome) {
+    if matches!(outcome, TaskOutcome::Failed) {
+        let failure = crate::engine::recovery::failure_record(record, operations);
+        record["failureClass"] = failure["failureClass"].clone();
+        record["recoveryHint"] = failure["recoveryHint"].clone();
+    } else if let Some(fields) = record.as_object_mut() {
+        fields.remove("failureClass");
+        fields.remove("recoveryHint");
+    }
+}
+
 pub(super) fn simple_file_creation(
     state: &AppState, input: &str, acceptance: &Option<(String, Value)>,
 ) -> Option<std::path::PathBuf> {
@@ -547,11 +562,7 @@ pub(in crate::engine::chat) fn finalize_execution(
     let task_outcome = determine_task_outcome(&record);
     record["taskOutcome"] =
         serde_json::to_value(task_outcome).unwrap_or_else(|_| json!("unknown"));
-    if !matches!(task_outcome, TaskOutcome::Succeeded) {
-        let failure = crate::engine::recovery::failure_record(&record, &operations);
-        record["failureClass"] = failure["failureClass"].clone();
-        record["recoveryHint"] = failure["recoveryHint"].clone();
-    }
+    update_failure_details(&mut record, &operations, task_outcome);
     let updates = match crate::addons::runtime_hooks::execution_updates(state, &record) {
         Ok(updates) => updates,
         Err(error) => {
@@ -878,6 +889,32 @@ pub(super) fn record_tool_stat(state: &AppState, session_id: &str, agent_id: Opt
             Some(name),
             "shared",
         );
+    }
+}
+
+#[cfg(test)]
+mod failure_outcome_tests {
+    use super::*;
+
+    #[test]
+    fn only_failed_attempts_carry_failure_learning_fields() {
+        for outcome in [
+            TaskOutcome::Succeeded,
+            TaskOutcome::AnsweredUnverified,
+            TaskOutcome::Cancelled,
+        ] {
+            let mut record = json!({
+                "status": "completed", "taskOutcome": "answered_unverified",
+                "failureClass": "old_false_failure", "recoveryHint": "stale hint"
+            });
+            update_failure_details(&mut record, &[], outcome);
+            assert!(record.get("failureClass").is_none(), "{outcome:?}: {record}");
+            assert!(record.get("recoveryHint").is_none(), "{outcome:?}: {record}");
+        }
+        let mut failed = json!({"status":"failed","taskOutcome":"failed",
+            "request":"a required file could not be written"});
+        update_failure_details(&mut failed, &[], TaskOutcome::Failed);
+        assert!(failed.get("failureClass").is_some(), "{failed}");
     }
 }
 
