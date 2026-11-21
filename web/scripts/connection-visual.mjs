@@ -38,6 +38,7 @@ const fixtures=[
    {key:'channelId',label:'Channel ID',type:'text',required:true}]}
 ]
 let connections=[]
+let taskTeams=[]
 const json=(route,body,status=200)=>route.fulfill({
  status,contentType:'application/json; charset=utf-8',body:JSON.stringify(body)
 })
@@ -49,6 +50,23 @@ const routeApi=async route=>{
  if(name==='/api/health')return json(route,{branch:'dominion-sub3',commit:'visual-smoke'})
  if(name==='/api/status')return json(route,{jobs:0})
  if(name==='/api/approvals')return json(route,[])
+ if(name==='/api/task-teams/bridges')return json(route,{bridges:{
+  codex:{enabled:true,binaryAvailable:true,authentication:'unknown'},
+  claude:{enabled:true,binaryAvailable:true,authentication:'unknown'},
+  qwen:{enabled:true,binaryAvailable:true,authentication:'unknown'}}})
+ if(name==='/api/task-teams'&&method==='GET')return json(route,taskTeams)
+ if(name==='/api/task-teams'&&method==='POST'){
+  const body=JSON.parse(route.request().postData()||'{}')
+  const team={id:'visual-team',status:'queued',goal:body.goal,
+   createdAt:new Date().toISOString(),teamState:{phase:'queued'},
+   tasks:body.tasks.map(step=>({taskId:step.id,mode:step.mode,
+    runtime:step.runtime,isolation:step.isolation,
+    dependsOn:step.dependsOn,status:'queued',verified:false,
+    childJobId:'team-child:visual-team:'+step.id}))}
+  taskTeams=[team,...taskTeams]
+  return json(route,team,202)
+ }
+ if(name==='/api/task-teams/visual-team'&&method==='GET')return json(route,taskTeams[0])
  if(name==='/api/channels/catalog')return json(route,fixtures)
  if(name==='/api/rooms')return json(route,[{id:'room-alpha',name:'테스트 연구실',agentIds:['a','b']}])
  if(name==='/api/agents')return json(route,[{id:'general',name:'일반 에이전트'}])
@@ -152,6 +170,27 @@ try{
   await page.waitForTimeout(200)
   await shot(page,file)
  }
+ // Existing Activity navigation owns the Task Team composer, without new tabs.
+ await page.goto(base+'/#/activity',{waitUntil:'domcontentloaded'})
+ const teamPanel=page.locator('[aria-label="작업 팀"]')
+ await teamPanel.getByRole('button',{name:'열기'}).click()
+ await teamPanel.getByRole('button',{name:'팀 만들기'}).click()
+ await teamPanel.getByLabel('팀 목표').fill('Review project with local and Qwen agents')
+ await teamPanel.getByLabel('작업 지시문').first().fill('Inspect source contracts')
+ await teamPanel.getByRole('button',{name:'조사 Worker'}).click()
+ await teamPanel.getByLabel('작업 지시문').nth(1).fill('Independently review the plan')
+ await teamPanel.getByLabel('실행 엔진').nth(1).selectOption('qwen')
+ await shot(page,'16-task-team-create-desktop.png')
+ await teamPanel.getByRole('button',{name:'팀 실행'}).click()
+ await teamPanel.getByText('팀이 실행 대기열에 등록됐습니다.').waitFor()
+ assert.equal(taskTeams.length,1)
+ assert.equal(taskTeams[0].tasks[0].runtime,'native')
+ assert.equal(taskTeams[0].tasks[1].runtime,'qwen')
+ assert.ok(taskTeams[0].tasks[1].dependsOn.includes(taskTeams[0].tasks[0].taskId))
+ await shot(page,'17-task-team-running-desktop.png')
+ await page.setViewportSize({width:390,height:844})
+ await shot(page,'18-task-team-mobile.png')
+ await page.setViewportSize({width:1440,height:900})
  assert.deepEqual(errors,[],'No uncaught React page errors during visual flow')
  console.log(JSON.stringify({ok:true,items:screenshots},null,2))
 }finally{
