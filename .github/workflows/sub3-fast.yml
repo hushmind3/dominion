@@ -53,7 +53,12 @@ jobs:
       - run: cargo test --locked --bin dominion-rust unknown_tool_effect_blocks_a_successful_final_answer
       - run: cargo test --locked --bin dominion-rust cancelled_paid_dispatch_only_relabels_as_review_with_both_durable_fences
       - run: cargo test --locked --bin dominion-rust cancelled_completed_task_never_reopens_on_unproven_review_claim
-      - run: cargo test --locked --bin dominion-rust sub3_standalone_explanation_uses_zero_tool_schemas_over_real_http_sse
+      # The lightweight Chat HTTP test lives in tests/e2e.rs, not the binary.
+      # Wrong target silently ran zero tests on prior green runs.
+      - run: cargo test --locked --test e2e web_api::sub3_standalone_explanation_uses_zero_tool_schemas_over_real_http_sse -- --exact
+      - run: cargo test --locked --bin dominion-rust conversation::chat::tests::split_korean_utf8_and_crlf_events_are_lossless -- --exact
+      - run: cargo test --locked --bin dominion-rust conversation::chat::tests::cancel_api_interrupts_silent_http_generation_and_allows_same_session_retry -- --exact
+      - run: cargo test --locked --test e2e web_api::cancelling_an_in_flight_paid_execution_requires_review_after_owner_cancel -- --exact
 
   quality-diagnostics:
     name: Rust format and Clippy diagnostics (migration report)

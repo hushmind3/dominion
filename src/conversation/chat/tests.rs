@@ -46,10 +46,12 @@ fn split_korean_utf8_and_crlf_events_are_lossless() {
             events.push(event);
         }
     }
-    assert_eq!(
-        events,
-        vec!["data: {\"text\":\"장기기억\"}\r\n\r\n", "data: [DONE]\n\n"]
-    );
+    // Chat and Native share a parsed SSE decoder: line endings are normalized
+    // to LF, while the complete Korean JSON payload and event order survive.
+    assert_eq!(events, vec![
+        "data: {\"text\":\"장기기억\"}\n\n",
+        "data: [DONE]\n\n",
+    ]);
 }
 
 #[test]
@@ -729,20 +731,25 @@ async fn cancel_api_interrupts_silent_http_generation_and_allows_same_session_re
         .unwrap();
     assert!(result.is_err(),"A cancelled turn cannot report a saved answer");
     let cancelled=state.store.get("execution",&first_id).unwrap();
-    assert_eq!(cancelled["status"],"cancelled");
-    assert_eq!(cancelled["phase"],"cancelled");
+    // The provider accepted the HTTP request but never supplied a completed
+    // event. Owner cancellation preempts the socket, not the unknown paid
+    // generation: retain its durable fence for manual reconciliation.
+    assert_eq!(cancelled["status"],"needs_review");
+    assert_eq!(cancelled["phase"],"needs_review");
+    assert_eq!(cancelled["ownerCancellationRequested"],true);
+    assert_eq!(cancelled["kernelState"]["modelInFlight"],true);
     assert!(!state.store.messages("cancel-ui").iter().any(|m|
         m["role"]=="assistant"));
     assert!(!state.store.all("execution_operation").iter().any(|op|
         op["runId"]==first_id && op["status"]=="completed"));
-    // A normal second user send resets only the cancellation epoch for this
-    // NEW turn. The old durable cancellation and error remain immutable.
+    // An explicit NEW owner turn may proceed without automatically replaying
+    // the previous uncertain generation. The original review fence is immutable.
     let (second_tx,_second_rx)=tokio::sync::mpsc::unbounded_channel();
     let second=tokio::time::timeout(Duration::from_secs(8),
         run_turn(&state,&request,&second_tx)).await.unwrap().unwrap().unwrap();
     assert_eq!(second["content"],"SECOND_RUN_OK");
     assert_eq!(requests.load(Ordering::SeqCst),2);
-    assert_eq!(state.store.get("execution",&first_id).unwrap()["status"],"cancelled");
+    assert_eq!(state.store.get("execution",&first_id).unwrap()["status"],"needs_review");
     assert_eq!(state.store.messages("cancel-ui").iter().filter(|m|
         m["role"]=="assistant").count(),1);
     server.abort();

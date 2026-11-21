@@ -329,9 +329,9 @@ fn executions_are_read_only_and_scoped_cancel_only_hits_running() {
 }
 
 #[test]
-fn cancelling_a_running_execution_marks_it_cancelled() {
+fn cancelling_an_in_flight_paid_execution_requires_review_after_owner_cancel() {
     let _serial = serial();
-    let (port, _) = scripted_provider(|_| {
+    let (port, observed) = scripted_provider(|_| {
         std::thread::sleep(Duration::from_secs(4));
         vec![json!({"choices":[{"delta":{"content":"late"},"finish_reason":"stop"}]})]
     });
@@ -364,6 +364,13 @@ fn cancelling_a_running_execution_marks_it_cancelled() {
         std::thread::sleep(Duration::from_millis(50));
     }
     let id = execution_id.expect("running execution");
+    // A running row alone does not prove that the paid request was sent.
+    // Wait for actual provider admission before invoking owner cancellation.
+    let provider_deadline = Instant::now() + Duration::from_secs(10);
+    while observed.lock().unwrap().is_empty() && Instant::now() < provider_deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(observed.lock().unwrap().len(), 1, "model was not dispatched");
     let cancelled = app
         .client
         .post(format!("{}/api/executions/{id}/cancel", app.base))
@@ -374,7 +381,12 @@ fn cancelling_a_running_execution_marks_it_cancelled() {
     let stream = turn.join().unwrap();
     assert!(stream.contains("중단") || stream.contains("error"), "{stream}");
     let stored = app.get(&format!("/api/executions/{id}"));
-    assert_eq!(stored["status"], "cancelled");
+    assert_eq!(stored["status"], "needs_review", "{stored}");
+    assert_eq!(stored["phase"], "needs_review");
+    assert_eq!(stored["ownerCancellationRequested"], true);
+    assert_eq!(stored["kernelState"]["modelInFlight"], true);
+    assert_eq!(observed.lock().unwrap().len(), 1,
+        "owner cancellation must never replay the paid call");
 }
 
 #[test]
