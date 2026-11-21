@@ -898,6 +898,25 @@ fn settle_team_child(
     Ok(())
 }
 
+/// Publish one parent result only after all child claims and receipts are
+/// settled. Task Team outcomes are references, never synthesized successes.
+fn finish_team_node(
+    ctx:&ProgramCtx<'_>,assignments:&[Value],checkpoint:&mut Value,
+    persist:bool,
+)->Result<(),String>{
+    if !persist{return Ok(());}
+    let result=crate::engine::task_team_work::finish_team(
+        ctx.state,assignments,checkpoint)?;
+    let scope=assignments.first()
+        .and_then(|row|row["teamNodeId"].as_str())
+        .ok_or("Task Team missing result scope")?;
+    if !checkpoint["teamResultRefs"].is_object(){
+        checkpoint["teamResultRefs"]=json!({});
+    }
+    checkpoint["teamResultRefs"][scope]=result["id"].clone();
+    Ok(())
+}
+
 /// Executes nodes recursively so Sequence/Branch/Parallel/Loop can contain any
 /// supported node. All side effects go through the same tool gateway.
 #[allow(clippy::too_many_arguments)]
@@ -1253,6 +1272,7 @@ pub(super) fn execute_nodes<'a>(
                                 paused,failure,
                             });
                         }
+                        finish_team_node(ctx,&team_assignments,&mut checkpoint,persist)?;
                         mark_program_completed(&mut checkpoint, node_id);
                         crate::engine::algorithms::mark_signal(
                             ctx.state,
@@ -1350,6 +1370,7 @@ pub(super) fn execute_nodes<'a>(
                             paused,failure,
                         });
                     }
+                    finish_team_node(ctx,&team_assignments,&mut checkpoint,persist)?;
                     mark_program_completed(&mut checkpoint, node_id);
                     crate::engine::algorithms::mark_signal(
                         ctx.state,
