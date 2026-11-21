@@ -125,3 +125,28 @@ flowchart TD
 ### 범위
 
 이번 구현은 새 제품 메뉴 또는 별도 서버를 만들지 않았습니다. 실제 모델을 이용한 장시간 비용·품질 측정, 외부 CLI 계정·승인 브리지의 실환경 연결, OS별 Tauri 패키지 검증은 릴리스 전에 별도로 필요합니다. 설계 P3의 분산 Gateway·원격 Worker는 원문에서 **실제 다중 기기 요구 시 도입**하도록 명시한 조건부 단계입니다.
+
+
+## 9. P3 실행: 분산 Rust Gateway + 원격 Worker (2026-11-21)
+
+P3 원문은 "실제 다중 기기 요구가 생길 때 도입"하는 조건부 단계였으나, 현재 브랜치에서는 사용자의 명시적인 구현 요청으로 실행 코드를 추가했습니다. 실제 기기·계정 연결의 검증과 구현 사실은 구분합니다.
+
+### 소스 구현
+
+- src/remote.rs: 별도 옵트인 Remote-only Axum 리스너, 32자 이상 클러스터 토큰 인증, 등록·heartbeat·claim·renew·settle, SQLite CAS 임대, 소유자/epoch fencing, 불확실한 결과 needs_review
+- src/remote_worker.rs: inbound 포트가 없는 outbound Rust CLI, 로컬 네이티브 Job/Harness 재사용, readOnly/Writer 허용 범위, 재접속 시 고정 Job ID, 완료 영수증 송신
+- src/engine/services/tools/tools_team.rs: Lead의 실제 원격 노드 검색 및 remoteWorkerId가 지정된 Team DAG 실행, 결과·검증 상태·후속 Worker 출처 전달
+- src/bootstrap.rs: 기존 데스크톱 HTTP API와 원격 전용 리스너 분리, remote-worker 실행 모드
+- crates/dominion-turn-core/src/run_state.rs, src/events.rs, sdk/typescript/src/index.ts: remote_task의 typed RunEvent, 단조 증가 SSE seq, Worker/lease/evidence metadata
+
+### 실행 구성
+
+자세한 배포 설정: [P3 Distributed Rust Workers](SUB2-P3-DISTRIBUTED-RUST-WORKERS-2026-11-21.md).
+
+리더는 기존 Rust GUI/API/Harness를 유지합니다. 같은 바이너리의 별도 remote-only listener는 명시적으로 설정했을 때만 활성화됩니다. 각 원격 PC는 로컬 모델·API·파일 자원과 정상 Rust Job 엔진을 사용하면서 수신 포트 없이 리더의 분산 작업을 처리합니다.
+
+임대 만료, 다른 epoch 재등록, 불확실한 원격 파일 변경은 자동 중복 위임하지 않습니다. 원격 Worker가 결과를 반환하더라도 코디네이터의 파일이 저절로 수정된 것으로 간주하지 않으며, 진짜 공유 저장소 동기화에는 명시적 Git/산출물 전달 계약이 필요합니다.
+
+### 검증 경계
+
+실제 루프백 HTTP(TCP)+SQLite 테스트, Rust lease/epoch/cancel 테스트, SDK typed SSE/구조 계약 테스트를 CI에 포함했습니다. 서로 다른 물리 컴퓨터, 실제 네트워크 복구, 원격 모델 인증, 비공개 터널, OS 설치 프로그램은 별도의 운영 E2E 검증 대상입니다. 클라우드 모델/계정 과금용 Cloudflare Gateway와 원격 실행 제어면은 동일한 기능으로 취급하지 않습니다.
