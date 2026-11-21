@@ -12,7 +12,7 @@ DOMINION의 실행 코어는 **Rust**입니다. 이 문서는 현재 저장소�
 | 제품 실행기 | `src/host/execution/native_agent.rs`, `jobs.rs` | SQLite, 모델·도구 연동, 실행 복구, 승인, 실측 |
 | 대화·그룹 대화 | `src/conversation/chat/`, `src/features/collaboration/rooms.rs` | 스트리밍, 대화실, 메시지 소유권, 답변 순서 |
 | 작업 팀 | `src/features/collaboration/task_team.rs`, `worktree.rs` | DAG, Worker 인계, 재시작, 작업공간 격리, 결과 검증 |
-| 외부 CLI Bridge | `src/integrations/agent_bridge.rs` | 명시적으로 연결한 Codex·Claude Code 읽기 전용 작업 |
+| 외부 CLI Bridge | `src/integrations/agent_bridge.rs` | 명시적으로 연결한 Codex·Claude Code·Qwen Code 읽기 전용 작업 |
 | 확장·모델·저장 | `src/integrations/`, `src/features/providers/`, `src/storage/` | MCP, OAuth, 모델 라우팅, 영속 기록 및 데이터 경계 |
 
 Chat의 스트리밍 턴은 별도 상위 어댑터를 유지합니다. 커널·도구 영수증 계약을 공유한다는 사실을 Chat·Room·Task의 모든 상위 실행 루프가 1개로 통합됐다는 뜻으로 해석하지 않습니다.
@@ -22,9 +22,10 @@ Chat의 스트리밍 턴은 별도 상위 어댑터를 유지합니다. 커널·
 - `POST /api/chat`: 사용자가 직접 보내는 대화 및 스트리밍 답변
 - `POST /api/jobs`, `POST /api/sdk/runs`: 네이티브 Rust SDK 실행
 - `POST /api/task-teams`: Lead/Worker DAG 실행, 하위 Worker 소유권·의존성 검증
+- 기존 **작업 현황(Activity)** 화면: 팀 생성, Native/Qwen/Codex/Claude Worker 지정, 의존성·모델·증거·취소·재시도·Worktree 승인. **새 메뉴를 만들지 않습니다.**
 - `POST /api/rooms/:id/run`: 여러 에이전트가 참여하는 방의 대화
 - `GET /api/runs/:id`: Chat·Room·Task·SDK·Bridge의 공통 실행 상태 조회
-- `GET /api/events?after=N`: 영속 이벤트 순번 기반 재연결
+- `GET /api/events?after=N`: 영속 이벤트 순번 기반 재연결 및 2초 간격 다른 프로세스 SQLite 이벤트 조회
 - `/api/harness/runs`: 기존 클라이언트를 위한 **제한된 호환 API**. 새 요청은 네이티브 커널로 연결하고, 오래된 단독 실행 기록은 읽기 전용으로 유지합니다.
 
 ## 3. Worker 작업공간·병합
@@ -48,7 +49,9 @@ Task Team의 작업은 로컬 모델과 외부 API 모델을 Worker마다 별도
 
 ## 5. 연결과 운영 검증
 
-브라우저, MCP, Google/GitHub OAuth, Discord/Telegram, 로컬 Skills는 `src/integrations/` 경계 아래에 있습니다. Codex·Claude Code의 독립 Bridge는 기본 비활성화 상태이며 `DOMINION_EXTERNAL_AGENTS=1`에서 사용자가 연결해야 합니다. 실제 CLI 인증·장시간 과금 검증과 운영체제별 Tauri 릴리즈 빌드는 별도로 확인해야 합니다.
+브라우저, MCP, Google/GitHub OAuth, Discord/Telegram, 로컬 Skills는 `src/integrations/` 경계 아래에 있습니다. Codex·Claude Code·Qwen Code의 독립 Bridge는 기본 비활성화 상태이며 `DOMINION_EXTERNAL_AGENTS=1`에서 사용자가 연결해야 합니다. Qwen Code는 공식 Headless JSON 이벤트 배열과 읽기 전용 Plan 모드로 실행하며, 요청한 세션 ID와 결과 ID가 일치하는지 확인합니다. 실제 3종 CLI 인증·장시간 과금 검증과 운영체제별 Tauri 릴리즈 빌드는 별도로 확인해야 합니다.
+
+2026-11-21 기준 Chat 스트리밍은 SDK의 모델/도구 예산과 영수증·저널 계약을 공유하지만, **Chat의 상위 모델 반복 루프는 Native ReActLoop와 아직 1개 코드 경로로 통합되지 않았습니다.** 작동하던 스트리밍·그룹 대화를 위험하게 갈아엎는 대신 실행 경계부터 단일화하는 중입니다.
 
 자세한 내용:
 - [현재 문서 목차](docs/INDEX.md)
