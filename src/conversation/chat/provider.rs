@@ -2231,6 +2231,20 @@ async fn stream_anthropic_once(
                         }
                         stop_reason=Some(reason.into());
                     }
+                    // Message deltas carry cumulative usage. Even zero
+                    // reported uncached input tokens must replace the initial
+                    // value when the rest of the prompt was cache-read.
+                    if let Some(input)=piece["usage"]["input_tokens"].as_u64() {
+                        input_reported=true;
+                        input_tokens=input;
+                    }
+                    if let Some(cached)=piece["usage"]["cache_read_input_tokens"].as_u64() {
+                        cache_read_reported=true;
+                        cache_read_tokens=cached;
+                    }
+                    if let Some(created)=piece["usage"]["cache_creation_input_tokens"].as_u64() {
+                        cache_write_tokens=created;
+                    }
                     output_reported|=piece["usage"]["output_tokens"].as_u64().is_some();
                     output_tokens = piece["usage"]["output_tokens"].as_u64().unwrap_or(output_tokens);
                 }
@@ -3249,7 +3263,8 @@ mod tests {
             }else if selected=="orphan-tool-delta" {
                 events.push(json!({"type":"content_block_delta","index":0,
                     "delta":{"type":"input_json_delta","partial_json":"{}"}}));
-            }else if selected=="valid-text"||selected=="no-stop"||selected=="max-tokens" {
+            }else if selected=="valid-text"||selected=="updated-usage"
+                ||selected=="no-stop"||selected=="max-tokens" {
                 events.extend([
                     json!({"type":"content_block_start","index":0,
                         "content_block":{"type":"text","text":""}}),
@@ -3283,8 +3298,12 @@ mod tests {
                 "valid-tool"|"duplicate-call"=>Some("tool_use"),
                 _=>Some("end_turn"),
             };
+            let usage=if selected=="updated-usage" {
+                json!({"input_tokens":0,"cache_read_input_tokens":75,
+                    "cache_creation_input_tokens":10,"output_tokens":3})
+            }else {json!({"output_tokens":3})};
             events.push(json!({"type":"message_delta","delta":{"stop_reason":reason},
-                "usage":{"output_tokens":3}}));
+                "usage":usage}));
             events.push(json!({"type":"message_stop"}));
             let wire=events.into_iter().map(|event|
                 format!("event: message\ndata: {event}\n\n")).collect::<String>();
@@ -3328,7 +3347,7 @@ mod tests {
             assert!(error.contains(expected),"{name}: {error}");
         }
         for (name,tool) in [("valid-text",false),("valid-initial-text",false),
-            ("valid-tool",true)] {
+            ("updated-usage",false),("valid-tool",true)] {
             let provider=ProviderRef{id:name.into(),name:"Anthropic mock".into(),
                 base_url:format!("http://{addr}"),api_key:"test".into(),
                 model:name.into(),tool_mode:"native".into(),
@@ -3342,6 +3361,12 @@ mod tests {
             else {assert_eq!(reply.content,if name=="valid-initial-text" {
                 "initial-only"
             }else{"partial"});}
+            if name=="updated-usage" {
+                assert_eq!(reply.prompt_tokens,85,"Latest zero uncached tokens + cache tokens");
+                assert_eq!(reply.cached_prompt_tokens,Some(75));
+                assert_eq!(reply.completion_tokens,3);
+                assert!(reply.usage_exact);
+            }
         }
         server.abort();
         crate::test_support::cleanup_dir(root);
