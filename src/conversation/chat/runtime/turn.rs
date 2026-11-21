@@ -195,23 +195,7 @@ pub(super) async fn run_turn_body(
     let simple_creation_target = if !session["roomId"].is_string() {
         simple_file_creation(state, &request.input, &acceptance)
     } else { None };
-    let mut tool_definitions = if request.tools_enabled && request.tools_execution_enabled {
-        tools::definitions_for(state)
-    } else {
-        Vec::new()
-    };
-    if request.tools_enabled && request.tools_execution_enabled {
-        tool_definitions.extend(mcp::definitions(state).await);
-    }
-    let full_catalog_size=tool_definitions.len();
     let is_room = session["roomId"].is_string();
-    let pure_chat_greeting = !is_room && request.attachment_ids.is_empty()
-        && acceptance.is_none() && pure_greeting(&request.input);
-    if is_room && request.tools_enabled && request.tools_execution_enabled {
-        let recent = recent_room_tools(state, session_id);
-        tool_definitions =
-            select_room_tools(tool_definitions, &request.input, &recent, acceptance.is_some());
-    }
     let discovery = if is_room {
         Value::Null
     } else {
@@ -219,6 +203,27 @@ pub(super) async fn run_turn_body(
             state, "tool.discovery", request.agent_id.as_deref(), Some(execution_id),
         ).unwrap_or(Value::Null)
     };
+    let pure_chat_greeting = !is_room && request.attachment_ids.is_empty()
+        && acceptance.is_none() && discovery["ownerActivated"]!=true
+        && pure_greeting(&request.input);
+    // Skip not only the provider schemas but also the MCP catalog lookup.
+    // An exact greeting should not block on discovery or connected services.
+    let enumerate_tools = request.tools_enabled && request.tools_execution_enabled
+        && !pure_chat_greeting;
+    let mut tool_definitions = if enumerate_tools {
+        tools::definitions_for(state)
+    } else {
+        Vec::new()
+    };
+    if enumerate_tools {
+        tool_definitions.extend(mcp::definitions(state).await);
+    }
+    let full_catalog_size=tool_definitions.len();
+    if is_room && enumerate_tools {
+        let recent = recent_room_tools(state, session_id);
+        tool_definitions =
+            select_room_tools(tool_definitions, &request.input, &recent, acceptance.is_some());
+    }
     if !is_room {
         let legacy_full_default=(discovery.is_null() ||
             (discovery["source"]=="builtin" && discovery["implementation"]=="all"
@@ -229,12 +234,6 @@ pub(super) async fn run_turn_body(
                 "legacy full-catalog default replaced by progressive host discovery");
         }
         tool_definitions = select_chat_tools(tool_definitions, &request.input, &discovery);
-        // A greeting must not drag a read/search catalog or the two bridge
-        // schemas into the first model call. Explicit owner catalog policy
-        // still overrides the default lightweight behavior.
-        if pure_chat_greeting && discovery["ownerActivated"]!=true {
-            tool_definitions.clear();
-        }
     }
     if simple_creation_target.is_some() {
         // A concrete file creation has no use for web, memory, delegation or
