@@ -1045,21 +1045,21 @@ pub(super) async fn run_turn_body(
         kernel_state.step = round + 1;
         kernel_state.model_calls = metrics.lock().unwrap().model_calls as usize;
         kernel_state.charged_tokens = total_tokens;
-        kernel_state.decision_tape.push(dominion_agent_sdk::Decision{
-            plan:Vec::new(),
-            actions:completion.tool_calls.iter().map(|call|
-                dominion_agent_sdk::Action{
-                    id:call.id.clone(),tool:call.name.clone(),
-                    arguments:serde_json::from_str(&call.arguments)
-                        .unwrap_or_else(|_|json!({"unparsed":call.arguments})),
-                    depends_on:Vec::new()
-                }).collect(),
-            answer:if completion.tool_calls.is_empty(){
-                Some(completion.content.clone())
-            }else{None}
-        });
-        kernel_state.model_in_flight=false;
-        dominion_agent_sdk::Journal::save(&kernel_journal,&kernel_state)?;
+        dominion_agent_sdk::settle_model_turn(&kernel_journal,&mut kernel_state,
+            dominion_agent_sdk::Decision{
+                plan:Vec::new(),
+                actions:completion.tool_calls.iter().map(|call|
+                    dominion_agent_sdk::Action{
+                        id:call.id.clone(),tool:call.name.clone(),
+                        arguments:serde_json::from_str(&call.arguments)
+                            .unwrap_or_else(|_|json!({"unparsed":call.arguments})),
+                        depends_on:Vec::new()
+                    }).collect(),
+                answer:if completion.tool_calls.is_empty(){
+                    Some(completion.content.clone())
+                }else{None}
+            },
+        )?;
 
         if completion.tool_calls.is_empty() {
             {
