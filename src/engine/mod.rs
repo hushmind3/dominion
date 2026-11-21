@@ -28,6 +28,8 @@ pub use dominion_agent_kernel as agent_kernel;
 pub mod workspace_scope;
 #[path = "services/operations/effect.rs"]
 pub mod effect;
+#[path = "services/operations/restore_transaction.rs"]
+pub mod restore_transaction;
 #[path = "services/conversation/chat/mod.rs"]
 pub mod chat;
 #[path = "services/decision/verification.rs"]
