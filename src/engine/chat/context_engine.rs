@@ -50,12 +50,22 @@ pub(super) fn is_generic_capabilities_turn(query: &str) -> bool {
 
 /// Date is task evidence, not an instruction. Most "hello"/code/reflection
 /// turns have no reason to rebill a changing clock field every request.
+/// Date-only queries do not need a per-second value. Explicit clock-time
+/// requests do: a calendar date alone makes the model guess the hour.
+pub(super) fn needs_local_time(query:&str) -> bool {
+    let q=query.to_lowercase();
+    ["몇 시","몇시","현재 시간","지금 시간","현재 시각","현지 시간",
+     "한국 시간","몇 분","몇분","what time","current time",
+     "local time","time is it","time now"].iter().any(|term|q.contains(term))
+}
+
 pub(super) fn needs_clock(query:&str) -> bool {
     let q=query.to_lowercase();
     ["오늘","어제","내일","지금","이번 주","이번주","이번 달","이번달",
-     "현재 날짜","날짜","몇 시","몇시","최신","최근","올해","내년",
+     "현재 날짜","날짜","최신","최근","올해","내년",
      "today","tomorrow","yesterday","latest","current date",
      "this week","this month","right now"].iter().any(|term|q.contains(term))
+     || needs_local_time(query)
 }
 
 pub(super) struct CompiledPrivate {
@@ -196,6 +206,18 @@ mod tests {
         for query in ["아까 작업으로 뭘 할 수 있어?", "그 도구는 뭐 할 수 있어?",
             "내 프로젝트에 어떤 기능이 있지?", "계속해", "이전에 한 거 확인해"] {
             assert!(!is_generic_capabilities_turn(query), "{query}");
+        }
+    }
+
+    #[test]
+    fn time_of_day_requires_a_clock_without_rebilling_time_for_date_only_queries() {
+        for query in ["지금 몇 시야?", "현재 시간 알려줘", "한국 시간은?",
+            "What time is it?", "current time", "local time"] {
+            assert!(needs_local_time(query), "{query}");
+            assert!(needs_clock(query), "{query}");
+        }
+        for query in ["안녕", "오늘 날짜 알려줘", "최신 뉴스", "시간복잡도 설명해줘"] {
+            assert!(!needs_local_time(query), "{query}");
         }
     }
 
