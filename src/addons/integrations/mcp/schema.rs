@@ -77,7 +77,7 @@ pub(super) fn projected_headers(schema:&Value,args:&Value)->Result<Vec<(String,S
     for binding in bindings(schema)? {
         let mut value=args;
         for key in &binding.path {
-            let Some(child)=value.get(key) else {value=&Value::Null;break};
+            let Some(child)=value.get(key.as_str()) else {value=&Value::Null;break};
             value=child;
         }
         if value.is_null(){continue;}
