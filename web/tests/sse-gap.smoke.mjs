@@ -61,7 +61,16 @@ try{
    body:JSON.stringify(result)});
  });
  await page.goto(origin+'/#/chat?session=gap-session',{waitUntil:'domcontentloaded'});
- await page.getByText('Before reconnect',{exact:true}).first().waitFor({timeout:10000});
+ await page.getByText('Before reconnect',{exact:true}).first().waitFor({timeout:10000})
+  .catch(async error=>{
+   console.error('SSE fixture initial Chat diagnosis',JSON.stringify({
+    sessionsRead,sseConnections,errors,
+    text:(await page.locator('body').innerText()).slice(0,3500),
+    activeUrl:page.url(),
+    dom:(await page.locator('body').innerHTML()).slice(0,1800),
+   }));
+   throw error;
+  });
  const before=sessionsRead;
  sessions=[{...sessions[0],title:'After reconnect'}];
  gapArmed=true;
