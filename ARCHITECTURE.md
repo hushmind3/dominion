@@ -58,6 +58,31 @@ streaming adapter        native_agent.rs         durable DAG supervisor
 
 Dependency arrow for crates: `dominion-agent-algorithms → dominion-agent-runtime`; `dominion-agent-sdk → {algorithms, runtime}`. The host binds the ports; neither portable crate imports Host.
 
+## Original 2026-11-20 architecture: Room event journal and shared dispatch admission
+
+The owner-supplied architecture drawing specifies a **single Local-first Rust
+Modular Monolith** with the Room/Task Orchestrator, Context Engine, optional
+Strategies, one Agent Harness, Execution Core and separate Model/Tool Gateways.
+
+The Room log is now an indexed SQLite `room_events` table with a trigger
+bound to the actual message INSERT, and idempotent backfill of prior Room
+transcripts. `RoomEvent` identifiers carry the per-room sequence, speaker,
+reply anchor and originating run; `RoomAgentBinding` exposes independent
+`readCursor` state. `GET /api/rooms/:id/events` and both client SDKs
+provide cursor pagination without creating another UI menu or service.
+
+The portable Runtime `dispatch_fence` now checks cancellation or owner
+correction **after writing the model-call intent and before dispatch**. Both
+the native Algorithm `ReActLoop` and Chat streaming adapter call this exact
+shared boundary. Tool dispatch already uses the same SDK action scheduler
+and Host approval/receipt contracts. The upper model-decision loops still
+need streaming-safe structural consolidation before full physical P0 loop
+singletons can be claimed.
+
+ModelGateway also now selects the exact model-specific context limit rather
+than inheriting a larger provider default; native tool compatibility remains
+checked before generation.
+
 ## 3. Canonical run identity and lifecycle (implemented)
 
 - `RunRef { version: 1, surface: chat | room | team | sdk | external_agent, runId, parentRunId }` is defined in `crates/dominion-agent-runtime/src/run_contract.rs`.

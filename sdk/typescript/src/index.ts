@@ -4,6 +4,17 @@ export interface Agent extends RecordItem {name:string;systemPrompt?:string;prov
 export interface Provider extends RecordItem {name:string;kind?:string;enabled?:boolean;hasKey?:boolean}
 export interface Session extends RecordItem {title:string;agentId?:string;providerId?:string;model?:string}
 export interface Room extends RecordItem {name:string;agentIds:string[];sessionId?:string}
+export interface RoomEvent {
+  version:1;roomId:string;sessionId:string;seq:number;eventId:string;
+  author:string;replyTo:string|null;originRun:string|null;kind:string;
+}
+export interface RoomAgentBinding {
+  roomId:string;agentId:string;sessionId:string;readCursor:number;state:string;
+}
+export interface RoomEventPage {
+  roomId:string;sessionId:string;events:RoomEvent[];
+  nextCursor:number;hasMore:boolean;bindings:RoomAgentBinding[];
+}
 export interface WorkflowStep {name:string;prompt:string;agentId:string;providerId?:string;model?:string}
 export interface Workflow extends RecordItem {name:string;steps:WorkflowStep[];description?:string}
 /** Provider-reported token totals; calls missing usage are counted separately. */
@@ -287,7 +298,14 @@ export class Dominion{
     get:(roomId:string)=>this.request<Room>('GET','/api/rooms/'+id(roomId)),
     run:(roomId:string,goal:string)=>this.request<unknown>('POST','/api/rooms/'+id(roomId)+'/run',{goal}),
     stop:(roomId:string)=>this.request<unknown>('POST','/api/rooms/'+id(roomId)+'/stop',{}),
-    messages:(roomId:string)=>this.request<unknown[]>('GET','/api/rooms/'+id(roomId)+'/messages')
+    messages:(roomId:string)=>this.request<unknown[]>('GET','/api/rooms/'+id(roomId)+'/messages'),
+    events:(roomId:string,after=0,limit=100)=>{
+      if(!Number.isSafeInteger(after)||after<0)throw new RangeError('Invalid Room event cursor');
+      if(!Number.isSafeInteger(limit)||limit<1||limit>200)
+        throw new RangeError('Room event page must contain 1-200 items');
+      return this.request<RoomEventPage>('GET','/api/rooms/'+id(roomId)+
+        '/events?after='+after+'&limit='+limit);
+    }
   };
   readonly approvals={
     pending:()=>this.request<Approval[]>('GET','/api/approvals'),

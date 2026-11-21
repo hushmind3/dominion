@@ -127,6 +127,28 @@ test('offline replay and paired cost comparison use exact Rust read-only endpoin
   assert.equal(calls[1].init.method,'POST');
   assert.ok(calls.every(c=>c.init.headers['X-Dominion-Token']==='owner'));
 });
+test('Room events expose durable sequence and agent read cursor',async()=>{
+  const calls=[];
+  const sdk=new Dominion({fetch:async(url,init)=>{
+    calls.push({url,init});return reply({
+      roomId:'one/x',sessionId:'room:one/x',
+      events:[{version:1,roomId:'one/x',sessionId:'room:one/x',
+        seq:14,eventId:'e14',author:'a',replyTo:null,
+        originRun:'run-1',kind:'agent_message'}],
+      nextCursor:14,hasMore:false,
+      bindings:[{roomId:'one/x',sessionId:'room:one/x',
+        agentId:'a',readCursor:12,state:'bound'}]
+    });
+  }});
+  const page=await sdk.rooms.events('one/x',13,25);
+  assert.equal(page.events[0].seq,14);
+  assert.equal(page.bindings[0].readCursor,12);
+  assert.equal(calls[0].url,
+    'http://127.0.0.1:4317/api/rooms/one%2Fx/events?after=13&limit=25');
+  assert.equal(calls[0].init.method,'GET');
+  assert.throws(()=>sdk.rooms.events('one/x',-1),RangeError);
+  assert.throws(()=>sdk.rooms.events('one/x',0,201),RangeError);
+});
 test('Task Team SDK uses native DAG routes and explicit worktree review',async()=>{
   const calls=[];
   const sdk=new Dominion({fetch:async(url,init)=>{

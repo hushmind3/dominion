@@ -235,6 +235,18 @@ impl Dominion {
             json!({"confirm":true,"expectedDiffSha256":expected_diff_sha256})).await
     }
     pub async fn rooms(&self) -> Result<Vec<Value>, Error> { self.get(&["api", "rooms"]).await }
+    /// Paginate committed Room events and each member's durable read cursor.
+    pub async fn room_events(&self,room_id:&str,after:u64,limit:usize)
+        ->Result<Value,Error>{
+        if !(1..=200).contains(&limit){
+            return Err(Error::Url("Room event page must contain 1-200 items".into()));
+        }
+        let mut url=self.url(&["api","rooms",room_id,"events"])?;
+        url.query_pairs_mut().append_pair("after",&after.to_string())
+            .append_pair("limit",&limit.to_string());
+        let response=self.open(Method::GET,url,None,false).await?;
+        Ok(response.json().await?)
+    }
     pub async fn run_room(&self, id: &str, goal: &str) -> Result<Value, Error> {
         self.post(&["api", "rooms", id, "run"], json!({"goal":goal})).await
     }

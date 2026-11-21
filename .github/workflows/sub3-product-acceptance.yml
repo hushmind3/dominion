@@ -65,6 +65,8 @@ jobs:
           cargo test --bin dominion-rust storage::migrations::tests
           # 150-turn independent Room cursors and periodic cross-process SSE.
           cargo test --bin dominion-rust features::collaboration::room_cursor::tests
+          cargo test --bin dominion-rust storage::sqlite::tests::room_events_commit_150_messages_in_order_and_survive_restart
+          cargo test --bin dominion-rust features::providers::gateway::tests::exact_model_context_and_native_tool_support_override_provider_defaults
           cargo test --bin dominion-rust events::tests
           # Latest main provider UI depends on public, keyless model browsing.
           cargo test --bin dominion-rust api::providers::tests

@@ -245,9 +245,11 @@ pub fn route_from_provider(
         })
         .unwrap_or_default();
     let local = is_local_provider(provider);
-    let context_tokens = provider["capabilities"]["contextTokens"]
+    // Model + endpoint overrides provider-wide marketing context limits.
+    let context_tokens=provider["modelCapabilities"][model.as_str()]["contextTokens"]
         .as_u64()
-        .or_else(|| provider["contextTokens"].as_u64());
+        .or_else(||provider["capabilities"]["contextTokens"].as_u64())
+        .or_else(||provider["contextTokens"].as_u64());
     let max_output_tokens = provider["capabilities"]["maxOutputTokens"]
         .as_u64()
         .or_else(|| provider["maxOutputTokens"].as_u64());
@@ -779,6 +781,23 @@ mod tests {
         assert!(compat.require_native_tools().is_err());
     }
 
+    #[test]
+    fn exact_model_context_and_native_tool_support_override_provider_defaults(){
+        let state=state();
+        state.store.put("provider",&json!({"id":"endpoint-test",
+            "baseUrl":"http://127.0.0.1:4444/v1","name":"local","model":"large",
+            "capabilities":{"contextTokens":65536},
+            "modelCapabilities":{
+                "small":{"contextTokens":4096,"toolCalling":false},
+                "large":{"contextTokens":32768,"toolCalling":true}
+            }})).unwrap();
+        let small=resolve(&state,"endpoint-test",Some("small")).unwrap();
+        let large=resolve(&state,"endpoint-test",None).unwrap();
+        assert_eq!(small.context_tokens,Some(4096));
+        assert_eq!(large.context_tokens,Some(32768));
+        assert!(small.capabilities.require_native_tools().is_err());
+        assert!(large.capabilities.require_native_tools().is_ok());
+    }
     #[test]
     fn provider_route_rejects_explicit_no_tool_model_before_generation() {
         let state=state();
