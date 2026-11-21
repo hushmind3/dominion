@@ -83,7 +83,22 @@ pub async fn run_cli(_args:&[String])->Result<(),String>{
             let lease=task.get("leaseId").and_then(Value::as_str).ok_or("Missing lease")?;
             let prompt=task.get("prompt").and_then(Value::as_str).ok_or("Missing prompt")?;
             let max_tokens=task.get("maxTokens").and_then(Value::as_u64).unwrap_or(2048);
-            let outcome=model_infer(&client,prompt,max_tokens).await;
+            // Keep the remote lease alive during a slow generation and
+            // observe owner cancellation without waiting for the model's
+            // entire HTTP timeout. Dropping the inference future aborts its
+            // outbound HTTP operation; no speculative retry is launched.
+            let inference=model_infer(&client,prompt,max_tokens);
+            tokio::pin!(inference);
+            let outcome=loop{
+                tokio::select!{
+                    result=&mut inference=>break result,
+                    _=tokio::time::sleep(Duration::from_secs(12))=>{
+                        gateway_post(&client,&base,&token,"v1/worker/heartbeat",
+                            &json!({"taskId":id,"leaseId":lease,"workerId":worker_id}))
+                            .await?;
+                    }
+                }
+            };
             let (status,answer,usage)=match outcome{
                 Ok((answer,usage))=>("completed",answer,usage),
                 Err(error)=>("needs_review",error,Value::Null)
