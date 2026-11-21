@@ -112,6 +112,9 @@ pub(crate) async fn http_fetch(url: &str) -> Result<Value, String> {
             current=public_http_url(next.as_str())?;
             continue;
         }
+        if response.content_length().is_some_and(|size|size>HTTP_FETCH_LIMIT as u64){
+            return Err("http_fetch 응답이 1 MiB 크기 제한을 초과했습니다.".into());
+        }
         let status=response.status().as_u16();
         let content_type=response.headers().get(reqwest::header::CONTENT_TYPE)
             .and_then(|value|value.to_str().ok()).unwrap_or("").to_string();
@@ -149,6 +152,9 @@ pub(crate) async fn web_search(query: &str) -> Result<Value, String> {
         .send()
         .await
         .map_err(|error| error.to_string())?;
+    if response.content_length().is_some_and(|size|size>HTTP_FETCH_LIMIT as u64){
+        return Err("web_search 응답이 1 MiB 크기 제한을 초과했습니다.".into());
+    }
     let mut response=response;
     let mut bytes=Vec::new();
     while let Some(chunk)=response.chunk().await.map_err(|error|error.to_string())? {
