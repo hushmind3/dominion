@@ -60,6 +60,9 @@ jobs:
         run: |
           cargo check --locked --bin dominion-worker
           cargo test --locked --bin dominion-rust api::remote_workers::tests
+          cargo test --locked --bin dominion-rust api::remote_registry::tests
+          cargo test --locked --bin dominion-rust api::remote_worker_route_tests
+          cargo test --locked --bin dominion-rust db::tests::remote_queue_uses_indexed_fifo
           cargo test --locked --bin dominion-rust addons::team_remote::tests
       - name: Versioned Chat/Room/SDK execution correlation (dev profile)
         run: cargo test --locked --bin dominion-rust events::tests
