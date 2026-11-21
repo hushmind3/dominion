@@ -124,6 +124,8 @@ pub mod remote_backup;
 pub mod vault_rotation;
 #[path = "operations/jobs.rs"]
 pub mod jobs;
+#[path = "operations/team_remote.rs"]
+pub mod team_remote;
 #[path = "operations/wake.rs"]
 pub mod wake;
 #[path = "operations/job_control.rs"]

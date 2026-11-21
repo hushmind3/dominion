@@ -650,6 +650,9 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
     let prompt = input["prompt"].as_str().unwrap_or("").to_string();
     if prompt.trim().is_empty() {return Err("작업 입력(prompt)이 비어 있습니다.".into());}
     if let Some(result) = job.pointer("/promptState/result") {return Ok(result.clone());}
+    if input["remoteWorker"]==true {
+        return crate::addons::team_remote::run(context,job).await;
+    }
     if job.pointer("/promptState/inFlight").and_then(Value::as_bool) == Some(true) {
         return Ok(json!({"status":"needs_review","reason":"중단된 프롬프트 작업 결과를 확인해야 합니다."}));
     }

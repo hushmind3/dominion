@@ -54,6 +54,7 @@ jobs:
         run: |
           cargo check --locked --bin dominion-worker
           cargo test --locked --bin dominion-rust api::remote_workers::tests
+          cargo test --locked --bin dominion-rust addons::team_remote::tests
       - name: Versioned Chat/Room/SDK execution correlation (dev profile)
         run: cargo test --locked --bin dominion-rust events::tests
       - name: Isolated agent-loop algorithm regressions (dev profile)

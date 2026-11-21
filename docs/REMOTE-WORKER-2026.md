@@ -58,3 +58,16 @@ not silently accepted. All decisions are journalled by the coordinator.
 This protocol provides useful remote SDK execution but does **not** ship
 workspace contents, add multi-host write transactions, or claim trusted
 cross-host verification. Workers use independent local workspaces.
+
+## Lead/Worker Team DAG remote research dispatch
+
+`team_start` accepts `allowRemoteWorkers:true` and explicit step
+`{"id":"research","profile":"general","remoteWorker":true,"prompt":"..."}`.
+The remote adapter uses the existing CAS-admitted prompt job, writes a durable
+replay fence, then enqueues one deterministic remote SDK ticket. A remote
+report is admitted into Team synthesis only after owner review and a
+provenance-checked assistant message; its evidence level is
+`remote_owner_reviewed`, never `verified_tool`. Dependent Team steps wait
+for that acceptance. Restarts, unknown effects and expired leases do not
+automatically rerun work. Implementation/verification stay local because a
+cross-device Git patch transfer and verifier proof is not implemented.

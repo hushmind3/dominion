@@ -6,7 +6,7 @@ use std::{collections::{HashMap,HashSet},time::{Duration,Instant}};
 
 #[derive(Clone)]
 struct Step{ id:String, agent:String, profile:String, prompt:String,
-    depends:Vec<String>, external:Option<String> }
+    depends:Vec<String>, external:Option<String>, remote:bool }
 
 fn agents(state:&AppState,session:&str)->Vec<Value>{
     let room=state.store.get("session",session).and_then(|s|
@@ -75,7 +75,14 @@ fn validate(plan:&Value,roster:&[Value])->Result<Vec<Step>,String>{
             profile!="inspection"||!matches!(id,"codex"|"claude"|"qwen"|"codex-app-server"|"qwen-acp")){
             return Err("외부 Agent는 격리된 inspection 역할에서만 실행합니다.".into());
         }
-        steps.push(Step{id:id.into(),agent,profile:profile.into(),prompt:prompt.into(),depends,external});
+        if item.get("remoteWorker").is_some_and(|v|!v.is_boolean()){
+            return Err("remoteWorker must be boolean".into());
+        }
+        let remote=item["remoteWorker"]==true;
+        if remote&&(profile!="general"||external.is_some()){
+            return Err("remote SDK worker supports general research only".into());
+        }
+        steps.push(Step{id:id.into(),agent,profile:profile.into(),prompt:prompt.into(),depends,external,remote});
     }
     for step in steps.iter().filter(|step|step.profile=="implementation"){
         if !steps.iter().any(|later|later.profile=="verification"
@@ -128,6 +135,14 @@ pub async fn start(ctx:&ToolContext<'_>,args:&Value,execution_id:&str)->Result<V
         else if args["steps"].is_null(){model_plan(ctx,goal,&pool,execution_id).await?}
         else{return Err("steps는 배열이어야 합니다.".into())};
     let plan=validate(&proposed,&pool)?;
+    if plan.iter().any(|s|s.remote){
+        if args["allowRemoteWorkers"]!=true{
+            return Err("remote worker dispatch requires allowRemoteWorkers=true".into());
+        }
+        if std::env::var("DOMINION_REMOTE_WORKER_TOKEN").ok().is_none_or(|s|s.len()<32){
+            return Err("configure remote worker token before Team dispatch".into());
+        }
+    }
     let team_id=format!("team:{}",uuid::Uuid::new_v4());
     let generations=ctx.state.cancellation_generation(ctx.session_id);
     let max_parallel=args["maxParallel"].as_u64().unwrap_or(3).clamp(1,4);
@@ -151,7 +166,7 @@ pub async fn start(ctx:&ToolContext<'_>,args:&Value,execution_id:&str)->Result<V
                 "delegationProfile":step.profile,
                 "readOnly":step.profile!="implementation",
                 "teamChildJobId":child_job,"teamJobId":team_id});
-            if step.profile!="general"{
+            if step.profile!="general"&&!step.remote{
                 let owned=crate::engine::delegation_worktree::prepare(
                     ctx.state,&workspace,&child_job).await?;
                 prepared.push(owned.clone());
@@ -170,6 +185,7 @@ pub async fn start(ctx:&ToolContext<'_>,args:&Value,execution_id:&str)->Result<V
                     "sessionId":session_id,"parentSessionId":ctx.session_id,
                     "parentGeneration":generations,"delegation":true,
                     "delegationProfile":step.profile,"externalRuntime":step.external,
+                    "remoteWorker":step.remote,
                     "dependsOnJobIds":depends,"teamJobId":team_id,
                     "teamStepId":step.id,"teamMaxParallel":max_parallel,
                     "toolsEnabled":ctx.tools_enabled,
@@ -185,7 +201,7 @@ pub async fn start(ctx:&ToolContext<'_>,args:&Value,execution_id:&str)->Result<V
         return Err(err);
     }
     let steps=plan.iter().map(|s|json!({"id":s.id,"agentId":s.agent,
-        "profile":s.profile,"dependsOn":s.depends,
+        "profile":s.profile,"dependsOn":s.depends,"remoteWorker":s.remote,
         "jobId":job_ids.get(&s.id)})).collect::<Vec<_>>();
     let ids=plan.iter().filter_map(|s|job_ids.get(&s.id)).cloned()
         .collect::<Vec<_>>();
@@ -217,7 +233,14 @@ fn verified_result(state:&AppState,job:&Value)->Result<Value,String>{
     let msg=state.store.message(id).ok_or("Worker 응답이 저장되지 않았습니다.")?;
     if msg["session_id"]!=session||msg["agent_id"]!=job["input"]["agentId"]
         ||msg["role"]!="assistant" {return Err("Worker 응답이 다른 실행에 속합니다.".into());}
-    let (execution,evidence)=if let Some(external)=job["result"]["externalRunId"].as_str(){
+    let (execution,evidence)=if let Some(remote)=job["result"]["remoteJobId"].as_str(){
+        if msg["metadata"]["remoteJobId"]!=remote ||
+            msg["metadata"]["verification"]!="remote_owner_reviewed"{
+            return Err("remote message provenance mismatched".into());
+        }
+        crate::addons::team_remote::evidence(state,job,remote)?;
+        (remote.to_string(),"remote_owner_reviewed")
+    }else if let Some(external)=job["result"]["externalRunId"].as_str(){
         let record=state.store.get("external_agent_run",external)
             .ok_or("외부 Worker 증거가 없습니다.")?;
         if record["status"]!="completed"||record["sessionId"]!=session
@@ -250,7 +273,10 @@ fn verified_result(state:&AppState,job:&Value)->Result<Value,String>{
     if output.is_empty(){return Err("Worker가 빈 응답을 제출했습니다.".into());}
     Ok(json!({"stepId":step,"jobId":job["id"],"agentId":job["input"]["agentId"],
         "profile":job["input"]["delegationProfile"],
-        "executionId":execution,"messageId":id,
+        "executionId":if evidence=="remote_owner_reviewed"{
+            Value::Null
+        }else{json!(execution)},
+        "remoteJobId":job["result"]["remoteJobId"],"messageId":id,
         "evidenceLevel":evidence,"patchSha256":job["delegationPatchSha256"],
         "answer":output.chars().take(1800).collect::<String>()}))
 }
@@ -270,7 +296,7 @@ pub fn dependency_evidence(state:&AppState,job:&Value)->Result<String,String>{
         let result=verified_result(state,&prior)?;
         let excerpt=result["answer"].as_str().unwrap_or("").chars().take(900)
             .collect::<String>();
-        notes.push(format!("Step {}, verified run {}, evidence type {}, frozen patch {}:\n{}",
+        notes.push(format!("Step {}, execution or receipt {}, evidence type {}, frozen patch {}:\n{}",
             result["stepId"].as_str().unwrap_or(""),
             result["executionId"].as_str().unwrap_or(""),
             result["evidenceLevel"].as_str().unwrap_or(""),
@@ -552,6 +578,11 @@ mod tests{
             {"id":"test","profile":"verification","prompt":"Run cargo test","agentId":"a","dependsOn":["change"]}
         ]});
         assert_eq!(validate(&plan,&roster).unwrap().len(),3);
+        let mut remote=plan.clone();
+        remote["steps"][0]["remoteWorker"]=json!(true);
+        assert!(validate(&remote,&roster).unwrap()[0].remote);
+        remote["steps"][1]["remoteWorker"]=json!(true);
+        assert!(validate(&remote,&roster).is_err());
         let mut cycle=plan.clone();cycle["steps"][0]["dependsOn"]=json!(["test"]);
         assert!(validate(&cycle,&roster).is_err());
         let mut fake=plan.clone();fake["steps"][0]["agentId"]=json!("intruder");
