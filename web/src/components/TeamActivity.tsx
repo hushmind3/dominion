@@ -10,11 +10,13 @@ type Worker={id:string;online:boolean;allowWrites:boolean;agentCount:number;agen
 type TeamTask={
  id:string;agentId?:string;status:string;readOnly:boolean;verified:boolean;
  dependsOn:string[];remoteWorkerId?:string;remoteTaskId?:string;
- artifactApplyStatus?:string;jobId?:string;error?:string
+ artifactApplyStatus?:string;jobId?:string;error?:string;
+ displayState?:string;pendingApproval?:boolean;workerOnline?:boolean;
+ waitingPredecessors?:boolean;artifactApprovalState?:string;artifactApplied?:boolean
 }
 type Team={
  id:string;status:string;leadSessionId?:string;leadAgentId?:string;
- verified:boolean;createdAt?:string;updatedAt?:string;
+ verified:boolean;createdAt?:string;updatedAt?:string;resumeAvailable?:boolean;
  pendingRemoteArtifactTaskIds:string[];tasks:TeamTask[]
 }
 type ActivityData={teams:Team[];remoteWorkers:Worker[];remoteConfigured?:boolean}
@@ -26,6 +28,13 @@ function goToLead(sessionId?:string){
  if(sessionId)window.location.hash='#/chat?session='+encodeURIComponent(sessionId)
 }
 const active=(status:string)=>status==='running'||status==='queued'||status==='launching'||status==='assigned'
+const taskStateLabel=(state:string,en:boolean)=>({
+ approval_pending:en?'Approval pending':'실행 승인 대기',
+ offline:en?'Worker offline':'Worker 오프라인',
+ waiting_predecessors:en?'Waiting for predecessors':'선행 작업 대기',
+ file_review_pending:en?'File review pending':'파일 검토·승인 대기',
+ applying_files:en?'Applying approved files':'승인된 파일 적용 중'
+} as Record<string,string>)[state]||state
 const artifactLabel=(status:string,en:boolean)=>({
  pending:en?'Awaiting approval':'승인 대기',applying:en?'Applying':'적용 중',
  applied:en?'Applied':'적용 완료',rejected:en?'Rejected':'거절됨',
@@ -127,7 +136,7 @@ export function TeamActivity(){
    await post(target(current.teamId,current.remoteTaskId)+(approve?'/apply':'/reject'),
     approve?{approved:true,reviewDigest:current.reviewDigest}:{rejected:true})
    setNotice(approve?
-    (en?'Changes applied and verified. Resume the team to continue.':'파일 변경 적용과 결과 검증을 마쳤습니다. 팀 재개를 눌러 이어서 실행하세요.'):
+    (en?'Approved files were applied and verified. The native scheduler continues eligible dependents.':'승인된 파일을 적용하고 해시 검증을 마쳤습니다. 실행 가능한 후속 Worker는 네이티브 스케줄러에서 이어집니다.'):
     (en?'Remote changes rejected; no local files were written.':'원격 변경을 거절했습니다. 로컬 파일은 수정하지 않았습니다.'))
    setReview(null);reload()
   }catch(e){setError((e as Error).message)}finally{setBusy('')}
@@ -179,7 +188,7 @@ export function TeamActivity(){
     <label className="text-[11px] font-semibold text-[#5C544A]">{en?'Execution device':'Worker 실행 장치'}
      <SelectInput className="mt-1" value={selectedRemote} onChange={e=>setRemoteId(e.target.value)}>
       <option value="">{en?'Local Rust workers':'이 PC의 Rust Worker'}</option>
-      {compatible.map(node=><option key={node.id} value={node.id}>{node.id} · {en?'remote':'원격'} ({workerIds.filter(id=>(node.agents||[]).includes(id)).length}/{workerIds.length})</option>)}
+      {compatible.map(node=><option key={node.id} value={node.id}>{node.id} · {node.allowWrites?(en?'Read / Write':'읽기·쓰기'):(en?'Read only':'읽기 전용')} ({workerIds.filter(id=>(node.agents||[]).includes(id)).length}/{workerIds.length})</option>)}
      </SelectInput>
     </label>
    </div>
@@ -223,10 +232,13 @@ export function TeamActivity(){
        <div className="space-y-2">
         {team.tasks.map(task=><div key={task.id} className="flex min-w-0 flex-wrap items-center gap-2 rounded-lg bg-[#FAF7F1] px-3 py-2 text-[11px]">
          <span className="min-w-0 flex-1"><strong className="block truncate text-[#3A342D]">{task.id} · {task.agentId||'Worker'}</strong>
-          <small className="text-[#8A8176]">{task.remoteWorkerId?'Remote · '+task.remoteWorkerId:(en?'Local':'로컬')}{task.dependsOn?.length?' · '+(en?'After ':'선행: ')+task.dependsOn.join(', '):''}</small>
+          <small className="text-[#8A8176]">{task.remoteWorkerId?(en?'Remote device: ':'원격 장치: ')+task.remoteWorkerId:(en?'Local · this PC':'로컬 · 이 PC')}{' · '}{task.readOnly?(en?'Read-only':'읽기 전용'):(en?'Writer · approval required':'Writer · 변경 승인 필요')}{task.dependsOn?.length?' · '+(en?'After ':'선행: ')+task.dependsOn.join(', '):''}</small>
          </span>
          {task.verified&&<CheckCircle2 size={14} className="text-emerald-600" aria-label={en?'Verified':'검증됨'}/>}
          <StatusPill status={task.status}/>
+         {task.displayState&&task.displayState!==task.status&&<span role="status" className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] text-amber-900">{taskStateLabel(task.displayState,en)}</span>}
+         {task.artifactApprovalState==='approved'&&<span className="rounded-md bg-sky-50 px-2 py-0.5 text-[10px] text-sky-800">{en?'File changes approved':'파일 변경 승인됨'}</span>}
+         {task.artifactApplied&&<span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-800">{en?'Local files applied and verified':'로컬 적용·해시 검증 완료'}</span>}
          {task.artifactApplyStatus&&task.artifactApplyStatus!=='not_required'&&<span className={'rounded-md px-2 py-0.5 text-[10px] '+(task.artifactApplyStatus==='applied'?'bg-emerald-50 text-emerald-700':'bg-amber-50 text-amber-800')}>{en?'Files: ':'산출물: '}{artifactLabel(task.artifactApplyStatus,en)}</span>}
          {task.remoteTaskId&&task.artifactApplyStatus==='pending'&&<Button size="sm" variant="secondary" disabled={Boolean(busy)} onClick={()=>void openReview(team.id,task.remoteTaskId!)}><GitMerge size={12}/>{en?'Review diff':'파일 변경 검토'}</Button>}
          {task.error&&<p className="w-full break-words text-rose-600">{task.error}</p>}
@@ -247,7 +259,7 @@ export function TeamActivity(){
        </div>}
        <div className="mt-3 flex flex-wrap gap-2">
         {team.leadSessionId&&<Button size="sm" variant="ghost" onClick={()=>goToLead(team.leadSessionId)}>{en?'Lead conversation':'Lead 대화'} <ChevronRight size={13}/></Button>}
-        {team.status==='running'&&<Button size="sm" variant="secondary" disabled={Boolean(busy)} onClick={()=>void control(team,'resume')}><RotateCcw size={13}/>{en?'Resume':'작업 재개'}</Button>}
+        {team.status==='running'&&<Button size="sm" variant="secondary" disabled={Boolean(busy)||team.resumeAvailable===false} onClick={()=>void control(team,'resume')} title={team.resumeAvailable===false?(en?'Approval, offline Worker or file review blocks manual continuation':'승인 대기·장치 오프라인·파일 검토가 끝나야 재개할 수 있습니다.'):undefined}><RotateCcw size={13}/>{en?'Resume':'작업 재개'}</Button>}
         {team.status==='running'&&<Button size="sm" variant="danger" disabled={Boolean(busy)} onClick={()=>void control(team,'stop')}><Square size={13}/>{en?'Stop team':'팀 중단'}</Button>}
        </div>
       </div>}
@@ -305,7 +317,7 @@ export function TeamRunStrip({sessionId,active:visible,onDraft}:{
   <UsersRound size={14} className="shrink-0 text-[#7C7469]"/>
   <span className="min-w-0 flex-1 text-[#5C544A]"><strong>{en?'Team':'팀'} {team.id.slice(-7)}</strong> · {done}/{team.tasks.length}{pending>0&&<span className="ml-1 font-semibold text-amber-800">{en?'File review pending':'파일 검토 대기'} {pending}</span>}</span>
   <StatusPill status={team.status}/>
-  <Button size="sm" variant="ghost" disabled={busy} onClick={()=>void action()}>{pending?(en?'Review files':'파일 검토'):(en?'Resume':'이어가기')}<ChevronRight size={13}/></Button>
+  <Button size="sm" variant="ghost" disabled={busy||(!pending&&team.status==='running'&&team.resumeAvailable===false)} onClick={()=>void action()}>{pending?(en?'Review files':'파일 검토'):(en?'Resume':'이어가기')}<ChevronRight size={13}/></Button>
   {error&&<p className="w-full text-rose-600">{error}</p>}
  </div>
 }
