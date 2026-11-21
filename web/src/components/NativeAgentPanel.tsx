@@ -20,6 +20,19 @@ type SdkRun = {
    entries:{path:string;state:string;bytes?:number|null;sha256?:string|null}[]} | null;
  } | null
 }
+// Keep unsent task details across a refresh within this tab only. Neither
+// submitted instructions nor model receipts are copied into browser storage.
+const instructionDraftKey='dominion.native.unsentInstruction'
+const verificationDraftKey='dominion.native.unsentVerification'
+const readDraft=(key:string):string=>{
+ try{return window.sessionStorage.getItem(key)||''}catch{return ''}
+}
+const saveDraft=(key:string,value:string):void=>{
+ try{
+  if(value)window.sessionStorage.setItem(key,value)
+  else window.sessionStorage.removeItem(key)
+ }catch{}
+}
 const running = new Set(['queued', 'running'])
 // Refusing a tool call is not the same as stopping its entire task.
 const cancellable = new Set(['queued', 'running', 'awaiting_approval'])
@@ -36,9 +49,11 @@ const stateNames:Record<string,[string,string]>={
 export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const locale=useLocale()
  const en=locale==='en'
- const [instruction,setInstruction]=useState('')
+ const [instruction,setInstruction]=useState(()=>readDraft(instructionDraftKey))
  const [providerId,setProviderId]=useState('')
- const [verification,setVerification]=useState('')
+ const [verification,setVerification]=useState(()=>readDraft(verificationDraftKey))
+ const editInstruction=(value:string)=>{setInstruction(value);saveDraft(instructionDraftKey,value)}
+ const editVerification=(value:string)=>{setVerification(value);saveDraft(verificationDraftKey,value)}
  const [algorithmId,setAlgorithmId]=useState<'standard-v1'|'focused-v1'>('standard-v1')
  const [maxRounds,setMaxRounds]=useState(24)
  const [steering,setSteering]=useState('')
@@ -129,6 +144,10 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    selectRun(created)
    setRuns(rows=>[created,...rows.filter(row=>row.id!==created.id)].slice(0,30))
    setSteering('')
+   // A successful enqueue owns the instructions; a failed network request
+   // must leave both unsent drafts intact for an owner retry.
+   editInstruction('')
+   editVerification('')
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
@@ -225,7 +244,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   </div>
   <div className="grid gap-3 p-4">
    <label className="text-[12px] font-semibold" htmlFor="sdk-goal">{en?'What would you like done?':'무엇을 해드릴까요?'}</label>
-   <textarea id="sdk-goal" value={instruction} onChange={e=>setInstruction(e.target.value)}
+   <textarea id="sdk-goal" value={instruction} onChange={e=>editInstruction(e.target.value)}
     rows={3} maxLength={64000}
     placeholder={en?'Describe a task, such as inspecting a project or fixing an issue.':'프로젝트를 분석하거나 문제를 해결하는 등 필요한 작업을 적어주세요.'}
     className="w-full resize-y rounded-xl border border-[#E7E0D5] bg-[#FCFBF9] p-3 text-[12px] outline-none focus:border-[#A36A4A]"/>
@@ -264,7 +283,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     <label className="mt-2 block" htmlFor="sdk-verify">
      {en?'Verification command (runs after the agent finishes)':'검증 명령어 (작업 결과를 확인할 때 실행)'}
     </label>
-    <input id="sdk-verify" value={verification} onChange={e=>setVerification(e.target.value)}
+    <input id="sdk-verify" value={verification} onChange={e=>editVerification(e.target.value)}
      maxLength={2048} placeholder="cargo test"
      className="mt-1 min-h-11 w-full rounded-lg border border-[#E7E0D5] px-3 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2"/>
    </details>

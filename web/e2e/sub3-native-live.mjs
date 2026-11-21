@@ -115,7 +115,20 @@ try {
   // Use the real hash route so this exercises the mounted React component.
   await page.goto(`${base}/#/home`,{waitUntil:'domcontentloaded'})
   await page.locator('#sdk-goal').waitFor()
+  // Unsent instructions and verification should survive an unexpected refresh,
+  // without creating a job or leaving the submitted text in storage.
+  await page.locator('#sdk-goal').fill('작성 중인 Native 작업 지시')
+  await page.locator('#sdk-verify').evaluate(el=>{el.closest('details').open=true})
+  await page.locator('#sdk-verify').fill('cargo test --locked')
+  await page.reload({waitUntil:'domcontentloaded'})
+  await page.locator('#sdk-goal').waitFor()
+  assert.equal(await page.locator('#sdk-goal').inputValue(),'작성 중인 Native 작업 지시')
+  assert.equal(await page.locator('#sdk-verify').inputValue(),'cargo test --locked')
+  assert.equal((await httpJson(`${base}/api/sdk/runs`)).length,0,
+    'Reloading an unsent draft must not enqueue a task')
   await page.locator('#sdk-goal').fill('한 문장으로 일반 개념을 설명해 주세요.')
+  await page.locator('#sdk-verify').evaluate(el=>{el.closest('details').open=true})
+  await page.locator('#sdk-verify').fill('')
   await page.getByRole('button',{name:/작업 시작|Start task/}).click()
   const first=await poll('Native text answer',async()=>{
     const jobs=await httpJson(`${base}/api/sdk/runs`)
@@ -125,6 +138,10 @@ try {
     return {done:run?.status==='completed',value:run}
   })
   assert.equal(first.phase,'succeeded')
+  assert.equal(await page.locator('#sdk-goal').inputValue(),'',
+    'A submitted task must no longer remain as an unsent draft')
+  assert.equal(await page.evaluate(()=>sessionStorage.getItem('dominion.native.unsentInstruction')),null)
+  assert.equal(await page.evaluate(()=>sessionStorage.getItem('dominion.native.unsentVerification')),null)
   const durable=await httpJson(`${base}/api/jobs/${first.id}`)
   assert.ok((durable.nativeState?.decisionTape||[]).length>0,
     'The native model decision must survive in the SQLite job checkpoint')
