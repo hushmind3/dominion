@@ -14,6 +14,7 @@ on:
       - '.github/workflows/ci.yml'
       - 'web/**'
       - 'src-tauri/**'
+      - 'packages/sdk-typescript/**'
       - 'scripts/**'
       - 'tests/**'
   pull_request:
@@ -27,6 +28,7 @@ on:
       - '.github/workflows/ci.yml'
       - 'web/**'
       - 'src-tauri/**'
+      - 'packages/sdk-typescript/**'
       - 'scripts/**'
       - 'tests/**'
 
@@ -254,3 +256,16 @@ jobs:
           node --experimental-strip-types --test web/tests/connections-ui.test.mjs
           npm run typecheck --prefix web
           npm run build --prefix web
+
+  typescript-agent-sdk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Shared Run/Event SDK typecheck and reconnect contracts
+        run: |
+          npm install --prefix packages/sdk-typescript --no-audit --no-fund
+          npm test --prefix packages/sdk-typescript

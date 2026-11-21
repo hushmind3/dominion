@@ -61,3 +61,31 @@ Pass an optional `idempotencyKey` when creating a native SDK run through `POST /
 SDK completion status and manual effect reconciliation now read only the matching session's latest native execution and exact child frames. API request/response contracts remain unchanged; evidence lookup errors surface instead of silently accepting an unverified result.
 
 If a native run reports `status: "needs_review"` and `failureClass: "completion_evidence_unavailable"`, `POST /api/sdk/runs/:id/resume` rechecks only persisted completion evidence without replaying LLM or tools. It returns HTTP 409 when the completed execution is missing or has unresolved side effects.
+
+## Durable Run/Event contract
+
+A frontend or external integrator can page native run events in global SQLite
+journal order. SDK facades and native execution IDs are different namespaces.
+`getRunEvents(sdkRunId)` resolves the actual `runRef.executionId` instead
+of guessing from the SDK run ID.
+
+```ts
+const page = await agent.getRunEvents(run.id, {after: 0, limit: 100})
+for (const event of page.events) {
+  // Persist the global event.seq cursor only after processing each event.
+  console.log(event.seq, event.runRef.executionId, event.type)
+}
+const next = await agent.getExecutionEvents(page.executionId, {
+  after: page.nextAfter, limit: 100,
+})
+```
+
+`historyTruncated` indicates an actual retention gap; in that case retrieve
+the authoritative execution state before continuing. Room speaker delivery,
+Lead/Worker outcomes and external read-only agent receipts share the same event
+journal while keeping their different execution identities and permissions.
+For external agents, an `externalRunId` is **not** a native tool receipt.
+
+`npm test` compiles the client and exercises run cursors, SDK facade lookup,
+explicit 409 for unadmitted runs, approval boundaries and verified-success
+gating. The development GitHub workflow runs this package independently.

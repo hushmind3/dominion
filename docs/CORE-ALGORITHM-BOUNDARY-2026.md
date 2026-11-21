@@ -32,7 +32,7 @@ It describes decisions, not their implementations:
 | `tool_discovery` | Discovery strategy | Preserves read-only and approval checks |
 | `discovery_overridden` | Strategy telemetry | No tool authority changes |
 | `decompose` | Acceptance-lineage DAG strategy | Still verifies actual tool evidence |
-| `planning_policy`, `needs_plan` | Optional planning algorithm | Runs ordinary model/tool loop |
+| `planning_policy`, `needs_plan`, `planning_decision` | Optional planning algorithm | Versioned typed `PlanningDecision`; native Harness still runs model/tool loop |
 | `harness_plan` | Optional procedure strategy | Tools still enter the shared effect gate |
 
 The product host assembles the port through
