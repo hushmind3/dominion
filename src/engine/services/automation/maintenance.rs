@@ -56,13 +56,32 @@ fn offsite_directory() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// Creates an encrypted snapshot. The plaintext SQLite file exists only as a
-/// short-lived temp during VACUUM INTO and is removed before returning.
+/// Drop every plaintext VACUUM INTO result, including paths that fail
+/// key-ring loading, encryption, offsite copy or final disk writes.
+struct PlaintextSnapshot(std::path::PathBuf);
+impl Drop for PlaintextSnapshot {
+    fn drop(&mut self) {
+        let _=std::fs::remove_file(&self.0);
+    }
+}
+
+/// Creates an encrypted snapshot. Plaintext SQLite is always staged inside a
+/// private owner-only directory and removed on every success/error path.
 pub fn create_snapshot(state: &AppState) -> Result<PathBuf, String> {
     let directory = state.config.data_dir.join("backups");
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
-    let temp = directory.join(format!(".backup-{}.tmp", uuid::Uuid::new_v4()));
+    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S-%3f");
+    // SQLite's VACUUM INTO demands a nonexistent destination, so enforce
+    // owner-only access on its PARENT before creating any plaintext bytes.
+    let private=directory.join(".plaintext-staging");
+    std::fs::create_dir_all(&private).map_err(|e|e.to_string())?;
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&private,
+            std::fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;
+    }
+    let temp = private.join(format!("snapshot-{}.sqlite", uuid::Uuid::new_v4()));
+    let _cleanup=PlaintextSnapshot(temp.clone());
     state.store.backup_to(&temp)?;
     let bytes = std::fs::read(&temp).map_err(|error| error.to_string())?;
     let ring = crate::engine::backup_keys::KeyRing::load_or_create(&state.config.data_dir)?;
@@ -72,9 +91,11 @@ pub fn create_snapshot(state: &AppState) -> Result<PathBuf, String> {
     container.extend_from_slice(&state.vault.primary_key());
     container.extend_from_slice(&bytes);
     let sealed = ring.encrypt(&container)?;
-    let path = directory.join(format!("dominion-{stamp}.sqlite.enc"));
+    let path = directory.join(format!(
+        "dominion-{stamp}-{}.sqlite.enc",uuid::Uuid::new_v4().simple()
+    ));
     std::fs::write(&path, &sealed).map_err(|error| error.to_string())?;
-    let _ = std::fs::remove_file(&temp);
+    // _cleanup is kept alive through all subsequent fallible operations.
     if let Some(offsite) = offsite_directory() {
         std::fs::create_dir_all(&offsite).map_err(|error| error.to_string())?;
         std::fs::copy(&path, offsite.join(path.file_name().unwrap_or_default()))
