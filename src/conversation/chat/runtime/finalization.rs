@@ -436,8 +436,13 @@ pub(crate) fn finalize_execution(
     };
     let counters = metrics.lock().unwrap();
     record["iterations"] = json!(counters.iterations);
-    record["tokens"] = json!(counters.tokens);
-    record["modelCalls"] = json!(counters.model_calls);
+    // Provider usage may have reached the kernel journal before the HTTP
+    // adapter was cancelled. The public run totals must never underreport
+    // that already persisted amount.
+    record["tokens"]=json!(counters.tokens.max(
+        record["kernelState"]["chargedTokens"].as_u64().unwrap_or(0)));
+    record["modelCalls"]=json!(u64::from(counters.model_calls).max(
+        record["kernelState"]["modelCalls"].as_u64().unwrap_or(0)));
     record["toolCalls"] = json!(counters.tool_calls);
     record["firstTokenMs"] = json!(counters.first_token_ms);
     record["modelElapsedMs"] = json!(counters.model_elapsed_ms);
