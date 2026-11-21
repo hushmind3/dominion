@@ -23,7 +23,8 @@ jobs:
           node-version: '24'
       - run: node scripts/check-runtime-architecture.mjs
       - run: node --check web/e2e/sub3-native-live.mjs
-      - run: node --test sdk/typescript/tests/sdk.test.mjs
+      - run: npm install --prefix sdk/typescript --no-package-lock --ignore-scripts --no-audit
+      - run: npm test --prefix sdk/typescript
 
   rust:
     name: Rust all-target compile and SDK regressions
