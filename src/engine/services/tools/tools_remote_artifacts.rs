@@ -86,7 +86,51 @@ fn build_patch(workspace:&Path,record:&Value)->Result<String,String>{
     if patch.len()>512*1024 {return Err("Remote changes exceed native patch limits".into());}
     Ok(patch)
 }
+pub(super) fn preview(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
+    let team_id=args["teamId"].as_str().ok_or("teamId required")?;
+    let task_id=args["remoteTaskId"].as_str().ok_or("remoteTaskId required")?;
+    let team=ctx.store.get("managed_team",team_id).ok_or("Team not found")?;
+    if team["leadSessionId"]!=ctx.session_id{return Err("Lead session mismatch".into());}
+    let source=ctx.store.get("remote_task",task_id).ok_or("Remote task not found")?;
+    if source["teamId"]!=team_id || source["status"]!="completed"
+        || source["readOnly"]!=false || source["artifactApplyStatus"]!="pending"{
+        return Err("Remote Writer result is not awaiting approval".into());
+    }
+    let patch=build_patch(ctx.workspace,&source)?;
+    let files=source["artifacts"].as_array().ok_or("Missing remote files")?
+        .iter().map(|item|json!({"path":item["path"],"sha256":item["sha256"]}))
+        .collect::<Vec<_>>();
+    Ok(json!({"teamId":team_id,"remoteTaskId":task_id,"files":files,
+        "reviewDigest":crate::remote::digest(patch.as_bytes()),
+        "patch":patch,"status":"pending"}))
+}
+pub(super) fn reject(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
+    let team_id=args["teamId"].as_str().ok_or("teamId required")?;
+    let task_id=args["remoteTaskId"].as_str().ok_or("remoteTaskId required")?;
+    let team=ctx.store.get("managed_team",team_id).ok_or("Team not found")?;
+    if team["leadSessionId"]!=ctx.session_id{return Err("Lead session mismatch".into());}
+    let task=ctx.store.get("remote_task",task_id).ok_or("Remote task not found")?;
+    if task["teamId"]!=team_id || task["status"]!="completed" || task["readOnly"]!=false{
+        return Err("Remote Writer receipt missing or ineligible".into());
+    }
+    let saved=ctx.store.patch_if("remote_task",task_id,"artifactApplyStatus",
+        &json!("pending"),&json!({"artifactApplyStatus":"rejected",
+            "artifactRejectedAt":chrono::Utc::now().to_rfc3339()}))
+        .ok_or("Remote changes were already processed; inspect current status")?;
+    crate::remote::publish_task(ctx.state,&saved);
+    Ok(json!({"remoteTaskId":task_id,"teamId":team_id,"status":"rejected"}))
+}
 pub(super) async fn apply(ctx:&ToolContext<'_>,args:&Value,run_id:&str)->Result<Value,String>{
+    apply_with_digest(ctx,args,run_id,None).await
+}
+pub(super) async fn apply_reviewed(
+    ctx:&ToolContext<'_>,args:&Value,run_id:&str,review_digest:&str,
+)->Result<Value,String>{
+    apply_with_digest(ctx,args,run_id,Some(review_digest)).await
+}
+async fn apply_with_digest(
+    ctx:&ToolContext<'_>,args:&Value,run_id:&str,expected_digest:Option<&str>,
+)->Result<Value,String>{
     let team_id=args["teamId"].as_str().filter(|s|!s.is_empty()).ok_or("teamId required")?;
     let task_id=args["remoteTaskId"].as_str().filter(|s|!s.is_empty())
         .ok_or("remoteTaskId required")?;
@@ -106,6 +150,9 @@ pub(super) async fn apply(ctx:&ToolContext<'_>,args:&Value,run_id:&str)->Result<
         return Err("Artifact application is uncertain or was already claimed; review is required".into());
     }
     let changes=build_patch(ctx.workspace,&source)?;
+    if expected_digest.is_some_and(|digest|crate::remote::digest(changes.as_bytes())!=digest){
+        return Err("Reviewed file diff changed since approval; inspect again".into());
+    }
     // Freeze one coordinator workspace ownership transition before the
     // first possible native file effect. A crashed process will not replay.
     let claimed=ctx.store.patch_if("remote_task",task_id,

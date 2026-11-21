@@ -30,6 +30,29 @@ pub struct ToolContext<'a> {
     pub tools_execution_enabled: bool,
 }
 
+/// Owner UI review uses the same native artifact and writer contracts as the
+/// model tool, rather than creating a second patch implementation.
+pub fn review_remote_artifacts(ctx:&ToolContext<'_>,team_id:&str,task_id:&str)->Result<Value,String>{
+    remote_artifacts::preview(ctx,&json!({"teamId":team_id,"remoteTaskId":task_id}))
+}
+pub fn reject_remote_artifacts(ctx:&ToolContext<'_>,team_id:&str,task_id:&str)->Result<Value,String>{
+    remote_artifacts::reject(ctx,&json!({"teamId":team_id,"remoteTaskId":task_id}))
+}
+pub async fn apply_operator_reviewed_remote(
+    ctx:&ToolContext<'_>,team_id:&str,task_id:&str,review_digest:&str,
+)->Result<Value,String>{
+    if review_digest.len()!=64 || !review_digest.bytes().all(|c|c.is_ascii_hexdigit()){
+        return Err("Reviewed SHA-256 digest required".into());
+    }
+    let args=json!({"teamId":team_id,"remoteTaskId":task_id});
+    // Same native exclusive writer lock and SQLite lease as the agent tool.
+    let _guard=crate::engine::resource_lock::acquire(ctx.workspace,"team_remote_apply",&args).await;
+    let _lease=crate::engine::resource_lock::acquire_durable(
+        ctx.state,ctx.workspace,"team_remote_apply",&args,ctx.session_id).await?;
+    let run_id=format!("operator-apply-{}",uuid::Uuid::new_v4());
+    remote_artifacts::apply_reviewed(ctx,&args,&run_id,review_digest).await
+}
+
 /// OpenAI-style tool definitions handed to the model.
 pub fn definitions() -> Vec<Value> {
     let object = |properties: Value, required: Vec<&str>| {

@@ -94,6 +94,10 @@ fn valid_id(id:&str)->bool{
     !id.is_empty() && id.len()<=80 &&
         id.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'||b==b'-')
 }
+pub fn control_plane_configured()->bool{
+    configured_token().is_some() && std::env::var("DOMINION_REMOTE_LISTEN")
+        .ok().is_some_and(|value|!value.trim().is_empty())
+}
 fn configured_token()->Option<String>{
     std::env::var("DOMINION_REMOTE_CLUSTER_TOKEN").ok()
         .filter(|value|value.len()>=32 && value.len()<=512)
