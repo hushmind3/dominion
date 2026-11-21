@@ -56,9 +56,20 @@ pub fn apply(state: &AppState, execution_id: &str, event: &str) -> Option<Value>
     if next == current {
         return Some(execution);
     }
-    execution["phase"] = json!(next);
-    execution["phaseUpdatedAt"] = json!(chrono::Utc::now().to_rfc3339());
-    let saved = state.store.put("execution", &execution)?;
+    let expected_status=execution["status"].clone();
+    let expected_phase=execution["phase"].clone();
+    let patch=json!({"phase":next,
+        "phaseUpdatedAt":chrono::Utc::now().to_rfc3339()});
+    let Some(saved)=state.store.patch_if_all(
+        "execution",execution_id,
+        &[("status",&expected_status),("phase",&expected_phase)],&patch)
+    else{
+        // Another worker/cancellation changed the authoritative record.
+        // Return the latest state without re-emitting a stale transition.
+        state.store.audit("run.phase_race",
+            json!({"executionId":execution_id,"oldPhase":current,"event":event}));
+        return state.store.get("execution",execution_id);
+    };
     state.bus.record("execution", &saved);
     Some(saved)
 }

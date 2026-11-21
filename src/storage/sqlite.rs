@@ -771,20 +771,35 @@ impl Store {
         expected: &Value,
         patch: &Value,
     ) -> Option<Value> {
+        self.patch_if_all(kind,id,&[(field,expected)],patch)
+    }
+
+    /// Multi-field compare-and-patch under one IMMEDIATE transaction.
+    /// Lifecycle reducers must compare both durable status and phase;
+    /// a concurrent cancellation or different worker's phase transition
+    /// must not be reverted by a stale full-record write.
+    pub fn patch_if_all(
+        &self,kind:&str,id:&str,expected:&[(&str,&Value)],patch:&Value
+    )->Option<Value>{
         let changes=patch.as_object()?;
+        if changes.contains_key("id") || expected.is_empty() ||
+            expected.iter().any(|(field,_)|field.is_empty()||*field=="id") {
+            return None;
+        }
         let mut conn=self.conn.lock().ok()?;
         let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).ok()?;
         let mut record=tx.query_row(
             "SELECT data,id,created_at,updated_at FROM records WHERE kind=?1 AND id=?2",
             params![kind,id],record_from_row,
         ).ok()?;
-        if record.get(field).unwrap_or(&Value::Null)!=expected{return None;}
-        for (key,value) in changes {
-            if key!="id"{record[key]=value.clone();}
+        if expected.iter().any(|(field,value)|
+            record.get(*field).unwrap_or(&Value::Null)!=*value){
+            return None;
         }
+        for (key,value) in changes {record[key]=value.clone();}
         tx.execute(
             "UPDATE records SET data=?3,updated_at=datetime('now') WHERE kind=?1 AND id=?2",
-            params![kind,id,record.to_string()],
+            params![kind,id,record.to_string()]
         ).ok()?;
         tx.commit().ok()?;
         Some(record)
@@ -2518,6 +2533,31 @@ mod tests {
         assert_eq!(again.room_events("room:b",0,150).unwrap().len(),100);
         drop(again);
         let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn dual_field_cas_rejects_stale_phase_and_completed_run_revival(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.put("execution",&json!({
+            "id":"race","status":"running","phase":"running",
+            "providerUsage":{"realTokens":42}
+        })).unwrap();
+        let running=json!("running");
+        let waiting=json!("waiting_approval");
+        let updated=store.patch_if_all("execution","race",
+            &[("status",&running),("phase",&running)],
+            &json!({"phase":"waiting_approval"})).unwrap();
+        assert_eq!(updated["phase"],waiting);
+        assert_eq!(updated["providerUsage"]["realTokens"],42);
+        assert!(store.patch_if_all("execution","race",
+            &[("status",&running),("phase",&running)],
+            &json!({"phase":"finalizing"})).is_none());
+        store.patch_if("execution","race","status",&running,
+            &json!({"status":"cancelled"})).unwrap();
+        assert!(store.patch_if_all("execution","race",
+            &[("status",&running),("phase",&waiting)],
+            &json!({"phase":"running"})).is_none());
+        assert_eq!(store.get("execution","race").unwrap()["status"],"cancelled");
     }
 
     #[test]
