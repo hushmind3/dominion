@@ -1,7 +1,7 @@
 //! Compatibility API for the frontend pinned to main commit 879dc23d.
 //! Delegates to the existing Rust jobs and approval engines: no second harness.
 use crate::state::AppState;
-use axum::{body::to_bytes,extract::{Path,State},http::StatusCode,response::{IntoResponse,Response},Json};
+use axum::{body::to_bytes,extract::{Path,Query,State},http::StatusCode,response::{IntoResponse,Response},Json};
 use serde_json::{json,Value};
 use super::{approvals,jobs,response::error};
 use crate::engine::gateway;
@@ -59,6 +59,13 @@ fn pending(state:&AppState,job:&Value)->Option<Value>{
         a["id"].as_str().is_some_and(|approval|
             state.approvals.lock().unwrap().contains_key(approval)))
 }
+/// One owner-facing projection for both the bounded run snapshot and
+/// explicitly requested historical pages; raw event journal is never changed.
+fn project_run_event(event:&Value)->Value{
+    json!({"kind":event["kind"].as_str().or_else(||event["type"].as_str())
+        .unwrap_or("event"),"detail":event})
+}
+
 /// Only offer the two manual-observation buttons for a *single* uncertain
 /// tool. A paid model outcome or generic verification failure is not a tool
 /// effect the owner can safely reconcile.
@@ -121,10 +128,7 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
     let events_omitted=event_rows.map(|rows|rows.len().saturating_sub(60))
         .unwrap_or(0);
     let mut events=event_rows.map(|rows|rows.iter().skip(events_omitted)
-        .map(|event|json!({
-            "kind":event["kind"].as_str().or_else(||event["type"].as_str())
-                .unwrap_or("event"),"detail":event
-        })).collect::<Vec<_>>()).unwrap_or_default();
+        .map(project_run_event).collect::<Vec<_>>()).unwrap_or_default();
     if events.is_empty() {
         // The kernel already persisted these receipts and in-flight intents
         // while running. Project their *real* progress, not synthetic timers.
@@ -242,6 +246,36 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
         }
     })
 }
+#[derive(serde::Deserialize)]
+pub struct EventPageQuery{
+    before:Option<usize>,
+    limit:Option<usize>,
+}
+
+/// A bounded, explicit history page for an owner-scoped Native panel run.
+/// The existing /api/sdk/runs list and detail stay O(60) in event payload,
+/// while old receipts are recoverable without re-running any model or tool.
+pub async fn events(
+    State(state):State<AppState>,Path(id):Path<String>,Query(page):Query<EventPageQuery>
+)->Response{
+    let Some(job)=prompt_job(&state,&id) else {
+        return error(StatusCode::NOT_FOUND,"자동 작업 기록을 찾지 못했습니다.");
+    };
+    let rows=job["events"].as_array();
+    let total=rows.map(Vec::len).unwrap_or(0);
+    let end=page.before.unwrap_or(total);
+    let limit=page.limit.unwrap_or(40);
+    if end>total || limit==0 || limit>40 {
+        return error(StatusCode::BAD_REQUEST,
+            "이전 기록 페이지의 커서 또는 요청 개수가 유효하지 않습니다.");
+    }
+    let start=end.saturating_sub(limit);
+    let events=rows.map(|items|items[start..end].iter()
+        .map(project_run_event).collect::<Vec<_>>()).unwrap_or_default();
+    Json(json!({"events":events,"total":total,"from":start,"to":end,
+        "nextBefore":if start==0 {Value::Null}else{json!(start)}})).into_response()
+}
+
 /// Reopen only a settled, host-witnessed UTF-8 artifact. The sealed digest
 /// ties the content to the run's original workspace and final file bytes.
 /// No arbitrary workspace browse, stale-file view or tool output exposure.
@@ -919,6 +953,38 @@ mod tests{
             Json(json!({"callId":"deny-call"}))).await.status(),StatusCode::CONFLICT);
         crate::test_support::cleanup_dir(root);
     }
+    #[tokio::test]
+    async fn owner_can_page_native_run_events_without_cross_menu_access(){
+        let (state,root)=temporary_state();
+        let rows=(0..92).map(|i|json!({"kind":"test_step","seq":i}))
+            .collect::<Vec<_>>();
+        state.store.put("job",&json!({"id":"own-history","kind":"prompt",
+            "status":"completed","input":{"prompt":"long task",
+                "clientSurface":"native_agent_panel"},"events":rows})).unwrap();
+        state.store.put("job",&json!({"id":"other-menu","kind":"prompt",
+            "status":"completed","input":{"clientSurface":"chat"},
+            "events":[{"kind":"private","seq":0}]})).unwrap();
+        let page=events(State(state.clone()),Path("own-history".into()),
+            Query(EventPageQuery{before:Some(52),limit:Some(40)})).await;
+        assert_eq!(page.status(),StatusCode::OK);
+        let json:Value=serde_json::from_slice(&to_bytes(page.into_body(),
+            1024*1024).await.unwrap()).unwrap();
+        assert_eq!(json["events"].as_array().unwrap().len(),40);
+        assert_eq!(json["events"][0]["detail"]["seq"],12);
+        assert_eq!(json["events"][39]["detail"]["seq"],51);
+        assert_eq!(json["total"],92);
+        assert_eq!(json["from"],12);
+        assert_eq!(json["to"],52);
+        assert_eq!(json["nextBefore"],12);
+        assert_eq!(events(State(state.clone()),Path("own-history".into()),
+            Query(EventPageQuery{before:Some(100),limit:Some(40)}))
+            .await.status(),StatusCode::BAD_REQUEST);
+        assert_eq!(events(State(state.clone()),Path("other-menu".into()),
+            Query(EventPageQuery{before:None,limit:None}))
+            .await.status(),StatusCode::NOT_FOUND);
+        let _=std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn native_run_history_projects_only_latest_events_without_losing_counts(){
         let (state,root)=temporary_state();
