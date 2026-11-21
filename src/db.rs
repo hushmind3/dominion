@@ -1293,6 +1293,46 @@ impl Store {
         Ok(Some(result))
     }
 
+    /// Room chat replays only the newest *eligible* participant history.
+    /// Filtering the durable store after reading every message redecodes
+    /// obsolete bot-owned user prompts and multi-megabyte tool bodies on every
+    /// speaker turn. SQLite applies the same owner-provenance predicate before
+    /// the bounded DESC index walk and respects a valid compaction cursor.
+    pub fn try_recent_room_messages(
+        &self, session_id:&str, limit:usize, checkpoint_id:Option<&str>
+    )->Result<(Vec<Value>,bool),String>{
+        let conn=self.conn.lock().unwrap();
+        let checkpoint_row=if let Some(id)=checkpoint_id {
+            conn.query_row(
+                "SELECT rowid FROM messages WHERE session_id=?1 AND id=?2 LIMIT 1",
+                rusqlite::params![session_id,id],
+                |row|row.get::<_,i64>(0)
+            ).optional().map_err(|error|error.to_string())?
+        }else{None};
+        let floor=checkpoint_row.unwrap_or(0);
+        let mut stmt=conn.prepare(
+            "SELECT id,session_id,role,content,reasoning,agent_id,tool_calls,
+                    tool_call_id,created_at,metadata
+             FROM messages WHERE session_id=?1 AND rowid>?2
+               AND (NOT json_valid(metadata) OR
+                    COALESCE(json_extract(metadata,'$.kind'),'')!='learning_report')
+               AND (role!='user' OR (
+                    agent_id IS NULL AND
+                    CASE WHEN json_valid(metadata)
+                      THEN json_extract(metadata,'$.authorKind')
+                      ELSE NULL END='owner'))
+             ORDER BY created_at DESC,rowid DESC LIMIT ?3"
+        ).map_err(|error|error.to_string())?;
+        let rows=stmt.query_map(
+            rusqlite::params![session_id,floor,limit.clamp(1,256) as i64],
+            message_from_row
+        ).map_err(|error|error.to_string())?;
+        let mut selected=Vec::new();
+        for row in rows{selected.push(row.map_err(|error|error.to_string())?);}
+        selected.reverse();
+        Ok((selected,checkpoint_row.is_some()))
+    }
+
     /// Restore owner-authored task goals without ever decoding old HTML,
     /// model reasoning or tool arguments from the full session archive.
     pub fn try_recent_user_messages(&self, session_id: &str, limit: usize) -> Result<Vec<Value>, String> {
