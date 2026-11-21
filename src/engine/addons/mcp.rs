@@ -703,6 +703,81 @@ mod tests {
         AppState::new(config, store, vault)
     }
 
+    #[tokio::test]
+    async fn modern_probe_falls_back_to_legacy_only_before_tool_effects(){
+        use axum::{extract::State,http::{HeaderMap,StatusCode},
+            routing::post,Json,Router};
+        #[derive(Clone)]
+        struct Observations(Arc<Mutex<Vec<(String,bool)>>>);
+        async fn handler(State(state):State<Observations>,headers:HeaderMap,
+            Json(body):Json<Value>)->(StatusCode,Json<Value>){
+            let method=body["method"].as_str().unwrap_or("").to_string();
+            let modern=headers.get("mcp-protocol-version").is_some();
+            state.0.lock().unwrap().push((method.clone(),modern));
+            if modern{
+                return (StatusCode::BAD_REQUEST,Json(json!({"error":"not initialized"})));
+            }
+            let result=match method.as_str(){
+                "initialize"=>json!({"protocolVersion":"2024-11-05",
+                    "capabilities":{"tools":{}},"serverInfo":{"name":"legacy","version":"1"}}),
+                "tools/list"=>json!({"tools":[{"name":"echo","inputSchema":{
+                    "type":"object"}}]}),
+                "tools/call"=>json!({"content":[{"type":"text","text":"legacy-ok"}]}),
+                _=>json!({}),
+            };
+            (StatusCode::OK,Json(json!({"jsonrpc":"2.0","id":body["id"],
+                "result":result})))
+        }
+        let observed=Observations(Arc::new(Mutex::new(Vec::new())));
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url=format!("http://{}/mcp",listener.local_addr().unwrap());
+        let app=Router::new().route("/mcp",post(handler)).with_state(observed.clone());
+        let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap();});
+        let state=temp_state();
+        let record=json!({"id":uuid::Uuid::new_v4().to_string(),
+            "name":"legacy-mock","transport":"http","url":url});
+        let list=http_request(&state,&record,"tools/list",json!({})).await.unwrap();
+        assert_eq!(list["tools"][0]["name"],"echo");
+        let reply=http_request(&state,&record,"tools/call",
+            json!({"name":"echo","arguments":{}})).await.unwrap();
+        assert_eq!(reply["content"][0]["text"],"legacy-ok");
+        let seen=observed.0.lock().unwrap().clone();
+        assert_eq!(seen.iter().filter(|row|row.1).count(),1,
+            "only read-only tools/list may probe the modern era");
+        assert!(seen.iter().any(|row|row.0=="initialize"&&!row.1));
+        assert!(seen.iter().any(|row|row.0=="tools/call"&&!row.1));
+        invalidate();
+        server.abort();
+    }
+    #[tokio::test]
+    async fn modern_unsupported_version_never_silently_downgrades(){
+        use axum::{extract::State,http::StatusCode,routing::post,Json,Router};
+        #[derive(Clone)]struct Count(Arc<Mutex<usize>>);
+        async fn reject(State(count):State<Count>,Json(body):Json<Value>)
+            ->(StatusCode,Json<Value>){
+            *count.0.lock().unwrap()+=1;
+            (StatusCode::BAD_REQUEST,Json(json!({"jsonrpc":"2.0",
+                "id":body["id"],"error":{"code":-32022,
+                "message":"Unsupported protocol version",
+                "data":{"supported":["2026-07-28"]}}})))
+        }
+        let count=Count(Arc::new(Mutex::new(0)));
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let app=Router::new().route("/mcp",post(reject)).with_state(count.clone());
+        let url=format!("http://{}/mcp",listener.local_addr().unwrap());
+        let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap();});
+        let state=temp_state();
+        let record=json!({"id":uuid::Uuid::new_v4().to_string(),
+            "name":"modern-mock","transport":"http","url":url});
+        let error=http_request(&state,&record,"tools/list",json!({}))
+            .await.unwrap_err();
+        assert!(error.contains("-32022"),"{error}");
+        assert_eq!(*count.0.lock().unwrap(),1,
+            "modern negotiation failures must not trigger legacy initialize");
+        invalidate();
+        server.abort();
+    }
+
     #[test]
     fn authenticated_http_pool_isolated_by_server_url_and_credentials(){
         let state=temp_state();
