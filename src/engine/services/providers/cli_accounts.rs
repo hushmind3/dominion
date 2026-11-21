@@ -4,8 +4,58 @@
 //! When a packaged OAuth app is configured the native OAuth flow wins.
 use reqwest::{Method,Url};
 use serde_json::{json,Value};
-use std::process::{Command,Stdio};
+use std::process::{Command,Output,Stdio};
 use std::time::Duration;
+use tokio::io::{AsyncRead,AsyncReadExt};
+
+const MAX_CLI_OUTPUT_BYTES:usize=64*1024;
+
+#[derive(Debug)]
+enum CliOutputError { Spawn, Timeout, OutputLimit, Io }
+
+async fn capture_cli_pipe<R:AsyncRead+Unpin>(mut pipe:R)->Result<(Vec<u8>,bool),CliOutputError>{
+    let mut bytes=Vec::new();
+    let mut buffer=[0u8;4096];
+    let mut exceeded=false;
+    loop{
+        let count=pipe.read(&mut buffer).await.map_err(|_|CliOutputError::Io)?;
+        if count==0{break;}
+        let retained=count.min(MAX_CLI_OUTPUT_BYTES.saturating_sub(bytes.len()));
+        bytes.extend_from_slice(&buffer[..retained]);
+        exceeded|=retained<count;
+    }
+    Ok((bytes,exceeded))
+}
+
+async fn run_cli_bounded(
+    executable:std::path::PathBuf,
+    args:&[&str],
+    limit:Duration,
+)->Result<Output,CliOutputError>{
+    let mut child=tokio::process::Command::new(executable)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|_|CliOutputError::Spawn)?;
+    let stdout=child.stdout.take().ok_or(CliOutputError::Io)?;
+    let stderr=child.stderr.take().ok_or(CliOutputError::Io)?;
+    let output=tokio::time::timeout(limit,async{
+        let (stdout,stderr,status)=tokio::join!(
+            capture_cli_pipe(stdout),
+            capture_cli_pipe(stderr),
+            child.wait(),
+        );
+        let (stdout,stdout_exceeded)=stdout?;
+        let (stderr,stderr_exceeded)=stderr?;
+        let status=status.map_err(|_|CliOutputError::Io)?;
+        if stdout_exceeded||stderr_exceeded{return Err(CliOutputError::OutputLimit);}
+        Ok(Output{status,stdout,stderr})
+    }).await.map_err(|_|CliOutputError::Timeout)??;
+    Ok(output)
+}
 
 #[derive(Clone,Debug)]
 pub struct LocalStatus {
@@ -80,12 +130,12 @@ pub fn status(provider:&str)->LocalStatus{
 }
 pub async fn github_token()->Result<String,String>{
     let executable=executable("github").ok_or("GitHub CLI가 설치되지 않았습니다.")?;
-    let result=tokio::time::timeout(Duration::from_secs(12),
-        tokio::process::Command::new(executable)
-            .args(["auth","token","--hostname","github.com"])
-            .stdin(Stdio::null()).kill_on_drop(true).output()
-    ).await.map_err(|_|"GitHub CLI 인증 조회가 지연됩니다.")?
-        .map_err(|_|"GitHub CLI가 설치되지 않았습니다. gh를 설치하고 GitHub 계정을 연결하세요.")?;
+    let result=run_cli_bounded(executable,&["auth","token","--hostname","github.com"],Duration::from_secs(12))
+        .await.map_err(|error|match error{
+            CliOutputError::Timeout=>"GitHub CLI 인증 조회가 지연됩니다.",
+            CliOutputError::OutputLimit=>"GitHub CLI 인증 응답이 허용 크기를 초과했습니다.",
+            CliOutputError::Spawn|CliOutputError::Io=>"GitHub CLI 실행에 실패했습니다. 설치와 계정 연결을 확인하세요.",
+        })?;
     if !result.status.success(){
         return Err("GitHub CLI 계정이 연결되지 않았습니다. 연결 메뉴에서 GitHub 로그인을 진행하세요.".into());
     }
