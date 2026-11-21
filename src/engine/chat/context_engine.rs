@@ -112,7 +112,7 @@ pub(super) fn compile_private(
         .clamp(1_024,32_000);
     let selected=context::history(state,session_id,request.agent_id.as_deref(),
         Some(history_byte_budget))?;
-    let history=if is_social_turn(query) {
+    let history=if is_social_turn(query) || is_generic_capabilities_turn(query) {
         // "Hello" after a 100-turn coding task must not rebill the whole
         // coding transcript. This is an explicit fresh context epoch; the
         // preceding assistant/tool frames remain durable in SQLite.
@@ -234,6 +234,10 @@ mod tests {
             "안녕",None,None,Some(65_536),Some(4_096),&[]).unwrap();
         assert_eq!(greeting.history.len(),1,
             "a social one-liner should never replay a completed long task");
+        let capabilities=compile_private(&state,&request,"private:compile",
+            "뭐할수있냐",None,None,Some(65_536),Some(4_096),&[]).unwrap();
+        assert_eq!(capabilities.history.len(),1,
+            "a standalone capability question must not replay old task receipts");
         assert!(greeting.history[0]["content"].as_str().unwrap().contains("owner-13:"));
         drop(state);
         std::fs::remove_dir_all(dir).unwrap();
