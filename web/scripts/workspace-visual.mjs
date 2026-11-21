@@ -120,11 +120,21 @@ async function overflow(page,route,width){
  if(result.pane)assert.ok(result.paneScroll<=result.pane+3,
   'Settings pane overflows at '+route+' '+width+': '+JSON.stringify(result))
 }
+async function waitScreen(page){
+ // Sidebar appears before React.lazy resolves. A navigation-only screenshot
+ // is not UX evidence: wait for the actual rendered page controls.
+ await page.waitForFunction(()=>{
+  const pane=document.querySelector('.workspace-settings-content')
+  return Boolean(pane && !pane.textContent?.includes('화면 불러오는 중') &&
+   pane.querySelectorAll('button,input,select,textarea').length>=2)
+ },null,{timeout:20000})
+ await page.waitForTimeout(160)
+}
 async function open(page,name){
  await page.goto(base+'/#/'+name,{waitUntil:'domcontentloaded'})
  const nav=page.locator('.workspace-settings>aside nav [aria-current="page"]')
  await nav.waitFor({timeout:15000})
- await page.waitForTimeout(200)
+ await waitScreen(page)
  await overflow(page,name,page.viewportSize().width)
  visits.push({name,width:page.viewportSize().width})
 }
@@ -145,7 +155,7 @@ try{
   assert.equal(await buttons.count(),7,'The existing seven settings menu items stay intact')
   await buttons.nth(i).click()
   await page.waitForFunction(name=>location.hash==='#/'+name,pages[i])
-  await page.waitForTimeout(250)
+  await waitScreen(page)
   await overflow(page,pages[i],1440)
   visits.push({name:pages[i],width:1440,interaction:'sidebar'})
   await screenshot(page,'1440-'+pages[i]+'.png')
@@ -197,6 +207,10 @@ try{
  for(const route of ['chat','rooms']){
   await page.goto(base+'/#/'+route,{waitUntil:'domcontentloaded'})
   await page.waitForTimeout(500)
+  if(route==='chat'){
+   assert.equal(await page.locator('.page-chat aside').first().isVisible(),false,
+    'Desktop history drawer must collapse after resizing to mobile')
+  }
   await overflow(page,route,320)
   await screenshot(page,'320-'+route+'.png')
   visits.push({name:route,width:320})
