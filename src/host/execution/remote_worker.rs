@@ -4,7 +4,9 @@ use reqwest::{Client,Url};
 use serde_json::{json,Value};
 use futures_util::StreamExt;
 use std::time::Duration;
-const MAX_GATEWAY_RESPONSE_BYTES:usize=64*1024;
+// A completed result can contain both a 16 KiB prompt and a 16,384-character
+// UTF-8 answer; allow JSON escaping overhead while keeping the frame bounded.
+const MAX_GATEWAY_RESPONSE_BYTES:usize=256*1024;
 const MAX_MODEL_RESPONSE_BYTES:usize=1024*1024;
 
 async fn bounded_json(response:reqwest::Response,limit:usize,label:&str)
