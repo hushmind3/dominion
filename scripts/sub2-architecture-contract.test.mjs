@@ -192,8 +192,9 @@ test('owner Team UI routes through one native scheduler and reviewed patch gatew
   assert.match(team,/ui_team_selection/);
   assert.match(team,/claim_managed_team_member/);
   assert.match(store,/TransactionBehavior::Immediate/);
-  for(const action of ['\/start','\/resume','\/stop','\/apply','\/reject'])
-    assert.match(ui,new RegExp(action));
+  for(const action of ['/start','/resume','/apply','/reject'])
+    assert.ok(ui.includes(action),'missing UI route '+action);
+  assert.match(ui,/control\(team,'stop'\)/);
   assert.match(ui,/reviewDigest/);
   assert.match(ui,/remoteWorkers/);
 });
