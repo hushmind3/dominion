@@ -103,6 +103,90 @@ macro_rules! harness_steps {
 #[cfg(test)]
 mod tests{
     use super::*;
+    struct ModelJournal{
+        seen:std::sync::Mutex<Vec<crate::Snapshot>>,
+        cancel_after_intent:bool,
+        directive:Option<String>,
+        cancel:std::sync::atomic::AtomicBool
+    }
+    impl crate::Journal for ModelJournal {
+        fn save(&self,snapshot:&crate::Snapshot)->Result<(),String>{
+            self.seen.lock().unwrap().push(snapshot.clone());
+            if self.cancel_after_intent && snapshot.model_in_flight {
+                self.cancel.store(true,std::sync::atomic::Ordering::SeqCst);
+            }
+            Ok(())
+        }
+        fn cancelled(&self,_:&str)->bool{
+            self.cancel.load(std::sync::atomic::Ordering::SeqCst)
+        }
+        fn directive(&self,_:&str)->Result<Option<String>,String>{
+            Ok(self.directive.clone())
+        }
+    }
+    fn snapshot()->crate::Snapshot{
+        crate::Snapshot::from_request(&crate::RunRequest{
+            id:"model-protected".into(),instruction:"Answer".into(),
+            owner_instructions:String::new(),strategy:crate::Strategy::Balanced,
+            limits:crate::Limits::default(),allowed_tools:Vec::new(),
+            checks:Vec::new(),require_evidence:false
+        })
+    }
+    fn ready<T>(f:impl std::future::Future<Output=T>)->T{
+        use std::future::Future;
+        let waker=std::task::Waker::noop();
+        let mut cx=std::task::Context::from_waker(waker);
+        let mut future=Box::pin(f);
+        match Future::poll(future.as_mut(),&mut cx){
+            std::task::Poll::Ready(v)=>v,
+            std::task::Poll::Pending=>panic!("expected an immediate test future")
+        }
+    }
+    #[test] fn model_dispatch_denies_post_journal_cancel_without_making_api_call(){
+        let journal=ModelJournal{seen:std::sync::Mutex::new(Vec::new()),
+            cancel_after_intent:true,directive:None,
+            cancel:std::sync::atomic::AtomicBool::new(false)};
+        let mut run=snapshot();
+        let called=std::sync::atomic::AtomicBool::new(false);
+        let outcome=ready(dispatch_model_turn(&journal,&mut run,None,
+            ||async{
+                called.store(true,std::sync::atomic::Ordering::SeqCst);
+                Ok::<_,String>("model text")
+            })).unwrap();
+        assert!(matches!(outcome,ModelAttempt::Cancelled));
+        assert!(!called.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(!run.model_in_flight);
+        assert_eq!(journal.seen.lock().unwrap().len(),2);
+    }
+    #[test] fn successful_model_call_preserves_uncertain_marker_until_owner_settlement(){
+        let journal=ModelJournal{seen:std::sync::Mutex::new(Vec::new()),
+            cancel_after_intent:false,directive:None,
+            cancel:std::sync::atomic::AtomicBool::new(false)};
+        let mut run=snapshot();
+        let outcome=ready(dispatch_model_turn(&journal,&mut run,None,
+            ||async{Ok::<_,String>("verified text")})).unwrap();
+        assert!(matches!(outcome,ModelAttempt::Completed("verified text")));
+        assert!(run.model_in_flight);
+        assert_eq!(journal.seen.lock().unwrap().len(),1);
+        run.model_calls+=1;
+        run.model_in_flight=false;
+        journal.save(&run).unwrap();
+        assert_eq!(journal.seen.lock().unwrap()[1].model_calls,1);
+    }
+    #[test] fn failed_paid_call_stays_unknown_and_owner_change_never_dispatches(){
+        let journal=ModelJournal{seen:std::sync::Mutex::new(Vec::new()),
+            cancel_after_intent:false,directive:Some("corrected".into()),
+            cancel:std::sync::atomic::AtomicBool::new(false)};
+        let mut run=snapshot();
+        let corrected=ready(dispatch_model_turn(&journal,&mut run,None,
+            ||async{Ok::<_,String>(())})).unwrap();
+        assert!(matches!(corrected,ModelAttempt::OwnerChanged));
+        assert!(!run.model_in_flight);
+        let failed=ready(dispatch_model_turn(&journal,&mut run,Some("corrected"),
+            ||async{Err::<(),String>("connection died after charge".into())})).unwrap();
+        assert!(matches!(failed,ModelAttempt::Uncertain(_)));
+        assert!(run.model_in_flight);
+    }
     #[test]fn shared_cursor_is_deterministic_across_chat_and_native_resume(){
         let mut first=HarnessDrive::new(3).unwrap();
         assert_eq!(first.admit(false,0,3),DriveAdmission::Next(0));
