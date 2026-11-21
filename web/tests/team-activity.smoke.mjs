@@ -57,6 +57,16 @@ try{
       {id:'researcher',name:'Researcher',providerId:'fixture',model:'fixture',enabled:true},
       {id:'builder',name:'Builder',providerId:'fixture',model:'fixture',enabled:true}
     ];
+    if(path==='/api/providers')response=[
+      {id:'fixture',name:'Fixture',model:'fixture',enabled:true,kind:'openai'}
+    ];
+    if(path==='/api/sessions')response=[
+      {id:'chat-one',title:'Conversation One',agentId:'lead',providerId:'fixture',model:'fixture'},
+      {id:'chat-two',title:'Conversation Two',agentId:'lead',providerId:'fixture',model:'fixture'}
+    ];
+    if(path.endsWith('/messages'))response=[];
+    if(path.endsWith('/usage'))response={totalTokens:0};
+    if(path==='/api/model-library/runtime')response={status:'idle'};
     if(path==='/api/health')response={branch:'dominion-sub2',commit:'fixture'};
     if(path==='/api/events'){
       await route.fulfill({status:200,contentType:'text/event-stream',body:': smoke\n\n'});
@@ -122,7 +132,38 @@ try{
   assert.ok(widths.body<=widths.screen+2,
     'Team UI is horizontally clipped on a mobile viewport: '+JSON.stringify(widths));
   assert.deepEqual(errors,[], 'React/JS runtime errors');
-  console.log('PASS Chromium mobile Team status / approval / local vs remote controls');
+  // Chat drafts are scoped to the actual session, including fresh chats.
+  const inputSelector='textarea[placeholder^="무엇을 도와드릴까요?"]';
+  await page.goto(address+'/#/chat?session=chat-one',{waitUntil:'domcontentloaded'});
+  const chatInput=page.locator(inputSelector);
+  await chatInput.waitFor({timeout:10000});
+  await chatInput.fill('첫 번째 대화에서만 보낼 미완성 지시');
+  await page.evaluate(()=>{window.location.hash='#/chat?session=chat-two'});
+  await page.waitForFunction(selector=>document.querySelector(selector)?.value==='',
+    inputSelector,{timeout:10000});
+  await chatInput.fill('두 번째 대화의 별도 초안');
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.waitForFunction(selector=>
+      document.querySelector(selector)?.value==='두 번째 대화의 별도 초안',
+    inputSelector,{timeout:10000});
+  await page.evaluate(()=>{window.location.hash='#/chat?session=chat-one'});
+  await page.waitForFunction(selector=>
+      document.querySelector(selector)?.value==='첫 번째 대화에서만 보낼 미완성 지시',
+    inputSelector,{timeout:10000});
+  await page.evaluate(()=>{window.location.hash='#/chat'});
+  await page.waitForFunction(selector=>document.querySelector(selector)?.value==='',
+    inputSelector,{timeout:10000});
+  await chatInput.fill('아직 세션을 만들지 않은 새 대화 초안');
+  await page.evaluate(()=>{window.location.hash='#/chat?session=chat-two'});
+  await page.waitForFunction(selector=>
+      document.querySelector(selector)?.value==='두 번째 대화의 별도 초안',
+    inputSelector,{timeout:10000});
+  await page.evaluate(()=>{window.location.hash='#/chat'});
+  await page.waitForFunction(selector=>
+      document.querySelector(selector)?.value==='아직 세션을 만들지 않은 새 대화 초안',
+    inputSelector,{timeout:10000});
+  assert.deepEqual(errors,[], 'Chat/Team React runtime errors');
+  console.log('PASS Chromium Team draft / stale route and per-session Chat draft recovery');
 }finally{
   await browser?.close();
   server.kill('SIGTERM');
