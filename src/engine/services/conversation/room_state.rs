@@ -622,8 +622,8 @@ mod tests {
         let snapshot=unread_for(&state,"r","room:r","agent-a").unwrap();
         assert_eq!(snapshot.through,0);
         let note=snapshot.unread.as_deref().unwrap();
-        assert!(note.contains("\\"gap\\":true"),"{note}");
-        assert!(note.contains("\\"safeAckThrough\\":0"),"{note}");
+        assert!(note.contains(r#""gap":true"#),"{note}");
+        assert!(note.contains(r#""safeAckThrough":0"#),"{note}");
         let reply=state.store.write_message(&json!({
             "id":"reply-1","session_id":"room:r","role":"assistant",
             "agent_id":"agent-a","content":"answer",
