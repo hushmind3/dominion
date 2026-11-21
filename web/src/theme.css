@@ -52,7 +52,7 @@
  .chat-transcript{padding:18px 13px 24px!important;row-gap:20px}
  .chat-turn{gap:9px}
  .chat-turn-assistant>div:first-child{width:29px;height:29px;border-radius:10px}
- .chat-turn-owner .chat-turn-body{max-width:86%}
+ .chat-turn-owner .chat-turn-body{max-width:78%}
  .chat-turn-text{font-size:15.5px;line-height:1.7}
  .chat-turn-owner .chat-turn-text{font-size:15px;padding:10px 14px}
 }
