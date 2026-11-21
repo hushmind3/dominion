@@ -619,6 +619,17 @@ impl Store {
         rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 
+    pub fn has_unresolved_approval_for_run(&self,run_id:&str)->Result<bool,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM records INDEXED BY idx_unresolved_approvals
+             WHERE kind='approval'
+               AND json_extract(data,'$.status') IN ('pending','interrupted')
+               AND json_extract(data,'$.runId')=?1)",
+            [run_id],|row|row.get::<_,bool>(0),
+        ).map_err(|e|e.to_string())
+    }
+
     /// Find only approval decisions whose lineage exactly matches the retry,
     /// joined to the interrupted original execution. The caller still runs
     /// its pure reuse-window check over these candidates.
@@ -1754,6 +1765,25 @@ impl Store {
                 "originRun":r.get::<_,Option<String>>(4)?,
                 "kind":r.get::<_,String>(5)?}))
         }).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// Startup wake recovery needs only interrupted executions without a
+    /// durable decision; completed execution history stays in SQLite.
+    pub fn interrupted_executions_without_wake(&self)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT e.data,e.id,e.created_at,e.updated_at FROM records AS e
+             INDEXED BY idx_execution_active_status
+             WHERE e.kind='execution'
+               AND json_extract(e.data,'$.status')='interrupted'
+               AND NOT EXISTS (
+                 SELECT 1 FROM records AS w
+                 WHERE w.kind='run_wake' AND w.id=('wake:' || e.id)
+               )
+             ORDER BY e.updated_at DESC,e.id DESC"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([],record_from_row).map_err(|e|e.to_string())?;
         rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 

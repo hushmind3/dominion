@@ -101,30 +101,31 @@ fn resumable_program(state: &AppState, execution: &Value) -> Option<Value> {
 /// Creates one durable wake decision per interrupted execution. Returns the
 /// decisions created by this call.
 pub fn recover(state: &AppState) -> Vec<Value> {
-    let operations = state.store.all("execution_operation");
-    let approvals = state.store.all("approval");
-    let mut created = Vec::new();
-    for execution in state.store.all("execution") {
-        if execution["status"].as_str() != Some("interrupted") {
-            continue;
+    let executions=match state.store.interrupted_executions_without_wake() {
+        Ok(executions)=>executions,
+        Err(error)=>{
+            state.store.audit("wake.recovery_executions_failed",json!({"error":error}));
+            return Vec::new();
         }
+    };
+    let mut created = Vec::new();
+    for execution in executions {
         let Some(execution_id) = execution["id"].as_str() else {
             continue;
         };
         let wake_id = format!("wake:{execution_id}");
-        if state.store.get("run_wake", &wake_id).is_some() {
-            continue;
-        }
-        let run_operations = operations
-            .iter()
-            .filter(|operation| operation["runId"].as_str() == Some(execution_id))
-            .cloned()
-            .collect::<Vec<_>>();
-        let pending_approval = approvals.iter().any(|approval| {
-            approval["runId"].as_str() == Some(execution_id)
-                && matches!(approval["status"].as_str(), Some("pending" | "interrupted"))
-        });
-        let unknown = run_operations.iter().any(|operation| {
+        let (run_operations,operation_read_failed)=match state.store.execution_operations(execution_id) {
+            Ok(operations)=>(operations,false),
+            Err(error)=>{
+                state.store.audit("wake.recovery_operations_failed",json!({
+                    "executionId":execution_id,"error":error
+                }));
+                (Vec::new(),true)
+            }
+        };
+        let pending_approval=state.store.has_unresolved_approval_for_run(execution_id)
+            .unwrap_or(true);
+        let unknown = operation_read_failed || run_operations.iter().any(|operation| {
             operation["outcomeUnknown"] == true
                 || matches!(operation["status"].as_str(), Some("interrupted" | "running"))
         });
