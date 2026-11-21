@@ -273,6 +273,9 @@ pub async fn commands(State(state): State<AppState>) -> Json<Value> {
 }
 
 pub async fn list_backups(State(state): State<AppState>) -> Json<Value> {
+    // Overlapping restore requests may not reuse the same rollback marker or
+    // overwrite one another's saved DB/key pair.
+    let _restore_guard=state.restore_guard.lock().await;
     let directory = state.config.data_dir.join("backups");
     let mut items = std::fs::read_dir(&directory)
         .map(|entries| {
@@ -490,28 +493,15 @@ pub async fn restore_backup(
         )
             .into_response();
     }
-    if let Some(key) = embedded_key {
-        if let Err(error) = state.vault.restore_primary(key) {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("secret key 복원 실패: {error}")})),
-            )
-                .into_response();
-        }
-    }
-    if let Err(error) = state.store.replace_database(&bytes) {
+    if let Err(error) = crate::engine::restore_transaction::apply(
+        &state,&bytes,target_key,crate::migrations::run
+    ) {
+        // A failed rollback leaves the durable marker for startup recovery;
+        // refuse ordinary writes until the process has restarted.
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": error})),
-        )
-            .into_response();
-    }
-    if let Err(error) = crate::migrations::run(&state) {
-        return (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("복구 후 마이그레이션 실패: {error}")})),
-        )
-            .into_response();
+            Json(json!({"error":error})),
+        ).into_response();
     }
     state.store.audit(
         "system.restored",
