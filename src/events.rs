@@ -58,6 +58,15 @@ impl Bus {
         if let Some(typed)=RunEvent::from_record(kind,record){
             let mut event=typed.into_value();
             event["runKind"]=json!(kind);
+            if kind=="task_team_work"{
+                // A child run is linked to its real parent execution and
+                // original dependency IDs, never to model-supplied output.
+                event["parentRunId"]=record["executionId"].clone();
+                event["teamNodeId"]=record["teamNodeId"].clone();
+                event["nodeId"]=record["nodeId"].clone();
+                event["dependsOn"]=record["dependsOn"].clone();
+                event["evidenceStatus"]=record["evidence"]["kind"].clone();
+            }
             events.push(event);
         }
         self.emit_many(events);
@@ -147,6 +156,29 @@ mod tests {
         assert!(!recent.is_empty());
         assert_eq!(recent.last().unwrap()["index"], 599);
         assert!(recent.len() <= 600);
+    }
+    #[test]
+    fn team_worker_events_include_parent_id_and_replay_after_restart(){
+        let store=store();let bus=Bus::new(store.clone());
+        bus.record("task_team_work",&json!({"id":"worker-1",
+            "status":"assigned","executionId":"exec-1","nodeId":"read",
+            "teamNodeId":"team","dependsOn":["prepare"],
+            "agentId":"worker-a"}));
+        let after=bus.replay(0,10);
+        assert_eq!(after.len(),2);
+        assert_eq!(after[1]["type"],"run_state");
+        assert_eq!(after[1]["runKind"],"task_team_work");
+        assert_eq!(after[1]["parentRunId"],"exec-1");
+        assert_eq!(after[1]["state"],"queued");
+        assert_eq!(after[1]["dependsOn"],json!(["prepare"]));
+        let restarted=Bus::new(store);
+        restarted.record("task_team_work",&json!({"id":"worker-1",
+            "status":"completed","executionId":"exec-1","nodeId":"read",
+            "teamNodeId":"team","evidence":{"kind":"tool_completed_observed"}}));
+        let tail=restarted.replay(2,10);
+        assert_eq!(tail.len(),2);
+        assert_eq!(tail[1]["state"],"completed");
+        assert_eq!(tail[1]["eventSeq"],4);
     }
     #[test]
     fn job_chat_and_room_share_durable_ordered_run_events_without_invented_owner(){

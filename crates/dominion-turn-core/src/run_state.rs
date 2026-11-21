@@ -130,7 +130,7 @@ impl RunEvent{
     /// contract. Missing owner-message identity stays null, never an invented
     /// user message or job id. All clients can consume the same state names.
     pub fn from_record(kind:&str,record:&Value)->Option<Self>{
-        if !matches!(kind,"execution"|"job"|"room_work_assignment"){
+        if !matches!(kind,"execution"|"job"|"room_work_assignment"|"task_team_work"){
             return None;
         }
         let run_id=record["id"].as_str().filter(|id|!id.is_empty())?;
@@ -194,6 +194,20 @@ mod tests{
             RunState::Cancelled);
     }
 
+    #[test]
+    fn task_team_worker_projects_into_the_same_typed_run_events(){
+        let assigned=RunEvent::from_record("task_team_work",&json!({
+            "id":"work-1","status":"assigned","executionId":"exec-1",
+            "nodeId":"read-1","agentId":"worker-1"
+        })).unwrap().into_value();
+        assert_eq!(assigned["state"],"queued");
+        assert_eq!(assigned["agentId"],"worker-1");
+        assert!(assigned["sourceMessageId"].is_null());
+        let blocked=RunEvent::from_record("task_team_work",&json!({
+            "id":"work-1","status":"needs_review"
+        })).unwrap().into_value();
+        assert_eq!(blocked["state"],"needs_review");
+    }
     #[test]
     fn durable_job_chat_and_room_records_project_into_one_run_schema(){
         let job=RunEvent::from_record("job",&json!({

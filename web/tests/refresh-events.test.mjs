@@ -54,3 +54,13 @@ test('versioned durable run state feeds existing UI surfaces without an extra me
  const old=classifyRefreshEvent({type:'run_state',runKind:'job',runId:'old',eventSeq:17,schemaVersion:0})
  assert.deepEqual(old.targets,[])
 })
+
+test('durable Task Team worker updates the existing execution surface',()=>{
+ const work=classifyRefreshEvent({type:'run_state',schemaVersion:1,eventSeq:42,
+   runKind:'task_team_work',runId:'worker-1'})
+ assert.ok(matchesRefreshTarget('/api/executions',work.targets))
+ assert.equal(matchesRefreshTarget('/api/providers',work.targets),false)
+ const row=classifyRefreshEvent({type:'record',kind:'task_team_work',
+   record:{id:'worker-1',executionId:'exec-1'}})
+ assert.ok(matchesRefreshTarget('/api/executions',row.targets))
+})

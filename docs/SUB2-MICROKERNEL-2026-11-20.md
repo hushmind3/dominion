@@ -279,3 +279,7 @@ ProgramIR의 기존 `parallel` 노드에 `dependsOn` 형제 ID를 정식 지원�
 ### P0 Task Team 연결 완료: 실제 ProgramIR 실행기로 이어진 작업판
 
 영속 Task Team API를 ProgramIR의 `parallel` 실행 분기에 결합했습니다. 팀 그래프의 각 자식은 실행·세션·프로그램 버전·팀 부모·노드 번호가 고정된 `task_team_work` 레코드로 먼저 배정됩니다. 각 의존성 파동 시작 전에 SQLite CAS로 `assigned→running`을 선점하며, 자식 `execute_nodes`가 실제 도구 실행 결과와 체크포인트를 남긴 뒤에만 `running→completed`로 기록합니다. 도구/위임 노드는 DB의 `execution_operation`과 실제 도구 호출 ID·종료 상태를 대조합니다. 실패·일시중지는 `needs_review`로 처리하고 다음 의존 파동을 실행하지 않습니다. 기존 Chat/Tool Gateway 및 SDK의 동일 효과 추적을 재사용하고 새로운 메뉴를 추가하지 않았습니다. 독립된 프로그램 재시작 시 완료가 아닌 `running`을 자동 재실행하지 않는 진입 차단 회귀 테스트를 추가했습니다.
+
+### P0: Task Team 상태 이벤트의 SDK·React 공통 계약
+
+각 `task_team_work` 기록의 `assigned/running/completed/needs_review` 전이는 `dominion-turn-core::run_state::RunEvent`로 변환되어 동일 전역 `eventSeq` SQLite 저널·SSE를 통과합니다. `parentRunId`에 실제 실행 ID를 포함하고 `nodeId`/`teamNodeId`/`dependsOn` 및 관측 상태를 원본 영속 레코드에서만 채웁니다. TypeScript SDK `runEvents()`가 새로운 `task_team_work` 유형을 받으며 React는 새로운 메뉴 없이 기존 실행 화면만 갱신합니다.
