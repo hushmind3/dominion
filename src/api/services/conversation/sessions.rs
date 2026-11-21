@@ -124,35 +124,98 @@ pub async fn clear_session(State(state): State<AppState>, Path(id): Path<String>
     Json(json!({ "ok": true }))
 }
 
+/// Forked transcripts get independent immutable attachment records and bytes.
+/// Reusing original IDs would silently drop their content on replay, because
+/// model context correctly forbids cross-session attachments.
+fn fork_message_attachments(
+    state: &AppState,
+    source_id: &str,
+    target_id: &str,
+    message: &mut Value,
+    copies: &mut std::collections::HashMap<String, Value>,
+) -> Result<(), String> {
+    let Some(files) = message["metadata"]["attachments"].as_array_mut() else {
+        return Ok(());
+    };
+    for descriptor in files.iter_mut() {
+        let source_file_id = descriptor["id"].as_str()
+            .ok_or("복제할 첨부 파일 ID가 올바르지 않습니다.")?.to_owned();
+        if let Some(copied) = copies.get(&source_file_id) {
+            *descriptor = copied.clone();
+            continue;
+        }
+        let (record, bytes) = engine::attachments::read(state, &source_file_id)?;
+        if record["sessionId"].as_str() != Some(source_id) {
+            return Err("다른 대화의 첨부 파일은 복제할 수 없습니다.".into());
+        }
+        use base64::Engine as _;
+        let new_file = engine::attachments::upload(state, &json!({
+            "sessionId":target_id, "name":record["name"],
+            "mimeType":record["mimeType"],
+            "data":base64::engine::general_purpose::STANDARD.encode(&bytes)
+        }))?;
+        copies.insert(source_file_id, new_file.clone());
+        *descriptor = new_file;
+    }
+    Ok(())
+}
+
 pub async fn fork_session(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let Some(source) = state.store.get("session", &id) else {
         return error(StatusCode::NOT_FOUND, "세션을 찾을 수 없습니다.");
     };
+    if !source["roomId"].is_null() || !source["channelContext"].is_null()
+        || source["kind"] == "room_worker" {
+        return error(StatusCode::CONFLICT, "그룹 또는 외부 채널의 대화는 복제할 수 없습니다.");
+    }
+    // Snapshot one consistent private transcript. Do not clone a moving
+    // provider/tool turn or steal another process' durable session lease.
+    if !state.begin_session(&id) {
+        return error(StatusCode::CONFLICT, "실행 중인 대화는 완료 후 복제하세요.");
+    }
+    let _session_guard = state.session_guard(&id);
+    let Some(_lease) = engine::lease::LeaseGuard::acquire(&state, &id) else {
+        return error(StatusCode::CONFLICT, "다른 엔진에서 실행 중인 대화입니다.");
+    };
+    let messages = state.store.messages(&id);
     let mut fork = source.clone();
     if let Value::Object(ref mut map) = fork {
         map.remove("id");
         map.remove("createdAt");
         map.remove("updatedAt");
     }
-    let title = source
-        .get("title")
-        .and_then(|value| value.as_str())
-        .unwrap_or("새 대화");
+    let title = source.get("title").and_then(Value::as_str).unwrap_or("새 대화");
     fork["title"] = json!(format!("{title} (fork)"));
     let Some(fork) = state.store.put("session", &fork) else {
-        return error(StatusCode::INTERNAL_SERVER_ERROR, "fork 실패");
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "대화 복제 세션을 저장하지 못했습니다.");
     };
-    let fork_id = fork
-        .get("id")
-        .and_then(|value| value.as_str())
-        .unwrap_or_default()
-        .to_string();
-    for mut message in state.store.messages(&id) {
-        if let Value::Object(ref mut map) = message {
-            map.remove("id");
-            map.insert("session_id".into(), json!(fork_id));
+    let Some(fork_id) = fork["id"].as_str() else {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "대화 복제 ID가 없습니다.");
+    };
+    let mut copies = std::collections::HashMap::new();
+    let result = (|| -> Result<(),String> {
+        for mut message in messages {
+            if let Value::Object(ref mut map) = message {
+                map.remove("id");
+                map.insert("session_id".into(), json!(fork_id));
+            }
+            fork_message_attachments(&state, &id, fork_id, &mut message, &mut copies)?;
+            state.store.write_message(&message)
+                .ok_or("복제 대화 기록을 저장하지 못했습니다.")?;
         }
-        state.store.write_message(&message);
+        Ok(())
+    })();
+    if let Err(reason) = result {
+        // An incomplete fork must never appear as a successful session.
+        // Undo its messages and owned attachment bytes, not the source files.
+        state.store.clear_messages(fork_id);
+        let cleanup = engine::attachments::purge_session(&state, fork_id);
+        state.store.remove("session", fork_id);
+        if cleanup.is_err() {
+            return error(StatusCode::INTERNAL_SERVER_ERROR,
+                "대화 복제 실패 및 첨부 정리 실패. 저장소 점검이 필요합니다.");
+        }
+        return error(StatusCode::INTERNAL_SERVER_ERROR, &reason);
     }
     state.bus.record("session", &fork);
     Json(fork).into_response()
