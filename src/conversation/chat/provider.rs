@@ -1595,6 +1595,34 @@ pub(super) fn codex_tool_calls(output: &[Value]) -> Vec<super::ToolCall> {
     calls
 }
 
+/// Merge only complete, structurally valid Codex function-call items.
+ // A repeated terminal copy is harmless only if its ID, tool and arguments
+ // match the earlier streamed item exactly.
+fn append_codex_stream_calls(
+    calls:&mut Vec<ToolCall>, output:&[Value],
+)->Result<(),String>{
+    for item in output {
+        if item["type"]!="function_call" {continue;}
+        let normalized=codex_function_call_item(item)
+            .ok_or("Codex returned an incomplete function_call item")?;
+        let id=normalized["call_id"].as_str().unwrap_or("");
+        let name=normalized["name"].as_str().unwrap_or("");
+        let args=normalized["arguments"].as_str().unwrap_or("");
+        if id.is_empty() || name.is_empty() || args.is_empty() ||
+            !serde_json::from_str::<Value>(args).is_ok_and(|value|value.is_object()) {
+            return Err("Codex returned invalid function_call arguments or identity".into());
+        }
+        if let Some(previous)=calls.iter().find(|call|call.id==id) {
+            if previous.name!=name || previous.arguments!=args {
+                return Err("Codex stream and settled output disagree on function_call".into());
+            }
+        }else{
+            calls.push(ToolCall{id:id.into(),name:name.into(),arguments:args.into()});
+        }
+    }
+    Ok(())
+}
+
 /// Converts chat messages into the Responses API shape used by the Codex
 /// backend. System text becomes `instructions`; assistant tool calls and tool
 /// observations stay structured so the model can continue a real tool loop.
@@ -1901,18 +1929,17 @@ async fn stream_codex_once(
                 }
                 "response.output_item.done" => {
                     if let Some(item) = piece.get("item") {
-                        for call in codex_tool_calls(std::slice::from_ref(item)) {
-                            if !completion
-                                .tool_calls
-                                .iter()
-                                .any(|existing| existing.id == call.id)
-                            {
-                                completion.tool_calls.push(call);
-                            }
-                        }
+                        append_codex_stream_calls(
+                            &mut completion.tool_calls,std::slice::from_ref(item))?;
                     }
                 }
                 "response.completed" => {
+                    // Completion event names are not enough. The provider's
+                    // final response must explicitly be in completed state.
+                    // Native SDK already enforces this same terminal rule.
+                    if piece["response"]["status"]!="completed" {
+                        return Err("Codex response.completed had non-completed status".into());
+                    }
                     if let Some(usage) = piece["response"]["usage"].as_object() {
                         completion.cached_prompt_tokens = cached_prompt_tokens(&json!(usage));
                         completion.prompt_tokens =
@@ -1939,15 +1966,7 @@ async fn stream_codex_once(
                             let _ = tx.send(json!({"type":"text","text":settled}));
                         }
                     }
-                    for call in codex_tool_calls(&output) {
-                        if !completion
-                            .tool_calls
-                            .iter()
-                            .any(|existing| existing.id == call.id)
-                        {
-                            completion.tool_calls.push(call);
-                        }
-                    }
+                    append_codex_stream_calls(&mut completion.tool_calls,&output)?;
                     terminated = true;
                     break 'stream;
                 }
@@ -2938,6 +2957,28 @@ mod tests {
         ] {
             assert!(settled_chat_message(&bad).is_err());
         }
+    }
+
+    #[test]
+    fn codex_stream_terminal_state_and_tool_identity_are_closed_contracts(){
+        let mut calls=Vec::new();
+        let original=json!({"type":"function_call","call_id":"call-1",
+            "name":"workspace_read","arguments":"{\\\"path\\\":\\\"README.md\\\"}"});
+        append_codex_stream_calls(&mut calls,&[original.clone()]).unwrap();
+        append_codex_stream_calls(&mut calls,&[original]).unwrap();
+        assert_eq!(calls.len(),1,"Same settled tool must not execute twice");
+        assert!(append_codex_stream_calls(&mut calls,&[json!({
+            "type":"function_call","call_id":"call-1",
+            "name":"workspace_write","arguments":"{}"
+        })]).is_err(),"Conflicting terminal tool must not overwrite a streamed read");
+        assert!(append_codex_stream_calls(&mut calls,&[json!({
+            "type":"function_call","call_id":"call-2",
+            "name":"workspace_read","arguments":"[1]"
+        })]).is_err(),"Malformed tool arguments cannot reach host dispatch");
+        assert!(append_codex_stream_calls(&mut calls,&[json!({
+            "type":"function_call","name":"workspace_read","arguments":"{}"
+        })]).is_err(),"Missing call identity must not be synthesized");
+        assert_eq!(calls.len(),1);
     }
 
     #[test]
