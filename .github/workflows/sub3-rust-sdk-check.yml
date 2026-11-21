@@ -47,6 +47,7 @@ jobs:
           cargo test -p dominion-agent-algorithms --lib
           cargo test -p dominion-agent-sdk --lib
           cargo test -p dominion-sdk --lib
+          cargo test -p dominion-agent-sdk --test kernel
           cargo test -p dominion-agent-sdk --test kernel_replanning
           cargo test -p dominion-agent-sdk --test algorithm_policy_injection
           cargo test --bin dominion-rust features::cognition::profiles::tests
