@@ -36,7 +36,9 @@ fn owner_identity(state:&AppState)->(String,Vec<Value>){
 
 /// The established private chat prefix does not change: persona then owner.
 pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec<Value>){
-    let mut text=String::from(DOMINION_IDENTITY);
+    let mut text=String::from(if request.direct_chat {
+        "당신은 DOMINION 대화형 AI입니다. 사용자 질문에 직접 답하고 자연스럽게 대화를 이어가십시오."
+    } else { DOMINION_IDENTITY });
     let (persona,mut items)=persona_identity(state,request);
     let (owner,owner_items)=owner_identity(state);
     text.push_str(&persona);
@@ -132,16 +134,22 @@ pub(super) fn system_prompt_with_manifest_at(
         prompt=String::from("당신은 DOMINION입니다. 사용자 언어로 자연스럽고 짧게 답하십시오.");
     }
     if custom_prompt.is_none() && !social {
-        prompt.push_str(
-            "\n당신은 Rust 엔진에서 동작하는 에이전트형 AI 작업 공간 DOMINION입니다. \
-             사용자가 다른 언어로 쓰지 않는 한 한국어로 답하십시오.",
-        );
-        if request.tools_enabled && request.tools_execution_enabled {
-            prompt.push_str(" 작업에 필요하면 사용 가능한 도구를 사용하십시오. 도구 결과를 정확히 보고하십시오.");
+        if request.direct_chat {
+            prompt.push_str(
+                "\n사용자가 다른 언어로 쓰지 않는 한 한국어로 답하십시오.                  일반 대화에서는 도구와 외부 작업을 실행하지 않습니다.                  실제로 수행하지 않은 행동을 완료했다고 말하지 마십시오.",
+            );
         } else {
-            prompt.push_str(" 이번 턴에는 도구가 비활성화되어 있습니다. 외부 작업을 수행했다고 말하지 마십시오.");
+            prompt.push_str(
+                "\n당신은 Rust 엔진에서 동작하는 에이전트형 AI 작업 공간 DOMINION입니다. \
+                 사용자가 다른 언어로 쓰지 않는 한 한국어로 답하십시오.",
+            );
+            if request.tools_enabled && request.tools_execution_enabled {
+                prompt.push_str(" 작업에 필요하면 사용 가능한 도구를 사용하십시오. 도구 결과를 정확히 보고하십시오.");
+            } else {
+                prompt.push_str(" 이번 턴에는 도구가 비활성화되어 있습니다. 외부 작업을 수행했다고 말하지 마십시오.");
+            }
+            prompt.push_str(&format!("\n작업 공간 루트: {}",state.config.workspace.display()));
         }
-        prompt.push_str(&format!("\n작업 공간 루트: {}",state.config.workspace.display()));
     }
     // The current date is runtime observation, not part of the immutable
     // developer/persona contract. Keeping a clock value in the system prompt
@@ -697,6 +705,24 @@ mod tests {
             crate::vault::Vault::open(&config.key_path()),
         );
         (state, dir)
+    }
+
+    #[test]
+    fn direct_chat_gets_conversational_identity_without_agent_or_workspace_instructions() {
+        let (state, dir)=state();
+        let request=TurnRequest::from_value(&json!({
+            "input":"반갑습니다","agentId":"worker","directChat":true,
+            "toolsEnabled":true,"toolsExecutionEnabled":true,
+        })).unwrap();
+        let built=system_prompt_with_manifest_at(
+            &state,&request,"private:direct-chat","일반 대화 해요",None,None);
+        assert!(built.prompt.contains("DOMINION 대화형 AI"));
+        assert!(built.prompt.contains("일반 대화에서는 도구와 외부 작업을 실행하지 않습니다"));
+        assert!(!built.prompt.contains("에이전트형 AI 작업 공간"));
+        assert!(!built.prompt.contains("작업 공간 루트:"));
+        assert!(!built.prompt.contains("활성 에이전트:"));
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
