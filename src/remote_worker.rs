@@ -133,7 +133,34 @@ fn native_job(
 fn terminal(status:&str)->bool{
     matches!(status,"completed"|"failed"|"cancelled"|"needs_review"|"interrupted")
 }
-fn receipt(state:&AppState,job_id:&str,session_id:&str)->Result<Value,String>{
+fn collect_artifacts(state:&AppState,task:&Value)->Result<Vec<Value>,String>{
+    let read_only=task["readOnly"]!=false;
+    let requested=super::validate_artifact_paths(&task["artifactPaths"],read_only)?;
+    let root=state.config.workspace.canonicalize()
+        .map_err(|e|format!("Remote workspace is unavailable: {e}"))?;
+    let mut output=Vec::with_capacity(requested.len());
+    for name in requested{
+        let name=name.as_str().ok_or("Bad artifact path")?;
+        let target=root.join(name);
+        let meta=std::fs::symlink_metadata(&target)
+            .map_err(|e|format!("Remote output missing {name}: {e}"))?;
+        if !meta.is_file() ||meta.file_type().is_symlink(){
+            return Err("Remote output must be a regular non-symlink file".into());
+        }
+        let canonical=target.canonicalize().map_err(|e|e.to_string())?;
+        if !canonical.starts_with(&root){return Err("Remote output escapes its workspace".into());}
+        if meta.len() as usize>super::MAX_ARTIFACT_BYTES{
+            return Err("Remote file exceeds 64 KiB transfer limit".into());
+        }
+        let data=std::fs::read_to_string(&canonical).map_err(|e|e.to_string())?;
+        if data.len()>super::MAX_ARTIFACT_BYTES{
+            return Err("Remote UTF-8 output exceeds limit".into());
+        }
+        output.push(json!({"path":name,"sha256":super::digest(data.as_bytes()),"content":data}));
+    }
+    Ok(output)
+}
+fn receipt(state:&AppState,job_id:&str,session_id:&str,task:&Value)->Result<Value,String>{
     let job=state.store.get("job",job_id).ok_or("Local remote job disappeared")?;
     let status=job["status"].as_str().ok_or("Local job status missing")?;
     if !terminal(status){return Err("Local job has not reached terminal status".into());}
@@ -146,6 +173,7 @@ fn receipt(state:&AppState,job_id:&str,session_id:&str)->Result<Value,String>{
         .map(|run_id|state.store.execution_operations(&run_id).map(|v|v.len()).unwrap_or(0))
         .sum::<usize>();
     let usage=state.store.session_usage(session_id);
+    let artifacts=if status=="completed"{collect_artifacts(state,task)?}else{Vec::new()};
     // Only return bounded provider-observed counters. Cost estimates,
     // raw prompts and provider credentials are never attested as billing.
     Ok(json!({
@@ -153,6 +181,7 @@ fn receipt(state:&AppState,job_id:&str,session_id:&str)->Result<Value,String>{
         "answer":answer,"verified":job["result"]["verified"]==true,
         "verification":job["result"]["verification"],
         "operationCount":operation_count.min(100),
+        "artifacts":artifacts,
         "usage":{
             "calls":usage["calls"],"promptTokens":usage["promptTokens"],
             "completionTokens":usage["completionTokens"],
@@ -175,7 +204,7 @@ async fn handle_task(
     loop{
         if let Some(job)=state.store.get("job",&job_id){
             if terminal(job["status"].as_str().unwrap_or("")){
-                let report=receipt(state,&job_id,&session_id)?;
+                let report=receipt(state,&job_id,&session_id,task)?;
                 let mut body=common.clone();
                 for (key,value) in report.as_object().ok_or("Invalid local native receipt")?{
                     body[key]=value.clone();
