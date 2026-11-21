@@ -23,6 +23,19 @@ fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+pub(crate) fn read_source_file(path: &Path) -> Option<Vec<u8>> {
+    use std::io::Read;
+
+    let file = std::fs::File::open(path).ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(MAX_FILE_BYTES as usize + 1);
+    file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes).ok()?;
+    (bytes.len() as u64 <= MAX_FILE_BYTES).then_some(bytes)
+}
+
 pub fn index_id(source: &Path) -> String {
     format!(
         "code-index-{}",
@@ -533,7 +546,7 @@ pub fn refresh(state: &AppState, source: &Path) -> Result<Value, String> {
         if !seen.insert(relative.clone()) {
             continue;
         }
-        let Ok(bytes) = std::fs::read(&path) else {
+        let Some(bytes) = read_source_file(&path) else {
             continue;
         };
         let hash = digest(&bytes);
@@ -981,7 +994,8 @@ pub fn bounded_focus_context(
     let Some(indexed) = state.store.get(FILE_KIND, &file_id(index_id, path)) else {
         return Some(format!("\n### 대상 파일: {path}\n색인에 이 파일이 없어 발췌를 만들지 못했습니다. workspace_read_range로 필요한 구간을 확인하세요.\n"));
     };
-    let Ok(bytes) = std::fs::read(source.join(path)) else {
+    let full_path = source.join(path);
+    let Some(bytes) = read_source_file(&full_path) else {
         return Some(format!("\n### 대상 파일: {path}\n파일을 읽지 못했습니다. workspace_read_range로 필요한 구간을 확인하세요.\n"));
     };
     let hash = digest(&bytes);

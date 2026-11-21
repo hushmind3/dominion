@@ -45,7 +45,8 @@ pub(crate) fn search_code_index(
             if file["indexId"].as_str()!=Some(index_id) {continue;}
             let Some(path)=file["path"].as_str() else {continue;};
                 let Ok(full)=resolve_workspace(ctx.workspace,path) else {continue;};
-            let Ok(content)=std::fs::read_to_string(full) else {continue;};
+            let Some(bytes)=crate::features::platform::code_index::read_source_file(&full) else {continue;};
+            let Ok(content)=String::from_utf8(bytes) else {continue;};
             for (index,line) in content.lines().enumerate().filter(|(_,line)|line.to_lowercase().contains(&needle)).take(limit) {
                 matches.push((100,json!({"path":path,"kind":"literal","line":index+1,
                     "name":line.trim().chars().take(180).collect::<String>()})));
