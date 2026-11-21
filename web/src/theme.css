@@ -57,6 +57,18 @@
  .chat-turn-owner .chat-turn-text{font-size:15px;padding:10px 14px}
 }
 
+/* Direct chat is the safe default; agent work is an explicit action. */
+.chat-execution-mode{display:flex;align-items:center;gap:4px;padding:9px 13px 5px;min-width:0;flex-wrap:wrap}
+.chat-execution-mode-option{display:inline-flex!important;align-items:center;justify-content:center;gap:5px!important;min-height:28px!important;padding:4px 10px!important;border:1px solid transparent!important;border-radius:9px!important;background:transparent!important;color:#796F63!important;font-size:12px!important;font-weight:650!important;line-height:18px}
+.chat-execution-mode-option:hover{background:#F7F1E9!important}
+.chat-execution-mode-option[aria-pressed="true"]{border-color:#ECD8C9!important;background:#F7E8E1!important;color:#A94E30!important}
+.chat-execution-mode-hint{margin-left:auto;color:#9B9084;font-size:11px;line-height:18px}
+@media(max-width:767px){
+ .chat-execution-mode{padding:7px 9px 3px;gap:2px}
+ .chat-execution-mode-option{font-size:11px!important;padding:4px 8px!important}
+ .chat-execution-mode-hint{display:none}
+}
+
 /* Chat and groups retain their existing controls; the workspace menu opens over them. */
 [aria-label="대화 전환"] [aria-current]{background:#FFFDF9;color:#A94E30;box-shadow:0 1px 4px #3020100a}
 .chat-model-controls{flex:1}
