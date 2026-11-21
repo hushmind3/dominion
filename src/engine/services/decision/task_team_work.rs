@@ -107,10 +107,16 @@ pub fn claim(state:&AppState,assigned:&Value)->Result<Value,String>{
     if live["status"]!="running" || live["sessionId"]!=assigned["sessionId"]{
         return Err("Task Team execution lost its owner".into());
     }
-    let saved=state.store.patch_if("task_team_work",id,"status",
-        &json!("assigned"),&json!({"status":"running","attempt":1,
-            "startedAt":chrono::Utc::now().to_rfc3339()}))
-        .ok_or("Task Team work already started or needs review; unsafe replay denied")?;
+    // A stale worker cannot claim after a competing process reassigned
+    // this still-queued work. Compare the status AND the exact worker ID
+    // atomically before granting any delegation authority.
+    let guards=[("status",json!("assigned")),
+        ("agentId",assigned["agentId"].clone())];
+    let refs=guards.iter().map(|(key,value)|(*key,value)).collect::<Vec<_>>();
+    let saved=state.store.patch_if_all_merge("task_team_work",id,&refs,
+        &json!({"status":"running","attempt":1,
+            "startedAt":chrono::Utc::now().to_rfc3339()}),&[])
+        .ok_or("Task Team work was reassigned, started, or needs review; stale claim denied")?;
     state.bus.record("task_team_work",&saved);
     Ok(saved)
 }
@@ -375,6 +381,8 @@ mod tests{
             "agentId":"missing","fallbackAgentIds":["backup"]});
         let first=assign(&state,"s","run-a","r1","team",3,&node).unwrap();
         let updated=reassign_unstarted(&state,&first,&node).unwrap();
+        assert!(claim(&state,&first).is_err(),
+            "a stale original worker must not claim after CAS reassignment");
         assert_eq!(updated["agentId"],"backup");
         assert_eq!(updated["requestedAgentId"],"missing");
         assert_eq!(reassign_unstarted(&state,&updated,&node).unwrap()["id"],first["id"]);
