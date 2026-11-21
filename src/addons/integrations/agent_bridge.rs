@@ -57,7 +57,7 @@ impl ExternalAgent {
         ->Result<(&'static str,Vec<String>),String>{
         let (binary,mut args)=self.command(prompt);
         if let Some(session)=resume {
-            if uuid::Uuid::parse_str(session).is_err(){
+            if !valid_resume_id(self,session){
                 return Err("외부 Agent 재개 세션 ID가 유효하지 않습니다.".into());
             }
             match self{
@@ -74,6 +74,19 @@ impl ExternalAgent {
             }
         }
         Ok((binary,args))
+    }
+}
+
+fn valid_resume_id(kind:ExternalAgent,session:&str)->bool{
+    // CLI legacy session IDs are UUIDs. ACP may return an opaque, provider-
+    // issued session identifier. It is only used as an RPC JSON string and
+    // is already bound to the exact parent, agent, runtime and worktree.
+    if kind==ExternalAgent::QwenAcp {
+        !session.is_empty()&&session.len()<=256
+            &&session.bytes().all(|b|b.is_ascii_alphanumeric()
+                ||matches!(b,b'-'|b'_'|b'.'|b':'))
+    }else{
+        uuid::Uuid::parse_str(session).is_ok()
     }
 }
 
@@ -136,7 +149,7 @@ fn claim_completed_session(context:&JobContext,session:&Value,
         return Err("이전 CLI 실행의 소유권 또는 완료 증거가 불일치합니다.".into());
     }
     let token=receipt["externalSessionId"].as_str()
-        .filter(|id|uuid::Uuid::parse_str(id).is_ok())
+        .filter(|id|valid_resume_id(kind,id))
         .ok_or("이전 CLI가 재개 가능한 세션 ID를 저장하지 않았습니다.")?.to_string();
     let claimed=store.mutate_record("external_agent_run",run_id,
         json!({"id":run_id}),|row|{
@@ -379,6 +392,15 @@ mod tests{
     use super::*;
 
 
+    #[test]
+    fn acp_opaque_session_ids_are_scoped_and_safely_serializable(){
+        assert!(valid_resume_id(ExternalAgent::QwenAcp,"qwen-session_123"));
+        assert!(!valid_resume_id(ExternalAgent::QwenAcp,"../escape"));
+        assert!(!valid_resume_id(ExternalAgent::QwenAcp,"a\nrequest"));
+        assert!(!valid_resume_id(ExternalAgent::CodexServer,"qwen-session_123"));
+        assert!(valid_resume_id(ExternalAgent::CodexServer,
+            "123e4567-e89b-12d3-a456-426614174000"));
+    }
     #[test]
     fn new_protocol_modes_use_real_cli_binaries_and_explicit_safe_args(){
         let (codex,args)=ExternalAgent::CodexServer.command("ignored");
