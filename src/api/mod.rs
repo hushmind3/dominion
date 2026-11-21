@@ -9,6 +9,8 @@ pub mod translation;
 pub mod settings;
 #[path = "services/evaluation/improvements.rs"]
 pub mod improvements;
+#[path = "services/evaluation/algorithm_controls.rs"]
+pub mod algorithm_controls;
 #[path = "services/automation/executions.rs"]
 pub mod executions;
 #[path = "services/automation/team_controls.rs"]
