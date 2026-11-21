@@ -54,6 +54,7 @@ try{
   if(path==='/api/providers')result=[{id:'provider-a',name:'Fixture',
    kind:'openai',model:'fixture',enabled:true}];
   if(path==='/api/health')result={branch:'dominion-sub2',commit:'fixture'};
+  if(path==='/api/activity/teams')result={leadJobs:[],teams:[],remoteWorkers:[],remoteConfigured:false};
   if(path==='/api/status')result={jobs:0};
   if(path==='/api/model-library/runtime')result={status:'idle'};
   if(path.endsWith('/usage'))result={totalTokens:0};
