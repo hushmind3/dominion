@@ -45,6 +45,10 @@ The full `main/cloud/` Cloudflare Worker implementation, D1 identity/usage/payme
 | Memory and recovery | SQLite-backed sessions, correction/learning records, bounded retrieval of past job receipts, cancellation and review of uncertain prior effects. |
 | Client integrations | `sdk/rust` re-exports the kernel and provides an HTTP client; `sdk/typescript` is the single supported TypeScript HTTP/SSE client. The older `/api/harness/runs` endpoint remains a narrow compatibility adapter to the same native Rust jobs; no second client package is maintained. |
 
+### Source + UX full-tree audit (2026-11-21)
+
+A follow-up audit inventoried the full 438-file branch source tree and traced the real owner UI, native SDK, Chat/Room, Task Team, remote worker and Cloud paths. It repaired a browser DNS-rebinding Host check gap on **local owner API reads** and exposed an explicit **Refuse this action** button tied to the exact native tool approval ID; both have Rust and Chromium regressions. The latest executable CI run (commit 606c5e4) passed Rust, frontend and actual Chromium browser jobs: [Actions](https://github.com/hushmind3/dominion-rust/actions/runs/44881424765). That Chromium suite uses API fixtures; it does not verify paid provider execution, actual Cloud deployment or a unified Chat/Agent loop. [Full audit and prioritized gaps](docs/SUB3-FULL-SOURCE-UX-AUDIT-2026-11-21.md).
+
 ### Crash-consistent paid model turns (2026-11-21)
 
 The native Rust kernel now keeps its durable `model_in_flight` replay fence until reported/estimated usage and the validated decision (or an explicit parse failure) are saved together. If the provider response was received but the Journal commit fails, recovery requires review instead of silently repeating a potentially paid generation. No UI or API shape changed. Regression coverage is included in the sub3 SDK CI. [Read the source-level settlement contract](docs/SUB3-PAID-MODEL-SETTLEMENT-2026-11-21.md).
