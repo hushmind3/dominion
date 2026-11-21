@@ -390,8 +390,9 @@ impl<'a> StreamProgress<'a> {
                     self.record("receiving")?;
                 }
             }
-            // Throttle disk writes; still stream each text delta to live UI.
-            if self.events%24==0 {self.record("receiving")?;}
+            // Persist the first real delta promptly for the owner panel.
+            // Subsequent deltas remain batched to avoid a SQLite write per token.
+            if self.events==1 || self.events%24==0 {self.record("receiving")?;}
         }
         Ok(())
     }
@@ -883,6 +884,24 @@ mod tests {
             "reasoningProtocol":if kind=="anthropic" {"anthropic"}else{"openai"}
         }));
         state
+    }
+    #[test]
+    fn first_native_stream_delta_is_visible_in_the_durable_run_preview(){
+        let state=mock_state("http://127.0.0.1:9","openai");
+        state.store.put("job",&json!({
+            "id":"preview-run","kind":"prompt","status":"running",
+            "sessionId":"preview-session"
+        })).unwrap();
+        let mut progress=StreamProgress::new(
+            Some(&state),"preview-session",Some("preview-run"),"chat");
+        progress.updates(vec![
+            crate::engine::native_stream::Update::Text("첫 모델 응답".into())
+        ]).unwrap();
+        let stored=state.store.get("job","preview-run").unwrap();
+        assert_eq!(stored["nativeStream"]["stage"],"receiving");
+        assert_eq!(stored["nativeStream"]["visibleTail"],"첫 모델 응답");
+        assert_eq!(stored["nativeStream"]["executable"],false,
+            "A stream preview never authorizes a tool effect");
     }
     #[tokio::test]
     async fn native_openai_compatible_http_wire_returns_structured_sdk_action() {
