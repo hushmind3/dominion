@@ -44,7 +44,15 @@ The source-wide automated gate, `scripts/sub2-source-audit.mjs`, recursively rea
 1. **No local browser/desktop preview, production Vite build or deployment** was executed during this web/GitHub-only audit (the development instructions deliberately skip release builds).
 2. **No physically connected second PC** was available to demonstrate HTTPS/private network, credentials, offline recovery, and cross-host file hashing under real latency.
 3. **No live model-backed Team task** was executed in this audit. Scripted/rust unit/API contract checks cannot assert autonomous task success, model choice quality, cost or multi-hour behavior.
-4. `team_execute(wait=false)` advances only a currently ready wave. After a child finishes, the native Team may require another explicit resume/tick; fully unattended, durable, cross-wave scheduling after the Lead turn exits remains a separate engineering gap.
+4. **Updated 2026-11-21:** `team_execute(wait=false)` is now resumed by the existing `jobs.rs` dispatcher on completed local/remote receipts and on its bounded recovery tick. It re-enters the same session-fenced native tool gateway and committed DAG; no new model loop is introduced. Duplicate wake, cancellation, restarts and Writer effects still require integration verification on the final commit. A pending remote artifact never becomes a local file change without explicit approval.
 5. Direct operator review is a purpose-built, explicit HTTP endpoint; the normal chat-tool approval channel is not implicitly bypassed or treated as authorization to auto-adopt remote files.
 
 **Bottom line:** The audited Team UI/API contracts have concrete Rust and frontend test gates and the described source defects were fixed. This does **not** prove a production deployment, the quality of an actual model-selected DAG, or unattended cross-wave completion.
+
+
+## Latest sub2-only scheduler change
+
+- The existing Job dispatcher now observes terminal child Job/remote task events and resumes only `managed_team` records with live `running` status, an owner session and an immutable saved DAG.
+- The original Lead session lock gives precedence to an active user turn; cancellation tombstones are never automatically cleared. Worker/member claims and workspace leases are still enforced by the original executor.
+- A 10-second fallback tick also checks previously committed teams after process restarts. Team status remains read-only; no new API, menu, second scheduler, or detached model loop was introduced.
+- Regression tests cover wake event filtering, cancelled/finalized team exclusion and the immutable Team readiness guard. These are unit-level protections, not a substitute for crash/network/physical-device tests.
