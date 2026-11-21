@@ -66,7 +66,7 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
  const patch=(id:string,value:Partial<Draft>)=>setSteps(rows=>
   rows.map(v=>v.id===id?{...v,...value}:v))
  const add=(mode:Mode)=>{
-  if(steps.length>=8)return
+  if(steps.length>=12)return
   const seen=new Set(steps.map(v=>v.id));let i=steps.length+1
   while(seen.has('step_'+i))i++
   const next=draft('step_'+i)
