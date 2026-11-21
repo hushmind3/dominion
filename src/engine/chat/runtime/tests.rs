@@ -2,6 +2,41 @@
 use super::*;
 
 #[cfg(test)]
+mod reasoning_controls_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_thinking_off_never_inherits_agent_or_provider_effort() {
+        for kind in ["openai","local","codex"] {
+            let (effort, thinking)=resolve_reasoning_effort(
+                None,Some(false),Some("high"),Some("max"),kind);
+            assert_eq!(thinking,Some(false));
+            assert_eq!(effort.as_deref(),if kind=="codex"{Some("none")}else{None});
+        }
+    }
+
+    #[test]
+    fn explicit_effort_none_wins_even_against_inherited_thinking() {
+        let (effort, thinking)=resolve_reasoning_effort(
+            Some("none"),Some(true),Some("high"),Some("max"),"deepseek");
+        assert_eq!(effort,None);
+        assert_eq!(thinking,Some(false));
+    }
+
+    #[test]
+    fn automatic_inheritance_only_when_user_does_not_override() {
+        let (effort, thinking)=resolve_reasoning_effort(
+            None,None,Some("low"),Some("high"),"openai");
+        assert_eq!(effort.as_deref(),Some("low"));
+        assert_eq!(thinking,None);
+        let (effort, thinking)=resolve_reasoning_effort(
+            Some("medium"),Some(true),Some("high"),Some("max"),"openai");
+        assert_eq!(effort.as_deref(),Some("medium"));
+        assert_eq!(thinking,Some(true));
+    }
+}
+
+#[cfg(test)]
 mod outcome_tests {
     use super::*;
     use crate::config::Config;
