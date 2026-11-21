@@ -221,13 +221,15 @@ pub(super) async fn run_turn_body(
             state, "tool.discovery", request.agent_id.as_deref(), Some(execution_id),
         ).unwrap_or(Value::Null)
     };
-    let pure_chat_greeting = !is_room && request.attachment_ids.is_empty()
+    let lightweight_chat = !is_room && request.attachment_ids.is_empty()
         && acceptance.is_none() && discovery["ownerActivated"]!=true
-        && pure_greeting(&request.input);
-    // Skip not only the provider schemas but also the MCP catalog lookup.
-    // An exact greeting should not block on discovery or connected services.
+        && (pure_greeting(&request.input)
+            || standalone_explanation(&request.input));
+    // Skip both tool schemas and remote MCP enumeration for context-free
+    // conversation. Source requests, active tasks and referential followups
+    // keep the normal owner-authorized discovery and evidence paths.
     let enumerate_tools = request.tools_enabled && request.tools_execution_enabled
-        && !pure_chat_greeting;
+        && !lightweight_chat;
     let mut tool_definitions = if enumerate_tools {
         tools::definitions_for(state)
     } else {
