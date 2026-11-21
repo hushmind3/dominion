@@ -3,7 +3,7 @@ use super::*;
 
 // A zero tool budget forbids tools; it must not forbid the model's first answer.
 fn tool_budget_exhausted(used: usize, limit: usize) -> bool {
-    limit > 0 && used >= limit
+    if limit == 0 { used > 0 } else { used >= limit }
 }
 
 pub(super) fn prepare_model<'a>(
@@ -661,7 +661,7 @@ mod direct_chat_budget_tests {
     #[test]
     fn zero_tool_budget_allows_model_answer_but_never_a_tool_call() {
         assert!(!tool_budget_exhausted(0, 0));
-        assert!(!tool_budget_exhausted(1, 0));
+        assert!(tool_budget_exhausted(1, 0));
         assert!(!tool_budget_exhausted(0, 1));
         assert!(tool_budget_exhausted(1, 1));
     }
