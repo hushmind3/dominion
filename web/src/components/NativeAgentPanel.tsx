@@ -4,6 +4,9 @@ import {get, post, type Provider} from '../api'
 import {useLocale} from '../i18n'
 
 type SdkState = {state: string; detail?: {call_id?: string; tool?: string}}
+type RunEvent={kind:string;detail:unknown}
+type RunEventsPage={events:RunEvent[];total:number;from:number;to:number;nextBefore:number|null}
+type OlderRunHistory={runId:string;events:RunEvent[];nextBefore:number|null;total:number}
 type SdkRun = {
  id: string; status: string; instruction: string; answer?: string; error?: string;
  algorithmId?:string; algorithmRevision?:string;
@@ -14,7 +17,7 @@ type SdkRun = {
   nativeStream?: {stage:'receiving'; visibleTail:string;
    pendingCalls:{id:string;name:string}[]} | null;
   uncertainAction?: {id:string; tool:string; targetPath?:string|null} | null;
-  events?: {kind:string; detail:unknown}[];
+  events?: RunEvent[];
   eventsOmitted?:number;
   verificationChecks?: {satisfied:boolean;explanation?:string}[];
   toolReceipts?: {id:string;tool:string;success:boolean;step:number}[];
@@ -63,6 +66,9 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [runs,setRuns]=useState<SdkRun[]>([])
  const [observation,setObservation]=useState('')
  const [showEventHistory,setShowEventHistory]=useState(false)
+ const [olderHistory,setOlderHistory]=useState<OlderRunHistory|null>(null)
+ const [loadingHistory,setLoadingHistory]=useState(false)
+ const [historyPageError,setHistoryPageError]=useState<{runId:string;message:string}|null>(null)
  const [run,setRun]=useState<SdkRun|null>(null)
  const [busy,setBusy]=useState(false)
  const [error,setError]=useState('')
@@ -84,6 +90,8 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const selectRun=(selected:SdkRun)=>{
   historyEpoch.current+=1
   setShowEventHistory(false)
+  setOlderHistory(null)
+  setHistoryPageError(null)
   setRun(selected)
   try{window.localStorage.setItem('dominion.native.selectedRun',selected.id)}catch{}
  }
@@ -247,6 +255,28 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    if(epoch===historyEpoch.current)setError((e as Error).message)
   }
  }
+ const loadOlderHistory=async()=>{
+  if(!run||loadingHistory)return
+  const runId=run.id
+  const existing=olderHistory?.runId===runId?olderHistory:null
+  const before=existing?existing.nextBefore:run.checkpoint?.eventsOmitted??0
+  if(!before)return
+  setLoadingHistory(true)
+  setHistoryPageError(null)
+  try{
+   const page=await get<RunEventsPage>(
+    `/api/sdk/runs/${encodeURIComponent(runId)}/events?before=${before}&limit=40`)
+   if(page.to!==before||page.from>page.to||page.total<page.to||
+    page.events.length!==page.to-page.from)throw Error(
+     en?'Invalid event history page from server':'서버 실행 기록 페이지가 올바르지 않습니다.')
+   setOlderHistory(previous=>previous?.runId===runId&&existing
+    ?{runId,events:[...page.events,...previous.events],
+      nextBefore:page.nextBefore,total:page.total}
+    :{runId,events:page.events,nextBefore:page.nextBefore,total:page.total})
+  }catch(e){
+   setHistoryPageError({runId,message:(e as Error).message})
+  }finally{setLoadingHistory(false)}
+ }
  const status=run?.status||''
  const call=run?.checkpoint?.pendingCall
  const needsApproval=status==='awaiting_approval' && call
@@ -367,6 +397,35 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
         event.kind==='verified'?(en?'Result verification':'결과 검증'):event.kind}
       </li>)}
      </ol>
+     {showEventHistory&&eventsOmitted>0&&<div
+      className="mt-3 min-w-0 rounded-lg border border-[#E7E0D5] bg-white p-2">
+      {olderHistory?.runId===run.id&&olderHistory.events.length>0&&<div>
+       <p className="text-[11px] font-semibold text-[#5C544D]">
+        {en?`Loaded ${olderHistory.events.length} older steps`:
+         `이전 실행 단계 ${olderHistory.events.length}건 불러옴`}
+       </p>
+       <ol className="mt-2 max-h-48 space-y-1 overflow-y-auto"
+        aria-label={en?'Older durable run events':'이전 저장 실행 기록'}>
+        {olderHistory.events.map((event,i)=><li key={i}
+         className="break-words rounded-md bg-[#F8F6F2] px-2 py-1 text-[11px] text-[#82796D]">
+         {event.kind}
+        </li>)}
+       </ol>
+      </div>}
+      {(olderHistory?.runId!==run.id||olderHistory.nextBefore!==null)&&
+       <button type="button" disabled={loadingHistory}
+        onClick={()=>void loadOlderHistory()}
+        className="mt-2 min-h-10 rounded-lg border border-[#E7E0D5] px-3 text-[11px] font-semibold text-[#845B47] focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40">
+        {loadingHistory?(en?'Loading…':'불러오는 중…'):
+         olderHistory?.runId===run.id
+         ?(en?'Load earlier steps':'더 이전 단계 불러오기')
+         :(en?'Load older saved steps':'이전 저장 기록 불러오기')}
+       </button>}
+      {historyPageError?.runId===run.id&&<p role="alert"
+       className="mt-2 break-words text-[11px] text-rose-700">
+       {historyPageError.message}
+      </p>}
+     </div>}
     </div>}
     {status==='running'&&run.checkpoint?.nativeStream&&<div
       aria-label={en?'Provisional model progress':'확정 전 모델 진행 내용'}
