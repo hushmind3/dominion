@@ -6,7 +6,8 @@ use super::response::error;
 
 pub async fn list_sessions(State(state): State<AppState>) -> Json<Value> {
     Json(json!(state.store.all("session").into_iter()
-        .filter(|session|session["kind"]!="room_worker").collect::<Vec<_>>()))
+        .filter(|session|session["kind"]!="room_worker"
+            && session["forkPending"]!=true).collect::<Vec<_>>()))
 }
 
 pub async fn create_session(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
@@ -210,6 +211,10 @@ pub async fn fork_session(State(state): State<AppState>, Path(id): Path<String>)
     }
     let title = source.get("title").and_then(Value::as_str).unwrap_or("새 대화");
     fork["title"] = json!(format!("{title} (fork)"));
+    // An in-progress copy is not a user-visible completed conversation.
+    // Publishing it before all referenced file bytes are copied lets another
+    // tab answer with only half a transcript.
+    fork["forkPending"] = json!(true);
     let Some(fork) = state.store.put("session", &fork) else {
         return error(StatusCode::INTERNAL_SERVER_ERROR, "대화 복제 세션을 저장하지 못했습니다.");
     };
@@ -217,7 +222,7 @@ pub async fn fork_session(State(state): State<AppState>, Path(id): Path<String>)
         return error(StatusCode::INTERNAL_SERVER_ERROR, "대화 복제 ID가 없습니다.");
     };
     let mut copies = std::collections::HashMap::new();
-    let result = (|| -> Result<(),String> {
+    let result = (|| -> Result<Value,String> {
         for mut message in messages {
             if let Value::Object(ref mut map) = message {
                 map.remove("id");
@@ -227,9 +232,13 @@ pub async fn fork_session(State(state): State<AppState>, Path(id): Path<String>)
             state.store.write_message(&message)
                 .ok_or("복제 대화 기록을 저장하지 못했습니다.")?;
         }
-        Ok(())
+        state.store.patch_if("session",fork_id,"forkPending",&json!(true),
+            &json!({"forkPending":false}))
+            .ok_or("복제 대화 완료 상태를 저장하지 못했습니다.".to_string())
     })();
-    if let Err(reason) = result {
+    let committed = match result {
+        Ok(committed) => committed,
+        Err(reason) => {
         // An incomplete fork must never appear as a successful session.
         // Undo its messages and owned attachment bytes, not the source files.
         state.store.clear_messages(fork_id);
@@ -240,9 +249,10 @@ pub async fn fork_session(State(state): State<AppState>, Path(id): Path<String>)
                 "대화 복제 실패 및 첨부 정리 실패. 저장소 점검이 필요합니다.");
         }
         return error(StatusCode::INTERNAL_SERVER_ERROR, &reason);
-    }
-    state.bus.record("session", &fork);
-    Json(fork).into_response()
+        }
+    };
+    state.bus.record("session", &committed);
+    Json(committed).into_response()
 }
 
 // ---------------------------------------------------------------- approvals
