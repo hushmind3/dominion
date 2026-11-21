@@ -50,6 +50,8 @@ flowchart TD
 
 ## 3. Room Chat과 Task Team은 한 가지 기능이 아닙니다
 
+실제 참가자별 지속 읽기 커서의 소유 코드는 `src/engine/services/conversation/room_state.rs`이며, 방의 작업 관측판은 `src/engine/services/conversation/room_workboard.rs`입니다.
+
 | 시스템 | 소유 상태 | 동작 |
 |---|---|---|
 | Room Chat | `rooms.rs`, `room_state.rs`, `room_workboard.rs` | 공통 원문·참가자별 읽기 커서·발언자 라우팅·협업 관측 |
