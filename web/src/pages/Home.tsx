@@ -18,9 +18,14 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
  const enabledProviders=providers.value.filter(p=>p.enabled)
  const authenticatedProviders=enabledProviders.filter((p:any)=>p.hasKey||p.local).length
  const recent=[...jobs.value].sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,6)
+ const privateSessions=sessions.value.filter(s=>!s.roomId&&!s.channelContext
+  &&s.kind!=='room'&&s.kind!=='channel'&&!s.archived)
  const busy=jobs.value.filter(j=>['queued','running','planning','reviewing','repairing'].includes(j.status)).length
+ // A paused job requiring owner approval is not "running" and must not be
+ // buried in the activity feed below the native execution panel.
+ const attention=jobs.value.filter(j=>['awaiting_approval','needs_review'].includes(j.status))
  const metrics=[
-  {name:'dashboard.metric.chat',value:sessions.value.length,icon:MessageSquare,page:'chat' as const},
+  {name:'dashboard.metric.chat',value:privateSessions.length,icon:MessageSquare,page:'chat' as const},
   {name:'dashboard.metric.providers',value:providers.value.filter(p=>p.enabled).length,icon:Cpu,page:'models' as const},
   {name:'dashboard.metric.agents',value:agents.value.length,icon:Bot,page:'agents' as const},
   {name:'dashboard.metric.jobs',value:busy,icon:Activity,page:'activity' as const}
@@ -45,6 +50,14 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
    <Button type="button" variant="primary" onClick={()=>navigate('models')}
     className="shrink-0 text-[12px]"><ArrowRight size={14}/>
     {locale==='en'?'Set up models':'모델 연결하기'}</Button>
+  </section>}
+  {attention.length>0&&<section role="status" aria-label={t('dashboard.attention')}
+   className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-[#E3CFB9] bg-[#FFF9EF] px-4 py-3">
+   <Activity size={18} className="text-[#92673C]"/>
+   <div className="min-w-0 flex-1 text-[12px] text-[#5C544A]"><strong className="block">{t('dashboard.attention')}</strong>
+    <span className="text-[11px]">{t('dashboard.attentionDesc',{count:attention.length})}</span></div>
+   <Button type="button" variant="secondary" className="text-xs" onClick={()=>navigate('activity')}>
+    {t('dashboard.reviewJobs')} <ArrowRight size={13}/></Button>
   </section>}
   <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{metrics.map(m=>{const Icon=m.icon;return <Button type="button" key={m.name} onClick={()=>navigate(m.page)} className="flex min-h-24 flex-col items-start rounded-xl border border-[#E7E0D5] bg-white p-4 text-left transition-colors hover:border-[#D8CFC2]"><span className="flex w-full items-center justify-between text-[11px] text-[#7C7469]">{t(m.name as any)}<Icon size={16} className="text-[#A79C8E]"/></span><strong className="mt-4 text-[23px] font-bold leading-none tabular-nums text-[#24211D]">{m.value}</strong></Button>})}</div>
   <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(270px,.72fr)]">
