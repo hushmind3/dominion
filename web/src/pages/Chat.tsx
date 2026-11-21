@@ -48,6 +48,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const [serverUsage,setServerUsage]=useState<SessionUsage>({});
  const approvals=useRemote<Approval[]>('/api/approvals',[],active);
  const [input,setInput]=useChatDraft(current);
+ const [historyQuery,setHistoryQuery]=useState('');
  const [modeChoice,setModeChoice]=useState<{scope?:string;mode:ChatMode}>()
  const mode:ChatMode=(modeChoice&&modeChoice.scope===current?modeChoice.mode:undefined)??
   (selectedSession?.mode==='agent'||(!selectedSession?.mode&&Boolean(selectedSession?.agentId))||(!current&&Boolean(initialAgent))?'agent':'chat')
@@ -104,6 +105,13 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const lastOwner=messages.filter(message=>message.role==='user').at(-1);
  const pendingVisible=Boolean(pendingOwner&&pendingOwner.scope===current
   && (!lastOwner||lastOwner.id===pendingOwner.priorUserId||lastOwner.content!==pendingOwner.text));
+ const historyEntries=useMemo(()=>{
+  const query=historyQuery.trim().toLocaleLowerCase()
+  const entries=sessions.value.filter(isPrivateChatSession)
+   .filter(session=>!query||session.title.toLocaleLowerCase().includes(query))
+  const lastActivity=(session:ChatSession)=>Date.parse(session.updatedAt||session.createdAt||'')||0
+  return entries.sort((left,right)=>lastActivity(right)-lastActivity(left))
+ },[sessions.value,historyQuery])
  const slashItems=slashOpen?slashCandidates(input,agents.value,models):[];
  const transcriptRevision=JSON.stringify([messages.at(-1)?.id,messages.length,pendingVisible?pendingOwner?.text:'',viewingTurn?live.length:0,viewingTurn?thought.length:0,viewingTurn?toolStatus:'',approval?.id]);
  const usageRevision=JSON.stringify([messages.at(-1)?.id,messages.length]);
@@ -430,7 +438,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   <aside className={'flex min-h-0 flex-col overflow-hidden border-r border-[#E7E0D5] bg-[#FAF7F1] '+(showHistory?'max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:w-[232px] max-md:shadow-2xl':'hidden')}>
    <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-2"><div className="min-w-0"><span className="block text-[10px] font-extrabold uppercase tracking-widest text-[#C96442]">{t('ui.label.conversations')}</span><strong className="mt-1 block text-sm text-[#3A342D]">{t('chat.recent')}</strong></div><Button size="icon" variant="ghost" onClick={resetLocal} title={t('chat.newChat')}><Plus size={19}/></Button></div>
    <Button className="mx-3 mb-4 inline-flex items-center justify-center gap-2 rounded-xl border border-[#EED9CC] bg-[#F7E8E1] px-4 py-2.5 text-xs font-bold text-[#A94E30] hover:bg-[#F1DCCF]" onClick={resetLocal}><Plus size={17}/> {t('chat.newChat')}</Button>
-   <div className="min-h-0 flex-1 overflow-y-auto px-2">{sessions.value.filter(isPrivateChatSession).map(s=><Button variant="bare" onClick={()=>pickSession(s)} key={s.id} title={s.title} className={'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-xs text-[#7C7469] hover:bg-[#F7E8E1] '+(current===s.id?'bg-[#F7E8E1] font-bold text-[#A94E30]':'')}><MessageCircle size={15} className="shrink-0"/><span className="truncate">{s.title}</span></Button>)}{!sessions.value.length&&<div className="p-5 text-center text-xs text-[#9C9388]">{t('chat.first')}</div>}</div>
+   <div className="px-3 pb-3"><TextInput aria-label={t('chat.historySearch')} placeholder={t('chat.historySearch')} value={historyQuery} onChange={event=>setHistoryQuery(event.target.value)} className="w-full text-xs"/></div>
+   <div className="min-h-0 flex-1 overflow-y-auto px-2">{historyEntries.map(s=><Button variant="bare" onClick={()=>pickSession(s)} key={s.id} title={s.title} className={'chat-history-entry flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-xs text-[#7C7469] hover:bg-[#F7E8E1] '+(current===s.id?'bg-[#F7E8E1] font-bold text-[#A94E30]':'')}><MessageCircle size={15} className="shrink-0"/><span className="truncate">{s.title}</span></Button>)}{!historyEntries.length&&<div className="p-5 text-center text-xs text-[#9C9388]">{historyQuery.trim()?t('chat.historyNoResults'):t('chat.first')}</div>}</div>
    <div className="shrink-0 border-t border-[#E7E0D5] p-2"><Button variant="ghost" onClick={openSettings} className="w-full !justify-start gap-2 !text-xs" aria-label={t('nav.settings')}><Settings size={17}/>{t('nav.settings')}</Button></div>
   </aside>
   <div className="flex min-h-0 min-w-0 flex-col">

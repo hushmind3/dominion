@@ -76,3 +76,11 @@ test('Room message drafts are per room, restored on remount and cleared only on 
  assert.match(rooms,/setInput\(''\);if\(inputRef\.current\)inputRef\.current\.style\.height=''\;setTargets\(\[\]\)/)
  assert.match(rooms,/if\(!creating\|\|saving\)return/)
 })
+
+test('chat history is searchable without modifying or deleting stored conversations',()=>{
+ assert.match(chat,/const \[historyQuery,setHistoryQuery\]=useState\(''\)/)
+ assert.match(chat,/historyEntries=useMemo/)
+ assert.match(chat,/session\.title\.toLocaleLowerCase\(\)\.includes\(query\)/)
+ assert.match(chat,/className=\{'chat-history-entry/)
+ assert.match(chat,/historyQuery\.trim\(\)\?t\('chat.historyNoResults'\)/)
+})

@@ -104,6 +104,17 @@ try{
   await page.route('**/api/**',mock)
   await page.goto(base+'/#/chat?session=chat-ui',{waitUntil:'domcontentloaded'})
   await page.locator('[data-role="assistant"] .chat-richtext h2').waitFor()
+  if(width===1440){
+   const search=page.getByRole('textbox',{name:'대화 제목 검색'})
+   assert.equal(await page.locator('.chat-history-entry').count(),2)
+   await search.fill('초안 분리')
+   assert.equal(await page.locator('.chat-history-entry').count(),1)
+   await search.fill('찾을 수 없는 제목')
+   await page.getByText('검색 결과가 없습니다.',{exact:true}).waitFor()
+   assert.equal(await page.locator('.chat-history-entry').count(),0)
+   await search.fill('')
+   assert.equal(await page.locator('.chat-history-entry').count(),2)
+  }
   assert.equal(await page.locator('[data-role="assistant"] .chat-richtext strong').first().textContent(),'굵은 글씨')
   assert.equal(await page.locator('[data-role="assistant"] .chat-richtext table tbody tr td').last().textContent(),'1')
   assert.match(await page.locator('[data-role="assistant"] .chat-code').textContent(),/const answer = 42/)

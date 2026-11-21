@@ -591,6 +591,8 @@ const ko = {
   'models.installingMlx': 'MLX 실행기 설치 중',
   'models.installingRunner': '공식 llama.cpp 실행기 설치 중',
   'models.recommended': 'Apple Silicon 권장',
+  'chat.historySearch': '대화 제목 검색',
+  'chat.historyNoResults': '검색 결과가 없습니다.',
   'chat.recent': '최근 대화',
   'chat.newChat': '새 대화 시작',
   'chat.first': '첫 번째 대화를 시작해보세요.',

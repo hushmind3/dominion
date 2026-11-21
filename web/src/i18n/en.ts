@@ -592,6 +592,8 @@ const en: Record<LocaleKey, string> = {
   'models.installingMlx': 'Installing MLX runtime',
   'models.installingRunner': 'Installing official llama.cpp runner',
   'models.recommended': 'Recommended for Apple Silicon',
+  'chat.historySearch': 'Search conversation titles',
+  'chat.historyNoResults': 'No matching conversations.',
   'chat.recent': 'Recent conversations',
   'chat.newChat': 'Start a new chat',
   'chat.first': 'Start your first conversation.',
