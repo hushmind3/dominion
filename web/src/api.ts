@@ -6,6 +6,7 @@ export type Provider = RecordItem & {name:string;baseUrl:string;kind:string;enab
 export type Agent = RecordItem & {name:string;description?:string;systemPrompt:string;providerId:string;model:string;reasoningEffort?:string;thinking?:boolean;color?:string;aliases?:string[];avatarUrl?:string;personaSource?:string;sourceProfile?:string;role?:string}
 export type ChatMessage = {id:string;session_id:string;role:string;content:string;reasoning?:string;agent_id?:string;tool_calls?:any[];tool_call_id?:string;metadata?:{authorKind?:string;roomId?:string;replyToMessageId?:string;executionId?:string;usage?:{promptTokens?:number;cachedPromptTokens?:number|null;uncachedPromptTokens?:number|null;completionTokens?:number;totalTokens?:number;estimated?:boolean;model?:string;providerId?:string};[key:string]:unknown};created_at:string}
 export type ChatSession = RecordItem & {title:string;agentId:string;providerId?:string;model?:string;roomId?:string}
+export type Attachment = {id:string;name:string;mimeType:string;size:number;isImage:boolean;url:string;sessionId:string;roomId?:string|null;createdAt?:string}
 export type Room = RecordItem & {name:string;agentIds:string[];rounds:number;maxTurns?:number;sessionId?:string}
 export type StreamEvent = {type:string;[key:string]:any}
 export const koreanReasoningKey='dominion.chat.reasoningKo'
@@ -77,6 +78,30 @@ export type ChatRequest = {
  sessionId: string; agentId: string; providerId?: string; model?: string; input: string;
  toolsEnabled: boolean; toolsExecutionEnabled: boolean; autoLearning: boolean;
  reasoningLanguage?: string; reasoningEffort?: string; thinking?: boolean;
+ attachmentIds?: string[];
+}
+
+function fileToBase64(file: File): Promise<string> {
+ return new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onerror = () => reject(new Error(t('chat.attachReadFailed')))
+  reader.onload = () => {
+   const result = typeof reader.result === 'string' ? reader.result : ''
+   const comma = result.indexOf(',')
+   if (comma < 0) reject(new Error(t('chat.attachReadFailed')))
+   else resolve(result.slice(comma + 1))
+  }
+  reader.readAsDataURL(file)
+ })
+}
+
+/** Store one file for this session or room. The server validates the real
+ *  bytes and owns the provider URL; callers only receive the verified record. */
+export async function uploadAttachment(target: {sessionId:string}|{roomId:string}, file: File): Promise<Attachment> {
+ const data = await fileToBase64(file)
+ return post<Attachment>('/api/attachments', {
+  ...target, name: file.name, mimeType: file.type || 'application/octet-stream', data,
+ })
 }
 
 export async function streamChat(data: ChatRequest, onEvent: (e: StreamEvent) => void, signal: AbortSignal) {

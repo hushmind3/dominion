@@ -669,3 +669,6 @@ mod procedure_collaboration;
 
 #[path = "e2e/codex_and_sdk.rs"]
 mod codex_and_sdk;
+
+#[path = "e2e/attachments.rs"]
+mod attachments;

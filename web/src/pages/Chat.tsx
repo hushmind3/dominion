@@ -5,9 +5,9 @@ import {TokenUsage} from '../components/TokenUsage'
 import {OwnerAvatar,useOwnerProfile} from '../components/OwnerProfile'
 import {createPortal} from 'react-dom'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
-import {FormEvent,useEffect,useMemo,useRef,useState,type KeyboardEvent} from 'react'
-import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
-import {Agent,Approval,ChatMessage,ChatSession,Provider,get,post,resolveApproval,streamChat,koreanReasoningEnabled} from '../api'
+import {FormEvent,useEffect,useMemo,useRef,useState,type ChangeEvent,type KeyboardEvent} from 'react'
+import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Paperclip,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
+import {Agent,Approval,Attachment,ChatMessage,ChatSession,Provider,get,post,resolveApproval,streamChat,koreanReasoningEnabled,uploadAttachment} from '../api'
 import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
 import {ModelPicker} from '../components/ModelPicker'
@@ -24,6 +24,9 @@ type LearningJob=JobState & {result?:LearningResult}
 type ModelOverride={scope?:string;providerId:string;model:string}
 type InstalledModel={id:string;repo:string;label:string;format:string;bytes:number;source?:string}
 type Runtime={status:string;id?:string;name?:string;model?:string;error?:string}
+type PendingImage={key:string;file:File;preview:string}
+const ATTACH_ALLOWED=['image/png','image/jpeg','image/webp','image/gif']
+const ATTACH_LIMIT=8
 const formatBytes=(bytes:number)=>{
  const gb=Number(bytes||0)/1024/1024/1024
  return gb>=1?gb.toFixed(1)+' GB':Math.max(0,Math.round(Number(bytes||0)/1024/1024))+' MB'
@@ -74,6 +77,30 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const [modelMenu,setModelMenu]=useState(false),[installed,setInstalled]=useState<InstalledModel[]>([]),[modelsLoading,setModelsLoading]=useState(false),[runtime,setRuntime]=useState<Runtime>({status:'idle'}),[modelBusy,setModelBusy]=useState(''),[unloading,setUnloading]=useState(false),[learning,setLearning]=useState(false),[menuError,setMenuError]=useState('');
  const [slashOpen,setSlashOpen]=useState(false),[slashActive,setSlashActive]=useState(0),[commandInfo,setCommandInfo]=useState('');
  const inputRef=useRef<HTMLTextAreaElement>(null);
+ const imageInputRef=useRef<HTMLInputElement>(null);
+ const [pendingImages,setPendingImages]=useState<PendingImage[]>([]);
+ const [uploading,setUploading]=useState(false);
+ const pendingImagesRef=useRef<PendingImage[]>([]);
+ pendingImagesRef.current=pendingImages;
+ useEffect(()=>()=>{pendingImagesRef.current.forEach(item=>URL.revokeObjectURL(item.preview))},[]);
+ const onPickImages=(event:ChangeEvent<HTMLInputElement>)=>{
+  const files=Array.from(event.target.files??[]);
+  event.target.value='';
+  if(!files.length)return;
+  if(files.some(file=>!ATTACH_ALLOWED.includes(file.type))){setError(t('chat.attachOnlyImages'));return}
+  if(pendingImages.length+files.length>ATTACH_LIMIT){setError(t('chat.attachLimit'));return}
+  setPendingImages(previous=>[...previous,...files.map(file=>({
+   key:`${file.name}:${file.lastModified}:${Math.random().toString(36).slice(2)}`,
+   file,preview:URL.createObjectURL(file),
+  }))]);
+ };
+ const removeImage=(key:string)=>{
+  setPendingImages(previous=>{
+   const target=previous.find(item=>item.key===key);
+   if(target)URL.revokeObjectURL(target.preview);
+   return previous.filter(item=>item.key!==key);
+  });
+ };
  const stream=useRef<AbortController|null>(null);
  const activeTurnSession=useRef<string|undefined>(undefined);
  const stoppingRef=useRef(false);
@@ -283,7 +310,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   setSlashOpen(false);void executeCommand(item.command);
  };
  const send=async(e?:FormEvent)=>{
-  e?.preventDefault();const text=input.trim();if(!text)return;
+  e?.preventDefault();const text=input.trim();
+  if(!text&&!pendingImages.length)return;
   if(text.startsWith('/')){
    if(busy&&text!=='/stop')return;
    await executeCommand(text);return;
@@ -315,9 +343,22 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    }
    setInput(previous=>previous.trim()===text?'':previous);
    if(inputRef.current)inputRef.current.style.height='';
+   let attachmentIds:string[]|undefined;
+   if(pendingImages.length){
+    setUploading(true);
+    try{
+     const uploaded=await Promise.all(pendingImages.map(item=>uploadAttachment({sessionId:id!},item.file)));
+     if(controller.signal.aborted)return;
+     attachmentIds=uploaded.map(item=>item.id);
+     pendingImages.forEach(item=>URL.revokeObjectURL(item.preview));
+     setPendingImages([]);
+    }finally{
+     setUploading(false);
+    }
+   }
    await streamChat({
     sessionId:id,agentId,providerId:manual?.providerId,model:manual?.model,input:text,
-    toolsEnabled,toolsExecutionEnabled:toolsEnabled,autoLearning:autoLearn,
+    toolsEnabled,toolsExecutionEnabled:toolsEnabled,autoLearning:autoLearn,attachmentIds,
     reasoningLanguage:reasoningKo?'ko':'original',reasoningEffort:reasoningEffort||undefined,thinking:selectedProvider?.kind==='codex'?(reasoningEffort==='none'?false:canDisableThinking?thinkingEnabled:undefined):thinkingEnabled,
    },event=>{
     if(controller.signal.aborted||stoppingRef.current||stream.current!==controller)return;
@@ -413,11 +454,19 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     {modelError&&!model&&<div className="mb-3 text-xs text-[#7C7469]">{t('chat.noModel')}: {modelError} <Button onClick={openModels}>{t('chat.manage')} <ArrowRight size={13}/></Button></div>}
     {commandInfo&&<div role="status" className="mb-3 max-h-36 overflow-auto whitespace-pre-wrap rounded-xl border border-[#EED9CC] bg-[#F7E8E1] p-3 text-xs leading-6 text-[#4A443C]">{commandInfo}</div>}
     <div className="relative">
+    {pendingImages.length>0&&<div className="mb-2 flex flex-wrap items-center gap-2">
+     {pendingImages.map(item=><div key={item.key} className="relative h-16 w-16 overflow-hidden rounded-lg border border-[#E7E0D5] bg-[#FAF7F1]">
+      <img src={item.preview} alt={item.file.name} className="h-full w-full object-cover"/>
+      <button type="button" onClick={()=>removeImage(item.key)} aria-label={t('chat.attachRemove')} title={t('chat.attachRemove')} className="absolute right-0.5 top-0.5 grid size-5 place-items-center rounded-full bg-black/60 text-white hover:bg-black/80"><X size={12}/></button>
+     </div>)}
+    </div>}
     {slashOpen&&<SlashMenu items={slashItems} active={slashActive} onChoose={chooseSlash}/>}
     <form onSubmit={send} className="conversation-composer">
      <TextArea ref={inputRef} rows={1} placeholder={t("chat.inputPlaceholder")} value={input} onChange={e=>{const next=e.target.value;setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n'));setSlashActive(0);const el=e.currentTarget;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,180)+'px'}} onKeyDown={appendKey} aria-controls="dominion-slash-menu" aria-expanded={slashOpen} className="conversation-composer-input"/>
      <div className="chat-composer-controls conversation-composer-controls">
       <div className="chat-composer-options conversation-composer-options">
+       <Button type="button" variant="ghost" size="icon" className="!h-7 !w-7 !border-0 !bg-transparent !text-[#5C544A]" title={t('chat.attach')} aria-label={t('chat.attach')} onClick={()=>imageInputRef.current?.click()} disabled={busy||uploading||Boolean(selectedSession?.roomId)}>{uploading?<LoaderCircle size={16} className="animate-spin"/>:<Paperclip size={16}/>}</Button>
+       <input ref={imageInputRef} type="file" accept={ATTACH_ALLOWED.join(',')} multiple className="sr-only" aria-label={t('chat.attach')} onChange={onPickImages}/>
        <ExecutionPermissions active={active} open={permissionOpen} onOpenChange={open=>{setPermissionOpen(open);if(open){setShowSettings(false);setModelMenu(false)}}} onError={setError} onChanged={label=>setCommandInfo(t('chat.perm.changed',{label}))}/>
 
        <ReasoningSelect value={reasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} model={selectedModel} requireCatalog={selectedProvider?.kind==='codex'} defaultLabel={activeAgent?.reasoningEffort?`에이전트 설정 (${activeAgent.reasoningEffort})`:t('chat.reasoningAuto')} className="chat-reasoning !h-7 !w-auto !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-[#5C544A]"/>
@@ -427,7 +476,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
       <div className="ml-auto flex items-center gap-2">
        <span className="hidden text-[10px] text-[#9C9388] sm:inline">{t('chat.enterHint')}</span>
        {busy?<Button className="conversation-composer-send !bg-rose-600 hover:!bg-rose-700" type="button" onClick={()=>void stopChat()} disabled={stopping} title={stopping?t('chat.stopping'):t('chat.stop')} aria-label={stopping?t('chat.stopping'):t('chat.stop')}>{stopping?<LoaderCircle size={18} className="animate-spin"/>:<Square size={18} fill="currentColor"/>}</Button>
-       :<Button className="conversation-composer-send" disabled={stopping||Boolean(selectedSession?.roomId)||(Boolean(current)&&sessions.loading)||!input.trim()} type="submit" title={t('chat.send')}><ArrowUp size={19}/></Button>}
+       :<Button className="conversation-composer-send" disabled={stopping||uploading||Boolean(selectedSession?.roomId)||(Boolean(current)&&sessions.loading)||(!input.trim()&&!pendingImages.length)} type="submit" title={t('chat.send')}><ArrowUp size={19}/></Button>}
       </div>
      </div>
     </form></div>
@@ -438,12 +487,18 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
 function Message({message,agentName,showReasoning}:{message:ChatMessage;agentName?:string;showReasoning?:boolean}){
  const {profile}=useOwnerProfile()
  const [open,setOpen]=useState(true);const human=message.role==='user';
+ const attachments=Array.isArray(message.metadata?.attachments)?message.metadata.attachments as Attachment[]:[];
  return <div className={'flex min-w-0 items-start gap-3 '+(human?'':'')} data-message>
   {human?<OwnerAvatar profile={profile}/>:<div className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#A94E30]"><Sparkles size={17}/></div>}
   <div className="relative min-w-0 flex-1">
    <div className="mb-2 flex items-center gap-2 text-xs font-bold text-[#4A443C]">{human?t('ui.you'):agentName||'DOMINION'}{!human&&<TokenUsage usage={message.metadata?.usage} className="ml-auto rounded border border-[#E7DDCC] bg-[#F7F1E6] px-1.5 py-0.5 text-[9px] font-medium text-[#8A775F]"/>}</div>
    {showReasoning&&message.reasoning&&<details className="mb-3 max-h-56 overflow-y-auto rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-[11px] leading-5 text-[#7C7469]" open={open}><summary className="cursor-pointer select-none" onClick={e=>{e.preventDefault();setOpen(v=>!v)}}><BrainCircuit size={14} className="inline"/> {t('chat.reasoningProcess',{count:message.reasoning.length.toLocaleString()})} <ChevronRight size={13} className="inline"/></summary><div className="mt-2 whitespace-pre-wrap">{message.reasoning}</div></details>}
    <div className={"min-w-0 break-words text-sm leading-7 text-[#3A342D] [&_p]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-xl [&_pre]:bg-slate-950 [&_pre]:p-4 [&_pre]:text-slate-100 [&_code]:break-words [&_ul]:list-disc [&_ul]:pl-6 "+(human?"rounded-xl bg-[#F3EEE5] px-4 py-3":"")}>{message.content||(!human&&message.tool_calls?.length?t('chat.toolRequest'):'' )}</div>
+   {human&&attachments.length>0&&<div className="mt-2 flex flex-wrap gap-2">
+    {attachments.map(item=>item.isImage
+     ?<a key={item.id} href={item.url} target="_blank" rel="noreferrer" title={item.name} className="block overflow-hidden rounded-lg border border-[#E7E0D5]"><img src={item.url} alt={item.name} className="h-24 w-24 object-cover"/></a>
+     :<a key={item.id} href={item.url} target="_blank" rel="noreferrer" className="rounded-lg border border-[#E7E0D5] bg-white px-2 py-1 text-[11px] text-[#5C544A] hover:bg-[#FAF7F1]">{item.name}</a>)}
+   </div>}
    {!human&&message.content&&<Button className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] text-[#7C7469] hover:bg-[#F3EEE5]" onClick={()=>navigator.clipboard.writeText(message.content)} title={t('chat.copy')}><Copy size={14}/></Button>}
   </div>
  </div>
