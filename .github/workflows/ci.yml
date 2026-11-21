@@ -226,6 +226,8 @@ jobs:
         run: cargo test --locked --bin dominion-rust api::providers::tests::public_
       - name: Shared SDK run and retry regressions (dev profile)
         run: cargo test --locked --bin dominion-rust api::sdk::view_tests
+      - name: External inspection resume ownership guards (dev profile)
+        run: cargo test --locked --bin dominion-rust api::jobs::external_resume_ui_tests
 
   windows-backend-and-frontend:
     runs-on: windows-latest
@@ -273,6 +275,7 @@ jobs:
           node --test web/tests/chat-stop-contract.test.mjs
           node --experimental-strip-types --test web/tests/connections-ui.test.mjs
           node --test web/tests/chat-attachments.test.mjs
+          node --test web/tests/runtime-ux-contract.test.mjs
           npm run typecheck --prefix web
           npm run build --prefix web
 
