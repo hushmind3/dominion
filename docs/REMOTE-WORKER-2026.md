@@ -91,3 +91,79 @@ concurrent worker heartbeat cannot be overwritten by an obsolete expiry
 observation. Missing evidence can be rejected or cancelled, but never
 accepted as a completed remote task. The TypeScript client exposes
 `reconcileRemoteLeases()`.
+
+
+## P3 Multi-machine control plane (2026-11-21)
+
+The owner controls worker identity, eligibility and dispatch through **the
+existing Rust API and SQLite journal**, not a second execution kernel.
+
+### Coordinator and owner authentication
+
+Set `DOMINION_ADMIN_TOKEN` on the coordinator. It is mandatory for **all**
+owner-facing `/api/remote/*` requests, including GET/list, when routed through
+the API. Only machine-specific claim, heartbeat and finish endpoints bypass
+the owner token; these still require `x-dominion-worker-token`.
+Keep the coordinator on loopback or expose it behind HTTPS. The owner token
+uses `x-dominion-token`; it must never be copied to the worker machine.
+
+Owner API:
+
+- `POST /api/remote/workers` body `{"workerId":"gpu-1","capabilities":["sdk","gpu"]}` creates an enrolled machine and returns its `token` **once**.
+- `GET /api/remote/workers` lists enabled state, capabilities and last-seen time, never credential hashes or tokens.
+- `POST /api/remote/workers/gpu-1/rotate` rotates the token and returns the replacement once. Existing in-flight leases can no longer heartbeat with the old credential; their uncertain effects require manual review.
+- `POST /api/remote/workers/gpu-1/state` with `{"enabled":false}` pauses dispatch and invalidates heartbeats until enabled.
+
+The per-machine `tokenSha256` exists only in coordinator SQLite. Event
+publications exclude it. Registered workers cannot authenticate with the
+old shared `DOMINION_REMOTE_WORKER_TOKEN`, even if they know that secret.
+Unregistered legacy workers can still use the shared secret for **unconstrained**
+jobs. Prefer enrolled identities for multi-device installations.
+
+### Capability-pinned work
+
+A job may now specify:
+
+```json
+{
+  "instruction": "Inspect code on the GPU worker",
+  "targetWorkerId": "gpu-1",
+  "requiredCapabilities": ["sdk", "gpu"],
+  "maxRounds": 12
+}
+```
+
+The owner must have enrolled and enabled an eligible worker before such a
+job is admitted. `requiredCapabilities` are owner-defined labels, never
+claims made by a model or proof of verification. Only matching registered
+machines can lease a pinned or capability-constrained job; multiple polling
+workers cannot claim the same ticket, since the final transition is a SQLite
+compare-and-patch under the connection lock.
+
+Queued and active remote jobs have dedicated SQLite partial indexes. The
+coordinator does not scan historical completed reports on each poll.
+Leases carry fresh unpredictable `leaseId` values; heartbeat and finish
+require exact worker identity, lease and unexpired deadline. A transport
+failure on a worker's heartbeat attempts to cancel its local SDK run.
+Expiration, process death, token rotation, owner cancellation and unknown
+effects all **fail closed** without an automatic second execution.
+
+### Invariants across P0–P3
+
+- **P0:** `dominion-core` owns durability, cancellation, journal and policy.
+  `dominion-algorithms::Engine::drive` remains the one native Harness.
+  Run/Event correlation uses the existing `RunEventRef`.
+- **P1:** Room cursors and selected-message evidence, endpoint capability
+  negotiation, and native Lead/Worker DAG remain product-owned adapters.
+- **P2:** Codex/Claude/Qwen Agent Bridge has a distinct external execution
+  namespace, per-session event matching, and cannot forge native receipts.
+  Strategy/memory decisions remain outside the Core.
+- **P3:** The remote control plane leases the existing native SDK execution
+  service on other machines; it does not introduce a second agent loop.
+
+**Scope boundary:** This is a working multi-machine control plane and worker
+transport, *not* a distributed file system or atomic cross-host Git merge.
+Cross-host native verification is not asserted. Remote owner-reviewed reports
+never set `nativeVerified:true`; remote write effects remain on the worker's
+own isolated workspace until a separate explicit artifact-transfer contract
+is implemented.
