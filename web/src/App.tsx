@@ -197,6 +197,10 @@ export default function App(){
       window.dispatchEvent(new CustomEvent('dominion-data-change',{detail:batch}))
      },100)
     }
+    if(item.type==='event_gap' && item.resyncRequired===true){
+     // A journal gap invalidates counters as well as the mounted API data.
+     scheduleStatus();scheduleApprovals()
+    }
     if(item.type==='approval')scheduleApprovals()
     if(item.type==='job_event'||item.type==='goal_event'||item.type==='execution_event'
       ||(item.type==='record'&&item.kind==='job'))scheduleStatus()
