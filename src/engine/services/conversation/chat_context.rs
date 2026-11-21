@@ -24,6 +24,41 @@ pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec
     (text,items)
 }
 
+/// Fresh one-to-one greetings and self-contained translations need neither
+/// tool catalogs nor native workspace/history policies. Preserve the full
+/// explicit owner and agent instructions, with the same authority order, but
+/// do not attach an unrelated operation manual or memory retrieval batch.
+/// Long owner instructions remain exact even when this costs more tokens.
+pub(super) fn lightweight_chat_prompt(state:&AppState,request:&TurnRequest)->PromptContext{
+    let mut prompt=String::from("DOMINION. 사용자의 언어로 자연스럽고 간결하게 답하십시오.");
+    let mut items=Vec::new();
+    if let Some(agent)=request.agent_id.as_deref().and_then(|id|state.store.get("agent",id)){
+        prompt.push_str(&format!("\n활성 에이전트: {} (id: {}).",
+            agent["name"].as_str().unwrap_or(""),agent["id"].as_str().unwrap_or(""));
+        if let Some(persona)=agent["systemPrompt"].as_str().filter(|s|!s.trim().is_empty()){
+            prompt.push_str("\n에이전트 지침:\n");prompt.push_str(persona);
+            items.push(json!({"kind":"persona","id":agent["id"],
+                "digest":crate::engine::memory::stable_id(&[persona])}));
+        }
+    }
+    if let Some(settings)=state.store.get("assistant_settings","global")
+        .filter(|settings|settings["enabled"]!=false){
+        if let Some(instructions)=settings["instructions"].as_str()
+            .filter(|s|!s.trim().is_empty()){
+            prompt.push_str("\n주인 지시(페르소나보다 우선):\n");
+            prompt.push_str(instructions);
+            items.push(json!({"kind":"owner_instructions",
+                "digest":crate::engine::memory::stable_id(&[instructions])}));
+        }
+    }
+    if request.reasoning_language.as_deref()==Some("ko"){
+        prompt.push_str("\n추론과 최종 답변은 다른 언어 요청이 없으면 한국어로 작성하십시오.");
+    }
+    let watermark=crate::engine::memory::stable_id(&[&prompt]);
+    PromptContext{prompt,dynamic_context:String::new(),
+        source_instructions:String::new(),items,memory_watermark:watermark}
+}
+
 /// Room-wide immutable cache prefix: generic identity and owner policy only.
 /// Unlike identity_prefix, no participant persona or current query is included.
 /// The caller appends the stable room charter before each agent's persona.
@@ -736,6 +771,30 @@ mod tests {
             crate::vault::Vault::open(&config.key_path()),
         );
         (state, dir)
+    }
+
+    #[test]
+    fn lightweight_greeting_keeps_owner_and_agent_policy_without_native_work_manual(){
+        let (state,dir)=state();
+        state.store.put("agent",&json!({"id":"greeting-agent","name":"친구",
+            "systemPrompt":"AGENT_EXACT_PERSONA"}));
+        state.store.put("assistant_settings",&json!({"id":"global",
+            "instructions":"OWNER_EXACT_POLICY","enabled":true}));
+        let request=TurnRequest::from_value(&json!({"input":"안녕",
+            "agentId":"greeting-agent","toolsEnabled":true})).unwrap();
+        let light=lightweight_chat_prompt(&state,&request);
+        assert!(light.prompt.contains("OWNER_EXACT_POLICY"));
+        assert!(light.prompt.contains("AGENT_EXACT_PERSONA"));
+        assert!(light.prompt.find("AGENT_EXACT_PERSONA").unwrap()
+            <light.prompt.find("OWNER_EXACT_POLICY").unwrap());
+        assert!(!light.prompt.contains("작업 공간 루트:"));
+        assert!(!light.prompt.contains("사용 가능한 도구"));
+        assert!(light.dynamic_context.is_empty());
+        let clean=TurnRequest::from_value(&json!({"input":"안녕"})).unwrap();
+        let estimated=super::room_context::estimate(
+            &lightweight_chat_prompt(&state,&clean).prompt);
+        assert!(estimated<100,"basic greeting should use tens of system tokens: {estimated}");
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]
