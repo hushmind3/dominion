@@ -324,6 +324,28 @@ try{
      sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}]}}}
  await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
  await page.getByText('No verified result').waitFor({timeout:8000})
+ // Long autonomous jobs retain more than four events. Owners must be able
+ // to reopen earlier stages without a new menu or a fake progress timeline.
+ sdkRuns[0].checkpoint.events=[
+  {kind:'verification_pending',detail:{}},
+  {kind:'model_started',detail:{}},
+  {kind:'tool_started',detail:{tool:'workspace_read'}},
+  {kind:'tool_completed',detail:{tool:'workspace_read'}},
+  {kind:'model_started',detail:{}},
+  {kind:'tool_started',detail:{tool:'workspace_write'}},
+  {kind:'tool_failed',detail:{tool:'workspace_write'}}
+ ]
+ await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
+ const history=page.getByRole('list',{name:'실행 단계 기록'})
+ await page.getByRole('button',{name:'이전 단계 보기'}).waitFor({timeout:8000})
+ assert.equal(await history.getByText('verification_pending').count(),0,
+  'Initial run detail should remain compact for ordinary jobs')
+ await page.getByRole('button',{name:'이전 단계 보기'}).click()
+ assert.equal(await history.getByText('verification_pending').count(),1,
+  'Previously recorded owner-visible steps must be reopenable')
+ assert.equal(await page.getByRole('button',{name:'최근 단계만'}).getAttribute('aria-expanded'),'true')
+ await page.getByRole('button',{name:'최근 단계만'}).click()
+ assert.equal(await history.getByText('verification_pending').count(),0)
  await page.locator('summary').filter({hasText:'도구 실행 기록'}).click()
  await page.getByText('saved-tool-2').waitFor({timeout:8000})
  assert.equal(await page.getByText('도구 실패').count(),1)
