@@ -349,35 +349,84 @@ fn parse_dsml_tool_calls(
     (calls, cleaned.trim().to_string())
 }
 
+/// Chat, Native SDK and Codex HTTP now use the SAME bounded UTF-8/SSE
+/// frame decoder. Hosts retain their own provider-specific event assembly.
+/// Converting validated JSON packets back to data-only blocks preserves the
+/// existing Chat provider contract without a duplicate low-level parser.
 #[derive(Default)]
-pub(super) struct SseBuffer(Vec<u8>);
-
+pub(super) struct SseBuffer {
+    decoder:crate::features::providers::native_stream::SseDecoder,
+    ready:std::collections::VecDeque<String>,
+}
 impl SseBuffer {
-    pub(super) fn push(&mut self, bytes: &[u8]) -> Result<(), String> {
-        if self.0.len() + bytes.len() > 2_000_000 {
-            return Err("SSE 이벤트 크기 제한을 초과했습니다.".into());
+    pub(super) fn push(&mut self, bytes:&[u8])->Result<(),String>{
+        use crate::features::providers::native_stream::Packet;
+        for packet in self.decoder.push(bytes)? {
+            let block=match packet {
+                Packet::Data(value)=>format!("data: {}\\n\\n",value),
+                Packet::Done=>"data: [DONE]\\n\\n".to_string(),
+            };
+            self.ready.push_back(block);
         }
-        self.0.extend_from_slice(bytes);
         Ok(())
     }
+    pub(super) fn pop(&mut self)->Result<Option<String>,String>{
+        Ok(self.ready.pop_front())
+    }
+}
 
-    pub(super) fn pop(&mut self) -> Result<Option<String>, String> {
-        let lf = self
-            .0
-            .windows(2)
-            .position(|part| part == b"\n\n")
-            .map(|index| (index, 2));
-        let crlf = self
-            .0
-            .windows(4)
-            .position(|part| part == b"\r\n\r\n")
-            .map(|index| (index, 4));
-        let Some((index, size)) = [lf, crlf].into_iter().flatten().min_by_key(|part| part.0) else {
-            return Ok(None);
-        };
-        let bytes: Vec<u8> = self.0.drain(..index + size).collect();
-        String::from_utf8(bytes)
-            .map(Some)
-            .map_err(|_| "모델 스트림에 잘못된 UTF-8이 있습니다.".into())
+#[cfg(test)]
+mod shared_sse_tests {
+    use super::*;
+    use crate::features::providers::native_stream::{Packet,SseDecoder};
+
+    #[test]
+    fn chat_and_native_decode_identical_fragmented_sse_packets(){
+        let frames=vec![
+            json!({"choices":[{"index":0,"delta":{"content":"한글 🌊"}}]}),
+            json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,
+                "id":"call-1","function":{"name":"workspace_read","arguments":"{}"}}]}}]}),
+            json!({"choices":[],"usage":{"prompt_tokens":14,
+                "completion_tokens":7,"total_tokens":21}}),
+        ];
+        let mut wire=String::from(": keepalive\\r\\n\\r\\n");
+        for frame in &frames {
+            wire.push_str(&format!("event: message\\r\\ndata: {}\\r\\n\\r\\n",frame));
+        }
+        wire.push_str("data: [DONE]\\n\\n");
+        let mut chat=SseBuffer::default();
+        let mut native=SseDecoder::default();
+        let mut from_chat=Vec::<Value>::new();
+        let mut from_native=Vec::<Value>::new();
+        let mut chat_done=0;
+        let mut native_done=0;
+        // A byte-by-byte split covers every UTF-8 scalar and SSE frame split.
+        for chunk in wire.as_bytes().chunks(1) {
+            chat.push(chunk).unwrap();
+            while let Some(block)=chat.pop().unwrap(){
+                let payload=block.lines().filter_map(|line|
+                    line.strip_prefix("data:").map(str::trim_start))
+                    .collect::<Vec<_>>().join("\\n");
+                if payload=="[DONE]" {chat_done+=1;}
+                else {from_chat.push(serde_json::from_str(&payload).unwrap());}
+            }
+            for packet in native.push(chunk).unwrap(){
+                match packet {
+                    Packet::Data(value)=>from_native.push(value),
+                    Packet::Done=>native_done+=1,
+                }
+            }
+        }
+        native.end().unwrap();
+        assert_eq!(from_chat,frames);
+        assert_eq!(from_native,from_chat);
+        assert_eq!((chat_done,native_done),(1,1));
+    }
+
+    #[test]
+    fn chat_and_native_fail_closed_on_malformed_sse_json(){
+        let input=b"data: {\"choices\":[}\\n\\n";
+        assert!(SseBuffer::default().push(input).is_err());
+        assert!(SseDecoder::default().push(input).is_err());
     }
 }
