@@ -218,7 +218,7 @@ fn gguf_download_options(siblings: &[Value]) -> Vec<Value> {
             continue;
         }
         let files = (1..=total).map(|i| group[&i].0.clone()).collect::<Vec<_>>();
-        let bytes = group.values().map(|(_, size)| *size).sum::<u64>();
+        let bytes = group.values().fold(0u64, |total, (_, size)| total.saturating_add(*size));
         let name = prefix.rsplit('/').next().unwrap_or(&prefix);
         options.push(json!({
             "id": files[0], "format": "gguf",
@@ -292,7 +292,7 @@ fn mlx_download_files(siblings: &[Value]) -> Option<Value> {
             shards += 1;
         }
         let size = sibling.get("size").and_then(Value::as_u64).unwrap_or(0);
-        bytes += size;
+        bytes = bytes.saturating_add(size);
         files.push(json!({"path": file, "bytes": size}));
     }
     if !has_config || shards == 0 {
@@ -356,9 +356,9 @@ pub async fn installed(state: &AppState) -> Vec<Value> {
             let metadata = std::fs::metadata(&path).ok()?;
             let bytes = if let Some((prefix, _, total)) =
                 gguf_shard_parts(&path.to_string_lossy()) {
-                (1..=total).map(|index|
+                (1..=total).fold(0u64, |sum, index|
                     std::fs::metadata(format!("{prefix}-{index:05}-of-{total:05}.gguf"))
-                        .map(|m| m.len()).unwrap_or(0)).sum()
+                        .map(|metadata| sum.saturating_add(metadata.len())).unwrap_or(sum))
             } else { metadata.len() };
             // Public model IDs must be stable across POSIX and Windows.
             let relative = path
@@ -427,7 +427,7 @@ fn mlx_model_from_dir(dir: &Path, root: &Path) -> Option<Value> {
                 let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
                 if name.ends_with(".safetensors") {
                     shards += 1;
-                    bytes += entry.metadata().map(|meta| meta.len()).unwrap_or(0);
+                    bytes = bytes.saturating_add(entry.metadata().map(|meta| meta.len()).unwrap_or(0));
                 }
             }
             if shards == 0 {
@@ -1463,7 +1463,7 @@ fn external_model(id: &str, path: &Path) -> Option<Value> {
             let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
             if name.ends_with(".safetensors") {
                 shards += 1;
-                bytes += entry.metadata().map(|meta| meta.len()).unwrap_or(0);
+                bytes = bytes.saturating_add(entry.metadata().map(|meta| meta.len()).unwrap_or(0));
             }
         }
         if shards == 0 {
@@ -2426,7 +2426,7 @@ pub fn start_download_at_revision(
         // worker validates its hash, only actual .part bytes are progress.
         let downloaded = std::fs::metadata(&partial)
             .map(|meta| meta.len()).unwrap_or(0);
-        total += downloaded;
+        total = total.saturating_add(downloaded);
         entries.push(json!({"path": path, "downloaded": downloaded, "total": 0}));
     }
     let job = state.store.put(
@@ -2479,20 +2479,18 @@ fn patch_download(state: &AppState, id: &str, patch: Value) {
 fn downloaded_total(files: &[Value]) -> u64 {
     files
         .iter()
-        .map(|file| file["downloaded"].as_u64().unwrap_or(0))
-        .sum()
+        .fold(0u64, |total, file| total.saturating_add(
+            file["downloaded"].as_u64().unwrap_or(0)))
 }
 
 fn declared_total(files: &[Value]) -> u64 {
     files
         .iter()
-        .map(|file| {
+        .fold(0u64, |total, file| total.saturating_add(
             file["total"]
                 .as_u64()
                 .filter(|value| *value > 0)
-                .unwrap_or_else(|| file["downloaded"].as_u64().unwrap_or(0))
-        })
-        .sum()
+                .unwrap_or_else(|| file["downloaded"].as_u64().unwrap_or(0))))
 }
 
 fn file_sha256(path: &Path) -> Result<String, String> {
@@ -2724,8 +2722,16 @@ async fn download_worker(state: AppState, job_id: String) {
         }
         let remote_size = blobs.get(&path).map(|(size, _)| *size).unwrap_or(0);
         let response_size = response.content_length()
-            .unwrap_or(0).saturating_add(if append { existing } else { 0 });
+            .map(|size|size.saturating_add(if append { existing } else { 0 }))
+            .unwrap_or(0);
         let declared = if remote_size > 0 { remote_size } else { response_size };
+        if declared == 0 {
+            patch_download(&state,&job_id,json!({
+                "status":"failed",
+                "error":"원격 모델 파일 크기를 확인할 수 없어 다운로드를 시작하지 않았습니다."
+            }));
+            return;
+        }
         let mut output = match tokio::fs::OpenOptions::new()
             .create(true)
             .write(true)
@@ -2760,6 +2766,18 @@ async fn download_worker(state: AppState, job_id: String) {
                 );
                 return;
             };
+            let Some(next_downloaded) = downloaded.checked_add(chunk.len() as u64) else {
+                patch_download(&state,&job_id,json!({
+                    "status":"failed","error":"다운로드 크기 계산이 범위를 초과했습니다."
+                }));
+                return;
+            };
+            if next_downloaded > declared {
+                patch_download(&state,&job_id,json!({
+                    "status":"failed","error":"서버가 선언한 크기보다 큰 모델 파일을 전송했습니다."
+                }));
+                return;
+            }
             if let Err(error) = output.write_all(&chunk).await {
                 patch_download(
                     &state,
@@ -2768,7 +2786,7 @@ async fn download_worker(state: AppState, job_id: String) {
                 );
                 return;
             }
-            downloaded += chunk.len() as u64;
+            downloaded = next_downloaded;
             if downloaded % (2 * 1024 * 1024) < chunk.len() as u64 {
                 files[index]["downloaded"] = json!(downloaded);
                 let total = downloaded_total(&files);
@@ -2845,7 +2863,7 @@ async fn download_worker(state: AppState, job_id: String) {
                 .filter(|value| *value > 0)
                 .unwrap_or_else(|| file["downloaded"].as_u64().unwrap_or(0))
         })
-        .sum::<u64>()
+        .fold(0u64, u64::saturating_add)
         .max(done);
     patch_download(
         &state,
