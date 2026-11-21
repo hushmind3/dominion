@@ -355,7 +355,7 @@ test('stream batching never drops final or cancelled conversation output',()=>{
   assert.match(chat,/if\(event\.type==='reasoning'\)queueStreamDelta\('reasoning',event\.text\)/)
   assert.match(chat,/if\(event\.type==='assistant_saved'\)\{flushStreamBuffer\(\);setSavedMessageId/)
   assert.match(chat,/\}finally\{\s*if\(stream\.current===controller\)\{\s*flushStreamBuffer\(\)/)
-  assert.match(chat,/controller\?\.abort\(\);clearStreamBuffer\(\)/)
+  assert.match(chat,/if\(controller\)flushStreamBuffer\(\);\s*controller\?\.abort\(\)/)
 })
 
 test('pending private image previews cannot follow a different session',()=>{
@@ -388,4 +388,12 @@ test('stop retains streamed assistant text and restores pre-session unsaved owne
  assert.match(chat,/if\(controller\)flushStreamBuffer\(\);\s*controller\?\.abort\(\)/)
  assert.match(chat,/setBusy\(false\);setLiveApproval\(null\);setToolStatus\(''\);/)
  assert.doesNotMatch(chat,/controller\?\.abort\(\);clearStreamBuffer\(\);/)
+})
+
+test('explicit web-search wording in model-only chat bypasses agent tool enforcement',()=>{
+ const product=source('../src/addons/integrations/chat_product.rs')
+ const testSource=source('../tests/e2e/http_execution.rs')
+ assert.match(product,/if !self\.is_room && !self\.request\.direct_chat \{/)
+ assert.match(testSource,/fn direct_chat_search_request_remains_a_model_reply_without_web_tool_or_error/)
+ assert.match(testSource,/assert!\(!response\.contains\("도구 실행이 꺼져 있습니다"\)/)
 })
