@@ -290,8 +290,10 @@ impl Kernel<'_> {
                 },
                 runtime::ModelAttempt::Uncertain(error)=>{
                     if self.journal.cancelled(&request.id){
-                        run.model_in_flight=false;
-                        run.stop(Status::Cancelled,"Owner cancelled native model generation");
+                        // Cancellation after dispatch cannot prove the model
+                        // was not billed. Preserve the write-ahead fence.
+                        run.stop(Status::NeedsReview,
+                            format!("Owner cancelled during a paid model call; outcome unknown: {error}"));
                     }else{
                         run.stop(Status::NeedsReview,format!("Model unavailable: {error}"));
                     }
@@ -323,10 +325,9 @@ impl Kernel<'_> {
             if !within_token_budget {
                 // The paid turn has been accounted for and is terminal: no
                 // decision or tool invocation can be taken from this reply.
-                run.model_in_flight = false;
                 run.stop(Status::NeedsReview,
                     "Provider-reported token usage exceeded the owner budget; no actions dispatched");
-                self.journal.save(&run)?;
+                runtime::settle_rejected_model_turn(self.journal,&mut run)?;
                 return Ok(run);
             }
             let decision = match native_decision.map_or_else(||decode(&reply.content),validate_decision_plan)
@@ -340,8 +341,7 @@ impl Kernel<'_> {
                     }];
                     // Persist the unsuccessful parse and charged model usage
                     // atomically with releasing the paid-generation fence.
-                    run.model_in_flight = false;
-                    self.journal.save(&run)?;
+                    runtime::settle_rejected_model_turn(self.journal,&mut run)?;
                     if invalid >= 3 { break; }
                     continue;
                 }
