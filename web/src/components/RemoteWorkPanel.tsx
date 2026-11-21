@@ -153,6 +153,14 @@ export function RemoteWorkPanel(){
     <button type="button" onClick={refreshAll} disabled={busy}
      className="inline-flex items-center gap-1 rounded-lg border border-[#E7E0D5] px-2.5 py-1.5 text-[11px]"><RefreshCw size={13}/>{en?'Refresh':'새로고침'}</button>
    </div>
+   <details className="rounded-xl border border-[#EFE9DF] bg-[#FCFAF6] p-3">
+    <summary className="cursor-pointer text-[11px] font-semibold text-[#5C544A]">{en?'How to connect a remote machine':'원격 장치 연결 방법'}</summary>
+    <p className="mt-2 text-[11px] leading-5 text-[#7C7469]">{en
+     ?'Set DOMINION_ADMIN_TOKEN on the coordinator and enter the same owner token in Settings → Advanced → Admin token. Register a worker here, then configure its one-time worker credential only on that remote machine. Use HTTPS for a network coordinator.'
+     :'코디네이터에 DOMINION_ADMIN_TOKEN을 설정하고, 기존 설정 → 고급 설정 → 관리자 토큰에 같은 값을 입력하세요. 여기서 워커를 등록한 다음, 1회 발급된 워커 키는 원격 장치에만 설정합니다. 외부 네트워크 연결은 HTTPS를 사용합니다.'}</p>
+    <pre className="mt-2 overflow-x-auto rounded-lg bg-white p-3 text-[10px] leading-5">{'export DOMINION_REMOTE_COORDINATOR="https://your-coordinator.example"\nexport DOMINION_REMOTE_WORKER_ID="registered-worker-id"\nexport DOMINION_REMOTE_WORKER_TOKEN="the-one-time-worker-token"\nexport DOMINION_WORKER_LOCAL_URL="http://127.0.0.1:4317"\ncargo run --locked --bin dominion-worker'}</pre>
+    <p className="mt-1 text-[10px] text-[#8A8176]">{en?'The remote machine must already be running its own DOMINION Rust server and configured model.':'원격 장치에는 별도의 도미니언 Rust 서버와 사용할 모델이 준비돼 있어야 합니다.'}</p>
+   </details>
    {workers.error&&<p role="alert" className="text-[11px] text-rose-700">{en?'Worker records: ':'워커 기록: '}{workers.error}</p>}
    {jobs.error&&<p role="alert" className="text-[11px] text-rose-700">{en?'Remote jobs: ':'원격 작업: '}{jobs.error}</p>}
    {error&&<p role="alert" className="break-words text-[11px] text-rose-700">{error}</p>}
