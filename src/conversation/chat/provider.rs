@@ -2805,6 +2805,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn chat_anthropic_http_rejects_malformed_and_unclosed_tool_blocks() {
+        use axum::{routing::post,Router,Json};
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address=listener.local_addr().unwrap();
+        let app=Router::new().route("/messages",post(|Json(body):Json<Value>|async move{
+            let invalid=body["model"]=="invalid-json";
+            let mut events=vec![
+                json!({"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":0}}}),
+                json!({"type":"content_block_start","index":0,"content_block":{
+                    "type":"tool_use","id":"call-1","name":"workspace_read","input":{}
+                }}),
+                json!({"type":"content_block_delta","index":0,"delta":{
+                    "type":"input_json_delta",
+                    "partial_json":if invalid {"{\"path\":"} else {"{\"path\":\"ok\"}"}
+                }}),
+            ];
+            if invalid {events.push(json!({"type":"content_block_stop","index":0}));}
+            events.push(json!({"type":"message_delta","usage":{"output_tokens":4}}));
+            events.push(json!({"type":"message_stop"}));
+            let payload=events.iter().map(|event|format!("event: x\ndata: {event}\n\n"))
+                .collect::<String>();
+            ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],payload)
+        }));
+        let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+        let root=std::env::temp_dir().join(format!("dominion-chat-bad-tool-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=crate::config::Config{
+            port:0,data_dir:root.clone(),web_dir:root.join("web"),workspace:root.clone()
+        };
+        let state=AppState::new(config,
+            crate::db::Store::open(&root.join("db.sqlite")).unwrap(),
+            crate::vault::Vault::open(&root.join("keys.json")));
+        let request=TurnRequest::from_value(&json!({
+            "input":"read a file","sessionId":"tool-test","autoLearning":false
+        })).unwrap();
+        let messages=vec![json!({"role":"user","content":"read a file"})];
+        let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+        for (model,expected) in [
+            ("invalid-json","Invalid Anthropic streamed tool arguments"),
+            ("unclosed-block","message_stop arrived before tool_use block was closed"),
+        ] {
+            let provider=ProviderRef{
+                id:model.into(),name:"Anthropic fixture".into(),
+                base_url:format!("http://{address}"),api_key:"test".into(),
+                model:model.into(),tool_mode:"native".into(),
+                reasoning_protocol:"anthropic".into(),local:false,
+                context_tokens:None,max_output_tokens:Some(256),
+                requests_per_minute:None,kind:"anthropic".into(),account_id:None,
+            };
+            let error=stream_completion_once(&state,&reqwest::Client::new(),&provider,
+                &messages,&[],&request,"tool-test",&tx,false).await.unwrap_err();
+            assert!(error.contains(expected),"{model}: {error}");
+        }
+        server.abort();
+        let _=std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn anthropic_native_stream_translates_messages_tools_and_usage() {
         use axum::{routing::post, Router, Json};
         use std::sync::{Arc, Mutex};
