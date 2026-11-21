@@ -237,3 +237,4 @@ jobs:
         run: |
           node web/tests/team-activity.smoke.mjs
           node web/tests/room-model-routing.smoke.mjs
+          node web/tests/sse-gap.smoke.mjs
