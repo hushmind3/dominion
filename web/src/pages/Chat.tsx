@@ -114,6 +114,10 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    file,preview:URL.createObjectURL(file),
   }))]);
  };
+ const discardPendingImages=()=>setPendingImages(previous=>{
+  previous.forEach(item=>URL.revokeObjectURL(item.preview));
+  return [];
+ });
  const removeImage=(key:string)=>{
   setPendingImages(previous=>{
    const target=previous.find(item=>item.key===key);
@@ -146,6 +150,16 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const activeTurnSession=useRef<string|undefined>(undefined);
  const stoppingRef=useRef(false);
  const [stopping,setStopping]=useState(false);
+ // Pending attachments must never follow a sidebar/browser-history switch to
+ // another conversation. The first send adopting a new session is not a switch.
+ const attachmentScope=useRef(current);
+ useEffect(()=>{
+  if(attachmentScope.current===current)return;
+  const previous=attachmentScope.current;
+  attachmentScope.current=current;
+  if(previous===undefined&&activeTurnSession.current===current)return;
+  discardPendingImages();
+ },[current]);
  const view=useRef(current);
  view.current=current;
  const viewingTurn=turnSession===current&&(!savedMessageId||!messages.some(message=>message.id===savedMessageId));
@@ -245,6 +259,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  };
  const resetLocal=()=>{
   onSession(undefined);setAgentChoice(undefined);setChatModeOverride(undefined);setOverride(undefined);
+  discardPendingImages();
   if(!current)setInput('');
   setError('');setCommandInfo('');setSlashOpen(false);
   if(window.innerWidth<768)setShowHistory(false);
