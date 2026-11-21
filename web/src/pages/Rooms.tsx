@@ -7,7 +7,7 @@ import {ConversationSwitch} from '../components/WorkspaceShell'
 import {TokenUsage} from '../components/TokenUsage'
 import {useOwnerProfile} from '../components/OwnerProfile'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
-import {useCallback,useEffect,useMemo,useRef,useState,type FormEvent} from 'react'
+import {useCallback,useEffect,useMemo,useRef,useState,type FormEvent,type SetStateAction} from 'react'
 import {Activity,ArrowDown,ArrowRight,ArrowUp,AtSign,BookOpenText,Bot,Check,ChevronDown,ChevronLeft,ChevronRight,Clock3,Copy,FileText,Hash,LoaderCircle,MessageCircle,MoreHorizontal,Menu,PanelLeft,Settings,Network,Plus,RefreshCw,RotateCcw,Settings2,ShieldCheck,Square,TerminalSquare,Trash2,UserRound,UsersRound,X} from 'lucide-react'
 import {get,post,del,resolveApproval,koreanReasoningEnabled,type Agent,type ChatMessage,type ModelOption,type Provider} from '../api'
 import {Button,TextArea,TextInput,SelectInput} from '../components/Primitives'
@@ -186,6 +186,28 @@ function RoomModelPicker({value,onChange,providers,agents,disabled=false}:{value
  </div>
 }
 
+type RoomComposerDraft={text:string;targets:string[]}
+const roomComposerPrefix='dominion.room.composer.v1:'
+function readRoomComposer(roomId:string):RoomComposerDraft{
+ const empty:RoomComposerDraft={text:'',targets:[]}
+ try{
+  const raw=sessionStorage.getItem(roomComposerPrefix+roomId)
+  if(!raw)return empty
+  const saved=JSON.parse(raw)
+  if(!saved||typeof saved.text!=='string'||saved.text.length>250000
+   ||!Array.isArray(saved.targets))return empty
+  return {text:saved.text,targets:[...new Set(saved.targets
+   .filter((id:unknown):id is string=>typeof id==='string'&&id.length>0)
+   .slice(0,32))]}
+ }catch{return empty}
+}
+function storeRoomComposer(roomId:string,draft:RoomComposerDraft){
+ try{
+  if(!draft.text&&!draft.targets.length)sessionStorage.removeItem(roomComposerPrefix+roomId)
+  else sessionStorage.setItem(roomComposerPrefix+roomId,JSON.stringify(draft))
+ }catch{/* Private mode or browser quota must not prevent composing. */}
+}
+
 function RoomConversation({room,agents,providers,openList,showList,openSession,onSaved,onRemoved,switchMode,visibleView,openSettings}:{openSettings:()=>void;switchMode:(mode:'chat'|'rooms')=>void;visibleView:boolean;room:RoomConfig;agents:Agent[];providers:Provider[];openList:()=>void;showList:boolean;openSession:(id:string)=>void;onSaved:()=>Promise<void>;onRemoved:()=>Promise<void>}){
  useLocale()
  const [messages,setMessages]=useState<ChatMessage[]>([]),[feed,setFeed]=useState<FeedState>(initialFeed)
@@ -196,7 +218,18 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
  const [reasoningEffort,setReasoningEffort]=useState(''),[permissionOpen,setPermissionOpen]=useState(false),[recipientsOpen,setRecipientsOpen]=useState(false)
  const recipientsPanel=useAnchoredPanel(recipientsOpen,()=>setRecipientsOpen(false),280,'top')
  useEffect(()=>{if(!visibleView){setRecipientsOpen(false);setPermissionOpen(false);setShowSettings(false)}else setReasoningKo(koreanReasoningEnabled())},[visibleView])
- const [input,setInput]=useState(''),[targets,setTargets]=useState<string[]>([]),[sending,setSending]=useState(false),[stopping,setStopping]=useState(false)
+ // A Room owns its unsent text and explicit recipients. Reopening another
+ // Room must never transplant this draft or silently broadcast it to all.
+ const [composer,setComposer]=useState<RoomComposerDraft>(()=>readRoomComposer(room.id))
+ const input=composer.text,targets=composer.targets
+ const setInput=(next:SetStateAction<string>)=>setComposer(prior=>({
+  ...prior,text:typeof next==='function'?next(prior.text):next
+ }))
+ const setTargets=(next:SetStateAction<string[]>)=>setComposer(prior=>({
+  ...prior,targets:typeof next==='function'?next(prior.targets):next
+ }))
+ useEffect(()=>storeRoomComposer(room.id,composer),[room.id,composer])
+ const [sending,setSending]=useState(false),[stopping,setStopping]=useState(false)
  const [inspector,setInspector]=useState(false),[draft,setDraft]=useState<RoomDraft>(()=>draftOf(room)),[dirty,setDirty]=useState(false),[saving,setSaving]=useState(false),[saved,setSaved]=useState(false)
  const [knowledgeOpen,setKnowledgeOpen]=useState(false),[knowledge,setKnowledge]=useState<any[]>([]),[knowledgeBusy,setKnowledgeBusy]=useState(false),[knowledgeNotice,setKnowledgeNotice]=useState('')
  const [approvalBusy,setApprovalBusy]=useState('')
@@ -211,6 +244,10 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
  const viewActive=useRef(visibleView);viewActive.current=visibleView
  const current=feed.room||room
  const roster=useMemo(()=>current.agentIds.map(id=>agents.find(agent=>agent.id===id)).filter((a):a is Agent=>Boolean(a)),[current.agentIds,agents])
+ // Preserve removed recipient IDs as a visible blocked draft. Dropping the
+ // last explicit ID would otherwise silently change a directed request into
+ // an auto-routed/broadcast Room turn.
+ const staleTargets=targets.filter(id=>!current.agentIds.includes(id))
  const runningJobs=feed.jobs.filter(job=>active(job.status))
  const running=runningJobs.length>0||current.status==='running'||feed.status==='running'
  const activeAgentId=live?.agentId||feed.activeAgentId||current.activeAgentId||runningJobs.find(job=>job.roomState?.activeAgentId)?.roomState?.activeAgentId
@@ -308,7 +345,6 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
  },[room.id,load])
  useEffect(()=>{if(visibleView)void load()},[visibleView,load])
  useEffect(()=>{if(!dirty)setDraft(draftOf(current))},[current,dirty])
- useEffect(()=>{setTargets(previous=>previous.filter(id=>current.agentIds.includes(id)))},[current.agentIds])
  const transcriptRevision=JSON.stringify([messages.at(-1)?.id,messages.length,live?.turnId,live?.text.length,live?.reasoning.length,live?.tool,live?.done]);
  const {scrollRef,onScroll,jumpDown}=useTranscriptScroll(room.id,transcriptRevision,setMoreBelow);
  const updateDraft=(value:RoomDraft)=>{setDraft(value);setDirty(true);setSaved(false)}
@@ -322,7 +358,7 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
    await onSaved()
   }catch(e){setError((e as Error).message)}finally{setOptionsBusy(false)}
  }
- const remove=async()=>{if(!confirm(t('rooms.deleteConfirm',{name:current.name})))return;setError('');try{await del('/api/rooms/'+room.id);await onRemoved()}catch(e){setError((e as Error).message)}}
+ const remove=async()=>{if(!confirm(t('rooms.deleteConfirm',{name:current.name})))return;setError('');try{await del('/api/rooms/'+room.id);storeRoomComposer(room.id,{text:'',targets:[]});await onRemoved()}catch(e){setError((e as Error).message)}}
  const reset=async()=>{if(!confirm(t('rooms.resetConfirm',{name:current.name})))return;setError('');setStopping(true);try{const result=await post<{sessionId:string}>('/api/rooms/'+room.id+'/reset',{});dataVersion.current+=1;if(activeTurnId.current)terminalTurnIds.current.add(activeTurnId.current);setMessages([]);setLive(null);setFeed(previous=>({...previous,sessionId:result.sessionId,jobs:[],executions:[],operations:[],approvals:[],status:'idle',activeAgentId:undefined}));setInspector(false);await load();await onSaved()}catch(e){setError((e as Error).message)}finally{setStopping(false)}}
  const previewPrompt=(id:string)=>get<NonNullable<typeof prompt>>(`/api/rooms/${room.id}/system-prompt?agentId=${encodeURIComponent(id)}`)
  const closePrompt=()=>{
@@ -363,7 +399,7 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
  const openKnowledge=async()=>{setKnowledgeOpen(true);setKnowledgeNotice('');await loadKnowledge()}
  const learnKnowledge=async()=>{if(knowledgeBusy)return;setKnowledgeBusy(true);setKnowledgeNotice('');try{await post('/api/rooms/'+room.id+'/knowledge/learn',{});setKnowledgeNotice(t('rooms.knowledgeQueued'));setTimeout(()=>void loadKnowledge(),2500)}catch(e){setError((e as Error).message)}finally{setKnowledgeBusy(false)}}
  const send=async(event?:FormEvent)=>{
-  event?.preventDefault();if(!input.trim()||sending)return;setSending(true);setError('');jumpDown()
+  event?.preventDefault();if(!input.trim()||sending||staleTargets.length>0)return;setSending(true);setError('');jumpDown()
   const contents=input.trim(),recipients=[...targets]
   if(!sendAttempt.current||sendAttempt.current.input!==contents||JSON.stringify(sendAttempt.current.targets)!==JSON.stringify(recipients)||sendAttempt.current.reasoningEffort!==(reasoningEffort||undefined)||sendAttempt.current.thinking!==(reasoningEffort==='none'?false:thinkingEnabled)||sendAttempt.current.reasoningLanguage!==(reasoningKo?'ko':'default'))sendAttempt.current={input:contents,targets:recipients,id:crypto.randomUUID(),reasoningLanguage:reasoningKo?'ko':'default',reasoningEffort:reasoningEffort||undefined,thinking:reasoningEffort==='none'?false:thinkingEnabled}
   try{const result=await post<{room:RoomConfig;message:ChatMessage;job:Job;sessionId:string}>('/api/rooms/'+room.id+'/messages',{input:contents,...(recipients.length?{agentIds:recipients}:{}),clientMessageId:sendAttempt.current.id,reasoningLanguage:sendAttempt.current.reasoningLanguage,reasoningEffort:sendAttempt.current.reasoningEffort,thinking:sendAttempt.current.thinking});dataVersion.current+=1;setMessages(previous=>previous.some(message=>message.id===result.message.id)?previous:[...previous,result.message]);setFeed(previous=>({...previous,room:result.room,sessionId:result.sessionId,jobs:[result.job,...previous.jobs.filter(job=>job.id!==result.job.id)]}));setInput('');if(inputRef.current)inputRef.current.style.height='';setTargets([]);setRecipientsOpen(false);sendAttempt.current=null;await load();await onSaved();inputRef.current?.focus({preventScroll:true})}
@@ -399,6 +435,10 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
 
     {pendingApprovals.length>0&&<div className="room-approvals-stack" ref={approvalRef} tabIndex={-1}>{pendingApprovals.map(approval=><div key={approval.id} className="room-approval" data-room-approval><div><ShieldCheck size={15}/><strong>{approval.tool}</strong><span>{t('rooms.approvalRequest')}</span></div><details><summary>{t('rooms.approvalShow')}</summary><pre>{JSON.stringify(approval.args,null,2)}</pre></details><div className="room-approval-actions"><Button size="sm" variant="ghost" disabled={Boolean(approvalBusy)} onClick={()=>void approve(approval.id,false)}>{t('rooms.deny')}</Button><Button size="sm" variant="primary" disabled={Boolean(approvalBusy)} onClick={()=>void approve(approval.id,true)}>{approvalBusy===approval.id?t('rooms.processing'):t('rooms.approveOnce')}</Button></div></div>)}</div>}
     {error&&<Notice message={error}/>}
+    {staleTargets.length>0&&<div role="alert" className="room-global-error">
+     <span>이전에 지정한 참가자 {staleTargets.join(', ')}는 현재 방에 없습니다. 전송 대상을 다시 선택해 주세요.</span>
+     <Button variant="ghost" size="sm" onClick={()=>setTargets(previous=>previous.filter(id=>current.agentIds.includes(id)))}>사용할 수 없는 대상 제외</Button>
+    </div>}
     <form className="conversation-composer" onSubmit={send}>
      <TextArea ref={inputRef} className="conversation-composer-input" aria-label={t('rooms.messageAria')} placeholder={mode==='mentioned'?t('rooms.mentionPlaceholder'):t('chat.inputPlaceholder')} value={input} onChange={e=>{setInput(e.target.value);e.currentTarget.style.height='auto';e.currentTarget.style.height=Math.min(e.currentTarget.scrollHeight,180)+'px'}} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();void send()}}} rows={1} disabled={sending}/>
      <div className="chat-composer-controls conversation-composer-controls">
@@ -418,7 +458,7 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
       <div className="ml-auto flex shrink-0 items-center gap-2">
        <span className="hidden text-[10px] text-[#9C9388] sm:inline">{t('chat.enterHint')}</span>
        {running&&<Button size="sm" variant="ghost" disabled={stopping} onClick={()=>void stop()}><Square size={12} fill="currentColor"/>{stopping?t('rooms.stopping'):t('rooms.stop')}</Button>}
-       <Button type="submit" className="conversation-composer-send" aria-label={t('rooms.sendAria')} disabled={sending||!input.trim()||!current.agentIds.length}>{sending?<LoaderCircle size={18} className="animate-spin"/>:<ArrowUp size={19}/>}</Button>
+       <Button type="submit" className="conversation-composer-send" aria-label={t('rooms.sendAria')} disabled={sending||!input.trim()||!current.agentIds.length||staleTargets.length>0}>{sending?<LoaderCircle size={18} className="animate-spin"/>:<ArrowUp size={19}/>}</Button>
       </div>
      </div>
     </form>
