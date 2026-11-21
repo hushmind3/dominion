@@ -185,7 +185,7 @@ pub fn settle(
         json!({
             "kind":if success{"tool_completed_observed"}else{"tool_failed_observed"},
             "operationId":operation["id"],"toolVerified":
-                operation["toolReceipt"]["verified"]==true,
+                success && operation["toolReceipt"]["verified"]==true,
         })
     }else{
         json!({"kind":"interpreter_completed","toolVerified":false})
@@ -240,13 +240,20 @@ pub fn finish_team(
         }
         let status=persisted["evidence"]["kind"].as_str()
             .ok_or("team member has no committed evidence")?;
-        if status=="tool_failed_observed"{
-            if persisted["onFailure"]!="continue"{
-                return Err("failed team work has no explicit continue policy".into());
+        match status{
+            "tool_completed_observed"|"interpreter_completed"=>{},
+            "tool_failed_observed"=>{
+                if persisted["onFailure"]!="continue"{
+                    return Err("failed team work has no explicit continue policy".into());
+                }
+                failures+=1;
             }
-            failures+=1;
+            _=>return Err("team member has an unsupported evidence kind".into()),
         }
-        let member_verified=persisted["evidence"]["toolVerified"]==true;
+        // A verified receipt for an observed FAILURE verifies the failure,
+        // not successful completion. Never promote it to a verified team.
+        let member_verified=status=="tool_completed_observed"
+            && persisted["evidence"]["toolVerified"]==true;
         verified&=member_verified;
         evidence.push(json!({
             "workId":id,"nodeId":persisted["nodeId"],
@@ -353,6 +360,30 @@ mod tests{
         assert_eq!(merged["evidenceVerified"],true);
         assert_eq!(finish_team(&state,&[worker_a,worker_b],&checkpoint).unwrap()["id"],merged["id"]);
         assert_eq!(state.store.all("task_team_result").len(),1);
+        drop(state);let _=std::fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn failed_verified_receipt_is_not_successful_team_evidence(){
+        let (state,dir)=state();
+        let node=json!({"id":"write","type":"call_tool",
+            "tool":"workspace_write","onFailure":"continue"});
+        let queued=assign(&state,"s","run-a","r1","team",0,&node).unwrap();
+        let claimed=claim(&state,&queued).unwrap();
+        state.store.put("execution_operation",&json!({
+            "id":"failed-op","runId":"run-a","sessionId":"s",
+            "startedAt":chrono::Utc::now().to_rfc3339(),
+            "tool":"workspace_write","callId":"program-write-failure",
+            "status":"failed","toolReceipt":{"verified":true},
+            "effectState":"verified"
+        })).unwrap();
+        let checkpoint=json!({"completedOperationIds":["write"]});
+        let settled=settle(&state,&claimed,&node,&checkpoint).unwrap();
+        assert_eq!(settled["evidence"]["kind"],"tool_failed_observed");
+        assert_eq!(settled["evidence"]["toolVerified"],false);
+        let result=finish_team(&state,&[settled],&checkpoint).unwrap();
+        assert_eq!(result["observedFailures"],1);
+        assert_eq!(result["evidenceVerified"],false);
+        assert_eq!(result["members"][0]["verified"],false);
         drop(state);let _=std::fs::remove_dir_all(dir);
     }
     #[test]
