@@ -2093,6 +2093,9 @@ async fn stream_anthropic_once(
                     }
                 }
                 "message_delta" => {
+                    if let Some(reason)=piece["delta"]["stop_reason"].as_str() {
+                        crate::engine::native_stream::validate_anthropic_stop_reason(reason)?;
+                    }
                     output_reported|=piece["usage"]["output_tokens"].as_u64().is_some();
                     output_tokens = piece["usage"]["output_tokens"].as_u64().unwrap_or(output_tokens);
                 }
