@@ -104,6 +104,8 @@ pub struct Store {
 /// historical job, execution, operation and approval on each refresh.
 pub struct RoomStatusRecords {
     pub room_jobs: Vec<Value>,
+    pub room_queue_depth: usize,
+    pub room_running_job: Option<Value>,
     pub executions: Vec<Value>,
     pub learning_jobs: Vec<Value>,
     pub operations: Vec<Value>,
@@ -300,6 +302,17 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_room_status_jobs
                  ON records(json_extract(data,'$.input.roomId'),updated_at DESC)
                  WHERE kind='job' AND json_extract(data,'$.kind')='room';
+             CREATE INDEX IF NOT EXISTS idx_room_status_jobs_queued
+                 ON records(json_extract(data,'$.input.roomId'),json_extract(data,'$.queuedAt') DESC,id DESC)
+                 WHERE kind='job' AND json_extract(data,'$.kind')='room';
+             CREATE INDEX IF NOT EXISTS idx_room_queued_jobs
+                 ON records(json_extract(data,'$.input.roomId'))
+                 WHERE kind='job' AND json_extract(data,'$.kind')='room'
+                   AND json_extract(data,'$.status')='queued';
+             CREATE INDEX IF NOT EXISTS idx_room_running_jobs
+                 ON records(json_extract(data,'$.input.roomId'),json_extract(data,'$.queuedAt') DESC,id DESC)
+                 WHERE kind='job' AND json_extract(data,'$.kind')='room'
+                   AND json_extract(data,'$.status')='running';
              CREATE INDEX IF NOT EXISTS idx_room_status_learning
                  ON records(json_extract(data,'$.input.sessionId'),updated_at DESC)
                  WHERE kind='job' AND json_extract(data,'$.kind')='learn';
@@ -375,10 +388,25 @@ impl Store {
         let conn = self.conn.lock().map_err(|error| error.to_string())?;
         let room_jobs = select_records(&conn,
             "SELECT data,id,created_at,updated_at FROM records
+             INDEXED BY idx_room_status_jobs_queued
              WHERE kind='job' AND json_extract(data,'$.kind')='room'
                AND json_extract(data,'$.input.roomId')=?1
-             ORDER BY updated_at DESC",
+             ORDER BY json_extract(data,'$.queuedAt') DESC,id DESC LIMIT 30",
             &[&room_id])?;
+        let room_queue_depth=conn.query_row(
+            "SELECT COUNT(*) FROM records INDEXED BY idx_room_queued_jobs
+             WHERE kind='job' AND json_extract(data,'$.kind')='room'
+               AND json_extract(data,'$.input.roomId')=?1
+               AND json_extract(data,'$.status')='queued'",
+            [&room_id],|row|row.get::<_,i64>(0)).map_err(|e|e.to_string())?.max(0) as usize;
+        let room_running_job=select_records(&conn,
+            "SELECT data,id,created_at,updated_at FROM records
+             INDEXED BY idx_room_running_jobs
+             WHERE kind='job' AND json_extract(data,'$.kind')='room'
+               AND json_extract(data,'$.input.roomId')=?1
+               AND json_extract(data,'$.status')='running'
+             ORDER BY json_extract(data,'$.queuedAt') DESC,id DESC LIMIT 1",
+            &[&room_id])?.into_iter().next();
         let executions = select_records(&conn,
             "SELECT data,id,created_at,updated_at FROM records
              WHERE kind='execution' AND json_extract(data,'$.sessionId')=?1
@@ -406,7 +434,8 @@ impl Store {
              ORDER BY updated_at DESC LIMIT 20",
             &[&session_id])?;
         Ok(RoomStatusRecords {
-            room_jobs, executions, learning_jobs, operations, approvals
+            room_jobs, room_queue_depth, room_running_job,
+            executions, learning_jobs, operations, approvals
         })
     }
 

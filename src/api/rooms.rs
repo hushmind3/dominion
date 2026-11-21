@@ -669,15 +669,9 @@ pub async fn state(State(state): State<AppState>, Path(id): Path<String>) -> Res
             .store
             .room_status_records(&id, session_id)
             .map_err(failed)?;
-        let mut jobs = snapshot.room_jobs;
-        jobs.sort_by(|a, b| {
-            b["queuedAt"]
-                .as_str()
-                .unwrap_or("")
-                .cmp(a["queuedAt"].as_str().unwrap_or(""))
-        });
-        let queue_depth = jobs.iter().filter(|job| job["status"] == "queued").count();
-        let running = jobs.iter().find(|job| job["status"] == "running");
+        let jobs = snapshot.room_jobs;
+        let queue_depth = snapshot.room_queue_depth;
+        let running = snapshot.room_running_job.as_ref();
         let active_agent = running
             .and_then(|job| job["roomState"]["activeAgentId"].as_str())
             .or_else(|| {
@@ -710,7 +704,7 @@ pub async fn state(State(state): State<AppState>, Path(id): Path<String>) -> Res
         let approvals = snapshot.approvals;
         Ok(
             json!({"room":room(&state,&id)?,"sessionId":session_id,"status":status,"activeAgentId":active_agent,"queueDepth":queue_depth,
-            "jobs":jobs.iter().take(30).collect::<Vec<_>>(),"executions":executions,"learningJobs":learning,"operations":operations,"approvals":approvals,"usage":state.store.session_usage(session_id)}),
+            "jobs":jobs,"executions":executions,"learningJobs":learning,"operations":operations,"approvals":approvals,"usage":state.store.session_usage(session_id)}),
         )
     })())
 }
