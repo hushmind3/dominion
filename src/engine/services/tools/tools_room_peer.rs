@@ -114,6 +114,48 @@ mod tests{
         (state,dir)
     }
     #[test]
+    fn peer_mail_reaches_only_next_real_room_turn_and_ack_is_watermark_scoped(){
+        let (state,dir)=state();
+        let a=ToolContext{workspace:&dir,store:&state.store,state:&state,
+            session_id:"room:one",agent_id:Some("a"),
+            tools_enabled:true,tools_execution_enabled:true};
+        let b=ToolContext{workspace:&dir,store:&state.store,state:&state,
+            session_id:"room:one",agent_id:Some("b"),
+            tools_enabled:true,tools_execution_enabled:true};
+        let first=send(&a,&json!({"agentId":"b","message":"First peer observation"}),"a-1").unwrap();
+        let first_id=first["messageId"].as_str().unwrap();
+        let first_snapshot=crate::engine::room_state::unread_for(
+            &state,"one","room:one","b").unwrap();
+        assert!(first_snapshot.unread.as_deref().unwrap_or("")
+            .contains("First peer observation"));
+        assert!(!crate::engine::room_state::unread_for(
+            &state,"one","room:one","a").unwrap().unread
+            .as_deref().unwrap_or("").contains("First peer observation"));
+        let late=send(&a,&json!({"agentId":"b","message":"Arrived during inference"}),"a-2").unwrap();
+        let late_id=late["messageId"].as_str().unwrap();
+        state.store.write_message(&json!({
+            "id":"owner-a","session_id":"room:one","role":"user",
+            "content":"Continue the discussion","metadata":{"authorKind":"owner","roomId":"one"}
+        })).unwrap();
+        state.store.write_message(&json!({
+            "id":"b-reply","session_id":"room:one","role":"assistant",
+            "agent_id":"b","content":"I read first",
+            "metadata":{"replyToMessageId":"owner-a"}
+        })).unwrap();
+        crate::engine::room_state::acknowledge_read(
+            &state,"one","room:one","b","owner-a","b-reply",
+            first_snapshot.through).unwrap();
+        assert_eq!(state.store.get("room_peer_mail",first_id).unwrap()["status"],"delivered");
+        assert_eq!(state.store.get("room_peer_mail",late_id).unwrap()["status"],"queued");
+        let next=crate::engine::room_state::unread_for(
+            &state,"one","room:one","b").unwrap();
+        assert!(next.unread.as_deref().unwrap_or("")
+            .contains("Arrived during inference"));
+        assert!(!next.unread.as_deref().unwrap_or("")
+            .contains("First peer observation"));
+        drop(state);let _=std::fs::remove_dir_all(dir);
+    }
+    #[test]
     fn peer_mail_is_real_idempotent_and_bounded_by_recipient_identity(){
         let (state,dir)=state();
         let a=ToolContext{workspace:&dir,store:&state.store,state:&state,
