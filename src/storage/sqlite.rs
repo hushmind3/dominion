@@ -1671,6 +1671,18 @@ impl Store {
         ).map_err(|error|error.to_string())?;
         let seq=last.checked_add(1).ok_or("Durable event sequence exhausted")?;
         value["seq"]=json!(seq as u64);
+        if value["type"]=="record"&&value["runRef"].is_object(){
+            let run_ref:dominion_agent_sdk::RunRef=
+                serde_json::from_value(value["runRef"].clone()).map_err(|e|e.to_string())?;
+            let phase:dominion_agent_sdk::RunPhase=
+                serde_json::from_value(value["runState"]["phase"].clone())
+                    .map_err(|e|e.to_string())?;
+            let kind=value["kind"].as_str().ok_or("Missing run journal kind")?;
+            let run_event=dominion_agent_sdk::RunEvent::new(
+                seq as u64,run_ref,phase,"record",kind)?;
+            value["runEvent"]=serde_json::to_value(run_event)
+                .map_err(|e|e.to_string())?;
+        }
         tx.execute("UPDATE event_clock SET last_seq=?1 WHERE id=1",params![seq])
             .map_err(|error|error.to_string())?;
         tx.execute(

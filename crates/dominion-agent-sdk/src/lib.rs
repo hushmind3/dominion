@@ -3,7 +3,7 @@
 //! the trusted contracts, authority fences and scheduling live in runtime.
 pub use dominion_agent_runtime as runtime;
 pub use dominion_agent_runtime::run_contract::{RunPhase,RunRef,RunSurface,RunTransition,
-    RoomEvent,RoomAgentBinding,RUN_CONTRACT_VERSION};
+    RoomEvent,RoomAgentBinding,RunEvent,RUN_CONTRACT_VERSION};
 pub use dominion_agent_runtime::{Action,Receipt,Strategy,ToolSpec,BoxFuture,Limits,
     CriterionKind,Criterion,RunRequest,Decision,ModelReply,ModelTurn,Model,
     Tools,Evidence,Journal,DispatchResult,Dispatcher,Status,CheckResult,Snapshot,

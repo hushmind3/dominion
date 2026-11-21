@@ -68,6 +68,20 @@ mod tests {
         Store::open(std::path::Path::new(":memory:")).unwrap()
     }
 
+    #[test] fn canonical_run_event_and_sse_clock_commit_in_one_transaction(){
+        let store=store();
+        let bus=Bus::new(store.clone());
+        let task=store.put("job",&json!({"id":"job-room",
+            "kind":"room","status":"running","phase":"waiting_approval"})).unwrap();
+        bus.record("job",&task);
+        let observed=bus.replay(0,1).remove(0);
+        let event:dominion_agent_sdk::RunEvent=
+            serde_json::from_value(observed["runEvent"].clone()).unwrap();
+        assert_eq!(event.event_seq,observed["seq"].as_u64().unwrap());
+        assert_eq!(event.phase,dominion_agent_sdk::RunPhase::WaitingApproval);
+        assert_eq!(event.run_ref.surface,dominion_agent_sdk::RunSurface::Room);
+        assert_eq!(event.source_journal,"job");
+    }
     #[test]
     fn events_are_durable_and_replayable_after_a_disconnect() {
         let store = store();

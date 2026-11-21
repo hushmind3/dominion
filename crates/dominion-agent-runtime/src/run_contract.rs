@@ -121,6 +121,32 @@ pub struct RunRef {
     pub run_id:String,
     pub parent_run_id:Option<String>,
 }
+/// Portable, source-ordered record event for all DOMINION run surfaces.
+#[derive(Debug,Clone,PartialEq,Eq,Serialize,Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct RunEvent {
+    pub version:u16,
+    pub event_seq:u64,
+    pub run_ref:RunRef,
+    pub phase:RunPhase,
+    pub event_type:String,
+    pub source_journal:String,
+}
+impl RunEvent {
+    pub fn new(event_seq:u64,run_ref:RunRef,phase:RunPhase,
+        event_type:impl Into<String>,source_journal:impl Into<String>)
+        ->Result<Self,String>{
+        let event_type=event_type.into();
+        let source_journal=source_journal.into();
+        if event_seq==0||run_ref.version!=RUN_CONTRACT_VERSION||
+            event_type.is_empty()||event_type.len()>80||
+            !matches!(source_journal.as_str(),"job"|"execution"|"remote_task"){
+            return Err("Invalid durable RunEvent identity".into());
+        }
+        Ok(Self{version:RUN_CONTRACT_VERSION,event_seq,run_ref,phase,
+            event_type,source_journal})
+    }
+}
 impl RunRef {
     pub fn new(surface:RunSurface,run_id:impl Into<String>,
         parent_run_id:Option<String>)->Result<Self,String>{
@@ -181,6 +207,17 @@ mod tests {
         let binding=RoomAgentBinding{room_id:"r".into(),agent_id:"b".into(),
             session_id:"room:r".into(),read_cursor:2,state:"bound".into()};
         assert_eq!(serde_json::to_value(binding).unwrap()["readCursor"],2);
+    }
+    #[test] fn run_event_binds_global_sequence_phase_and_parent(){
+        let reference=RunRef::new(RunSurface::Room,"room-1",Some("team".into())).unwrap();
+        assert!(RunEvent::new(0,reference.clone(),RunPhase::Running,"record","job").is_err());
+        assert!(RunEvent::new(1,reference.clone(),RunPhase::Running,"record","unknown").is_err());
+        let event=RunEvent::new(84,reference,RunPhase::WaitingApproval,
+            "record","execution").unwrap();
+        let encoded=serde_json::to_value(&event).unwrap();
+        assert_eq!(encoded["eventSeq"],84);
+        assert_eq!(encoded["runRef"]["parentRunId"],"team");
+        assert_eq!(serde_json::from_value::<RunEvent>(encoded).unwrap(),event);
     }
     #[test] fn typed_ref_roundtrips_without_unscoped_parent(){
         let r=RunRef::new(RunSurface::Team,"job:123",Some("team:0".into())).unwrap();
