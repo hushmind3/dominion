@@ -225,6 +225,39 @@ mod tests {
     }
 
     #[test]
+    fn failed_encryption_never_leaves_world_readable_plaintext_snapshots() {
+        let (state,dir)=state();
+        state.store.put("session",&serde_json::json!({
+            "id":"private-chat","title":"do not expose plaintext"
+        }));
+        // A regular file deliberately blocks creation of the key-ring folder
+        // after the SQLite VACUUM snapshot was already created.
+        std::fs::write(dir.join("backup-keys"),b"blocked").unwrap();
+        assert!(create_snapshot(&state).is_err());
+        let staging=dir.join("backups").join(".plaintext-staging");
+        let remaining=std::fs::read_dir(&staging).unwrap().count();
+        assert_eq!(remaining,0,"failed encrypt must erase temporary SQLite");
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&staging).unwrap().permissions().mode()&0o777,
+                0o700,"staging directory must be inaccessible to other users");
+        }
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rapid_backup_requests_never_overwrite_a_previous_encrypted_snapshot() {
+        let (state,dir)=state();
+        let first=create_snapshot(&state).unwrap();
+        let second=create_snapshot(&state).unwrap();
+        assert_ne!(first,second,"repeated backups must use collision-resistant names");
+        assert!(first.is_file()&&second.is_file());
+        let private=dir.join("backups").join(".plaintext-staging");
+        assert_eq!(std::fs::read_dir(private).unwrap().count(),0);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn retention_keeps_the_newest_snapshots_only() {
         let dir = std::env::temp_dir().join(format!("dominion-backup-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
