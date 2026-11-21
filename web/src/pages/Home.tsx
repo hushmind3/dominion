@@ -8,7 +8,7 @@ import {t,useLocale,formatDateTime,jobKindLabel} from '../i18n'
 import type {Agent,ChatSession,Provider} from '../api'
 type Destination='chat'|'models'|'agents'|'rooms'|'connections'|'memory'|'activity'
 export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
- useLocale()
+ const locale=useLocale()
  const sessions=useRemote<ChatSession[]>('/api/sessions',[])
  const providers=useRemote<Provider[]>('/api/providers',[])
  const agents=useRemote<Agent[]>('/api/agents',[])
@@ -32,6 +32,20 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
  ]
  return <PageContainer className="!max-w-[1200px] !py-5">
   <div className="mb-5 flex flex-wrap items-end justify-between gap-3"><div><h1 className="m-0 text-[19px] font-bold tracking-tight">{t('dashboard.title')}</h1><p className="mt-1 text-[12px] text-[#7C7469]">{t('dashboard.subtitle')}</p></div><Button type="button" variant="primary" onClick={()=>navigate('chat')} className="flex h-8 items-center gap-2 rounded-lg px-3 text-[11px] font-semibold"><MessageSquare size={14}/> {t('dashboard.openChat')} <ArrowRight size={13}/></Button></div>
+  {enabledProviders.length===0&&<section role="status"
+   className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-[#E5D4C5] bg-[#FFF8F0] p-4">
+   <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#F4E4D8] text-[#A94E30]">
+    <Cpu size={19}/></span>
+   <div className="min-w-0 flex-1">
+    <strong className="block text-[13px]">{locale==='en'?'Connect an AI model to get started':'첫 실행을 위해 AI 모델을 연결하세요'}</strong>
+    <p className="mt-1 text-[11px] text-[#7C7469]">{locale==='en'?
+     'Choose a local model, API provider or connected account before running an agent.':
+     '로컬 모델·API 업체·연결 계정 중 하나를 설정하면 대화와 자동 작업을 시작할 수 있습니다.'}</p>
+   </div>
+   <Button type="button" variant="primary" onClick={()=>navigate('models')}
+    className="shrink-0 text-[12px]"><ArrowRight size={14}/>
+    {locale==='en'?'Set up models':'모델 연결하기'}</Button>
+  </section>}
   <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{metrics.map(m=>{const Icon=m.icon;return <Button type="button" key={m.name} onClick={()=>navigate(m.page)} className="flex min-h-24 flex-col items-start rounded-xl border border-[#E7E0D5] bg-white p-4 text-left transition-colors hover:border-[#D8CFC2]"><span className="flex w-full items-center justify-between text-[11px] text-[#7C7469]">{t(m.name as any)}<Icon size={16} className="text-[#A79C8E]"/></span><strong className="mt-4 text-[23px] font-bold leading-none tabular-nums text-[#24211D]">{m.value}</strong></Button>})}</div>
   <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(270px,.72fr)]">
    <section className="rounded-xl border border-[#E7E0D5] bg-white">
