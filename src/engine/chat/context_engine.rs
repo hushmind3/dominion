@@ -91,7 +91,11 @@ pub(super) fn compile_private(
     let capacity=provider_context_tokens.unwrap_or(32_768) as usize;
     let reserve=(provider_max_output_tokens.unwrap_or(4096) as usize)
         .min(capacity / 4).max(128);
-    let schema_tokens=room_context::estimate(&json!(tools).to_string());
+    // An empty schema list is not a transmitted tool schema. Estimating
+    // serialized [] as one token made 0 exposed tools look like a schema cost.
+    let schema_tokens=if tools.is_empty(){0}else{
+        room_context::estimate(&json!(tools).to_string())
+    };
     let fixed_tokens=room_context::estimate(&system.prompt)
         .saturating_add(room_context::estimate(&system.dynamic_context))
         .saturating_add(schema_tokens);
@@ -221,6 +225,8 @@ mod tests {
             <large.accounting["historyByteBudget"].as_u64().unwrap(),
             "small local models must not be billed for a large-model history");
         assert_eq!(small.accounting["policy"],"private-context-engine-v1");
+        assert_eq!(small.accounting["toolSchemaTokens"],0,
+            "no exposed tools means zero tool-schema tokens");
         assert!(small.history.last().unwrap()["content"].as_str().unwrap().contains("owner-13:"),
             "the latest owner message is mandatory even when old history is pruned");
         assert_eq!(large.accounting["contextModelCalls"],0);
