@@ -12,7 +12,7 @@ use sha2::{Digest,Sha256};
 use std::{
     collections::HashSet,
     fs::{self,OpenOptions},
-    io::Write,
+    io::{Read,Write},
     path::{Component,Path,PathBuf},
 };
 
@@ -167,7 +167,20 @@ fn read_existing(path:&Path)->Result<Option<Vec<u8>>,String>{
             if meta.len()>MAX_FILE_BYTES as u64{
                 return Err(format!("File exceeds 1.5 MB patch limit: {}",path.display()));
             }
-            let bytes=fs::read(path).map_err(|e|e.to_string())?;
+            // Recheck and bound the opened file itself. The path may have
+            // changed since symlink_metadata, and a growing file must not
+            // turn the size check into an unbounded allocation.
+            let file=OpenOptions::new().read(true).open(path).map_err(|e|e.to_string())?;
+            let opened=file.metadata().map_err(|e|e.to_string())?;
+            if !opened.is_file(){
+                return Err(format!("Patch target is not a regular file: {}",path.display()));
+            }
+            if opened.len()>MAX_FILE_BYTES as u64{
+                return Err(format!("File exceeds 1.5 MB patch limit: {}",path.display()));
+            }
+            let mut bytes=Vec::with_capacity(opened.len() as usize);
+            let mut limited=file.take(MAX_FILE_BYTES as u64+1);
+            limited.read_to_end(&mut bytes).map_err(|e|e.to_string())?;
             if bytes.len()>MAX_FILE_BYTES{return Err("Source grew beyond patch limit".into());}
             std::str::from_utf8(&bytes).map_err(|_|format!(
                 "Binary or non-UTF8 file cannot be patched: {}",path.display()))?;
