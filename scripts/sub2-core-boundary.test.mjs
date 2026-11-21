@@ -448,3 +448,13 @@ test('ProgramIR Task Team requires durable claimed worker and committed tool evi
  assert.match(runtime,/claim_team_child/);
  assert.match(runtime,/settle_team_child/);
 });
+
+test('Task Team parent completion is computed from committed worker receipts',()=>{
+ const team=source('src/engine/services/decision/task_team_work.rs');
+ const runtime=source('src/engine/services/decision/runtime_program.rs');
+ assert.match(team,/pub fn finish_team\(/);
+ assert.match(team,/tool_failed_observed/);
+ assert.match(team,/old\["members"\]==result\["members"\]/);
+ assert.match(runtime,/finish_team_node\(ctx,&team_assignments,&mut checkpoint,persist\)/);
+ assert.match(runtime,/checkpoint\["teamResultRefs"\]/);
+});
