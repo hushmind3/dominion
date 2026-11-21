@@ -218,7 +218,10 @@ test('distributed Rust Worker leases and receipts use the same typed durable SSE
       runKind:'remote_task',runId:'remote-task-1',state:'completed',
       sourceMessageId:null,agentId:'worker-agent',remoteWorkerId:'node-b',
       workerJobId:'local-run-1',verified:true,
-      evidenceOrigin:'remote_worker_reported'}
+      evidenceOrigin:'remote_worker_reported',
+      remoteUsage:{calls:2,promptTokens:1200,completionTokens:300,
+        totalTokens:1500,cachedPromptTokens:200,
+        cacheObservedCalls:1,estimatedCalls:0}}
   ];
   const client=new Dominion({fetch:async()=>sse(
     events.map(event=>'id: '+event.seq+'\ndata: '+JSON.stringify(event)+'\n\n')
@@ -233,5 +236,7 @@ test('distributed Rust Worker leases and receipts use the same typed durable SSE
   ]);
   assert.equal(received[2].evidenceOrigin,'remote_worker_reported');
   assert.equal(received[2].workerJobId,'local-run-1');
+  assert.equal(received[2].remoteUsage.cachedPromptTokens,200);
+  assert.equal(received[2].remoteUsage.totalTokens,1500);
   assert.equal(received[0].remoteWorkerId,'node-b');
 });
