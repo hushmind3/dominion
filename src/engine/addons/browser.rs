@@ -13,9 +13,11 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool,Ordering};
 use std::time::Duration;
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::{protocol::WebSocketConfig, Message};
 
 const MAX_CDP_JSON_BYTES: usize = 2 * 1024 * 1024;
+const MAX_CDP_MESSAGE_BYTES: usize = 44 * 1024 * 1024;
+const MAX_SCREENSHOT_BYTES: usize = 32 * 1024 * 1024;
 
 async fn bounded_cdp_json(mut response: reqwest::Response) -> Result<Value, String> {
     if response
@@ -295,9 +297,14 @@ async fn page_target(port: u16, owner_id: &str) -> Result<Value, String> {
 }
 
 async fn cdp(ws_url: &str, method: &str, params: Value) -> Result<Value, String> {
+    let config = WebSocketConfig {
+        max_message_size: Some(MAX_CDP_MESSAGE_BYTES),
+        max_frame_size: Some(MAX_CDP_MESSAGE_BYTES),
+        ..WebSocketConfig::default()
+    };
     let (mut socket, _) = tokio::time::timeout(
         Duration::from_secs(15),
-        tokio_tungstenite::connect_async(ws_url),
+        tokio_tungstenite::connect_async_with_config(ws_url, Some(config), true),
     )
     .await
     .map_err(|_| "브라우저 DevTools 연결 시간 초과".to_string())?
@@ -500,10 +507,16 @@ async fn screenshot(ws_url: &str, workspace: &Path) -> Result<Value, String> {
     let encoded = result["data"]
         .as_str()
         .ok_or("스크린샷 데이터가 없습니다.")?;
+    if encoded.len() > MAX_SCREENSHOT_BYTES.saturating_mul(4).div_ceil(3) + 16 {
+        return Err("스크린샷이 32 MiB 한도를 초과했습니다.".into());
+    }
     use base64::Engine;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(encoded)
         .map_err(|error| format!("스크린샷 디코딩 실패: {error}"))?;
+    if bytes.len() > MAX_SCREENSHOT_BYTES {
+        return Err("스크린샷이 32 MiB 한도를 초과했습니다.".into());
+    }
     let dir = workspace.join(".dominion").join("browser");
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     let path = dir.join(format!(
