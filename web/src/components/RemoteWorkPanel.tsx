@@ -1,4 +1,4 @@
-import {useState} from 'react'
+import {useEffect,useState} from 'react'
 import {Check,ChevronDown,ChevronRight,Cloud,Copy,FileDiff,KeyRound,LoaderCircle,RefreshCw,ShieldAlert} from 'lucide-react'
 import {get,post} from '../api'
 import {useLocale} from '../i18n'
@@ -97,6 +97,11 @@ export function RemoteWorkPanel(){
  const [showCreate,setShowCreate]=useState(false)
  const selectedJob=jobs.value.find(job=>job.id===selected)||jobs.value[0]
  const refreshAll=()=>{void Promise.all([workers.reload(),jobs.reload()]).catch(()=>{})}
+ useEffect(()=>{
+  if(!open)return
+  const timer=window.setInterval(()=>{void workers.reload();void jobs.reload()},8000)
+  return()=>window.clearInterval(timer)
+ },[open,workers.reload,jobs.reload])
  const act=async(task:()=>Promise<unknown>,message:string)=>{
   if(busy)return
   setBusy(true);setError('');setNotice('')

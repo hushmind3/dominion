@@ -39,6 +39,11 @@ export function RunEventTimeline({executionId}:{executionId:string}){
   }catch(e){setError((e as Error).message)}
   finally{setLoading(false)}
  }
+ useEffect(()=>{
+  if(!open)return
+  const timer=window.setInterval(()=>{void load(false)},5000)
+  return()=>window.clearInterval(timer)
+ },[open,cursor,loading,executionId])
  return <section className="mt-3 rounded-xl border border-[#E7E0D5] bg-white">
   <button type="button" aria-expanded={open} onClick={()=>{if(!open&&!rows.length)void load(true);setOpen(!open)}}
    className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left text-[11px] font-semibold text-[#514940] hover:bg-[#FAF7F1]">
