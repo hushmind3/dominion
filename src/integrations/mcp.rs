@@ -552,139 +552,185 @@ struct HttpSession {
     session: Option<String>,
     token: Option<String>,
     next_id: u64,
+    modern: bool,
+    // Only the very next tools/call consumes this live validated schema.
+    tool_schema: Option<Value>,
 }
 
 impl HttpSession {
-    /// Full MCP handshake: initialize, capture Mcp-Session-Id, then
-    /// notifications/initialized. Stateless one-shot requests fail against
-    /// spec-compliant Streamable HTTP servers.
+    /// Modern HTTP probes only a read-only server/discover operation.
+    /// The fallback never retries a paid/effecting tool invocation.
     async fn open(record: &Value, state: &AppState) -> Result<Self, String> {
-        let url = record
-            .get("url")
-            .and_then(|value| value.as_str())
-            .filter(|value| !value.is_empty())
-            .ok_or("MCP HTTP 서버에 url 이 없습니다.")?
-            .to_string();
-        let parsed = reqwest::Url::parse(&url).map_err(|error| error.to_string())?;
-        if !matches!(parsed.scheme(), "http" | "https") {
+        let url = record.get("url").and_then(Value::as_str)
+            .filter(|value|!value.is_empty())
+            .ok_or("MCP HTTP 서버에 url 이 없습니다.")?.to_string();
+        let parsed = reqwest::Url::parse(&url).map_err(|error|error.to_string())?;
+        if !matches!(parsed.scheme(),"http"|"https") {
             return Err("MCP URL 은 HTTP(S)여야 합니다.".into());
         }
-        let id = record
-            .get("id")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default();
-        let token = state.read_secret(&format!("mcp:{id}"));
-        let mut session = Self {
-            client: reqwest::Client::builder()
+        let id=record["id"].as_str().unwrap_or_default();
+        let mode=record["protocolMode"].as_str().unwrap_or("auto");
+        if !matches!(mode,"auto"|"modern"|"legacy"){
+            return Err("MCP protocolMode must be auto, modern or legacy".into());
+        }
+        let mut session=Self{
+            client:reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(60))
-                .build()
-                .map_err(|error| error.to_string())?,
-            url,
-            session: None,
-            token,
-            next_id: 1,
+                .build().map_err(|error|error.to_string())?,
+            url,session:None,token:state.read_secret(&format!("mcp:{id}")),
+            next_id:1,modern:mode!="legacy",tool_schema:None,
         };
-
-        session
-            .request(
-                "initialize",
-                json!({
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": { "name": "dominion-rust", "version": env!("CARGO_PKG_VERSION") }
-                }),
-            )
-            .await?;
-        session.notify("notifications/initialized", json!({})).await?;
+        if session.modern {
+            let probe=json!({"jsonrpc":"2.0","id":session.next_id,
+                "method":"server/discover","params":{}});
+            session.next_id+=1;
+            match session.post(&probe).await {
+                Ok(value)=>{
+                    if value["error"]["code"]==-32601 && mode=="auto" {
+                        // A legacy handshake-era peer replied MethodNotFound.
+                        session.modern=false;
+                    }else if let Some(error)=value.get("error"){
+                        return Err(format!("MCP modern discovery rejected: {error}"));
+                    }else if value["id"]!=probe["id"] {
+                        return Err("MCP modern discovery replied to another call".into());
+                    }else{
+                        let result=&value["result"];
+                        if !result["supportedVersions"].as_array()
+                            .is_some_and(|versions|versions.iter()
+                                .any(|v|v.as_str()==Some(modern::VERSION))) {
+                            return Err("MCP server/discover does not advertise 2026-07-28".into());
+                        }
+                    }
+                },
+                Err(error) if mode=="auto" && (
+                    error.starts_with("MCP HTTP 404 ")||
+                    error.starts_with("MCP HTTP 405 ")||
+                    (error.starts_with("MCP HTTP 400 ")&&
+                        !error.contains("\\\"jsonrpc\\\""))
+                )=>{
+                    // Ordinary handshake-era HTTP gateways often reject the
+                    // unknown discovery method. A modern JSON-RPC error, 401,
+                    // 403, 5xx or ambiguous network failure NEVER falls back.
+                    session.modern=false;
+                },
+                Err(error)=>return Err(error),
+            }
+        }
+        if !session.modern {
+            session.request("initialize",json!({
+                "protocolVersion":"2024-11-05",
+                "capabilities":{},
+                "clientInfo":{"name":"dominion-rust",
+                    "version":env!("CARGO_PKG_VERSION")}
+            })).await?;
+            session.notify("notifications/initialized",json!({})).await?;
+        }
         Ok(session)
     }
 
-    async fn notify(&mut self, method: &str, params: Value)->Result<(),String> {
-        let payload = json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        });
-        // 202 + empty body is valid; 401/403/404 must not enter the pool.
+    async fn notify(&mut self,method:&str,params:Value)->Result<(),String>{
+        if self.modern {
+            return Err("Modern MCP does not use initialized notifications".into());
+        }
+        let payload=json!({"jsonrpc":"2.0","method":method,"params":params});
         self.post(&payload).await.map(|_|())
     }
 
-    async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
-        let id = self.next_id;
-        self.next_id += 1;
-        let payload = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        });
-        let value = self.post(&payload).await?;
-        if let Some(error) = value.get("error") {
-            return Err(format!("MCP 오류: {error}"));
-        }
-        Ok(value.get("result").cloned().unwrap_or_else(|| json!({})))
+    async fn request_tool(&mut self,params:Value,schema:&Value)->Result<Value,String>{
+        self.tool_schema=Some(schema.clone());
+        self.request("tools/call",params).await
     }
 
-    async fn post(&mut self, payload: &Value) -> Result<Value, String> {
-        let mut request = self
-            .client
-            .post(&self.url)
-            .header("content-type", "application/json")
-            .header("accept", "application/json, text/event-stream")
-            .json(payload);
-        if let Some(session) = &self.session {
-            request = request.header("mcp-session-id", session);
+    async fn request(&mut self,method:&str,params:Value)->Result<Value,String>{
+        let id=self.next_id;
+        self.next_id+=1;
+        let payload=json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
+        let value=self.post(&payload).await?;
+        if value["id"]!=id {
+            return Err(format!("MCP JSON-RPC response ID mismatch for {method}"));
         }
-        if let Some(token) = &self.token {
-            request = request.header("authorization", format!("Bearer {token}"));
+        if let Some(error)=value.get("error") {
+            return Err(format!("MCP 오류: {error}"));
         }
+        let result=value.get("result").cloned()
+            .ok_or("MCP reply missing result")?;
+        if self.modern && result["resultType"]=="input_required" {
+            // MRTR must return control to owner approval, NEVER repeat an
+            // effecting tools/call without explicit inputResponses.
+            return Err("MCP input_required: user input/approval needed; no automatic replay".into());
+        }
+        Ok(result)
+    }
 
-        let response = request.send().await.map_err(|error| error.to_string())?;
+    async fn post(&mut self,payload:&Value)->Result<Value,String>{
+        let (body,headers)=if self.modern {
+            modern::decorate(payload,self.tool_schema.take().as_ref())?
+        }else {
+            self.tool_schema=None;
+            (payload.clone(),Vec::new())
+        };
+        let mut request=self.client.post(&self.url)
+            .header("content-type","application/json")
+            .header("accept","application/json, text/event-stream")
+            .json(&body);
+        for (name,value) in headers {
+            let key=reqwest::header::HeaderName::from_bytes(name.as_bytes())
+                .map_err(|error|format!("Invalid MCP routing header name: {error}"))?;
+            let value=reqwest::header::HeaderValue::from_str(&value)
+                .map_err(|error|format!("Invalid MCP routing header: {error}"))?;
+            request=request.header(key,value);
+        }
+        if !self.modern {
+            if let Some(session)=&self.session{
+                request=request.header("mcp-session-id",session);
+            }
+        }
+        if let Some(token)=&self.token {
+            request=request.header("authorization",format!("Bearer {token}"));
+        }
+        let response=request.send().await.map_err(|error|error.to_string())?;
         if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            return Err(format!(
-                "MCP HTTP {status}: {}",
-                text.chars().take(400).collect::<String>()
-            ));
+            let status=response.status();
+            let text=response.text().await.unwrap_or_default();
+            return Err(format!("MCP HTTP {status}: {}",
+                text.chars().take(700).collect::<String>()));
         }
-        if let Some(session) = response
-            .headers()
-            .get("mcp-session-id")
-            .and_then(|value| value.to_str().ok())
-        {
-            self.session = Some(session.to_string());
+        if !self.modern {
+            if let Some(session)=response.headers().get("mcp-session-id")
+                .and_then(|value|value.to_str().ok()){
+                self.session=Some(session.to_string());
+            }
         }
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or("")
-            .to_string();
-        let text = response.text().await.map_err(|error| error.to_string())?;
+        let content_type=response.headers().get("content-type")
+            .and_then(|value|value.to_str().ok()).unwrap_or("").to_string();
+        let text=response.text().await.map_err(|error|error.to_string())?;
         if text.trim().is_empty() {
+            if self.modern{return Err("MCP response missing JSON-RPC completion".into());}
             return Ok(json!({}));
         }
         if content_type.contains("text/event-stream") {
-            for block in text.split("\n\n") {
-                let payload = block
-                    .lines()
-                    .filter(|line| line.starts_with("data:"))
-                    .map(|line| line[5..].trim_start())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if payload.is_empty() {
-                    continue;
-                }
-                if let Ok(value) = serde_json::from_str::<Value>(&payload) {
-                    if value.get("result").is_some() || value.get("error").is_some() {
-                        return Ok(value);
+            let normalized=text.replace("\\r\\n","\\n");
+            let mut settled:Option<Value>=None;
+            for block in normalized.split("\\n\\n") {
+                let data=block.lines()
+                    .filter_map(|line|line.strip_prefix("data:")
+                        .map(str::trim_start)).collect::<Vec<_>>().join("\\n");
+                if data.is_empty(){continue;}
+                let value:Value=serde_json::from_str(&data)
+                    .map_err(|error|format!("Invalid MCP SSE JSON: {error}"))?;
+                if value.get("result").is_some()||value.get("error").is_some(){
+                    if value["id"]!=body["id"] {
+                        return Err("MCP SSE returned an unrelated JSON-RPC result".into());
+                    }
+                    if settled.replace(value).is_some(){
+                        return Err("MCP SSE contained multiple terminal results".into());
                     }
                 }
             }
-            return Ok(json!({}));
+            return settled.ok_or("MCP SSE ended without a terminal JSON-RPC result".into());
         }
-        serde_json::from_str::<Value>(&text).map_err(|error| error.to_string())
+        serde_json::from_str(&text).map_err(|error|error.to_string())
     }
 }
 
