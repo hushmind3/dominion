@@ -82,3 +82,76 @@
 .settings-nav-collapsed>div:first-child{gap:0;padding:0;justify-content:center}
 .settings-nav-collapsed>div:first-child>*:not(button){display:none}
 .settings-nav-collapsed>*:not(:first-child){display:none}
+
+
+/* Shared workspace ergonomics: preserve the existing information architecture. */
+.workspace-settings-content{
+ scrollbar-gutter:stable;
+ overflow-wrap:anywhere;
+}
+.workspace-settings-content :where(pre,table,textarea,input,select){
+ max-width:100%;
+}
+.workspace-settings-content pre{
+ overflow-x:auto;
+ white-space:pre-wrap;
+ overflow-wrap:anywhere;
+}
+.workspace-settings-content :where(button,a,input,select,textarea):focus-visible{
+ outline:2px solid #A94E30;
+ outline-offset:2px;
+}
+.workspace-settings-content :where(button,select,input,textarea):disabled{
+ cursor:not-allowed;
+}
+.workspace-settings-content :where(details>summary){
+ cursor:pointer;
+}
+@media (max-width:767px){
+ /* The compact navigation must still work when it was collapsed on desktop. */
+ .workspace-settings>.settings-nav-collapsed{
+  width:100%!important;
+  height:54px;
+  flex-direction:row;
+ }
+ .workspace-settings>.settings-nav-collapsed>nav{
+  display:flex!important;
+  min-width:0;
+  width:100%;
+ }
+ .workspace-settings>.settings-nav-collapsed>nav section{
+  display:contents;
+ }
+ .workspace-settings>.settings-nav-collapsed>nav section>div{
+  display:contents;
+ }
+ .workspace-settings-content{
+  scrollbar-gutter:auto;
+  overscroll-behavior:contain;
+ }
+ .workspace-settings>aside nav{
+  scroll-padding-inline:12px;
+  scrollbar-width:none;
+ }
+ .workspace-settings>aside nav::-webkit-scrollbar{display:none}
+ .workspace-settings>aside nav button{
+  min-height:40px;
+  border-radius:10px;
+ }
+ .workspace-settings-content :where(button,select,input:not([type="checkbox"]):not([type="radio"]),textarea){
+  min-height:36px;
+ }
+ .workspace-settings-content :where(.grid,.flex)>*{min-width:0}
+ .workspace-settings-content :where(h1,h2,h3,p,small){overflow-wrap:anywhere}
+ .workspace-settings-content :where(.overflow-x-auto){overscroll-behavior-x:contain}
+}
+@media(prefers-reduced-motion:reduce){
+ .workspace-settings *,
+ .connection-tabs *,
+ .room-main *,
+ .chat-header *{
+  scroll-behavior:auto!important;
+  animation-duration:.01ms!important;
+  transition-duration:.01ms!important;
+ }
+}
