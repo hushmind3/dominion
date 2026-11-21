@@ -1,5 +1,5 @@
 import {useMemo,useState} from 'react'
-import {Check,ChevronDown,ChevronRight,GitBranch,Layers3,RefreshCw,ShieldCheck} from 'lucide-react'
+import {Check,ChevronDown,ChevronRight,GitBranch,Layers3,MessageSquare,RefreshCw,ShieldCheck} from 'lucide-react'
 import {get,post} from '../api'
 import {useLocale} from '../i18n'
 import {Panel,useRemote} from './UI'
@@ -93,6 +93,10 @@ function WorkerStep({step,job,ids,onCreated}:{step:Step;job?:Job;ids:Record<stri
    className="mt-2 inline-flex items-center gap-1 text-[11px] text-[#A4583E]">
    <ShieldCheck size={12}/>{en?'Evidence and output':'증거·결과 확인'} {showResult?'▴':'▾'}
   </button>}
+  {job?.input?.sessionId&&<a href={'#/chat?session='+encodeURIComponent(job.input.sessionId)}
+   className="ml-2 mt-2 inline-flex items-center gap-1 rounded-lg border border-[#E7E0D5] px-2 py-1 text-[11px] text-[#5C544A] hover:bg-[#FAF7F1] focus-visible:outline-2 focus-visible:outline-offset-2">
+   <MessageSquare size={12}/>{en?'Open Worker conversation':'Worker 대화 열기'}
+  </a>}
   {showResult&&job?.result&&<pre className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-[#FAF7F1] p-2 text-[10px]">{JSON.stringify(job.result,null,2)}</pre>}
   {job&&<span className="mt-1 block break-all font-mono text-[9px] text-[#A79C8E]">{job.id}</span>}
   {done&&<span className="sr-only">{en?'Completed':'완료'}</span>}
