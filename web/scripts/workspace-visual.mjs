@@ -24,6 +24,10 @@ const viewports=[{width:1440,height:900},{width:768,height:1024},
 const pictures=[],errors=[],visits=[]
 const requests={sdk:[],team:[],remote:[]}
 let sdkRuns=[],teams=[],remoteTasks=[]
+// Hold a stale polling GET while an owner refusal is confirmed. Releasing
+// that old payload afterwards must not resurrect approval in React state.
+let holdNextSdkRead=false
+let releaseHeldSdkRead=null
 const send=(route,payload,status=200)=>route.fulfill({
  status,contentType:'application/json',body:JSON.stringify(payload)
 })
@@ -91,7 +95,15 @@ async function mock(route){
  }
  if(n.startsWith('/api/sdk/runs/')&&m==='GET'){
   const id=n.slice('/api/sdk/runs/'.length)
-  return send(route,sdkRuns.find(r=>r.id===id)||{})
+  const current=sdkRuns.find(r=>r.id===id)||{}
+  if(holdNextSdkRead){
+   holdNextSdkRead=false
+   const stale=structuredClone(current)
+   await new Promise(resolve=>{releaseHeldSdkRead=resolve})
+   return route.fulfill({status:200,contentType:'application/json',
+    headers:{'x-dominion-stale-fixture':'1'},body:JSON.stringify(stale)})
+  }
+  return send(route,current)
  }
  if(n==='/api/memories'||n==='/api/rooms'||n==='/api/sessions'||
   n==='/api/jobs'||n==='/api/audit'||n==='/api/executions'||
@@ -191,6 +203,14 @@ try{
  }}
  await page.getByRole('button',{name:'이 도구 실행 거부'}).waitFor({timeout:8000})
  await screenshot(page,'1440-tool-approval-review.png')
+ // Force an earlier polling GET to complete AFTER the owner refuses the
+ // exact tool. The stale GET must not reintroduce its approval buttons.
+ holdNextSdkRead=true
+ for(let n=0;n<40&&!releaseHeldSdkRead;n++){
+  await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
+  await sleep(75)
+ }
+ assert.ok(releaseHeldSdkRead,'Expected a held GET from the real UI poller')
  await page.getByRole('button',{name:'이 도구 실행 거부'}).click()
  // The click starts an async GET(callId revalidation) → POST(deny) flow.
  // Wait for the real React UI to consume the host response, not just click.
@@ -199,6 +219,14 @@ try{
   'Owner rejection must settle the exact tool and clear the approval UI')
  assert.equal(sdkRuns[0].status,'running',
   'The browser fixture must only clear the exact refused tool call')
+ const oldResponse=page.waitForResponse(response=>
+  response.headers()['x-dominion-stale-fixture']==='1',{timeout:8000})
+ releaseHeldSdkRead()
+ releaseHeldSdkRead=null
+ await oldResponse
+ await page.waitForTimeout(180)
+ assert.equal(await page.getByRole('button',{name:'이 도구 실행 거부'}).count(),0,
+  'Stale poll resurrected an already refused tool approval')
  // Team composer and remote worker use backend contracts, no fake completion.
  await open(page,'activity')
  const team=page.locator('[aria-label="작업 팀"]')

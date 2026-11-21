@@ -48,7 +48,9 @@ jobs:
       - run: cargo test --locked --bin dominion-rust http_reuses_mcp_session_and_reconnects_after_credential_rotation
       - run: cargo test --locked --bin dominion-rust stdio_reuses_one_live_mcp_process_and_rotates_on_config_change
       - run: cargo test --locked -p dominion-agent-runtime --lib
-      - run: cargo test --locked -p dominion-agent-sdk --lib
+      # SDK library has zero unit tests; execute actual policy/safety suites.
+      - run: cargo test --locked -p dominion-agent-sdk --test dispatch_safety
+      - run: cargo test --locked -p dominion-agent-sdk --test kernel
       - run: cargo test --locked --bin dominion-rust unknown_paid_generation_is_needs_review_even_after_owner_cancel
       - run: cargo test --locked --bin dominion-rust unknown_tool_effect_blocks_a_successful_final_answer
       - run: cargo test --locked --bin dominion-rust cancelled_paid_dispatch_only_relabels_as_review_with_both_durable_fences

@@ -1,4 +1,4 @@
-import {useEffect, useState} from 'react'
+import {useEffect, useRef, useState} from 'react'
 import {Check, Play, RefreshCw, ShieldAlert, Square, Sparkles, MessageSquareText} from 'lucide-react'
 import {get, post, type Provider} from '../api'
 import {useLocale} from '../i18n'
@@ -41,6 +41,10 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [busy,setBusy]=useState(false)
  const [error,setError]=useState('')
  const [disconnected,setDisconnected]=useState(false)
+ // A pre-action poll must not revive a refused/approved tool after the
+ // server has accepted the exact owner decision.
+ const pollEpoch=useRef(0)
+ const mutationInProgress=useRef(false)
  // A late response from a different selected task must never replace the active run.
  const updateRun=(next:SdkRun)=>{
   setRun(current=>current?.id===next.id?next:current)
@@ -60,11 +64,18 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   let fetching=false
   const selectedId=run.id
   const refresh=()=>{
-   if(!alive||fetching||document.visibilityState==='hidden')return
+   if(!alive||fetching||mutationInProgress.current||document.visibilityState==='hidden')return
    fetching=true
+   const epoch=pollEpoch.current
    get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(selectedId)}`)
-    .then(next=>{if(alive){updateRun(next);setDisconnected(false)}})
-    .catch(()=>{if(alive)setDisconnected(true)})
+    .then(next=>{
+     if(alive&&epoch===pollEpoch.current&&!mutationInProgress.current){
+      updateRun(next);setDisconnected(false)
+     }
+    })
+    .catch(()=>{
+     if(alive&&epoch===pollEpoch.current&&!mutationInProgress.current)setDisconnected(true)
+    })
     .finally(()=>{fetching=false})
   }
   // Approval may be resolved on another tab, and an interrupted run may
@@ -94,6 +105,8 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  }
  const action=async(kind:'approve'|'deny'|'cancel'|'resume')=>{
   if(!run||busy)return
+  mutationInProgress.current=true
+  pollEpoch.current+=1
   setBusy(true);setError('')
   try{
    const call=run.checkpoint?.pendingCall
@@ -112,20 +125,24 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    // The host, not the button click, determines the actual next phase.
    updateRun(updated)
   }catch(e){setError((e as Error).message)}
-  finally{setBusy(false)}
+  finally{mutationInProgress.current=false;setBusy(false)}
  }
  const reconcile=async(applied:boolean)=>{
   if(!run||busy||!observation.trim())return
+  mutationInProgress.current=true
+  pollEpoch.current+=1
   setBusy(true);setError('')
   try{
    const updated=await post<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}/reconcile`,
     {applied,details:observation.trim()})
    updateRun(updated);setObservation('')
   }catch(e){setError((e as Error).message)}
-  finally{setBusy(false)}
+  finally{mutationInProgress.current=false;setBusy(false)}
  }
  const steer=async()=>{
   if(!run||busy||!running.has(run.status)||!steering.trim())return
+  mutationInProgress.current=true
+  pollEpoch.current+=1
   setBusy(true);setError('')
   try{
    const updated=await post<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}/steer`,{
@@ -133,7 +150,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    })
    updateRun(updated);setSteering('')
   }catch(e){setError((e as Error).message)}
-  finally{setBusy(false)}
+  finally{mutationInProgress.current=false;setBusy(false)}
  }
  const reload=async()=>{
   setError('')
