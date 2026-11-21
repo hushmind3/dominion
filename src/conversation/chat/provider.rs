@@ -2930,7 +2930,7 @@ mod tests {
                 requests_per_minute:None,kind:"anthropic".into(),account_id:None,
             };
             let error=stream_completion_once(&state,&reqwest::Client::new(),&provider,
-                &messages,&[],&request,"tool-test",&tx,false).await.unwrap_err();
+                &messages,&[],&request,"tool-test",&tx,false).await.err().expect("malformed Anthropic tool frame must fail");
             assert!(error.contains(expected),"{model}: {error}");
         }
         server.abort();
