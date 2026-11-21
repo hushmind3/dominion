@@ -37,6 +37,9 @@ jobs:
       - run: cargo test --locked -p dominion-agent-runtime --lib
       - run: cargo test --locked -p dominion-agent-sdk --lib
       - run: cargo test --locked --bin dominion-rust unknown_paid_generation_is_needs_review_even_after_owner_cancel
+      - run: cargo test --locked --bin dominion-rust unknown_tool_effect_blocks_a_successful_final_answer
+      - run: cargo test --locked --bin dominion-rust cancelled_paid_dispatch_only_relabels_as_review_with_both_durable_fences
+      - run: cargo test --locked --bin dominion-rust cancelled_completed_task_never_reopens_on_unproven_review_claim
       - run: cargo test --locked --bin dominion-rust sub3_standalone_explanation_uses_zero_tool_schemas_over_real_http_sse
 
   web:
