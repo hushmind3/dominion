@@ -1,7 +1,7 @@
 import {DialogBackdrop,DialogPanel} from '../components/Dialog'
 import {Button,TextInput} from '../components/Primitives'
 import {ChannelEditor} from '../components/ChannelEditor'
-import {useState} from 'react'
+import {useEffect,useRef,useState} from 'react'
 import {Activity,Blocks,BookOpenText,PackagePlus,Sparkles,Server,Check,Globe2,Github,KeyRound,Link2,RadioTower,Settings2,X} from 'lucide-react'
 import {del,post} from '../api'
 import {Action,FormField,Notice,Panel,StateTag,Subheading,useRemote} from '../components/UI'
@@ -19,6 +19,11 @@ type Connection={id:string;provider:string;displayName:string;scopes:string;hasT
 export function ConnectionsPage(){
  useLocale()
  const [section,setSection]=useState<'channels'|'quick-connect'|'accounts'|'capabilities'|ExtensionTab>('channels');
+ const tabsRef=useRef<HTMLElement>(null)
+ useEffect(()=>{
+  tabsRef.current?.querySelector<HTMLElement>('[aria-current="page"]')
+   ?.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'})
+ },[section])
  const [editor,setEditor]=useState<{entry:ChannelEntry;record:any}|null>(null);
  const [error,setError]=useState(''),[info,setInfo]=useState(''),[probe,setProbe]=useState<Record<string,ChannelProbe>>({}),[saving,setSaving]=useState(false);
  const [oauthEditor,setOauthEditor]=useState<{id:OAuthAccountId;clientId:string;clientSecret:string}|null>(null);
@@ -120,7 +125,7 @@ export function ConnectionsPage(){
    <Activity size={15} className={refreshing?'animate-spin':''}/><span className="hidden sm:inline">{t('conn.refresh')}</span>
   </Button>
  </header>
- const sectionTabs=<nav className="connection-tabs" aria-label={t('conn.navigation')}>{tabs.map(({id,label,icon:Icon},index)=><span key={id} className="inline-flex shrink-0 items-center gap-1">
+ const sectionTabs=<nav ref={tabsRef} className="connection-tabs" aria-label={t('conn.navigation')}>{tabs.map(({id,label,icon:Icon},index)=><span key={id} className="inline-flex shrink-0 items-center gap-1">
   {(index===3||index===7)&&<span aria-hidden="true" className="mx-2 h-5 w-px shrink-0 bg-[#DED4C8]"/>}
   <Button variant="bare" aria-current={section===id?'page':undefined} onClick={()=>setSection(id)}><Icon size={15}/>{label}</Button>
  </span>)}</nav>
