@@ -79,7 +79,7 @@ pub(super) async fn run_turn_body(
     let super::tool_catalog::Catalog{
         definitions:mut tool_definitions,
         discovery:discovery_catalog,
-        progressive_enabled,simple_creation_target,is_room,
+        progressive_enabled,simple_creation_target,lightweight_only,is_room,
     }=super::tool_catalog::prepare(
         state,request,&session,session_id,execution_id,
         &acceptance,&decision_policy,
@@ -119,14 +119,20 @@ pub(super) async fn run_turn_body(
         }
         (compiled.system, compiled.history)
     } else {
-        let prompt_context = super::context::system_prompt_with_manifest_at(
-            state,
-            request,
-            session_id,
-            task_input(&session,&request.input),
-            Some(&strategy_candidates),
-            Some(execution_id),
-        );
+        let prompt_context = if lightweight_only {
+            // This path is source-free by design: exact user/agent policy
+            // remains, native operations and irrelevant memory do not.
+            super::context::lightweight_chat_prompt(state,request)
+        } else {
+            super::context::system_prompt_with_manifest_at(
+                state,
+                request,
+                session_id,
+                task_input(&session,&request.input),
+                Some(&strategy_candidates),
+                Some(execution_id),
+            )
+        };
         // Size the history the provider will see *after* historical tool
         // receipts are compacted. A short question no longer automatically
         // replays the previous 96 kB of web/file observations. Execution
