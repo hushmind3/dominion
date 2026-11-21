@@ -81,6 +81,19 @@ pub(super) fn private_tool_request(input:&str)->bool {
         return true;
     }
     let compact=q.chars().filter(|ch|!ch.is_whitespace()).collect::<String>();
+    // Explicit runtime/tool names are actions, even when the sentence has
+    // none of the Korean file/edit verbs. Keep compat and failover contracts.
+    if ["workspace_","file_list","file_read","file_write","shell_exec",
+        "terminal_exec","web_search","http_fetch","mcp__","delegate_task",
+        "task_status","task_result","browser_control","memory_search"]
+        .iter().any(|name|q.contains(name)){
+        return true;
+    }
+    // A follow-up instruction inherits an action request: a bare "계속 확인"
+    // must not lose its live tool catalog after a tool-enabled first turn.
+    if compact.starts_with("계속") && (compact.contains("확인")||compact.contains("진행")){
+        return true;
+    }
     let resource=["파일","폴더","코드","레포","저장소","프로젝트",
         "깃허브","github","브랜치","커밋","로그"]
         .iter().any(|term|q.contains(term));
@@ -118,7 +131,8 @@ mod private_tool_request_tests {
         for q in ["src/main.rs 파일 읽어줘","웹에서 최신 자료 검색해줘",
             "러스트 테스트 돌려줘","메인","이어서 작업해",
             "깃허브에서 코드 수정해","검색 좀 해줘",
-            "코드 리뷰해줘","파일 확인해"] {
+            "코드 리뷰해줘","파일 확인해",
+            "workspace_list 도구로 작업 환경을 확인해","계속 확인"] {
             assert!(private_tool_request(q),"{q}");
         }
     }
