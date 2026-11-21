@@ -33,6 +33,21 @@ const PROVIDERS: &[Provider] = &[
     },
 ];
 
+const MAX_OAUTH_RESPONSE_BYTES:usize=256*1024;
+async fn bounded_oauth_json(mut response:reqwest::Response)->Result<Value,String>{
+    if response.content_length().is_some_and(|length|length>MAX_OAUTH_RESPONSE_BYTES as u64){
+        return Err("OAuth 응답이 256 KiB를 초과했습니다.".into());
+    }
+    let mut bytes=Vec::new();
+    while let Some(chunk)=response.chunk().await.map_err(|error|error.to_string())?{
+        if bytes.len().saturating_add(chunk.len())>MAX_OAUTH_RESPONSE_BYTES{
+            return Err("OAuth 응답이 256 KiB를 초과했습니다.".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|error|error.to_string())
+}
+
 fn provider(id: &str) -> Option<&'static Provider> {
     PROVIDERS.iter().find(|provider| provider.id == id)
 }
@@ -339,8 +354,7 @@ pub async fn callback(
     if !status.is_success() {
         return Err(format!("OAuth 토큰 교환 거부: HTTP {status}"));
     }
-    let text = response.text().await.unwrap_or_default();
-    let token_value: Value = serde_json::from_str(&text)
+    let token_value: Value = bounded_oauth_json(response).await
         .map_err(|_| format!("토큰 응답을 해석할 수 없습니다 (HTTP {status})"))?;
     let access_token = token_value
         .get("access_token")
@@ -365,7 +379,7 @@ pub async fn callback(
         .send()
         .await
     {
-        if let Ok(value) = info.json::<Value>().await {
+        if let Ok(value) = bounded_oauth_json(info).await {
             account = value
                 .get("login")
                 .or_else(|| value.get("email"))
@@ -432,7 +446,7 @@ pub async fn link_github_cli_account(state:&AppState, access:&str)->Result<(),St
     }
     let scopes=response.headers().get("x-oauth-scopes")
         .and_then(|v|v.to_str().ok()).unwrap_or("").to_string();
-    let body:Value=response.json().await.map_err(|e|format!("GitHub 계정 조회 실패: {e}"))?;
+    let body:Value=bounded_oauth_json(response).await.map_err(|e|format!("GitHub 계정 조회 실패: {e}"))?;
     let account=body["login"].as_str().filter(|s|!s.is_empty())
         .ok_or("GitHub 계정 ID를 읽지 못했습니다.")?;
     let token=json!({"accessToken":access,"refreshToken":null,"scopes":scopes,
@@ -514,7 +528,7 @@ pub async fn fresh_access_token(state: &AppState, id: &str) -> Result<String, St
     if !response.status().is_success() {
         return Err("OAuth 갱신이 거부되었습니다. 계정을 다시 연결하세요.".into());
     }
-    let updated: Value = response.json().await.map_err(|_| "OAuth 갱신 응답 오류")?;
+    let updated: Value = bounded_oauth_json(response).await.map_err(|_| "OAuth 갱신 응답 오류")?;
     let access = updated["access_token"]
         .as_str()
         .filter(|v| !v.is_empty())

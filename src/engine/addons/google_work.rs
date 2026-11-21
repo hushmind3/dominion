@@ -55,13 +55,19 @@ async fn request(state:&AppState,scope:&str,method:Method,url:Url,body:Option<Va
     let mut req=client()?.request(method,url).bearer_auth(token)
         .header("User-Agent","DOMINION");
     if let Some(body)=body{req=req.json(&body);}
-    let response=req.send().await.map_err(|e|format!("Google API 연결 오류: {e}"))?;
+    let mut response=req.send().await.map_err(|e|format!("Google API 연결 오류: {e}"))?;
     let status=response.status();
     if response.content_length().is_some_and(|len|len>1_000_000){
         return Err("Google 응답이 1MB를 넘습니다. 조회 범위를 줄이세요.".into());
     }
-    let bytes=response.bytes().await.map_err(|e|format!("Google 응답 수신 실패: {e}"))?;
-    if bytes.len()>1_000_000{return Err("Google 응답이 1MB를 넘습니다.".into());}
+    let mut bytes=Vec::new();
+    while let Some(chunk)=response.chunk().await
+        .map_err(|e|format!("Google 응답 수신 실패: {e}"))?{
+        if bytes.len().saturating_add(chunk.len())>1_000_000{
+            return Err("Google 응답이 1MB를 넘습니다. 조회 범위를 줄이세요.".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
     if !status.is_success(){
         return Err(match status.as_u16(){
             401=>"Google 연결이 만료됐습니다. 다시 로그인하세요.".into(),
