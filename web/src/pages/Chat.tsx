@@ -50,7 +50,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const approvals=useRemote<Approval[]>('/api/approvals',[],active);
  const [input,setInput]=useChatDraft(current);
  const [fileSelection,setFileSelection]=useState<{scope?:string;files:ChatFileDraft[]}>()
- const draftFiles=fileSelection?.scope===current?fileSelection.files:[]
+ const draftFiles=fileSelection&&fileSelection.scope===current?fileSelection.files:[]
  const [historyQuery,setHistoryQuery]=useState('');
  const [modeChoice,setModeChoice]=useState<{scope?:string;mode:ChatMode}>()
  const mode:ChatMode=(modeChoice&&modeChoice.scope===current?modeChoice.mode:undefined)??
