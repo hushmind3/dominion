@@ -12,7 +12,7 @@ mod remote_artifacts;
 use crate::db::Store;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{io::Read, path::{Component, Path, PathBuf}};
+use std::{collections::BTreeMap, io::Read, path::{Component, Path, PathBuf}};
 use std::time::Duration;
 
 const TOOL_TEXT_READ_LIMIT: u64 = 1_500_000;
@@ -69,7 +69,7 @@ pub fn definitions() -> Vec<Value> {
     let text = |description: &str| json!({ "type": "string", "description": description });
 
     let mut defs=vec![
-        tool("workspace_list", "List files and folders in the workspace", object(json!({"path": text("Relative folder path")}), vec![])),
+        tool("workspace_list", "List one page of files and folders in the workspace. Continue with nextCursor while hasMore is true.", object(json!({"path": text("Relative folder path"), "limit": json!({"type":"integer","minimum":1,"maximum":500,"description":"Entries to return; defaults to 200"}), "cursor": text("nextCursor from the previous page")}), vec![])),
         tool("workspace_read", "Read a UTF-8 file from the workspace", object(json!({"path": text("Relative file path")}), vec!["path"])),
         tool("workspace_read_range", "Read only a line range from a workspace file. Use the line numbers from the repository index instead of reading a large file end to end.", object(json!({"path": text("Relative file path"), "startLine": json!({"type":"integer","minimum":1}), "endLine": json!({"type":"integer","minimum":1, "description":"Inclusive end line; at most 400 lines are returned"})}), vec!["path","startLine"])),
         tool("code_search", "Search the persistent repository index for file paths, symbols and line numbers. Use this before reading a large file.", object(json!({"query": text("Function, type, path or keyword fragment"), "limit": json!({"type":"integer","minimum":1,"maximum":50})}), vec!["query"])),
@@ -79,7 +79,7 @@ pub fn definitions() -> Vec<Value> {
         tool("workspace_apply_patch", "Apply one Codex-style multi-file patch across up to 32 files: *** Begin Patch, *** Add/Update/Delete File, optional *** Move to, @@ hunks, *** End Patch. Entire patch is validated before writes; on commit failure inspect the returned partial receipts and re-read files. Approval required.", object(json!({
             "input": text("One Codex-style multi-file patch. Prefix changed lines with + or -, context lines with one space.")
         }), vec!["input"])),
-        tool("file_list", "List any folder on this computer using an absolute path", object(json!({"path": text("Absolute folder path")}), vec!["path"])),
+        tool("file_list", "List one page of a folder on this computer using an absolute path. Continue with nextCursor while hasMore is true.", object(json!({"path": text("Absolute folder path"), "limit": json!({"type":"integer","minimum":1,"maximum":500,"description":"Entries to return; defaults to 200"}), "cursor": text("nextCursor from the previous page")}), vec!["path"])),
         tool("file_read", "Read any UTF-8 text file using an absolute path", object(json!({"path": text("Absolute file path")}), vec!["path"])),
         tool("file_write", "Create or overwrite any file using an absolute path (approval required)", object(json!({"path": text("Absolute file path"), "content": text("UTF-8 content")}), vec!["path", "content"])),
         tool("shell_exec", "Run a shell command on this computer and return stdout/stderr (approval required)", object(json!({"command": text("Shell command line"), "cwd": text("Optional absolute working directory")}), vec!["command"])),
@@ -335,7 +335,7 @@ pub async fn execute(
     match name {
         "workspace_list" => {
             let path = resolve_workspace(ctx.workspace, string_arg(args, "path").unwrap_or("."))?;
-            list_dir(&path).await
+            list_dir(&path, args).await
         }
         "workspace_read" => {
             let path = resolve_workspace(ctx.workspace, &required_arg(args, "path")?)?;
@@ -447,7 +447,7 @@ pub async fn execute(
         },
         "file_list" => {
             let path = PathBuf::from(required_arg(args, "path")?);
-            list_dir(&path).await
+            list_dir(&path, args).await
         }
         "file_read" => {
             let path = PathBuf::from(required_arg(args, "path")?);
@@ -1063,27 +1063,54 @@ fn canonical_target(path: &Path) -> std::io::Result<PathBuf> {
     }
 }
 
-async fn list_dir(path: &Path) -> Result<Value, String> {
-    let mut entries = Vec::new();
+async fn list_dir(path: &Path, args: &Value) -> Result<Value, String> {
+    let limit = args["limit"].as_u64().unwrap_or(200).clamp(1, 500) as usize;
+    let cursor = match args["cursor"].as_str() {
+        Some(raw) => Some(serde_json::from_str::<(String, String)>(raw)
+            .map_err(|_| "Invalid directory-list cursor".to_string())?),
+        None => None,
+    };
+    // Retain only the first limit + 1 entries after the cursor. Large folders
+    // therefore do not create an unbounded in-memory result before paging.
+    let mut entries = BTreeMap::<(String, String), Value>::new();
     let mut reader = tokio::fs::read_dir(path)
         .await
         .map_err(|error| format!("{}: {error}", path.display()))?;
-    while let Ok(Some(entry)) = reader.next_entry().await {
+    while let Some(entry) = reader.next_entry().await
+        .map_err(|error| format!("{}: {error}", path.display()))? {
         let metadata = entry.metadata().await.ok();
-        entries.push(json!({
-            "name": entry.file_name().to_string_lossy(),
-            "path": entry.path().to_string_lossy(),
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let entry_path = entry.path().to_string_lossy().into_owned();
+        let key = (name.clone(), entry_path.clone());
+        if cursor.as_ref().is_some_and(|after| key <= *after) {
+            continue;
+        }
+        entries.insert(key, json!({
+            "name": name,
+            "path": entry_path,
             "type": if metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false) { "dir" } else { "file" },
             "size": metadata.as_ref().map(|m| m.len()).unwrap_or(0),
         }));
+        if entries.len() > limit + 1 {
+            entries.pop_last();
+        }
     }
-    entries.sort_by(|a, b| {
-        a["name"]
-            .as_str()
-            .unwrap_or("")
-            .cmp(b["name"].as_str().unwrap_or(""))
-    });
-    Ok(json!({ "path": path.to_string_lossy(), "entries": entries }))
+    let has_more = entries.len() > limit;
+    let mut entries: Vec<_> = entries.into_iter().map(|(_, value)| value).collect();
+    if has_more {
+        entries.pop();
+    }
+    let next_cursor = if has_more {
+        entries.last().map(|entry| {
+            serde_json::to_string(&(
+                entry["name"].as_str().unwrap_or_default(),
+                entry["path"].as_str().unwrap_or_default(),
+            )).unwrap_or_default()
+        })
+    } else {
+        None
+    };
+    Ok(json!({ "path": path.to_string_lossy(), "entries": entries, "limit": limit, "hasMore": has_more, "nextCursor": next_cursor }))
 }
 
 async fn read_text(path: &Path) -> Result<Value, String> {
