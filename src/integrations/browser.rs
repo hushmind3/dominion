@@ -14,6 +14,9 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 
+pub const MAX_SCREENSHOT_BYTES: usize = 12 * 1024 * 1024;
+const MAX_CDP_MESSAGE_BYTES: usize = 24 * 1024 * 1024;
+
 struct Session {
     child: Child,
     port: u16,
@@ -162,15 +165,19 @@ async fn page_target(port: u16, owner_id: &str) -> Result<Value, String> {
         return Err("브라우저 탭을 사용할 작업 세션 ID가 필요합니다.".into());
     }
     let client = reqwest::Client::new();
-    let targets = client
+    let targets_response = client
         .get(format!("http://127.0.0.1:{port}/json/list"))
         .timeout(Duration::from_secs(10))
         .send()
         .await
         .map_err(|error| format!("브라우저 대상 조회 실패: {error}"))?
         .error_for_status()
-        .map_err(|error| format!("브라우저 대상 HTTP 오류: {error}"))?
-        .json::<Value>()
+        .map_err(|error| format!("브라우저 대상 HTTP 오류: {error}"))?;
+    let targets = crate::integrations::network::read_bounded_json(
+        targets_response,
+        1024 * 1024,
+        "브라우저 대상 목록",
+    )
         .await
         .map_err(|error| format!("브라우저 대상 응답 오류: {error}"))?;
     let owned_id=session().lock().map_err(|_|"브라우저 세션 잠금 오류")?
@@ -180,15 +187,19 @@ async fn page_target(port: u16, owner_id: &str) -> Result<Value, String> {
     }
     // A lost tab is not a license to switch to another agent's first tab.
     // Create a new page and atomically assign its CDP target to this owner.
-    let created = client
+    let created_response = client
         .put(format!("http://127.0.0.1:{port}/json/new?about:blank"))
         .timeout(Duration::from_secs(10))
         .send()
         .await
         .map_err(|error| format!("브라우저 탭 생성 실패: {error}"))?
         .error_for_status()
-        .map_err(|error| format!("브라우저 탭 HTTP 오류: {error}"))?
-        .json::<Value>()
+        .map_err(|error| format!("브라우저 탭 HTTP 오류: {error}"))?;
+    let created = crate::integrations::network::read_bounded_json(
+        created_response,
+        256 * 1024,
+        "브라우저 탭 생성",
+    )
         .await
         .map_err(|error| format!("브라우저 탭 응답 오류: {error}"))?;
     let id=created["id"].as_str().ok_or("새 브라우저 탭 ID가 없습니다.")?;
@@ -207,7 +218,15 @@ async fn page_target(port: u16, owner_id: &str) -> Result<Value, String> {
 async fn cdp(ws_url: &str, method: &str, params: Value) -> Result<Value, String> {
     let (mut socket, _) = tokio::time::timeout(
         Duration::from_secs(15),
-        tokio_tungstenite::connect_async(ws_url),
+        tokio_tungstenite::connect_async_with_config(
+            ws_url,
+            Some(tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
+                max_message_size: Some(MAX_CDP_MESSAGE_BYTES),
+                max_frame_size: Some(MAX_CDP_MESSAGE_BYTES),
+                ..Default::default()
+            }),
+            false,
+        ),
     )
     .await
     .map_err(|_| "브라우저 DevTools 연결 시간 초과".to_string())?
@@ -410,10 +429,16 @@ async fn screenshot(ws_url: &str, workspace: &Path) -> Result<Value, String> {
     let encoded = result["data"]
         .as_str()
         .ok_or("스크린샷 데이터가 없습니다.")?;
+    if encoded.len() > (MAX_SCREENSHOT_BYTES * 4 / 3 + 4) {
+        return Err("스크린샷이 12 MiB 제한을 초과했습니다.".into());
+    }
     use base64::Engine;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(encoded)
         .map_err(|error| format!("스크린샷 디코딩 실패: {error}"))?;
+    if bytes.len() > MAX_SCREENSHOT_BYTES {
+        return Err("스크린샷이 12 MiB 제한을 초과했습니다.".into());
+    }
     let dir = workspace.join(".dominion").join("browser");
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     let path = dir.join(format!(

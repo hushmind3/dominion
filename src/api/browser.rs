@@ -4,6 +4,7 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
+use std::io::Read;
 
 use crate::integrations::browser;
 use crate::state::AppState;
@@ -46,17 +47,38 @@ pub async fn screenshot(State(state): State<AppState>) -> Response {
     let Some(path) = latest_screenshot(&state) else {
         return (StatusCode::NOT_FOUND, "아직 캡처한 화면이 없습니다.").into_response();
     };
-    match std::fs::read(&path) {
-        Ok(bytes) => (
-            [
-                (header::CONTENT_TYPE, "image/png"),
-                (header::CACHE_CONTROL, "no-store"),
-            ],
-            Body::from(bytes),
-        )
-            .into_response(),
-        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+    let file = match std::fs::File::open(&path) {
+        Ok(file) => file,
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+        }
+    };
+    let limit = crate::integrations::browser::MAX_SCREENSHOT_BYTES;
+    match file.metadata() {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => {
+            return (StatusCode::NOT_FOUND, "스크린샷 파일을 찾을 수 없습니다.").into_response();
+        }
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+        }
     }
+    let mut bytes = Vec::new();
+    if let Err(error) = file.take((limit + 1) as u64).read_to_end(&mut bytes) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+    }
+    if bytes.len() > limit {
+        return (StatusCode::PAYLOAD_TOO_LARGE, "스크린샷이 12 MiB 제한을 초과했습니다.")
+            .into_response();
+    }
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        Body::from(bytes),
+    )
+    .into_response()
 }
 
 fn latest_screenshot(state: &AppState) -> Option<std::path::PathBuf> {
