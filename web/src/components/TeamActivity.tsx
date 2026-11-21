@@ -53,7 +53,7 @@ export function TeamActivity(){
  const runnable=agents.value.filter(agent=>agent.id&&agent.providerId&&agent.model&&agent.enabled!==false&&agent.disabled!==true)
  const lead=runnable.find(agent=>agent.id===leadId)||runnable[0]
  const workers=activity.value.remoteWorkers
- const compatible=workers.filter(node=>node.online&&workerIds.every(id=>(node.agents||[]).includes(id)))
+ const compatible=workers.filter(node=>node.online&&workerIds.some(id=>(node.agents||[]).includes(id)))
  const selectedRemote=compatible.some(node=>node.id===remoteId)?remoteId:''
  const inProgress=activity.value.teams.filter(team=>team.status==='running').length
  const reviewCount=activity.value.teams.filter(team=>team.status==='needs_review').length
@@ -166,7 +166,7 @@ export function TeamActivity(){
     <label className="text-[11px] font-semibold text-[#5C544A]">{en?'Execution device':'Worker 실행 장치'}
      <SelectInput className="mt-1" value={selectedRemote} onChange={e=>setRemoteId(e.target.value)}>
       <option value="">{en?'Local Rust workers':'이 PC의 Rust Worker'}</option>
-      {compatible.map(node=><option key={node.id} value={node.id}>{node.id} · {en?'remote':'원격'}</option>)}
+      {compatible.map(node=><option key={node.id} value={node.id}>{node.id} · {en?'remote':'원격'} ({workerIds.filter(id=>(node.agents||[]).includes(id)).length}/{workerIds.length})</option>)}
      </SelectInput>
     </label>
    </div>

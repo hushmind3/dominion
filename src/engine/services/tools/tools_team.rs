@@ -56,11 +56,9 @@ fn validate_ui_worker_route(roster:&[String],remote:Option<&str>,node:&Value)->R
             if actual.is_some_and(|name|name!=selected){
                 return Err("A different remote Worker was requested".into());
             }
-            if node["readOnly"]!=false && actual!=Some(selected){
-                return Err("Remote investigator must use the selected Worker".into());
-            }
-            // Writer may remain local. Remote writer capability is validated
-            // separately by worker_available(read_only=false).
+            // Other selected Agents can stay local when this device does not
+            // advertise them. At least one node must use the selected remote
+            // device, checked against the complete DAG in create().
         }
         None if actual.is_some()=>{
             return Err("Local Team must not use an unselected remote Worker".into());
@@ -463,6 +461,11 @@ fn create(ctx:&ToolContext<'_>,args:&Value,run_id:&str)->Result<Value,String>{
     }
     // All members and scopes must be valid BEFORE any persisted side effects.
     let ui_selection=ui_team_selection(ctx);
+    if let Some((_,Some(selected_remote)))=&ui_selection{
+        if !tasks.iter().any(|task|task["remoteWorkerId"]==selected_remote.as_str()){
+            return Err("Selected remote Worker is unused in the proposed Team DAG".into());
+        }
+    }
     for task in tasks {
         let agent=task["agentId"].as_str().ok_or("agentId required")?;
         if let Some((roster,remote))=&ui_selection{
@@ -641,7 +644,7 @@ mod tests{
         assert!(validate_ui_worker_route(&roster,Some("remote-1"),&writer).is_ok());
         assert!(validate_ui_worker_route(&roster,None,&writer).is_ok());
         assert!(validate_ui_worker_route(&roster,Some("remote-1"),
-            &json!({"agentId":"researcher","readOnly":true})).is_err());
+            &json!({"agentId":"researcher","readOnly":true})).is_ok());
         assert!(validate_ui_worker_route(&roster,Some("remote-1"),
             &json!({"agentId":"builder","readOnly":false,
                 "remoteWorkerId":"remote-2"})).is_err());

@@ -65,15 +65,22 @@ pub async fn start(State(state):State<AppState>,Json(body):Json<Value>)->Respons
     }
     let remote_id=body["remoteWorkerId"].as_str().filter(|s|!s.trim().is_empty());
     if let Some(remote_id)=remote_id{
-        for id in &worker_ids{
-            if let Err(reason)=crate::remote::worker_available(&state,remote_id,id,true){
-                return fail(StatusCode::CONFLICT,&reason);
-            }
+        let advertised=state.store.get("remote_worker",remote_id)
+            .and_then(|node|node["agents"].as_array().cloned())
+            .unwrap_or_default();
+        let eligible=worker_ids.iter().filter(|id|
+            advertised.iter().any(|agent|agent.as_str()==Some(id.as_str())))
+            .collect::<Vec<_>>();
+        if eligible.is_empty(){
+            return fail(StatusCode::CONFLICT,"No selected Agent is advertised by this remote Worker");
+        }
+        if let Err(reason)=crate::remote::worker_available(&state,remote_id,eligible[0],true){
+            return fail(StatusCode::CONFLICT,&reason);
         }
     }
     let roster=worker_ids.iter().map(|s|format!("- {s}")).collect::<Vec<_>>().join("\n");
     let remote_hint=remote_id.map_or(String::new(),|id|format!(
-        "Remote Worker {id} advertises the selected agents. Use remoteWorkerId only on eligible readOnly nodes. File mutations require explicit owner approval."));
+        "Selected remote Worker {id} can execute only Agents advertised by that node. Assign at least one eligible task with remoteWorkerId={id}; unadvertised Agents remain local. Prefer remote readOnly research and a local verified Writer unless remote writes were explicitly enabled."));
     let instruction=format!(
         "OWNER REQUEST:\n{prompt}\n\nRun the DOMINION native managed team. \
         First call team_workers and inspect real Agent IDs. Then call team_execute \
