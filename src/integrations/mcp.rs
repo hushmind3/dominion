@@ -588,6 +588,22 @@ struct HttpSession {
     tool_schema: Option<Value>,
 }
 
+const MAX_MCP_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+
+async fn bounded_response_text(mut response:reqwest::Response)->Result<String,String>{
+    if response.content_length().is_some_and(|size|size>MAX_MCP_RESPONSE_BYTES as u64){
+        return Err("MCP response exceeds the 8 MiB limit".into());
+    }
+    let mut bytes=Vec::new();
+    while let Some(chunk)=response.chunk().await.map_err(|error|error.to_string())?{
+        if bytes.len().saturating_add(chunk.len())>MAX_MCP_RESPONSE_BYTES{
+            return Err("MCP response exceeds the 8 MiB limit".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    String::from_utf8(bytes).map_err(|_|"MCP response is not valid UTF-8".into())
+}
+
 impl HttpSession {
     /// Modern HTTP probes only a read-only server/discover operation.
     /// The fallback never retries a paid/effecting tool invocation.
@@ -616,6 +632,9 @@ impl HttpSession {
             client:reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(60))
+                // MCP requests can contain bearer credentials and effectful
+                // tool arguments. Never forward either through a redirect.
+                .redirect(reqwest::redirect::Policy::none())
                 .build().map_err(|error|error.to_string())?,
             url,session:None,token:state.read_secret(&format!("mcp:{id}")),
             next_id:1,modern:mode!="legacy",legacy_version:None,tool_schema:None,
@@ -754,7 +773,7 @@ impl HttpSession {
         let response=request.send().await.map_err(|error|error.to_string())?;
         if !response.status().is_success() {
             let status=response.status();
-            let text=response.text().await.unwrap_or_default();
+            let text=bounded_response_text(response).await?;
             return Err(format!("MCP HTTP {status}: {}",
                 text.chars().take(700).collect::<String>()));
         }
@@ -766,7 +785,7 @@ impl HttpSession {
         }
         let content_type=response.headers().get("content-type")
             .and_then(|value|value.to_str().ok()).unwrap_or("").to_string();
-        let text=response.text().await.map_err(|error|error.to_string())?;
+        let text=bounded_response_text(response).await?;
         if text.trim().is_empty() {
             if self.modern{return Err("MCP response missing JSON-RPC completion".into());}
             return Ok(json!({}));

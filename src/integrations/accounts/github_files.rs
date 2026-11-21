@@ -13,6 +13,21 @@ use sha2::{Digest,Sha256};
 const API_ORIGIN:&str="https://api.github.com/";
 const MAX_SOURCE_BYTES:usize=160_000;
 const MAX_VISIBLE_CHARS:usize=16_000;
+const MAX_GITHUB_RESPONSE_BYTES:usize=512_000;
+
+async fn response_bytes(mut response:reqwest::Response)->Result<Vec<u8>,String>{
+    if response.content_length().is_some_and(|size|size>MAX_GITHUB_RESPONSE_BYTES as u64){
+        return Err("GitHub response exceeds 512 KB".into());
+    }
+    let mut bytes=Vec::new();
+    while let Some(chunk)=response.chunk().await.map_err(|error|error.to_string())?{
+        if bytes.len().saturating_add(chunk.len())>MAX_GITHUB_RESPONSE_BYTES{
+            return Err("GitHub response exceeds 512 KB".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
 
 #[derive(Debug)]
 struct Target<'a>{
@@ -88,13 +103,14 @@ async fn remote_file(client:&reqwest::Client,token:&str,url:&reqwest::Url)
         .header("Accept","application/vnd.github+json")
         .header("User-Agent","DOMINION-Agent")
         .send().await.map_err(|e|format!("GitHub read unavailable: {e}"))?;
-    if reply.status()==reqwest::StatusCode::NOT_FOUND{return Ok(None)}
-    if !reply.status().is_success(){
-        let status=reply.status();
-        let body=reply.text().await.unwrap_or_default();
+    let status=reply.status();
+    if status==reqwest::StatusCode::NOT_FOUND{return Ok(None)}
+    let bytes=response_bytes(reply).await?;
+    if !status.is_success(){
+        let body=String::from_utf8_lossy(&bytes);
         return Err(api_error(status,&body));
     }
-    let value:Value=reply.json().await.map_err(|_|"Invalid GitHub file response")?;
+    let value:Value=serde_json::from_slice(&bytes).map_err(|_|"Invalid GitHub file response")?;
     Ok(Some(body_text(&value)?))
 }
 
@@ -158,11 +174,12 @@ async fn commit_with(client:&reqwest::Client,token:&str,origin:&str,
         .json(&body).send().await.map_err(|e|format!(
             "GitHub write result uncertain; do not retry without re-reading the remote SHA: {e}"))?;
     let status=response.status();
+    let bytes=response_bytes(response).await?;
     if !status.is_success(){
-        let detail=response.text().await.unwrap_or_default();
+        let detail=String::from_utf8_lossy(&bytes);
         return Err(api_error(status,&detail));
     }
-    let changed:Value=response.json().await
+    let changed:Value=serde_json::from_slice(&bytes)
         .map_err(|_|"GitHub write response unknown; re-read before retry")?;
     let expected_new_sha=changed["content"]["sha"].as_str().ok_or(
         "GitHub commit result missing blob SHA; re-read before retry")?;

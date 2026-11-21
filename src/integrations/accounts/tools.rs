@@ -3,6 +3,9 @@
 use crate::state::AppState;
 use serde_json::{json,Value};
 use std::time::Duration;
+
+const MAX_GITHUB_REQUEST_BYTES:usize=160_000;
+const MAX_GITHUB_RESPONSE_BYTES:usize=1024*1024;
 use super::{oauth,github_files,github_workflow,google_workspace};
 
 fn tool(name:&str,description:&str,parameters:Value)->Value{
@@ -120,12 +123,27 @@ async fn github_api(state: &AppState, args: &Value) -> Result<Value, String> {
         .header("User-Agent", "DOMINION")
         .timeout(Duration::from_secs(30));
     if let Some(body) = args.get("body").filter(|value| !value.is_null()) {
+        let encoded=serde_json::to_vec(body).map_err(|error|error.to_string())?;
+        if encoded.len()>MAX_GITHUB_REQUEST_BYTES{
+            return Err("GitHub request body exceeds 160 KB".into());
+        }
         request = request.json(body);
     }
     let response = request.send().await.map_err(|error| error.to_string())?;
     let status = response.status().as_u16();
-    let text = response.text().await.unwrap_or_default();
-    let parsed: Value = serde_json::from_str(&text).unwrap_or_else(|_| json!(text));
+    if response.content_length().is_some_and(|size|size>MAX_GITHUB_RESPONSE_BYTES as u64){
+        return Err("GitHub response exceeds 1 MiB".into());
+    }
+    let mut response=response;
+    let mut bytes=Vec::new();
+    while let Some(chunk)=response.chunk().await.map_err(|error|error.to_string())?{
+        if bytes.len().saturating_add(chunk.len())>MAX_GITHUB_RESPONSE_BYTES{
+            return Err("GitHub response exceeds 1 MiB".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let text=String::from_utf8_lossy(&bytes);
+    let parsed: Value = serde_json::from_str(&text).unwrap_or_else(|_| json!(text.as_ref()));
     Ok(json!({
         "status": status,
         "body": parsed.to_string().chars().take(20_000).collect::<String>(),
