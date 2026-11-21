@@ -31,7 +31,7 @@ pub(super) fn compat_messages(messages: &[Value]) -> Vec<Value> {
 
 /// Preserve an incomplete native stream long enough to account for model usage,
 /// then reject it instead of silently discarding missing indexed tool calls.
-fn finalize_streamed_tool_calls(calls:Vec<ToolCall>)->(Vec<ToolCall>,bool){
+pub(super) fn finalize_streamed_tool_calls(calls:Vec<ToolCall>)->(Vec<ToolCall>,bool){
     let incomplete=calls.iter().any(|call|call.name.trim().is_empty());
     let calls=calls.into_iter().map(|mut call|{
         if call.id.is_empty(){call.id=uuid::Uuid::new_v4().to_string();}
