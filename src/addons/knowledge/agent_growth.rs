@@ -75,8 +75,10 @@ pub fn record(state: &AppState, execution: &Value) -> Option<Value> {
     }
     if let Some(class) = execution["failureClass"]
         .as_str()
-        .filter(|value| !value.is_empty())
+        .filter(|value| !value.is_empty() && execution["taskOutcome"] == "failed")
     {
+        // Legacy records may carry a stale failureClass from an ordinary
+        // unverified chat or a cancellation. Never turn it into guidance.
         let count = growth["failureClasses"][class].as_u64().unwrap_or(0) + 1;
         growth["failureClasses"][class] = json!(count);
         let hint = execution["recoveryHint"].as_str().unwrap_or("");
@@ -360,6 +362,26 @@ mod tests {
         assert!(context_block(&state,"agent-a").is_none(),
             "unverified chat counters must not be injected into the next model prompt");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn stale_failure_details_on_nonfailed_turns_never_become_guidance() {
+        let (state, dir) = state();
+        for (index, outcome) in [
+            "answered_unverified", "cancelled", "answered_unverified", "cancelled"
+        ].into_iter().enumerate() {
+            record(&state, &json!({
+                "id":format!("legacy-{index}"),"sessionId":"s","agentId":"agent-a",
+                "taskOutcome":outcome,"failureClass":"legacy_false_failure",
+                "recoveryHint":"do not repeat a normal conversation"
+            })).unwrap();
+        }
+        let result=growth(&state,"agent-a");
+        assert_eq!(result["failed"],0);
+        assert!(result["failureClasses"].get("legacy_false_failure").is_none(),"{result}");
+        assert!(result["guidance"].as_array().unwrap().is_empty(),"{result}");
+        assert!(context_block(&state,"agent-a").is_none());
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]
