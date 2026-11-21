@@ -172,7 +172,7 @@ if(!strategyPort.includes('pub trait TurnStrategyPort')||
    !runtime.includes('intelligence.execution_limits(')||
    !runtime.includes('intelligence.decompose(')||
    !runtime.includes('intelligence.tool_discovery(')||
-   !runtime.includes('intelligence.needs_plan(')||
+   !runtime.includes('intelligence.planning_decision(')||
    runtime.includes('crate::engine::decompose::')||
    runtime.includes('"execution.budget"')||
    runtime.includes('"tool.discovery"')||
