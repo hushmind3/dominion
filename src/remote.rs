@@ -12,6 +12,8 @@ use axum::{
     Json,
 };
 use serde_json::{json,Value};
+use sha2::{Digest,Sha256};
+use std::path::{Component,Path};
 
 #[path = "remote_worker.rs"]
 mod worker;
@@ -20,6 +22,71 @@ const LEASE_MS:i64=45_000;
 const NODE_TTL_MS:i64=90_000;
 const MAX_AGENTS:usize=32;
 const MAX_PROMPT:usize=8_000;
+pub(crate) const MAX_ARTIFACT_BYTES:usize=64*1024;
+const MAX_ARTIFACT_FILES:usize=8;
+
+/// An artifact is an explicitly authorized, bounded UTF-8 file transfer.
+/// Worker paths are never absolute and cannot address Git metadata.
+pub(crate) fn valid_artifact_path(raw:&str)->bool{
+    if raw.is_empty() || raw.len()>260 || raw.contains('\\') {return false;}
+    let path=Path::new(raw);
+    !path.is_absolute() && path.components().all(|part|match part{
+        Component::Normal(name)=>{
+            let text=name.to_string_lossy();
+            !text.eq_ignore_ascii_case(".git")
+                && !text.eq_ignore_ascii_case(".env")
+                && !text.starts_with(".env.")
+                && !text.eq_ignore_ascii_case("secrets")
+        },
+        _=>false,
+    })
+}
+pub(crate) fn digest(data:&[u8])->String{
+    format!("{:x}",Sha256::digest(data))
+}
+fn baseline(workspace:&Path,items:&[Value])->Result<Vec<Value>,String>{
+    let root=workspace.canonicalize().map_err(|e|format!("workspace missing: {e}"))?;
+    let mut output=Vec::new();
+    for item in items{
+        let path=item.as_str().ok_or("artifactPaths must contain strings")?;
+        if !valid_artifact_path(path){return Err("Invalid remote artifact path".into());}
+        let file=root.join(path);
+        let base=if file.exists(){
+            let metadata=std::fs::symlink_metadata(&file).map_err(|e|e.to_string())?;
+            if !metadata.is_file() ||metadata.file_type().is_symlink(){
+                return Err("Remote artifact destination must be a regular file".into());
+            }
+            let target=file.canonicalize().map_err(|e|e.to_string())?;
+            if !target.starts_with(&root){return Err("Remote artifact escapes workspace".into());}
+            let bytes=std::fs::read(&target).map_err(|e|e.to_string())?;
+            if bytes.len()>1_500_000{return Err("Remote artifact baseline too large".into());}
+            Value::String(digest(&bytes))
+        }else{
+            let mut parent=file.parent().ok_or("Artifact has no parent")?;
+            while !parent.exists(){parent=parent.parent().ok_or("Artifact parent not found")?;}
+            if !parent.canonicalize().map_err(|e|e.to_string())?.starts_with(&root){
+                return Err("Remote artifact parent escapes workspace".into());
+            }
+            Value::Null
+        };
+        output.push(json!({"path":path,"expectedSha256":base}));
+    }
+    Ok(output)
+}
+pub(crate) fn validate_artifact_paths(value:&Value,read_only:bool)->Result<Vec<Value>,String>{
+    if value.is_null(){return Ok(vec![]);}
+    let paths=value.as_array().ok_or("artifactPaths must be an array")?;
+    if read_only && !paths.is_empty(){return Err("Read-only remote worker cannot return file edits".into());}
+    if paths.len()>MAX_ARTIFACT_FILES{return Err("Too many remote artifacts".into());}
+    let mut seen=std::collections::HashSet::new();
+    for p in paths{
+        let p=p.as_str().ok_or("Artifact path must be a string")?;
+        if !valid_artifact_path(p) || !seen.insert(p){
+            return Err("Duplicate or unsafe remote artifact path".into());
+        }
+    }
+    Ok(paths.clone())
+}
 
 fn now_ms()->i64{chrono::Utc::now().timestamp_millis()}
 fn valid_id(id:&str)->bool{
@@ -194,7 +261,7 @@ pub fn visible_workers(state:&AppState)->Vec<Value>{
 /// Commits one deterministic task. A retry with the same immutable identity
 /// never queues a second remote effect. Work is never replayed on expiry.
 pub fn submit(
-    state:&AppState,team_id:&str,node:&Value,prompt:&str,
+    state:&AppState,team_id:&str,node:&Value,prompt:&str,workspace:&Path,
 )->Result<Value,String>{
     let worker_id=node["remoteWorkerId"].as_str().ok_or("remoteWorkerId required")?;
     let agent_id=node["agentId"].as_str().ok_or("agentId required")?;
@@ -207,6 +274,8 @@ pub fn submit(
     if let Some(criteria)=node.get("successCriteria").filter(|v|!v.is_null()){
         crate::engine::verification::validate_criteria(criteria)?;
     }
+    let artifacts=validate_artifact_paths(&node["artifactPaths"],read_only)?;
+    let bases=baseline(workspace,&artifacts)?;
     let id=format!("remote-task-{}",crate::engine::memory::stable_id(&[
         team_id,node_id,worker_id,agent_id,prompt,
     ]));
@@ -214,6 +283,7 @@ pub fn submit(
         "id":id,"kind":"remote_task","teamId":team_id,"nodeId":node_id,
         "workerId":worker_id,"agentId":agent_id,"prompt":prompt,
         "readOnly":read_only,"successCriteria":node["successCriteria"],
+        "artifactPaths":artifacts,"artifactBases":bases,
         "status":"queued","attempts":0,
         "createdAtMs":now_ms(),
     }));
@@ -223,7 +293,8 @@ pub fn submit(
     if task["teamId"]!=team_id ||task["nodeId"]!=node_id ||
         task["workerId"]!=worker_id ||task["agentId"]!=agent_id ||
         task["prompt"]!=prompt ||task["readOnly"]!=read_only ||
-        task["successCriteria"]!=node["successCriteria"]{
+        task["successCriteria"]!=node["successCriteria"] ||
+        task["artifactPaths"]!=json!(artifacts){
         return Err("Remote task ID was reused with different inputs".into());
     }
     Ok(task)
@@ -335,6 +406,30 @@ fn renew(state:&AppState,body:&Value,now:i64)->Result<Value,String>{
     Ok(json!({"taskId":id,"leaseUntilMs":saved["leaseUntilMs"],"renewed":true,
         "cancelRequested":saved["cancelRequested"]==true}))
 }
+fn task_paths(state:&AppState,id:&str)->Result<Vec<Value>,String>{
+    let task=state.store.get("remote_task",id).ok_or("Remote task missing")?;
+    validate_artifact_paths(&task["artifactPaths"],task["readOnly"]!=false)
+}
+fn validate_received_artifacts(paths:&[Value],value:&Value)->Result<Vec<Value>,String>{
+    let received=value.as_array().cloned().unwrap_or_default();
+    if received.len()!=paths.len(){return Err("Remote result is missing requested artifacts".into());}
+    let mut clean=Vec::new();
+    let mut total=0usize;
+    for path in paths{
+        let name=path.as_str().ok_or("Invalid artifact manifest")?;
+        let matches=received.iter().filter(|v|v["path"]==name).collect::<Vec<_>>();
+        if matches.len()!=1{return Err("Remote artifact identity mismatch".into());}
+        let data=matches[0]["content"].as_str().ok_or("Artifact must contain UTF-8 content")?;
+        total=total.checked_add(data.len()).ok_or("Artifact bytes overflow")?;
+        if data.len()>MAX_ARTIFACT_BYTES || total>MAX_ARTIFACT_BYTES*MAX_ARTIFACT_FILES{
+            return Err("Remote artifact exceeds transfer size limit".into());
+        }
+        let hash=digest(data.as_bytes());
+        if matches[0]["sha256"]!=hash{return Err("Artifact SHA-256 mismatch".into());}
+        clean.push(json!({"path":name,"content":data,"sha256":hash}));
+    }
+    Ok(clean)
+}
 fn settle(state:&AppState,body:&Value,now:i64)->Result<Value,String>{
     let task_id=body["taskId"].as_str().ok_or("taskId required")?;
     if let Some(task)=state.store.get("remote_task",task_id){
@@ -361,6 +456,10 @@ fn settle(state:&AppState,body:&Value,now:i64)->Result<Value,String>{
     let answer=body["answer"].as_str().unwrap_or("")
         .chars().take(2_000).collect::<String>();
     let verification=body["verification"].clone();
+    let paths=task_paths(state,&id)?;
+    let artifacts=if status=="completed"{
+        validate_received_artifacts(&paths,&body["artifacts"])?
+    }else{vec![]};
     let verified=status=="completed" && body["verified"]==true;
     let telemetry=if body["usage"].is_object(){
         let mut data=serde_json::Map::new();
@@ -379,6 +478,8 @@ fn settle(state:&AppState,body:&Value,now:i64)->Result<Value,String>{
             "reportedJobStatus":status,
             "answer":answer,
             "verification":verification,
+            "artifacts":artifacts,
+            "artifactApplyStatus":if paths.is_empty(){"not_required"}else{"pending"},
             "verified":verified,"evidenceOrigin":"remote_worker_reported",
             "operationCount":body["operationCount"].as_u64().unwrap_or(0).min(100),
             "usage":telemetry,
