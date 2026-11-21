@@ -3,6 +3,9 @@
 //! by the coordinator; all work enters that machine's native Agent SDK.
 use reqwest::{Client,Response,StatusCode};
 use serde_json::{json,Value};
+use sha2::{Digest,Sha256};
+use std::path::{Path,PathBuf};
+use tokio::process::Command;
 use std::time::Duration;
 use tokio::time::{sleep,Instant};
 
@@ -12,6 +15,7 @@ struct Config{
     worker_id:String,
     local:String,
     local_token:Option<String>,
+    git_worktree:Option<PathBuf>,
 }
 impl Config{
     fn read()->Result<Self,String>{
@@ -40,7 +44,10 @@ impl Config{
             return Err("worker SDK endpoint must be loopback-only".into());
         }
         let local_token=std::env::var("DOMINION_LOCAL_ADMIN_TOKEN").ok();
-        Ok(Self{coordinator,token,worker_id,local,local_token})
+        // Explicit opt-in; never take an arbitrary repo path from job text.
+        let git_worktree=std::env::var_os("DOMINION_REMOTE_GIT_WORKTREE")
+            .map(PathBuf::from);
+        Ok(Self{coordinator,token,worker_id,local,local_token,git_worktree})
     }
 }
 async fn json_response(r:Response)->Result<Value,String>{
@@ -76,9 +83,62 @@ fn urlencode_id(s:&str)->String{
     s.chars().filter(|c|c.is_ascii_alphanumeric()||matches!(c,'-'|'_'|':'))
         .collect()
 }
+/// Fixed-argument Git inspection only: no shell expansion or worker-provided
+/// command. A dirty baseline is excluded so preexisting edits cannot become
+/// another job's patch evidence.
+async fn git(dir:&Path,args:&[&str])->Result<Vec<u8>,String>{
+    let output=tokio::time::timeout(Duration::from_secs(15),
+        Command::new("git").arg("-C").arg(dir).args(args)
+            .kill_on_drop(true).output())
+        .await.map_err(|_|"git evidence inspection timed out".to_string())?
+        .map_err(|e|e.to_string())?;
+    if !output.status.success(){
+        return Err("git evidence inspection failed".into());
+    }
+    Ok(output.stdout)
+}
+async fn clean_git_base(cfg:&Config)->Option<String>{
+    let dir=cfg.git_worktree.as_deref()?;
+    let dirty=git(dir,&["status","--porcelain","--untracked-files=normal"])
+        .await.ok()?;
+    if !dirty.is_empty(){return None;}
+    let rev=git(dir,&["rev-parse","--verify","HEAD"]).await.ok()?;
+    let revision=String::from_utf8(rev).ok()?.trim().to_string();
+    if !(revision.len()==40||revision.len()==64)
+        ||!revision.bytes().all(|b|b.is_ascii_hexdigit()){return None;}
+    Some(revision)
+}
+async fn upload_git_patch(client:&Client,cfg:&Config,job:&Value,
+    base:&str)->Result<Option<String>,String>{
+    let dir=cfg.git_worktree.as_deref().ok_or("git workspace not configured")?;
+    let current=git(dir,&["rev-parse","--verify","HEAD"]).await?;
+    if String::from_utf8_lossy(&current).trim()!=base{
+        return Err("worker Git HEAD changed during execution".into());
+    }
+    // Only tracked edits; binary Git patches are textual and remain bounded.
+    // Untracked files are intentionally NOT transferred automatically.
+    let bytes=git(dir,&["diff","--binary","--no-ext-diff","HEAD"]).await?;
+    if bytes.is_empty(){return Ok(None);}
+    if bytes.len()>128*1024{return Err("Git patch exceeds 128 KiB".into());}
+    let patch=String::from_utf8(bytes).map_err(|_|"non-UTF8 Git patch".to_string())?;
+    if !patch.starts_with("diff --git "){return Err("unexpected Git diff format".into());}
+    let sha=format!("{:x}",Sha256::digest(patch.as_bytes()));
+    let id=job["jobId"].as_str().ok_or("job identity missing")?;
+    let sent=coordinator_request(client,cfg,
+        &format!("/api/remote/jobs/{}/artifact/upload",urlencode_id(id)))
+        .json(&json!({"workerId":cfg.worker_id,"leaseId":job["leaseId"],
+            "baseCommit":base,"patchSha256":sha,"patch":patch}))
+        .send().await.map_err(|e|e.to_string())?;
+    if sent.status()!=StatusCode::CREATED{
+        return Err(format!("coordinator declined Git artifact: {}",sent.status()));
+    }
+    Ok(Some(sha))
+}
+
 async fn execute(client:&Client,cfg:&Config,job:&Value)->Result<(),String>{
     let job_id=job["jobId"].as_str().ok_or("missing remote job id")?;
     let instruction=job["instruction"].as_str().ok_or("missing instruction")?;
+    let git_base=clean_git_base(cfg).await;
     let mut request=json!({
         "instruction":instruction,
         "maxRounds":job["maxRounds"].as_u64().unwrap_or(24).clamp(1,80),
@@ -133,11 +193,17 @@ async fn execute(client:&Client,cfg:&Config,job:&Value)->Result<(),String>{
         match row["status"].as_str().unwrap_or(""){
             "completed"|"cancelled"|"failed"|"exhausted"|"denied"|
             "awaiting_approval"|"in_doubt"|"interrupted"|"needs_review"=>{
+                let uploaded=if row["status"]=="completed"{
+                    if let Some(base)=git_base.as_deref(){
+                        upload_git_patch(client,cfg,job,base).await.ok().flatten()
+                    }else{None}
+                }else{None};
                 return report(client,cfg,job,json!({
                     "outcome":row["status"],
                     "remoteSdkRunId":native_id,
                     "remoteNativeExecutionId":row["runRef"]["executionId"],
                     "remoteVerifiedClaim":row["verified"]==true,
+                    "remoteArtifactSha256":uploaded,
                     "taskOutcome":row["taskOutcome"],
                     "modelAccounting":row["modelAccounting"],
                     "answer":row["answer"].as_str().unwrap_or("")
@@ -175,5 +241,41 @@ async fn run()->Result<(),String>{
             eprintln!("remote job execution stopped; manual review: {error}");
             sleep(Duration::from_secs(5)).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod artifact_tests{
+    use super::*;
+    #[tokio::test]
+    async fn fixed_git_inspection_rejects_dirty_baselines_and_keeps_diff_bounded(){
+        let root=std::env::temp_dir().join(format!("dominion-p3-diff-{}",
+            uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let init=git(&root,&["init"]).await.unwrap();
+        assert!(init.is_empty()||!init.is_empty());
+        // No Git invocation runs text supplied by an Agent. All commands
+        // are hardcoded here and dispatched without a shell.
+        std::fs::write(root.join("a.txt"),"original\n").unwrap();
+        let mut add=Command::new("git");
+        assert!(add.arg("-C").arg(&root).args(["add","a.txt"]).status()
+            .await.unwrap().success());
+        let mut commit=Command::new("git");
+        assert!(commit.arg("-C").arg(&root).args([
+            "-c","user.name=DOMINION-test",
+            "-c","user.email=dominion-test@example.invalid",
+            "commit","-m","baseline"]).status().await.unwrap().success());
+        let cfg=Config{coordinator:String::new(),token:String::new(),
+            worker_id:String::new(),local:String::new(),local_token:None,
+            git_worktree:Some(root.clone())};
+        let base=clean_git_base(&cfg).await.expect("clean baseline");
+        std::fs::write(root.join("a.txt"),"changed\n").unwrap();
+        assert!(clean_git_base(&cfg).await.is_none());
+        let delta=git(&root,&["diff","--binary","--no-ext-diff","HEAD"])
+            .await.unwrap();
+        assert!(String::from_utf8(delta).unwrap().starts_with("diff --git "));
+        assert_eq!(git(&root,&["rev-parse","--verify","HEAD"]).await.unwrap()
+            .len(),base.len()+1);
+        let _=std::fs::remove_dir_all(root);
     }
 }
