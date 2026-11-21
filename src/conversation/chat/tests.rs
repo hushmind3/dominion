@@ -777,3 +777,134 @@ async fn ordinary_chat_cannot_append_to_channel_bound_transcript() {
         assert!(state.store.messages(id).is_empty());
     }
 }
+
+#[tokio::test]
+async fn plain_chat_is_one_model_call_without_agent_or_tools_and_preserves_followups() {
+    use axum::{extract::State, routing::post, Json, Router};
+    use axum::response::IntoResponse;
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+    async fn reply(
+        State(captured): State<std::sync::Arc<std::sync::Mutex<Vec<Value>>>>,
+        Json(body): Json<Value>,
+    ) -> axum::response::Response {
+        captured.lock().unwrap().push(body);
+        let events=format!(
+            "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+            json!({"choices":[{"delta":{"content":"안녕하세요. 대화를 이어갑니다."}}]}),
+            json!({"choices":[{"delta":{},"finish_reason":"stop"}],
+                "usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}})
+        );
+        ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],events).into_response()
+    }
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr=listener.local_addr().unwrap();
+    let app=Router::new().route("/chat/completions",post(reply)).with_state(captured.clone());
+    let server=tokio::spawn(async move {axum::serve(listener,app).await.unwrap()});
+    let state=temp_state();
+    state.store.put("provider",&json!({
+        "id":"plain-test","baseUrl":format!("http://{addr}"),
+        "model":"plain-fixture","kind":"openai","enabled":true,
+    }));
+    state.store.put("agent",&json!({
+        "id":"default","name":"Agent Sentinel","providerId":"plain-test",
+        "model":"plain-fixture","systemPrompt":"NEVER_SHOW_AGENT_SENTINEL",
+    }));
+    state.store.put("assistant_settings",&json!({
+        "id":"global","enabled":true,"instructions":"OWNER_INSTRUCTION_SENTINEL",
+    }));
+    state.store.put("session",&json!({
+        "id":"plain-chat-test","title":"새 대화","agentId":"default",
+        "providerId":"plain-test","model":"plain-fixture","mode":"agent",
+    }));
+    let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+    for prompt in ["첫 질문입니다.","그 답변에 이어서요."] {
+        // Simulate a UI or old client still sending agent/tool flags.
+        // Explicit plain mode is the source of truth, never the flags.
+        let request=TurnRequest::from_value(&json!({
+            "sessionId":"plain-chat-test","agentId":"default",
+            "providerId":"plain-test","model":"plain-fixture",
+            "input":prompt,"toolsEnabled":true,"toolsExecutionEnabled":true,
+            "autoLearning":true,
+        })).unwrap();
+        let saved=tokio::time::timeout(Duration::from_secs(15),
+            run_turn_plain(&state,&request,&tx)).await.unwrap().unwrap().unwrap();
+        assert_eq!(saved["content"],"안녕하세요. 대화를 이어갑니다.");
+        assert!(saved["agent_id"].is_null());
+        assert_eq!(saved["metadata"]["runtime"],"plain-chat");
+        assert_eq!(saved["metadata"]["usage"]["totalTokens"],18);
+    }
+    let captured=captured.lock().unwrap();
+    assert_eq!(captured.len(),2,"each plain chat turn makes exactly one model call");
+    for (index,body) in captured.iter().enumerate() {
+        assert!(body.get("tools").is_none() || body["tools"].as_array().is_some_and(Vec::is_empty));
+        let system=body["messages"][0]["content"].as_str().unwrap_or("");
+        assert!(system.contains("OWNER_INSTRUCTION_SENTINEL"),"{body}");
+        assert!(!system.contains("NEVER_SHOW_AGENT_SENTINEL"),"{body}");
+        assert!(!system.contains("지속 에이전트"),"{body}");
+        let messages=body["messages"].as_array().unwrap();
+        assert_eq!(messages.iter().filter(|item|item["role"]=="assistant").count(),index);
+        assert_eq!(messages.iter().filter(|item|item["role"]=="user").count(),index+1);
+        assert!(!messages.iter().any(|item|item["role"]=="tool"));
+    }
+    let session=state.store.get("session","plain-chat-test").unwrap();
+    assert_eq!(session["mode"],"chat");
+    assert!(session["agentId"].is_null());
+    assert_eq!(state.store.messages("plain-chat-test").len(),4);
+    let executions=state.store.all("execution");
+    assert_eq!(executions.len(),2);
+    for run in executions {
+        assert_eq!(run["status"],"completed","{run}");
+        assert_eq!(run["runtime"],"plain-chat");
+        assert_eq!(run["modelCalls"],1);
+        assert_eq!(run["toolCalls"],0);
+        assert_eq!(run["kernelState"]["modelInFlight"],false);
+    }
+    server.abort();
+    let _=std::fs::remove_dir_all(&state.config.data_dir);
+}
+
+#[tokio::test]
+async fn plain_chat_refuses_model_tool_calls_without_executing_any_tool() {
+    use axum::{routing::post, Router};
+    use axum::response::IntoResponse;
+    async fn unauthorized_tool() -> axum::response::Response {
+        let events=format!(
+            "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+            json!({"choices":[{"delta":{"tool_calls":[{
+                "index":0,"id":"forged-call","type":"function",
+                "function":{"name":"shell_exec","arguments":"{\\"command\\":\\"touch denied.txt\\"}"}
+            }]}}]}),
+            json!({"choices":[{"delta":{},"finish_reason":"tool_calls"}],
+                "usage":{"prompt_tokens":6,"completion_tokens":2,"total_tokens":8}})
+        );
+        ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],events).into_response()
+    }
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr=listener.local_addr().unwrap();
+    let server=tokio::spawn(async move {
+        axum::serve(listener,Router::new().route("/chat/completions",post(unauthorized_tool))).await.unwrap()
+    });
+    let state=temp_state();
+    state.store.put("provider",&json!({
+        "id":"plain-test","baseUrl":format!("http://{addr}"),
+        "model":"plain-fixture","kind":"openai","enabled":true,
+    }));
+    state.store.put("session",&json!({"id":"plain-deny","providerId":"plain-test"}));
+    let request=TurnRequest::from_value(&json!({
+        "sessionId":"plain-deny","input":"그냥 대화만 해줘",
+        "providerId":"plain-test","model":"plain-fixture",
+        "toolsEnabled":true,"toolsExecutionEnabled":true,
+    })).unwrap();
+    let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+    let result=tokio::time::timeout(Duration::from_secs(15),
+        run_turn_plain(&state,&request,&tx)).await.unwrap();
+    assert!(result.is_err(),"{result:?}");
+    assert!(!state.config.workspace.join("denied.txt").exists());
+    assert!(!state.store.messages("plain-deny").iter().any(|m|m["role"]=="assistant"));
+    let run=state.store.all("execution").pop().unwrap();
+    assert_eq!(run["modelCalls"],1);
+    assert_eq!(run["toolCalls"],0);
+    assert_eq!(run["kernelState"]["modelInFlight"],false);
+    server.abort();
+    let _=std::fs::remove_dir_all(&state.config.data_dir);
+}
