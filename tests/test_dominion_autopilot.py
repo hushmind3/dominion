@@ -172,6 +172,19 @@ if not p.exists():
         self.assertTrue(all(r['risky_paths']==['.env'] for r in results))
         self.assertEqual(git(self.remote,'rev-parse','refs/heads/main'),self.original_head)
 
+
+    def test_shared_owner_goal_is_sent_once_to_every_agent_and_judge(self):
+        goal='Implement source-cited continuation in Chat and Room'
+        self.assertEqual(a.main(['--repo',str(self.repo),'--state',str(self.state),
+                       '--agent-command',self.command,'--judge-command',self.judge_command,
+                       '--goal',goal,'--cooldown','0']),0)
+        run=json.loads((self.state/'latest_round.json').read_text())
+        for branch in a.BRANCHES:
+            prompt=(self.state/'runs'/run['id']/branch/'prompt.txt').read_text()
+            self.assertIn(goal,prompt)
+        judge_prompt=(self.state/'runs'/run['id']/'judge'/'prompt.txt').read_text()
+        self.assertIn(goal,judge_prompt)
+
     def test_singleton_lock(self):
         path=self.state/'autopilot.lock'
         with a.singleton_lock(path):
