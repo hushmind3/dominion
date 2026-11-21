@@ -78,7 +78,38 @@ pub async fn save(
         )
             .into_response();
     }
+    // The legacy generic upsert previously allowed a caller to fabricate a
+    // learned memory or overwrite any existing source/evidence by supplying
+    // the record ID. Owner edits/corrections now have dedicated CAS actions.
+    if kind == "memory" {
+        if id_from_uri(&uri).is_some() || body["id"].as_str()
+            .is_some_and(|id| !id.trim().is_empty()) {
+            return (StatusCode::CONFLICT, Json(json!({
+                "error":"기존 기억은 전용 수정·정정 API에서 변경하세요."
+            }))).into_response();
+        }
+        let text = body["text"].as_str().map(str::trim).unwrap_or("");
+        if text.is_empty() || text.chars().count()>16_000 {
+            return (StatusCode::BAD_REQUEST, Json(json!({
+                "error":"새 기억은 1~16000자로 입력하세요."
+            }))).into_response();
+        }
+        if body["source"].as_str().is_some_and(|source|source!="user")
+            || body["status"].as_str().is_some_and(|status|status!="active")
+            || body["sourceMessageIds"].is_array()
+            || body["evidenceQuote"].is_string()
+            || body["supersedes"].is_string() {
+            return (StatusCode::BAD_REQUEST, Json(json!({
+                "error":"사용자가 직접 만든 기억만 새로 저장할 수 있습니다."
+            }))).into_response();
+        }
+    }
     let mut body = body;
+    if kind == "memory" {
+        body["source"] = json!("user");
+        body["status"] = json!("active");
+        body["text"] = json!(body["text"].as_str().unwrap_or("").trim());
+    }
     if kind == "mcp" {
         let id = body
             .get("id")
@@ -337,6 +368,35 @@ mod memory_edit_tests{
             "expectedText":"출처 근거","text":" "
         }));
         assert_eq!(empty.status(),StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn generic_memory_upsert_cannot_overwrite_or_forge_provenance(){
+        let state=state();
+        state.store.put("memory",&json!({
+            "id":"original","text":"원본 내용","source":"learn","status":"active",
+            "sourceMessageIds":["immutable-evidence"]
+        })).unwrap();
+        let uri=||OriginalUri("/api/memories".parse().unwrap());
+        let overwritten=save(State(state.clone()),uri(),Json(json!({
+            "id":"original","text":"위조 내용","source":"user","status":"active"
+        }))).await;
+        assert_eq!(overwritten.status(),StatusCode::CONFLICT);
+        let forged=save(State(state.clone()),uri(),Json(json!({
+            "text":"가짜 학습 기록","source":"learn",
+            "sourceMessageIds":["forged"]
+        }))).await;
+        assert_eq!(forged.status(),StatusCode::BAD_REQUEST);
+        let valid=save(State(state.clone()),uri(),Json(json!({
+            "text":"사용자가 직접 작성한 기억","scope":"shared"
+        }))).await;
+        assert_eq!(valid.status(),StatusCode::OK);
+        let list=state.store.all("memory");
+        assert_eq!(list.len(),2);
+        assert_eq!(state.store.get("memory","original").unwrap()["sourceMessageIds"][0],
+            "immutable-evidence");
+        assert!(list.iter().any(|record|record["source"]=="user"
+            && record["text"]=="사용자가 직접 작성한 기억"));
     }
 
     #[test]
