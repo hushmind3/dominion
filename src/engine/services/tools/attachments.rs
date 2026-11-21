@@ -3,6 +3,7 @@
 use crate::state::AppState;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 pub const MAX_FILE: usize = 8 * 1024 * 1024;
 pub const MAX_TOTAL: usize = 24 * 1024 * 1024;
@@ -93,7 +94,10 @@ pub fn upload(state: &AppState, body: &Value) -> Result<Value, String> {
     let id = uuid::Uuid::new_v4().to_string();
     let path = directory(state)?.join(format!("{id}.bin"));
     std::fs::write(&path, &bytes).map_err(|_| "첨부 파일을 저장할 수 없습니다.")?;
-    let record = json!({"id":id,"name":name,"mimeType":mime,"size":bytes.len(),"isImage":image.is_some(),"supportedForModel":kind,
+    // The original file is immutable. Bind future reads and restored backups
+    // to the exact uploaded bytes, not just a matching byte length.
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let record = json!({"id":id,"name":name,"mimeType":mime,"size":bytes.len(),"sha256":sha256,"isImage":image.is_some(),"supportedForModel":kind,
         "sessionId":session_id,"roomId":session["roomId"],"url":format!("/api/attachments/{id}/content"),"createdAt":chrono::Utc::now().to_rfc3339()});
     match state.store.put_if_absent("attachment", &record) {
         Some(record) => Ok(record),
@@ -161,6 +165,10 @@ pub fn read(state: &AppState, id: &str) -> Result<(Value, Vec<u8>), String> {
         .map_err(|_| "첨부 파일을 읽을 수 없습니다.")?;
     if bytes.len() > MAX_FILE || record["size"].as_u64() != Some(bytes.len() as u64) {
         return Err("첨부 원본이 저장 이후 변경되었습니다.".into());
+    }
+    if record["sha256"].as_str().is_some_and(|expected|
+        format!("{:x}",Sha256::digest(&bytes)) != expected) {
+        return Err("첨부 원본 무결성 검증에 실패했습니다.".into());
     }
     Ok((record, bytes))
 }
@@ -385,6 +393,23 @@ mod tests {
         state.store.put("session", &json!({"id":"two"}));
         (state, path)
     }
+    #[test]
+    fn same_length_attachment_corruption_is_rejected_by_exact_sha256() {
+        let (state,dir)=state();
+        let saved=upload(&state,&json!({
+            "sessionId":"one","name":"immutable.txt",
+            "data":STANDARD.encode("original")
+        })).unwrap();
+        let id=saved["id"].as_str().unwrap();
+        assert_eq!(saved["sha256"],format!("{:x}",Sha256::digest(b"original")));
+        assert_eq!(read(&state,id).unwrap().1,b"original");
+        std::fs::write(dir.join("attachments").join(format!("{id}.bin")),
+            b"modified").unwrap();
+        assert!(read(&state,id).unwrap_err().contains("무결성"),
+            "same-size changes must not pass integrity validation");
+        let _=std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn long_text_selects_late_query_evidence_with_source_line_not_just_head() {
         let mut source = String::new();
