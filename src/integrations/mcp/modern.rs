@@ -114,10 +114,9 @@ pub(super) fn validate_tool_schema(schema:&Value)->Result<(),String>{
     annotated_headers(schema,&Value::Null).map(|_|())
 }
 
-pub(super) fn decorate(payload:&Value,tool_schema:Option<&Value>)
-    ->Result<(Value,Vec<(String,String)>),String>{
-    let method=payload["method"].as_str()
-        .filter(|v|!v.is_empty()&&v.len()<=128)
+/// Modern stdio and HTTP share exactly the same request-scoped metadata.
+pub(super) fn envelope(payload:&Value)->Result<Value,String>{
+    payload["method"].as_str().filter(|m|!m.is_empty()&&m.len()<=128)
         .ok_or("Missing MCP method")?;
     let mut params=payload["params"].as_object().cloned().unwrap_or_default();
     let mut meta=params.get("_meta").and_then(Value::as_object)
@@ -129,6 +128,14 @@ pub(super) fn decorate(payload:&Value,tool_schema:Option<&Value>)
     params.insert("_meta".into(),Value::Object(meta));
     let mut body=payload.clone();
     body["params"]=Value::Object(params);
+    Ok(body)
+}
+
+/// Headers apply only on HTTP; on stdio the same envelope travels in JSON.
+pub(super) fn decorate(payload:&Value,tool_schema:Option<&Value>)
+    ->Result<(Value,Vec<(String,String)>),String>{
+    let body=envelope(payload)?;
+    let method=body["method"].as_str().ok_or("Missing MCP method")?;
     let mut headers=vec![
         ("MCP-Protocol-Version".into(),VERSION.into()),
         ("Mcp-Method".into(),method.into())
