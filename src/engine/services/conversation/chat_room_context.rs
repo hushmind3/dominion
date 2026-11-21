@@ -1298,12 +1298,17 @@ mod tests {
             }
             let current=format!("current-{count}");message(&state,&current,"user","project convention");
             let mut shared=None;
+            let mut snapshot_id=None;
             for id in &ids {
                 let request=TurnRequest::from_value(&json!({"input":"project convention","agentId":id,"toolsEnabled":false})).unwrap();
                 let compiled=compile(&state,&request,"room:r",&current,&[],&[]).unwrap();
-                let frame=compiled.history.iter().find(|row|row["_dominion_frame"]==format!("room-shared:{current}")).unwrap();
+                let frame=compiled.history.iter().find(|row|
+                    row["_dominion_frame"].as_str().is_some_and(|id|id.starts_with("room-shared:")))
+                    .expect("every room speaker receives a stable semantic snapshot");
                 if let Some(prior)=&shared {assert_eq!(&frame["content"],prior);}
                 else {shared=Some(frame["content"].clone());}
+                if let Some(prior)=&snapshot_id {assert_eq!(&frame["_dominion_frame"],prior);}
+                else {snapshot_id=Some(frame["_dominion_frame"].clone());}
                 assert!(frame["content"].as_str().unwrap().contains(&format!("{count}/{count}")));
                 let text=json!(compiled.history).to_string();
                 assert!(text.contains(&format!("project convention {id}")),"own memory must follow the bot into the room");
@@ -1313,6 +1318,33 @@ mod tests {
             }
         }
         let dir=state.config.data_dir.clone(); drop(state); std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn room_snapshot_fallback_is_present_and_isolated_when_no_prior_speakers_exist(){
+        let state=state();
+        for (room_id,agent_id,owner_id) in [("empty-a","one","owner-a"),
+            ("empty-b","two","owner-b")]{
+            state.store.put("agent",&json!({"id":agent_id,"name":agent_id}));
+            state.store.put("room",&json!({"id":room_id,"agentIds":[agent_id],
+                "contextBudgetTokens":1200}));
+            let session_id=format!("room:{room_id}");
+            state.store.put("session",&json!({"id":session_id,"roomId":room_id}));
+            state.store.write_message(&json!({"id":owner_id,"session_id":session_id,
+                "role":"user","content":format!("hello from {room_id}"),
+                "metadata":{"authorKind":"owner"}})).unwrap();
+            let request=TurnRequest::from_value(&json!({"input":"hello",
+                "agentId":agent_id,"toolsEnabled":false})).unwrap();
+            let result=compile(&state,&request,&session_id,owner_id,&[],&[]).unwrap();
+            assert!(result.history.iter().any(|row|row["_dominion_frame"].as_str()
+                .is_some_and(|id|id.starts_with("room-shared:"))),
+                "no previous speaker must still yield a room snapshot");
+            let raw=serde_json::to_string(&result.history).unwrap();
+            let other=if room_id=="empty-a"{"empty-b"}else{"empty-a"};
+            assert!(!raw.contains(&format!("hello from {other}")),
+                "a separate room must not inherit another room's owner state");
+        }
+        let dir=state.config.data_dir.clone();drop(state);let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]
