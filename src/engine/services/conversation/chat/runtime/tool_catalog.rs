@@ -54,7 +54,8 @@ pub(super) async fn prepare(
     acceptance:&Option<(String,Value)>,
     decision_policy:&crate::engine::turn_policy::TurnPolicy<'_>,
 )->Result<Catalog,String>{
-    let simple_creation_target=if !session["roomId"].is_string() {
+    let simple_creation_target=if request.tools_enabled && request.tools_execution_enabled
+        && !session["roomId"].is_string() {
         simple_file_creation(state,&request.input,&acceptance)
     }else{None};
     let lightweight_only=no_tools_required(request,session,acceptance);
