@@ -283,8 +283,9 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_running_external_agent
                  ON records(json_extract(data,'$.status'))
                  WHERE kind='external_agent_run';
-             CREATE INDEX IF NOT EXISTS idx_remote_job_queued
-                 ON records(created_at ASC,id ASC)
+             DROP INDEX IF EXISTS idx_remote_job_queued;
+             CREATE INDEX IF NOT EXISTS idx_remote_job_fifo_v2
+                 ON records(kind,created_at ASC,id ASC)
                  WHERE kind='remote_job' AND json_extract(data,'$.status')='queued';
              CREATE INDEX IF NOT EXISTS idx_remote_job_leased
                  ON records(id)
@@ -2343,7 +2344,7 @@ mod tests {
             "EXPLAIN QUERY PLAN SELECT data,id,created_at,updated_at FROM records
              WHERE kind='remote_job' AND json_extract(data,'$.status')='queued'
              ORDER BY created_at ASC,id ASC",[],|row|row.get(3)).unwrap();
-        assert!(plan.contains("idx_remote_job_queued"),"{plan}");
+        assert!(plan.contains("idx_remote_job_fifo_v2"),"{plan}");
         drop(conn);drop(store);
         let _=std::fs::remove_dir_all(root);
     }
