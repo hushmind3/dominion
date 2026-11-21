@@ -67,9 +67,9 @@ The repository in the available authoring environment is accessible through its 
 ## Fast branch-only CI and the current gate
 
 `.github/workflows/sub3-fast.yml` is configured for push to `dominion-sub3`.
-It contains three independent jobs: source architecture + TypeScript SDK, Rust
-`cargo check --locked --all-targets` and kernel/Chat regression tests, and
-frontend TypeScript/Vite build. This workflow is distinct from manual full
+It contains four independent jobs: source architecture + TypeScript SDK,
+Rust `cargo check --locked --all-targets` and kernel/Chat/MCP regressions,
+frontend TypeScript/Vite build, and non-blocking Rustfmt/Clippy diagnostics. This workflow is distinct from manual full
 macOS/Windows release CI and has no production deployment or secrets.
 **Workflow configuration is committed; successful execution is not yet verified.**
 
@@ -90,3 +90,21 @@ forged/stale reviews remain terminal. SQLite regression fixtures cover valid
 review upgrades, missing fences, and missing owner-cancel authority. Full
 process-level timing verification remains unexecuted in this authoring
 environment; do not claim that the crash race is end-to-end proven.
+
+## MCP 2026-07-28 migration (Sub3)
+
+Modern stateless HTTP **and** stdio now probe `server/discover` and attach
+request-scoped protocol/client metadata. HTTP sends the 2026 routing headers
+and schema-scoped `Mcp-Param-*` headers; both transports retain safe
+2025/2024 initialization compatibility and the original Host approval,
+pinned-tool manifest and durable receipt boundary. Read
+[SUB3-MCP-2026-MIGRATION.md](SUB3-MCP-2026-MIGRATION.md) for the exact
+compatibility modes and unsupported MRTR continuation/OAuth capabilities.
+
+Source-level checks find the new contracts and fixtures on this branch.
+The independent Node stdio MCP fixture was manually exercised locally:
+2026 `server/discover`, `tools/list`, `tools/call` succeeded and a
+legacy `initialize` call was rejected. **This does not prove** the Rust client
+or complete integrated MCP suite passed. An actual `cargo check`, GitHub
+Actions result, and public-server interoperability result have not been
+obtained in this authoring environment.
