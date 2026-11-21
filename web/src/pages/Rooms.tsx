@@ -9,7 +9,7 @@ import {MarkdownMessage} from '../components/MarkdownMessage'
 import {useOwnerProfile} from '../components/OwnerProfile'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
 import {useCallback,useEffect,useMemo,useRef,useState,type FormEvent,type SetStateAction} from 'react'
-import {Activity,ArrowDown,ArrowRight,ArrowUp,AtSign,BookOpenText,Bot,Check,ChevronDown,ChevronLeft,ChevronRight,Clock3,Copy,FileText,Hash,LoaderCircle,MessageCircle,MoreHorizontal,Menu,PanelLeft,Settings,Network,Plus,RefreshCw,RotateCcw,Settings2,ShieldCheck,Square,TerminalSquare,Trash2,UserRound,UsersRound,X} from 'lucide-react'
+import {Activity,ArrowDown,ArrowRight,ArrowUp,AtSign,BookOpenText,Bot,Check,ChevronDown,ChevronLeft,ChevronRight,Clock3,Copy,FileText,Hash,LoaderCircle,MessageCircle,MoreHorizontal,Menu,PanelLeft,Paperclip,Settings,Network,Plus,RefreshCw,RotateCcw,Settings2,ShieldCheck,Square,TerminalSquare,Trash2,UserRound,UsersRound,X} from 'lucide-react'
 import {get,post,del,resolveApproval,koreanReasoningEnabled,type Agent,type ChatMessage,type ModelOption,type Provider} from '../api'
 import {Button,TextArea,TextInput,SelectInput} from '../components/Primitives'
 import {DialogBackdrop,DialogPanel} from '../components/Dialog'
@@ -187,11 +187,28 @@ function RoomModelPicker({value,onChange,providers,agents,disabled=false}:{value
  </div>
 }
 
-type RoomSendAttempt={input:string;targets:string[];id:string;reasoningLanguage:'ko'|'default';reasoningEffort?:string;thinking:boolean}
-type RoomComposerDraft={text:string;targets:string[];attempt?:RoomSendAttempt}
+type RoomAttachment={id:string;name:string;size:number}
+type RoomSendAttempt={input:string;targets:string[];attachmentIds:string[];id:string;reasoningLanguage:'ko'|'default';reasoningEffort?:string;thinking:boolean}
+type RoomComposerDraft={text:string;targets:string[];attachments:RoomAttachment[];attempt?:RoomSendAttempt}
+const maxRoomAttachmentBytes=8*1024*1024,maxRoomAttachments=8,maxRoomTotalBytes=24*1024*1024
+const formatRoomAttachmentSize=(bytes:number)=>bytes>=1048576
+ ?(bytes/1048576).toFixed(1)+' MiB':bytes>=1024?(bytes/1024).toFixed(1)+' KiB':bytes+' B'
+async function encodeRoomFile(file:File):Promise<string>{
+ const data=new Uint8Array(await file.arrayBuffer())
+ let binary=''
+ for(let offset=0;offset<data.length;offset+=32768)
+  binary+=String.fromCharCode(...data.subarray(offset,offset+32768))
+ return btoa(binary)
+}
+function supportedRoomFile(file:File):boolean{
+ return /^(?:image\/(?:png|jpeg|gif|webp)|text\/|application\/(?:json|xml))/.test(file.type)
+  ||/\.(?:txt|md|csv|ts|tsx|js|mjs|json|py|rs|yaml|yml|xml|html|css|log|sql)$/i.test(file.name)
+}
+const roomAttachmentOnlyPrompt='첨부한 파일을 확인해 주세요.'
+const roomMessageText=(text:string,files:RoomAttachment[])=>text.trim()||(files.length?roomAttachmentOnlyPrompt:'')
 const roomComposerPrefix='dominion.room.composer.v1:'
 function readRoomComposer(roomId:string):RoomComposerDraft{
- const empty:RoomComposerDraft={text:'',targets:[]}
+ const empty:RoomComposerDraft={text:'',targets:[],attachments:[]}
  try{
   const raw=sessionStorage.getItem(roomComposerPrefix+roomId)
   if(!raw)return empty
@@ -201,26 +218,38 @@ function readRoomComposer(roomId:string):RoomComposerDraft{
   const targets:string[]=[...new Set<string>(saved.targets
    .filter((id:unknown):id is string=>typeof id==='string'&&id.length>0)
    .slice(0,32))]
+  const attachments:RoomAttachment[]=Array.isArray(saved.attachments)?
+   saved.attachments.filter((item:unknown):item is RoomAttachment=>{
+    if(!item||typeof item!=='object')return false
+    const row=item as Partial<RoomAttachment>
+    return typeof row.id==='string'&&row.id.length>0&&row.id.length<=160
+     &&typeof row.name==='string'&&row.name.length>0&&row.name.length<=240
+     &&typeof row.size==='number'&&Number.isSafeInteger(row.size)
+     &&row.size>=0&&row.size<=maxRoomAttachmentBytes
+   }).slice(0,maxRoomAttachments):[]
+  if(attachments.reduce((sum,file)=>sum+file.size,0)>maxRoomTotalBytes)return empty
   const pending=saved.attempt
   const validPending=pending&&typeof pending.id==='string'
    &&pending.id.length>0&&pending.id.length<=160
-   &&pending.input===saved.text.trim()
+   &&pending.input===roomMessageText(saved.text,attachments)
+   &&Array.isArray(pending.attachmentIds)
+   &&JSON.stringify(pending.attachmentIds)===JSON.stringify(attachments.map(file=>file.id))
    &&Array.isArray(pending.targets)
    &&JSON.stringify(pending.targets)===JSON.stringify(targets)
    &&(pending.reasoningLanguage==='ko'||pending.reasoningLanguage==='default')
    &&typeof pending.thinking==='boolean'
    &&(pending.reasoningEffort===undefined||typeof pending.reasoningEffort==='string')
   const attempt:RoomSendAttempt|undefined=validPending?{
-   id:pending.id,input:pending.input,targets,
+   id:pending.id,input:pending.input,targets,attachmentIds:attachments.map(file=>file.id),
    reasoningLanguage:pending.reasoningLanguage,
    reasoningEffort:pending.reasoningEffort,thinking:pending.thinking
   }:undefined
-  return {text:saved.text,targets,attempt}
+  return {text:saved.text,targets,attachments,attempt}
  }catch{return empty}
 }
 function storeRoomComposer(roomId:string,draft:RoomComposerDraft){
  try{
-  if(!draft.text&&!draft.targets.length)sessionStorage.removeItem(roomComposerPrefix+roomId)
+  if(!draft.text&&!draft.targets.length&&!draft.attachments.length)sessionStorage.removeItem(roomComposerPrefix+roomId)
   else sessionStorage.setItem(roomComposerPrefix+roomId,JSON.stringify(draft))
  }catch{/* Private mode or browser quota must not prevent composing. */}
 }
@@ -251,6 +280,41 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
  })
  useEffect(()=>storeRoomComposer(room.id,composer),[room.id,composer])
  const [sending,setSending]=useState(false),[stopping,setStopping]=useState(false)
+ const [uploading,setUploading]=useState(false)
+ const uploadBusy=useRef(false)
+ const roomFileInput=useRef<HTMLInputElement>(null)
+ const attachRoomFiles=async(files:FileList|null)=>{
+  if(!files||uploadBusy.current||sending)return
+  uploadBusy.current=true;setUploading(true);setError('')
+  // Each successful upload enters the room-scoped durable composer at once.
+  // A failed later file must not discard earlier uploaded references.
+  let pending=[...composer.attachments]
+  try{
+   for(const file of Array.from(files)){
+    if(!supportedRoomFile(file))throw Error('이미지 또는 텍스트 파일만 첨부할 수 있습니다.')
+    if(file.size>maxRoomAttachmentBytes)throw Error('파일 한 개는 최대 8MiB입니다.')
+    if(pending.length>=maxRoomAttachments||
+     pending.reduce((sum,item)=>sum+item.size,0)+file.size>maxRoomTotalBytes)
+     throw Error('첨부는 최대 8개, 합계 24MiB까지 가능합니다.')
+    const saved=await post<{id:string;name:string;size:number}>('/api/attachments',{
+     roomId:room.id,name:file.name,mimeType:file.type||'application/octet-stream',
+     data:await encodeRoomFile(file)
+    })
+    if(!mounted.current)return
+    pending=[...pending,{id:saved.id,name:saved.name,size:saved.size}]
+    setComposer(previous=>({...previous,attachments:pending,attempt:undefined}))
+    sendAttempt.current=null
+   }
+  }catch(error){if(mounted.current)setError((error as Error).message)}
+  finally{uploadBusy.current=false;if(mounted.current)setUploading(false)}
+ }
+ const removeRoomAttachment=(id:string)=>{
+  setComposer(previous=>({...previous,
+   attachments:previous.attachments.filter(file=>file.id!==id),
+   attempt:undefined
+  }))
+  sendAttempt.current=null
+ }
  const [inspector,setInspector]=useState(false),[draft,setDraft]=useState<RoomDraft>(()=>draftOf(room)),[dirty,setDirty]=useState(false),[saving,setSaving]=useState(false),[saved,setSaved]=useState(false)
  const [knowledgeOpen,setKnowledgeOpen]=useState(false),[knowledge,setKnowledge]=useState<any[]>([]),[knowledgeBusy,setKnowledgeBusy]=useState(false),[knowledgeNotice,setKnowledgeNotice]=useState('')
  const [approvalBusy,setApprovalBusy]=useState('')
@@ -420,14 +484,25 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
  const openKnowledge=async()=>{setKnowledgeOpen(true);setKnowledgeNotice('');await loadKnowledge()}
  const learnKnowledge=async()=>{if(knowledgeBusy)return;setKnowledgeBusy(true);setKnowledgeNotice('');try{await post('/api/rooms/'+room.id+'/knowledge/learn',{});setKnowledgeNotice(t('rooms.knowledgeQueued'));setTimeout(()=>void loadKnowledge(),2500)}catch(e){setError((e as Error).message)}finally{setKnowledgeBusy(false)}}
  const send=async(event?:FormEvent)=>{
-  event?.preventDefault();if(!input.trim()||sending||staleTargets.length>0)return;setSending(true);setError('');jumpDown()
-  const contents=input.trim(),recipients=[...targets]
-  if(!sendAttempt.current||sendAttempt.current.input!==contents||JSON.stringify(sendAttempt.current.targets)!==JSON.stringify(recipients)||sendAttempt.current.reasoningEffort!==(reasoningEffort||undefined)||sendAttempt.current.thinking!==(reasoningEffort==='none'?false:thinkingEnabled)||sendAttempt.current.reasoningLanguage!==(reasoningKo?'ko':'default'))sendAttempt.current={input:contents,targets:recipients,id:crypto.randomUUID(),reasoningLanguage:reasoningKo?'ko':'default',reasoningEffort:reasoningEffort||undefined,thinking:reasoningEffort==='none'?false:thinkingEnabled}
+  event?.preventDefault()
+  const contents=roomMessageText(input,composer.attachments),recipients=[...targets]
+  const attachmentIds=composer.attachments.map(file=>file.id)
+  if(!contents||uploading||sending||staleTargets.length>0)return
+  setSending(true);setError('');jumpDown()
+  if(!sendAttempt.current||sendAttempt.current.input!==contents
+    ||JSON.stringify(sendAttempt.current.targets)!==JSON.stringify(recipients)
+    ||JSON.stringify(sendAttempt.current.attachmentIds)!==JSON.stringify(attachmentIds)
+    ||sendAttempt.current.reasoningEffort!==(reasoningEffort||undefined)
+    ||sendAttempt.current.thinking!==(reasoningEffort==='none'?false:thinkingEnabled)
+    ||sendAttempt.current.reasoningLanguage!==(reasoningKo?'ko':'default'))
+   sendAttempt.current={input:contents,targets:recipients,attachmentIds,
+    id:crypto.randomUUID(),reasoningLanguage:reasoningKo?'ko':'default',
+    reasoningEffort:reasoningEffort||undefined,thinking:reasoningEffort==='none'?false:thinkingEnabled}
   // Persist the exact in-flight idempotency key BEFORE dispatch. If the
   // server commits but the tab reloads before receiving 200, retrying the
   // restored draft uses the same owner operation ID, not a second job.
   storeRoomComposer(room.id,{...composer,attempt:sendAttempt.current})
-  try{const result=await post<{room:RoomConfig;message:ChatMessage;job:Job;sessionId:string}>('/api/rooms/'+room.id+'/messages',{input:contents,...(recipients.length?{agentIds:recipients}:{}),clientMessageId:sendAttempt.current.id,reasoningLanguage:sendAttempt.current.reasoningLanguage,reasoningEffort:sendAttempt.current.reasoningEffort,thinking:sendAttempt.current.thinking});dataVersion.current+=1;setMessages(previous=>previous.some(message=>message.id===result.message.id)?previous:[...previous,result.message]);setFeed(previous=>({...previous,room:result.room,sessionId:result.sessionId,jobs:[result.job,...previous.jobs.filter(job=>job.id!==result.job.id)]}));setInput('');if(inputRef.current)inputRef.current.style.height='';setTargets([]);setRecipientsOpen(false);sendAttempt.current=null;await load();await onSaved();inputRef.current?.focus({preventScroll:true})}
+  try{const result=await post<{room:RoomConfig;message:ChatMessage;job:Job;sessionId:string}>('/api/rooms/'+room.id+'/messages',{input:contents,...(recipients.length?{agentIds:recipients}:{}),clientMessageId:sendAttempt.current.id,attachmentIds:sendAttempt.current.attachmentIds,reasoningLanguage:sendAttempt.current.reasoningLanguage,reasoningEffort:sendAttempt.current.reasoningEffort,thinking:sendAttempt.current.thinking});dataVersion.current+=1;setMessages(previous=>previous.some(message=>message.id===result.message.id)?previous:[...previous,result.message]);setFeed(previous=>({...previous,room:result.room,sessionId:result.sessionId,jobs:[result.job,...previous.jobs.filter(job=>job.id!==result.job.id)]}));setComposer({text:'',targets:[],attachments:[]});if(inputRef.current)inputRef.current.style.height='';setRecipientsOpen(false);sendAttempt.current=null;await load();await onSaved();inputRef.current?.focus({preventScroll:true})}
   catch(e){setError((e as Error).message)}finally{setSending(false)}
  }
  const approve=async(id:string,allow:boolean)=>{if(approvalBusy)return;setApprovalBusy(id);setError('');try{await resolveApproval(id,allow);dataVersion.current+=1;setFeed(previous=>({...previous,approvals:previous.approvals.filter(approval=>approval.id!==id)}));refresh()}catch(e){setError((e as Error).message)}finally{await load();setApprovalBusy('')}}
@@ -465,9 +540,13 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
      <Button variant="ghost" size="sm" onClick={()=>setTargets(previous=>previous.filter(id=>current.agentIds.includes(id)))}>사용할 수 없는 대상 제외</Button>
     </div>}
     <form className="conversation-composer" onSubmit={send}>
+     {composer.attachments.length>0&&<div className="chat-file-drafts" aria-label="그룹 첨부 대기 파일">{composer.attachments.map(file=><span key={file.id} className="chat-file-chip"><Paperclip size={13}/><span title={file.name}>{file.name}</span><small>{formatRoomAttachmentSize(file.size)}</small><button type="button" aria-label={file.name+' 첨부 취소'} disabled={sending||uploading} onClick={()=>removeRoomAttachment(file.id)}><X size={13}/></button></span>)}</div>}
+     {uploading&&<div className="room-attachment-uploading" role="status"><LoaderCircle size={13} className="animate-spin"/>첨부 파일 업로드 중…</div>}
+     <input ref={roomFileInput} type="file" className="sr-only" multiple accept="image/png,image/jpeg,image/webp,image/gif,.txt,.md,.csv,.ts,.tsx,.js,.mjs,.json,.py,.rs,.yaml,.yml,.xml,.html,.css,.log,.sql" aria-label="그룹 첨부 파일 선택" disabled={sending||uploading} onChange={event=>{void attachRoomFiles(event.currentTarget.files);event.currentTarget.value=''}}/>
      <TextArea ref={inputRef} className="conversation-composer-input" aria-label={t('rooms.messageAria')} placeholder={mode==='mentioned'?t('rooms.mentionPlaceholder'):t('chat.inputPlaceholder')} value={input} onChange={e=>{setInput(e.target.value);e.currentTarget.style.height='auto';e.currentTarget.style.height=Math.min(e.currentTarget.scrollHeight,180)+'px'}} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();void send()}}} rows={1} disabled={sending}/>
      <div className="chat-composer-controls conversation-composer-controls">
       <div className="chat-composer-options conversation-composer-options">
+       <Button type="button" variant="ghost" disabled={sending||uploading} className="chat-file-add" title="그룹에 이미지 또는 텍스트 파일 첨부" onClick={()=>roomFileInput.current?.click()}><Paperclip size={15}/><span className="hidden sm:inline">첨부</span></Button>
        <ExecutionPermissions active={visibleView} open={permissionOpen} onOpenChange={open=>{setPermissionOpen(open);if(open){setRecipientsOpen(false);setShowSettings(false)}}} onError={setError}/>
        <ReasoningSelect value={reasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} defaultLabel={current.reasoningEffort?`${t('rooms.reasoningDefault')} (${current.reasoningEffort})`:t('chat.reasoningAuto')} className="chat-reasoning !h-7 !w-auto !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-[#5C544A]"/>
        <div className="relative">
@@ -483,7 +562,7 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
       <div className="ml-auto flex shrink-0 items-center gap-2">
        <span className="hidden text-[10px] text-[#9C9388] sm:inline">{t('chat.enterHint')}</span>
        {running&&<Button size="sm" variant="ghost" disabled={stopping} onClick={()=>void stop()}><Square size={12} fill="currentColor"/>{stopping?t('rooms.stopping'):t('rooms.stop')}</Button>}
-       <Button type="submit" className="conversation-composer-send" aria-label={t('rooms.sendAria')} disabled={sending||!input.trim()||!current.agentIds.length||staleTargets.length>0}>{sending?<LoaderCircle size={18} className="animate-spin"/>:<ArrowUp size={19}/>}</Button>
+       <Button type="submit" className="conversation-composer-send" aria-label={t('rooms.sendAria')} disabled={sending||uploading||(!input.trim()&&!composer.attachments.length)||!current.agentIds.length||staleTargets.length>0}>{sending?<LoaderCircle size={18} className="animate-spin"/>:<ArrowUp size={19}/>}</Button>
       </div>
      </div>
     </form>
@@ -499,7 +578,12 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
 function TranscriptMessage({message,agent,name,owner,index,showReasoning=true}:{showReasoning?:boolean;message:ChatMessage;agent?:Agent;name:string;owner:boolean;index:number}){
  useLocale()
  const [copied,setCopied]=useState(false)
- return <article className={'room-message '+(owner?'room-message-owner':'room-message-agent')+(message.metadata?.kind==='learning_report'?' room-message-review':'')}><Avatar agent={agent} owner={owner} index={index}/><div className="room-message-main"><div className="room-message-byline"><strong>{name}</strong>{message.metadata?.kind==='learning_report'?<span className="room-agent-tag">{t(message.metadata?.learningScope==='room'||message.metadata?.source==='knowledge'?'rooms.sharedLearning':'rooms.selfReview')}</span>:owner?<span className="room-author-tag">{t('rooms.authorMe')}</span>:<span className="room-agent-tag">{t('rooms.authorAgent')}</span>}<time>{stamp(message.created_at)}</time>{!owner&&message.metadata?.usage?.model&&<span className="room-message-model" title={t('rooms.routeActual')}>{message.metadata.usage.model}</span>}<TokenUsage usage={message.metadata?.usage} className="room-message-usage"/><Button variant="bare" className="room-copy" aria-label={t('rooms.copyAria')} title={t('rooms.copyAria')} onClick={()=>{void navigator.clipboard.writeText(message.content).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),1600)})}}>{copied?<Check size={12}/>:<Copy size={12}/>}</Button></div>{showReasoning&&message.reasoning&&<details className="room-reasoning"><summary>{t('rooms.live.showReasoning')}</summary><pre>{message.reasoning}</pre></details>}<MessageBody text={message.content} owner={owner}/>{message.tool_calls?.length?<span className="room-message-tools"><TerminalSquare size={12}/>{t('rooms.toolCallsSummary',{count:message.tool_calls.length})}</span>:null}</div></article>
+ return <article className={'room-message '+(owner?'room-message-owner':'room-message-agent')+(message.metadata?.kind==='learning_report'?' room-message-review':'')}><Avatar agent={agent} owner={owner} index={index}/><div className="room-message-main"><div className="room-message-byline"><strong>{name}</strong>{message.metadata?.kind==='learning_report'?<span className="room-agent-tag">{t(message.metadata?.learningScope==='room'||message.metadata?.source==='knowledge'?'rooms.sharedLearning':'rooms.selfReview')}</span>:owner?<span className="room-author-tag">{t('rooms.authorMe')}</span>:<span className="room-agent-tag">{t('rooms.authorAgent')}</span>}<time>{stamp(message.created_at)}</time>{!owner&&message.metadata?.usage?.model&&<span className="room-message-model" title={t('rooms.routeActual')}>{message.metadata.usage.model}</span>}<TokenUsage usage={message.metadata?.usage} className="room-message-usage"/><Button variant="bare" className="room-copy" aria-label={t('rooms.copyAria')} title={t('rooms.copyAria')} onClick={()=>{void navigator.clipboard.writeText(message.content).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),1600)})}}>{copied?<Check size={12}/>:<Copy size={12}/>}</Button></div>{showReasoning&&message.reasoning&&<details className="room-reasoning"><summary>{t('rooms.live.showReasoning')}</summary><pre>{message.reasoning}</pre></details>}<MessageBody text={message.content} owner={owner}/>
+   {owner&&Array.isArray(message.metadata?.attachments)&&message.metadata.attachments.length>0&&
+    <div className="chat-saved-attachments">
+     {(message.metadata.attachments as {id:string;name:string}[]).map(file=><a key={file.id} href={'/api/attachments/'+encodeURIComponent(file.id)+'/content'} target="_blank" rel="noopener noreferrer"><Paperclip size={13}/><span>{file.name}</span></a>)}
+    </div>}
+   {message.tool_calls?.length?<span className="room-message-tools"><TerminalSquare size={12}/>{t('rooms.toolCallsSummary',{count:message.tool_calls.length})}</span>:null}</div></article>
 }
 function MessageBody({text,owner=false,streaming=false}:{text:string;owner?:boolean;streaming?:boolean}){
  return <div className="room-message-text">{owner||streaming?text:<MarkdownMessage text={text}/>}</div>

@@ -170,3 +170,5 @@
 /* Keep file drops inside the Chat composer; never navigate to a local file. */
 .conversation-composer.chat-composer-drop{outline:2px dashed #B8855D;outline-offset:-3px;background:#FFF8EC}
 .conversation-composer.chat-composer-drop .conversation-composer-input{background:transparent}
+
+.room-attachment-uploading{display:flex;gap:6px;align-items:center;padding:2px 13px 7px;font-size:12px;color:#826D56}

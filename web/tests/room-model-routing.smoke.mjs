@@ -16,6 +16,7 @@ const server=spawn(process.execPath,[resolve(root,'node_modules/vite/bin/vite.js
 let browser;
 let selectedModelRequest=false;
 const submittedMessages=[];
+const uploadedRoomAttachments=[];
 let room={
  id:'room-model-fixture',name:'Model mapping room',
  agentIds:['lead','researcher'],routingMode:'discussion',rounds:1,maxTurns:2,
@@ -62,6 +63,10 @@ try{
    await route.fulfill({status:502,contentType:'application/json',
     body:JSON.stringify({error:'catalog offline'})});
    return;
+  }
+  if(pathname==='/api/attachments'&&route.request().method()==='POST'){
+   uploadedRoomAttachments.push(route.request().postDataJSON());
+   response={id:'room-uploaded-note',name:'notes.txt',size:14,supportedForModel:'text'};
   }
   if(pathname==='/api/rooms'){
    if(route.request().method()==='POST'){
@@ -188,6 +193,14 @@ try{
  // Rust E2E covers server deduplication; Chromium verifies the real form
  // resends the SAME nonce after reopening the tab.
  await composer.fill('Retry the same Room task');
+ await page.locator('input[aria-label="그룹 첨부 파일 선택"]').setInputFiles({
+  name:'notes.txt',mimeType:'text/plain',buffer:Buffer.from('room file bytes')
+ });
+ await page.getByText('notes.txt',{exact:true}).waitFor({timeout:10000});
+ assert.equal(uploadedRoomAttachments.length,1);
+ assert.equal(uploadedRoomAttachments[0].roomId,'room-model-fixture');
+ assert.equal(uploadedRoomAttachments[0].name,'notes.txt');
+ assert.equal(uploadedRoomAttachments[0].data,Buffer.from('room file bytes').toString('base64'));
  const submit=page.getByRole('button',{name:'메시지 보내기'});
  const firstResponse=page.waitForResponse(response=>
   response.url().endsWith('/api/rooms/room-model-fixture/messages')
@@ -197,17 +210,21 @@ try{
  await page.getByText('temporary-room-unavailable',{exact:false})
   .waitFor({timeout:10000});
  assert.equal(submittedMessages.length,1);
+ assert.deepEqual(submittedMessages[0].attachmentIds,['room-uploaded-note']);
  const firstId=submittedMessages[0].clientMessageId;
  assert.ok(firstId,'the first request must carry an idempotency key');
  await page.reload({waitUntil:'domcontentloaded'});
  await composer.waitFor({timeout:10000});
  assert.equal(await composer.inputValue(),'Retry the same Room task');
+ await page.getByText('notes.txt',{exact:true}).waitFor({timeout:10000});
  const retryResponse=page.waitForResponse(response=>
   response.url().endsWith('/api/rooms/room-model-fixture/messages')
   &&response.request().method()==='POST',{timeout:10000});
  await submit.click();
  await retryResponse;
  assert.equal(submittedMessages.length,2);
+ assert.deepEqual(submittedMessages[1].attachmentIds,['room-uploaded-note']);
+ assert.equal(uploadedRoomAttachments.length,1,'retries must reuse uploaded bytes by ID');
  assert.equal(submittedMessages[1].clientMessageId,firstId,
   'reload plus retry cannot spawn a second server-owned Room job');
  const sizes=await page.evaluate(()=>({screen:innerWidth,body:document.documentElement.scrollWidth}));
