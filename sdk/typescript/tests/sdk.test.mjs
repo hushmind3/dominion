@@ -48,6 +48,21 @@ test('waitJob polls durable status, not UI-local promises',async()=>{
   assert.equal(count,2);
 });
 
+test('canonical RunView lookup and durable SSE surface identity agree',async()=>{
+  const calls=[];
+  const state={ref:{version:1,surface:'room',runId:'room/1',parentRunId:null},
+    phase:'waiting_approval',status:'running',terminal:false,
+    reviewRequired:false,sourceJournal:'execution'};
+  const sdk=new Dominion({fetch:async(url,init)=>{
+    calls.push({url,init});return reply(state);
+  }});
+  const run=await sdk.runs.get('room/1');
+  assert.equal(run.ref.surface,'room');
+  assert.equal(run.phase,'waiting_approval');
+  assert.equal(run.terminal,false);
+  assert.equal(calls[0].url,'http://127.0.0.1:4317/api/runs/room%2F1');
+  assert.equal(calls[0].init.method,'GET');
+});
 test('native SDK steering and session binding share real Rust API contracts',async()=>{
   const observed=[];
   const sdk=new Dominion({adminToken:'owner',fetch:async(url,init)=>{
