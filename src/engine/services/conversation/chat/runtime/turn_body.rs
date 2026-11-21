@@ -626,8 +626,14 @@ pub(super) async fn run_turn_body(
     let mut harness=crate::engine::core::agent_loop::Harness::new(
         &mut driver,&mut agent_loop,
     );
-    for round in 0..max_rounds {
-        if finished { break; }
+    // Both Chat and the SDK now obtain their next provider round from the
+    // same core Driver. Product-only budget, streaming and durable receipts
+    // remain host work; no private Chat for/round-limit controller survives.
+    while let Some(round)=harness.next_round(
+        finished,
+        state.is_cancelled(session_id)
+            || state.cancellation_generation(session_id)!=generation,
+    ).map_err(str::to_string)? {
         if !budget.charge_round() {
             mark_budget_exhausted(state, execution_id);
             return Err("모델 라운드 예산을 초과했습니다.".into());
