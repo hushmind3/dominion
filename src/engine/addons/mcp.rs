@@ -9,10 +9,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool,Ordering};
 use tokio::sync::Mutex as AsyncMutex;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 const CACHE_TTL: Duration = Duration::from_secs(120);
+const MAX_STDIO_FRAME_BYTES:usize=4*1024*1024;
 
 #[derive(Clone)]
 pub struct McpTool {
@@ -21,6 +22,30 @@ pub struct McpTool {
     pub tool: String,
     pub description: String,
     pub schema: Value,
+}
+
+/// Read one newline-delimited MCP frame without allowing a child process to
+/// grow memory without bound. Returns `None` only for EOF before any bytes.
+async fn read_stdio_frame<R:AsyncBufRead+Unpin>(
+    reader:&mut R,max_bytes:usize,
+)->std::io::Result<Option<Vec<u8>>>{
+    let mut frame=Vec::new();
+    loop{
+        let available=reader.fill_buf().await?;
+        if available.is_empty(){
+            return if frame.is_empty(){Ok(None)}else{Ok(Some(frame))};
+        }
+        let count=available.iter().position(|byte|*byte==b'\n')
+            .map(|index|index+1).unwrap_or(available.len());
+        if frame.len().saturating_add(count)>max_bytes{
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData,
+                format!("MCP stdio frame exceeds {max_bytes} bytes")));
+        }
+        let ended=available[count-1]==b'\n';
+        frame.extend_from_slice(&available[..count]);
+        reader.consume(count);
+        if ended{return Ok(Some(frame));}
+    }
 }
 
 impl McpTool {
@@ -290,7 +315,9 @@ impl StdioSession {
             .current_dir(workspace)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
+            // Stderr is diagnostic output, never protocol data. Piping it
+            // without draining lets a noisy child block once the pipe fills.
+            .stderr(std::process::Stdio::null())
             .kill_on_drop(true);
         if let Some(env) = record.get("env").and_then(|value| value.as_object()) {
             for (key, value) in env {
@@ -305,8 +332,6 @@ impl StdioSession {
             .map_err(|error| format!("MCP 서버 실행 실패 ({command}): {error}"))?;
         let stdin = child.stdin.take().ok_or("MCP stdin 을 열 수 없습니다.")?;
         let stdout = child.stdout.take().ok_or("MCP stdout 을 열 수 없습니다.")?;
-        drop(child.stderr.take());
-
         let mut session = Self {
             _child: child,
             stdin,
@@ -335,8 +360,13 @@ impl StdioSession {
     }
 
     async fn send(&mut self, payload: &Value) -> Result<(), String> {
+        let mut frame=serde_json::to_vec(payload).map_err(|error|error.to_string())?;
+        if frame.len()>MAX_STDIO_FRAME_BYTES{
+            return Err(format!("MCP stdio request exceeds {MAX_STDIO_FRAME_BYTES} bytes"));
+        }
+        frame.push(b'\n');
         self.stdin
-            .write_all(format!("{payload}\n").as_bytes())
+            .write_all(&frame)
             .await
             .map_err(|error| error.to_string())?;
         self.stdin.flush().await.map_err(|error| error.to_string())
@@ -354,15 +384,14 @@ impl StdioSession {
         self.send(&payload).await?;
 
         loop {
-            let mut line = String::new();
-            let read =
-                tokio::time::timeout(Duration::from_secs(40), self.stdout.read_line(&mut line))
-                    .await
-                    .map_err(|_| format!("MCP 응답 시간 초과: {method}"))?
-                    .map_err(|error| error.to_string())?;
-            if read == 0 {
+            let frame=tokio::time::timeout(Duration::from_secs(40),
+                read_stdio_frame(&mut self.stdout,MAX_STDIO_FRAME_BYTES))
+                .await.map_err(|_|format!("MCP 응답 시간 초과: {method}"))?
+                .map_err(|error|error.to_string())?;
+            let Some(frame)=frame else{
                 return Err("MCP 서버가 응답 없이 종료되었습니다.".into());
-            }
+            };
+            let line=String::from_utf8(frame).map_err(|error|error.to_string())?;
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
@@ -824,6 +853,21 @@ mod tests {
         };
         assert_eq!(slug("Echo Lab"), "echo_lab");
         assert_eq!(tool.qualified(), "mcp__echo_lab__echo");
+    }
+
+    #[tokio::test]
+    async fn stdio_frames_are_bounded_and_newline_delimited(){
+        let (mut writer,reader)=tokio::io::duplex(32);
+        writer.write_all(b"12345\n").await.unwrap();
+        let mut reader=BufReader::new(reader);
+        assert_eq!(read_stdio_frame(&mut reader,6).await.unwrap().unwrap(),b"12345\n");
+
+        let (mut writer,reader)=tokio::io::duplex(32);
+        writer.write_all(b"123456\n").await.unwrap();
+        let mut reader=BufReader::new(reader);
+        let error=read_stdio_frame(&mut reader,6).await.unwrap_err();
+        assert_eq!(error.kind(),std::io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("exceeds 6 bytes"));
     }
 
     #[test]

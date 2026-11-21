@@ -33,6 +33,11 @@ pub struct AppState {
     pub instance_id: String,
     /// Explicit maintenance flag. While true, non-GET writes are rejected.
     pub maintenance: Arc<std::sync::atomic::AtomicBool>,
+    /// Serializes restore transactions against maintenance-mode changes.
+    pub restore_in_progress: Arc<std::sync::atomic::AtomicBool>,
+    /// Atomically admits ordinary API writes before maintenance is enabled.
+    maintenance_gate: Arc<Mutex<()>>,
+    active_api_writes: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl AppState {
@@ -58,6 +63,9 @@ impl AppState {
             policy_settlement: Arc::new(Mutex::new(())),
             instance_id,
             maintenance: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            restore_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            maintenance_gate: Arc::new(Mutex::new(())),
+            active_api_writes: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -80,17 +88,49 @@ impl AppState {
             .map_err(|_|"제공자 동시성 게이트가 종료되었습니다.".into())
     }
 
-    pub fn set_maintenance(&self, enabled: bool) {
+    pub fn set_maintenance(&self, enabled: bool)->bool {
+        let _gate=match self.maintenance_gate.lock(){
+            Ok(gate)=>gate,
+            Err(_)=>return false,
+        };
+        if !enabled&&self.restore_is_in_progress(){return false;}
         self.maintenance
             .store(enabled, std::sync::atomic::Ordering::SeqCst);
         self.store.audit(
             "system.maintenance",
             serde_json::json!({"enabled": enabled}),
         );
+        true
     }
 
     pub fn maintenance_mode(&self) -> bool {
         self.maintenance.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn begin_restore(&self)->bool{
+        let Ok(_gate)=self.maintenance_gate.lock() else{return false};
+        self.maintenance_mode()
+            && self.active_api_writes.load(std::sync::atomic::Ordering::SeqCst)==0
+            && self.restore_in_progress.compare_exchange(false,true,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst).is_ok()
+    }
+
+    pub fn restore_is_in_progress(&self)->bool{
+        self.restore_in_progress.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Admit one HTTP mutation only while the engine is out of maintenance.
+    /// The shared gate closes the check/increment race with maintenance start.
+    pub fn begin_api_write(&self)->bool{
+        let Ok(_gate)=self.maintenance_gate.lock() else{return false};
+        if self.maintenance_mode()||self.restore_is_in_progress(){return false;}
+        self.active_api_writes.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
+        true
+    }
+
+    pub fn end_api_write(&self){
+        self.active_api_writes.fetch_sub(1,std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn save_secret(&self, name: &str, plaintext: &str) {

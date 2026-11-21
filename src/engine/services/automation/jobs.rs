@@ -508,7 +508,9 @@ pub fn start(state:AppState){
             // An already approved DAG may have become ready when a prior
             // local or remote Worker finished. Re-enter its existing Rust
             // tool gateway, never a new model loop or a second Team plan.
-            advance_managed_teams(&dispatch_state);
+            if !dispatch_state.maintenance_mode(){
+                advance_managed_teams(&dispatch_state);
+            }
             if !wait_dispatch_event(&mut events,&finished,&mut fallback).await{
                 break;
             }
@@ -524,6 +526,7 @@ pub fn start(state:AppState){
 }
 
 fn next_queued(state: &AppState) -> Option<Value> {
+    if state.maintenance_mode(){return None;}
     let jobs=match state.store.active_jobs(){
         Ok(jobs)=>jobs,
         Err(error)=>{
@@ -604,6 +607,7 @@ fn next_queued(state: &AppState) -> Option<Value> {
 /// parent waiting on a child can never deadlock the worker pool.
 pub fn start_now(state: AppState, job_id: String) {
     tokio::spawn(async move {
+        if state.maintenance_mode(){return;}
         let Some(job) = state.store.get("job", &job_id) else {
             return;
         };
@@ -621,6 +625,14 @@ pub fn start_now(state: AppState, job_id: String) {
         ) else {
             return;
         };
+        if state.maintenance_mode(){
+            if let Some(queued)=state.store.patch_if("job",&job_id,"runEpoch",
+                &running["runEpoch"],&json!({"status":"queued","startedAt":Value::Null,
+                    "attempts":job["attempts"].as_u64().unwrap_or(0)})){
+                state.bus.record("job",&queued);
+            }
+            return;
+        }
         run_job(state, running).await;
     });
 }
@@ -652,6 +664,16 @@ async fn run_job(state: AppState, job: Value) {
         .unwrap_or("")
         .to_string();
     if job_id.is_empty() {
+        return;
+    }
+    if state.maintenance_mode(){
+        // start_now and the dispatcher can race the maintenance toggle after
+        // their initial check. Return only this claimed attempt to the queue.
+        if let Some(queued)=state.store.patch_if("job",&job_id,"runEpoch",
+            &job["runEpoch"],&json!({"status":"queued","startedAt":Value::Null,
+                "attempts":job["attempts"].as_u64().unwrap_or(1).saturating_sub(1)})){
+            state.bus.record("job",&queued);
+        }
         return;
     }
     let context = JobContext::from_claim(state.clone(),&job);
@@ -1062,6 +1084,24 @@ mod tests {
             "record":{"status":"running"}})));
         assert!(!queued_job_event(&json!({"type":"record","kind":"unrelated_record",
             "record":{"status":"queued"}})));
+    }
+
+    #[test]
+    fn maintenance_pauses_job_claims_without_consuming_attempts(){
+        let state=temp_state();
+        let job=enqueue(&state,"prompt",json!({"prompt":"wait for maintenance"})).unwrap();
+        let id=job["id"].as_str().unwrap();
+        state.set_maintenance(true);
+        assert!(next_queued(&state).is_none());
+        let still_queued=state.store.get("job",id).unwrap();
+        assert_eq!(still_queued["status"],"queued");
+        assert_eq!(still_queued["attempts"],0);
+
+        state.set_maintenance(false);
+        let claimed=next_queued(&state).unwrap();
+        assert_eq!(claimed["status"],"running");
+        assert_eq!(claimed["attempts"],1);
+        let _=std::fs::remove_dir_all(state.config.data_dir);
     }
 
     #[test]

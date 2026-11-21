@@ -50,6 +50,14 @@ fn clean_replace_temp(config:&Config)->Result<(),String>{
         Err(error)=>Err(error.to_string()),
     }
 }
+/// Restore may only begin after foreground turns and claimed background jobs
+/// have drained. Maintenance mode blocks new API work and job claims first.
+pub fn has_active_work(state:&AppState)->bool{
+    let active_sessions=state.active.lock().map(|sessions|!sessions.is_empty())
+        .unwrap_or(true);
+    active_sessions||state.store.all("job").iter()
+        .any(|job|job["status"]=="running")
+}
 fn finish(dir:&Path)->Result<(),String>{
     // Keep a durable commit marker until both plaintext rollback files and
     // the pending marker are gone. Startup can finish cleanup after a crash
@@ -267,6 +275,30 @@ mod tests{
         let store=Store::open(&config.db_path()).unwrap();
         let vault=Vault::open(&config.key_path());
         (AppState::new(config.clone(),store,vault),config)
+    }
+    #[test]
+    fn restore_requires_foreground_and_background_work_to_drain(){
+        let (state,config)=fixture();
+        assert!(!has_active_work(&state));
+        assert!(state.begin_session("active-session"));
+        assert!(has_active_work(&state));
+        state.end_session("active-session");
+        state.store.put("job",&json!({"id":"active-job","status":"running"}));
+        assert!(has_active_work(&state));
+        let _=fs::remove_dir_all(config.data_dir);
+    }
+    #[test]
+    fn restore_admission_waits_for_api_writes_and_holds_maintenance_on(){
+        let (state,config)=fixture();
+        assert!(state.begin_api_write());
+        assert!(state.set_maintenance(true));
+        assert!(!state.begin_restore(),"restore must not overlap an admitted HTTP write");
+        state.end_api_write();
+        assert!(state.begin_restore());
+        assert!(!state.set_maintenance(false),"maintenance cannot be disabled during restore");
+        state.restore_in_progress.store(false,std::sync::atomic::Ordering::SeqCst);
+        assert!(state.set_maintenance(false));
+        let _=fs::remove_dir_all(config.data_dir);
     }
     #[test]
     fn restore_refuses_missing_or_corrupt_files_without_touching_live_database() {

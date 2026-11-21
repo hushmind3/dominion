@@ -172,13 +172,17 @@ async fn no_stale_ui(request: Request, next: Next) -> Response {
     response
 }
 
-/// While maintenance mode is on, only reads and `/api/system/*` mutations are
-/// allowed. Restore cannot race with normal writes.
+/// While maintenance mode is on, only reads and the maintenance/restore
+/// controls remain available. Other system writes must not race with restore.
 async fn maintenance_guard(State(state): State<AppState>, request: Request, next: Next) -> Response {
-    if !state.maintenance_mode() {
+    let path=request.uri().path();
+    if request.method() == Method::GET
+        || path=="/api/system/maintenance"
+        || path=="/api/system/restore" {
         return next.run(request).await;
     }
-    if request.method() == Method::GET || request.uri().path().starts_with("/api/system/") {
+    if state.begin_api_write(){
+        let _lease=ApiWriteLease(state.clone());
         return next.run(request).await;
     }
     (
@@ -189,6 +193,11 @@ async fn maintenance_guard(State(state): State<AppState>, request: Request, next
         })),
     )
         .into_response()
+}
+
+struct ApiWriteLease(AppState);
+impl Drop for ApiWriteLease{
+    fn drop(&mut self){self.0.end_api_write();}
 }
 
 /// A loopback listener alone does not prevent browser DNS rebinding: a

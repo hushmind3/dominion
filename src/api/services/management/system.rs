@@ -514,10 +514,27 @@ pub async fn maintenance_status(State(state): State<AppState>) -> Json<Value> {
 pub async fn maintenance(
     State(state): State<AppState>,
     Json(body): Json<Value>,
-) -> Json<Value> {
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
     let enabled = body["enabled"].as_bool().unwrap_or(false);
-    state.set_maintenance(enabled);
-    Json(json!({"maintenance": enabled}))
+    if !enabled&&state.restore_is_in_progress(){
+        return (axum::http::StatusCode::CONFLICT,
+            Json(json!({"error":"백업 복구가 끝날 때까지 유지보수 모드를 해제할 수 없습니다."})))
+            .into_response();
+    }
+    if !state.set_maintenance(enabled){
+        return (axum::http::StatusCode::CONFLICT,
+            Json(json!({"error":"복구 진행 중이거나 유지보수 잠금을 사용할 수 없습니다."})))
+            .into_response();
+    }
+    Json(json!({"maintenance": enabled})).into_response()
+}
+
+struct RestoreLease(AppState);
+impl Drop for RestoreLease{
+    fn drop(&mut self){
+        self.0.restore_in_progress.store(false,std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 /// Restores an encrypted backup while maintenance mode is explicit. The
@@ -540,6 +557,20 @@ pub async fn restore_backup(
             Json(json!({"error":"confirm=true 가 필요합니다."})),
         )
             .into_response();
+    }
+    if !state.begin_restore(){
+        return (axum::http::StatusCode::CONFLICT,
+            Json(json!({"error":"다른 복구가 진행 중이거나 기존 쓰기 요청이 끝난 뒤 다시 시도하세요."}))).into_response();
+    }
+    let _restore_lease=RestoreLease(state.clone());
+    if !state.maintenance_mode(){
+        return (axum::http::StatusCode::CONFLICT,
+            Json(json!({"error":"복구를 시작하려면 유지보수 모드를 켜야 합니다."}))).into_response();
+    }
+    if crate::engine::restore_transaction::has_active_work(&state){
+        return (axum::http::StatusCode::CONFLICT,
+            Json(json!({"error":"실행 중인 대화나 작업이 끝난 뒤 다시 복구를 시도하세요.",
+                "restored":false}))).into_response();
     }
     let Some(requested) = body["path"].as_str().filter(|value| !value.is_empty()) else {
         return (
