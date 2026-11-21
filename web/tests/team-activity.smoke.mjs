@@ -308,6 +308,11 @@ try{
   await page.getByRole('button',{name:'에이전트 실행'}).waitFor({timeout:10000});
   await page.waitForFunction(()=>document.querySelector('button[aria-pressed="true"]')?.textContent?.includes('에이전트 실행'),null,{timeout:10000});
   await page.reload({waitUntil:'domcontentloaded'});
+  await page.waitForFunction(()=>{
+    const button=Array.from(document.querySelectorAll('button'))
+      .find(item=>item.textContent?.includes('에이전트 실행'));
+    return button?.getAttribute('aria-pressed')==='true';
+  },null,{timeout:10000});
   assert.equal(await page.getByRole('button',{name:'에이전트 실행'}).getAttribute('aria-pressed'),'true');
   assert.deepEqual(errors,[], 'Chat/Team React runtime errors');
   console.log('PASS Chromium route isolation, safe Markdown, attachments, persisted execution mode');
