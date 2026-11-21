@@ -171,10 +171,16 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
         let target = to.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
             copy_dir(&entry.path(), &target)?;
-        } else {
+        } else if file_type.is_file() {
             std::fs::copy(entry.path(), target)?;
+        } else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "skill assets cannot contain symbolic links or special files",
+            ));
         }
     }
     Ok(())
