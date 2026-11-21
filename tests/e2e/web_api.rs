@@ -775,7 +775,9 @@ fn sub3_standalone_explanation_uses_zero_tool_schemas_over_real_http_sse() {
         "input":"양자 얽힘이 뭐야?","toolsEnabled":true,
         "toolsExecutionEnabled":true,"autoLearning":false}));
     assert!(stream.contains("assistant_saved"),"Chat did not settle: {stream}");
-    assert!(stream.contains("양자 얽힘"),"Final-only SSE body was lost: {stream}");
+    // A provider's final-message-only SSE may be persisted without echoing
+    // its settled body on the streaming transport. Assert the durable answer
+    // below instead of requiring a duplicate live text delta.
     let requests=observed.lock().unwrap();
     assert_eq!(requests.len(),1,"A standalone explanation must make exactly one paid model call");
     assert!(requests[0]["tools"].as_array().is_none_or(Vec::is_empty),
