@@ -285,6 +285,11 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   if(!id){
    if(controller){
     controller.abort();stream.current=null;clearStreamBuffer();
+    // No session exists yet, so the owner prompt cannot be recovered from
+    // SQLite. Return it to the draft before dismissing the optimistic bubble.
+    if(optimisticOwner?.sessionId===undefined)
+     setInput(previous=>previous.trim()?previous:optimisticOwner.content);
+    setOptimisticOwner(undefined);
     setBusy(false);setLive('');setThought('');setToolStatus('');setTurnSession(undefined);
     setCommandInfo(t('chat.stopped'));
    }else setError(t('chat.cmd.noSessionStop'));
@@ -294,11 +299,13 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   try{
    const outcome=await post<{cancelled:boolean;stopped:boolean}>('/api/sessions/'+encodeURIComponent(id)+'/cancel',{});
    if(!outcome.stopped)throw Error(t('chat.stopPending'));
-   controller?.abort();clearStreamBuffer();
+   // A STOP must preserve already streamed text, even when the native
+   // execution was cancelled before the assistant answer was saved.
+   if(controller)flushStreamBuffer();
+   controller?.abort();
    if(stream.current===controller){
     stream.current=null;activeTurnSession.current=undefined;
-    setBusy(false);setLive('');setThought('');setLiveApproval(null);
-    setToolStatus('');setTurnSession(undefined);setSavedMessageId(undefined);
+    setBusy(false);setLiveApproval(null);setToolStatus('');
    }
    refresh('/api/sessions','/api/approvals','/api/sessions/'+encodeURIComponent(id)+'/messages','/api/sessions/'+encodeURIComponent(id)+'/usage');
    setCommandInfo(outcome.cancelled||controller?t('chat.stopped'):t('chat.cmd.nothingRunning'));
