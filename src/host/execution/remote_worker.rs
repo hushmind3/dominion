@@ -2,7 +2,28 @@
 //! an owner-controlled private endpoint through TLS or a localhost tunnel.
 use reqwest::{Client,Url};
 use serde_json::{json,Value};
+use futures_util::StreamExt;
 use std::time::Duration;
+const MAX_GATEWAY_RESPONSE_BYTES:usize=64*1024;
+const MAX_MODEL_RESPONSE_BYTES:usize=1024*1024;
+
+async fn bounded_json(response:reqwest::Response,limit:usize,label:&str)
+    ->Result<Value,String>{
+    if response.content_length().is_some_and(|size|size>limit as u64){
+        return Err(format!("{label} response exceeds size bound"));
+    }
+    let mut stream=response.bytes_stream();
+    let mut body=Vec::new();
+    while let Some(chunk)=stream.next().await{
+        let chunk=chunk.map_err(|e|format!("{label} response interrupted: {e}"))?;
+        if body.len().saturating_add(chunk.len())>limit{
+            return Err(format!("{label} response exceeds size bound"));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&body).map_err(|e|format!("Invalid {label} JSON: {e}"))
+}
+
 fn remote_url(raw:&str)->Result<Url,String>{
     let url=Url::parse(raw).map_err(|e|e.to_string())?;
     let allowed= url.scheme()=="https"
@@ -25,7 +46,7 @@ async fn gateway_post(client:&Client,base:&Url,token:&str,path:&str,
     if !response.status().is_success(){
         return Err(format!("Worker gateway rejected {}: HTTP {}",path,response.status()));
     }
-    response.json().await.map_err(|e|e.to_string())
+    bounded_json(response,MAX_GATEWAY_RESPONSE_BYTES,"Remote gateway").await
 }
 async fn model_infer(client:&Client,prompt:&str,max_tokens:u64)->Result<(String,Value),String>{
     let endpoint=std::env::var("DOMINION_WORKER_MODEL_ENDPOINT")
@@ -45,7 +66,7 @@ async fn model_infer(client:&Client,prompt:&str,max_tokens:u64)->Result<(String,
     if !response.status().is_success(){
         return Err(format!("Model endpoint HTTP {}",response.status()));
     }
-    let output:Value=response.json().await.map_err(|e|e.to_string())?;
+    let output=bounded_json(response,MAX_MODEL_RESPONSE_BYTES,"Worker model").await?;
     let answer=output["choices"][0]["message"]["content"]
         .as_str().ok_or("Missing text completion from worker model")?;
     if answer.trim().is_empty(){return Err("Worker model returned empty text".into());}
