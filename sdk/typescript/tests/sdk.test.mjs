@@ -113,6 +113,31 @@ test('missing in-band failure message still rejects with a typed error',async()=
   await assert.rejects(client.streamChat({sessionId:'s',input:'work'},()=>{}),
     error=>error instanceof ChatTurnFailedError && error.message==='Chat turn failed');
 });
+test('SDK cancels exact delayed Chat request and waits for durable server release',async()=>{
+  const requestId='123e4567-e89b-42d3-a456-426614174000';
+  const calls=[];
+  const client=new Dominion({token:'private',fetch:async(url,init)=>{
+    calls.push({url,init});
+    return json(url.endsWith('/cancel-status')
+      ?{sessionId:'session-1',stopped:true,active:false,running:false}
+      :{cancelled:true,requestRecorded:true,running:true});
+  }});
+  const ack=await client.sessions.cancelTurn('session-1',requestId);
+  const state=await client.sessions.cancelStatus('session-1');
+  assert.equal(ack.requestRecorded,true);
+  assert.equal(state.stopped,true);
+  assert.deepEqual(JSON.parse(calls[0].init.body),{requestId});
+  assert.equal(calls[0].url,'http://127.0.0.1:4317/api/sessions/session-1/cancel');
+  assert.equal(calls[1].url,'http://127.0.0.1:4317/api/sessions/session-1/cancel-status');
+  assert.equal(calls[1].init.method,'GET');
+  assert.ok(calls.every(call=>call.init.headers.get('X-Dominion-Token')==='private'));
+});
+test('SDK rejects malformed Chat cancellation UUID before contacting Rust',()=>{
+  let calls=0;
+  const client=new Dominion({fetch:async()=>{calls++;return json({});}});
+  assert.throws(()=>client.sessions.cancelTurn('session-1','not-a-request-uuid'),TypeError);
+  assert.equal(calls,0);
+});
 test('unexpected chat stream close is explicit failure and never repeats the POST',async()=>{
   let calls=0;
   const d=new Dominion({fetch:async()=>{calls++;return sse(['data: {"type":"delta"}\n\n']);}});
