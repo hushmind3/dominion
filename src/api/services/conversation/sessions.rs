@@ -189,6 +189,9 @@ pub async fn fork_session(State(state): State<AppState>, Path(id): Path<String>)
     let Some(source) = state.store.get("session", &id) else {
         return error(StatusCode::NOT_FOUND, "세션을 찾을 수 없습니다.");
     };
+    if source["forkPending"] == true {
+        return error(StatusCode::CONFLICT, "아직 복제가 완료되지 않은 대화입니다.");
+    }
     if !source["roomId"].is_null() || !source["channelContext"].is_null()
         || source["kind"] == "room_worker" {
         return error(StatusCode::CONFLICT, "그룹 또는 외부 채널의 대화는 복제할 수 없습니다.");
@@ -242,12 +245,14 @@ pub async fn fork_session(State(state): State<AppState>, Path(id): Path<String>)
         // An incomplete fork must never appear as a successful session.
         // Undo its messages and owned attachment bytes, not the source files.
         state.store.clear_messages(fork_id);
-        let cleanup = engine::attachments::purge_session(&state, fork_id);
-        state.store.remove("session", fork_id);
-        if cleanup.is_err() {
+        if engine::attachments::purge_session(&state, fork_id).is_err() {
+            // Retain an undisclosed pending-session tombstone so later
+            // maintenance can discover the orphan; deleting its only
+            // ownership record would strand private file bytes forever.
             return error(StatusCode::INTERNAL_SERVER_ERROR,
                 "대화 복제 실패 및 첨부 정리 실패. 저장소 점검이 필요합니다.");
         }
+        state.store.remove("session", fork_id);
         return error(StatusCode::INTERNAL_SERVER_ERROR, &reason);
         }
     };
