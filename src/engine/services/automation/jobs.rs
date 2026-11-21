@@ -557,9 +557,13 @@ pub fn start_now(state: AppState, job_id: String) {
 /// Only a Team committed under this exact job ID can satisfy the UI task.
 fn verify_team_ui_completion(state:&AppState,job:&Value,result:Value)->Value{
     if job["input"]["uiSource"]!="team_activity"{return result;}
-    if state.store.all("managed_team").iter().any(|team|
+    // The dispatcher holds the original queued snapshot. run_prompt stamps
+    // the real sessionId later through a durable checkpoint, so read it now.
+    let session_id=state.store.get("job",job["id"].as_str().unwrap_or(""))
+        .map(|current|current["sessionId"].clone()).unwrap_or(Value::Null);
+    if session_id.is_string() && state.store.all("managed_team").iter().any(|team|
         team["uiOwnerJobId"]==job["id"]
-        && team["leadSessionId"]==job["sessionId"]){
+        && team["leadSessionId"]==session_id){
         return result;
     }
     json!({"status":"needs_review",
