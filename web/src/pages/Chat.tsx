@@ -80,6 +80,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const job=useJob<LearningJob>(learningJob?'/api/jobs/'+encodeURIComponent(learningJob.id):null);
  const approval=(liveApproval?.sessionId===current?liveApproval:null)||
   approvals.value.find(item=>item.sessionId===current&&item.status==='pending');
+ const [dismissedError,setDismissedError]=useState<{session?:string;message:string}>();
  const [error,setError]=useState(''),[busy,setBusy]=useState(false),[live,setLive]=useState(''),[thought,setThought]=useState(''),[thinking,setThinking]=useState(false),[showSettings,setShowSettings]=useState(false),[showHistory,setShowHistory]=useState(()=>{try{if(window.innerWidth<768)return false;return localStorage.getItem('dominion.chat.sidebar')!=='0'}catch{return true}}),[toolStatus,setToolStatus]=useState('');
  const [reasoningKo,setReasoningKo]=usePersistentKoreanReasoning();
  const [showReasoning,setShowReasoning]=usePersistentConversationToggle('showReasoning');
@@ -182,6 +183,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const transcriptRevision=JSON.stringify([messages.at(-1)?.id,messages.length,showOptimisticOwner,busy&&viewingTurn,viewingTurn?live.length:0,viewingTurn?thought.length:0,viewingTurn?toolStatus:'',approval?.id]);
  const usageRevision=JSON.stringify([messages.at(-1)?.id,messages.length]);
  useEffect(()=>{if(!current){setServerUsage(0);return}let alive=true;get<{totalTokens?:number}>('/api/sessions/'+encodeURIComponent(current)+'/usage').then(usage=>{if(alive)setServerUsage(Number(usage.totalTokens)||0)}).catch(()=>{});return()=>{alive=false}},[current,usageRevision])
+ const alertMessage=error||transcript.error||translateError(job.error||'');
+ const visibleAlert=alertMessage&&!(dismissedError?.session===current&&dismissedError.message===alertMessage)?alertMessage:'';
  const [moreBelow,setMoreBelow]=useState(false);
  const {scrollRef,onScroll,jumpDown}=useTranscriptScroll(current,transcriptRevision,setMoreBelow);
  const modelPanel=useAnchoredPanel(modelMenu,()=>setModelMenu(false),380);
@@ -264,14 +267,14 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const chooseAgent=(id:string)=>{setAgentChoice({scope:current,id});setChatModeOverride({scope:current,mode:'agent'});setOverride(undefined)};
  const pickSession=(s:ChatSession)=>{
   onSession(s.id);setAgentChoice(undefined);setChatModeOverride(undefined);setOverride(undefined);
-  setError('');setCommandInfo('');setSlashOpen(false);
+  setDismissedError(undefined);setError('');setCommandInfo('');setSlashOpen(false);
   if(window.innerWidth<768)setShowHistory(false);
  };
  const resetLocal=()=>{
   onSession(undefined);setAgentChoice(undefined);setChatModeOverride(undefined);setOverride(undefined);
   discardPendingImages();
   if(!current)setInput('');
-  setError('');setCommandInfo('');setSlashOpen(false);
+  setDismissedError(undefined);setError('');setCommandInfo('');setSlashOpen(false);
   if(window.innerWidth<768)setShowHistory(false);
   inputRef.current?.focus({preventScroll:true});
  };
@@ -406,7 +409,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   activeTurnSession.current=current;
   setTurnSession(current);setSavedMessageId(undefined);
   setOptimisticOwner({sessionId:current,content:text,lastSeenMessageId:messages.at(-1)?.id});
-  setBusy(true);setError('');setCommandInfo('');setLive('');setThought('');setSlashOpen(false);setToolStatus('');
+  setBusy(true);setDismissedError(undefined);setError('');setCommandInfo('');setLive('');setThought('');setSlashOpen(false);setToolStatus('');
   jumpDown();
   let id=current;
   let streamStarted=false;
@@ -588,7 +591,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    </div>:<div className={'chat-transcript mx-auto flex min-h-full w-full max-w-[860px] flex-col gap-7 px-4 py-7 sm:px-7 '+(busy&&viewingTurn?'chat-transcript--responding':'')}>{messages.filter(m=>m.role!=='tool').map(m=><Message key={m.id} message={m} agentName={agents.value.find(a=>a.id===m.agent_id)?.name} showReasoning={showReasoning} />)}{showOptimisticOwner&&<Message key="optimistic-owner" message={{id:'optimistic-owner',session_id:current||'',role:'user',content:optimisticOwner!.content,created_at:''}}/>}{viewingTurn&&(live||thought||busy)&&<div className="chat-message chat-message--assistant flex min-w-0 items-start gap-3 justify-start assistant" data-message data-message-role="assistant"><div className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#F3EEE5] text-[#4A443C] ai"><Sparkles size={17}/></div><div className="chat-message-body relative min-w-0 flex-1"><div className="mb-2 flex items-center gap-2 text-xs font-bold text-[#4A443C]">DOMINION <span>{busy?t('ui.label.live'):savedMessageId?'대화 내역 동기화 중':'중단된 응답 · 미저장'}</span>{busy&&thought&&!showReasoning&&<span className="inline-flex items-center gap-1 rounded bg-[#F3EEE5] px-1.5 py-0.5 text-[10px] font-medium text-[#7C7469]"><BrainCircuit size={11}/> {t('chat.thinkingNow')}</span>}</div>{showReasoning&&thought&&<details className="mb-3 max-h-56 overflow-y-auto rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-[11px] leading-5 text-[#7C7469]" open={thinking}><summary className="cursor-pointer select-none" onClick={e=>{e.preventDefault();setThinking(x=>!x)}}><BrainCircuit size={14} className="inline"/> {t('chat.reasoningProcess',{count:thought.length.toLocaleString()} )} <ChevronRight size={13} className="inline"/></summary><div className="mt-2 whitespace-pre-wrap">{thought}</div></details>}{live&&<div className="chat-message-content chat-message-content--assistant min-w-0 break-words text-[#3A342D] [&_p]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-xl [&_pre]:bg-slate-950 [&_pre]:p-4 [&_pre]:text-slate-100 [&_code]:break-words [&_ul]:list-disc [&_ul]:pl-6"><ChatRichText text={live}/></div>}{busy&&!live&&<div className="flex items-center gap-2 text-xs text-[#9C9388]"><i/><i/><i/></div>}</div></div>}{viewingTurn&&toolStatus&&<div className="inline-flex items-center gap-2 rounded-lg bg-[#FAF7F1] px-3 py-1.5 text-xs text-[#7C7469]"><TerminalSquare size={15}/>{toolStatus}</div>}</div>}</div>
    {moreBelow&&<Button type="button" variant="ghost" onClick={jumpDown} aria-label="최신 메시지로 이동" className="chat-scroll-to-bottom absolute bottom-[132px] left-1/2 z-20 -translate-x-1/2 inline-flex items-center gap-2 rounded-full border border-[#E7E0D5] bg-white px-3 py-2 text-[12px] font-semibold text-[#5C544A] shadow-md hover:bg-[#F7F1E6]"><ArrowDown size={16}/>최신 메시지</Button>}
    <div className="conversation-composer-wrap sticky bottom-0 z-10"><div className="mx-auto w-full max-w-[860px]">{approval&&<div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"><div><ShieldAlert size={20}/><span><strong>{t('chat.approval')}</strong><small>{approval.tool} · {JSON.stringify(approval.args??{}).slice(0,150)}</small></span></div><div><Action variant="secondary" disabled={approvalBusy} onClick={()=>approve(false)}>{t('chat.deny')}</Action><Action disabled={approvalBusy} onClick={()=>approve(true)}><Check size={15}/> {t('chat.approve')}</Action></div></div>}
-    {(error||transcript.error||job.error)&&<div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"><CircleHelp size={16}/>{error||transcript.error||translateError(job.error||'')}<Button onClick={()=>setError('')}><X size={14}/></Button></div>}
+    {visibleAlert&&<div role="alert" className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"><CircleHelp size={16}/>{visibleAlert}<Button type="button" aria-label="오류 닫기" onClick={()=>{setDismissedError({session:current,message:visibleAlert});setError('')}}><X size={14}/></Button></div>}
     {modelError&&!model&&<div className="mb-3 text-xs text-[#7C7469]">{t('chat.noModel')}: {modelError} <Button onClick={openModels}>{t('chat.manage')} <ArrowRight size={13}/></Button></div>}
     {commandInfo&&<div role="status" className="mb-3 max-h-36 overflow-auto whitespace-pre-wrap rounded-xl border border-[#EED9CC] bg-[#F7E8E1] p-3 text-xs leading-6 text-[#4A443C]">{commandInfo}</div>}
     <div className="relative">
