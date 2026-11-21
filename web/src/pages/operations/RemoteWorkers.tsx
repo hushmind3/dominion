@@ -1,4 +1,4 @@
-import {useCallback,useEffect,useState} from 'react'
+import {useCallback,useEffect,useRef,useState} from 'react'
 import {Cpu,RefreshCw,Send,Square,Wifi,WifiOff} from 'lucide-react'
 import {ApiError,get,post} from '../../api'
 import {formatDateTime,useLocale} from '../../i18n'
@@ -30,10 +30,13 @@ export function RemoteWorkersPanel({onAvailability}:{
  const [busy,setBusy]=useState(false)
  const [error,setError]=useState('')
  const [notice,setNotice]=useState('')
+ const refreshSequence=useRef(0)
  const refresh=useCallback(async()=>{
+  const version=++refreshSequence.current
   try{
    const machines=await get<Worker[]>('/api/remote/workers')
    const jobs=await get<Task[]>('/api/remote/tasks')
+   if(version!==refreshSequence.current)return
    setWorkers(machines)
    setTasks(jobs)
    setEnabled(true)
@@ -41,6 +44,7 @@ export function RemoteWorkersPanel({onAvailability}:{
    setError('')
    onAvailability({enabled:true,online:machines.filter(w=>w.online).length,loaded:true})
   }catch(cause){
+   if(version!==refreshSequence.current)return
    if(cause instanceof ApiError && cause.status===503){
     setEnabled(false);setLoaded(true);setWorkers([]);setTasks([])
     onAvailability({enabled:false,online:0,loaded:true})
@@ -54,13 +58,14 @@ export function RemoteWorkersPanel({onAvailability}:{
  useEffect(()=>{
   void refresh()
   const timer=window.setInterval(()=>{void refresh()},5000)
-  return()=>window.clearInterval(timer)
+  return()=>{window.clearInterval(timer);refreshSequence.current++}
  },[refresh])
  const online=workers.filter(w=>w.online).length
  const validPrompt=prompt.trim().length>0 &&
   new TextEncoder().encode(prompt.trim()).length<=16384
  const create=async()=>{
   if(busy||!enabled||online===0||!validPrompt)return
+  refreshSequence.current++
   setBusy(true);setError('');setNotice('')
   try{
    const result=await post<{id:string}>('/api/remote/tasks',{
@@ -76,6 +81,7 @@ export function RemoteWorkersPanel({onAvailability}:{
  const cancel=async(id:string)=>{
   if(busy||!window.confirm(t('이 원격 작업을 취소하시겠습니까?',
    'Cancel this remote task?')))return
+  refreshSequence.current++
   setBusy(true);setError('')
   try{
    await post('/api/remote/tasks/'+encodeURIComponent(id)+'/cancel',{})

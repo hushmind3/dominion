@@ -104,9 +104,8 @@ pub fn hint(class: &str) -> &'static str {
 pub fn latest_failure_hint(state: &AppState, task_id: &str) -> Option<String> {
     let latest = state
         .store
-        .all("execution")
+        .task_executions(task_id).ok()?
         .into_iter()
-        .filter(|execution| execution["taskId"].as_str() == Some(task_id))
         .filter(|execution| execution["failureClass"].as_str().is_some())
         .max_by_key(|execution| {
             execution["startedAt"]

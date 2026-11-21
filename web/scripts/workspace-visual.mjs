@@ -28,6 +28,8 @@ let sdkRuns=[],teams=[],remoteTasks=[]
 // that old payload afterwards must not resurrect approval in React state.
 let holdNextSdkRead=false
 let releaseHeldSdkRead=null
+let holdNextTeamRead=false,releaseHeldTeamRead=null
+let holdNextRemoteRead=false,releaseHeldRemoteRead=null
 const send=(route,payload,status=200)=>route.fulfill({
  status,contentType:'application/json',body:JSON.stringify(payload)
 })
@@ -52,7 +54,16 @@ async function mock(route){
  if(n==='/api/skill-catalog')return send(route,{items:[],total:0})
  if(n==='/api/task-teams/bridges')return send(route,{bridges:{codex:{enabled:true,binaryAvailable:true},
   claude:{enabled:true,binaryAvailable:true},qwen:{enabled:true,binaryAvailable:true}}})
- if(n==='/api/task-teams'&&m==='GET')return send(route,teams)
+ if(n==='/api/task-teams'&&m==='GET'){
+  const snapshot=structuredClone(teams)
+  if(holdNextTeamRead){
+   holdNextTeamRead=false
+   await new Promise(resolve=>{releaseHeldTeamRead=resolve})
+   return route.fulfill({status:200,contentType:'application/json',
+    headers:{'x-dominion-stale-team':'1'},body:JSON.stringify(snapshot)})
+  }
+  return send(route,snapshot)
+ }
  if(n==='/api/task-teams'&&m==='POST'){
   const data=body();requests.team.push(data)
   const item={id:'ux-team-'+requests.team.length,status:'queued',goal:data.goal,
@@ -65,7 +76,16 @@ async function mock(route){
   workerId:'test-machine',model:'local-27b',online:true,
   capabilities:['text_inference'],lastSeenAt:new Date().toISOString()
  }])
- if(n==='/api/remote/tasks'&&m==='GET')return send(route,remoteTasks)
+ if(n==='/api/remote/tasks'&&m==='GET'){
+  const snapshot=structuredClone(remoteTasks)
+  if(holdNextRemoteRead){
+   holdNextRemoteRead=false
+   await new Promise(resolve=>{releaseHeldRemoteRead=resolve})
+   return route.fulfill({status:200,contentType:'application/json',
+    headers:{'x-dominion-stale-remote':'1'},body:JSON.stringify(snapshot)})
+  }
+  return send(route,snapshot)
+ }
  if(n==='/api/remote/tasks'&&m==='POST'){
   const data=body();requests.remote.push(data)
   const item={id:'remote:ux-'+requests.remote.length,status:'queued',
@@ -258,15 +278,42 @@ try{
  // Team composer and remote worker use backend contracts, no fake completion.
  await open(page,'activity')
  const team=page.locator('[aria-label="작업 팀"]')
+ // Deliberately hold an old empty Team list while the user creates a new run.
+ holdNextTeamRead=true
+ await team.getByRole('button',{name:'새로고침'}).click()
+ for(let n=0;n<80&&!releaseHeldTeamRead;n++)await sleep(50)
+ assert.ok(releaseHeldTeamRead,'Expected a held Team history request')
  await team.getByRole('button',{name:'팀 만들기'}).click()
  await team.getByLabel('팀 목표').fill('Review provider routing')
  await team.getByRole('button',{name:'팀 실행'}).click()
  assert.equal(requests.team[0].tasks[0].prompt,'Review provider routing')
+ await team.getByRole('button',{name:/Review provider routing/}).waitFor({timeout:8000})
+ const oldTeamResponse=page.waitForResponse(response=>
+  response.headers()['x-dominion-stale-team']==='1',{timeout:8000})
+ releaseHeldTeamRead()
+ releaseHeldTeamRead=null
+ await oldTeamResponse
+ await page.waitForTimeout(150)
+ assert.equal(await team.getByRole('button',{name:/Review provider routing/}).count(),1,
+  'Stale Team polling result hid the new owner-created task')
  await screenshot(page,'1440-team-run.png')
  await page.getByRole('button',{name:'장치 · 작업 보기'}).click()
+ holdNextRemoteRead=true
+ await page.getByRole('button',{name:'원격 연결 새로고침'}).click()
+ for(let n=0;n<80&&!releaseHeldRemoteRead;n++)await sleep(50)
+ assert.ok(releaseHeldRemoteRead,'Expected a held remote task list')
  await page.locator('#remote-task-prompt').fill('Summarize local device inference')
  await page.getByRole('button',{name:'원격 작업 요청'}).click()
  assert.equal(requests.remote.length,1)
+ await page.getByRole('button',{name:/remote:ux-1/}).waitFor({timeout:8000})
+ const oldRemoteResponse=page.waitForResponse(response=>
+  response.headers()['x-dominion-stale-remote']==='1',{timeout:8000})
+ releaseHeldRemoteRead()
+ releaseHeldRemoteRead=null
+ await oldRemoteResponse
+ await page.waitForTimeout(150)
+ assert.equal(await page.getByRole('button',{name:/remote:ux-1/}).count(),1,
+  'Stale remote polling result erased the queued task')
  await screenshot(page,'1440-remote-run.png')
  // All settings pages in desktop, tablet, mobile and narrow mobile.
  for(const viewport of viewports.slice(1)){

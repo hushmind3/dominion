@@ -1,4 +1,4 @@
-import {useCallback,useEffect,useState} from 'react'
+import {useCallback,useEffect,useRef,useState} from 'react'
 import {GitBranch,Plus,RefreshCw,ShieldCheck,Square,Workflow} from 'lucide-react'
 import {get,post,type Provider} from '../../api'
 import {formatDateTime,useLocale} from '../../i18n'
@@ -46,11 +46,17 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
  const [preview,setPreview]=useState<Preview|null>(null)
  const [consent,setConsent]=useState(false),[busy,setBusy]=useState(false)
  const [error,setError]=useState(''),[notice,setNotice]=useState('')
- const refresh=useCallback(async()=>{
+ // Polls from before an owner create/cancel/retry cannot rewind the selected
+ // Team, especially while the server is saving a new DAG.
+ const refreshSequence=useRef(0)
+ const refresh=useCallback(async(targetId?:string)=>{
+  const version=++refreshSequence.current
   const list=await get<Team[]>('/api/task-teams')
+  if(version!==refreshSequence.current)return
   setTeams(list)
-  if(selected){
-   const team=list.find(v=>v.id===selected)
+  const activeId=targetId||selected
+  if(activeId){
+   const team=list.find(v=>v.id===activeId)
    if(team)setDetails(team)
   }
  },[selected])
@@ -61,7 +67,7 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
    .then(([,result])=>{if(alive)setBridges(result.bridges||{})})
    .catch(err=>{if(alive)setError((err as Error).message)})
   const timer=setInterval(()=>{void refresh().catch(()=>{})},3000)
-  return()=>{alive=false;clearInterval(timer)}
+  return()=>{alive=false;clearInterval(timer);refreshSequence.current++}
  },[open,refresh])
  const patch=(id:string,value:Partial<Draft>)=>setSteps(rows=>
   rows.map(v=>v.id===id?{...v,...value}:v))
@@ -101,6 +107,7 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
  })()
  const create=async()=>{
   if(invalid||busy)return
+  refreshSequence.current++
   setBusy(true);setError('');setNotice('')
   try{
    const tasks=steps.map(step=>{
@@ -119,7 +126,7 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
     goal:goal.trim(),maxParallel:parallel,maxReadRetries:retries,tasks})
    setEditing(false);setSelected(created.id);setDetails(created)
    setNotice(t('팀이 실행 대기열에 등록됐습니다.','Team queued for execution.'))
-   await refresh()
+   await refresh(created.id)
   }catch(err){setError((err as Error).message)}
   finally{setBusy(false)}
  }
@@ -129,6 +136,7 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
    t('새 팀으로 처음부터 실행합니다. 추가 모델 비용이 발생할 수 있습니다. 진행하시겠습니까?',
     'Replay from scratch as a new team? Additional model costs may occur.'):
    t('이 팀과 하위 Worker를 취소하시겠습니까?','Cancel this team and all workers?')))return
+  refreshSequence.current++
   setBusy(true);setError('');setNotice('')
   try{
    const result=await post<any>(apiPath(details.id)+'/'+kind,kind==='retry'?{confirm:true}:{})
@@ -136,7 +144,8 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
     setSelected(result.newTeamId)
     setNotice(t('기존 기록은 유지되고 새 팀이 생성됐습니다.','Old records preserved; new team created.'))
    }else setDetails(result)
-   setPreview(null);setConsent(false);await refresh()
+   setPreview(null);setConsent(false);await refresh(
+    kind==='retry'?result.newTeamId:details.id)
   }catch(err){setError((err as Error).message)}
   finally{setBusy(false)}
  }
@@ -151,6 +160,7 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
   if(!details||!preview||!consent||busy)return
   if(!window.confirm(t('검토한 변경을 원본 Git 작업공간에 스테이징할까요? 자동 커밋은 하지 않습니다.',
     'Stage reviewed changes in source Git workspace? No auto-commit.')))return
+  refreshSequence.current++
   setBusy(true);setError('')
   try{
    await post(apiPath(details.id,preview.taskId)+'/promote',
