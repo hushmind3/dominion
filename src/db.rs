@@ -1651,6 +1651,17 @@ impl Store {
         Ok(())
     }
 
+    /// A restore journal cannot be cleared until all new SQLite WAL commits
+    /// are checkpointed and the replacement database has reached the disk.
+    pub fn sync_database_for_restore(&self) -> Result<(),String> {
+        let guard=self.conn.lock().map_err(|error|error.to_string())?;
+        let busy:i64=guard.query_row("PRAGMA wal_checkpoint(TRUNCATE)",[],|row|row.get(0))
+            .map_err(|error|format!("restore durability checkpoint: {error}"))?;
+        if busy!=0{return Err("restore durability checkpoint is busy".into());}
+        std::fs::File::open(&self.path)
+            .and_then(|file|file.sync_all()).map_err(|error|error.to_string())
+    }
+
     /// Consistent online snapshot for a restore drill. `VACUUM INTO` includes
     /// committed WAL content and never exposes a half-written database.
     pub fn backup_to(&self, path: &Path) -> Result<u64, String> {
