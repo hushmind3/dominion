@@ -121,6 +121,16 @@ fn tool_receipt(state:&AppState,assignment:&Value,node:&Value)
     let id=node["id"].as_str().filter(|s|!s.is_empty())
         .ok_or("tool node identity missing")?;
     let call_prefix=format!("program-{id}-");
+    let work_id=assignment["id"].as_str().ok_or("missing work ID")?;
+    let claimed=state.store.get("task_team_work",work_id)
+        .ok_or("Task Team claim missing")?;
+    if claimed["status"]!="running" || claimed["executionId"]!=execution
+        || claimed["sessionId"]!=session{
+        return Err("Task Team receipt has no matching active claim".into());
+    }
+    let claimed_at=claimed["startedAt"].as_str()
+        .and_then(|raw|chrono::DateTime::parse_from_rfc3339(raw).ok())
+        .ok_or("Task Team claim start time missing")?;
     let tool=if node["type"]=="delegate"{"delegate_task"}
         else{node["tool"].as_str().ok_or("missing tool name")?};
     let entries=state.store.execution_operations(execution)?;
@@ -128,6 +138,11 @@ fn tool_receipt(state:&AppState,assignment:&Value,node:&Value)
         op["runId"]==execution && op["sessionId"]==session
             && op["tool"]==tool
             && op["callId"].as_str().is_some_and(|c|c.starts_with(&call_prefix))
+            && op["startedAt"].as_str()
+                .and_then(|raw|chrono::DateTime::parse_from_rfc3339(raw).ok())
+                .is_some_and(|started|started>=claimed_at)
+            && (node["type"]!="delegate" ||
+                op["arguments"]["agentId"]==claimed["agentId"])
             && matches!(op["status"].as_str(),Some("completed"|"failed"))
             && op["outcomeUnknown"]!=true
             && op["effectState"]!="effect_unknown"
@@ -141,6 +156,17 @@ fn tool_receipt(state:&AppState,assignment:&Value,node:&Value)
 pub fn settle(
     state:&AppState,assignment:&Value,node:&Value,checkpoint:&Value,
 )->Result<Value,String>{
+    let work_id=assignment["id"].as_str().ok_or("Task Team ID missing")?;
+    let durable=state.store.get("task_team_work",work_id)
+        .ok_or("Task Team assignment disappeared")?;
+    if durable["status"]!="running"
+        || durable["executionId"]!=assignment["executionId"]
+        || durable["sessionId"]!=assignment["sessionId"]
+        || durable["nodeId"]!=node["id"]
+        || durable["nodeType"]!=node["type"]
+        || (node["type"]=="delegate"&&durable["agentId"]!=node["agentId"]){
+        return Err("Task Team completion lacks current node or worker ownership".into());
+    }
     let node_id=node["id"].as_str().filter(|s|!s.is_empty());
     if node_id.is_some_and(|id|
         !checkpoint["completedOperationIds"].as_array()
@@ -274,6 +300,7 @@ mod tests{
         let checkpoint=json!({"completedOperationIds":["write"]});
         assert!(settle(&state,&live,&node,&checkpoint).is_err());
         state.store.put("execution_operation",&json!({"id":"o1",
+            "startedAt":chrono::Utc::now().to_rfc3339(),
             "runId":"run-a","sessionId":"s","tool":"workspace_write",
             "callId":"program-write-first","status":"completed",
             "toolReceipt":{"verified":true},"effectState":"verified"})).unwrap();
@@ -300,6 +327,7 @@ mod tests{
         assert!(finish_team(&state,&[worker_a.clone(),worker_b.clone()],&checkpoint).is_err());
         state.store.put("execution_operation",&json!({
             "id":"read-op","runId":"run-a","sessionId":"s",
+            "startedAt":chrono::Utc::now().to_rfc3339(),
             "tool":"workspace_read","callId":"program-read-call",
             "status":"completed","toolReceipt":{"verified":true}
         })).unwrap();
@@ -307,6 +335,7 @@ mod tests{
         assert!(finish_team(&state,&[worker_a.clone(),worker_b.clone()],&checkpoint).is_err());
         state.store.put("execution_operation",&json!({
             "id":"write-op","runId":"run-a","sessionId":"s",
+            "startedAt":chrono::Utc::now().to_rfc3339(),
             "tool":"workspace_write","callId":"program-write-call",
             "status":"completed","toolReceipt":{"verified":true}
         })).unwrap();
@@ -318,6 +347,24 @@ mod tests{
         assert_eq!(merged["evidenceVerified"],true);
         assert_eq!(finish_team(&state,&[worker_a,worker_b],&checkpoint).unwrap()["id"],merged["id"]);
         assert_eq!(state.store.all("task_team_result").len(),1);
+        drop(state);let _=std::fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn stale_tool_receipt_from_before_claim_cannot_complete_a_new_worker(){
+        let (state,dir)=state();
+        let node=json!({"id":"write","type":"call_tool","tool":"workspace_write"});
+        let assignment=assign(&state,"s","run-a","r1","team",0,&node).unwrap();
+        let old=(chrono::Utc::now()-chrono::Duration::days(1)).to_rfc3339();
+        state.store.put("execution_operation",&json!({
+            "id":"old-effect","runId":"run-a","sessionId":"s",
+            "startedAt":old,"callId":"program-write-old",
+            "tool":"workspace_write","status":"completed",
+            "toolReceipt":{"verified":true}
+        })).unwrap();
+        let running=claim(&state,&assignment).unwrap();
+        assert!(settle(&state,&running,&node,
+            &json!({"completedOperationIds":["write"]})).is_err());
+        let _=block(&state,&running,"stale evidence").unwrap();
         drop(state);let _=std::fs::remove_dir_all(dir);
     }
     #[test]

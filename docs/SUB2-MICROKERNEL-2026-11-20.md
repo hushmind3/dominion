@@ -299,3 +299,7 @@ ProgramIR `delegate`에서 최대 4개의 `fallbackAgentIds`를 지정할 수 �
 ## 2026-11-21 P0: 중복 standalone 실행 루프 제거
 
 `dominion-agent-loop::run`에서 직접 모델→도구 반복 실행하던 약 3KB 구간을 `dominion-turn-core::agent_loop::Harness::drive_ports`로 물리 이관했습니다. 기존 외부 Rust SDK `RunResult`는 Core 결과 타입을 재수출해 유지하고, 별도 알고리즘은 전략 구현만 보유합니다. 네이티브 Chat은 동일 Harness의 요청·응답 준비·배치 승인 인터페이스를 이미 사용하며, 채팅 스트리밍과 도구 영속 기록은 호스트 어댑터로 유지합니다.
+
+### P0: Worker 영수증의 새 실행 귀속 검증
+
+`task_team_work::settle`은 SQLite의 실제 `running` 소유권과 노드 ID·Worker를 재조회합니다. 도구 영수증이 **해당 Worker claim 시각 이후** 생성됐는지 확인하며 이전 재시도 또는 다른 Agent의 원격 위임 영수증은 해당 완료의 근거가 될 수 없습니다. 같은 호출 ID 접두사만으로 오래된 성공을 재활용하는 위험을 차단하는 회귀 테스트를 추가했습니다.
