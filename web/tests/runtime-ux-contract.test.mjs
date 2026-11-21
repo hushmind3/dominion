@@ -482,3 +482,11 @@ test('idempotency checks only scoped SQLite metadata, never materializes entire 
  assert.match(runtime,/state\.store\.has_owner_turn_key\(&session_id,client_turn_id\)\?/)
  assert.doesNotMatch(runtime,/state\.store\.messages\(&session_id\)\.iter\(\)\.any\(\|message\|/)
 })
+
+test('interrupted assistant output remains readable and copyable',()=>{
+ const chat=source('src/pages/Chat.tsx')
+ assert.match(chat,/중단된 응답 · 미저장/)
+ assert.match(chat,/!busy&&!savedMessageId&&live&&<Button/)
+ assert.match(chat,/aria-label="중단된 답변 복사"/)
+ assert.match(chat,/navigator\.clipboard\.writeText\(live\)/)
+})
