@@ -4,7 +4,7 @@ import {post} from '../../api'
 import {Button, TextInput} from '../../components/Primitives'
 import {Action, Notice, Panel, StateTag, Subheading, useRemote} from '../../components/UI'
 import {formatDateTime, t} from '../../i18n'
-type Backup = {name: string; path: string; bytes: number; encrypted: boolean; modifiedAt?: string}
+type Backup = {name: string; path: string; bytes: number; encrypted: boolean; attachmentsIncluded?: boolean; modifiedAt?: string}
 type KeyStatus = {activeVersion?: number; versions?: number[]; error?: string}
 type SecretStatus = {previousKeys?: number; oldKeyFiles?: string[]; error?: string}
 type MaintenanceState = {maintenance: boolean}
@@ -29,6 +29,7 @@ export function BackupPanel() {
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [attachmentWarning,setAttachmentWarning] = useState('')
   const [selected, setSelected] = useState('')
   const [confirm, setConfirm] = useState(false)
   const [keepOld, setKeepOld] = useState(false)
@@ -53,8 +54,12 @@ export function BackupPanel() {
   }
 
   const createBackup = () => run('create', async () => {
-    const result = await post<{ok: boolean; bytes: number; path: string; remote?: {attempted?: boolean; uploaded?: boolean; verified?: boolean; error?: string}}>('/api/system/backup', {})
+    setAttachmentWarning('')
+    const result = await post<{ok: boolean; bytes: number; path: string; attachmentsIncluded?:boolean; currentAttachmentCount?:number; remote?: {attempted?: boolean; uploaded?: boolean; verified?: boolean; error?: string}}>('/api/system/backup', {})
     await reload()
+    if(result.attachmentsIncluded===false && (result.currentAttachmentCount??0)>0){
+      setAttachmentWarning(t('ops.backup.attachmentsCurrentCount',{count:result.currentAttachmentCount}))
+    }
     const remote = result.remote
     setMessage(
       remote?.attempted
@@ -95,6 +100,10 @@ export function BackupPanel() {
   return <Panel className="min-w-0 p-5 xl:col-span-2">
     <Subheading title={t('ops.backup')} extra={<Archive size={19}/>}/>
     <p>{t('ops.backup.desc')}</p>
+    <div className="mt-2 flex items-start gap-2 rounded-xl border border-[#EED9CC] bg-[#F7E8E1] p-3 text-[11px] leading-5 text-[#7C5A48]" role="note">
+      <TriangleAlert size={15} className="mt-0.5 shrink-0"/>
+      <span>{t('ops.backup.attachmentsExcluded')}</span>
+    </div>
     <div className="mt-3 flex flex-wrap items-center gap-2">
       <Action onClick={createBackup} disabled={Boolean(busy)}>
         {busy === 'create' ? <RefreshCw size={16} className="animate-spin"/> : <Archive size={16}/>} {busy === 'create' ? t('ops.backup.creating') : t('ops.backup.create')}
@@ -135,6 +144,7 @@ export function BackupPanel() {
     </label>
     {error && <Notice message={error}/>}
     {message && <div className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{message}</div>}
+    {attachmentWarning && <Notice message={attachmentWarning}/>} 
     <div className="mt-5 border-t border-[#EFE9DF] pt-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <strong className="text-[13px] text-[#3A342D]">{t('ops.backup.files')}</strong>
@@ -143,7 +153,7 @@ export function BackupPanel() {
       {backups.value.length ? <div className="mt-2 grid gap-2">
         {backups.value.map(backup => <label key={backup.name} className={'flex min-w-0 flex-wrap items-center gap-3 rounded-xl border px-3 py-2 text-[11px] ' + (selected === backup.name ? 'border-[#C7B18F] bg-[#F2EADF]' : 'border-[#EFE9DF] bg-white')}>
           <TextInput type="radio" name="backup" disabled={!backup.encrypted} checked={selected === backup.name} onChange={() => { setSelected(backup.name); setConfirm(false) }}/>
-          <span className="min-w-0 flex-1"><strong className="block break-all text-[11px] text-[#3A342D]">{backup.name}</strong><small className="text-[10px] text-[#9C9388]">{formatBytes(backup.bytes)} · {backup.modifiedAt ? formatDateTime(backup.modifiedAt) : ''} · {backup.encrypted ? t('ops.backup.encrypted') : t('ops.backup.plain')}</small></span>
+          <span className="min-w-0 flex-1"><strong className="block break-all text-[11px] text-[#3A342D]">{backup.name}</strong><small className="text-[10px] text-[#9C9388]">{formatBytes(backup.bytes)} · {backup.modifiedAt ? formatDateTime(backup.modifiedAt) : ''} · {backup.encrypted ? t('ops.backup.encrypted') : t('ops.backup.plain')} · {backup.attachmentsIncluded===false ? t('ops.backup.filesNotIncluded'):''}</small></span>
         </label>)}
       </div> : <p className="mt-2 text-[11px] text-[#9C9388]">{t('ops.backup.noFiles')}</p>}
       <div className="mt-3 rounded-xl border border-[#EED9CC] bg-[#F7E8E1] p-3">
