@@ -1736,6 +1736,14 @@ impl Store {
     pub fn replace_database(&self, bytes: &[u8]) -> Result<(), String> {
         let temp = self.path.with_extension("restore.tmp");
         std::fs::write(&temp, bytes).map_err(|error| error.to_string())?;
+        self.replace_database_from_staged(&temp, true)
+    }
+
+    pub fn replace_database_from_file(&self, source: &Path) -> Result<(), String> {
+        self.replace_database_from_staged(source, false)
+    }
+
+    fn replace_database_from_staged(&self, temp: &Path, remove_staged: bool) -> Result<(), String> {
         let mut guard = self.conn.lock().map_err(|error| error.to_string())?;
         let _ = guard.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
         // Close the old handle before copying over the database file.
@@ -1744,8 +1752,10 @@ impl Store {
         let shm = PathBuf::from(format!("{}-shm", self.path.display()));
         let _ = std::fs::remove_file(wal);
         let _ = std::fs::remove_file(shm);
-        std::fs::copy(&temp, &self.path).map_err(|error| error.to_string())?;
-        let _ = std::fs::remove_file(&temp);
+        std::fs::copy(temp, &self.path).map_err(|error| error.to_string())?;
+        if remove_staged {
+            let _ = std::fs::remove_file(temp);
+        }
         *guard = Connection::open(&self.path).map_err(|error| error.to_string())?;
         let _ = guard.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;",

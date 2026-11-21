@@ -44,17 +44,39 @@ pub fn verify_snapshot_secrets(
 ) -> Result<(), String> {
     let path = temp_dir.join(format!(".restore-verify-{}.sqlite", uuid::Uuid::new_v4()));
     std::fs::write(&path, database).map_err(|error| error.to_string())?;
-    let result = (|| -> Result<(), String> {
-        let store = crate::db::Store::open(&path).map_err(|error| error.to_string())?;
-        for (name, sealed) in store.all_secrets() {
-            if crate::vault::Vault::open_secret_with_key(key, &sealed).is_none() {
-                return Err(format!("secret {name} cannot be decrypted by the snapshot key"));
-            }
-        }
-        Ok(())
-    })();
+    let result = verify_snapshot_secrets_file(key, &path);
     let _ = std::fs::remove_file(&path);
     result
+}
+
+pub fn verify_snapshot_secrets_file(
+    key: &[u8; 32],
+    database: &std::path::Path,
+) -> Result<(), String> {
+    let conn = rusqlite::Connection::open_with_flags(
+        database,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    ).map_err(|error| error.to_string())?;
+    let has_secrets: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='secrets')",
+        [],
+        |row| row.get(0),
+    ).map_err(|error| error.to_string())?;
+    if !has_secrets {
+        return Ok(());
+    }
+    let mut statement = conn.prepare("SELECT name, value FROM secrets ORDER BY name")
+        .map_err(|error| error.to_string())?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    }).map_err(|error| error.to_string())?;
+    for row in rows {
+        let (name, sealed) = row.map_err(|error| error.to_string())?;
+        if crate::vault::Vault::open_secret_with_key(key, &sealed).is_none() {
+            return Err(format!("secret {name} cannot be decrypted by the snapshot key"));
+        }
+    }
+    Ok(())
 }
 
 pub fn rotate(state: &AppState, keep_old: bool) -> Result<RotationReport, String> {

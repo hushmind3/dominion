@@ -6,11 +6,24 @@ use axum::{
     response::sse::{Event, KeepAlive, Sse},
     Json,
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, io::{Read, Seek, SeekFrom}, path::PathBuf};
 use serde_json::{json,Value};
 use std::time::Duration;
 use std::convert::Infallible;
 use futures_util::Stream;
+
+struct RemoveFileOnDrop(PathBuf);
+
+impl Drop for RemoveFileOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+        for suffix in ["-wal", "-shm"] {
+            let mut sidecar = self.0.as_os_str().to_os_string();
+            sidecar.push(suffix);
+            let _ = std::fs::remove_file(PathBuf::from(sidecar));
+        }
+    }
+}
 
 pub async fn health() -> Json<Value> {
     Json(json!({
@@ -431,8 +444,23 @@ pub async fn restore_backup(
         )
             .into_response();
     }
-    let sealed = match std::fs::read(&canonical) {
-        Ok(bytes) => bytes,
+    let restore_id = uuid::Uuid::new_v4();
+    let container_path = directory.join(format!(".restore-container-{restore_id}.tmp"));
+    let _container_cleanup = RemoveFileOnDrop(container_path.clone());
+    let container_len = match crate::engine::backup_keys::decrypt_backup_file_to(
+        &state, &canonical, &container_path,
+    ) {
+        Ok(length) => length,
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(json!({"error":"이 키로 백업을 복호화할 수 없습니다."})),
+            )
+                .into_response()
+        }
+    };
+    let mut container = match std::fs::File::open(&container_path) {
+        Ok(file) => file,
         Err(error) => {
             return (
                 axum::http::StatusCode::BAD_REQUEST,
@@ -441,27 +469,65 @@ pub async fn restore_backup(
                 .into_response()
         }
     };
-    let Some(decoded) = crate::engine::backup_keys::decrypt_backup(&state, &sealed) else {
+    let mut embedded_key = None;
+    let mut database_offset = 0u64;
+    if container_len >= 41 {
+        let mut envelope = [0u8; 41];
+        if container.read_exact(&mut envelope).is_err() {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(json!({"error":"백업 데이터 헤더가 잘렸습니다."})),
+            )
+                .into_response();
+        }
+        if &envelope[..9] == b"DOMVAULT1" {
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&envelope[9..]);
+            embedded_key = Some(key);
+            database_offset = 41;
+        }
+    }
+    let database_path = directory.join(format!(".restore-database-{restore_id}.tmp"));
+    let _database_cleanup = RemoveFileOnDrop(database_path.clone());
+    let mut database = match std::fs::File::create(&database_path) {
+        Ok(file) => file,
+        Err(error) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": error.to_string()})),
+            )
+                .into_response()
+        }
+    };
+    if let Err(error) = container.seek(SeekFrom::Start(database_offset))
+        .and_then(|_| std::io::copy(&mut container, &mut database).map(|_| ()))
+        .and_then(|_| database.sync_all())
+    {
         return (
-            axum::http::StatusCode::BAD_REQUEST,
-            Json(json!({"error":"이 키로 백업을 복호화할 수 없습니다."})),
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": error.to_string()})),
         )
             .into_response();
-    };
-    let (bytes, embedded_key) = if decoded.len() > 41 && decoded.starts_with(b"DOMVAULT1") {
-        let mut key = [0u8; 32];
-        key.copy_from_slice(&decoded[9..41]);
-        (decoded[41..].to_vec(), Some(key))
-    } else {
-        (decoded, None)
-    };
+    }
+    drop(database);
+    drop(container);
+    let mut database_header = [0u8; 16];
+    if std::fs::File::open(&database_path)
+        .and_then(|mut file| file.read_exact(&mut database_header))
+        .is_err()
+        || &database_header != b"SQLite format 3\0"
+    {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(json!({"error":"복구 파일이 SQLite 백업 형식이 아닙니다."})),
+        )
+            .into_response();
+    }
     let target_key = embedded_key.unwrap_or_else(|| state.vault.primary_key());
     // Verify every sealed secret in the snapshot is decryptable with the key
     // we would install. Abort before touching the live database/key otherwise.
-    if let Err(error) = crate::engine::vault_rotation::verify_snapshot_secrets(
-        &target_key,
-        &bytes,
-        &state.config.data_dir,
+    if let Err(error) = crate::engine::vault_rotation::verify_snapshot_secrets_file(
+        &target_key, &database_path,
     ) {
         return (
             axum::http::StatusCode::CONFLICT,
@@ -480,7 +546,7 @@ pub async fn restore_backup(
                 .into_response();
         }
     }
-    if let Err(error) = state.store.replace_database(&bytes) {
+    if let Err(error) = state.store.replace_database_from_file(&database_path) {
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": error})),

@@ -206,6 +206,47 @@ impl KeyRing {
         Ok(read == prefix.len() && (&prefix == MAGIC || &prefix == STREAM_MAGIC))
     }
 
+    pub fn is_stream_file(path: &Path) -> std::io::Result<bool> {
+        let mut file = std::fs::File::open(path)?;
+        let mut prefix = [0u8; STREAM_MAGIC.len()];
+        let mut read = 0;
+        while read < prefix.len() {
+            let count = file.read(&mut prefix[read..])?;
+            if count == 0 {
+                break;
+            }
+            read += count;
+        }
+        Ok(read == prefix.len() && &prefix == STREAM_MAGIC)
+    }
+
+    pub fn decrypt_stream_file_to(&self, source: &Path, target: &Path) -> Result<u64, String> {
+        let mut reader = std::fs::File::open(source).map_err(|error| error.to_string())?;
+        let metadata = reader.metadata().map_err(|error| error.to_string())?;
+        if !metadata.is_file() {
+            return Err("backup source is not a regular file".into());
+        }
+        let mut writer = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(target)
+            .map_err(|error| error.to_string())?;
+        let plaintext_len = match self.decrypt_stream_reader(&mut reader, metadata.len(), &mut writer) {
+            Ok(length) => length,
+            Err(error) => {
+                drop(writer);
+                let _ = std::fs::remove_file(target);
+                return Err(error);
+            }
+        };
+        if let Err(error) = writer.sync_all() {
+            drop(writer);
+            let _ = std::fs::remove_file(target);
+            return Err(error.to_string());
+        }
+        Ok(plaintext_len)
+    }
+
     pub fn decrypt(&self, data: &[u8]) -> Option<Vec<u8>> {
         if data.starts_with(STREAM_MAGIC) {
             return self.decrypt_stream(data);
@@ -220,55 +261,73 @@ impl KeyRing {
     }
 
     fn decrypt_stream(&self, data: &[u8]) -> Option<Vec<u8>> {
-        if data.len() < STREAM_HEADER_BYTES {
-            return None;
+        let mut reader = std::io::Cursor::new(data);
+        let mut plaintext = Vec::new();
+        self.decrypt_stream_reader(&mut reader, data.len() as u64, &mut plaintext).ok()?;
+        Some(plaintext)
+    }
+
+    fn decrypt_stream_reader(
+        &self,
+        reader: &mut impl Read,
+        sealed_len: u64,
+        writer: &mut impl Write,
+    ) -> Result<u64, String> {
+        let mut header = [0u8; STREAM_HEADER_BYTES];
+        reader.read_exact(&mut header).map_err(|error| error.to_string())?;
+        if &header[..STREAM_MAGIC.len()] != STREAM_MAGIC {
+            return Err("invalid streaming backup header".into());
         }
-        let version = u32::from_le_bytes(data[7..11].try_into().ok()?);
-        let key = self.keys.get(&version)?;
-        let nonce = chacha20poly1305::aead::generic_array::GenericArray::clone_from_slice(&data[11..18]);
-        let plaintext_len = u64::from_le_bytes(data[18..26].try_into().ok()?);
+        let version = u32::from_le_bytes(header[7..11].try_into().map_err(|_| "invalid key version")?);
+        let key = self.keys.get(&version).ok_or("backup key version is missing")?;
+        let nonce = chacha20poly1305::aead::generic_array::GenericArray::clone_from_slice(&header[11..18]);
+        let plaintext_len = u64::from_le_bytes(header[18..26].try_into().map_err(|_| "invalid backup length")?);
         let chunk_count = if plaintext_len == 0 {
             1
         } else {
             (plaintext_len - 1) / STREAM_CHUNK_BYTES as u64 + 1
         };
         if chunk_count > u32::MAX as u64 {
-            return None;
+            return Err("backup exceeds the streaming decryption limit".into());
         }
-        let capacity = usize::try_from(plaintext_len).ok()?;
-        let tag_bytes = (chunk_count as usize).checked_mul(16)?;
-        let expected_len = STREAM_HEADER_BYTES.checked_add(capacity)?.checked_add(tag_bytes)?;
-        if data.len() != expected_len {
-            return None;
+        let tag_bytes = chunk_count.checked_mul(16).ok_or("backup size overflow")?;
+        let expected_len = (STREAM_HEADER_BYTES as u64)
+            .checked_add(plaintext_len).and_then(|len| len.checked_add(tag_bytes))
+            .ok_or("backup size overflow")?;
+        if sealed_len != expected_len {
+            return Err("streaming backup length does not match its header".into());
         }
-        let header = &data[..STREAM_HEADER_BYTES];
         let mut decryptor = DecryptorBE32::from_aead(Self::cipher(key), &nonce);
-        let mut plaintext = Vec::with_capacity(capacity);
         let mut remaining = plaintext_len;
-        let mut offset = STREAM_HEADER_BYTES;
         while remaining > STREAM_CHUNK_BYTES as u64 {
             let length = STREAM_CHUNK_BYTES;
-            let encrypted_len = length.checked_add(16)?;
-            let encrypted = &data[offset..offset.checked_add(encrypted_len)?];
-            let payload = Payload { msg: encrypted, aad: header };
-            let chunk = decryptor.decrypt_next(payload).ok()?;
+            let encrypted_len = length.checked_add(16).ok_or("backup size overflow")?;
+            let mut encrypted = vec![0u8; encrypted_len];
+            reader.read_exact(&mut encrypted).map_err(|error| error.to_string())?;
+            let chunk = decryptor.decrypt_next(Payload { msg: &encrypted, aad: &header })
+                .map_err(|_| "backup authentication failed".to_string())?;
             if chunk.len() != length {
-                return None;
+                return Err("invalid decrypted backup chunk length".into());
             }
-            plaintext.extend_from_slice(&chunk);
+            writer.write_all(&chunk).map_err(|error| error.to_string())?;
             remaining -= length as u64;
-            offset += encrypted_len;
         }
         let length = remaining as usize;
-        let encrypted_len = length.checked_add(16)?;
-        let encrypted = &data[offset..offset.checked_add(encrypted_len)?];
-        let chunk = decryptor.decrypt_last(Payload { msg: encrypted, aad: header }).ok()?;
+        let encrypted_len = length.checked_add(16).ok_or("backup size overflow")?;
+        let mut encrypted = vec![0u8; encrypted_len];
+        reader.read_exact(&mut encrypted).map_err(|error| error.to_string())?;
+        let chunk = decryptor.decrypt_last(Payload { msg: &encrypted, aad: &header })
+            .map_err(|_| "backup authentication failed".to_string())?;
         if chunk.len() != length {
-            return None;
+            return Err("invalid decrypted backup chunk length".into());
         }
-        plaintext.extend_from_slice(&chunk);
-        offset += encrypted_len;
-        (offset == data.len()).then_some(plaintext)
+        writer.write_all(&chunk).map_err(|error| error.to_string())?;
+        let mut extra = [0u8; 1];
+        if reader.read(&mut extra).map_err(|error| error.to_string())? != 0 {
+            return Err("streaming backup has trailing data".into());
+        }
+        writer.flush().map_err(|error| error.to_string())?;
+        Ok(plaintext_len)
     }
 }
 
@@ -366,6 +425,25 @@ pub fn decrypt_backup(state: &AppState, sealed: &[u8]) -> Option<Vec<u8>> {
         return ring.decrypt(sealed);
     }
     state.vault.open_bytes(sealed)
+}
+
+pub fn decrypt_backup_file_to(
+    state: &AppState,
+    source: &Path,
+    target: &Path,
+) -> Result<u64, String> {
+    let ring = KeyRing::load_or_create(&state.config.data_dir)?;
+    if KeyRing::is_stream_file(source).map_err(|error| error.to_string())? {
+        return ring.decrypt_stream_file_to(source, target);
+    }
+    let sealed = std::fs::read(source).map_err(|error| error.to_string())?;
+    let plaintext = if KeyRing::is_versioned(&sealed) {
+        ring.decrypt(&sealed)
+    } else {
+        state.vault.open_bytes(&sealed)
+    }.ok_or("backup authentication failed")?;
+    std::fs::write(target, &plaintext).map_err(|error| error.to_string())?;
+    Ok(plaintext.len() as u64)
 }
 
 pub fn status(state: &AppState) -> Value {
