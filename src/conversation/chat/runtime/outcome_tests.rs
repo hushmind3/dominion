@@ -554,7 +554,9 @@
         assert_eq!(actual["kernelState"]["modelInFlight"],true);
         assert_eq!(actual["kernelState"]["chargedTokens"],54,
             "a lost HTTP observation must not erase already-accounted tokens");
+        assert_eq!(actual["tokens"],54,"public usage and kernel ledger must agree");
         assert_eq!(actual["kernelState"]["modelCalls"],1);
+        assert_eq!(actual["modelCalls"],1,"public paid call count cannot be reset");
         assert_eq!(actual["ownerCancellationRequested"],true);
         assert_ne!(actual["taskOutcome"],"succeeded");
         let _=std::fs::remove_dir_all(dir);
