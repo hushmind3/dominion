@@ -98,3 +98,19 @@ committed execution/message/approval/SDK record. This is additive: public
 SSE event fields and existing room/job statuses are not renamed.
 `RunLifecycle` intentionally excludes room presentation states like
 `idle` or `silence`. Existing `seq` remains the durable replay position.
+
+## Versioned strategy decisions (2026-11-21)
+
+The mandatory Harness still calls one `TurnStrategyPort`. The product
+strategy implementation remains optional. This contract exposes explicit
+Rust types with `schemaVersion:1` for:
+`PlanningDecision`, `DiscoveryDecision`, `DecompositionDecision`,
+and `ProcedureDecision`. For compatibility, the existing strategy
+functions still implement their legacy return shapes behind default typed
+adapters. No new JSON-defined executable module is accepted.
+
+`DecompositionDecision` validates the strategy's subtask list before handing
+it to the runtime (objects only, maximum 64). It retains the complete
+compatible payload for existing record consumers. `ProcedureDecision`
+likewise restricts optional procedures to 32 object candidates. None of
+these types grants approval, bypasses sandbox or declares task verification.

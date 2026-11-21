@@ -164,14 +164,18 @@ const addonIndex=readFileSync(path.join(root,'src/addons/mod.rs'),'utf8')
 const strategyPort=readFileSync(path.join(root,'crates/dominion-core/src/strategy.rs'),'utf8')
 const strategyOwner=readFileSync(path.join(root,'src/addons/strategies/turn_policy.rs'),'utf8')
 if(!strategyPort.includes('pub trait TurnStrategyPort')||
+   !strategyPort.includes('pub struct DiscoveryDecision')||
+   !strategyPort.includes('pub struct DecompositionDecision')||
+   !strategyPort.includes('pub struct ProcedureDecision')||
+   !runtime.includes('intelligence.procedure_decision(')||
    !strategyPort.includes('pub struct PlanningDecision')||
    !runtime.includes('intelligence.planning_decision(')||
    !strategyOwner.includes('impl TurnStrategyPort for ScopedAlgorithms')||
    !runtime.includes('crate::addons::runtime_hooks::strategy_port(')||
    runtime.includes('ScopedAlgorithms::new(')||
    !runtime.includes('intelligence.execution_limits(')||
-   !runtime.includes('intelligence.decompose(')||
-   !runtime.includes('intelligence.tool_discovery(')||
+   !runtime.includes('intelligence.decomposition_decision(')||
+   !runtime.includes('intelligence.discovery_decision(')||
    !runtime.includes('intelligence.planning_decision(')||
    runtime.includes('crate::engine::decompose::')||
    runtime.includes('"execution.budget"')||

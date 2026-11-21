@@ -556,7 +556,8 @@ async fn run_turn_body(
                 select_room_tools(tool_definitions, &request.input, &recent, acceptance.is_some());
         }
     }
-    let discovery=intelligence.tool_discovery(is_room);
+    let discovery_decision=intelligence.discovery_decision(is_room);
+    let discovery=discovery_decision.selection;
     if !is_room {
         tool_definitions = select_tool_definitions(tool_definitions, &request.input, &discovery);
     }
@@ -827,7 +828,9 @@ async fn run_turn_body(
     // An optional algorithm supplies decomposition. Native verification still
     // owns every acceptance check even when strategies are disabled.
     let frozen_checks=acceptance.as_ref().map(|(_,checks)|checks).unwrap_or(&Value::Null);
-    let decomposition=intelligence.decompose(task_input(&session,&request.input),frozen_checks);
+    let typed_decomposition=intelligence.decomposition_decision(
+        task_input(&session,&request.input),frozen_checks);
+    let decomposition=typed_decomposition.payload;
     let subtask_count = decomposition["subtasks"]
         .as_array()
         .map(Vec::len)
@@ -932,10 +935,12 @@ async fn run_turn_body(
         "digest": crate::engine::memory::stable_id(&[&final_system]),
         "chars": final_system.chars().count(),
     }));
-    let harness_plan=intelligence.harness_plan(&strategy_candidates,&request.input);
+    let typed_procedure=intelligence.procedure_decision(
+        &strategy_candidates,&request.input);
     context_items.push(json!({
         "kind": "harness_plan",
-        "strategies": harness_plan,
+        "schemaVersion":typed_procedure.schema_version,
+        "strategies": typed_procedure.strategies,
         "note": "harness output is recorded as execution_operation evidence after this freeze",
     }));
     let model_config = json!({
