@@ -416,12 +416,12 @@ mod tests{
     fn qwen_cli_requires_read_only_plan_mode_and_project_scoped_resume(){
         let args=qwen_arguments("Review project",Some("123e4567-e89b-12d3-a456-426614174000"),
             Some("qwen3-coder-plus"));
-        assert!(args.windows(2).any(|pair|pair==["--approval-mode","plan"]));
+        assert!(args.windows(2).any(|pair|pair[0]=="--approval-mode"&&pair[1]=="plan"));
         assert!(args.contains(&"--safe-mode".to_string()));
         assert!(!args.contains(&"--yolo".to_string()));
-        assert!(args.windows(2).any(|pair|pair==["--resume",
-            "123e4567-e89b-12d3-a456-426614174000"]));
-        assert!(args.windows(2).any(|pair|pair==["--model","qwen3-coder-plus"]));
+        assert!(args.windows(2).any(|pair|pair[0]=="--resume"
+            &&pair[1]=="123e4567-e89b-12d3-a456-426614174000"));
+        assert!(args.windows(2).any(|pair|pair[0]=="--model"&&pair[1]=="qwen3-coder-plus"));
     }
     #[test]
     fn qwen_output_must_end_in_successful_result_not_plausible_chat_text(){
