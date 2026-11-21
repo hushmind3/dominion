@@ -25,8 +25,9 @@ python3 tools/dominion_autopilot.py --repo /Users/gim-yeonsu/dominion-rust --rou
 2. 저장소 **밖**의 `dominion-autopilot-state/worktrees/<round>/...`에 브랜치별 **분리된 detached worktree**를 만듭니다. 기본적으로 4개가 동시에 실행됩니다.
 3. 개발자는 `codex exec --sandbox workspace-write --ephemeral`로 자기 worktree에서 수정합니다. 실패·미커밋·민감 파일 수정이면 업로드를 차단하고 결과를 남깁니다. `--publish` 없이는 푸시하지 않습니다. 푸시 충돌 시 강제 푸시하지 않습니다.
 4. 심판은 별도 읽기 전용 worktree에서 `codex exec --sandbox read-only --ephemeral`로 증거를 검토합니다. CI 성공 자체에는 가점하지 않으며 측정하지 않은 실사용 성능은 추정하지 않습니다.
-5. `latest_feedback.json`에 저장된 브랜치별 심판 의견을 다음 회차 프롬프트에 자동 전달합니다. 사용자에게 4번씩 피드백을 복사하라고 하지 않습니다.
-6. `runs/<round>/<branch>/result.json`, `agent.log`, `judge/report.json`, `latest_round.json`을 보관해 상태를 추적할 수 있습니다.
+5. 푸시하지 않은 검증된 로컬 커밋도 다음 회차의 시작점으로 이어갑니다. 원격 브랜치가 그 사이 서로 다른 방향으로 진행되면 자동으로 버리지 않고 해당 후보를 검토 대기로 둡니다.
+6. `latest_feedback.json`에 저장된 브랜치별 심판 의견을 다음 회차 프롬프트에 자동 전달합니다. 사용자에게 4번씩 피드백을 복사하라고 하지 않습니다.
+7. `runs/<round>/<branch>/result.json`, `agent.log`, `judge/report.json`, `latest_round.json`을 보관해 상태를 추적할 수 있습니다.
 
 **실행 결과를 '채택'으로 오인하지 않습니다.** 로컬 개발 커밋과 GitHub의 실제 푸시, CI, 유료 실모델 E2E는 서로 다른 단계입니다. 심판은 제품 파일을 수정하지 않으며 후보 간 병합이나 main 채용도 수행하지 않습니다.
 
