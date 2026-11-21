@@ -147,7 +147,7 @@ impl AppState {
         self.cancel_wakeup.notify_waiters();
         // Cancellation survives a restart and cannot be cleared for old queued
         // work merely because the user starts a fresh foreground turn.
-        for job in self.store.all("job") {
+        for job in self.store.active_jobs().unwrap_or_default() {
             let matches = [
                 "/sessionId",
                 "/input/sessionId",

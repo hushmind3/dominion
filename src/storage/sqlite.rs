@@ -583,6 +583,17 @@ impl Store {
         rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 
+    /// Lightweight status polling should count indexed active rows without
+    /// decoding all queued/running job documents into memory.
+    pub fn active_job_count(&self)->usize{
+        let conn=self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM records INDEXED BY idx_job_active_status
+             WHERE kind='job' AND json_extract(data,'$.status') IN ('queued','running')",
+            [],|row|row.get::<_,i64>(0),
+        ).unwrap_or(0).max(0) as usize
+    }
+
     /// One indexed startup lookup for unresolved tool effects, with a legacy
     /// run->session fallback. The prior recovery loop scanned the entire
     /// operation ledger once per running job and fetched each execution.
