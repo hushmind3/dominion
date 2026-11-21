@@ -1,4 +1,4 @@
-import {useEffect,useState} from 'react'
+import {useEffect,useRef,useState} from 'react'
 import {Activity,ChevronDown,ChevronRight,LoaderCircle,RefreshCw} from 'lucide-react'
 import {get} from '../api'
 import {useLocale} from '../i18n'
@@ -22,12 +22,27 @@ export function RunEventTimeline({executionId}:{executionId:string}){
  const [truncated,setTruncated]=useState(false)
  const [loading,setLoading]=useState(false)
  const [error,setError]=useState('')
- useEffect(()=>{setOpen(false);setRows([]);setCursor(0);setMore(false);setTruncated(false);setError('')},[executionId])
+ const epoch=useRef(0)
+ const inFlight=useRef<AbortController|null>(null)
+ useEffect(()=>{
+  ++epoch.current
+  inFlight.current?.abort()
+  inFlight.current=null
+  setOpen(false);setRows([]);setCursor(0);setMore(false);setTruncated(false);setError('');setLoading(false)
+  return ()=>{++epoch.current;inFlight.current?.abort();inFlight.current=null}
+ },[executionId])
  const load=async(reset=false)=>{
-  if(loading)return
+  if(inFlight.current)return
+  const token=epoch.current
+  const controller=new AbortController()
+  inFlight.current=controller
   setLoading(true);setError('')
   try{
-   const page=await get<EventPage>('/api/executions/'+encodeURIComponent(executionId)+'/events?limit=80&after='+(reset?0:cursor))
+   const page=await get<EventPage>(
+    '/api/executions/'+encodeURIComponent(executionId)+'/events?limit=80&after='+(reset?0:cursor),
+    controller.signal
+   )
+   if(controller.signal.aborted||token!==epoch.current)return
    setRows(previous=>{
     const merged=reset?[]:previous
     const seen=new Set(merged.map(event=>event.seq))
@@ -35,9 +50,15 @@ export function RunEventTimeline({executionId}:{executionId:string}){
    })
    setCursor(page.nextAfter)
    setMore(page.hasMore)
-   setTruncated(page.historyTruncated)
-  }catch(e){setError((e as Error).message)}
-  finally{setLoading(false)}
+   setTruncated(previous=>reset?page.historyTruncated:previous||page.historyTruncated)
+  }catch(e){
+   if(!controller.signal.aborted&&token===epoch.current)setError((e as Error).message)
+  }finally{
+   if(inFlight.current===controller){
+    inFlight.current=null
+    if(token===epoch.current)setLoading(false)
+   }
+  }
  }
  useEffect(()=>{
   if(!open)return

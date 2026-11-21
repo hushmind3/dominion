@@ -1,4 +1,4 @@
-import {useEffect, useState} from 'react'
+import {useEffect, useRef, useState} from 'react'
 import {Check, Play, RefreshCw, ShieldAlert, Square, Sparkles} from 'lucide-react'
 import {get, post, type Provider} from '../api'
 import {useLocale} from '../i18n'
@@ -10,11 +10,12 @@ type SdkRun = {
  id: string; status: string; instruction: string; answer?: string; error?: string; createdAt?:string; model?:string; sessionId?:string; runRef?:{executionId:string}; readOnly?:boolean;
  checkpoint?: {
   state?: SdkState; rounds?: number; toolCalls?: number; answer?: string; executionId?:string;
-  usage?: {prompt_tokens:number; completion_tokens:number; cached_prompt_tokens:number};
+  usage?: {prompt_tokens?:number|null; completion_tokens?:number|null; cached_prompt_tokens?:number|null; estimated?:boolean};
   pendingCall?: {id:string; name:string; arguments:unknown} | null;
   events?: {kind:string; detail:unknown}[];
  } | null
 }
+const fmtTokens=(value?:number|null)=>typeof value==='number'&&Number.isFinite(value)?value.toLocaleString():'—'
 const running = new Set(['queued', 'running'])
 const stopPolling = new Set(['completed','failed','cancelled','exhausted','denied','awaiting_approval','interrupted','in_doubt'])
 const stateNames:Record<string,[string,string]>={
@@ -37,6 +38,17 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [historyOpen,setHistoryOpen]=useState(false)
  const [steering,setSteering]=useState('')
  const [notice,setNotice]=useState('')
+ const selectionGeneration=useRef(0)
+ const selectHistory=async(id:string)=>{
+  const selected=++selectionGeneration.current
+  setError('');setNotice('');setSteering('')
+  try{
+   const current=await get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(id)}`)
+   if(selected===selectionGeneration.current)setRun(current)
+  }catch(e){
+   if(selected===selectionGeneration.current)setError((e as Error).message)
+  }
+ }
  const [busy,setBusy]=useState(false)
  const [error,setError]=useState('')
  const refreshHistory=async()=>{const list=await get<SdkRun[]>('/api/sdk/runs')
@@ -71,6 +83,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     instruction:instruction.trim(),providerId:providerId||undefined,
     verifyCommand:verification.trim()||undefined
    })
+   ++selectionGeneration.current
    setRun(created);setHistoryOpen(false);setNotice('')
    void refreshHistory().catch(()=>{})
   }catch(e){setError((e as Error).message)}
@@ -130,7 +143,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    {historyOpen&&<div className="mt-2 max-h-44 space-y-1 overflow-y-auto">
     <button type="button" className="mb-1 text-[10px] underline" onClick={()=>void refreshHistory().catch(e=>setError((e as Error).message))}>{en?'Refresh history':'목록 새로고침'}</button>
     {history.map(item=><button type="button" key={item.id}
-      aria-pressed={run?.id===item.id} onClick={()=>{setError('');setNotice('');setSteering('');void get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(item.id)}`).then(setRun).catch(e=>setError((e as Error).message))}}
+      aria-pressed={run?.id===item.id} onClick={()=>void selectHistory(item.id)}
       className={'flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-[11px] '+(run?.id===item.id?'bg-[#F7E8E1]':'bg-[#FAF7F1] hover:bg-[#F3EEE5]')}>
       <span className="min-w-0 flex-1 truncate">{item.instruction||item.id}</span>
       <span className="shrink-0 text-[#8A8176]">{item.status}</span>
@@ -173,7 +186,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      <strong className="text-[12px]">{en?stateNames[status]?.[1]||status:stateNames[status]?.[0]||status}</strong>
      <span className="text-[11px] text-[#82796D]">{run.checkpoint?.rounds??0} {en?'rounds':'회 판단'} · {run.checkpoint?.toolCalls??0} {en?'actions':'회 도구 실행'}</span>
     {run.checkpoint?.usage&&<p className="mt-2 text-[11px] text-[#82796D]">
-     {en?'Provider-reported tokens':'제공자 보고 토큰'}: {run.checkpoint.usage.prompt_tokens.toLocaleString()} {en?'input':'입력'} · {run.checkpoint.usage.completion_tokens.toLocaleString()} {en?'output':'출력'} · {run.checkpoint.usage.cached_prompt_tokens.toLocaleString()} {en?'cached input':'캐시 입력'}
+     {run.checkpoint.usage.estimated?(en?'Estimated tokens':'추정 토큰'):(en?'Token usage':'토큰 사용량')}: {fmtTokens(run.checkpoint.usage.prompt_tokens)} {en?'input':'입력'} · {fmtTokens(run.checkpoint.usage.completion_tokens)} {en?'output':'출력'} · {fmtTokens(run.checkpoint.usage.cached_prompt_tokens)} {en?'cached input':'캐시 입력'}
     </p>}
     </div>
     <p className="mt-2 line-clamp-2 text-[11px] text-[#766F67]">{run.instruction}</p>

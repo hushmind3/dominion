@@ -169,7 +169,8 @@ fn public_view_indexed(state:&AppState,mut record:Value,index:&ViewIndex)->Value
         let usage=message.as_ref().map(|m|json!({
             "prompt_tokens":m["metadata"]["usage"]["promptTokens"],
             "completion_tokens":m["metadata"]["usage"]["completionTokens"],
-            "cached_prompt_tokens":m["metadata"]["usage"]["cachedPromptTokens"]
+            "cached_prompt_tokens":m["metadata"]["usage"]["cachedPromptTokens"],
+            "estimated":m["metadata"]["usage"]["estimated"]
         }));
         let mut events=run["kernelState"]["native"]["events"].as_array().cloned().unwrap_or_default();
         if let Some(items)=record["observations"].as_array(){events.extend(items.clone());}

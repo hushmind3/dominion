@@ -27,7 +27,11 @@ function PatchReview({jobId,jobStatus,onChanged}:{jobId:string;jobStatus:string;
  const [error,setError]=useState('')
  const inspect=async()=>{
   setLoading(true);setError('')
-  try{setPatch(await get<PatchResponse>('/api/remote/jobs/'+encodeURIComponent(jobId)+'/artifact'))}
+  try{
+   const evidence=await get<PatchResponse>('/api/remote/jobs/'+encodeURIComponent(jobId)+'/artifact')
+   if(evidence.manifest.jobId!==jobId)throw Error(en?'Patch belongs to another job.':'패치의 원본 작업 ID가 일치하지 않습니다.')
+   setPatch(evidence)
+  }
   catch(e){setError((e as Error).message)}
   finally{setLoading(false)}
  }
@@ -274,7 +278,7 @@ export function RemoteWorkPanel(){
       {['queued','leased','needs_review'].includes(selectedJob.status)&&<button type="button" disabled={busy} onClick={()=>cancel(selectedJob)}
        className="rounded-lg border border-[#E7E0D5] px-3 py-1.5 text-[11px] disabled:opacity-50">{en?'Cancel':'작업 중단'}</button>}
      </div>
-     {selectedJob.artifactId&&<PatchReview jobId={selectedJob.id} jobStatus={selectedJob.status} onChanged={refreshAll}/>}
+     {selectedJob.artifactId&&<PatchReview key={selectedJob.id} jobId={selectedJob.id} jobStatus={selectedJob.status} onChanged={refreshAll}/>}
     </div>}
    </section>
   </div>}
