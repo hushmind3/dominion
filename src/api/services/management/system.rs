@@ -135,17 +135,34 @@ fn event_cursor(params: &HashMap<String, String>, headers: &HeaderMap) -> u64 {
         .unwrap_or(0)
 }
 
+/// A restored snapshot can have a lower journal sequence than the tab's
+/// previous Last-Event-ID. Restarting at that future ID would suppress all
+/// later SSE events until the sequence eventually caught up.
+fn replay_start(requested:u64, current:u64)->(u64,bool) {
+    if requested>current {(0,true)} else {(requested,false)}
+}
+
 pub async fn events(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let after = event_cursor(&params, &headers);
+    let requested_after = event_cursor(&params, &headers);
     let bus = state.bus.clone();
     // Subscribe before replay so writes during page reads enter the receiver.
     let mut receiver = bus.subscribe();
     let stream = async_stream::stream! {
-        let mut last = after;
+        let current = bus.cursor();
+        let (mut last,reset) = replay_start(requested_after,current);
+        if reset {
+            // Reset the browser's Last-Event-ID to 0 as well as our own
+            // cursor. The UI must reload affected data after this gap.
+            yield Ok(Event::default().id("0").data(json!({
+                "type":"event_gap","seq":0,
+                "resumedAfter":requested_after,"currentThrough":current,
+                "reason":"cursor_ahead_of_journal","resyncRequired":true,
+            }).to_string()));
+        }
         for value in durable_replay(&bus, last) {
             let seq = value["seq"].as_u64().unwrap_or(0);
             if seq <= last { continue; }
@@ -195,6 +212,14 @@ pub async fn events(
 #[cfg(test)]
 mod event_replay_tests {
     use super::*;
+    #[test]
+    fn restore_to_older_journal_resets_future_eventsource_cursor() {
+        assert_eq!(replay_start(50,12),(0,true));
+        assert_eq!(replay_start(0,12),(0,false));
+        assert_eq!(replay_start(12,12),(12,false));
+        assert_eq!(replay_start(11,12),(11,false));
+    }
+
     #[test]
     fn eventsource_reconnect_uses_latest_header_not_original_query() {
         let mut params = HashMap::new();
