@@ -112,6 +112,7 @@ jobs:
           cargo test --bin dominion-rust conversation::chat::runtime::program::recovery_tests
           cargo test --bin dominion-rust features::forensics::native_adjudication::tests
           cargo test --bin dominion-rust host::execution::native_agent::tests
+          cargo test --bin dominion-rust api::sdk_runs::tests
           cargo test --bin dominion-rust api::sdk::tests
           cargo test --test e2e native_job_prompt_runs -- --test-threads=1
 
