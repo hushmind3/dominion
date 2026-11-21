@@ -89,7 +89,7 @@ test('Rust / event journal / TypeScript SDK agree on run lifecycle',()=>{
   }
   assert.match(state,/pub fn transition/);
   assert.match(state,/invalid_phase_never_becomes_a_valid_terminal_receipt/);
-  assert.match(events,/event\["eventSeq"\]=json!\(seq\)/);
+  assert.match(events,/value\["eventSeq"\]=json!\(seq\)/);
   assert.match(events,/RunEvent::from_record/);
   assert.match(sdk,/event\.eventSeq===event\.seq/);
   assert.match(sdk,/async \*runEvents/);
