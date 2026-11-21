@@ -308,7 +308,7 @@ mod tests{
         assert!(dir.join(OLD_DB).is_file(),"old database must survive sync failure");
         assert!(dir.join(OLD_KEY).is_file(),"old key must survive sync failure");
         // A power cut can replay a marker deletion that was not synced.
-        fs::write(dir.join(MARKER),b"DOMINION_RESTORE_ROLLBACK_V1\\n").unwrap();
+        fs::write(dir.join(MARKER),b"DOMINION_RESTORE_ROLLBACK_V1\n").unwrap();
         drop(tx);
         drop(state);
         let config=Config{port:0,data_dir:dir.clone(),web_dir:dir.join("web"),workspace:dir.clone()};

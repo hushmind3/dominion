@@ -322,8 +322,8 @@ fn merge_final_chat_message(
             let aligned = parsed.len() >= calls.len()
                 && calls.iter().zip(parsed.iter()).all(|(partial, full)| {
                     (partial.id.is_empty() || partial.id == full.id)
-                        && full.name.starts_with(&partial.name)
-                        && full.arguments.starts_with(&partial.arguments)
+                        && full.name.starts_with(partial.name.as_str())
+                        && full.arguments.starts_with(partial.arguments.as_str())
                 });
             if aligned {
                 *calls = parsed;
