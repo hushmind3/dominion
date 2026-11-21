@@ -96,6 +96,16 @@ export class DominionError extends Error {
 export class StreamInterruptedError extends Error {
   constructor() { super('Stream interrupted before completion'); this.name = 'StreamInterruptedError'; }
 }
+/** Rust may stream an error followed by a terminal done over HTTP 200.
+ * Preserve that failure instead of reporting a successful Chat turn.
+ */
+export class ChatTurnFailedError extends Error {
+  constructor(public readonly event:StreamEvent) {
+    super(typeof event.message==='string' && event.message.trim()
+      ?event.message:'Chat turn failed');
+    this.name='ChatTurnFailedError';
+  }
+}
 function id(value: string): string {
   if (typeof value !== 'string' || !value.length) throw new TypeError('A nonempty ID is required');
   return encodeURIComponent(value);
@@ -248,6 +258,7 @@ export class Dominion {
     for await (const frame of parseSse(response)) {
       const event=JSON.parse(frame.data) as StreamEvent;
       onEvent(event);
+      if (event.type==='error') throw new ChatTurnFailedError(event);
       if (event.type==='done') return;
     }
     if (options.signal?.aborted) throw options.signal.reason ?? abortError();
