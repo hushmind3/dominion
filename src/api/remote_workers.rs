@@ -9,7 +9,7 @@ use axum::{
     Json
 };
 use serde_json::{json,Value};
-use sha2::{Digest,Sha256};
+use super::remote_registry;
 const LEASE_SECS:i64=75;
 fn reply(code:StatusCode,message:&str)->Response{
     (code,Json(json!({"error":message}))).into_response()
@@ -18,17 +18,8 @@ fn valid_worker_id(id:&str)->bool{
     !id.is_empty()&&id.len()<=96&&id.bytes().all(|b|b.is_ascii_alphanumeric()
         ||matches!(b,b'-'|b'_'|b'.'|b':'))
 }
-fn worker_auth(headers:&HeaderMap)->Result<(),Response>{
-    let secret=std::env::var("DOMINION_REMOTE_WORKER_TOKEN").unwrap_or_default();
-    if secret.len()<32{return Err(reply(StatusCode::SERVICE_UNAVAILABLE,
-        "원격 Worker 토큰(32자 이상)이 설정되지 않았습니다."));}
-    let candidate=headers.get("x-dominion-worker-token").and_then(|s|s.to_str().ok())
-        .unwrap_or("");
-    let expected=Sha256::digest(secret.as_bytes());
-    let actual=Sha256::digest(candidate.as_bytes());
-    let difference=expected.iter().zip(actual.iter()).fold(0u8,|acc,(a,b)|acc|(a^b));
-    if difference!=0{return Err(reply(StatusCode::UNAUTHORIZED,"원격 Worker 인증이 필요합니다."));}
-    Ok(())
+fn worker_auth(state:&AppState,headers:&HeaderMap,worker:&str)->Result<(),Response>{
+    remote_registry::authenticate(state,headers,worker)
 }
 fn lease_alive(row:&Value,worker:&str,lease:&str)->bool{
     row["status"]=="leased"&&row["workerId"]==worker&&row["leaseId"]==lease
@@ -102,7 +93,28 @@ pub async fn create(State(state):State<AppState>,Json(input):Json<Value>)->Respo
     if verify.is_some_and(|s|s.len()>2048){
         return reply(StatusCode::BAD_REQUEST,"검증 명령이 너무 깁니다.");
     }
+    let required=match remote_registry::capabilities(&input["requiredCapabilities"]){
+        Ok(value)=>value,
+        Err(message)=>return reply(StatusCode::BAD_REQUEST,&message),
+    };
+    let target=input["targetWorkerId"].as_str();
+    if !input["targetWorkerId"].is_null()&&target.is_none(){
+        return reply(StatusCode::BAD_REQUEST,"targetWorkerId는 문자열이어야 합니다.");
+    }
+    if target.is_some_and(|id|!valid_worker_id(id)){
+        return reply(StatusCode::BAD_REQUEST,"유효하지 않은 targetWorkerId입니다.");
+    }
+    if let Some(id)=target{
+        if !remote_registry::matches_capabilities(&state,id,&required){
+            return reply(StatusCode::CONFLICT,"대상 Worker가 없거나 필요한 능력이 없습니다.");
+        }
+    }else if !required.is_empty()&&!state.store.all("remote_worker").iter()
+        .any(|row|remote_registry::matches_capabilities(
+            &state,row["id"].as_str().unwrap_or(""),&required)){
+        return reply(StatusCode::CONFLICT,"필요한 능력을 가진 Worker가 없습니다.");
+    }
     let row=json!({
+        "targetWorkerId":target,"requiredCapabilities":required,
         "id":format!("remote:{}",uuid::Uuid::new_v4()),
         "kind":"remote_sdk","status":"queued","attempts":0,
         "instruction":instruction,"verifyCommand":verify,
@@ -118,10 +130,9 @@ pub async fn create(State(state):State<AppState>,Json(input):Json<Value>)->Respo
 }
 pub async fn claim(State(state):State<AppState>,headers:HeaderMap,
     Json(body):Json<Value>)->Response{
-    if let Err(error)=worker_auth(&headers){return error;}
-    let Some(worker)=body["workerId"].as_str().filter(|w|valid_worker_id(w))else{
-        return reply(StatusCode::BAD_REQUEST,"유효한 Worker ID가 필요합니다.");
-    };
+    let worker=body["workerId"].as_str().unwrap_or("");
+    if let Err(error)=worker_auth(&state,&headers,worker){return error;}
+    remote_registry::seen(&state,worker);
     // Mark expired leases for owner review. This never redispatches the
     // ambiguous remote effects, even when a new worker polls for work.
     reconcile_expired(&state);
@@ -130,12 +141,14 @@ pub async fn claim(State(state):State<AppState>,headers:HeaderMap,
     let mut jobs=state.store.all("remote_job");
     jobs.sort_by(|a,b|a["createdAt"].as_str().unwrap_or("")
         .cmp(b["createdAt"].as_str().unwrap_or("")));
-    for row in jobs.into_iter().filter(|r|r["status"]=="queued").take(100){
+    for row in jobs.into_iter().filter(|r|r["status"]=="queued"
+        &&remote_registry::eligible(&state,r,worker)).take(100){
         let Some(id)=row["id"].as_str()else{continue};
         let lease=format!("lease:{}",uuid::Uuid::new_v4());
         let expires=(chrono::Utc::now()+chrono::Duration::seconds(LEASE_SECS))
             .to_rfc3339();
         let patch=json!({"status":"leased","workerId":worker,"leaseId":lease,
+            "assignmentCapabilities":row["requiredCapabilities"],
             "leaseExpiresAt":expires,"claimedAt":chrono::Utc::now().to_rfc3339(),
             "attempts":1});
         if let Some(saved)=state.store.patch_if("remote_job",id,"status",
@@ -151,8 +164,8 @@ pub async fn claim(State(state):State<AppState>,headers:HeaderMap,
 }
 pub async fn heartbeat(State(state):State<AppState>,headers:HeaderMap,
     Path(id):Path<String>,Json(body):Json<Value>)->Response{
-    if let Err(error)=worker_auth(&headers){return error;}
     let worker=body["workerId"].as_str().unwrap_or("");
+    if let Err(error)=worker_auth(&state,&headers,worker){return error;}
     let lease=body["leaseId"].as_str().unwrap_or("");
     let until=(chrono::Utc::now()+chrono::Duration::seconds(LEASE_SECS)).to_rfc3339();
     let result=state.store.mutate_record("remote_job",&id,json!({"id":id}),
@@ -170,8 +183,8 @@ pub async fn heartbeat(State(state):State<AppState>,headers:HeaderMap,
 }
 pub async fn finish(State(state):State<AppState>,headers:HeaderMap,
     Path(id):Path<String>,Json(body):Json<Value>)->Response{
-    if let Err(error)=worker_auth(&headers){return error;}
     let worker=body["workerId"].as_str().unwrap_or("");
+    if let Err(error)=worker_auth(&state,&headers,worker){return error;}
     let lease=body["leaseId"].as_str().unwrap_or("");
     let Some(result)=body.get("result").filter(|v|v.is_object()
         &&v.to_string().len()<=32_000)else{
@@ -291,6 +304,45 @@ mod tests{
             Json(json!({"accept":false}))).await;
         assert_eq!(rejected.status(),StatusCode::OK);
         assert_eq!(state.store.get("remote_job","ticket").unwrap()["nativeVerified"],false);
+        let _=std::fs::remove_dir_all(&state.config.data_dir);
+    }
+
+    #[tokio::test]
+    async fn multi_device_claim_is_capability_matched_and_lease_fenced(){
+        use axum::http::HeaderValue;
+        let state=fixture();
+        let registered=super::remote_registry::enroll(State(state.clone()),Json(json!({
+            "workerId":"gpu-node","capabilities":["gpu","sdk"]
+        }))).await;
+        let body=axum::body::to_bytes(registered.into_body(),4096).await.unwrap();
+        let enrollment:Value=serde_json::from_slice(&body).unwrap();
+        let token=enrollment["token"].as_str().unwrap();
+        let mut headers=HeaderMap::new();
+        headers.insert("x-dominion-worker-token",HeaderValue::from_str(token).unwrap());
+        let request=json!({"instruction":"GPU inspection","targetWorkerId":"gpu-node",
+            "requiredCapabilities":["gpu"]});
+        assert_eq!(create(State(state.clone()),Json(request)).await.status(),
+            StatusCode::ACCEPTED);
+        // The same credential may not impersonate another worker, even to claim.
+        let wrong=claim(State(state.clone()),headers.clone(),
+            Json(json!({"workerId":"cpu-node"}))).await;
+        assert_ne!(wrong.status(),StatusCode::OK);
+        let assigned=claim(State(state.clone()),headers.clone(),
+            Json(json!({"workerId":"gpu-node"}))).await;
+        assert_eq!(assigned.status(),StatusCode::OK);
+        let body=axum::body::to_bytes(assigned.into_body(),4096).await.unwrap();
+        let task:Value=serde_json::from_slice(&body).unwrap();
+        let job=task["jobId"].as_str().unwrap().to_string();
+        assert_eq!(state.store.get("remote_job",&job).unwrap()["workerId"],"gpu-node");
+        assert_eq!(claim(State(state.clone()),headers.clone(),
+            Json(json!({"workerId":"gpu-node"}))).await.status(),StatusCode::NO_CONTENT);
+        let rotated=super::remote_registry::rotate(State(state.clone()),
+            Path("gpu-node".into())).await;
+        assert_eq!(rotated.status(),StatusCode::OK);
+        let expired_token=heartbeat(State(state.clone()),headers.clone(),
+            Path(job.clone()),Json(json!({"workerId":"gpu-node",
+                "leaseId":task["leaseId"]}))).await;
+        assert_eq!(expired_token.status(),StatusCode::UNAUTHORIZED);
         let _=std::fs::remove_dir_all(&state.config.data_dir);
     }
     #[test]
