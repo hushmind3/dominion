@@ -39,6 +39,9 @@ fn plan(nodes:&[Value])->Result<Vec<Vec<usize>>,String>{
         if node.get("readOnly").is_some()&&!node["readOnly"].is_boolean(){
             return Err(format!("{id}: readOnly must be boolean"));
         }
+        if node.get("successCriteria").is_some(){
+            crate::engine::verification::validate_criteria(&node["successCriteria"])?;
+        }
         converted.push(json!({
             "id":id,"dependsOn":node["dependsOn"],
             "type":if node["readOnly"]==false {"delegate"} else {"observe"}
@@ -65,7 +68,8 @@ fn member(ctx:&ToolContext<'_>,team_id:&str,node:&Value)->Result<Value,String>{
         || saved["agentId"]!=node["agentId"]
         || saved["prompt"]!=node["prompt"]
         || saved["dependsOn"]!=node["dependsOn"]
-        || saved["readOnly"]!=json!(node["readOnly"]!=false){
+        || saved["readOnly"]!=json!(node["readOnly"]!=false)
+        || saved["successCriteria"]!=node["successCriteria"]{
         return Err("Managed team task identity or plan changed after commit".into());
     }
     Ok(saved)
@@ -98,6 +102,7 @@ fn summary(ctx:&ToolContext<'_>,team:&Value)->Result<Value,String>{
             "id":row["nodeId"],"agentId":row["agentId"],
             "answerPreview":excerpt,"observedOperationCount":operations,
             "readOnly":row["readOnly"],"dependsOn":row["dependsOn"],
+            "acceptanceCheckCount":row["successCriteria"].as_array().map_or(0,Vec::len),
             "status":status,"jobId":row["jobId"],
             "sessionId":row["workerSessionId"],
             "verified":row["verified"]==true,
@@ -234,6 +239,7 @@ async fn launch(ctx:&ToolContext<'_>,team_id:&str,node:&Value,nodes:&[Value])->R
     let delegated=delegate(ctx,&json!({
         "agentId":node["agentId"],"prompt":prompt,
         "readOnly":node["readOnly"]!=false,"wait":false,
+        "successCriteria":node["successCriteria"],
         "teamId":team_id,"teamNodeId":node["id"],
     })).await;
     match delegated{
@@ -297,6 +303,7 @@ fn create(ctx:&ToolContext<'_>,args:&Value,run_id:&str)->Result<Value,String>{
             "nodeId":node["id"],"agentId":node["agentId"],
             "prompt":node["prompt"],"dependsOn":node["dependsOn"],
             "readOnly":node["readOnly"]!=false,
+            "successCriteria":node["successCriteria"],
             "status":"assigned",
         });
         let saved=ctx.store.put_if_absent("managed_team_task",&value);
@@ -396,6 +403,18 @@ pub(super) fn status(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn explicit_team_acceptance_uses_native_verifier_contract(){
+        let valid=vec![json!({"id":"impl","agentId":"coder",
+            "prompt":"Write output","readOnly":false,
+            "successCriteria":[{"type":"file_exists","path":"output.txt"}]})];
+        assert_eq!(plan(&valid).unwrap(),vec![vec![0]]);
+        let mut invalid=valid.clone();
+        invalid[0]["successCriteria"]=json!([
+            {"type":"file_equals","path":"output.txt"}
+        ]);
+        assert!(plan(&invalid).is_err());
+    }
     #[test]
     fn lead_plan_runs_independent_research_before_a_single_writer(){
         let tasks=vec![
