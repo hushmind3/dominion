@@ -92,6 +92,11 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
             other=>other
         }
     };
+    // Preserve legacy display status while exposing the shared Chat/Room/SDK
+    // runtime phase as a separate, stable machine-readable field.
+    let phase=dominion_agent_sdk::RunPhase::from_host_status(status)
+        .map(dominion_agent_sdk::RunPhase::as_str)
+        .unwrap_or("needs_review");
     let m=&job["nativeModelUsage"];
     let usage=if m["reportedCalls"].as_u64().unwrap_or(0)>0 {
         json!({"prompt_tokens":m["inputTokens"].as_u64().unwrap_or(0),
@@ -132,7 +137,7 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
         }
     }
     json!({
-        "id":job["id"],"status":status,
+        "id":job["id"],"status":status,"phase":phase,
         "instruction":job["input"]["prompt"],
         "algorithmId":job["nativeAlgorithm"]["id"].as_str()
             .or_else(||job["input"]["algorithmId"].as_str()).unwrap_or("standard-v1"),
@@ -608,6 +613,7 @@ mod tests{
         });
         let view=project(&state,&working);
         assert_eq!(view["status"],"running");
+        assert_eq!(view["phase"],"running");
         assert_eq!(view["checkpoint"]["events"].as_array().unwrap().len(),2);
         assert_eq!(view["checkpoint"]["events"][0]["kind"],"tool_completed");
         assert_eq!(view["checkpoint"]["events"][1]["kind"],"tool_started");
@@ -621,6 +627,7 @@ mod tests{
         working["nativeState"]["modelInFlight"]=json!(false);
         working["nativeState"]["inFlight"]=json!([]);
         working["nativeState"]["error"]=json!("Model token budget exhausted");
+        assert_eq!(project(&state,&working)["phase"],"needs_review");
         assert_eq!(project(&state,&working)["status"],"exhausted",
             "budget stop must not show a meaningless Applied button");
         working["status"]=json!("failed");
