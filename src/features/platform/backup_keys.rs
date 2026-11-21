@@ -44,12 +44,18 @@ fn key_file(directory: &Path, version: u32) -> PathBuf {
 }
 
 fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let mut file = std::fs::File::create(path).map_err(|error| error.to_string())?;
-    file.write_all(bytes).map_err(|error| error.to_string())?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path).map_err(|error| error.to_string())?;
+    if let Err(error) = file.write_all(bytes).and_then(|_| file.sync_all()) {
+        drop(file);
+        let _ = std::fs::remove_file(path);
+        return Err(error.to_string());
     }
     Ok(())
 }
@@ -465,7 +471,13 @@ pub fn rotate(state: &AppState, keep_old: bool) -> Result<RotationReport, String
     let previous_version = ring.active_version();
     let directory = state.config.data_dir.join("backups");
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    let next = ring.versions().into_iter().max().unwrap_or(0) + 1;
+    let next = ring
+        .versions()
+        .into_iter()
+        .max()
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or("backup key version space exhausted")?;
     let mut new_key = [0u8; KEY_LEN];
     rand::thread_rng().fill_bytes(&mut new_key);
     ring.keys.insert(next, new_key);
