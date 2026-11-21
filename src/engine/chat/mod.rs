@@ -292,3 +292,67 @@ struct Metrics {
     tool_elapsed_ms: u64,
     context_elapsed_ms: u64,
 }
+
+
+#[cfg(test)]
+mod private_prompt_preview_tests {
+    use super::*;
+    use crate::{config::Config,db::Store,state::AppState,vault::Vault};
+    use serde_json::json;
+
+    fn fixture() -> AppState {
+        let dir=std::env::temp_dir().join(format!("dominion-prompt-preview-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=Config{port:0,data_dir:dir.clone(),web_dir:dir.join("web"),workspace:dir};
+        AppState::new(
+            config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path())
+        )
+    }
+
+    #[test]
+    fn private_preview_uses_real_owner_and_agent_instruction_compiler_without_writing_history(){
+        let state=fixture();
+        state.store.put("session",&json!({"id":"private:preview"})).unwrap();
+        state.store.put("agent",&json!({
+            "id":"worker","name":"검토자","systemPrompt":"TEST_AGENT_PROMPT_256"
+        })).unwrap();
+        state.store.put("assistant_settings",&json!({
+            "id":"global","enabled":true,"instructions":"TEST_OWNER_RULE_384"
+        })).unwrap();
+        let preview=private_system_prompt_preview(
+            &state,Some("private:preview"),Some("worker"),
+            "코드 확인",false,true
+        ).unwrap();
+        let content=preview["systemPrompt"].as_str().unwrap();
+        assert!(content.contains("DOMINION 지속 에이전트"));
+        assert!(content.contains("TEST_AGENT_PROMPT_256"));
+        assert!(content.contains("TEST_OWNER_RULE_384"));
+        assert!(content.contains("도구가 비활성화"));
+        assert_eq!(preview["scope"],"private-chat");
+        assert!(preview["systemTokensEstimated"].as_u64().is_some());
+        assert!(state.store.messages("private:preview").is_empty(),
+            "preview must not add a user or assistant message");
+        assert!(state.store.all("execution").is_empty(),
+            "preview must not run or bill a model");
+    }
+
+    #[test]
+    fn private_preview_respects_owner_opt_out_and_refuses_room_scope() {
+        let state=fixture();
+        state.store.put("agent",&json!({"id":"worker","name":"worker"})).unwrap();
+        state.store.put("assistant_settings",&json!({
+            "id":"global","enabled":false,"instructions":"HIDDEN_DISABLED_OWNER_PROMPT"
+        })).unwrap();
+        let preview=private_system_prompt_preview(
+            &state,None,Some("worker"),"설명",false,false
+        ).unwrap();
+        assert!(!preview["systemPrompt"].as_str().unwrap()
+            .contains("HIDDEN_DISABLED_OWNER_PROMPT"));
+        state.store.put("session",&json!({"id":"group-room","roomId":"room-1"})).unwrap();
+        let error=private_system_prompt_preview(
+            &state,Some("group-room"),Some("worker"),"설명",true,false
+        ).unwrap_err();
+        assert!(error.contains("그룹"));
+    }
+}
