@@ -138,6 +138,15 @@ pub async fn tools(state: &AppState) -> Vec<McpTool> {
         .collect()
 }
 
+fn list_cache_ttl(result:&Value, modern_http:bool)->Duration {
+    if !modern_http { return CACHE_TTL; }
+    if matches!(result["cacheScope"].as_str(), Some("public" | "private")) {
+        Duration::from_millis(result["ttlMs"].as_u64().unwrap_or(0).min(300_000))
+    } else {
+        Duration::ZERO
+    }
+}
+
 async fn list_server(state: &AppState, server: &Value, server_slug:&str) -> Result<(Vec<McpTool>, Duration), String> {
     let server_name = server
         .get("name")
@@ -162,15 +171,7 @@ async fn list_server(state: &AppState, server: &Value, server_slug:&str) -> Resu
 
     // In 2026, ttlMs/cacheScope are server-owned. Never reuse a modern
     // tool catalog beyond its advertised freshness, and never invent TTL.
-    let ttl = if modern_http {
-        if matches!(result["cacheScope"].as_str(), Some("public" | "private")) {
-            Duration::from_millis(result["ttlMs"].as_u64().unwrap_or(0).min(300_000))
-        } else {
-            Duration::ZERO
-        }
-    } else {
-        CACHE_TTL
-    };
+    let ttl = list_cache_ttl(&result, modern_http);
     let tools = result
         .get("tools")
         .and_then(|value| value.as_array())
