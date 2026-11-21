@@ -684,7 +684,12 @@ async fn github_api(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String
     }
     let method =
         reqwest::Method::from_bytes(method.as_bytes()).map_err(|error| error.to_string())?;
-    let mut request = reqwest::Client::new()
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let mut request = client
         .request(method, format!("https://api.github.com{path}"))
         .header("Authorization", format!("Bearer {token}"))
         .header("Accept", "application/vnd.github+json")
@@ -693,9 +698,16 @@ async fn github_api(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String
     if let Some(body) = args.get("body").filter(|value| !value.is_null()) {
         request = request.json(body);
     }
-    let response = request.send().await.map_err(|error| error.to_string())?;
+    let mut response = request.send().await.map_err(|error| error.to_string())?;
     let status = response.status().as_u16();
-    let text = response.text().await.unwrap_or_default();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
+        if bytes.len().saturating_add(chunk.len()) > 1024 * 1024 {
+            return Err("GitHub API response exceeded 1 MiB".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let text = String::from_utf8_lossy(&bytes);
     let parsed: Value = serde_json::from_str(&text).unwrap_or_else(|_| json!(text));
     Ok(json!({
         "status": status,
