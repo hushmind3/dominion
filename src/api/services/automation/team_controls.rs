@@ -139,6 +139,22 @@ pub async fn resume(State(state):State<AppState>,Path(id):Path<String>)->Respons
     if team["status"]!="running" ||team["cancelRequested"]==true{
         return fail(StatusCode::CONFLICT,"Stopped or finalized team cannot resume");
     }
+    let session_id=team["leadSessionId"].as_str().unwrap_or("");
+    // Claim the actual Lead turn slot. A pending old turn cannot race a
+    // user-initiated resume or leave effects running in the same session.
+    if !state.begin_session(session_id){
+        return fail(StatusCode::CONFLICT,"Lead turn is still active; inspect it before resuming");
+    }
+    let _session_guard=state.session_guard(session_id);
+    // A previously stopped turn leaves a durable cancellation tombstone.
+    // Re-arm only the latest generation, after acquiring the session slot.
+    // Old provider/tool work remains fenced by the generation mismatch.
+    if state.is_cancelled(session_id){
+        let generation=state.cancellation_generation(session_id);
+        if !state.resume_session_if_generation(session_id,generation){
+            return fail(StatusCode::CONFLICT,"Lead cancellation changed; reload and inspect");
+        }
+    }
     let workspace=match workspace_for(&state,&team){
         Ok(v)=>v,Err(e)=>return fail(StatusCode::CONFLICT,&e),
     };
@@ -252,6 +268,24 @@ mod tests{
         assert_eq!(state.store.get("managed_team_task","member-a").unwrap()["status"],"cancelled");
         assert_eq!(state.store.get("managed_team","team-b").unwrap()["status"],"running");
         assert_eq!(resume(State(state.clone()),Path("team-a".into())).await.status(),StatusCode::CONFLICT);
+        drop(state);let _=std::fs::remove_dir_all(dir);
+    }
+    #[tokio::test]
+    async fn resume_requires_drained_lead_and_rearms_only_its_epoch(){
+        let (state,dir)=fixture();
+        state.store.put("session",&json!({"id":"lead-session"})).unwrap();
+        state.store.put("managed_team",&json!({"id":"team-r","status":"running",
+            "leadSessionId":"lead-session","tasks":[],"waves":[]})).unwrap();
+        assert!(state.begin_session("lead-session"));
+        state.cancel_session("lead-session");
+        assert_eq!(resume(State(state.clone()),Path("team-r".into())).await.status(),
+            StatusCode::CONFLICT);
+        assert!(state.is_cancelled("lead-session"));
+        state.end_session("lead-session");
+        assert_eq!(resume(State(state.clone()),Path("team-r".into())).await.status(),
+            StatusCode::OK);
+        assert!(!state.is_cancelled("lead-session"));
+        assert!(!state.active.lock().unwrap().contains("lead-session"));
         drop(state);let _=std::fs::remove_dir_all(dir);
     }
     #[tokio::test]
