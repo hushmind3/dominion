@@ -84,7 +84,8 @@ pub async fn start(State(state):State<AppState>,Json(body):Json<Value>)->Respons
     let input=json!({"prompt":instruction,"agentId":lead_id,
         "providerId":lead["providerId"],"model":lead["model"],
         "toolsEnabled":true,"toolsExecutionEnabled":true,
-        "autonomous":true,"maxAutonomousAttempts":2,"uiSource":"team_activity"});
+        "autonomous":true,"maxAutonomousAttempts":2,"uiSource":"team_activity",
+        "teamUiWorkerIds":worker_ids,"teamUiRemoteWorkerId":remote_id});
     match engine::jobs::enqueue(&state,"prompt",input){
         Some(job)=>(StatusCode::ACCEPTED,Json(json!({"status":"lead_queued",
             "jobId":job["id"],"note":"Native Lead job queued; teamId is assigned only after team_execute"}))).into_response(),

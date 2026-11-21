@@ -171,3 +171,29 @@ test('P3 remote Writer file artifacts go through explicit owner approval and exi
   assert.match(tools,/\|\s*"team_remote_apply"/);
   assert.match(lock,/"team_remote_apply"/);
 });
+
+test('owner Team UI routes through one native scheduler and reviewed patch gateway',()=>{
+  const api=source('src/api/services/automation/team_controls.rs');
+  const routes=source('src/api/surfaces/automation_routes.rs');
+  const adapter=source('src/engine/services/tools/tools.rs');
+  const patch=source('src/engine/services/tools/tools_remote_artifacts.rs');
+  const jobs=source('src/engine/services/automation/jobs.rs');
+  const team=source('src/engine/services/tools/tools_team.rs');
+  const store=source('src/db.rs');
+  const ui=source('web/src/components/TeamActivity.tsx');
+  for(const action of ['start','stop','resume','preview','approve_apply','reject'])
+    assert.match(routes,new RegExp('team_controls::'+action));
+  assert.match(api,/engine::jobs::enqueue/);
+  assert.match(api,/engine::tools::execute/);
+  assert.match(adapter,/resource_lock::acquire_durable/);
+  assert.match(patch,/apply_with_digest/);
+  assert.match(patch,/Reviewed file diff changed since approval/);
+  assert.match(jobs,/teamUiOwnerJobId/);
+  assert.match(team,/ui_team_selection/);
+  assert.match(team,/claim_managed_team_member/);
+  assert.match(store,/TransactionBehavior::Immediate/);
+  for(const action of ['\/start','\/resume','\/stop','\/apply','\/reject'])
+    assert.match(ui,new RegExp(action));
+  assert.match(ui,/reviewDigest/);
+  assert.match(ui,/remoteWorkers/);
+});

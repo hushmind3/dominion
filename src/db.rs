@@ -832,6 +832,37 @@ impl Store {
         Some(record)
     }
 
+    /// Atomic UI team admission: a paused or cancelled parent cannot race a
+    /// newly claimed native worker. Both rows share SQLite IMMEDIATE fencing.
+    pub fn claim_managed_team_member(
+        &self,id:&str,team_id:&str,expected_status:&str,patch:&Value,
+    )->Option<Value>{
+        let changes=patch.as_object()?;
+        let mut conn=self.conn.lock().ok()?;
+        let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).ok()?;
+        let team=tx.query_row(
+            "SELECT data,id,created_at,updated_at FROM records WHERE kind='managed_team' AND id=?1",
+            [team_id],record_from_row,
+        ).ok()?;
+        if team["status"]!="running" ||team["cancelRequested"]==true{return None;}
+        let mut child=tx.query_row(
+            "SELECT data,id,created_at,updated_at FROM records WHERE kind='managed_team_task' AND id=?1",
+            [id],record_from_row,
+        ).ok()?;
+        if child["teamId"]!=team_id ||child["leadSessionId"]!=team["leadSessionId"]
+            ||child["status"]!=expected_status{return None;}
+        for (key,value) in changes{
+            if key=="id" ||key=="teamId" ||key=="leadSessionId" ||key=="nodeId"{return None;}
+            child[key]=value.clone();
+        }
+        tx.execute(
+            "UPDATE records SET data=?2,updated_at=datetime('now') WHERE kind='managed_team_task' AND id=?1",
+            params![id,child.to_string()],
+        ).ok()?;
+        tx.commit().ok()?;
+        Some(child)
+    }
+
     /// Task Team child ownership is admitted only while its *parent run*
     /// remains live. The parent check and child CAS share one SQLite IMMEDIATE
     /// transaction, including when cancellation races a second engine process.

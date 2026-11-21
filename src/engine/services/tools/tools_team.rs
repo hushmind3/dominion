@@ -24,6 +24,25 @@ fn remote_artifacts_unmerged(task:&Value)->bool{
     task["artifactPaths"].as_array().is_some_and(|paths|!paths.is_empty())
         && task["artifactApplyStatus"]!="applied"
 }
+/// Only the matching running UI Lead job can bind the team's worker roster.
+/// A later chat turn in the same session cannot inherit stale UI authority.
+fn ui_team_selection(ctx:&ToolContext<'_>)->Option<(Vec<String>,Option<String>)>{
+    let session=ctx.store.get("session",ctx.session_id)?;
+    let job_id=session["teamUiOwnerJobId"].as_str()?;
+    let job=ctx.store.get("job",job_id)?;
+    if job["status"]!="running" || job["kind"]!="prompt"
+        || job["input"]["uiSource"]!="team_activity"
+        || job["sessionId"]!=ctx.session_id
+        || job["input"]["teamUiWorkerIds"]!=session["teamUiWorkerIds"]
+        || job["input"]["teamUiRemoteWorkerId"]!=session["teamUiRemoteWorkerId"]{
+        return None;
+    }
+    let roster=session["teamUiWorkerIds"].as_array()?.iter()
+        .filter_map(|value|value.as_str().map(str::to_string))
+        .collect::<Vec<_>>();
+    if roster.is_empty(){return None;}
+    Some((roster,session["teamUiRemoteWorkerId"].as_str().map(str::to_string)))
+}
 fn plan(nodes:&[Value])->Result<Vec<Vec<usize>>,String>{
     if nodes.is_empty()||nodes.len()>MAX_TEAM_NODES{
         return Err("Team requires 1..8 agent tasks".into());
@@ -340,20 +359,31 @@ async fn launch(ctx:&ToolContext<'_>,team_id:&str,node:&Value,nodes:&[Value])->R
     // launch slot. A missing source must not leave a phantom running worker.
     let sources=dependency_context(ctx,team_id,node,nodes)?;
     let id=current["id"].as_str().ok_or("Team task ID missing")?;
-    let claim=ctx.store.patch_if("managed_team_task",id,"status",
-        &json!("assigned"),&json!({"status":"launching",
+    let claim=ctx.store.claim_managed_team_member(id,team_id,"assigned",
+        &json!({"status":"launching",
             "launchStartedMs":chrono::Utc::now().timestamp_millis()}));
     let Some(claim)=claim else{return member(ctx,team_id,node);};
     ctx.state.bus.record("managed_team_task",&claim);
     let prompt=format!("{}{}",node["prompt"].as_str().unwrap_or(""),sources);
+    if ctx.store.get("managed_team",team_id).is_none_or(|saved|
+        saved["status"]!="running" || saved["cancelRequested"]==true){
+        if let Some(stopped)=ctx.store.patch_if("managed_team_task",id,"status",
+            &json!("launching"),&json!({"status":"cancelled"})){
+            ctx.state.bus.record("managed_team_task",&stopped);
+        }
+        return Err("Managed team was cancelled before worker dispatch".into());
+    }
     if node["remoteWorkerId"].is_string(){
         let committed=crate::remote::submit(ctx.state,team_id,node,&prompt,ctx.workspace);
         match committed{
             Ok(task)=>{
-                let saved=ctx.store.patch_if("managed_team_task",id,"status",
+                let Some(saved)=ctx.store.patch_if("managed_team_task",id,"status",
                     &json!("launching"),&json!({
                         "status":"running","remoteTaskId":task["id"],
-                    })).ok_or("Remote member launch claim changed; reconcile by teamId")?;
+                    }))else{
+                    crate::remote::cancel_team(ctx.state,team_id);
+                    return Err("Remote launch claim changed; remote cancellation requested".into());
+                };
                 ctx.state.bus.record("managed_team_task",&saved);
                 return Ok(saved);
             }
@@ -375,10 +405,12 @@ async fn launch(ctx:&ToolContext<'_>,team_id:&str,node:&Value,nodes:&[Value])->R
     match delegated{
         Ok(started)=>{
             let job_id=started["jobId"].as_str().ok_or("Delegation returned no job ID")?;
-            let updated=ctx.store.patch_if("managed_team_task",id,"status",
+            let Some(updated)=ctx.store.patch_if("managed_team_task",id,"status",
                 &json!("launching"),&json!({"status":"running",
-                    "jobId":job_id,"workerSessionId":started["sessionId"]}))
-                .ok_or("Team worker launch lost its claim")?;
+                    "jobId":job_id,"workerSessionId":started["sessionId"]})) else{
+                let _=crate::engine::jobs::cancel_job(ctx.state,job_id);
+                return Err("Native team launch lost its claim; child cancellation requested".into());
+            };
             ctx.state.bus.record("managed_team_task",&updated);
             Ok(updated)
         }
@@ -401,8 +433,17 @@ fn create(ctx:&ToolContext<'_>,args:&Value,run_id:&str)->Result<Value,String>{
         return Err("Maximum delegated agent depth reached".into());
     }
     // All members and scopes must be valid BEFORE any persisted side effects.
+    let ui_selection=ui_team_selection(ctx);
     for task in tasks {
         let agent=task["agentId"].as_str().ok_or("agentId required")?;
+        if let Some((roster,remote))=&ui_selection{
+            if !roster.iter().any(|id|id==agent){
+                return Err("Team node agent is outside the UI-selected Worker roster".into());
+            }
+            if task["remoteWorkerId"].as_str()!=remote.as_deref(){
+                return Err("Team node remote routing differs from the UI-selected device".into());
+            }
+        }
         if let Some(remote_id)=task["remoteWorkerId"].as_str(){
             crate::remote::worker_available(ctx.state,remote_id,agent,
                 task["readOnly"]!=false)?;

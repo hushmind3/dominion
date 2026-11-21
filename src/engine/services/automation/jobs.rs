@@ -717,6 +717,18 @@ pub(crate) async fn run_prompt(context:&JobContext,job:&Value)->Result<Value,Str
    context.state.store.put("session",&session)
      .ok_or("작업별 토큰 예산을 저장하지 못했습니다.")?;
  }
+ // Freeze the UI-selected worker roster on the real native Lead session.
+ // Active job ownership is checked again by managed-team admission; these
+ // hints cannot become permanent restrictions on later manual chat turns.
+ if input["uiSource"]=="team_activity"{
+   let mut session=context.state.store.get("session",&session_id)
+     .ok_or("Team Lead session is unavailable")?;
+   session["teamUiOwnerJobId"]=json!(context.job_id);
+   session["teamUiWorkerIds"]=input["teamUiWorkerIds"].clone();
+   session["teamUiRemoteWorkerId"]=input["teamUiRemoteWorkerId"].clone();
+   context.state.store.put("session",&session)
+     .ok_or("Unable to persist selected worker roster")?;
+ }
  if input["uiSource"]=="native_sdk_panel"{
    let baseline=context.state.store.session_usage(&session_id);
    let mut session=context.state.store.get("session",&session_id)
