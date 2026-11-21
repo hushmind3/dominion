@@ -33,7 +33,8 @@ const freePort=async()=>{
   return port
 }
 const json=async(response)=>{
-  assert.ok(response.ok,`HTTP ${response.status}: ${await response.text()}`)
+  // Response bodies are single-use: read text only on HTTP failure.
+  if(!response.ok)throw Error(`HTTP ${response.status}: ${await response.text()}`)
   return response.json()
 }
 const httpJson=async(url,options={})=>json(await fetch(url,options))
