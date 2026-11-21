@@ -362,7 +362,7 @@ try{
   await page.getByText('일치하는 대화가 없습니다.').waitFor({timeout:10000});
   await page.getByRole('button',{name:'검색 지우기'}).click();
   assert.equal(await page.locator('aside').getByRole('button',{name:'Conversation One'}).count(),1);
-  await page.getByRole('button',{name:'대화 목록 접기'}).click();
+  await page.getByRole('button',{name:'대화 목록 접기'}).first().click();
   // Stop acknowledgement has no "stopped" field. Only the separate durable
   // cancel-status endpoint can confirm release of the pending provider turn.
   await page.evaluate(()=>{window.location.hash='#/chat?session=chat-two'});
