@@ -61,8 +61,8 @@ try{
   });
   await page.goto(address+'/#/activity',{waitUntil:'domcontentloaded'});
   await page.getByRole('heading',{name:'멀티에이전트 팀 작업'}).waitFor({timeout:10000});
-  assert.ok(await page.getByText('저장된 Lead 작업',{exact:false}).first().isVisible(),
-    'durable queued Lead job should appear on Activity');
+  await page.getByText('저장된 Lead 작업',{exact:false}).first()
+    .waitFor({state:'visible',timeout:10000});
   await page.reload({waitUntil:'domcontentloaded'});
   await page.getByText('저장된 Lead 작업',{exact:false}).first().waitFor({timeout:10000});
   await page.locator('button[aria-expanded="false"]').filter({hasText:'m-fixture'}).click();
