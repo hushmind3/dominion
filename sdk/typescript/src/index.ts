@@ -32,6 +32,10 @@ export interface RunStateEvent extends DurableEvent {
   verified?:boolean|null; workerJobId?:string|null;
   remoteWorkerId?:string|null; leaseUntilMs?:number|null;
   evidenceOrigin?:'remote_worker_reported'|null;
+  /** Remote node's observed provider counters; never a billing attestation. */
+  remoteUsage?:{calls:number;promptTokens:number;completionTokens:number;
+    totalTokens:number;cachedPromptTokens:number;cacheObservedCalls:number;
+    estimatedCalls:number}|null;
 }
 /** A runtime guard: do not promote unknown or mismatched event versions. */
 export function isRunStateEvent(event:DurableEvent):event is RunStateEvent {
