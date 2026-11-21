@@ -147,6 +147,22 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
         })).collect::<Vec<_>>()).unwrap_or_default();
     let omitted_receipts=all_receipts.map(|receipts|
         receipts.len().saturating_sub(tool_receipts.len())).unwrap_or(0);
+    // Only the host-sealed owner acceptance witness is eligible here.
+    // Do not use model-claimed files, re-read the live workspace, or expose
+    // raw artifact bytes. A captured file state does NOT imply criteria pass.
+    let final_witness=&job["nativeEvidenceFinal"];
+    let artifact_evidence=if final_witness["scope"]=="acceptance_artifact_paths_only" {
+        final_witness["entries"].as_object().filter(|entries|!entries.is_empty())
+            .map(|entries|{
+                let visible=entries.iter().take(30).map(|(path,entry)|json!({
+                    "path":path,"state":entry["state"],
+                    "bytes":entry["bytes"],"sha256":entry["sha256"]
+                })).collect::<Vec<_>>();
+                json!({"captureComplete":final_witness["complete"],
+                    "entries":visible,
+                    "omitted":entries.len().saturating_sub(visible.len())})
+            }).unwrap_or(Value::Null)
+    }else {Value::Null};
     json!({
         "id":job["id"],"status":status,"phase":phase,
         "instruction":job["input"]["prompt"],
@@ -166,6 +182,7 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
             "answer":snapshot["answer"],"usage":usage,
             "verificationChecks":snapshot["checks"],
             "toolReceipts":tool_receipts,"toolReceiptsOmitted":omitted_receipts,
+            "artifactEvidence":artifact_evidence,
             "pendingCall":approval,"events":events
         }
     })
@@ -673,7 +690,10 @@ mod tests{
         let job=json!({"id":"completed-review","kind":"prompt","status":"completed",
             "input":{"clientSurface":"native_agent_panel","prompt":"Inspect changes"},
             "nativeState":{"status":"completed","step":44,"receipts":receipts,
-                "checks":[{"satisfied":true,"explanation":"file exists"}]}});
+                "checks":[{"satisfied":true,"explanation":"file exists"}]},
+            "nativeEvidenceFinal":{"scope":"acceptance_artifact_paths_only",
+                "complete":true,"entries":{"summary.md":{"state":"file",
+                    "bytes":14,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}});
         state.store.put("job",&job).unwrap();
         let body=project(&state,&job);
         let visible=body["checkpoint"]["toolReceipts"].as_array().unwrap();
@@ -684,6 +704,13 @@ mod tests{
         assert_eq!(visible[39]["id"],"call-42");
         assert_eq!(visible[39]["success"],false);
         assert_eq!(body["checkpoint"]["verificationChecks"][0]["satisfied"],true);
+        let artifacts=&body["checkpoint"]["artifactEvidence"];
+        assert_eq!(artifacts["captureComplete"],true);
+        assert_eq!(artifacts["entries"][0]["path"],"summary.md");
+        assert_eq!(artifacts["entries"][0]["state"],"file");
+        assert_eq!(artifacts["entries"][0]["bytes"],14);
+        assert_eq!(artifacts["entries"][0]["sha256"].as_str().unwrap().len(),64);
+        assert_eq!(artifacts["omitted"],0);
         assert!(!body.to_string().contains("PRIVATE-CREDENTIAL"));
         assert!(!body.to_string().contains("PRIVATE-TOOL-OUTPUT"));
         // Test the same API handlers serving the actual Native frontend.
@@ -692,8 +719,10 @@ mod tests{
         let bytes=to_bytes(response.into_body(),1024*1024).await.unwrap();
         let reopened:Value=serde_json::from_slice(&bytes).unwrap();
         assert_eq!(reopened["checkpoint"]["toolReceipts"],body["checkpoint"]["toolReceipts"]);
+        assert_eq!(reopened["checkpoint"]["artifactEvidence"],artifacts.clone());
         let Json(history)=list(State(state.clone())).await;
         assert_eq!(history[0]["checkpoint"]["toolReceipts"],body["checkpoint"]["toolReceipts"]);
+        assert_eq!(history[0]["checkpoint"]["artifactEvidence"],artifacts.clone());
         assert!(!bytes.windows(18).any(|part|part==b"PRIVATE-CREDENTIAL"));
         crate::test_support::cleanup_dir(root);
     }

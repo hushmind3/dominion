@@ -235,7 +235,10 @@ try{
     {id:'saved-tool-1',tool:'workspace_read',success:true,step:1},
     {id:'saved-tool-2',tool:'workspace_write',success:false,step:2}],
    toolReceiptsOmitted:0,verificationChecks:[
-    {satisfied:false,explanation:'Expected file content was not found'}]}}
+    {satisfied:false,explanation:'Expected file content was not found'}],
+   artifactEvidence:{captureComplete:true,omitted:0,
+    entries:[{path:'summary.md',state:'file',bytes:14,
+     sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}]}}}
  await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
  await page.getByText('No verified result').waitFor({timeout:8000})
  await page.locator('summary').filter({hasText:'도구 실행 기록'}).click()
@@ -246,6 +249,10 @@ try{
   'Tool receipt origin must be identified separately from acceptance checks')
  assert.equal(await page.locator('summary').filter({hasText:'실제 결과 검증 · 0/1'}).count(),1,
   'A failed acceptance check must not be shown as a verified result')
+ await page.locator('summary').filter({hasText:'파일 검증 스냅샷'}).click()
+ await page.getByText('summary.md').waitFor({timeout:8000})
+ assert.equal(await page.getByText('SHA-256:',{exact:false}).count(),1)
+ assert.equal(await page.locator('summary').filter({hasText:'실제 결과 검증 · 0/1'}).count(),1)
  await screenshot(page,'1440-native-receipts.png')
  // Team composer and remote worker use backend contracts, no fake completion.
  await open(page,'activity')

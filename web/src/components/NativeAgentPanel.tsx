@@ -15,6 +15,8 @@ type SdkRun = {
   verificationChecks?: {satisfied:boolean;explanation?:string}[];
   toolReceipts?: {id:string;tool:string;success:boolean;step:number}[];
   toolReceiptsOmitted?:number;
+  artifactEvidence?: {captureComplete:boolean;omitted:number;
+   entries:{path:string;state:string;bytes?:number|null;sha256?:string|null}[]} | null;
  } | null
 }
 const running = new Set(['queued', 'running'])
@@ -300,6 +302,32 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
        </span>
       </li>)}
      </ol>
+    </details>}
+    {Boolean(run.checkpoint?.artifactEvidence?.entries?.length)&&<details
+     className="mt-3 min-w-0 rounded-lg border border-[#E7E0D5] bg-white p-3 text-[11px]">
+     <summary className="cursor-pointer font-semibold">
+      {en?'Captured file evidence':'파일 검증 스냅샷'} · {run.checkpoint?.artifactEvidence?.entries.length}
+     </summary>
+     <p className="mt-2 text-[10px] text-[#82796D]">{en?
+      'Workspace file states captured when this run ended. Not a live scan or a claim that all checks passed.':
+      '실행 종료 시 관찰한 파일 상태입니다. 현재 파일과의 일치 또는 전체 검증 통과를 뜻하지 않습니다.'}</p>
+     {Boolean(run.checkpoint?.artifactEvidence?.omitted)&&<p className="mt-1 text-[10px] text-[#82796D]">
+      {en?`${run.checkpoint?.artifactEvidence?.omitted} earlier files omitted`:
+       `파일 ${run.checkpoint?.artifactEvidence?.omitted}건 표시 생략`}
+     </p>}
+     <ul className="mt-2 max-h-64 space-y-1 overflow-y-auto" aria-label={en?'Host-captured file evidence':'호스트 관찰 파일 증거'}>
+      {run.checkpoint?.artifactEvidence?.entries.map((artifact,i)=><li key={artifact.path||i}
+       className="min-w-0 rounded-lg bg-[#F8F6F2] p-2">
+       <strong className="block break-all text-[#51483F]">{artifact.path}</strong>
+       <span className="mt-1 block text-[10px] text-[#766F67]">
+        {en?`Observed state: ${artifact.state}`:`관찰 상태: ${artifact.state}`}
+        {artifact.bytes!=null?` · ${artifact.bytes.toLocaleString()} bytes`:''}
+       </span>
+       {artifact.sha256&&<code className="mt-1 block break-all text-[10px] text-[#766F67]">
+        SHA-256: {artifact.sha256}
+       </code>}
+      </li>)}
+     </ul>
     </details>}
     {run.checkpoint?.verificationChecks?.length?
      <details className="mt-3 rounded-lg border border-[#E7E0D5] bg-white p-3 text-[11px]">
