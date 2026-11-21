@@ -69,13 +69,23 @@ fn request(client:&reqwest::Client,url:reqwest::Url,token:&str)
         .header("Accept","application/vnd.github+json")
         .header("User-Agent","DOMINION")
 }
+const MAX_GITHUB_RESPONSE_BYTES:usize=2*1024*1024;
+async fn bounded_json(mut response:reqwest::Response)->Result<Value,String>{
+    let mut bytes=Vec::new();
+    while let Some(chunk)=response.chunk().await.map_err(|error|error.to_string())?{
+        if bytes.len().saturating_add(chunk.len())>MAX_GITHUB_RESPONSE_BYTES{
+            return Err("GitHub 응답이 2 MiB를 초과했습니다.".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|error|format!("GitHub 응답 해석 실패: {error}"))
+}
 async fn get_json(client:&reqwest::Client,url:reqwest::Url,token:&str)
     ->Result<(u16,Value),String>{
     let response=request(client,url,token).send().await
         .map_err(|error|format!("GitHub 조회 실패: {error}"))?;
     let status=response.status().as_u16();
-    let body=response.json::<Value>().await
-        .map_err(|error|format!("GitHub 응답 해석 실패: {error}"))?;
+    let body=bounded_json(response).await?;
     Ok((status,body))
 }
 fn http_error(status:u16)->String{
@@ -248,7 +258,7 @@ pub async fn commit(state:&AppState,args:&Value)->Result<Value,String>{
             "error":"서버 오류로 커밋 적용 여부가 불확실합니다. 파일을 다시 조회하세요."}));
     }
     if put_status>=400{return Err(http_error(put_status));}
-    let receipt=match response.json::<Value>().await{
+    let receipt=match bounded_json(response).await{
         Ok(receipt)=>receipt,
         Err(_)=>return Ok(json!({"success":false,"outcomeUnknown":true,
             "requiresInspection":true,
@@ -357,7 +367,7 @@ async fn write_json(client:&reqwest::Client,token:&str,url:reqwest::Url,body:Val
             "status":code,"error":"GitHub 서버 오류. 원격 상태를 직접 다시 조회하세요."}));
     }
     if code>=400{return Err(http_error(code));}
-    match response.json::<Value>().await {
+    match bounded_json(response).await {
         Ok(body)=>Ok(body),
         Err(_)=>Ok(json!({"outcomeUnknown":true,"requiresReview":true,
             "error":"GitHub 쓰기 후 성공 응답 해석 실패. 원격 결과를 확인하고 중복 생성하지 마세요."}))
