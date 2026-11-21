@@ -73,7 +73,9 @@ pub(super) fn room_tool_request(input: &str) -> bool {
         "결과", "가져와", "확인해", "진행해",
         "스킬", "메모리", "브라우저", "깃허브", "github", "shell", "file", "read",
         "write", "run", "search", "fetch", "install", "build", "test", "tool",
-        "browser", "memory", "delegate", "task", "구글", "드라이브", "시트", "문서", "google", "drive", "docs", "sheets",
+        "browser", "memory", "delegate", "task", "팀", "협업", "team", "worker", "lead",
+        "동료에게", "peer", "inbox", "보내", "전달",
+        "구글", "드라이브", "시트", "문서", "google", "drive", "docs", "sheets",
     ]
     .iter()
     .any(|term| lower.contains(term))
@@ -146,6 +148,18 @@ pub(super) fn select_room_tools(
         (
             &["위임", "delegate", "task", "에이전트"],
             &["delegate_task", "task_status", "task_result"],
+        ),
+        (
+            &["팀", "협업", "team", "worker", "lead", "작업 분해", "멀티에이전트", "subagent"],
+            &["team_workers", "team_execute", "team_status", "delegate_task"],
+        ),
+        (
+            &["동료에게", "봇에게", "전달해", "메시지 보내", "peer", "inbox", "받은편지함"],
+            &["room_peer_send", "room_peer_inbox"],
+        ),
+        (
+            &["외부 에이전트", "외부 실행기", "codex", "claude code", "qwen code", "bridge"],
+            &["external_harness_run", "external_harness_sessions"],
         ),
         (
             &["브라우저", "browser", "클릭", "click"],
@@ -319,8 +333,15 @@ pub(super) fn select_tool_definitions(
     // An operator-configured external harness is one *delegation target*,
     // not a second engine. Keep it alongside native delegation when the
     // selected core allows that category. No configured adapter: no schema.
-    let delegated=|name:&str|name=="external_harness_run"
-        && core.contains("delegate_task");
+    let team_intent=["팀","협업","team","lead","worker","멀티에이전트"]
+        .iter().any(|word|query.to_lowercase().contains(word));
+    let external_intent=["external harness","외부 실행기","codex","claude code","qwen code"]
+        .iter().any(|word|query.to_lowercase().contains(word));
+    let delegated=|name:&str|core.contains("delegate_task") && (
+        (matches!(name,"team_workers"|"team_execute"|"team_status") && team_intent)
+        || (matches!(name,"external_harness_run"|"external_harness_sessions")
+            && external_intent)
+    );
     if strategy == "core" {
         return definitions
             .into_iter()
@@ -392,6 +413,34 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn real_team_and_peer_tools_are_advertised_for_explicit_room_intent(){
+        let make=|name:&str|json!({"type":"function","function":{
+            "name":name,"description":name,
+            "parameters":{"type":"object","properties":{}}
+        }});
+        let catalog=[
+            "team_workers","team_execute","team_status","room_peer_send",
+            "room_peer_inbox","external_harness_sessions","workspace_read",
+            "delegate_task","task_status"
+        ].iter().map(|name|make(name)).collect::<Vec<_>>();
+        let names=|query:&str|select_room_tools(catalog.clone(),query,
+            &Default::default(),false).into_iter()
+            .map(|entry|tool_name(&entry).to_string())
+            .collect::<std::collections::HashSet<_>>();
+        let team=names("에이전트 팀을 만들고 병렬 worker를 실행해");
+        for name in ["team_workers","team_execute","team_status"]{
+            assert!(team.contains(name),"Team intent needs {name}");
+        }
+        let peers=names("동료에게 메시지 보내");
+        assert!(peers.contains("room_peer_send"));
+        assert!(peers.contains("room_peer_inbox"));
+        let core=select_tool_definitions(catalog,"팀 작업 분해",
+            &json!({"implementation":"core"}));
+        assert!(advertised_tool(&core,"team_workers"));
+        assert!(advertised_tool(&core,"team_execute"));
+        assert!(!advertised_tool(&core,"room_peer_send"));
+    }
     #[test]
     fn priority_reserves_source_reader_under_tight_provider_schema_budget(){
         let make=|name:&str,description:&str|json!({
