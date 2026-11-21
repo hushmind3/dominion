@@ -95,6 +95,27 @@ if(!boardAddonIndex.includes('pub mod room_board;')||
    !dbSource.includes('CREATE INDEX IF NOT EXISTS idx_room_work_source')||
    !dbSource.includes('pub fn room_work_receipts('))
   throw Error('Room work board lost verified receipt provenance or scoped SQLite admission')
+// Keep the architecture.md §5/§6 wire and SQLite boundaries from
+// silently regressing into UI-only state or model-name guesses.
+const roomEventsSource=readFileSync(path.join(root,'src/db/room_events.rs'),'utf8')
+const roomApi=readFileSync(path.join(root,'src/api/rooms.rs'),'utf8')
+const roomRouter=readFileSync(path.join(root,'src/api/mod.rs'),'utf8')
+const sdkTypeScript=readFileSync(path.join(root,'packages/sdk-typescript/src/index.ts'),'utf8')
+if(!dbSource.includes('CREATE TABLE IF NOT EXISTS room_events(')||
+   !dbSource.includes('room_events::insert_room_event(')||
+   !roomCursor.includes('super::room_events::insert_room_event(')||
+   !roomEventsSource.includes('pub struct RoomEvent')||
+   !roomEventsSource.includes('pub fn room_events(')||
+   !roomRouter.includes('get(rooms::events)')||
+   !roomApi.includes('pub async fn events(')||
+   !sdkTypeScript.includes('getRoomEvents('))
+  throw Error('RoomEvent durable delivery or SDK cursor was removed')
+if(!capabilityNegotiation.includes('endpointModelCapabilities')||
+   !capabilityNegotiation.includes('endpointCapabilities')||
+   !capabilityNegotiation.includes('pub context_window:Option<u64>')||
+   !providerGateway.includes('route_caps.context_window')||
+   !chatProvider.includes('selected_route.tool_mode=crate::engine::gateway::negotiate_tool_mode('))
+  throw Error('Endpoint-model capability or context budget gate was removed')
 const adapter=readFileSync(path.join(root,'src/addons/integrations/chat_product.rs'),'utf8')
 const chatPaths=[
  ['src/engine/chat/runtime.rs',1600],

@@ -858,6 +858,39 @@ mod tests {
         .is_err());
         let _ = std::fs::remove_dir_all(dir);
     }
+    #[tokio::test]
+    async fn room_event_api_paginates_each_room_without_aliasing_global_run_seq(){
+        let (state,dir)=test_state();
+        save_room(&state,None,&config()).unwrap();
+        let first=submit(&state,"room-one",&json!({
+            "input":"첫 번째 명시적인 메시지","clientMessageId":"cursor-1"
+        })).unwrap();
+        let second=submit(&state,"room-one",&json!({
+            "input":"두 번째 명시적인 메시지","clientMessageId":"cursor-2"
+        })).unwrap();
+        let response=events(State(state.clone()),Path("room-one".into()),
+            Query(RoomEventCursor{after:Some(0),limit:Some(1)})).await;
+        assert_eq!(response.status(),StatusCode::OK);
+        let bytes=axum::body::to_bytes(response.into_body(),1024*1024).await.unwrap();
+        let page:Value=serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(page["schemaVersion"],1);
+        assert_eq!(page["hasMore"],true);
+        assert_eq!(page["nextAfter"],1);
+        assert_eq!(page["events"][0]["eventId"],first["message"]["id"]);
+        assert_eq!(page["events"][0]["author"],"owner");
+        let next=events(State(state.clone()),Path("room-one".into()),
+            Query(RoomEventCursor{after:Some(1),limit:Some(10)})).await;
+        let bytes=axum::body::to_bytes(next.into_body(),1024*1024).await.unwrap();
+        let after:Value=serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(after["events"].as_array().unwrap().len(),1);
+        assert_eq!(after["events"][0]["eventId"],second["message"]["id"]);
+        assert_eq!(after["hasMore"],false);
+        let unknown=events(State(state.clone()),Path("other".into()),
+            Query(RoomEventCursor::default())).await;
+        assert_eq!(unknown.status(),StatusCode::NOT_FOUND);
+        drop(state);
+        let _=std::fs::remove_dir_all(dir);
+    }
     #[test]
     fn owner_message_and_job_are_atomic_idempotent_and_stop_preserves_transcript() {
         let (state, dir) = test_state();

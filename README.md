@@ -90,6 +90,8 @@ the provider-independent strategy port, optional decisions and ownership rules.
 | Agent orchestration and tool admission | [chat runtime](src/engine/chat/runtime.rs), [native gateway](src/engine/chat/runtime/tool_dispatch.rs) |
 | Private-chat context compilation | [Context Engine](src/engine/chat/context_engine.rs), [continuity](src/engine/chat/continuity.rs) |
 | Group state, memory and provider continuity | [rooms](src/addons/integrations/rooms.rs), [room context](src/addons/integrations/chat_room_context.rs), [continuity](src/engine/chat/continuity.rs) |
+| Durable RoomEvent / per-agent read cursor | [RoomEvent journal](src/db/room_events.rs), [per-agent cursor](src/db/room_cursor.rs), [room replay API](src/api/rooms.rs) |
+| Endpoint/model capability gate | [capability contract](src/addons/integrations/model_capabilities.rs), [gateway](src/addons/integrations/gateway.rs) |
 | Local API, durable records | [HTTP router](src/api/mod.rs), [SQLite store](src/db.rs) |
 | React interface | [App](web/src/App.tsx), [workspace shell](web/src/components/WorkspaceShell.tsx) |
 | Native desktop | [Tauri configuration](src-tauri/tauri.conf.json), [build script](scripts/build-desktop.mjs) |
