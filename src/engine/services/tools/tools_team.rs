@@ -117,6 +117,7 @@ fn summary(ctx:&ToolContext<'_>,team:&Value)->Result<Value,String>{
             "acceptanceCheckCount":row["successCriteria"].as_array().map_or(0,Vec::len),
             "status":status,"jobId":row["jobId"],
             "remoteWorkerId":row["remoteWorkerId"],"remoteTaskId":row["remoteTaskId"],
+            "remoteUsage":remote.as_ref().map(|task|task["usage"].clone()).unwrap_or(Value::Null),
             "sessionId":row["workerSessionId"],
             "verified":row["verified"]==true,
             "evidence":row["resultEvidence"],
