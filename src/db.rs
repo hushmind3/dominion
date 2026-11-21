@@ -832,6 +832,52 @@ impl Store {
         Some(record)
     }
 
+    /// Task Team child ownership is admitted only while its *parent run*
+    /// remains live. The parent check and child CAS share one SQLite IMMEDIATE
+    /// transaction, including when cancellation races a second engine process.
+    /// This prevents a read-then-claim gap across separate database connections.
+    pub fn patch_team_work_if_parent_running(
+        &self, id:&str, guards:&[(&str,&Value)], patch:&Value,
+    )->Option<Value>{
+        let changes=patch.as_object()?;
+        if changes.keys().any(|key|matches!(key.as_str(),
+            "id"|"kind"|"executionId"|"sessionId"|"teamNodeId"
+            |"programRevision"|"index"|"nodeId"|"nodeType"|"requestedAgentId")){
+            return None;
+        }
+        let mut conn=self.conn.lock().ok()?;
+        let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).ok()?;
+        let mut work=tx.query_row(
+            "SELECT data,id,created_at,updated_at FROM records WHERE kind='task_team_work' AND id=?1",
+            [id],record_from_row,
+        ).ok()?;
+        if guards.iter().any(|(key,expected)|
+            work.get(*key).unwrap_or(&Value::Null)!=*expected){
+            return None;
+        }
+        let run_id=work["executionId"].as_str()?;
+        let parent=tx.query_row(
+            "SELECT data,id,created_at,updated_at FROM records WHERE kind='execution' AND id=?1",
+            [run_id],record_from_row,
+        ).ok()?;
+        if parent["status"]!="running"
+            || parent["sessionId"]!=work["sessionId"]
+            || parent["cancelRequested"]==true
+            || matches!(parent["phase"].as_str(),
+                Some("cancelled"|"interrupted"|"failed"|"succeeded")){
+            return None;
+        }
+        for (key,value) in changes{
+            work[key]=value.clone();
+        }
+        tx.execute(
+            "UPDATE records SET data=?2,updated_at=datetime('now') WHERE kind='task_team_work' AND id=?1",
+            params![id,work.to_string()],
+        ).ok()?;
+        tx.commit().ok()?;
+        Some(work)
+    }
+
     pub fn patch_records(&self, kind: &str, ids: &[String], patch: &Value) -> Option<Vec<Value>> {
         let patch = patch.as_object()?;
         let mut conn = self.conn.lock().unwrap();
@@ -1778,6 +1824,46 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let store = Store::open(&dir.join("dominion.sqlite")).unwrap();
         (store, dir)
+    }
+
+    #[test]
+    fn task_team_work_claim_checks_parent_status_and_phase_atomically(){
+        let (store,dir)=temp_store();
+        store.put("execution",&json!({
+            "id":"run","status":"running","sessionId":"s","phase":"running"
+        })).unwrap();
+        store.put("task_team_work",&json!({
+            "id":"work","executionId":"run","sessionId":"s",
+            "programRevision":"r1","teamNodeId":"team","index":0,
+            "nodeId":"a","nodeType":"delegate","agentId":"worker",
+            "requestedAgentId":"worker","status":"assigned"
+        })).unwrap();
+        let assigned=json!("assigned");
+        let worker=json!("worker");
+        let guards=[("status",&assigned),("agentId",&worker)];
+        // An interrupted phase blocks a new claim even before the parent
+        // status has been reconciled from running to cancelled.
+        store.patch_if("execution","run","phase",&json!("running"),
+            &json!({"phase":"cancelled"})).unwrap();
+        assert!(store.patch_team_work_if_parent_running("work",&guards,
+            &json!({"status":"running","attempt":1})).is_none());
+        assert_eq!(store.get("task_team_work","work").unwrap()["status"],"assigned");
+        store.patch_if("execution","run","phase",&json!("cancelled"),
+            &json!({"phase":"running","status":"running"})).unwrap();
+        let claim=store.patch_team_work_if_parent_running("work",&guards,
+            &json!({"status":"running","attempt":1})).unwrap();
+        assert_eq!(claim["status"],"running");
+        assert!(store.patch_team_work_if_parent_running("work",&guards,
+            &json!({"status":"running","attempt":2})).is_none());
+        // Parent termination prevents even a stale completion receipt from
+        // advancing a previously claimed child.
+        store.patch_if("execution","run","status",&json!("running"),
+            &json!({"status":"cancelled","phase":"cancelled"})).unwrap();
+        assert!(store.patch_team_work_if_parent_running("work",
+            &[("status",&json!("running"))],
+            &json!({"status":"completed"})).is_none());
+        assert_eq!(store.get("task_team_work","work").unwrap()["status"],"running");
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]
