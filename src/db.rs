@@ -1601,26 +1601,53 @@ impl Store {
             .filter(|lease| lease["status"].as_str() == Some("active"))
     }
 
-    /// Replaces the live database with a consistent snapshot. Callers must put
-    /// the engine into maintenance mode first; the connection is swapped under
-    /// the same mutex so no query observes a half-written file.
+    /// Stage and validate a complete SQLite snapshot before closing the live
+    /// handle. The final rename replaces the file on the same filesystem.
+    /// Rollback uses a *different* staging name, even if restore.tmp is blocked.
     pub fn replace_database(&self, bytes: &[u8]) -> Result<(), String> {
-        let temp = self.path.with_extension("restore.tmp");
-        std::fs::write(&temp, bytes).map_err(|error| error.to_string())?;
-        let mut guard = self.conn.lock().map_err(|error| error.to_string())?;
-        let _ = guard.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
-        // Close the old handle before copying over the database file.
-        *guard = Connection::open_in_memory().map_err(|error| error.to_string())?;
-        let wal = PathBuf::from(format!("{}-wal", self.path.display()));
-        let shm = PathBuf::from(format!("{}-shm", self.path.display()));
-        let _ = std::fs::remove_file(wal);
-        let _ = std::fs::remove_file(shm);
-        std::fs::copy(&temp, &self.path).map_err(|error| error.to_string())?;
-        let _ = std::fs::remove_file(&temp);
-        *guard = Connection::open(&self.path).map_err(|error| error.to_string())?;
-        let _ = guard.execute_batch(
-            "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;",
-        );
+        self.replace_database_staged(bytes, "restore.tmp")
+    }
+    pub fn replace_database_rollback(&self, bytes: &[u8]) -> Result<(), String> {
+        self.replace_database_staged(bytes, "rollback.tmp")
+    }
+    fn replace_database_staged(&self, bytes: &[u8], suffix: &str) -> Result<(), String> {
+        let temp=self.path.with_extension(suffix);
+        std::fs::write(&temp,bytes).map_err(|error|error.to_string())?;
+        std::fs::File::open(&temp).and_then(|file|file.sync_all())
+            .map_err(|error|error.to_string())?;
+        // Invalid snapshots cannot destroy a healthy, connected live store.
+        {
+            let candidate=Connection::open_with_flags(
+                &temp,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+            ).map_err(|error|error.to_string())?;
+            let integrity:String=candidate.query_row("PRAGMA quick_check",[],|row|row.get(0))
+                .map_err(|error|error.to_string())?;
+            if integrity!="ok" {return Err(format!("restore SQLite integrity: {integrity}"));}
+        }
+        let mut guard=self.conn.lock().map_err(|error|error.to_string())?;
+        let busy:i64=guard.query_row("PRAGMA wal_checkpoint(TRUNCATE)",[],|row|row.get(0))
+            .map_err(|error|format!("restore WAL checkpoint: {error}"))?;
+        if busy!=0{return Err("restore WAL checkpoint is busy".into());}
+        let placeholder=Connection::open_in_memory().map_err(|error|error.to_string())?;
+        drop(std::mem::replace(&mut *guard,placeholder));
+        // No old database handle remains, so orphaned WAL pages must not be
+        // replayed into the replacement database.
+        for suffix in ["-wal","-shm"]{
+            let aux=PathBuf::from(format!("{}{}",self.path.display(),suffix));
+            let _=std::fs::remove_file(aux);
+        }
+        if let Err(error)=std::fs::rename(&temp,&self.path){
+            if let Ok(original)=Connection::open(&self.path){
+                *guard=original;
+                let _=guard.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;");
+            }
+            return Err(format!("restore SQLite atomic rename: {error}"));
+        }
+        let reopened=Connection::open(&self.path).map_err(|error|error.to_string())?;
+        reopened.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;"
+        ).map_err(|error|error.to_string())?;
+        *guard=reopened;
         Ok(())
     }
 
