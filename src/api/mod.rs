@@ -22,6 +22,7 @@ pub mod benchmark;
 pub mod experiments;
 pub mod chat;
 pub mod jobs;
+pub mod remote_workers;
 pub mod system;
 pub mod attachments;
 pub mod channels;
@@ -130,6 +131,13 @@ pub fn router(state: AppState) -> Router {
         .route("/api/sdk/runs/:id/reconcile", post(sdk::reconcile))
         .route("/api/sdk/runs/:id/cancel", post(sdk::cancel))
         .route("/api/sdk/runs/:id/steer",post(sdk::steer))
+        .route("/api/remote/jobs",get(remote_workers::list).post(remote_workers::create))
+        .route("/api/remote/jobs/:id",get(remote_workers::one))
+        .route("/api/remote/jobs/:id/review",post(remote_workers::review))
+        .route("/api/remote/jobs/:id/cancel",post(remote_workers::cancel))
+        .route("/api/remote/claim",post(remote_workers::claim))
+        .route("/api/remote/jobs/:id/heartbeat",post(remote_workers::heartbeat))
+        .route("/api/remote/jobs/:id/finish",post(remote_workers::finish))
         .route("/api/jobs",get(jobs::list).post(jobs::create))
         .route("/api/jobs/:id",get(jobs::one))
         .route("/api/jobs/:id/cancel",post(jobs::cancel))
