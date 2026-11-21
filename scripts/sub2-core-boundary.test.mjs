@@ -121,8 +121,8 @@ test('real chat model loop consults pure execution driver and gates parallel too
  const s=source('src/engine/services/conversation/chat/runtime/turn_body.rs');
  assert.match(s,/Harness::new/);
  assert.match(s,/harness\.request_model/);
- assert.match(s,/harness\.authorize_step/);
- assert.match(s,/harness\.admit_batch/);
+ assert.match(s,/harness\.prepare_response/);
+ assert.match(s,/harness\.admit_prepared/);
  assert.match(s,/budget\.charge_proposals\(round_calls\.len\(\)\)/);
  assert.doesNotMatch(s,/driver\.admit_tool/);
  assert.doesNotMatch(s,/Driver::batch_advertised/);
@@ -203,7 +203,8 @@ test('swap-ready agent loops use the core trait without importing the gateway',(
  assert.match(algo,/impl AgentLoop for PlanExecuteLoop/);
  assert.match(algo,/pub async fn run</);
  assert.match(runtime,/Harness::new/);
- assert.match(runtime,/harness\.authorize_step/);
+ assert.match(runtime,/harness\.prepare_response/);
+ assert.match(runtime,/harness\.admit_prepared/);
  assert.match(algo,/Harness::new\(driver,policy\)/);
  assert.match(runtime,/decision_policy\.workflow\(plan_requested\)/);
  assert.match(policy,/pub fn workflow\(/);
@@ -403,7 +404,7 @@ test('DAG ready read waves stay concurrent while writer and delegate steps remai
 test('model/provider duplicate call IDs cannot be silently rewritten by native Chat',()=>{
  const product=source('src/engine/services/conversation/chat/runtime/turn_body.rs');
  const driver=source('crates/dominion-turn-core/src/driver.rs');
- assert.match(product,/Driver::validate_call_ids/);
+ assert.match(product,/harness\.prepare_response/);
  assert.doesNotMatch(product,/!seen_ids\.insert\(call\.id\.clone\(\)\)/);
  assert.match(driver,/pub fn validate_call_ids/);
  assert.match(driver,/Self::validate_call_ids\(pending\.iter/);

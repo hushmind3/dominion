@@ -1124,13 +1124,20 @@ pub(super) async fn run_turn_body(
             }
         }
 
-        let next_step=harness.authorize_step(
-            crate::engine::core::agent_loop::RoundObservation{
-                proposed_calls:completion.tool_calls.len(),
-                has_plan:plan_digest.is_some(),
-            },
-            request.tools_enabled && request.tools_execution_enabled)
-            .map_err(str::to_string)?;
+        // Repair only absent IDs. Duplicate provider IDs remain invalid and
+        // cannot acquire fresh tool authority by generating replacement IDs.
+        for call in completion.tool_calls.iter_mut(){
+            if call.id.trim().is_empty(){
+                call.id=uuid::Uuid::new_v4().to_string();
+            }
+        }
+        let prepared=harness.prepare_response(
+            completion.tool_calls.iter().map(|call|
+                (call.id.as_str(),call.name.as_str())),
+            plan_digest.is_some(),
+            request.tools_enabled && request.tools_execution_enabled,
+        ).map_err(str::to_string)?;
+        let next_step=prepared.step();
         if next_step==crate::engine::core::driver::Step::Answer {
             {
                 let mut operations=state.store.execution_operations(execution_id)?
@@ -1359,17 +1366,6 @@ pub(super) async fn run_turn_body(
             break;
         }
 
-        // The provider may omit an ID; give that call exactly one stable
-        // host-generated ID. Never rewrite a duplicate non-empty provider ID:
-        // that would transform an invalid response into fresh tool authority.
-        for call in completion.tool_calls.iter_mut(){
-            if call.id.trim().is_empty(){
-                call.id=uuid::Uuid::new_v4().to_string();
-            }
-        }
-        crate::engine::core::driver::Driver::validate_call_ids(
-            completion.tool_calls.iter().map(|call|call.id.as_str())
-        ).map_err(str::to_string)?;
         let tool_calls_json = completion
             .tool_calls
             .iter()
@@ -1417,9 +1413,8 @@ pub(super) async fn run_turn_body(
             return Err(format!("도구 제안 예산({}회)을 초과했습니다.",
                 max_tools.saturating_mul(2)));
         }
-        if let Err(reason)=harness.admit_batch(
-            round_calls.iter().map(|call|(call.id.as_str(),call.name.as_str())),
-            &round_tools,
+        if let Err(reason)=harness.admit_prepared(
+            &prepared,&round_tools,
             request.tools_enabled && request.tools_execution_enabled,
         ){
             state.store.audit("tool.batch_admission_denied",json!({

@@ -55,6 +55,20 @@ pub struct ModelResponse {
     pub content:String,
     pub calls:Vec<ToolRequest>,
 }
+/// One immutable admission ticket for an actual provider response. Product
+/// Chat persists the assistant tool-call envelope BEFORE batch admission,
+/// while a standalone SDK can admit immediately. Neither host may alter the
+/// IDs/tool names between the decision and effect boundary.
+#[derive(Debug,Clone)]
+pub struct PreparedResponse{
+    step:Step,
+    calls:Vec<(String,String)>,
+}
+impl PreparedResponse{
+    pub fn step(&self)->Step{self.step}
+    pub fn call_count(&self)->usize{self.calls.len()}
+}
+
 /// The single provider-independent round coordinator shared by both the
 /// product Chat runtime and the standalone port-driven AgentLoop. Strategy
 /// decisions cannot bypass the driver; no product, model, tool or I/O code
@@ -68,6 +82,35 @@ impl<'a,A:AgentLoop+?Sized> Harness<'a,A>{
         Self{driver,algorithm}
     }
     pub fn workflow(&self)->&'static str{self.algorithm.name()}
+
+    /// Decide a whole model response, with exactly the provider's real tool
+    /// IDs. No tool authority is reserved yet: Chat may first commit the
+    /// assistant proposal and then persist precise rejected-call feedback.
+    pub fn prepare_response<'b>(
+        &mut self,calls:impl IntoIterator<Item=(&'b str,&'b str)>,
+        has_plan:bool,enabled:bool,
+    )->Result<PreparedResponse,&'static str>{
+        let calls=calls.into_iter().map(|(id,name)|
+            (id.to_string(),name.to_string())).collect::<Vec<_>>();
+        let step=self.authorize_step(
+            RoundObservation{proposed_calls:calls.len(),has_plan},enabled)?;
+        if matches!(step,Step::Execute{..}){
+            Driver::validate_call_ids(calls.iter().map(|(id,_)|id.as_str()))?;
+        }
+        Ok(PreparedResponse{step,calls})
+    }
+    /// The only post-proposal batch admission path. Rechecks both the
+    /// currently advertised tools and turn-local call IDs atomically.
+    pub fn admit_prepared(
+        &mut self,prepared:&PreparedResponse,visible:&[Value],enabled:bool,
+    )->Result<(),&'static str>{
+        match prepared.step{
+            Step::Answer=>Ok(()),
+            Step::Execute{..}=>self.admit_batch(
+                prepared.calls.iter().map(|(id,name)|
+                    (id.as_str(),name.as_str())),visible,enabled),
+        }
+    }
     /// Return the driver's future directly; no extra async state machine.
     /// Native streaming completions are large futures and nested wrappers
     /// can overflow the small macOS test-thread stack on room replays.
@@ -158,6 +201,39 @@ mod tests{
         assert_eq!(harness.admit_batch(
             [("a","read")],&visible,true),
             Err("duplicate or missing tool call id"));
+    }
+
+    #[test]
+    fn staged_response_admission_preserves_host_persistence_and_rejects_bad_siblings(){
+        struct Policy;
+        impl AgentLoop for Policy{
+            fn name(&self)->&'static str{"react"}
+            fn after_model(&mut self,observation:RoundObservation)->Step{
+                if observation.proposed_calls==0{Step::Answer}
+                else{Step::Execute{calls:observation.proposed_calls}}
+            }
+        }
+        let mut driver=Driver::new(4,3);
+        let mut policy=Policy;
+        let mut harness=Harness::new(&mut driver,&mut policy);
+        let visible=vec![json!({"name":"read"})];
+        let bad=harness.prepare_response([
+            ("r1","read"),("r2","hidden")],false,true).unwrap();
+        assert_eq!(bad.step(),Step::Execute{calls:2});
+        assert_eq!(harness.admit_prepared(&bad,&visible,true),
+            Err("tool was not advertised"));
+        let good=harness.prepare_response([
+            ("r1","read"),("r2","read")],false,true).unwrap();
+        assert!(harness.admit_prepared(&good,&visible,true).is_ok());
+        assert_eq!(harness.admit_prepared(&good,&visible,true),
+            Err("duplicate or missing tool call id"));
+        assert_eq!(harness.prepare_response([
+            ("duplicate","read"),("duplicate","read")],false,true)
+            .unwrap_err(),"duplicate or missing tool call id");
+        let answer=harness.prepare_response(std::iter::empty(),false,true).unwrap();
+        assert_eq!(answer.step(),Step::Answer);
+        assert_eq!(answer.call_count(),0);
+        assert!(harness.admit_prepared(&answer,&visible,true).is_ok());
     }
 
     #[test]

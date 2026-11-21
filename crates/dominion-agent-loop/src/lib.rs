@@ -84,10 +84,11 @@ pub async fn run<A:AgentLoop,M:ModelPort,T:ToolPort>(
             model.complete(history,visible_tools),
         ).await?;
         rounds+=1;
-        let step=harness.authorize_step(RoundObservation{
-            proposed_calls:response.calls.len(),has_plan,
-        },tools_enabled).map_err(str::to_string)?;
-        match step{
+        let prepared=harness.prepare_response(
+            response.calls.iter().map(|call|(call.id.as_str(),call.name.as_str())),
+            has_plan,tools_enabled,
+        ).map_err(str::to_string)?;
+        match prepared.step(){
             Step::Answer=>{
                 history.push(json!({"role":"assistant","content":response.content}));
                 return Ok(RunResult{
@@ -99,10 +100,8 @@ pub async fn run<A:AgentLoop,M:ModelPort,T:ToolPort>(
                 // Reserve the full batch before any external effect. A
                 // hidden tool, duplicate call ID or exhausted budget denies
                 // every call in the proposal, not just the later ones.
-                harness.admit_batch(
-                    response.calls.iter().map(|c|(c.id.as_str(),c.name.as_str())),
-                    visible_tools,tools_enabled,
-                ).map_err(str::to_string)?;
+                harness.admit_prepared(&prepared,visible_tools,tools_enabled)
+                    .map_err(str::to_string)?;
                 let calls=response.calls.iter().map(|c|json!({
                     "id":c.id,"type":"function",
                     "function":{"name":c.name,"arguments":c.arguments.to_string()}

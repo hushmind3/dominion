@@ -265,3 +265,9 @@ ProgramIR의 기존 `parallel` 노드에 `dependsOn` 형제 ID를 정식 지원�
 ### P0: 중첩 실패의 실행 전파 회귀 검증
 
 실제 제품의 ProgramIR을 통해 존재하지 않는 파일을 읽는 하위 작업(`onFailure=revise`)과 그 결과에 의존해 파일을 생성하는 writer를 실행하는 테스트를 추가했습니다. 자식 실패는 상위 Team까지 전파되어 writer를 호출하지 않고, 부모 완료 ID를 발급하지 않으며, 체크포인트에는 `needs_revision`을 기록해야 합니다. Chat·Room·SDK의 공통 Tool Gateway를 그대로 사용합니다.
+
+## 2026-11-21 P0: 단일 Harness 응답별 준비·승인 상태 기계
+
+제품 Chat과 standalone Rust AgentLoop가 각각의 `authorize_step`/도구 호출 목록 검사/`admit_batch` 조립을 반복하지 않도록 `dominion-turn-core::agent_loop::PreparedResponse` 계약을 도입했습니다. **두 실행 경로 모두 `Harness::prepare_response`에서 실제 모델 응답의 도구 ID·전략 판정을 수행**하고, 영속 assistant 제안 저장 이후(또는 standalone transcript 추가 전) 동일한 `Harness::admit_prepared`로 전체 도구 배치를 원자 승인합니다. 승인 티켓은 ID·도구 이름을 비공개 소유하며, model/provider가 광고하지 않은 도구와 중복 호출을 전부 거절합니다. 제품의 거절 피드백·SQLite 체인과 standalone host callbacks는 기존 인터페이스를 유지합니다.
+
+호스트별 스트리밍 UI, 도구 승인 대기, ProgramIR 스케줄링은 여전히 별도 어댑터 안에 있으며, 단일 모델 응답의 판단·승인 경계를 먼저 공통화한 것입니다.
