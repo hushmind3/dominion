@@ -192,8 +192,13 @@ try{
  await page.getByRole('button',{name:'이 도구 실행 거부'}).waitFor({timeout:8000})
  await screenshot(page,'1440-tool-approval-review.png')
  await page.getByRole('button',{name:'이 도구 실행 거부'}).click()
+ // The click starts an async GET(callId revalidation) → POST(deny) flow.
+ // Wait for the real React UI to consume the host response, not just click.
+ await page.getByRole('button',{name:'이 도구 실행 거부'}).waitFor({state:'hidden',timeout:8000})
  assert.equal(sdkRuns[0].checkpoint.pendingCall,null,
   'Owner rejection must settle the exact tool and clear the approval UI')
+ assert.equal(sdkRuns[0].status,'running',
+  'The browser fixture must only clear the exact refused tool call')
  // Team composer and remote worker use backend contracts, no fake completion.
  await open(page,'activity')
  const team=page.locator('[aria-label="작업 팀"]')

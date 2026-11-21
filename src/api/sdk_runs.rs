@@ -627,7 +627,9 @@ mod tests{
         working["nativeState"]["modelInFlight"]=json!(false);
         working["nativeState"]["inFlight"]=json!([]);
         working["nativeState"]["error"]=json!("Model token budget exhausted");
-        assert_eq!(project(&state,&working)["phase"],"needs_review");
+        // A budget-exhausted native run is terminal FAILED in the shared
+        // execution phase reducer; the legacy display status stays exhausted.
+        assert_eq!(project(&state,&working)["phase"],"failed");
         assert_eq!(project(&state,&working)["status"],"exhausted",
             "budget stop must not show a meaningless Applied button");
         working["status"]=json!("failed");
@@ -672,7 +674,10 @@ mod tests{
             "unrelated tool uncertainty must not block this SDK run");
         state.store.put("execution_operation",&json!({"id":"my-unknown",
             "runId":"my-job","status":"interrupted","outcomeUnknown":true})).unwrap();
-        assert_eq!(project(&state,&interrupted)["status"],"denied");
+        // Uncertain host effects block resume. No owner denied this call,
+        // so reporting a refusal would invent an approval decision.
+        assert_eq!(project(&state,&interrupted)["status"],"failed");
+        assert_eq!(project(&state,&interrupted)["phase"],"failed");
         state.store.put("approval",&json!({"id":"my-approval","runId":"my-job",
             "sessionId":"my-session","status":"pending"})).unwrap();
         let (sender,_receiver)=tokio::sync::oneshot::channel();
