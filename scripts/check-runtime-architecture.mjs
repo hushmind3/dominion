@@ -41,7 +41,15 @@ has('src/host/execution/native_agent.rs',['AgentLoop','agent_loop.execute(']);
 has('src/conversation/chat/runtime/turn.rs',
   ['dominion_agent_sdk::dispatch_model_turn','dominion_agent_sdk::dispatch_batch']);
 has('crates/dominion-agent-runtime/src/drive.rs',
-  ['pub async fn dispatch_model_turn','pub enum ModelAttempt']);
+  ['pub async fn dispatch_model_turn','pub enum ModelAttempt',
+   'pub fn settle_model_turn','pub fn settle_rejected_model_turn']);
+has('src/conversation/chat/protocol.rs',
+  ['native_stream::SseDecoder','Packet::Data(value)','Packet::Done']);
+has('src/conversation/chat/runtime/turn.rs',
+  ['settle_rejected_chat_turn','settle_rejected_model_turn']);
+has('crates/dominion-agent-algorithms/src/agent_loop.rs',
+  ['runtime::settle_rejected_model_turn','runtime::settle_model_turn']);
+has('src/api/sdk_runs.rs',['"phase":phase','"needs_review"=>"needs_review"']);
 has('crates/dominion-agent-algorithms/src/harness.rs',
   ['macro_rules! harness_steps','both_loop_styles_share_one_control_flow_source']);
 has('crates/dominion-agent-algorithms/src/agent_loop.rs',
