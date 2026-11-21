@@ -3,11 +3,12 @@ import {Check,ChevronDown,ChevronRight,GitBranch,Layers3,MessageSquare,RefreshCw
 import {get,post} from '../api'
 import {useLocale} from '../i18n'
 import {Panel,useRemote} from './UI'
+import {classifyTeamReview} from './teamOutcome'
 
 type Job={
  id:string;kind?:string;status?:string;error?:string;result?:Record<string,unknown>|null;
  createdAt?:string;queuedAt?:string;
- delegationPatchSha256?:string;integrationStatus?:string;
+ delegationPatchSha256?:string;integrationStatus?:string;integratedAt?:string;
  input?:{
   goal?:string;prompt?:string;sessionId?:string;parentSessionId?:string;agentId?:string;
   teamJobId?:string;teamStepId?:string;delegation?:boolean;delegationProfile?:string;externalRuntime?:string|null;
@@ -21,6 +22,7 @@ const compact=(value:unknown)=>typeof value==='string'?value:'—'
 const stateClass=(state?:string)=>state==='completed'?'border-emerald-200 bg-emerald-50 text-emerald-700':
  state==='failed'||state==='cancelled'?'border-rose-200 bg-rose-50 text-rose-700':
  state==='running'?'border-[#D9BAA6] bg-[#F7E8E1] text-[#9D5039]':
+ state==='needs_review'?'border-amber-200 bg-amber-50 text-amber-800':
  'border-[#E7E0D5] bg-[#FAF7F1] text-[#7C7469]'
 function ExternalContinuation({job,onCreated}:{job:Job;onCreated:()=>void}){
  const en=useLocale()==='en'
@@ -113,6 +115,7 @@ function TeamCard({team,summary,onCreated}:{team:Job;summary:Map<string,Job>;onC
  const statuses=Object.fromEntries(plan.map(step=>[step.id,records.get(step.jobId)?.status||'unknown']))
  const complete=plan.filter(step=>records.get(step.jobId)?.status==='completed').length
  const unknown=plan.filter(step=>!records.has(step.jobId)).length
+ const review=classifyTeamReview(team)
  return <div className="rounded-xl border border-[#E7E0D5] bg-[#FCFAF6] p-3">
   <button type="button" aria-expanded={open} onClick={()=>setOpen(v=>!v)} className="flex w-full min-w-0 justify-between gap-2 text-left">
    <span className="min-w-0"><strong className="block text-[12px]">{team.input?.goal||team.id}</strong>
@@ -121,6 +124,21 @@ function TeamCard({team,summary,onCreated}:{team:Job;summary:Map<string,Job>;onC
      {' · '}{en?'Parallel capacity':'동시 실행 한도'} {team.input?.maxParallel||'—'}</span></span>
    <span className={'shrink-0 self-start rounded border px-2 py-1 text-[10px] '+stateClass(team.status)}>{team.status}</span>
   </button>
+  {review.kind==='integrated'&&<p role="status" className="mt-2 flex items-center gap-1 text-[11px] text-emerald-700">
+   <Check size={12}/>{en?'Team patches integrated':'팀 패치 통합 완료'}
+  </p>}
+  {review.kind==='pending'&&<p role="status" className="mt-2 text-[11px] text-amber-800">
+   {en?'Integration still requires owner review for':'검토·통합이 아직 끝나지 않은 패치 대상'} {review.count}{en?' patch jobs':'개'}
+   {team.input?.sessionId&&<a href={'#/chat?session='+encodeURIComponent(team.input.sessionId)}
+    className="ml-2 underline">{en?'Open owner conversation':'원본 대화 열기'}</a>}
+  </p>}
+  {review.kind==='gaps'&&<p role="alert" className="mt-2 text-[11px] text-rose-700">
+   {en?'Worker verification gaps block integration':'검증 공백으로 통합 불가'}: {review.count}
+  </p>}
+  {review.kind==='review'&&<p role="status" className="mt-2 text-[11px] text-amber-800">
+   {en?'Team needs owner review':'팀 실행 결과 확인 필요'}
+   {typeof team.result?.reason==='string'&&<>: {team.result.reason}</>}
+  </p>}
   {open&&<div className="mt-3 space-y-2">
    {details.loading&&<p role="status" className="text-[11px] text-[#7C7469]">{en?'Loading durable Worker records…':'저장된 Worker 기록 조회 중…'}</p>}
    {details.error&&<p role="alert" className="text-[11px] text-rose-700">{en?'Detailed Worker status could not be loaded':'Worker 상세 기록 조회 실패'}: {details.error}
