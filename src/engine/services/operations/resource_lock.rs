@@ -16,7 +16,7 @@ fn key(workspace:&Path,name:&str,args:&Value)->Option<String>{
     let prefix=canonical.to_string_lossy();
     match name{
         "workspace_write"|"workspace_replace"|"workspace_replace_range"|
-        "workspace_apply_patch"|"shell_exec"|"terminal_exec"|"external_harness_run" =>
+        "workspace_apply_patch"|"team_remote_apply"|"shell_exec"|"terminal_exec"|"external_harness_run" =>
             Some(format!("workspace:{prefix}")),
         "file_write"=>{
             // Absolute file_write is an alias for workspace_write whenever
