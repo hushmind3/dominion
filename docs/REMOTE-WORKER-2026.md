@@ -167,3 +167,43 @@ Cross-host native verification is not asserted. Remote owner-reviewed reports
 never set `nativeVerified:true`; remote write effects remain on the worker's
 own isolated workspace until a separate explicit artifact-transfer contract
 is implemented.
+
+## Remote Git artifact courier (2026-11-21)
+
+Remote jobs can now deliver an **immutable, content-addressed Git patch** to
+the coordinator, instead of reducing all cross-device output to a text answer.
+
+On an enrolled worker, explicitly set
+`DOMINION_REMOTE_GIT_WORKTREE=/absolute/path/to/local/repository` to enable
+patch export. Before its native SDK run, the worker requires a clean Git
+working directory and records the exact 40/64-hex commit OID. After a
+completed run it checks that HEAD has not changed and collects one bounded
+`git diff --binary --no-ext-diff HEAD` from **tracked files only**.
+Untracked files and previous dirty state never silently enter a patch. This
+uses fixed executable arguments; model text is never interpolated into a
+shell command.
+
+Transport and owner inspection:
+
+- Worker-only `POST /api/remote/jobs/:id/artifact/upload`, with the same
+  per-device secret, active worker ID and lease ID as heartbeat. Body:
+  `{"workerId","leaseId","baseCommit","patchSha256","patch"}`.
+- Maximum patch size is 128 KiB. The coordinator independently recomputes
+  SHA-256; invalid hashes, stale leases, foreign workers and changed
+  duplicate payloads fail closed.
+- Coordinator SQLite retains the artifact as `quarantined`, keyed to its
+  job, owning worker, frozen Git base and hash. The shared event bus
+  publishes only the manifest, **never untrusted patch text or tokens**.
+- Owner-only `GET /api/remote/jobs/:id/artifact` returns the manifest and
+  patch for inspection, requiring the coordinator admin token.
+- Owner-only `POST /api/remote/jobs/:id/artifact/review` with
+  `{"accept":true|false}` records a separate patch decision **after**
+  the parent remote report has been owner accepted.
+
+**Explicit remaining boundary:** Patch receipt and owner approval do not
+apply code, claim independent native verification, synchronize workspaces,
+run tests, or merge into the coordinator repository. Cross-host patch
+replay and verified integration require a separate coordinator-native
+sandbox/worktree and immutable acceptance-check receipt. The patch is
+remote evidence, not a trusted Core tool effect.
+
