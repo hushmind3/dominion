@@ -229,6 +229,65 @@ async fn failed_write_cannot_leak_later_write_from_same_plan(){
     assert_eq!(*tools.called.lock().unwrap(),vec!["first_write","observe"]);
 }
 #[tokio::test]
+async fn failed_final_external_effect_blocks_false_completion_until_repaired() {
+    let model=ScriptedModel::new(vec![
+        decide(json!([op("prepare","write",&[])]),None),
+        decide(json!([op("deploy-failed","write",&[])]),None),
+        decide(json!([]),Some("Deployed successfully")),
+        decide(json!([op("deploy-repaired","write",&[])]),None),
+        decide(json!([]),Some("Deployment confirmed after correction")),
+    ]);
+    let tools=RecordingTools::new(&["deploy-failed"]);
+    let journal=RecordingJournal::default();
+    let kernel=Kernel{model:&model,tools:&tools,
+        evidence:&AlwaysTrueEvidence,journal:&journal};
+    let mut req=request("failed-deployment-recovery");
+    req.instruction="Deploy the artifact to the service".into();
+    let result=kernel.run(req).await.unwrap();
+    assert!(matches!(result.status,Status::Completed),"{result:?}");
+    assert_eq!(result.answer.as_deref(),
+        Some("Deployment confirmed after correction"));
+    assert_eq!(result.model_calls,5);
+    assert_eq!(*tools.called.lock().unwrap(),
+        vec!["prepare","deploy-failed","deploy-repaired"]);
+    let failed=&result.receipts.iter().find(|r|r.id=="deploy-failed").unwrap();
+    assert!(!failed.success);
+    assert!(result.receipts.iter().any(|r|r.id=="deploy-repaired"&&r.success));
+    let prompts=model.prompts.lock().unwrap();
+    let retry_prompt:Value=serde_json::from_str(&prompts[3]).unwrap();
+    assert!(retry_prompt["verificationGaps"].to_string()
+        .contains("latest external effect failed"));
+    let stored=journal.snapshots.lock().unwrap();
+    assert!(stored.iter().any(|snapshot|snapshot.checks.iter().any(
+        |check|check.criterion.tool.as_deref()==Some("last_external_effect")
+            && !check.satisfied)));
+}
+
+#[tokio::test]
+async fn repeated_claims_after_failed_external_effect_are_needs_review() {
+    let model=ScriptedModel::new(vec![
+        decide(json!([op("prepare","write",&[])]),None),
+        decide(json!([op("deployment-error","write",&[])]),None),
+        decide(json!([]),Some("Deployed")),
+        decide(json!([]),Some("Deployed")),
+        decide(json!([]),Some("Deployed")),
+    ]);
+    let tools=RecordingTools::new(&["deployment-error"]);
+    let journal=RecordingJournal::default();
+    let kernel=Kernel{model:&model,tools:&tools,
+        evidence:&AlwaysTrueEvidence,journal:&journal};
+    let mut req=request("unresolved-deployment");
+    req.instruction="Deploy the artifact to the service".into();
+    let result=kernel.run(req).await.unwrap();
+    assert!(matches!(result.status,Status::NeedsReview),"{result:?}");
+    assert!(result.answer.is_none());
+    assert_eq!(result.model_calls,5);
+    assert_eq!(*tools.called.lock().unwrap(),
+        vec!["prepare","deployment-error"]);
+    assert!(result.receipts.iter().any(|r|r.id=="deployment-error"&&!r.success));
+}
+
+#[tokio::test]
 async fn malformed_dependencies_never_hit_host_tools(){
     let model=ScriptedModel::new(vec![
         decide(json!([op("a","read",&["future"]),op("future","write",&[])]),None),

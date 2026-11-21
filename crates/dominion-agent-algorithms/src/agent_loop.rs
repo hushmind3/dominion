@@ -383,6 +383,31 @@ impl Kernel<'_> {
                     let has_confirmed_write = run.receipts.iter().any(|r|r.success &&
                         r.result["written"] == true &&
                         tools.get(&r.tool).is_some_and(|tool| !tool.read_only));
+                    // A previous successful effect must not mask a later failed
+                    // deploy, patch or other owner-requested external action.
+                    // Read-only inspections after the failure are not proof
+                    // that the failed effect has now succeeded. Give the
+                    // planner a bounded chance to repair/retry instead of
+                    // accepting its unsupported final narrative.
+                    let last_effect_failed = run.receipts.iter().rev()
+                        .find(|receipt| receipt.result["skipped"] != true
+                            && tools.get(&receipt.tool)
+                                .is_some_and(|spec| !spec.read_only))
+                        .is_some_and(|receipt| !receipt.success);
+                    if request.require_evidence && requires_external_effect
+                        && last_effect_failed {
+                        run.checks = vec![CheckResult {
+                            criterion:Criterion{kind:CriterionKind::ToolSucceeded,
+                                path:None,contains:None,
+                                tool:Some("last_external_effect".into())},
+                            satisfied:false,
+                            explanation:"The latest external effect failed. Inspect its receipt and perform a successful corrective action before claiming completion".into(),
+                        }];
+                        invalid += 1;
+                        self.journal.save(&run)?;
+                        if invalid >= 3 {break;}
+                        continue;
+                    }
                     if requires_file_mutation && !has_confirmed_write {
                         run.checks = vec![CheckResult {
                             criterion:Criterion{kind:CriterionKind::ToolSucceeded,
