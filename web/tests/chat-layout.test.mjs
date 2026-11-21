@@ -91,3 +91,16 @@ test('assistant task checklists render as explicit read-only checked/unchecked b
  assert.match(rich,/type="checkbox" disabled checked=/)
  assert.match(css,/\.chat-richtext \.chat-task-item/)
 })
+
+test('basic chat attaches local files to the real session and model request',()=>{
+ const attachments=readFileSync(root+'src/utils/chatAttachments.ts','utf8')
+ const api=readFileSync(root+'src/api.ts','utf8')
+ assert.match(chat,/mergeChatFiles\(draftFiles,Array\.from\(picked\)\)/)
+ assert.match(chat,/post<\{id:string\}>\('\/api\/attachments'/)
+ assert.match(chat,/attachmentIds,/)
+ assert.match(api,/attachmentIds\?:string\[\]/)
+ assert.match(api,/async function attachmentBlob/)
+ assert.match(attachments,/MAX_CHAT_FILE_BYTES=8\*1024\*1024/)
+ assert.match(attachments,/MAX_CHAT_TOTAL_BYTES=24\*1024\*1024/)
+ assert.match(attachments,/MAX_CHAT_FILES=8/)
+})

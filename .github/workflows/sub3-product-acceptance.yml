@@ -191,6 +191,8 @@ jobs:
         run: node web/scripts/home-dashboard-visual.mjs
       - name: Verify Agent persona drafts survive refresh and cancel clears them
         run: node web/scripts/agents-draft-visual.mjs
+      - name: Verify image and file attachments on plain chat model wire
+        run: node web/scripts/chat-attachments-visual.mjs
       - name: Attach real browser screenshots and UX reports
         if: always()
         uses: actions/upload-artifact@v4
