@@ -68,6 +68,9 @@
 
 /* Distinct chat roles, scoped to the private Chat page (Room stays intact). */
 .page-chat .chat-transcript{gap:28px}
+.page-chat .chat-transcript--responding::after{
+ content:"";display:block;flex:0 0 auto;min-height:min(38vh,280px)
+}
 .page-chat .chat-message{width:100%;align-items:flex-start}
 .page-chat .chat-message--user{justify-content:flex-end}
 .page-chat .chat-message--user>.chat-message-body{
