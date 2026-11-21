@@ -79,7 +79,7 @@ pub(super) fn tool_name(definition: &Value) -> &str {
 /// Question forms remain explanation-only by default.
 fn action_followup(input:&str)->bool {
     let trimmed=input.trim();
-    if trimmed.ends_with(['?', '？']) { return false; }
+    if trimmed.ends_with('?') || trimmed.ends_with('？') { return false; }
     let normalized=trimmed.chars().filter(|ch|
         !ch.is_whitespace() && !matches!(ch,'!'|'！'|'.'|'。'|'~'|'～')
     ).flat_map(char::to_lowercase).collect::<String>();
@@ -89,7 +89,7 @@ fn action_followup(input:&str)->bool {
         "이거해","이걸해","마저해","끝까지해","시작해",
         "착수해","처리해","진행시켜","진행해라","바로진행해",
         "전수점검해","다음거해",
-    ].iter().any(|suffix|normalized.ends_with(suffix))
+    ].iter().any(|suffix|normalized.ends_with(*suffix))
 }
 
 /// Private conversation does not need a schema catalog solely because the
