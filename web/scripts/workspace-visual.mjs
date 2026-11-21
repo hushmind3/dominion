@@ -255,11 +255,30 @@ try{
  assert.equal(await page.locator('#sdk-history').inputValue(),'sdk-ux-1',
   'stale initial history must not deselect the newly created job')
  await screenshot(page,'1440-agent-run.png')
+ // A user can inspect provisional model text during a live native run,
+ // without mistaking it for a settled answer or seeing tool arguments.
+ sdkRuns[0]={...sdkRuns[0],status:'running',checkpoint:{
+  ...sdkRuns[0].checkpoint,nativeStream:{
+   stage:'receiving',visibleTail:'UNCONFIRMED_NATIVE_STREAM_PREVIEW',
+   pendingCalls:[{id:'assembling-tool-1',name:'workspace_read'}]
+  }
+ }}
+ await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
+ const progressPreview=page.getByLabel('확정 전 모델 진행 내용')
+ await progressPreview.waitFor({timeout:8000})
+ assert.equal(await progressPreview.getByText('UNCONFIRMED_NATIVE_STREAM_PREVIEW').count(),1)
+ assert.equal(await progressPreview.getByText('모델 작성 중 · 확정된 결과가 아닙니다').count(),1)
+ assert.match(await progressPreview.textContent(),/workspace_read/)
+ await screenshot(page,'1440-native-provisional-progress.png')
  sdkRuns[0]={...sdkRuns[0],status:'awaiting_approval',checkpoint:{
   ...sdkRuns[0].checkpoint,pendingCall:{id:'tool-pending-1',
    name:'workspace_write',arguments:{path:'src/mod.rs'}}
  }}
+ await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
  await page.getByRole('button',{name:'이 도구 실행 거부'}).waitFor({timeout:8000})
+ await progressPreview.waitFor({state:'hidden',timeout:8000})
+ assert.equal(await page.getByText('UNCONFIRMED_NATIVE_STREAM_PREVIEW').count(),0,
+  'A waiting-approval run must not show stale unconfirmed model text')
  await screenshot(page,'1440-tool-approval-review.png')
  // Force an earlier polling GET to complete AFTER the owner refuses the
  // exact tool. The stale GET must not reintroduce its approval buttons.
