@@ -22,7 +22,7 @@ const pages=['home','models','agents','connections','memory','activity','setting
 const viewports=[{width:1440,height:900},{width:768,height:1024},
  {width:390,height:844},{width:320,height:740}]
 const pictures=[],errors=[],visits=[]
-const requests={sdk:[],team:[],remote:[]}
+const requests={sdk:[],team:[],remote:[],sdkDetailReads:0}
 let sdkRuns=[],teams=[],remoteTasks=[]
 // Hold a stale polling GET while an owner refusal is confirmed. Releasing
 // that old payload afterwards must not resurrect approval in React state.
@@ -139,6 +139,7 @@ async function mock(route){
   return send(route,sdkRuns.find(item=>item.id===id))
  }
  if(n.startsWith('/api/sdk/runs/')&&m==='GET'){
+  requests.sdkDetailReads++
   const id=n.slice('/api/sdk/runs/'.length)
   const current=sdkRuns.find(r=>r.id===id)||{}
   if(holdNextSdkRead){
@@ -397,6 +398,20 @@ try{
      sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}]}}}
  await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
  await page.getByText('Saved output ready').waitFor({timeout:8000})
+ // The terminal run is stable: do not keep polling it in the background.
+ // Explicit owner focus still rechecks cross-tab state.
+ await page.waitForTimeout(250)
+ const terminalReadBaseline=requests.sdkDetailReads
+ await page.waitForTimeout(2800)
+ assert.equal(requests.sdkDetailReads,terminalReadBaseline,
+  'A completed Native run must not issue repeated idle detail requests')
+ const focusRead=page.waitForResponse(response=>
+  new URL(response.url()).pathname==='/api/sdk/runs/sdk-ux-1' &&
+  response.request().method()==='GET',{timeout:8000})
+ await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
+ await focusRead
+ assert.ok(requests.sdkDetailReads>terminalReadBaseline,
+  'Explicit focus must still revalidate the terminal receipt')
  const evidence=page.locator('summary').filter({hasText:'파일 검증 스냅샷'})
  if(!(await evidence.locator('..').evaluate(el=>el.hasAttribute('open'))))await evidence.click()
  await page.getByRole('button',{name:'검증된 파일 열기'}).click()
