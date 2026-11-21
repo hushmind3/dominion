@@ -324,3 +324,12 @@ test('chat drafts follow session identity, including first-send migration',()=>{
   assert.match(chat,/if\(view\.current===current\|\|view\.current===id\)\{/)
   assert.doesNotMatch(chat,/onSession\(undefined\);[^\n]+setInput\(''\)/)
 })
+
+test('streamed markdown starts tables and dividers even without a preceding blank line',()=>{
+  const rich=source('src/components/ChatRichText.tsx')
+  assert.match(rich,/const isBlock=\(line:string,index:number\)=>/)
+  assert.match(rich,/index\+1<lines\.length&&line\.includes\('\|'\)&&isTableDivider\(lines\[index\+1\]\)/)
+  assert.match(rich,/while\(i<lines\.length&&lines\[i\]\.trim\(\)&&!isBlock\(lines\[i\],i\)\)/)
+  assert.match(rich,/<table className=/)
+  assert.match(rich,/<hr key=/)
+})
