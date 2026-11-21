@@ -9,6 +9,8 @@ use serde::{Serialize,Deserialize};
 /// Reserved operation-id namespace for verified kernel checks.
 pub const KERNEL_VERIFICATION_PREFIX:&str="kernel-verify-";
 pub mod run_contract;
+pub mod drive;
+pub use drive::{HarnessDrive,DriveAdmission};
 pub mod scheduler;
 pub mod schema;
 pub mod contracts;

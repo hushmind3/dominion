@@ -172,15 +172,20 @@ impl Kernel<'_> {
             &format!("{:?}",request.strategy),&request.owner_instructions);
         let mut invalid = 0usize;
         self.journal.save(&run)?;
-        'steps: for step in run.step..request.limits.max_steps {
-            if self.journal.cancelled(&request.id) {
-                run.stop(Status::Cancelled, "Owner cancelled execution");
-                self.journal.save(&run)?;
-                return Ok(run);
-            }
-            if run.model_calls >= request.limits.max_model_calls {
-                break;
-            }
+        let mut drive=runtime::HarnessDrive::resume(
+            request.limits.max_steps,run.step)?;
+        'steps: loop {
+            let step=match drive.admit(
+                self.journal.cancelled(&request.id),run.model_calls,
+                request.limits.max_model_calls){
+                runtime::DriveAdmission::Next(step)=>step,
+                runtime::DriveAdmission::Cancelled=>{
+                    run.stop(Status::Cancelled,"Owner cancelled execution");
+                    self.journal.save(&run)?;
+                    return Ok(run);
+                },
+                runtime::DriveAdmission::Exhausted=>break,
+            };
             run.step = step + 1;
             // Compact only the model's view. Full receipts remain durable
             // and can be searched/retrieved by internal read-only tools.

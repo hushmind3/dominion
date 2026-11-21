@@ -556,7 +556,7 @@ mod tests {
         assert!(team.validate().is_err());
     }
     #[test] fn remote_worker_is_read_only_without_host_tools_or_replay(){
-        let mut team=fixture();
+        let mut team=sample();
         team.tasks[0].runtime=WorkerRuntime::Remote;
         team.validate().unwrap();
         team.tasks[0].mode=Mode::Write;
