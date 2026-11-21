@@ -231,7 +231,11 @@ pub fn project(receipts:&[Receipt], strategy:Strategy, max_result_chars:usize)
     recent.reverse();
     let mut important_failures=Vec::new();
     let mut failure_budget=cap/6;
-    for receipt in receipts[..recent_start].iter().rev().filter(|r|!r.success).take(4) {
+    // A skipped dependency is not the root failure. It remains searchable in
+    // the durable journal, but must not evict the actionable failing receipt
+    // from the model's tiny failure viewport.
+    for receipt in receipts[..recent_start].iter().rev()
+        .filter(|r|!r.success && r.result["skipped"]!=true).take(4) {
         // Failed operations remain actionable even when diagnostics contain
         // huge escaped strings. A fixed-size preview can exceed the budget
         // after JSON serialization; shrink it instead of dropping the error.
@@ -342,6 +346,30 @@ mod tests {
         let serialized=serde_json::to_string(&projection.recent).unwrap();
         assert!(serialized.chars().count()<4000,
             "bounded projection must respect the low-cost evidence budget");
+    }
+
+    #[test]
+    fn skipped_dependents_cannot_hide_real_failure_from_compact_context(){
+        let mut data=vec![receipt("root-build-error",1,false,json!({
+            "error":"ROOT_COMPILER_ERROR"
+        }))];
+        for step in 2..=9 {
+            data.push(receipt(&format!("skipped-{step}"),step,false,json!({
+                "skipped":true,"reason":"Dependency root-build-error was not successful"
+            })));
+        }
+        for step in 10..=15 {
+            data.push(receipt(&format!("fresh-{step}"),step,true,json!("read-only OK")));
+        }
+        let projected=project(&data,Strategy::LowCost,1000);
+        assert!(projected.important_failures.iter()
+            .any(|entry|entry["id"]=="root-build-error"),
+            "The original failure must remain visible after skipped downstream actions");
+        assert!(projected.important_failures.iter()
+            .all(|entry|!entry["id"].as_str().unwrap_or("").starts_with("skipped-")),
+            "Skipped dependent actions are already in the index, not root diagnoses");
+        assert_eq!(projected.digest["failedOperations"],9,
+            "No persisted evidence is deleted by model-context filtering");
     }
 
     #[test]
