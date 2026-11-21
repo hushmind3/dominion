@@ -110,6 +110,9 @@ try{
  assert.ok(await page.getByText('recorded-model',{exact:true}).first().isVisible(),
   'each saved reply must expose its ACTUAL model, not just the configured route');
  // The configured model remains selectable when /models is not available.
+ // The settings panel remains open after Save; close it before exercising
+ // the visible per-Room model-change entry point.
+ await page.getByRole('button',{name:'설정 닫기',exact:true}).click();
  await page.getByRole('button',{name:'모델 변경',exact:true}).click();
  await page.getByLabel('모델 제공자 선택').selectOption('offline');
  await page.getByText('configured-only-model',{exact:true}).first()
