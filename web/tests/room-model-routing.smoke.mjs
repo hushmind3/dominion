@@ -90,7 +90,13 @@ try{
  await page.getByRole('button',{name:'그룹 설정',exact:true}).waitFor({timeout:10000});
  await page.getByRole('button',{name:'그룹 설정',exact:true}).click();
  await page.getByLabel('모델 제공자 선택').waitFor({timeout:10000});
+ // A configured fallback option can render before the asynchronous catalog
+ // request finishes. Observe the actual network response, not the checkbox.
+ const modelsFetched=page.waitForResponse(response=>
+  new URL(response.url()).pathname==='/api/providers/fixture/models',
+  {timeout:10000});
  releaseProviders();
+ await modelsFetched;
  await page.locator('.room-model-check input[type="checkbox"]').first()
   .waitFor({state:'visible',timeout:10000});
  assert.equal(selectedModelRequest,true,
