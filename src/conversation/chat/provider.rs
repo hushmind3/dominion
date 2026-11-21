@@ -1108,7 +1108,8 @@ async fn stream_completion_once_body(
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
             crate::engine::gateway::mark_rate_limited(&provider.base_url, &provider.model);
         }
-        let text = response.text().await.unwrap_or_default();
+        let text=crate::integrations::network::read_bounded_text(
+            response,256*1024,"Provider error").await?;
         let lower = text.to_ascii_lowercase();
         if text.contains("1305") || lower.contains("temporarily overloaded") {
             return Err(format!(
@@ -1886,7 +1887,8 @@ async fn stream_codex_once(
     let response=super::continuity::send(state,provider,builder,&body,continuity,super::continuity::CacheWire::Key).await?;
     if !response.status().is_success() {
         let status = response.status();
-        let text = response.text().await.unwrap_or_default();
+        let text=crate::integrations::network::read_bounded_text(
+            response,256*1024,"Codex response error").await?;
         if matches!(status.as_u16(), 401 | 403) {
             return Err("Codex OAuth 토큰이 만료되었거나 거부되었습니다. Codex 앱에서 다시 로그인한 뒤 모델 관리에서 다시 가져오세요.".into());
         }
@@ -2075,7 +2077,8 @@ async fn stream_anthropic_once(
     let response=super::continuity::send(state,provider,builder,&body,continuity,super::continuity::CacheWire::Ephemeral).await?;
     if !response.status().is_success() {
         let status = response.status();
-        let text = response.text().await.unwrap_or_default();
+        let text=crate::integrations::network::read_bounded_text(
+            response,256*1024,"Anthropic response error").await?;
         return Err(format!(
             "{} 호출 실패 (HTTP {status}): {}",
             provider.name,

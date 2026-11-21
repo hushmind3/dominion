@@ -746,7 +746,9 @@ pub(super) async fn send(
         let status=response.status();
         if hinted && attempt==1 && matches!(status.as_u16(),400|422) {
             let headers=response.headers().clone();let version=response.version();
-            let bytes=response.bytes().await.map_err(|e|e.to_string())?;
+            let response_body=crate::integrations::network::read_bounded_body(
+                response,2*1024*1024,"Provider compatibility response").await?;
+            let bytes=axum::body::Bytes::from(response_body);
             if rejects_hint(status,&String::from_utf8_lossy(&bytes),wire.field()) {
                 note_hint(state,provider,wire,false,status.as_u16());
                 body=original.clone();hinted=false;

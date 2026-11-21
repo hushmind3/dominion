@@ -537,7 +537,10 @@ pub async fn refresh_free_catalog(state: &AppState) -> Value {
         let url = format!("http://127.0.0.1:{port}/api/providers/{id}/models");
         match client.get(&url).send().await {
             Ok(response) if response.status().is_success() => {
-                let models = response.json::<Vec<Value>>().await.unwrap_or_default();
+                let models=crate::integrations::network::read_bounded_json(
+                    response,8*1024*1024,"Provider free catalog").await
+                    .ok().and_then(|value|serde_json::from_value::<Vec<Value>>(value).ok())
+                    .unwrap_or_default();
                 let mut rows = Vec::new();
                 for model in models {
                     match model["freeStatus"].as_str() {
@@ -997,7 +1000,8 @@ async fn codex_device_poll(
         };
         let status = response.status();
         if status.is_success() {
-            let Ok(data) = response.json::<Value>().await else {
+            let Ok(data)=crate::integrations::network::read_bounded_json(
+                response,256*1024,"Codex device authorization").await else {
                 if !is_current(&state) {
                     return;
                 }
@@ -1090,7 +1094,8 @@ pub async fn codex_device_start(State(state): State<AppState>) -> Response {
                 "ChatGPT 보안 설정에서 기기 코드 로그인이 꺼져 있습니다. ChatGPT 설정 → 보안 → 기기 코드 로그인을 켠 뒤 다시 시도하세요.",
             );
         }
-        let text = response.text().await.unwrap_or_default();
+        let text=crate::integrations::network::read_bounded_text(
+            response,256*1024,"Codex device authorization error").await.unwrap_or_default();
         return error(
             StatusCode::BAD_GATEWAY,
             &format!(
@@ -1099,7 +1104,8 @@ pub async fn codex_device_start(State(state): State<AppState>) -> Response {
             ),
         );
     }
-    let Ok(data) = response.json::<Value>().await else {
+    let Ok(data)=crate::integrations::network::read_bounded_json(
+        response,256*1024,"Codex device authorization").await else {
         return error(
             StatusCode::BAD_GATEWAY,
             "Codex 기기 코드 응답 형식을 읽을 수 없습니다.",
@@ -1187,7 +1193,8 @@ async fn discover_cloudflare_account(api_key: &str) -> Option<String> {
     if !response.status().is_success() {
         return None;
     }
-    let value: Value = response.json().await.ok()?;
+    let value=crate::integrations::network::read_bounded_json(
+        response,2*1024*1024,"Cloudflare account list").await.ok()?;
     value["result"].as_array()?.iter()
         .find_map(|account| account["id"].as_str().map(str::to_string))
 }
@@ -1830,7 +1837,8 @@ async fn codex_models_live(
             failure = format!("Codex 모델 조회 HTTP {} (client_version={version})",response.status());
             continue;
         }
-        let data:Value = response.json().await
+        let data=crate::integrations::network::read_bounded_json(
+            response,8*1024*1024,"Codex model catalog").await
             .map_err(|_|"Codex 모델 응답 JSON 오류")?;
         match parse_codex_models(&data) {
             Ok(models) => return Ok(models),

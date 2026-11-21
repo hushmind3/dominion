@@ -493,7 +493,8 @@ async fn send_codex(state:&AppState,route:&gateway::Route,client:&reqwest::Clien
     gateway::verify_benchmark_route(&response)?;
     if !response.status().is_success() {
         let status=response.status();
-        let error=response.text().await.unwrap_or_default();
+        let error=crate::integrations::network::read_bounded_text(
+            response,256*1024,"Codex native error").await?;
         return Err(format!("Codex native HTTP {status}: {}",clip(&error,600)));
     }
     receive_stream(response,crate::engine::native_stream::Wire::Codex,
@@ -535,12 +536,13 @@ async fn send_anthropic(route:&gateway::Route,client:&reqwest::Client,
                 receive_stream(response,crate::engine::native_stream::Wire::Anthropic,
                     Some(state),session,job_id).await
             }else{
-                response.json::<Value>().await
-                    .map_err(|e|format!("Anthropic native response error: {e}"))
+                crate::integrations::network::read_bounded_json(
+                    response,16*1024*1024,"Anthropic native response").await
             };
         }
         let status=response.status();
-        let error=response.text().await.unwrap_or_default();
+        let error=crate::integrations::network::read_bounded_text(
+            response,256*1024,"Anthropic native error").await?;
         if hinted && attempt==0 &&
             crate::engine::native_cache::unsupported(status,&error) {
             crate::engine::native_cache::record(
@@ -637,7 +639,8 @@ pub(crate) async fn complete_with_run(
                 if opencode_go {Some(session)} else {None}).await?;
             if !response.response.status().is_success(){
                 let status=response.response.status();
-                let error=response.response.text().await.unwrap_or_default();
+                let error=crate::integrations::network::read_bounded_text(
+                    response.response,256*1024,"Native model error").await?;
                 return Err(format!("Native model HTTP {status}: {}",clip(&error,600)));
             }
             if response.response.headers().get(reqwest::header::CONTENT_TYPE)
@@ -649,7 +652,8 @@ pub(crate) async fn complete_with_run(
             }else{
                 // Self-hosted OpenAI-compatible servers may ignore stream=true.
                 // Accept their complete JSON result without fabricating SSE.
-                response.response.json::<Value>().await.map_err(|e|e.to_string())?
+                crate::integrations::network::read_bounded_json(
+                    response.response,16*1024*1024,"Native model response").await?
             }
         }
     };

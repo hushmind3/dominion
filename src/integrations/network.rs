@@ -46,6 +46,13 @@ pub(crate) async fn read_bounded_json(
     serde_json::from_slice(&bytes).map_err(|error|format!("Invalid {label} JSON: {error}"))
 }
 
+pub(crate) async fn read_bounded_text(
+    response:reqwest::Response,limit:usize,label:&str,
+)->Result<String,String>{
+    let bytes=read_bounded_body(response,limit,label).await?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
 /// Reject non-public destinations even when URL parsing normalizes unusual
 /// IPv4 literals. The same check runs again after every redirect and DNS
 /// resolution; no configured proxy can bypass the pinned address.

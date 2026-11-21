@@ -54,7 +54,8 @@ pub async fn translate(Json(body): Json<Value>) -> Response {
         .send()
         .await
     {
-        Ok(response) if response.status().is_success() => match response.json::<Value>().await {
+        Ok(response) if response.status().is_success() => match crate::integrations::network::read_bounded_json(
+            response,1024*1024,"Translation response").await {
             Ok(value) => {
                 let translated = value
                     .get(0)

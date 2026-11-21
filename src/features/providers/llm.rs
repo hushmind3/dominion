@@ -57,7 +57,8 @@ async fn try_complete(
         if !response.status().is_success() {
             return Err(format!("모델 호출 실패: HTTP {}", response.status()));
         }
-        let value: Value = response.json().await.map_err(|error| error.to_string())?;
+        let value=crate::integrations::network::read_bounded_json(
+            response,16*1024*1024,"Model completion").await?;
         gateway::record_usage(
             state,
             &route,
