@@ -47,7 +47,7 @@ The full `main/cloud/` Cloudflare Worker implementation, D1 identity/usage/payme
 
 ### Source + UX full-tree audit (2026-11-21)
 
-A follow-up audit inventoried the full 438-file branch source tree and traced the real owner UI, native SDK, Chat/Room, Task Team, remote worker and Cloud paths. It repaired a browser DNS-rebinding Host check gap on **local owner API reads** and exposed an explicit **Refuse this action** button tied to the exact native tool approval ID; both have Rust and Chromium regressions. The latest executable CI run (commit 606c5e4) passed Rust, frontend and actual Chromium browser jobs: [Actions](https://github.com/hushmind3/dominion-rust/actions/runs/44881424765). That Chromium suite uses API fixtures; it does not verify paid provider execution, actual Cloud deployment or a unified Chat/Agent loop. [Full audit and prioritized gaps](docs/SUB3-FULL-SOURCE-UX-AUDIT-2026-11-21.md).
+A follow-up audit inventoried the full 438-file branch source tree and traced the real owner UI, native SDK, Chat/Room, Task Team, remote worker and Cloud paths. It repaired a browser DNS-rebinding Host check gap on **local owner API reads** and exposed an explicit **Refuse this action** button tied to the exact native tool approval ID; both have Rust and Chromium regressions. The latest executable CI run (commit 86274c0) passed Rust, frontend and actual Chromium browser jobs: [Actions](https://github.com/hushmind3/dominion-rust/actions/runs/44881868925). That Chromium suite uses API fixtures; it does not verify paid provider execution, actual Cloud deployment or a unified Chat/Agent loop. [Full audit and prioritized gaps](docs/SUB3-FULL-SOURCE-UX-AUDIT-2026-11-21.md).
 
 ### Crash-consistent paid model turns (2026-11-21)
 
