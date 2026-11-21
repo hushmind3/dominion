@@ -657,8 +657,17 @@ pub(super) async fn run_turn_body(
     let mut kernel_state = dominion_agent_sdk::Snapshot::from_request(&dominion_agent_sdk::RunRequest {
         id: execution_id.to_string(), instruction: request.input.clone(),
         owner_instructions: String::new(), strategy: dominion_agent_sdk::Strategy::Balanced,
-        limits: dominion_agent_sdk::Limits::default(), allowed_tools: vec![], checks: vec![],
-        require_evidence: false,
+        // Use the same effective hard limits as the live chat host. An SDK
+        // checkpoint containing unrelated default limits was misleading and
+        // could not serve as the common Run snapshot after reconnect.
+        limits: dominion_agent_sdk::Limits {
+            max_steps:max_rounds,max_model_calls:max_rounds,
+            max_tool_calls:max_tools,max_estimated_tokens:MAX_TOKENS,
+            max_parallel_reads:4,max_result_chars:3000,
+        },
+        allowed_tools: tool_definitions.iter().map(tool_name)
+            .filter(|name|!name.is_empty()).map(str::to_string).collect(),
+        checks: vec![],require_evidence: false,
     });
     let kernel_journal = ChatKernelJournal { state, execution_id, session_id, generation };
     dominion_agent_sdk::Journal::save(&kernel_journal, &kernel_state)?;
