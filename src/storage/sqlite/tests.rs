@@ -591,6 +591,50 @@
     }
 
     #[test]
+    fn cancelled_paid_dispatch_only_relabels_as_review_with_both_durable_fences() {
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        let persisted=json!({"id":"cancelled-paid","status":"cancelled",
+            "kernelState":{"modelInFlight":true,"inFlight":[]},
+            "reason":"owner cancellation"});
+        store.put("execution",&persisted).unwrap();
+        let mut review=persisted.clone();
+        review["status"]=json!("needs_review");
+        review["ownerCancellationRequested"]=json!(true);
+        let marker=json!({"id":"execution:cancelled-paid",
+            "payloadHash":"uncertain-paid"});
+        assert_eq!(store.finalize_once(&review,&marker,&[],&[]).unwrap(),
+            FinalizeOutcome::Applied);
+        assert_eq!(store.get("execution","cancelled-paid").unwrap()["status"],
+            "needs_review");
+        assert_eq!(store.get("execution","cancelled-paid").unwrap()
+            ["kernelState"]["modelInFlight"],true);
+        assert_eq!(store.finalize_once(&review,&marker,&[],&[]).unwrap(),
+            FinalizeOutcome::AlreadyApplied);
+    }
+
+    #[test]
+    fn cancelled_completed_task_never_reopens_on_unproven_review_claim(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for (id,committed_fence,claimed_fence,claim_owner) in [
+            ("no-paid-fence",false,true,true),
+            ("no-review-fence",true,false,true),
+            ("missing-cancel-authority",true,true,false)
+        ] {
+            store.put("execution",&json!({"id":id,"status":"cancelled",
+                "kernelState":{"modelInFlight":committed_fence}})).unwrap();
+            let claim=json!({"id":id,"status":"needs_review",
+                "ownerCancellationRequested":claim_owner,
+                "kernelState":{"modelInFlight":claimed_fence}});
+            let marker=json!({"id":format!("execution:{id}"),
+                "payloadHash":format!("bad-{id}")});
+            assert_eq!(store.finalize_once(&claim,&marker,&[],&[]).unwrap(),
+                FinalizeOutcome::Conflict);
+            assert_eq!(store.get("execution",id).unwrap()["status"],
+                "cancelled");
+        }
+    }
+
+    #[test]
     fn finalization_is_idempotent_and_conflict_aware() {
         let store = Store::open(std::path::Path::new(":memory:")).unwrap();
         let execution = json!({"id":"exec-1","status":"completed"});
