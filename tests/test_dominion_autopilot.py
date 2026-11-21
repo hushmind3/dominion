@@ -1,5 +1,7 @@
 import json
 import os
+import signal
+import time
 from pathlib import Path
 import subprocess
 import sys
@@ -111,6 +113,55 @@ print(json.dumps({'summary':'code review only','feedback':{
         self.assertTrue(all(r['status']=='needs_review_uncommitted' for r in latest['results']))
         self.assertEqual(git(self.remote,'rev-parse','refs/heads/main'),self.original_head)
 
+
+
+
+    def test_dirty_watched_main_prevents_main_publish_only(self):
+        (self.repo/'user-ui-work.tsx').write_text('precious uncommitted change')
+        self.assertEqual(a.main(['--repo',str(self.repo),'--state',str(self.state),
+                                 '--agent-command',self.command,'--skip-judge',
+                                 '--publish','--cooldown','0']),0)
+        results=json.loads((self.state/'latest_round.json').read_text())['results']
+        self.assertEqual(results[0]['status'],'needs_review_watched_checkout_dirty')
+        self.assertEqual([r['status'] for r in results[1:]], ['published']*3, results)
+        self.assertEqual(git(self.remote,'rev-parse','refs/heads/main'),self.original_head)
+        self.assertTrue((self.repo/'user-ui-work.tsx').exists())
+
+    def test_repeated_noop_does_not_lose_unpushed_local_history(self):
+        self.agent.write_text("""import pathlib,subprocess,os
+p=pathlib.Path('ONLY-FIRST.txt')
+if not p.exists():
+ p.write_text('local')
+ subprocess.run(['git','add',str(p)],check=True)
+ subprocess.run(['git','-c','user.name=Bot','-c','user.email=bot@example.invalid','commit','-m','one'],check=True)
+""")
+        self.assertEqual(a.main(['--repo',str(self.repo),'--state',str(self.state),
+                       '--agent-command',self.command,'--skip-judge','--rounds','3','--cooldown','0']),0)
+        results=json.loads((self.state/'latest_round.json').read_text())['results']
+        self.assertTrue(all(r['status']=='committed_local_no_new_changes' for r in results))
+        self.assertTrue(all(Path(r['worktree'],'ONLY-FIRST.txt').exists() for r in results))
+        self.assertEqual(git(self.remote,'rev-parse','refs/heads/main'),self.original_head)
+
+    def test_sigint_stops_running_agents_instead_of_waiting_for_timeout(self):
+        self.agent.write_text('import time; time.sleep(120)\n')
+        command=[sys.executable,str(ROOT/'tools'/'dominion_autopilot.py'),
+                 '--repo',str(self.repo),'--state',str(self.state),
+                 '--agent-command',self.command,'--skip-judge','--rounds','0','--cooldown','0',
+                 '--timeout','300']
+        proc=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            # Wait for all worktrees to be launched, then signal the coordinator.
+            deadline=time.time()+10
+            while time.time()<deadline and not (self.state/'worktrees').exists():
+                time.sleep(0.1)
+            time.sleep(1)
+            proc.send_signal(signal.SIGINT)
+            stdout,stderr=proc.communicate(timeout=12)
+            self.assertEqual(proc.returncode,130,(stdout,stderr))
+            self.assertIn('stopped by user',stderr)
+        finally:
+            if proc.poll() is None:
+                proc.kill();proc.communicate()
 
     def test_sensitive_commit_blocks_automatic_publish(self):
         self.agent.write_text("import pathlib,subprocess\npathlib.Path('.env').write_text('key=x')\nsubprocess.run(['git','add','-f','.env'],check=True)\nsubprocess.run(['git','-c','user.name=Bot','-c','user.email=bot@example.invalid','commit','-m','unsafe'],check=True)\n")
