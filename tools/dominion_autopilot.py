@@ -147,10 +147,13 @@ def command_from_template(template: str | None, prompt: str, *, judge: bool = Fa
             "--ephemeral", prompt]
 
 
-def prompt_for(branch: str, previous_feedback: str, base: str) -> str:
+def prompt_for(branch: str, previous_feedback: str, base: str, goal: str = "") -> str:
     return f"""You are the independent DOMINION {ROLES[branch]} developer, assigned ONLY branch {branch}.
 This is an autonomous development cycle in a detached, isolated git worktree at {base[:12]}.
 Branch-specific context: {ROLE_FOCUS[branch]}
+ONE SHARED OWNER GOAL FOR ALL FOUR CANDIDATES: {goal.strip() if goal.strip() else '(not specified; choose independently)'}
+If a shared owner goal is supplied, deliver that goal on YOUR branch using your native design.
+If absent, identify and implement the highest-value user-facing deficiency independently.
 Your task is to independently identify the highest-value real user problem or missing capability,
 trace its actual caller through Core/Harness/Strategy/Host/UI, implement a usable improvement,
 remove newly obsolete paths, run targeted regressions, and commit only your own verified changes.
@@ -198,7 +201,7 @@ def prepare(repo: Path, state: Path, branch: str, round_id: str,
 
 def run_branch(repo: Path, state: Path, branch: str, round_id: str, feedback: str,
                timeout: int, template: str | None, publish: bool,
-               previous: dict | None = None) -> dict:
+               previous: dict | None = None, goal: str = "") -> dict:
     out = state / "runs" / round_id / branch
     out.mkdir(parents=True, exist_ok=True)
     result: dict = {"branch": branch, "round": round_id, "status": "not_started"}
@@ -206,7 +209,7 @@ def run_branch(repo: Path, state: Path, branch: str, round_id: str, feedback: st
     try:
         target, base, remote_sha = prepare(repo, state, branch, round_id, previous)
         result.update({"base": base, "remote_base": remote_sha, "worktree": str(target)})
-        prompt = prompt_for(branch, feedback, base)
+        prompt = prompt_for(branch, feedback, base, goal)
         (out / "prompt.txt").write_text(prompt, encoding="utf-8")
         command = command_from_template(template, prompt)
         env = {**os.environ, "DOMINION_BRANCH": branch, "DOMINION_ROLE": "developer"}
@@ -252,7 +255,7 @@ def run_branch(repo: Path, state: Path, branch: str, round_id: str, feedback: st
 
 
 def judge_round(repo: Path, state: Path, round_id: str, results: list[dict],
-                timeout: int, template: str | None) -> dict:
+                timeout: int, template: str | None, goal: str = "") -> dict:
     folder = state / "runs" / round_id / "judge"
     folder.mkdir(parents=True, exist_ok=True)
     evidence = json.dumps(results, indent=2, ensure_ascii=False)
@@ -260,6 +263,7 @@ def judge_round(repo: Path, state: Path, round_id: str, results: list[dict],
 Judge 4 competing products against the same rubric (completion 20, run/recovery 15,
 context/Room/Team 15, model/tool/SDK 10, architecture 10, UI/UX 15, measured cost/latency 10,
 frontier implementation 5). CI status and code volume confer ZERO bonus.
+Shared user task for this round: {goal.strip() if goal.strip() else '(none specified; compare general product progress)'}
 Source evidence for round {round_id}: {evidence}
 You may inspect each listed detached worktree's code and the actual agent logs.
 Do not invent runtime successes, numerical grades, costs or UI improvements: those require
@@ -311,6 +315,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--agent-command", help='Optional argv template, e.g. "codex exec --sandbox workspace-write {prompt}"')
     p.add_argument("--judge-command", help='Optional argv template, e.g. "codex exec --sandbox read-only {prompt}"')
     p.add_argument("--publish", action="store_true", help="Fast-forward push each committed branch, never force/merge")
+    p.add_argument("--goal", default="", help="One common owner task sent unchanged to all four candidates")
     p.add_argument("--skip-judge", action="store_true")
     args = p.parse_args(argv)
     if args.rounds < 0 or args.timeout < 5 or args.cooldown < 0:
@@ -349,13 +354,13 @@ def main(argv: list[str] | None = None) -> int:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=args.parallel) as pool:
                     futures = [pool.submit(run_branch, repo, state, b, round_id,
                                            str(feedback.get(b, "")), args.timeout,
-                                           args.agent_command, args.publish, prior_by_branch.get(b)) for b in BRANCHES]
+                                           args.agent_command, args.publish, prior_by_branch.get(b), args.goal) for b in BRANCHES]
                     results = [future.result() for future in futures]
                 print("[DOMINION] " + " | ".join(f"{r['branch']}:{r['status']}" for r in results), flush=True)
                 if STOP.is_set():
                     break
                 if not args.skip_judge:
-                    report = judge_round(repo, state, round_id, results, args.timeout, args.judge_command)
+                    report = judge_round(repo, state, round_id, results, args.timeout, args.judge_command, args.goal)
                     if report["status"] == "judge_feedback_recorded":
                         feedback_path.write_text(json.dumps(report["feedback"], ensure_ascii=False, indent=2), encoding="utf-8")
                     print(f"[DOMINION] judge: {report['status']}", flush=True)
