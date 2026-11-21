@@ -149,6 +149,18 @@ try {
   await page.locator('#sdk-history').waitFor()
   assert.ok(await page.locator('#sdk-history').inputValue(),
     'Refresh must restore the selected native task')
+  // Simulate a task aging out of the last-30 history index. The browser must
+  // recover that authorized run through the real owner-scoped detail API.
+  await page.route('**/api/sdk/runs',route=>route.fulfill({
+    status:200,contentType:'application/json',body:'[]'
+  }))
+  await page.reload({waitUntil:'domcontentloaded'})
+  await page.locator('#sdk-history').waitFor()
+  assert.equal(await page.locator('#sdk-history').inputValue(),first.id,
+    'An older selected task must remain reopenable after leaving recent history')
+  await page.unroute('**/api/sdk/runs')
+  await page.reload({waitUntil:'domcontentloaded'})
+  await page.locator('#sdk-history').waitFor()
   // A second run exercises the real approval gate and filesystem receipt.
   await page.locator('#sdk-goal').fill('sub3-smoke.txt 파일에 SUB3_VERIFIED를 작성해 주세요.')
   await page.getByRole('button',{name:/작업 시작|Start task/}).click()

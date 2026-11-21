@@ -99,6 +99,15 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    if(list.length)setRun(current=>
     list.find(item=>item.id===current?.id)||
     list.find(item=>item.id===preferred)||list[0])
+   // The history dropdown is limited to recent jobs, but a selected older
+   // run still exists under the owner-scoped detail endpoint. Reopen it.
+   if(preferred&&!list.some(item=>item.id===preferred)){
+    get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(preferred)}`).then(older=>{
+     if(!alive||epoch!==historyEpoch.current)return
+     setRuns(rows=>[...rows.filter(item=>item.id!==older.id).slice(0,29),older])
+     setRun(older)
+    }).catch(()=>{})
+   }
   }).catch(()=>{})
   return()=>{alive=false}
  },[])
@@ -219,7 +228,10 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   try{
    const list=await get<SdkRun[]>('/api/sdk/runs')
    if(epoch!==historyEpoch.current)return
-   setRuns(list)
+   // Manual refresh must not remove an older selection from the dropdown
+   // just because it is outside the latest 30 indexed history entries.
+   setRuns(selectedId&&run&&!list.some(row=>row.id===selectedId)
+    ?[...list.slice(0,29),run]:list)
    setDisconnected(false)
    if(selectedId){
     const selected=list.find(row=>row.id===selectedId)
