@@ -127,6 +127,25 @@ impl Dominion {
         }
         Ok(url)
     }
+    /// Explicit history requests use path-segment encoding and bounded
+    /// query parameters. They never authorize a new model or tool execution.
+    fn native_history_url(
+        &self, id:&str, kind:&str, before:Option<usize>, limit:usize
+    )->Result<Url,Error>{
+        if !(1..=40).contains(&limit) || !matches!(kind,"events"|"receipts") {
+            return Err(Error::Url("Native history page limit must be 1..=40".into()));
+        }
+        let mut url=self.url(&["api","sdk","runs",id,kind])?;
+        {
+            let mut params=url.query_pairs_mut();
+            params.append_pair("limit",&limit.to_string());
+            if let Some(before)=before{
+                params.append_pair("before",&before.to_string());
+            }
+        }
+        Ok(url)
+    }
+
     async fn open(&self, method: Method, url: Url, body: Option<Value>, sse: bool) -> Result<Response, Error> {
         let mut request = self.client.request(method, url).header("Accept",
             if sse { "text/event-stream" } else { "application/json" });
@@ -163,6 +182,22 @@ impl Dominion {
     /// Read the same persistent lifecycle from any Rust product surface.
     pub async fn get_run(&self,id:&str)->Result<RunView,Error>{
         self.get(&["api","runs",id]).await
+    }
+    /// Read the oldest available retained Native run event page.
+    /// Returned JSON includes earliestAvailable/eventsDropped when the
+    /// historical 200-event ring has discarded its oldest progress.
+    pub async fn native_run_events(
+        &self,id:&str,before:Option<usize>,limit:usize
+    )->Result<Value,Error>{
+        let url=self.native_history_url(id,"events",before,limit)?;
+        Ok(self.open(Method::GET,url,None,false).await?.json().await?)
+    }
+    /// Read real Rust kernel action receipts without tool arguments or output.
+    pub async fn native_run_receipts(
+        &self,id:&str,before:Option<usize>,limit:usize
+    )->Result<Value,Error>{
+        let url=self.native_history_url(id,"receipts",before,limit)?;
+        Ok(self.open(Method::GET,url,None,false).await?.json().await?)
     }
     pub async fn agents(&self) -> Result<Vec<Value>, Error> { self.get(&["api", "agents"]).await }
     pub async fn providers(&self) -> Result<Vec<Value>, Error> { self.get(&["api", "providers"]).await }
@@ -365,6 +400,23 @@ mod tests {
         assert_eq!(sdk.url(&["api", "jobs", "a/b", "cancel"]).unwrap().path(), "/api/jobs/a%2Fb/cancel");
         assert!(sdk.url(&["v1", "runs"]).is_err());
     }
+    #[test]
+    fn native_history_routes_are_safe_and_cursors_are_explicit(){
+        let sdk=Dominion::local();
+        let events=sdk.native_history_url("owner/a","events",Some(80),40).unwrap();
+        assert_eq!(events.path(),"/api/sdk/runs/owner%2Fa/events");
+        assert_eq!(events.query_pairs().find(|(name,_)|name=="before")
+            .map(|(_,value)|value.to_string()),Some("80".into()));
+        assert_eq!(events.query_pairs().find(|(name,_)|name=="limit")
+            .map(|(_,value)|value.to_string()),Some("40".into()));
+        let receipts=sdk.native_history_url("owner/a","receipts",None,10).unwrap();
+        assert_eq!(receipts.path(),"/api/sdk/runs/owner%2Fa/receipts");
+        assert!(!receipts.query_pairs().any(|(key,_)|key=="before"));
+        assert!(sdk.native_history_url("x","events",None,0).is_err());
+        assert!(sdk.native_history_url("x","events",None,41).is_err());
+        assert!(sdk.native_history_url("x","execute",None,40).is_err());
+    }
+
     #[test]
     fn sse_handles_partial_frames_multiline_and_comments() {
         let mut buffer = b": keepalive\r\n\r\ndata: {\"seq\":5,\"type\":\"record\"}\r\n".to_vec();
