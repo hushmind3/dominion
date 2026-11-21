@@ -28,9 +28,11 @@ type Runtime={status:string;id?:string;name?:string;model?:string;error?:string}
 const chatDraftPrefix='dominion.chat.draft.v1:'
 type ChatExecutionMode='chat'|'agent'
 const chatModePrefix='dominion.chat.execution-mode.v1:'
-function readChatMode(scope:string):ChatExecutionMode{
- try{return sessionStorage.getItem(chatModePrefix+scope)==='agent'?'agent':'chat'}
- catch{return 'chat'}
+function readChatMode(scope:string,fallback:ChatExecutionMode='chat'):ChatExecutionMode{
+ try{
+  const saved=sessionStorage.getItem(chatModePrefix+scope)
+  return saved==='agent'||saved==='chat'?saved:fallback
+ }catch{return fallback}
 }
 function storeChatMode(scope:string,mode:ChatExecutionMode){
  try{sessionStorage.setItem(chatModePrefix+scope,mode)}
@@ -84,7 +86,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const modeValues=useRef<Record<string,ChatExecutionMode>>({})
  const [,redrawMode]=useState(0)
  const executionMode=Object.hasOwn(modeValues.current,draftScope)?
-  modeValues.current[draftScope]:readChatMode(draftScope)
+  modeValues.current[draftScope]:readChatMode(draftScope,!current&&initialAgent?'agent':'chat')
  const setExecutionMode=(mode:ChatExecutionMode)=>{
   modeValues.current[draftScope]=mode
   storeChatMode(draftScope,mode)
