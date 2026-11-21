@@ -338,10 +338,16 @@ fn renew(state:&AppState,body:&Value,now:i64)->Result<Value,String>{
 fn settle(state:&AppState,body:&Value,now:i64)->Result<Value,String>{
     let task_id=body["taskId"].as_str().ok_or("taskId required")?;
     if let Some(task)=state.store.get("remote_task",task_id){
+        // Review resulting from lease expiry is NOT a completed native
+        // receipt. An expired worker's late result must never be accepted
+        // as an idempotent settlement that the coordinator never saw.
         if matches!(task["status"].as_str(),Some("completed"|"needs_review")) &&
             task["workerId"]==body["workerId"] &&
             task["workerEpoch"]==body["workerEpoch"] &&
-            task["leaseId"]==body["leaseId"]{
+            task["leaseId"]==body["leaseId"] &&
+            task["completedAtMs"].as_i64().is_some() &&
+            task["localJobId"]==body["localJobId"] &&
+            task["reportedJobStatus"]==body["jobStatus"]{
             return Ok(json!({"taskId":task_id,"status":task["status"],"replayed":true}));
         }
     }
