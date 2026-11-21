@@ -65,6 +65,22 @@ test('external URL and traversal fail locally before credentials are sent', asyn
   assert.throws(()=>d.raw('/api/../../evil'),TypeError);
   assert.equal(calls,0);
 });
+test('private Chat deletion reaches Rust DELETE without retry and honors active-run conflict',async()=>{
+  const calls=[];
+  const client=new Dominion({token:'private',fetch:async(url,init)=>{
+    calls.push({url,init});
+    if(url.endsWith('/busy'))return json({error:'실행 중인 대화입니다.'},409);
+    return json({ok:true});
+  }});
+  const result=await client.sessions.delete('private/one');
+  assert.equal(result.ok,true);
+  assert.equal(calls[0].url,'http://127.0.0.1:4317/api/sessions/private%2Fone');
+  assert.equal(calls[0].init.method,'DELETE');
+  assert.equal(calls[0].init.headers.get('X-Dominion-Token'),'private');
+  await assert.rejects(client.sessions.delete('busy'),
+    error=>error instanceof DominionError && error.status===409);
+  assert.equal(calls.length,2,'DELETE must never auto-retry an uncertain mutation');
+});
 test('real Rust JSON error is preserved and HTML is not accidentally parsed',async()=>{
   const d=new Dominion({fetch:async()=>json({error:'승인 필요'},401)});
   await assert.rejects(d.jobs.list(),e=>e instanceof DominionError&&e.status===401&&e.message==='승인 필요');
