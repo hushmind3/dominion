@@ -344,3 +344,16 @@ test('following mode watches transcript content height and newly submitted bubbl
   assert.match(scroll,/if \(following\.current\) el\.scrollTop = el\.scrollHeight/)
   assert.match(scroll,/return \(\) => \{ observer\.disconnect\(\);children\.disconnect\(\) \}/)
 })
+
+test('stream batching never drops final or cancelled conversation output',()=>{
+  const chat=source('src/pages/Chat.tsx')
+  assert.match(chat,/const streamBuffer=useRef\(\{text:'',reasoning:'',frame:0\}\)/)
+  assert.match(chat,/pending\[kind\]\+=delta/)
+  assert.match(chat,/pending\.frame=requestAnimationFrame\(flushStreamBuffer\)/)
+  assert.match(chat,/if\(pending\.frame\)cancelAnimationFrame\(pending\.frame\)/)
+  assert.match(chat,/if\(event\.type==='text'\)queueStreamDelta\('text',event\.text\)/)
+  assert.match(chat,/if\(event\.type==='reasoning'\)queueStreamDelta\('reasoning',event\.text\)/)
+  assert.match(chat,/if\(event\.type==='assistant_saved'\)\{flushStreamBuffer\(\);setSavedMessageId/)
+  assert.match(chat,/\}finally\{\s*if\(stream\.current===controller\)\{\s*flushStreamBuffer\(\)/)
+  assert.match(chat,/controller\?\.abort\(\);clearStreamBuffer\(\)/)
+})
