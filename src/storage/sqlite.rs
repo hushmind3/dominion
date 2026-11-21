@@ -1183,7 +1183,11 @@ impl Store {
     pub fn messages(&self, session_id: &str) -> Vec<Value> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = match conn.prepare(
-            "SELECT id,session_id,role,content,reasoning,agent_id,tool_calls,tool_call_id,created_at,metadata FROM messages WHERE session_id=?1 ORDER BY created_at ASC,rowid ASC",
+            if session_id.starts_with("room:"){
+                "SELECT id,session_id,role,content,reasoning,agent_id,tool_calls,tool_call_id,created_at,metadata FROM messages WHERE session_id=?1 ORDER BY rowid ASC"
+            }else{
+                "SELECT id,session_id,role,content,reasoning,agent_id,tool_calls,tool_call_id,created_at,metadata FROM messages WHERE session_id=?1 ORDER BY created_at ASC,rowid ASC"
+            },
         ) {
             Ok(stmt) => stmt,
             Err(_) => return Vec::new(),
@@ -1227,7 +1231,11 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let mut statement = conn
             .prepare(
-                "SELECT id,session_id,role,content,reasoning,agent_id,tool_calls,tool_call_id,created_at,metadata FROM messages WHERE session_id=?1 ORDER BY created_at ASC,rowid ASC",
+                if session_id.starts_with("room:"){
+                "SELECT id,session_id,role,content,reasoning,agent_id,tool_calls,tool_call_id,created_at,metadata FROM messages WHERE session_id=?1 ORDER BY rowid ASC"
+            }else{
+                "SELECT id,session_id,role,content,reasoning,agent_id,tool_calls,tool_call_id,created_at,metadata FROM messages WHERE session_id=?1 ORDER BY created_at ASC,rowid ASC"
+            },
             )
             .map_err(|error| error.to_string())?;
         let rows = statement
@@ -2558,6 +2566,29 @@ mod tests {
             &[("status",&running),("phase",&waiting)],
             &json!({"phase":"running"})).is_none());
         assert_eq!(store.get("execution","race").unwrap()["status"],"cancelled");
+    }
+
+    #[test]
+    fn room_context_reads_exact_commit_order_even_if_imported_timestamps_differ(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        for (id,session) in [("first","room:a"),("second","room:a"),
+            ("p-first","private"),("p-second","private")]{
+            store.write_message(&json!({"id":id,"session_id":session,
+                "role":"assistant","content":id})).unwrap();
+        }
+        {
+            let conn=store.conn.lock().unwrap();
+            conn.execute("UPDATE messages SET created_at='2099-01-01' WHERE id IN ('first','p-first')",[]).unwrap();
+            conn.execute("UPDATE messages SET created_at='2000-01-01' WHERE id IN ('second','p-second')",[]).unwrap();
+        }
+        let read=store.try_messages("room:a").unwrap();
+        assert_eq!(read[0]["id"],"first");
+        assert_eq!(read[1]["id"],"second");
+        let listed=store.messages("room:a");
+        assert_eq!(listed[0]["id"],"first");
+        assert_eq!(listed[1]["id"],"second");
+        assert_eq!(store.messages("private")[0]["id"],"p-second");
+        assert_eq!(store.room_events("room:a",0,10).unwrap()[0]["eventId"],"first");
     }
 
     #[test]
