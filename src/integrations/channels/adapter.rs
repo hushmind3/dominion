@@ -69,9 +69,14 @@ pub fn validate(state: &AppState, config: &Value) -> Result<(), String> {
     Ok(())
 }
 
+async fn response_json(response:reqwest::Response)->Result<Value,String>{
+    crate::integrations::network::read_bounded_json(
+        response,512*1024,"Channel API").await
+}
+
 async fn response_id(response: reqwest::Response, kind: &str) -> Result<String, String> {
     let status = response.status();
-    let value: Value = response.json().await.unwrap_or_else(|_| json!({}));
+    let value=response_json(response).await.unwrap_or_else(|_|json!({}));
     if !status.is_success() {
         return Err(format!("{kind} HTTP {status}: {value}"));
     }
@@ -307,7 +312,7 @@ pub async fn diagnose(state: &AppState, config: &Value) -> Result<Value, String>
                 .await
                 .map_err(|error| format!("Slack 연결 실패: {error}"))?;
             let status = response.status();
-            let body: Value = response.json().await.unwrap_or_else(|_| json!({}));
+            let body=response_json(response).await.unwrap_or_else(|_|json!({}));
             if !status.is_success() || body["ok"] == false {
                 return Err(format!(
                     "Slack 인증 실패: {}",
@@ -334,7 +339,7 @@ pub async fn diagnose(state: &AppState, config: &Value) -> Result<Value, String>
                 .await
                 .map_err(|error| format!("Matrix 연결 실패: {error}"))?;
             let status = response.status();
-            let body: Value = response.json().await.unwrap_or_else(|_| json!({}));
+            let body=response_json(response).await.unwrap_or_else(|_|json!({}));
             if !status.is_success() {
                 return Err(format!(
                     "Matrix 인증 실패 (HTTP {status}): {}",
@@ -365,7 +370,7 @@ pub async fn diagnose(state: &AppState, config: &Value) -> Result<Value, String>
                 .await
                 .map_err(|error| format!("WhatsApp 연결 실패: {error}"))?;
             let status = response.status();
-            let body: Value = response.json().await.unwrap_or_else(|_| json!({}));
+            let body=response_json(response).await.unwrap_or_else(|_|json!({}));
             if !status.is_success() || body["error"].is_object() {
                 return Err(format!(
                     "WhatsApp 인증 실패: {}",
@@ -392,7 +397,7 @@ pub async fn diagnose(state: &AppState, config: &Value) -> Result<Value, String>
                 .await
                 .map_err(|error| format!("LINE 연결 실패: {error}"))?;
             let status = response.status();
-            let body: Value = response.json().await.unwrap_or_else(|_| json!({}));
+            let body=response_json(response).await.unwrap_or_else(|_|json!({}));
             if !status.is_success() {
                 return Err(format!(
                     "LINE 인증 실패 (HTTP {status}): {}",
@@ -419,7 +424,7 @@ pub async fn diagnose(state: &AppState, config: &Value) -> Result<Value, String>
                 .await
                 .map_err(|error| format!("Zulip 연결 실패: {error}"))?;
             let status = response.status();
-            let body: Value = response.json().await.unwrap_or_else(|_| json!({}));
+            let body=response_json(response).await.unwrap_or_else(|_|json!({}));
             if !status.is_success() {
                 return Err(format!(
                     "Zulip 인증 실패 (HTTP {status}): {}",
@@ -446,7 +451,7 @@ pub async fn diagnose(state: &AppState, config: &Value) -> Result<Value, String>
                 .await
                 .map_err(|error| format!("Mattermost 연결 실패: {error}"))?;
             let status = response.status();
-            let body: Value = response.json().await.unwrap_or_else(|_| json!({}));
+            let body=response_json(response).await.unwrap_or_else(|_|json!({}));
             if !status.is_success() {
                 return Err(format!(
                     "Mattermost 인증 실패 (HTTP {status}): {}",
@@ -472,7 +477,7 @@ pub async fn diagnose(state: &AppState, config: &Value) -> Result<Value, String>
                 .await
                 .map_err(|error| format!("Signal 브리지 연결 실패: {error}"))?;
             let status = response.status();
-            let body: Value = response.json().await.unwrap_or_else(|_| json!({}));
+            let body=response_json(response).await.unwrap_or_else(|_|json!({}));
             if !status.is_success() {
                 return Err(format!(
                     "Signal 브리지 인증 실패 (HTTP {status}): {}",
