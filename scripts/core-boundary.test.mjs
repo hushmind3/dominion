@@ -48,7 +48,15 @@ test('DB, migrations, vault and shared host state cannot reappear in core',()=>{
  assert.match(read('src/compat/engine.rs'),/pub\(crate\) use crate::host::execution::\*/);
  const declared=[...host.matchAll(/^pub(?:\(crate\))? mod ([a-z_]+);$/gm)].map(x=>x[1]).sort();
  assert.deepEqual(declared,['goal_control','native_agent','native_evidence','effect','program',
- 'verification','recovery','jobs','lease','run_state','run_view'].sort());
+ 'verification','recovery','jobs','lease','remote_worker','run_state','run_view'].sort());
+ const remote=read('src/host/execution/remote_worker.rs');
+ assert.match(remote,/pub async fn run_team_read/);
+ assert.match(remote,/pub async fn run_cli/);
+ for(const p of ['crates/dominion-agent-sdk/src/lib.rs',
+                  'crates/dominion-agent-runtime/src/lib.rs']){
+  assert.doesNotMatch(read(p),/crate::host::execution::remote_worker/,
+    p+' must never import remote Host process transport');
+ }
 });
 test('product capabilities register outside the host execution adapter',()=>{
  for(const [group,names] of Object.entries(groups))for(const name of names){
