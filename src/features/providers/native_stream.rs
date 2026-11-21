@@ -237,15 +237,6 @@ impl Assembler {
                 match reason {
                     "stop"|"tool_calls"=>{
                         self.chat_finish=Some(reason.into());
-                        if reason=="tool_calls" {
-                            for call in self.calls.values() {
-                                if !call.id.is_empty() && !call.name.is_empty() {
-                                    updates.push(Update::ToolStarted{
-                                        id:call.id.clone(),name:call.name.clone()
-                                    });
-                                }
-                            }
-                        }
                     }
                     _=>return Err(format!("Native Chat stopped without a complete tool turn: {reason}")),
                 }
@@ -270,6 +261,18 @@ impl Assembler {
                 if idx>=MAX_NATIVE_CALLS {return Err("Native tool call index exceeds limit".into());}
                 let entry=self.calls.entry(idx).or_default();
                 entry.append(tool)?;
+            }
+            // A compatible endpoint may include its final tool metadata in
+            // the very same choice that declares finish_reason=tool_calls.
+            // Announce only after collecting that last fragment.
+            if reason==Some("tool_calls") {
+                for call in self.calls.values() {
+                    if !call.id.is_empty() && !call.name.is_empty() {
+                        updates.push(Update::ToolStarted{
+                            id:call.id.clone(),name:call.name.clone()
+                        });
+                    }
+                }
             }
         }
         Ok(())
@@ -775,6 +778,24 @@ mod tests {
         assert!(stream.feed(Packet::Data(json!({"choices":[{"delta":{"tool_calls":[
             {"function":{"arguments":"}"}}
         ]}}]}))).is_err(), "Without index or ID, parallel ownership is unknowable");
+    }
+
+    #[test]
+    fn native_chat_terminal_delta_still_announces_complete_pending_tool() {
+        let mut stream=Assembler::new(Wire::Chat);
+        let updates=stream.feed(Packet::Data(json!({"choices":[{
+            "index":0,"finish_reason":"tool_calls",
+            "delta":{"tool_calls":[{
+                "index":0,"id":"call-terminal",
+                "function":{"name":"workspace_read","arguments":"{}"}
+            }]}
+        }]}))).unwrap();
+        assert!(updates.iter().any(|update|matches!(update,
+            Update::ToolStarted{id,name} if id=="call-terminal" && name=="workspace_read")),
+            "The last tool delta must not vanish from live progress");
+        stream.feed(Packet::Done).unwrap();
+        let settled=stream.finish().unwrap();
+        assert_eq!(settled["choices"][0]["message"]["tool_calls"][0]["id"],"call-terminal");
     }
 
     #[test]
