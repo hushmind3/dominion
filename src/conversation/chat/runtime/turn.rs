@@ -1,6 +1,24 @@
 //! Streaming chat turn, model calls and output settlement.
 use super::*;
 
+/// A received and paid model answer may be unsafe to use as a decision.
+/// Journal the metered rejection before releasing the same SDK generation
+/// fence used by Native. Do not grant an executable tool or a final answer.
+fn settle_rejected_chat_turn(
+    journal:&dyn dominion_agent_sdk::Journal,
+    snapshot:&mut dominion_agent_sdk::Snapshot,
+    round:usize,
+    model_calls:usize,
+    charged_tokens:u64,
+    reason:&str,
+)->Result<(),String>{
+    snapshot.step=round+1;
+    snapshot.model_calls=model_calls;
+    snapshot.charged_tokens=charged_tokens;
+    snapshot.stop(dominion_agent_sdk::Status::NeedsReview,reason);
+    dominion_agent_sdk::settle_rejected_model_turn(journal,snapshot)
+}
+
 pub(super) async fn run_turn_body(
     state: &AppState,
     request: &TurnRequest,
@@ -894,13 +912,8 @@ pub(super) async fn run_turn_body(
 
         let has_dsml_call = completion.content.contains("invoke name=\"")
             && completion.content.contains("parameter name=\"");
-        if (!request.tools_enabled || !request.tools_execution_enabled)
-            && (!completion.tool_calls.is_empty() || has_dsml_call)
-        {
-            return Err(
-                "도구가 비활성인 대화에서 모델이 도구 실행을 요청했습니다.".into(),
-            );
-        }
+        let forbidden_tool_attempt=(!request.tools_enabled || !request.tools_execution_enabled)
+            && (!completion.tool_calls.is_empty() || has_dsml_call);
         metadata["continuity"] = completion.continuity.clone().unwrap_or(Value::Null);
         continuation_projection = completion.projection.take();
         if let Some(mut execution) = state.store.get("execution", execution_id) {
@@ -997,10 +1010,17 @@ pub(super) async fn run_turn_body(
         }
         metrics.lock().unwrap().tokens = total_tokens;
         if !within_token_budget {
+            let reason=format!("토큰 예산({MAX_TOKENS})을 초과했습니다. 요청을 나눠 다시 시도하세요.");
+            settle_rejected_chat_turn(&kernel_journal,&mut kernel_state,
+                round,metrics.lock().unwrap().model_calls as usize,total_tokens,&reason)?;
             mark_budget_exhausted(state,execution_id);
-            return Err(format!(
-                "토큰 예산({MAX_TOKENS})을 초과했습니다. 요청을 나눠 다시 시도하세요."
-            ));
+            return Err(reason);
+        }
+        if forbidden_tool_attempt {
+            let reason="도구가 비활성인 대화에서 모델이 도구 실행을 요청했습니다.";
+            settle_rejected_chat_turn(&kernel_journal,&mut kernel_state,
+                round,metrics.lock().unwrap().model_calls as usize,total_tokens,reason)?;
+            return Err(reason.into());
         }
 
         if force_final {
@@ -1010,9 +1030,10 @@ pub(super) async fn run_turn_body(
         }
 
         if has_dsml_call && round_tools.is_empty() {
-            return Err(
-                "모델이 이번 턴에 제공되지 않은 도구를 호출하려 했습니다.".into(),
-            );
+            let reason="모델이 이번 턴에 제공되지 않은 도구를 호출하려 했습니다.";
+            settle_rejected_chat_turn(&kernel_journal,&mut kernel_state,
+                round,metrics.lock().unwrap().model_calls as usize,total_tokens,reason)?;
+            return Err(reason.into());
         }
         if completion.tool_calls.is_empty()
             && request.tools_enabled
@@ -1041,9 +1062,10 @@ pub(super) async fn run_turn_body(
                 // A malformed/unknown DSML call must not be shown as a final
                 // answer. Remove the protocol block and fail the turn.
                 completion.content = cleaned;
-                return Err(
-                    "모델이 지원되지 않는 도구 호출 형식을 출력했습니다.".into(),
-                );
+                let reason="모델이 지원되지 않는 도구 호출 형식을 출력했습니다.";
+                settle_rejected_chat_turn(&kernel_journal,&mut kernel_state,
+                    round,metrics.lock().unwrap().model_calls as usize,total_tokens,reason)?;
+                return Err(reason.into());
             }
         }
 
