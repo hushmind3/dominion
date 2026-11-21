@@ -114,3 +114,13 @@ the original `.event` for diagnostics. Rust may append `done` after the error;
 this terminator never upgrades a failed turn into success. The
 `assistant_saved` event records a persisted final answer.
 
+
+## Optional public web lookup in ordinary Chat
+
+Set `conversationMode:'chat'` and `webSearch:true` to allow a direct
+conversation to consult public sources. The browser and SDK keep
+`toolsEnabled:false` and `toolsExecutionEnabled:false`; the Rust runtime
+grants only `web_search` and `http_fetch`. No file, shell, memory-writing,
+MCP or agent execution capabilities are exposed. Search availability depends
+on the network and the selected model's native/compatible tool calling.
+Omit webSearch for fast no-tool conversations.

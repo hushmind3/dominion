@@ -264,8 +264,21 @@ try{
   assert.equal(directRequest.toolsEnabled,false);
   assert.equal(directRequest.toolsExecutionEnabled,false);
   assert.equal(directRequest.autoLearning,false);
+  assert.equal(directRequest.webSearch,false);
   assert.equal(directRequest.providerId,'fixture');
   assert.equal(directRequest.model,'fixture');
+  // Browser cannot grant arbitrary native tools, even when web lookup is on.
+  await page.getByRole('button',{name:'웹 검색'}).click();
+  assert.equal(await page.getByRole('button',{name:'웹 검색'}).getAttribute('aria-pressed'),'true');
+  await chatInput.fill('웹 검색으로 최신 기술 뉴스를 찾아줘');
+  const webRequestPromise=page.waitForRequest(request=>new URL(request.url()).pathname==='/api/chat');
+  await chatInput.press('Enter');
+  const webRequest=(await webRequestPromise).postDataJSON();
+  assert.equal(webRequest.webSearch,true);
+  assert.equal(webRequest.conversationMode,'chat');
+  assert.equal(webRequest.toolsEnabled,false);
+  assert.equal(webRequest.toolsExecutionEnabled,false);
+  assert.equal(webRequest.agentId,undefined);
   await page.getByRole('button',{name:'에이전트 실행'}).click();
   assert.equal(await page.getByRole('button',{name:'에이전트 실행'}).getAttribute('aria-pressed'),'true');
   await chatInput.fill('에이전트 작업 요청');
@@ -276,6 +289,7 @@ try{
   assert.equal(agentRequest.agentId,'lead');
   assert.equal(agentRequest.toolsEnabled,true);
   assert.equal(agentRequest.toolsExecutionEnabled,true);
+  assert.equal(agentRequest.webSearch,false);
   await page.reload({waitUntil:'domcontentloaded'});
   assert.equal(await page.getByRole('button',{name:'에이전트 실행'}).getAttribute('aria-pressed'),'true',
     'explicit agent mode should survive reload for the same session');

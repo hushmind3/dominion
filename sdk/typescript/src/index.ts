@@ -55,7 +55,7 @@ export function isRunStateEvent(event:DurableEvent):event is RunStateEvent {
 }
 export interface Health { ok: boolean; service: string; version: string; runtime: string; engine: string }
 export interface ChatInput {
-  sessionId: string; input: string; conversationMode?:'chat'|'agent';
+  sessionId: string; input: string; conversationMode?:'chat'|'agent'; webSearch?:boolean;
   agentId?: string; providerId?: string; model?: string; attachmentIds?: string[];
   toolsEnabled?: boolean; toolsExecutionEnabled?: boolean; autoLearning?: boolean;
   reasoningLanguage?: string; reasoningEffort?: string; thinking?: boolean; requestId?: string;

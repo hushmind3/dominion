@@ -45,7 +45,7 @@ test('direct Chat and immutable attachments share typed Rust API and auth',async
   const bytes=await client.attachments.content('attachment-id');
   assert.deepEqual([...new Uint8Array(bytes)],[65,66]);
   await client.streamChat({sessionId:'s',input:'summarize',conversationMode:'chat',
-    attachmentIds:[uploaded.id],toolsEnabled:false,toolsExecutionEnabled:false},()=>{});
+    webSearch:true,attachmentIds:[uploaded.id],toolsEnabled:false,toolsExecutionEnabled:false},()=>{});
   assert.equal(JSON.parse(calls[0].init.body).conversationMode,'chat');
   assert.equal(calls[1].url,'http://127.0.0.1:4317/api/attachments');
   assert.equal(JSON.parse(calls[1].init.body).sessionId,'s');
@@ -54,6 +54,7 @@ test('direct Chat and immutable attachments share typed Rust API and auth',async
   const payload=JSON.parse(calls[3].init.body);
   assert.equal(payload.agentId,undefined);
   assert.equal(payload.conversationMode,'chat');
+  assert.equal(payload.webSearch,true);
   assert.deepEqual(payload.attachmentIds,['attachment-id']);
   assert.equal(payload.toolsExecutionEnabled,false);
   assert.ok(calls.every(call=>call.init.headers.get('X-Dominion-Token')==='private'));

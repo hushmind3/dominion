@@ -181,3 +181,8 @@
 .conversation-composer.chat-composer-drop .conversation-composer-input{background:transparent}
 
 .room-attachment-uploading{display:flex;gap:6px;align-items:center;padding:2px 13px 7px;font-size:12px;color:#826D56}
+
+/* Optional public web lookup is still normal Chat, never agent authority. */
+.chat-web-search-toggle{display:inline-flex!important;align-items:center;gap:5px!important;min-height:27px!important;padding:4px 9px!important;border:1px solid transparent!important;border-radius:8px!important;background:transparent!important;color:#71665A!important;font-size:11px!important;font-weight:620!important}
+.chat-web-search-toggle:hover{background:#F7F1E9!important}
+.chat-web-search-toggle[aria-pressed="true"]{border-color:#CCB296!important;background:#F6EADA!important;color:#8C5034!important}
