@@ -27,7 +27,7 @@ export function ConversationSettings({open,onOpenChange,showReasoning,setShowRea
   <Button type="button" variant="ghost" ref={settingsPanel.trigger} onClick={()=>onOpenChange(!open)}
    className="inline-flex !min-h-9 items-center gap-1.5 !rounded-lg !border-0 !px-2.5 !text-[12px] !font-semibold text-[#6C6257] hover:bg-[#F3EEE5]"
    title={t('chat.settings')} aria-label={t('chat.settings')} aria-expanded={open} aria-haspopup="dialog">
-   <SlidersHorizontal size={16}/><span>{t('chat.settings')}</span>
+   <SlidersHorizontal size={16}/><span className="hidden sm:inline">{t('chat.settings')}</span>
   </Button>
   {open&&settingsPanel.position&&createPortal(
    <div ref={settingsPanel.panel} style={settingsPanel.position} role="dialog" aria-label={t('chat.settings')}

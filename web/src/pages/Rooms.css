@@ -113,7 +113,7 @@
 .room-team-trigger{background:#F9F0E7!important;border-color:#E9D5C4!important;color:#8E4D34!important;font-weight:700!important}
 .room-team-trigger:hover,.room-team-trigger[aria-expanded="true"]{background:#F4E2D3!important}
 @media(max-width:639px){
- .room-team-dialog{max-height:100dvh!important;height:100dvh;border:0;border-radius:0!important}
+ .room-team-dialog{max-height:calc(100dvh - 32px)!important;height:auto;max-width:100%;border-radius:14px!important}
  .room-team-dialog-header{padding:18px 17px 15px}
  #root .room-team-dialog-header h2{font-size:19px!important}
  .room-team-dialog-content{padding:18px 16px 28px}
