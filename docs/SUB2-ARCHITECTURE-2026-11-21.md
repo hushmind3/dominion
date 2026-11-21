@@ -159,7 +159,7 @@ P3 원문은 "실제 다중 기기 요구가 생길 때 도입"하는 조건부 
 - **실제 과거 첨부 자료 복원**: 32k 선두 자르기 대신 질문 관련 중간 원문과 문서 앞/뒤를 선택하고 L/C 원본 위치를 남깁니다. 한 줄짜리 대형 JSON도 UTF-8 1,400자 창으로 탐색합니다. 역사적 파일의 제목을 지칭하면 최신 스크린샷보다 해당 파일을 우선 선택하고, Chat history focus에서도 선택된 출처를 유지합니다. 모델에 전송하는 실제 텍스트와 base64 이미지 바이트를 예산에 반영합니다. SQLite의 전체 파일 원본은 변경하지 않습니다.
 - **Room 문맥 경량화**: 9명 그룹의 장기 기록을 매 발언마다 전부 디코딩하지 않고, SQLite의 최근 기록 쿼리에서 유효한 owner 출처만 필터링합니다. 압축 커서는 같은 세션의 유효한 참가자 행에만 적용되며, bot 발언을 owner 확정 요약으로 승격시키지 않습니다.
 - **첨부 생명주기**: Room 초기화는 미전송 글을 보존하고 과거 Room 세션의 파일 ID·재전송 nonce를 제거합니다. 개인 Chat 삭제/지우기는 실행 중인 Job·Team·DB lease를 확인한 뒤 파일 바이트/메타데이터와 대화 기록을 함께 정리합니다. 다른 세션·Room의 기록은 보존하며, 원본이 삭제되어도 복제된 Chat은 **별도 새 파일 ID와 실제 복사한 바이트**로 계속 읽을 수 있습니다.
-- **Fork 완결성**: Chat 복제가 실제 파일까지 성공한 뒤에만 UI 세션 목록에 공개됩니다. 중간 실패 시 새 파일·메시지를 정리합니다. 파일 삭제 오류가 나면 추후 점검 가능한 비공개 pending 레코드를 유지합니다. 강제 종료로 남은 pending 복제의 자동 청소는 아직 구현되지 않았습니다.
+- **Fork 완결성**: Chat 복제가 실제 파일까지 성공한 뒤에만 UI 세션 목록에 공개됩니다. 중간 실패 시 새 파일·메시지를 정리합니다. 파일 삭제 오류가 나면 추후 점검 가능한 비공개 pending 레코드를 유지합니다. 강제 종료로 남은 pending 복제는 **생성 후 15분 이상 경과하고 원본 세션의 독점 DB lease를 획득할 수 있을 때만** 정리합니다. 서비스 시작과 기존 백업 유지보수 주기에서 복구를 시도하며, 출처 ID가 없는 레거시 pending은 추측해 삭제하지 않습니다.
 - **공용 SDK 정합성**: Rust SSE의 `error → done`을 실패로 전달하고 유료 POST를 중복 발송하지 않습니다. 정확한 `requestId` 중지와 서버의 durable `cancel-status`, private session 삭제를 같은 Rust API에 연결했습니다.
 
 ### 출발·제출/검증 경계
@@ -168,4 +168,20 @@ P3 원문은 "실제 다중 기기 요구가 생길 때 도입"하는 조건부 
 - 주요 회귀: `cargo test --lib api::sessions::deletion_tests`, `cargo test --lib engine::chat::context::tests`, `cargo test --lib engine::chat::context_window::tests`, `cargo test --lib engine::task_team_work::tests`, `./web/node_modules/.bin/tsc -p sdk/typescript/tsconfig.json`, `node --test sdk/typescript/tests/sdk.test.mjs`, `node web/tests/team-activity.smoke.mjs`, `node web/tests/room-model-routing.smoke.mjs`.
 - GitHub Actions에서 여러 차례 프런트 타입·빌드·SDK와 Chromium fixture 성공을 관찰했습니다. 연속 커밋으로 오래 걸리는 macOS Rust 실행은 취소된 회차가 있으므로, 최신 **제출 SHA의 전체 CI·실모델·실기기 통과라고 주장하지 않습니다**. 각 커밋 SHA에 대응하는 Actions 원문으로 판정해야 합니다.
 - 로컬 4321 검증자는 제출한 Rust/프런트 빌드 SHA가 실제 서버와 일치함을 먼저 확인합니다. 긴 파일의 중간 원문 재질문, 다른 세션의 파일 차단, Chat 복제 후 원본 삭제, Room 재설정 후 초안 유지와 오래된 파일 불사용, 중지 후 늦은 결과·초안·영수증을 확인합니다.
-- 후속 남은 구현: 강제 중단된 pending-fork의 안전한 복구/수거, 오래된 데이터베이스와 서로 다른 OS의 실제 호환 회귀, 오래 끊긴 실모델/원격 Worker 유료 호출의 독립 검증 및 같은 조건의 비용·지연 비교.
+- 후속 남은 구현: 백업에 첨부 원본 자체를 포함하는 **암호화된 전체 보관 포맷과 복원 트랜잭션**, 오래된 데이터베이스와 서로 다른 OS의 실제 호환 회귀, 오래 끊긴 실모델/원격 Worker 유료 호출의 독립 검증 및 같은 조건의 비용·지연 비교. 현재 SQLite-only 백업은 원본 첨부 저장 폴더의 별도 보관이 필요하다고 API·화면에 공개합니다.
+
+
+## 11. 재시작 복구·첨부 무결성·백업 안전성·기억 조회 (2026-11-22)
+
+- `src/sdk.rs`, `src/api/services/conversation/sessions.rs`, `src/engine/services/automation/maintenance.rs`: 독립 pending fork를 무조건 폐기하지 않습니다. 생성 시각·출처 세션·동일 Rust lease로 실제 미완료를 판정하고, 새 호출을 예약하거나 다른 데몬을 만들지 않고 기존 SDK 시작 및 유지보수에 통합했습니다. 출처/시각 정보가 불충분한 레거시 파일은 보수적으로 남기며 수동 점검 대상으로 기록합니다.
+- `src/db.rs`와 `chat/runtime/tool_catalog.rs`: 일반 Chat의 메모리/경험 존재 검사를 전체 `Vec<Value>` 적재에서 SQLite의 **첫 유효 scope에서 중단되는 순회**로 변경했습니다. 실제 메모리 추출·주입에 사용하던 `memory::visible` 권한 필터를 그대로 적용하며, 조회 실패는 없는 기억으로 가장하지 않고 오류로 전달합니다.
+- `src/engine/services/tools/attachments.rs`: 새 첨부를 저장할 때 SHA-256을 남기고 Chat·Room·SDK·다운로드에 쓰이는 공통 `read`에서 **같은 길이로 변경된 파일도 차단**합니다. 과거 SHA-256 없는 레코드는 기존 크기 검사를 유지합니다.
+- `src/engine/services/operations/restore_transaction.rs`: 복구하기 전에 암호화 백업에서 해독한 SQLite의 모든 첨부 참조를 현재 저장 폴더의 실제 파일 크기·SHA-256과 대조합니다. 파일이 사라지거나 위조됐다면 기존 SQLite/비밀키를 바꾸기 전에 복원을 거부합니다. 복구 검증용 임시 SQLite는 0600으로 생성하고 정상·오류 경로에서 삭제합니다.
+- `src/engine/services/automation/maintenance.rs`: 기존 `DOMVAULT1` 백업은 여전히 DB+key 포맷입니다. 암호화하기 전 일시적인 평문 SQLite는 0700 개인 폴더에 만들고 즉시 RAII 정리하며, 프로세스 강제 종료로 24시간 이상 남은 UUID-소유 파일만 기존 유지보수에서 수거합니다. 같은 초 안의 연속 백업도 파일명 충돌을 피합니다.
+- `src/api/services/management/system.rs`, `web/src/pages/operations/Backup.tsx`: `attachmentsIncluded:false`와 현재 첨부 개수를 공개하고 기존 백업/복원 화면에 사용자 경고를 표시합니다. **원본 첨부파일까지 백업됐다고 표시하지 않습니다.** 데이터베이스와 파일을 함께 묶는 완전한 암호화 백업/복구는 아직 미구현입니다.
+
+### 재현용 검사
+
+`cargo test --lib api::sessions::deletion_tests`, `cargo test --lib engine::restore_transaction::tests`, `cargo test --lib engine::maintenance::tests`, `cargo test --lib engine::chat::context::tests`, `cargo test --lib db::tests::short_circuit_memory_existence`, `npm --prefix web run typecheck`, `npm --prefix web run build`, `node --test sdk/typescript/tests/sdk.test.mjs`.
+
+복구 성공의 기준은 첨부파일·SHA까지 확인한 복구입니다. 첨부 원본이 없는 DB-only 백업을 다른 PC에서 복원했을 때 오류를 반환하는 것이 이번 구현의 정상 동작입니다. 전체 파일이 포함된 백업으로 오해시키지 않기 위해 API와 UI 양쪽에 해당 제약을 명시합니다.
