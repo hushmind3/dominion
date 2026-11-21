@@ -51,7 +51,7 @@ fn settled_witness(job:&Value)->(&Value,&'static str){
         (kernel,"kernel_checks")
     }else{(&job["nativeEvidenceFinal"],"owner_checks")}
 }
-fn pending(state:&AppState,job:&Value>{
+fn pending(state:&AppState,job:&Value)->Option<Value>{
     if job["status"]!="running"{return None;}
     let session=job["sessionId"].as_str()?;
     let id=job["id"].as_str()?;
