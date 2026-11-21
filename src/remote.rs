@@ -288,7 +288,7 @@ pub fn submit(
         "status":"queued","attempts":0,
         "createdAtMs":now_ms(),
     }));
-    if let Some(ref task)=saved{state.bus.record("remote_task",task);}
+    if let Some(ref task)=saved{publish_task(state,task);}
     let task=saved.or_else(||state.store.get("remote_task",&id))
         .ok_or("Unable to persist remote work")?;
     if task["teamId"]!=team_id ||task["nodeId"]!=node_id ||
@@ -317,7 +317,7 @@ fn expire(state:&AppState,now:i64){
         if let Some(saved)=state.store.patch_if_all_merge("remote_task",id,&guards,
             &json!({"status":"needs_review","outcomeUnknown":true,
                 "error":"remote worker lease expired; inspect effects before retry"}),&[]){
-            state.bus.record("remote_task",&saved);
+            publish_task(state,&saved);
         }
     }
 }
@@ -348,7 +348,7 @@ fn claim(state:&AppState,body:&Value,now:i64)->Result<Value,String>{
                 "workerEpoch":epoch,"leaseId":lease_id,
                 "leaseUntilMs":now+LEASE_MS,"lastHeartbeatMs":now,
                 "startedAtMs":now,"attempts":1})){
-            state.bus.record("remote_task",&saved);
+            publish_task(state,&saved);
             return Ok(json!({"task":saved,"reattached":false}));
         }
     }
@@ -370,7 +370,7 @@ pub fn cancel_team(state:&AppState,team_id:&str){
             ],&json!({"cancelRequested":true}),&[]),
             _=>None,
         };
-        if let Some(saved)=saved{state.bus.record("remote_task",&saved);}
+        if let Some(saved)=saved{publish_task(state,&saved);}
     }
 }
 
@@ -486,8 +486,20 @@ fn settle(state:&AppState,body:&Value,now:i64)->Result<Value,String>{
             "usage":telemetry,
             "completedAtMs":now,"outcomeUnknown":status!="completed",
         }),&[]).ok_or("Remote task lease changed during settlement")?;
-    state.bus.record("remote_task",&saved);
+    publish_task(state,&saved);
     Ok(json!({"taskId":id,"status":saved["status"],"verified":verified}))
+}
+/// Only the coordinator's private SQLite keeps artifact bytes. The global
+/// SSE journal must never broadcast arbitrary remote source contents to
+/// every connected session.
+pub(crate) fn publish_task(state:&AppState,task:&Value){
+    let mut safe=task.clone();
+    if let Some(items)=safe["artifacts"].as_array_mut(){
+        for item in items {
+            if let Some(obj)=item.as_object_mut(){obj.remove("content");}
+        }
+    }
+    state.bus.record("remote_task",&safe);
 }
 pub fn task_status(state:&AppState,id:&str)->Result<Value,String>{
     expire(state,now_ms());
