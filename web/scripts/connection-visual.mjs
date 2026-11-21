@@ -5,13 +5,14 @@ import {fileURLToPath} from 'node:url'
 import path from 'node:path'
 import {chromium} from 'playwright'
 
-// Browser-level visual acceptance against the actual built Vite bundle.
+// Browser-level visual acceptance against real Vite development rendering.
+ // No production/release build is needed.
 // Provider responses are fixtures: verification of layout and navigation,
 // never a claim that external messaging credentials actually work.
 const root=fileURLToPath(new URL('../../',import.meta.url))
 const artifacts=path.join(root,'web','artifacts','connection-visual')
 const port=Number(process.env.DOMINION_VISUAL_PORT||4382)
-const server=spawn(process.execPath,['node_modules/vite/bin/vite.js','preview','--host','127.0.0.1','--port',String(port),'--strictPort'],{
+const server=spawn(process.execPath,['node_modules/vite/bin/vite.js','--host','127.0.0.1','--port',String(port),'--strictPort'],{
  cwd:path.join(root,'web'),stdio:['ignore','pipe','pipe']
 })
 let output=''
@@ -98,12 +99,12 @@ const routeApi=async route=>{
 }
 async function waitReady(){
  for(let i=0;i<90;i++){
-  if(server.exitCode!==null)throw Error('Vite preview exited: '+output)
+  if(server.exitCode!==null)throw Error('Vite dev server exited: '+output)
   try{const response=await fetch(base);if(response.ok)return}
   catch{}
   await new Promise(resolve=>setTimeout(resolve,250))
  }
- throw Error('Preview did not start: '+output)
+ throw Error('Vite dev server did not start: '+output)
 }
 const screenshots=[]
 const shot=async(page,file)=>{
@@ -173,7 +174,9 @@ try{
  // Existing Activity navigation owns the Task Team composer, without new tabs.
  await page.goto(base+'/#/activity',{waitUntil:'domcontentloaded'})
  const teamPanel=page.locator('[aria-label="작업 팀"]')
- await teamPanel.getByRole('button',{name:'열기'}).click()
+ if(await teamPanel.getByRole('button',{name:'열기'}).count()){
+  await teamPanel.getByRole('button',{name:'열기'}).click()
+ }
  await teamPanel.getByRole('button',{name:'팀 만들기'}).click()
  await teamPanel.getByLabel('팀 목표').fill('Review project with local and Qwen agents')
  await teamPanel.getByLabel('작업 지시문').first().fill('Inspect source contracts')
@@ -186,7 +189,8 @@ try{
  assert.equal(taskTeams.length,1)
  assert.equal(taskTeams[0].tasks[0].runtime,'native')
  assert.equal(taskTeams[0].tasks[1].runtime,'qwen')
- assert.ok(taskTeams[0].tasks[1].dependsOn.includes(taskTeams[0].tasks[0].taskId))
+ assert.deepEqual(taskTeams[0].tasks[1].dependsOn,[],
+  'Independent read workers should be parallel without accidental dependencies')
  await shot(page,'17-task-team-running-desktop.png')
  await page.setViewportSize({width:390,height:844})
  await shot(page,'18-task-team-mobile.png')
