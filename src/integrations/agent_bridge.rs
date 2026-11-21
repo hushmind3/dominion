@@ -542,6 +542,53 @@ mod tests{
         assert!(codex_finish("thread1",false,"false success").is_err());
     }
     #[tokio::test]
+    async fn codex_app_server_read_only_turn_declines_external_approval_and_completes(){
+        use crate::{config::Config,db::Store,state::AppState,vault::Vault};
+        let root=std::env::temp_dir().join(format!(
+            "dominion-codex-deny-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=Config{port:0,data_dir:root.clone(),
+            web_dir:root.join("web"),workspace:root.clone()};
+        let state=AppState::new(config.clone(),
+            Store::open(&config.db_path()).unwrap(),Vault::open(&config.key_path()));
+        state.store.put("job",&json!({"id":"codex-denial",
+            "kind":"external_agent","status":"running","attempts":1})).unwrap();
+        let ctx=JobContext::new(state.clone(),"codex-denial".into());
+        let mock=r#"
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"id":1,"result":{}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{"id":2,"result":{"thread":{"id":"denial-thread"}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{"id":77,"method":"item/commandExecution/requestApproval","params":{"command":"rm -rf ./workspace"}}'
+      ;;
+    *'"id":77'*'"decision":"decline"'*)
+      printf '%s\n' '{"method":"item/agentMessage/delta","params":{"delta":"Permission denied. Read-only review finished."}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+      printf '%s\n' '{"id":3,"result":{"turn":{"id":"completed"}}}'
+      ;;
+  esac
+done
+"#;
+        let mut child=Command::new("sh").arg("-c").arg(mock)
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+            .kill_on_drop(true).spawn().unwrap();
+        let result=tokio::time::timeout(Duration::from_secs(8),
+            run_codex(&ctx,&mut child,Instant::now(),"Review only",None,
+                &ctx.state.config.workspace,None)).await.unwrap().unwrap();
+        assert_eq!(result["status"],"completed");
+        assert!(result["answer"].as_str().unwrap().contains("Permission denied"));
+        let job=state.store.get("job","codex-denial").unwrap();
+        assert_eq!(job["bridgeLastDeniedApproval"]["method"],
+            "item/commandExecution/requestApproval");
+        let _=child.kill().await;
+        crate::test_support::cleanup_dir(&root);
+    }
+    #[tokio::test]
     async fn real_jsonl_pipe_preserves_completion_before_turn_start_rpc_response(){
         use crate::{config::Config,db::Store,state::AppState,vault::Vault};
         let root=std::env::temp_dir().join(format!(
