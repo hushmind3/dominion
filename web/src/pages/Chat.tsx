@@ -17,6 +17,7 @@ import {ModelPicker} from '../components/ModelPicker'
 import {ReasoningSelect,reasoningOptions} from '../components/ReasoningSelect'
 import {useProviderModels} from '../hooks/useProviderModels'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
+import {useChatDraft} from '../hooks/useChatDraft'
 import {useAnchoredPanel} from '../hooks/useAnchoredPanel'
 import {useJob,jobFinished,type JobState} from '../hooks/useJob'
 import {t,useLocale,type LocaleKey} from '../i18n'
@@ -47,7 +48,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const messageUsage=useMemo(()=>messages.reduce((sum,message)=>sum+(Number(message.metadata?.usage?.totalTokens)||0),0),[messages])
  const [serverUsage,setServerUsage]=useState(0);
  const approvals=useRemote<Approval[]>('/api/approvals',[],active);
- const [input,setInput]=useState('');
+ const [input,setInput,adoptNewSession]=useChatDraft(current);
  const [agentChoice,setAgentChoice]=useState<{scope?:string;id:string}>();
  const [chatModeOverride,setChatModeOverride]=useState<{scope?:string;mode:'chat'|'agent'}>();
  const [override,setOverride]=useState<ModelOverride>();
@@ -222,7 +223,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   if(window.innerWidth<768)setShowHistory(false);
  };
  const resetLocal=()=>{
-  onSession(undefined);setAgentChoice(undefined);setChatModeOverride(undefined);setOverride(undefined);setInput('');
+  onSession(undefined);setAgentChoice(undefined);setChatModeOverride(undefined);setOverride(undefined);
+  if(!current)setInput('');
   setError('');setCommandInfo('');setSlashOpen(false);
   if(window.innerWidth<768)setShowHistory(false);
   inputRef.current?.focus({preventScroll:true});
@@ -361,6 +363,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     id=session.id;
     activeTurnSession.current=id;
     if(view.current===current){
+     adoptNewSession(id,text);
      onSession(id);setTurnSession(id);
      setOptimisticOwner(previous=>previous?.content===text?{...previous,sessionId:id}:previous);
      setChatModeOverride({scope:id,mode:agentMode?'agent':'chat'});
@@ -369,7 +372,10 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     }
     void sessions.reload();
    }
-   setInput(previous=>previous.trim()===text?'':previous);
+   // A background turn must never clear the draft of another selected chat.
+   if(view.current===current||view.current===id){
+    setInput(previous=>previous.trim()===text?'':previous);
+   }
    if(inputRef.current)inputRef.current.style.height='';
    let attachmentIds:string[]|undefined;
    if(pendingImages.length){
