@@ -82,11 +82,11 @@ pub fn reassign_unstarted(
     }
     let guards=[("status",json!("assigned")),("agentId",assignment["agentId"].clone())];
     let refs=guards.iter().map(|(key,value)|(*key,value)).collect::<Vec<_>>();
-    if let Some(saved)=state.store.patch_if_all_merge(
-        "task_team_work",id,&refs,
+    if let Some(saved)=state.store.patch_team_work_if_parent_running(
+        id,&refs,
         &json!({"agentId":replacement,"reassignedFrom":original,
             "reassignmentReason":"original_agent_unavailable_before_dispatch",
-            "reassignedAt":chrono::Utc::now().to_rfc3339()}),&[]
+            "reassignedAt":chrono::Utc::now().to_rfc3339()})
     ){
         state.bus.record("task_team_work",&saved);
         return Ok(saved);
@@ -126,9 +126,9 @@ pub fn claim(state:&AppState,assigned:&Value)->Result<Value,String>{
         ("requestedAgentId",assigned["requestedAgentId"].clone()),
     ];
     let refs=guards.iter().map(|(key,value)|(*key,value)).collect::<Vec<_>>();
-    let saved=state.store.patch_if_all_merge("task_team_work",id,&refs,
+    let saved=state.store.patch_team_work_if_parent_running(id,&refs,
         &json!({"status":"running","attempt":1,
-            "startedAt":chrono::Utc::now().to_rfc3339()}),&[])
+            "startedAt":chrono::Utc::now().to_rfc3339()}))
         .ok_or("Task Team work was reassigned, started, or needs review; stale claim denied")?;
     state.bus.record("task_team_work",&saved);
     Ok(saved)
@@ -204,8 +204,23 @@ pub fn settle(
         json!({"kind":"interpreter_completed","toolVerified":false})
     };
     let id=assignment["id"].as_str().ok_or("Task Team ID missing")?;
-    let saved=state.store.patch_if("task_team_work",id,"status",
-        &json!("running"),&json!({"status":"completed","evidence":evidence,
+    // The terminal receipt must settle under the same parent-run ownership
+    // checked at dispatch. Cancellation and late worker completion serialize
+    // through the SAME SQLite transaction; a closed parent cannot receive
+    // an apparently successful late child result.
+    let guards=[
+        ("status",json!("running")),
+        ("agentId",durable["agentId"].clone()),
+        ("startedAt",durable["startedAt"].clone()),
+        ("executionId",durable["executionId"].clone()),
+        ("sessionId",durable["sessionId"].clone()),
+        ("programRevision",durable["programRevision"].clone()),
+        ("teamNodeId",durable["teamNodeId"].clone()),
+        ("nodeId",durable["nodeId"].clone()),
+    ];
+    let refs=guards.iter().map(|(k,v)|(*k,v)).collect::<Vec<_>>();
+    let saved=state.store.patch_team_work_if_parent_running(id,&refs,
+        &json!({"status":"completed","evidence":evidence,
             "completedAt":chrono::Utc::now().to_rfc3339()}))
         .ok_or("Task Team completion is stale or was never claimed")?;
     state.bus.record("task_team_work",&saved);
@@ -446,6 +461,37 @@ mod tests{
         let unexpected=json!({"id":"delegate1","type":"delegate",
             "agentId":"missing","fallbackAgentIds":["unauthorized"]});
         assert!(assign(&state,"s","run-a","r1","team",3,&unexpected).is_err());
+        drop(state);let _=std::fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn parent_cancellation_blocks_reassignment_claim_and_late_settlement(){
+        let (state,dir)=state();
+        state.store.put("agent",&json!({"id":"backup","name":"backup"})).unwrap();
+        let delegate=json!({"id":"task","type":"delegate",
+            "agentId":"unavailable","fallbackAgentIds":["backup"]});
+        let queued=assign(&state,"s","run-a","r1","team",0,&delegate).unwrap();
+        state.store.patch_if("execution","run-a","status",&json!("running"),
+            &json!({"phase":"cancelled"})).unwrap();
+        assert!(reassign_unstarted(&state,&queued,&delegate).is_err());
+        assert!(claim(&state,&queued).is_err());
+        state.store.patch_if("execution","run-a","phase",&json!("cancelled"),
+            &json!({"phase":"running"})).unwrap();
+        let mut selected=reassign_unstarted(&state,&queued,&delegate).unwrap();
+        selected=claim(&state,&selected).unwrap();
+        let node=json!({"id":"task","type":"delegate","agentId":"backup"});
+        state.store.put("execution_operation",&json!({
+            "id":"late","runId":"run-a","sessionId":"s",
+            "startedAt":chrono::Utc::now().to_rfc3339(),
+            "tool":"delegate_task","callId":"program-task-one",
+            "arguments":{"agentId":"backup"},"status":"completed",
+            "toolReceipt":{"verified":true}
+        })).unwrap();
+        state.store.patch_if("execution","run-a","status",&json!("running"),
+            &json!({"status":"cancelled","phase":"cancelled"})).unwrap();
+        assert!(settle(&state,&selected,&node,
+            &json!({"completedOperationIds":["task"]})).is_err());
+        assert_eq!(state.store.get("task_team_work",
+            queued["id"].as_str().unwrap()).unwrap()["status"],"running");
         drop(state);let _=std::fs::remove_dir_all(dir);
     }
     #[test]
