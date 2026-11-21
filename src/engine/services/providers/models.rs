@@ -12,6 +12,23 @@ const MODEL_KIND: &str = "model_job";
 const EXTERNAL_KIND: &str = "external_model";
 const MAX_LLAMA_RELEASE_ARCHIVE_BYTES:u64=1024*1024*1024;
 
+async fn bounded_response_json(
+    mut response:reqwest::Response,
+    limit:usize,
+)->Result<Value,String>{
+    if response.content_length().is_some_and(|length|length>limit as u64){
+        return Err(format!("모델 서비스 응답이 {limit} 바이트 한도를 초과했습니다."));
+    }
+    let mut bytes=Vec::new();
+    while let Some(chunk)=response.chunk().await.map_err(|error|error.to_string())?{
+        if bytes.len().saturating_add(chunk.len())>limit{
+            return Err(format!("모델 서비스 응답이 {limit} 바이트 한도를 초과했습니다."));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|error|error.to_string())
+}
+
 struct InstallTempDir(PathBuf);
 impl Drop for InstallTempDir{
     fn drop(&mut self){let _=std::fs::remove_dir_all(&self.0);}
@@ -851,7 +868,7 @@ async fn install_from_release(state: &AppState) -> Result<(PathBuf, String), Str
         return Err("이 플랫폼의 llama.cpp 자동 설치 자산이 없습니다.".into());
     }
     let client = reqwest::Client::new();
-    let release = client
+    let release_response = client
         .get("https://api.github.com/repos/ggml-org/llama.cpp/releases/latest")
         .header("User-Agent", "dominion-rust")
         .timeout(Duration::from_secs(30))
@@ -859,10 +876,9 @@ async fn install_from_release(state: &AppState) -> Result<(PathBuf, String), Str
         .await
         .map_err(|error| format!("llama.cpp 릴리스 조회 실패: {error}"))?
         .error_for_status()
-        .map_err(|error| format!("llama.cpp 릴리스 HTTP 오류: {error}"))?
-        .json::<Value>()
-        .await
-        .map_err(|error| format!("llama.cpp 릴리스 응답 오류: {error}"))?;
+        .map_err(|error| format!("llama.cpp 릴리스 HTTP 오류: {error}"))?;
+    let release=bounded_response_json(release_response,4*1024*1024).await
+        .map_err(|error|format!("llama.cpp 릴리스 응답 오류: {error}"))?;
     let asset = release["assets"]
         .as_array()
         .into_iter()
@@ -2134,7 +2150,10 @@ async fn catalog_filtered(
     if !response.status().is_success() {
         return Err(format!("Hugging Face HTTP {}", response.status()));
     }
-    let items: Vec<Value> = response.json().await.map_err(|error| error.to_string())?;
+    let items: Vec<Value> = serde_json::from_value(
+        bounded_response_json(response, 2 * 1024 * 1024).await?,
+    )
+    .map_err(|error| error.to_string())?;
     Ok(items
         .into_iter()
         .map(|item| {
@@ -2170,7 +2189,7 @@ pub async fn details(repo: &str) -> Result<Value, String> {
     if !response.status().is_success() {
         return Err(format!("Hugging Face HTTP {}", response.status()));
     }
-    let value: Value = response.json().await.map_err(|error| error.to_string())?;
+    let value = bounded_response_json(response, 8 * 1024 * 1024).await?;
     let siblings = value
         .get("siblings")
         .and_then(|value| value.as_array())
@@ -2432,7 +2451,7 @@ async fn hf_blob_metadata(
     let Ok(response) = client.get(url).timeout(Duration::from_secs(20)).send().await else {
         return Default::default();
     };
-    let Ok(value) = response.json::<Value>().await else {
+    let Ok(value) = bounded_response_json(response, 16 * 1024 * 1024).await else {
         return Default::default();
     };
     let mut map = std::collections::HashMap::new();
