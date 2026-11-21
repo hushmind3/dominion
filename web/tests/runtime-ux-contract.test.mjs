@@ -397,3 +397,15 @@ test('explicit web-search wording in model-only chat bypasses agent tool enforce
  assert.match(testSource,/fn direct_chat_search_request_remains_a_model_reply_without_web_tool_or_error/)
  assert.match(testSource,/assert!\(!response\.contains\("도구 실행이 꺼져 있습니다"\)/)
 })
+
+test('failed SSE never blindly resends an already persisted owner instruction',()=>{
+ const chat=source('src/pages/Chat.tsx')
+ assert.match(chat,/else if\(!ownerSaved&&id\)\{/)
+ assert.match(chat,/get<ChatMessage\[]>\('\/api\/sessions\/'\+encodeURIComponent\(id\)\+'\/messages'\)/)
+ assert.match(chat,/rows\.findIndex\(row=>row\.id===oldId\)/)
+ assert.match(chat,/row\.role==='user'&&row\.content===text/)
+ assert.match(chat,/if\(persisted\)\{\s*setOptimisticOwner/)
+ assert.match(chat,/persistedId:persisted!\.id/)
+ assert.match(chat,/setInput\(previous=>previous\.trim\(\)\?previous:text\)/)
+ assert.match(chat,/전송 상태를 확인하지 못했습니다/)
+})
