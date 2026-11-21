@@ -181,6 +181,11 @@ jobs:
           # Verify HTTP room persistence and 9-speaker routing end to end.
           cargo test --test e2e persistent_room_http_flow_keeps_owner_once_and_shares_peer_context -- --test-threads=1
           cargo test --test e2e a_short_greeting_reaches_all_nine_when_the_turn_cap_covers_the_roster -- --test-threads=1
+          # P0 acceptance: run the ACTUAL real-binary HTTP suite, not only
+          # green library tests. The 2026-11-21 snapshot had 23 failures.
+          # Wrong Host on owner GET, reused provider call IDs, and restore
+          # failure injection must be part of the blocking product gate.
+          cargo test --locked --test e2e -- --test-threads=1
           # Sub2 completion gate: execute the complete locked workspace lib suite,
           # not just selected green regressions that could hide the P0 five.
           cargo test --locked --workspace --lib -- --test-threads=2
