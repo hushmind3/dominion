@@ -237,6 +237,61 @@ pub(super) fn apply_reasoning_options(
     }
 }
 
+/// OpenAI-compatible servers may send the entire final choice as
+/// choices[0].message rather than streaming it through delta. Only fill
+/// fields that did not arrive through deltas; otherwise the final snapshot
+/// duplicates content already visible to the user.
+fn merge_final_chat_message(
+    completion: &mut Completion,
+    calls: &mut Vec<ToolCall>,
+    message: &Value,
+) -> Result<(String, String), String> {
+    let mut new_text = String::new();
+    let mut new_reasoning = String::new();
+    if completion.content.is_empty() {
+        if let Some(text) = message["content"].as_str().filter(|text| !text.is_empty()) {
+            completion.content.push_str(text);
+            new_text.push_str(text);
+        }
+    }
+    if completion.reasoning.is_empty() {
+        if let Some(text) = message["reasoning_content"]
+            .as_str()
+            .or_else(|| message["reasoning"].as_str())
+            .filter(|text| !text.is_empty())
+        {
+            completion.reasoning.push_str(text);
+            new_reasoning.push_str(text);
+        }
+    }
+    if calls.iter().all(|call| call.name.is_empty()) {
+        if let Some(final_calls) = message["tool_calls"].as_array() {
+            if final_calls.len() > MAX_TOOL_CALLS {
+                return Err("모델이 너무 많은 도구 호출을 반환했습니다.".into());
+            }
+            if !final_calls.is_empty() {
+                let mut parsed = Vec::with_capacity(final_calls.len());
+                for item in final_calls {
+                    let name = item["function"]["name"]
+                        .as_str()
+                        .filter(|name| !name.is_empty())
+                        .ok_or("모델의 최종 도구 호출에 이름이 없습니다.")?;
+                    parsed.push(ToolCall {
+                        id: item["id"].as_str().filter(|id| !id.is_empty())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                        name: name.to_string(),
+                        arguments: item["function"]["arguments"]
+                            .as_str().unwrap_or("{}").to_string(),
+                    });
+                }
+                *calls = parsed;
+            }
+        }
+    }
+    Ok((new_text, new_reasoning))
+}
+
 /// Retry transient provider/stream failures only before any content was
 /// published to the client. Replaying a partially streamed answer could repeat
 /// visible text, reasoning, or a tool request, so that case always stops.
@@ -1037,6 +1092,8 @@ async fn stream_completion_once_body(
     let mut terminated = false;
     let mut text_pending = String::new();
     let mut in_text_tool_call = false;
+    let mut final_message: Option<Value> = None;
+    let mut final_message_ms: Option<u64> = None;
 
     'stream: while let Some(chunk) = stream.next().await {
         if state.is_cancelled(session_id) {
@@ -1079,6 +1136,12 @@ async fn stream_completion_once_body(
                     }
                     completion.usage_exact = true;
                 }
+            }
+            if let Some(message) = piece.pointer("/choices/0/message").filter(|value| value.is_object()) {
+                if final_message_ms.is_none() {
+                    final_message_ms = Some(started.elapsed().as_millis() as u64);
+                }
+                final_message = Some(message.clone());
             }
             if let Some(reason) = piece["choices"][0]["finish_reason"].as_str() {
                 if reason == "content_filter" {
@@ -1169,6 +1232,25 @@ async fn stream_completion_once_body(
         {
             return Err("모델 응답 크기 제한을 초과했습니다.".into());
         }
+    }
+    if let Some(message) = final_message.as_ref() {
+        let (text, reasoning) = merge_final_chat_message(&mut completion, &mut calls, message)?;
+        if !text.is_empty() {
+            stream_visible_text(tx, &text, &mut text_pending, &mut in_text_tool_call);
+        }
+        if !reasoning.is_empty() {
+            let _ = tx.send(json!({"type":"reasoning","text":reasoning}));
+        }
+        if completion.first_delta_ms.is_none()
+            && (!text.is_empty() || !reasoning.is_empty() || !calls.is_empty())
+        {
+            completion.first_delta_ms = final_message_ms;
+        }
+    }
+    if completion.content.len() + completion.reasoning.len()
+        + calls.iter().map(|call|call.arguments.len()).sum::<usize>() > 2_000_000
+    {
+        return Err("모델 응답 크기 제한을 초과했습니다.".into());
     }
     // Flush text held for a possible tag, unless it is a dangling prefix.
     if !in_text_tool_call
@@ -2029,6 +2111,56 @@ async fn stream_anthropic_once(
 #[cfg(test)]
 #[path = "provider/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod final_chat_message_tests {
+    use super::*;
+
+    #[test]
+    fn final_message_only_restores_text_reasoning_and_native_calls() {
+        let mut completion = Completion::default();
+        let mut calls = Vec::new();
+        let (text, reasoning) = merge_final_chat_message(
+            &mut completion, &mut calls,
+            &json!({"content":"안녕하세요","reasoning_content":"reason",
+                "tool_calls":[{"id":"call-1","function":{
+                    "name":"workspace_read","arguments":"{\\\"path\\\":\\\"x\\\"}"}}]}),
+        ).unwrap();
+        assert_eq!(text, "안녕하세요");
+        assert_eq!(reasoning, "reason");
+        assert_eq!(completion.content, "안녕하세요");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call-1");
+        assert_eq!(calls[0].name, "workspace_read");
+    }
+
+    #[test]
+    fn final_snapshot_never_replays_accumulated_delta() {
+        let mut completion = Completion::default();
+        completion.content = "streamed".into();
+        completion.reasoning = "thinking".into();
+        let mut calls = vec![ToolCall {id:"id".into(),name:"shell_exec".into(),
+            arguments:"{}".into()}];
+        let (text, reasoning) = merge_final_chat_message(&mut completion, &mut calls,
+            &json!({"content":"streamed","reasoning_content":"thinking",
+                "tool_calls":[{"id":"other","function":{"name":"other","arguments":"{}"}}]}))
+            .unwrap();
+        assert!(text.is_empty());
+        assert!(reasoning.is_empty());
+        assert_eq!(completion.content, "streamed");
+        assert_eq!(calls[0].id, "id");
+    }
+
+    #[test]
+    fn usage_only_final_message_does_not_synthesize_an_answer() {
+        let mut completion = Completion::default();
+        let mut calls = Vec::new();
+        let (text, reasoning) = merge_final_chat_message(&mut completion, &mut calls,
+            &json!({"role":"assistant","content":null})).unwrap();
+        assert!(text.is_empty() && reasoning.is_empty());
+        assert!(completion.content.is_empty() && calls.is_empty());
+    }
+}
 
 #[cfg(test)]
 mod cache_accounting_tests {
