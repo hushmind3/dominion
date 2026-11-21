@@ -81,6 +81,14 @@ async function mock(route){
    checkpoint:{rounds:0,toolCalls:0}}
   sdkRuns=[item,...sdkRuns];return send(route,item,202)
  }
+ if(n.startsWith('/api/sdk/runs/')&&n.endsWith('/deny')&&m==='POST'){
+  const id=n.split('/')[4],callId=body().callId
+  const current=sdkRuns.find(item=>item.id===id)
+  assert.equal(callId,current?.checkpoint?.pendingCall?.id,'Refusal must be bound to the real pending tool')
+  sdkRuns=sdkRuns.map(item=>item.id===id?{...item,status:'running',
+   checkpoint:{...item.checkpoint,pendingCall:null}}:item)
+  return send(route,sdkRuns.find(item=>item.id===id))
+ }
  if(n.startsWith('/api/sdk/runs/')&&m==='GET'){
   const id=n.slice('/api/sdk/runs/'.length)
   return send(route,sdkRuns.find(r=>r.id===id)||{})
@@ -177,6 +185,15 @@ try{
  assert.equal(requests.sdk[0].algorithmId,'focused-v1')
  assert.equal(requests.sdk[0].maxRounds,12)
  await screenshot(page,'1440-agent-run.png')
+ sdkRuns[0]={...sdkRuns[0],status:'awaiting_approval',checkpoint:{
+  ...sdkRuns[0].checkpoint,pendingCall:{id:'tool-pending-1',
+   name:'workspace_write',arguments:{path:'src/mod.rs'}}
+ }}
+ await page.getByRole('button',{name:'이 도구 실행 거부'}).waitFor({timeout:8000})
+ await screenshot(page,'1440-tool-approval-review.png')
+ await page.getByRole('button',{name:'이 도구 실행 거부'}).click()
+ assert.equal(sdkRuns[0].checkpoint.pendingCall,null,
+  'Owner rejection must settle the exact tool and clear the approval UI')
  // Team composer and remote worker use backend contracts, no fake completion.
  await open(page,'activity')
  const team=page.locator('[aria-label="작업 팀"]')
