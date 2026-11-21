@@ -270,6 +270,12 @@ try{
  assert.equal(await progressPreview.getByText('모델 작성 중 · 확정된 결과가 아닙니다').count(),1)
  assert.match(await progressPreview.textContent(),/workspace_read/)
  await screenshot(page,'1440-native-provisional-progress.png')
+ await page.setViewportSize({width:320,height:740})
+ await overflow(page,'home/provisional-native-stream',320)
+ assert.equal(await page.getByLabel('확정 전 모델 진행 내용').isVisible(),true,
+  'Mobile user must still see provisional native text')
+ await screenshot(page,'320-native-provisional-progress.png')
+ await page.setViewportSize(viewports[0])
  sdkRuns[0]={...sdkRuns[0],status:'awaiting_approval',checkpoint:{
   ...sdkRuns[0].checkpoint,pendingCall:{id:'tool-pending-1',
    name:'workspace_write',arguments:{path:'src/mod.rs'}}
