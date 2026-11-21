@@ -221,6 +221,10 @@ export class Dominion {
     list: (options?:RequestOptions) => this.request<Session[]>('GET','/api/sessions',undefined,options),
     create: (input:{title?:string;agentId?:string;providerId?:string;model?:string;conversationMode?:'chat'|'agent'},options?:RequestOptions) => this.request<Session>('POST','/api/sessions',input,options),
     get: (key:string,options?:RequestOptions) => this.request<Session>('GET','/api/sessions/'+id(key),undefined,options),
+    /** Delete a private transcript and revoke its stored attachments. Busy,
+     * Room-owned and channel-owned sessions are refused by Rust. */
+    delete: (key:string,options?:RequestOptions) => this.request<{ok:boolean}>(
+      'DELETE','/api/sessions/'+id(key),undefined,options),
     messages: (key:string,options?:RequestOptions) => this.request<RecordItem[]>('GET','/api/sessions/'+id(key)+'/messages',undefined,options),
     usage: (key:string,options?:RequestOptions) => this.request<unknown>('GET','/api/sessions/'+id(key)+'/usage',undefined,options),
     cancel: (key:string,options?:RequestOptions) => this.request<ChatCancellation>('POST','/api/sessions/'+id(key)+'/cancel',{},options),
