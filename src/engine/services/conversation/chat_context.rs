@@ -600,46 +600,57 @@ pub(super) fn render_history(
     let session = state.store.get("session", session_id).unwrap_or(Value::Null);
     let is_room = session["roomId"].is_string();
     let room = session["roomId"].as_str().and_then(|id| state.store.get("room", id)).unwrap_or(Value::Null);
-    // Keep newest files first when bounding a long transcript. Otherwise an
-    // old screenshot could exhaust the budget before today's image is read.
-    let mut selected_files = std::collections::HashSet::new();
-    let mut selected_bytes = 0usize;
-    for message in window
-        .iter()
-        .rev()
-        .filter(|message| message["role"] == "user")
-    {
-        for descriptor in message["metadata"]["attachments"]
-            .as_array()
-            .into_iter()
-            .flatten()
-        {
-            if selected_files.len() >= crate::engine::attachments::MAX_FILES {
-                break;
-            }
-            if let Some(id) = descriptor["id"].as_str() {
-                if let Some(file) = state
-                    .store
-                    .get("attachment", id)
-                    .filter(|file| file["sessionId"] == session_id)
-                {
-                    let size = file["size"].as_u64().unwrap_or(u64::MAX) as usize;
-                    if size <= crate::engine::attachments::MAX_TOTAL.saturating_sub(selected_bytes)
-                        && selected_files.insert(id.to_string())
-                    {
-                        selected_bytes += size;
-                    }
-                }
-            }
-        }
-    }
-    let mut remaining = crate::engine::attachments::MAX_TOTAL;
-    // Select source excerpts using the latest owner question, not only the
-    // original caption ("please see attached") that accompanied the file.
-    // This is retrieval, not a rewrite of the stored owner message.
+    // Keep a strict provider-wire budget and at most eight attachments. Most
+    // turns favor recent files, but an explicit reference to a previously
+    // uploaded filename must outrank newer unrelated screenshots.
     let latest_question = window.iter().rev()
         .find(|message| message["role"] == "user")
         .and_then(|message| message["content"].as_str()).unwrap_or("");
+    let question_lower = latest_question.to_lowercase();
+    let mut candidates: Vec<(u8, usize, String, usize)> = Vec::new();
+    let mut seen_ids = std::collections::HashSet::new();
+    for (recency, message) in window.iter().rev()
+        .filter(|message| message["role"] == "user").enumerate()
+    {
+        for descriptor in message["metadata"]["attachments"]
+            .as_array().into_iter().flatten()
+        {
+            let Some(id) = descriptor["id"].as_str() else { continue };
+            if !seen_ids.insert(id.to_string()) { continue }
+            let Some(file) = state.store.get("attachment", id)
+                .filter(|file| file["sessionId"] == session_id) else { continue };
+            let size = file["size"].as_u64()
+                .and_then(|size| usize::try_from(size).ok()).unwrap_or(usize::MAX);
+            let encoded_estimate = if file["isImage"] == true {
+                size.saturating_add(2).saturating_div(3).saturating_mul(4)
+                    .saturating_add(100)
+            } else if file["supportedForModel"] == "text" {
+                size.min(140_000).saturating_add(2_000)
+            } else {
+                512
+            };
+            let name = file["name"].as_str().unwrap_or("").to_lowercase();
+            let stem = name.rsplit_once('.').map(|(stem,_)|stem).unwrap_or(&name);
+            let relevance = if name.chars().count() >= 4 && question_lower.contains(&name) {
+                3
+            } else if stem.chars().count() >= 3 && question_lower.contains(stem) {
+                2
+            } else { 0 };
+            candidates.push((relevance,recency,id.to_string(),encoded_estimate));
+        }
+    }
+    candidates.sort_by(|a,b|b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    let mut selected_files = std::collections::HashSet::new();
+    let mut selected_bytes = 0usize;
+    for (_,_,id,size) in candidates {
+        if selected_files.len() >= crate::engine::attachments::MAX_FILES { break }
+        if size <= crate::engine::attachments::MAX_TOTAL.saturating_sub(selected_bytes) {
+            selected_bytes += size;
+            selected_files.insert(id);
+        }
+    }
+    let mut remaining = crate::engine::attachments::MAX_TOTAL;
+    // Historical attachments use the latest owner question for excerpt selection.
     let mut index = 0;
     while index < window.len() {
         let message = &window[index];
