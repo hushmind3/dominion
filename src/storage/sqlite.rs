@@ -704,6 +704,57 @@ impl Store {
         Ok(true)
     }
 
+    /// Patch several existing records in one immediate SQLite transaction,
+    /// comparing the relevant owner/attempt and operation fields first.
+    /// Unlike transaction_if_fields, patches merge with the CURRENT record
+    /// after locking, so unrelated concurrent checkpoint fields are retained.
+    /// A conflict or failed update rolls back ALL patches.
+    pub fn patch_records_if_fields(
+        &self,
+        conditions: &[(&str, &str, &str, Value)],
+        patches: &[(&str, &str, Value)],
+    ) -> Result<Option<Vec<Value>>, String> {
+        if conditions.is_empty() || patches.is_empty() {
+            return Err("Multi-record patch needs conditions and patches".into());
+        }
+        if patches.iter().any(|(_, _, patch)| patch.as_object()
+            .is_none_or(|fields| fields.is_empty() || fields.contains_key("id"))) {
+            return Err("Multi-record patches must be nonempty objects without id".into());
+        }
+        let mut conn=self.conn.lock().map_err(|error|error.to_string())?;
+        let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|error|error.to_string())?;
+        for (kind,id,field,expected) in conditions {
+            let actual=tx.query_row(
+                "SELECT data,id,created_at,updated_at FROM records WHERE kind=?1 AND id=?2",
+                params![kind,id],record_from_row,
+            ).optional().map_err(|error|error.to_string())?;
+            let Some(current)=actual else{return Ok(None);};
+            if current.get(*field).unwrap_or(&Value::Null)!=expected {
+                return Ok(None);
+            }
+        }
+        let mut saved=Vec::with_capacity(patches.len());
+        for (kind,id,patch) in patches {
+            let current=tx.query_row(
+                "SELECT data,id,created_at,updated_at FROM records WHERE kind=?1 AND id=?2",
+                params![kind,id],record_from_row,
+            ).optional().map_err(|error|error.to_string())?;
+            let Some(mut row)=current else{return Ok(None);};
+            for (key,value) in patch.as_object().expect("validated object") {
+                row[key]=value.clone();
+            }
+            let changed=tx.execute(
+                "UPDATE records SET data=?3,updated_at=datetime('now') WHERE kind=?1 AND id=?2",
+                params![kind,id,row.to_string()]
+            ).map_err(|error|error.to_string())?;
+            if changed!=1{return Ok(None);}
+            saved.push(row);
+        }
+        tx.commit().map_err(|error|error.to_string())?;
+        Ok(Some(saved))
+    }
+
     /// Durable idempotency key. Unlike `put`, this never overwrites a record.
     pub fn put_if_absent(&self, kind: &str, value: &Value) -> Option<Value> {
         let id = value.get("id")?.as_str().filter(|id| !id.is_empty())?;

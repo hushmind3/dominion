@@ -410,33 +410,47 @@ pub async fn reconcile(
         "kind":"owner_observation_not_execution_proof",
         "requiresInspection":applied
     });
-    // Resolve the host operation journal FIRST. If its CAS conflicts, keep
-    // the job in needs_review, not an interrupted state with a dead Resume
-    // button. An operator observation never asserts successful execution.
-    if let Some(operation)=operation {
-        if operation["outcomeUnknown"]==true {
-            let before=operation["status"].clone();
-            if state.store.patch_if("execution_operation",&operation_id,
-                "status",&before,&json!({
-                    "status":"manually_reconciled",
-                    "outcomeUnknown":false,"ownerObservation":observation,
-                    "reconciledAt":chrono::Utc::now().to_rfc3339()
-                })).is_none(){
-                return error(StatusCode::CONFLICT,
-                    "확인 중 도구 실행 기록이 변경됐습니다. 실제 기록을 다시 확인하세요.");
-            }
+    // A tool observation must settle its host operation and SDK checkpoint
+    // atomically. The old two-CAS sequence could clear outcomeUnknown before
+    // a concurrent owner cancellation made the job checkpoint fail.
+    let mut conditions=vec![
+        ("job",id.as_str(),"status",json!("needs_review")),
+        ("job",id.as_str(),"nativeState",job["nativeState"].clone()),
+        ("job",id.as_str(),"attempts",job["attempts"].clone()),
+        ("job",id.as_str(),"cancelRequested",job["cancelRequested"].clone()),
+        ("job",id.as_str(),"nativeDirective",job["nativeDirective"].clone()),
+    ];
+    let mut patches=vec![("job",id.as_str(),json!({
+        "status":"interrupted","nativeState":snapshot,
+        "nativeInFlight":false,"nativeOwnerObservation":observation,
+        "nativeDirective":directive,"error":null
+    }))];
+    if let Some(ref operation)=operation {
+        if operation["outcomeUnknown"]!=true {
+            return error(StatusCode::CONFLICT,
+                "도구 실행 결과가 이미 확정됐습니다. 기록을 다시 확인하세요.");
         }
+        conditions.extend([
+            ("execution_operation",operation_id.as_str(),"status",operation["status"].clone()),
+            ("execution_operation",operation_id.as_str(),"outcomeUnknown",json!(true)),
+            ("execution_operation",operation_id.as_str(),"runId",json!(id)),
+            ("execution_operation",operation_id.as_str(),"tool",json!(action.tool)),
+            ("execution_operation",operation_id.as_str(),"args",action.arguments.clone()),
+        ]);
+        patches.push(("execution_operation",operation_id.as_str(),json!({
+            "status":"manually_reconciled","outcomeUnknown":false,
+            "ownerObservation":observation,
+            "reconciledAt":chrono::Utc::now().to_rfc3339()
+        })));
     }
-    // The job's state and exact reconciled Rust checkpoint move together.
-    // If this CAS fails, the task remains paused for operator review.
-    let Some(updated)=state.store.patch_if("job",&id,"status",&json!("needs_review"),
-        &json!({
-            "status":"interrupted","nativeState":snapshot,
-            "nativeInFlight":false,"nativeOwnerObservation":observation,
-            "nativeDirective":directive,"error":null
-        })) else {
-        return error(StatusCode::CONFLICT,"수동 확인 중 실행 상태가 변경됐습니다.");
+    let changed=match state.store.patch_records_if_fields(&conditions,&patches) {
+        Ok(Some(records))=>records,
+        Ok(None)=>return error(StatusCode::CONFLICT,
+            "수동 확인 중 실행 소유권이나 영수증이 변경됐습니다. 다시 확인하세요."),
+        Err(_)=>return error(StatusCode::INTERNAL_SERVER_ERROR,
+            "수동 복구 기록을 원자적으로 저장하지 못했습니다."),
     };
+    let updated=changed.into_iter().next().expect("job was patched");
     state.store.audit("sdk.main_ui_reconciled_observation",json!({
         "jobId":id,"actionId":action.id,"tool":action.tool,
         "applied":applied,"replayed":false,"independentlyVerified":false
@@ -810,6 +824,49 @@ mod tests{
         assert_eq!(state.store.get("approval","orphaned").unwrap()["status"],"pending");
         let _=std::fs::remove_dir_all(root);
     }
+    #[test]
+    fn owner_reconciliation_cannot_partially_settle_a_cancelled_job(){
+        let (state,root)=temporary_state();
+        state.store.put("job",&json!({"id":"race-job","kind":"prompt",
+            "status":"needs_review","attempts":2,"cancelRequested":false,
+            "input":{"clientSurface":"native_agent_panel"},"nativeState":{"step":3},
+            "unrelatedOwnerNote":"keep"})).unwrap();
+        state.store.put("execution_operation",&json!({"id":"race-op",
+            "runId":"race-job","status":"interrupted","outcomeUnknown":true,
+            "tool":"workspace_write","args":{"path":"a.txt"}})).unwrap();
+        let job=state.store.get("job","race-job").unwrap();
+        let conditions=vec![
+            ("job","race-job","status",json!("needs_review")),
+            ("job","race-job","attempts",json!(2)),
+            ("job","race-job","cancelRequested",json!(false)),
+            ("execution_operation","race-op","status",json!("interrupted")),
+            ("execution_operation","race-op","outcomeUnknown",json!(true)),
+        ];
+        let patches=vec![
+            ("job","race-job",json!({"status":"interrupted",
+                "nativeState":{"step":4},"nativeOwnerObservation":{"applied":false}})),
+            ("execution_operation","race-op",json!({
+                "status":"manually_reconciled","outcomeUnknown":false})),
+        ];
+        let second=crate::db::Store::open(&state.config.db_path()).unwrap();
+        second.patch_if("job","race-job","status",&json!("needs_review"),
+            &json!({"status":"cancelled","cancelRequested":true})).unwrap();
+        assert!(state.store.patch_records_if_fields(&conditions,&patches)
+            .unwrap().is_none(),"cancellation must roll back BOTH transitions");
+        assert_eq!(state.store.get("execution_operation","race-op").unwrap()["outcomeUnknown"],true);
+        assert_eq!(state.store.get("job","race-job").unwrap()["status"],"cancelled");
+        second.patch_if("job","race-job","status",&json!("cancelled"),
+            &json!({"status":"needs_review","cancelRequested":false})).unwrap();
+        let settled=state.store.patch_records_if_fields(&conditions,&patches)
+            .unwrap().unwrap();
+        assert_eq!(settled[0]["unrelatedOwnerNote"],"keep");
+        assert_eq!(state.store.get("job","race-job").unwrap()["nativeState"]["step"],4);
+        assert_eq!(state.store.get("execution_operation","race-op").unwrap()["outcomeUnknown"],false);
+        assert!(state.store.patch_records_if_fields(&conditions,&patches)
+            .unwrap().is_none(),"a settled observation cannot be applied twice");
+        crate::test_support::cleanup_dir(root);
+    }
+
     #[tokio::test]
     async fn main_ui_reconcile_is_a_real_paused_sdk_checkpoint_not_fake_success(){
         let (state,root)=temporary_state();
