@@ -719,7 +719,13 @@ pub(super) async fn run_turn_body(
         }
         let model_started = std::time::Instant::now();
         let model_offset_ms = turn_started.elapsed().as_millis() as u64;
-        let mut round_tools = if force_final {
+        // A Codex WebSocket previous_response_id belongs to the exact model
+        // request contract, including its tool schemas. Dropping schemas
+        // after verified effects forces an accidental chain rebase and may
+        // replay a prior model tool proposal as if it were a fresh turn.
+        // Keep the prior wire contract for Codex finalization, but reject
+        // all further tool proposals below when force_final is set.
+        let mut round_tools = if force_final && provider.kind != "codex" {
             Vec::new()
         } else {
             tool_definitions.clone()
