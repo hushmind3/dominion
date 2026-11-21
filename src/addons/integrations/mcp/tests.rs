@@ -66,6 +66,7 @@ use super::*;
             token: None,
             next_id: 1,
             era: HttpEra::Legacy,
+            tool_schema: None,
         };
         let reply = tokio::time::timeout(
             Duration::from_secs(2),
