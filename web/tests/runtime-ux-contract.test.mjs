@@ -357,3 +357,13 @@ test('stream batching never drops final or cancelled conversation output',()=>{
   assert.match(chat,/\}finally\{\s*if\(stream\.current===controller\)\{\s*flushStreamBuffer\(\)/)
   assert.match(chat,/controller\?\.abort\(\);clearStreamBuffer\(\)/)
 })
+
+test('pending private image previews cannot follow a different session',()=>{
+  const chat=source('src/pages/Chat.tsx')
+  assert.match(chat,/const attachmentScope=useRef\(current\)/)
+  assert.match(chat,/useLayoutEffect\(\(\)=>\{\s*if\(attachmentScope\.current===current\)return/)
+  assert.match(chat,/previous===undefined&&activeTurnSession\.current===current/)
+  assert.match(chat,/discardPendingImages\(\)/)
+  assert.match(chat,/const discardPendingImages=\(\)=>setPendingImages\(previous=>\{/)
+  assert.match(chat,/previous\.forEach\(item=>URL\.revokeObjectURL\(item\.preview\)\)/)
+})
