@@ -588,15 +588,17 @@ impl Host for MainTurn<'_> {
                 ));
             }
 
-            if let Some(error) = terminal_model_error(&completion) {
-                return Err(error.to_string());
-            }
             if self.owner_changed()? {
+                // Cancellation/owner revision wins over a late empty model
+                // frame. The charged call is already in the usage ledger.
                 self.state.store.audit(
                     "job.stale_model_reply",
                     json!({"executionId":self.execution_id,"revision":self.owner_revision}),
                 );
                 return Ok(ModelDecision::Continue);
+            }
+            if let Some(error) = terminal_model_error(&completion) {
+                return Err(error.to_string());
             }
             if self.force_final {
                 // The deterministic checks already passed. Ignore any late tool
