@@ -1,6 +1,15 @@
 # Sub3 runtime / intelligence separation
 Date: 2026-11-20. Scope: `dominion-sub3` branch only.
 
+## 2026-11-21 product behavior: failed-effect completion gate
+
+- `crates/dominion-agent-algorithms/src/agent_loop.rs` refuses an unsupported final answer when the owner's request needs a real external effect, evidence is required, and the latest attempted non-read effect has a failed durable receipt. A prior successful effect and later read-only inspections cannot turn that failed operation into a successful final result.
+- The planner receives a specific `last_external_effect` verification gap and can perform a corrective action using the normal Host permission, budget, approval, cancellation and journal gates. A subsequent successful effect allows the normal independent acceptance checks. Repeated unsupported completion attempts end as `NeedsReview` under the existing bounded invalid-decision rule.
+- `crates/dominion-agent-sdk/tests/kernel_replanning.rs` contains scripted real-kernel tests for failed deploy → unsupported success claim → corrective operation → true completion, and failed deploy → repeated false claims → review. This is a deterministic host/tool fixture, **not** a live deployment or model accuracy benchmark.
+- This complements provider-status correctness discussed in [Qwen Code issue #9509](https://github.com/QwenLM/qwen-code/issues/9509); the Dominion rule is an independently implemented receipt-based final-answer gate.
+- `crates/dominion-agent-algorithms/src/ranking.rs` also adds Korean connector-intent normalization, shared with Chat/Native, with full SDK and Chat selection regressions. See `docs/SUB3-PROGRESSIVE-TOOLS-2026-11-16.md`.
+- Exact submitted SHA and CI job results must be read from GitHub Actions; no synthetic fixture constitutes measured paid-model savings or a user's existing local app validation.
+
 ## Problem
 
 A model-loop SDK that directly owns runtime admission, natural-language intent rules, tool relevance, memory projection and repair heuristics becomes expensive to modify or evaluate. In the previous layout, `crates/dominion-agent-sdk/src/lib.rs` assembled all of these and `src/engine/` mixed the product's SQLite-backed host services. The DB and host services were separated first; this phase moves intelligence out of the execution substrate.
