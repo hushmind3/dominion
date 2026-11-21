@@ -84,16 +84,20 @@ export type RunPhase='queued'|'running'|'waiting_approval'|'verifying'|'finalizi
 export interface RunRef {
  version:1;surface:RunSurface;runId:string;parentRunId:string|null;
 }
+export interface RunEvent {
+  version:1;eventSeq:number;runRef:RunRef;phase:RunPhase;
+  eventType:string;sourceJournal:'job'|'execution'|'remote_task';
+}
 export interface RunView {
  ref:RunRef;phase:RunPhase;status:string;terminal:boolean;reviewRequired:boolean;ownerActionRequired:boolean;
  attempt:number|null;sessionId:string|null;providerId:string|null;model:string|null;
- startedAt:string|null;finishedAt:string|null;sourceJournal:'job'|'execution';
+ startedAt:string|null;finishedAt:string|null;sourceJournal:'job'|'execution'|'remote_task';
 }
 /** Native workers execute inside the shared Rust kernel; external bridge workers
  * remain independent read-only runtimes and never mint native tool receipts. */
 export interface TeamTask {
   id:string;prompt:string;dependsOn?:string[];
-  mode?:'read'|'write';runtime?:'native'|'codex'|'claude'|'qwen';
+  mode?:'read'|'write';runtime?:'native'|'codex'|'claude'|'qwen'|'remote';
   isolation?:'shared'|'worktree';resumeId?:string;
   agentId?:string;providerId?:string;model?:string;
   allowedTools?:string[];checks?:unknown[];
@@ -122,7 +126,7 @@ export interface WorktreePreview {
   diffSha256:string;files:unknown[];[key:string]:unknown;
 }
 export interface Approval extends RecordItem {status:string;sessionId?:string;tool?:string;args?:unknown}
-export interface EngineEvent {seq:number;type:string;kind?:string;record?:RecordItem;removed?:string;approval?:Approval;runRef?:RunRef|null;runState?:RunView|null;[key:string]:unknown}
+export interface EngineEvent {seq:number;type:string;kind?:string;record?:RecordItem;removed?:string;approval?:Approval;runRef?:RunRef|null;runState?:RunView|null;runEvent?:RunEvent|null;[key:string]:unknown}
 export interface ChatEvent {type:string;[key:string]:unknown}
 export interface ChatRequest {sessionId:string;agentId:string;input:string;providerId?:string;model?:string;toolsEnabled?:boolean;toolsExecutionEnabled?:boolean;autoLearning?:boolean;reasoningEffort?:string;reasoningLanguage?:string;thinking?:boolean}
 export type CreateJob={kind:'prompt';input:{prompt:string;sessionId?:string;agentId?:string;providerId?:string;model?:string;toolsEnabled?:boolean;reasoningEffort?:string;thinking?:boolean;maxSteps?:number;maxAttempts?:number;maxModelCalls?:number;maxToolCalls?:number;tokenBudget?:number;parallelReads?:number;strategy?:"balanced"|"verify_first"|"low_cost";algorithmId?:AlgorithmId;ownerInstructions?:string;allowedTools?:string[];acceptanceChecks?:unknown[];requireEvidence?:boolean;allowFallback?:boolean;routingMode?:RoutingMode;minQuality?:number;maxQualityDrop?:number}}|{kind:'workflow';input:{workflowId:string;input?:string}};

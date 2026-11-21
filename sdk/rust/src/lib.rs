@@ -79,6 +79,14 @@ pub struct Event {
     #[serde(rename = "type")] pub kind: String,
     #[serde(flatten)] pub fields: Map<String, Value>,
 }
+impl Event {
+    /// Decode the typed RunEvent from the same global SSE sequence.
+    pub fn run_event(&self)->Result<Option<harness::RunEvent>,Error>{
+        self.fields.get("runEvent").filter(|v|!v.is_null())
+            .map(|v|serde_json::from_value(v.clone()).map_err(Error::from))
+            .transpose()
+    }
+}
 pub type EventStream<T> = Pin<Box<dyn Stream<Item = Result<T, Error>> + Send>>;
 
 /// A cloneable handle to DOMINION's actual Rust server (default port 4317).
@@ -386,6 +394,19 @@ mod tests {
             .unwrap().path(),"/api/remote/tasks/remote:a%2Fb/cancel");
         assert_eq!(client.url(&["api","runs","remote:a/b"]).unwrap().path(),
             "/api/runs/remote:a%2Fb");
+    }
+    #[test] fn sdk_replays_canonical_execution_envelope(){
+        let raw=json!({"seq":12,"type":"record","kind":"remote_task",
+            "runEvent":{"version":1,"eventSeq":12,
+              "runRef":{"version":1,"surface":"external_agent",
+                 "runId":"remote:12","parentRunId":null},
+              "phase":"needs_review","eventType":"record",
+              "sourceJournal":"remote_task"}});
+        let event:Event=serde_json::from_value(raw).unwrap();
+        let envelope=event.run_event().unwrap().unwrap();
+        assert_eq!(envelope.event_seq,event.seq);
+        assert_eq!(envelope.run_ref.surface,harness::RunSurface::ExternalAgent);
+        assert_eq!(envelope.phase,harness::RunPhase::NeedsReview);
     }
     #[test]
     fn team_review_routes_remain_scoped_to_task_ids(){

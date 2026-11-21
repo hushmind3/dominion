@@ -24,6 +24,19 @@ test('SSE handles split CRLF, comments, replay and duplicates',async()=>{
   const values=[];for await(const event of sdk.events({after:2}))values.push(event.type);
   assert.deepEqual(values,['record','approval']);
 });
+test('RunEvent has one durable eventSeq and typed phase across transport',async()=>{
+  const ref={version:1,surface:'team',runId:'lead',parentRunId:null};
+  const event={version:1,eventSeq:21,runRef:ref,phase:'waiting_approval',
+    eventType:'record',sourceJournal:'job'};
+  const sdk=new Dominion({fetch:async()=>sse(
+    'data: '+JSON.stringify({seq:21,type:'record',kind:'job',
+      runRef:ref,runEvent:event})+'\n\n'
+  )});
+  const all=[];for await(const entry of sdk.events())all.push(entry);
+  assert.equal(all.length,1);
+  assert.equal(all[0].seq,all[0].runEvent.eventSeq);
+  assert.equal(all[0].runEvent.phase,'waiting_approval');
+});
 test('reconnect carries forward the last sequence number',async()=>{
   let calls=0;const urls=[],controller=new AbortController();
   const sdk=new Dominion({fetch:async url=>{urls.push(url);calls++;
