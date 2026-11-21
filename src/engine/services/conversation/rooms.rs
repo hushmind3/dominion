@@ -1204,14 +1204,27 @@ fn mention_text(input: &str) -> String {
 fn mention_boundary(ch: Option<char>) -> bool {
     ch.is_none_or(|ch| !ch.is_alphanumeric() && !matches!(ch, '_' | '-' | '.'))
 }
-fn bare_mention_follows(after: &str) -> bool {
-    // A speaker's name appearing in an example, table, transcript or normal
-    // descriptive sentence is NOT routing intent. Only an explicit vocative
-    // or address particle is a natural-language direct call. @name remains
-    // the unambiguous override for every supported routing mode.
+fn bare_mention_follows(after: &str, directive: bool) -> bool {
+    // Vocatives address a participant even without a trailing imperative.
+    // Subject/coordinator particles alone are descriptive; permit them only
+    // when the owner's sentence actually requests those agents to act.
     const ADDRESS: &[&str] = &["야", "아", "님께", "님", "씨", "에게", "한테", "께"];
-    ADDRESS.iter().any(|particle| after.strip_prefix(particle)
+    const CLAUSE: &[&str] = &["와", "과", "랑", "이랑", "가", "이", "은", "는"];
+    let addressed=ADDRESS.iter().any(|particle| after.strip_prefix(particle)
+        .is_some_and(|suffix|mention_boundary(suffix.chars().next())));
+    addressed || directive && CLAUSE.iter().any(|particle|after.strip_prefix(particle)
         .is_some_and(|suffix|mention_boundary(suffix.chars().next())))
+}
+fn explicit_agent_directive(text:&str)->bool{
+    // Restrict bare-name subject lists to actual owner requests, not ordinary
+    // descriptions of who said/did something. @id works without this check.
+    let ending=text.trim_end_matches(|ch:char|ch.is_whitespace()
+        || matches!(ch,'.'|'!'|'?'|'。'|'！'|'？'));
+    ["해","해줘","해봐","해라","해줘요","해주세요","해 주세요",
+      "말해","말해줘","답해","답해줘","읽어","읽어줘","찾아","찾아줘",
+      "해주시겠어요","확인해주세요","확인해줘","정리해줘","검토해줘",
+      "진행해줘","작성해줘","조사해줘"]
+        .iter().any(|verb|ending.ends_with(verb))
 }
 /// Optional silence: a member may decline its turn instead of speaking.
 fn is_silence(content: &str) -> bool {
@@ -1229,6 +1242,7 @@ fn mentioned_agents(
     input: &str,
 ) -> Result<Vec<String>, String> {
     let text = mention_text(input).to_lowercase();
+    let directive=explicit_agent_directive(&text);
     let mut matches = Vec::new();
     for (order, id) in roster.iter().enumerate() {
         let agent = state
@@ -1267,7 +1281,7 @@ fn mentioned_agents(
                     continue;
                 }
                 let after = &text[position + alias.len()..];
-                if bare_mention_follows(after) {
+                if bare_mention_follows(after,directive) {
                     matches.push((position, alias.len(), order, id.clone(), alias.clone()));
                 }
             }
@@ -1440,6 +1454,21 @@ mod tests {
         assert_eq!(
             mentioned_agents(&state, &roster, "아인즈와 알베도가 확인해").unwrap(),
             vec!["a".to_string(), "b".to_string()]
+        );
+        assert_eq!(
+            mentioned_agents(&state, &roster, "아인즈와 알베도가 등장했다고 들었어").unwrap(),
+            Vec::<String>::new(),
+            "descriptive sentences must not route agents"
+        );
+        assert_eq!(
+            mentioned_agents(&state, &roster, "@아인즈 와 @알베도, 의견 부탁드립니다").unwrap(),
+            vec!["a".to_string(), "b".to_string()],
+            "explicit mentions work regardless of bare-name clause heuristics"
+        );
+        assert_eq!(
+            mentioned_agents(&state, &roster, "`아인즈야` 예시를 보여줘").unwrap(),
+            Vec::<String>::new(),
+            "inline code examples are never a routing command"
         );
         let _ = std::fs::remove_dir_all(dir);
     }
