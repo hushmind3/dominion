@@ -521,8 +521,14 @@ pub(super) fn history(
     // The checkpoint is used as a SQLite cursor, not an instruction to scan
     // every pre-compaction tool result. Rooms keep their own compiler.
     let mut valid_private_checkpoint=false;
+    let mut valid_room_checkpoint=false;
     let mut all=if is_room{
-        state.store.try_messages(session_id)
+        let (recent,valid)=state.store.try_recent_room_messages(
+            session_id,HISTORY_LIMIT*2,compaction.as_ref()
+                .and_then(|record|record["throughMessageId"].as_str())
+        )?;
+        valid_room_checkpoint=valid;
+        Ok(recent)
     }else if let Some(id)=compaction.as_ref()
         .and_then(|record|record["throughMessageId"].as_str()){
         match state.store.try_recent_messages_after(session_id,id,HISTORY_LIMIT)?{
@@ -547,13 +553,7 @@ pub(super) fn history(
     }
     let mut prefix = Vec::new();
     if let Some(compaction) = compaction {
-        let valid=if is_room{
-            let through=compaction["throughMessageId"].as_str().unwrap_or("");
-            if let Some(index)=all.iter().position(|row|row["id"]==through){
-                all.drain(..=index);
-                true
-            }else{false}
-        }else{valid_private_checkpoint};
+        let valid=if is_room{valid_room_checkpoint}else{valid_private_checkpoint};
         if valid{
             if let Some(summary)=compaction["summary"].as_str(){
                 prefix.push(json!({
