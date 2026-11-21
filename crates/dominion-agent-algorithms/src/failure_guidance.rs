@@ -104,12 +104,16 @@ pub fn latest(receipts:&[Receipt])->Option<FailureGuidance>{
         }
         let raw=diagnostic(receipt);
         let (category,original_probe,original_tools)=classify(&receipt.tool,&raw);
+        // A successful tool receipt may still represent a no-op (unchanged
+        // bytes, skipped replacement). Only a host-confirmed source mutation
+        // can make a previously failing check eligible for re-verification.
         let verification_pending_after_edit=matches!(category,
             "compiler_diagnostic"|"test_assertion_failure"|"missing_path")
             && later.iter().any(|newer|newer.success
+                && newer.result["written"]==true
                 && matches!(newer.tool.as_str(),
                     "workspace_write"|"workspace_replace"|"workspace_replace_range"
-                    |"file_write"|"github_file_commit"));
+                    |"file_write"));
         let (next_probe,probe_tools)=if verification_pending_after_edit {
             ("Source changed since this failure; propose completion so the Rust kernel reruns required checks. Do not assume the edit fixed it.",
                 &[][..])
@@ -167,6 +171,21 @@ mod tests{
             verified,
         ]).is_none());
     }
+    #[test]
+    fn no_op_source_write_does_not_hide_unrepaired_compile_failure(){
+        let failure=failure("compile-1","shell_exec",
+            "error[E0308]: src/lib.rs: mismatched types");
+        let noop=Receipt{id:"noop".into(),tool:"workspace_replace_range".into(),
+            arguments:json!({"path":"src/lib.rs"}),success:true,
+            result:json!({"written":false,"unchanged":true}),step:2};
+        let diagnosis=latest(&[failure,noop]).unwrap();
+        assert_eq!(diagnosis.category,"compiler_diagnostic");
+        assert!(!diagnosis.verification_pending_after_edit,
+            "The unchanged file cannot count as a repair");
+        assert!(diagnosis.model_view()["suggestedNextInspection"].as_str().unwrap()
+            .contains("Read the cited source line"));
+    }
+
     #[test]
     fn unrelated_success_never_silences_open_failure(){
         let unrelated=Receipt{id:"other".into(),tool:"shell_exec".into(),
