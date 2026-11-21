@@ -228,7 +228,10 @@ impl Journal for Directed {
         Ok(())
     }
     fn directive(&self, _id:&str)->Result<Option<String>,String>{
-        if self.reads.fetch_add(1,Ordering::SeqCst)==0 {Ok(None)}
+        // First planning read and the post-intent dispatch fence observe
+        // the original task. Correction arrives while inference is running,
+        // so the completed stale answer must be rejected before any write.
+        if self.reads.fetch_add(1,Ordering::SeqCst)<2 {Ok(None)}
         else {Ok(Some("Owner corrected the target".into()))}
     }
 }
