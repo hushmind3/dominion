@@ -1064,34 +1064,34 @@ mod tests {
     }
 
     #[test]
-    fn room_history_preserves_stored_reasoning_for_provider_specific_replay() {
+    fn provider_specific_reasoning_is_retained_for_own_private_replay_not_room_peers() {
         let (state, dir) = state();
-        state
-            .store
-            .put("agent", &json!({"id":"a1","name":"아인즈"}));
-        state.store.put(
-            "session",
-            &json!({"id":"room:t","roomId":"t","agentId":"a1"}),
-        );
-        state.store.write_message(&json!({
-            "session_id":"room:t",
-            "role":"user",
-            "content":"안녕",
-            "metadata":{"authorKind":"owner"},
-        }));
-        state.store.write_message(&json!({
-            "session_id":"room:t",
-            "role":"assistant",
-            "agent_id":"a1",
-            "content":"짧은 답",
-            "reasoning":"SECRET-REASONING-TEXT",
-            "metadata":{"providerReasoning":"SECRET-REASONING-TEXT"},
-        }));
-        let history = history(&state, "room:t", Some("a1"), None).unwrap();
-        let serialized = serde_json::to_string(&history).unwrap();
-        assert!(serialized.contains("SECRET-REASONING-TEXT"));
-        assert!(history.iter().any(|message| message["role"] == "assistant"
-            && message["reasoning_content"] == "SECRET-REASONING-TEXT"));
-        let _ = std::fs::remove_dir_all(dir);
+        state.store.put("agent", &json!({"id":"a1","name":"아인즈"}));
+        for (session_id,is_room) in [("private:a1",false),("room:t",true)] {
+            let session=if is_room {json!({"id":session_id,"roomId":"t","agentId":"a1"})}
+                else {json!({"id":session_id,"agentId":"a1"})};
+            state.store.put("session",&session);
+            state.store.write_message(&json!({
+                "session_id":session_id,"role":"user","content":"안녕",
+                "metadata":{"authorKind":"owner"}
+            })).unwrap();
+            state.store.write_message(&json!({
+                "session_id":session_id,"role":"assistant","agent_id":"a1",
+                "content":"짧은 답",
+                "reasoning":"SECRET-REASONING-TEXT",
+                "metadata":{"providerReasoning":"SECRET-REASONING-TEXT"},
+            })).unwrap();
+            let wire=history(&state,session_id,Some("a1"),None).unwrap();
+            let serialized=serde_json::to_string(&wire).unwrap();
+            let replay=wire.iter().any(|message|message["role"]=="assistant"
+                && message["reasoning_content"]=="SECRET-REASONING-TEXT");
+            assert_eq!(replay,!is_room,
+                "private provider continuation may need own reasoning, room peers must never replay it");
+            assert_eq!(serialized.contains("SECRET-REASONING-TEXT"),!is_room);
+            let durable=state.store.messages(session_id);
+            assert!(durable.iter().any(|row|row["reasoning"]=="SECRET-REASONING-TEXT"),
+                "source evidence is retained in SQLite, not silently removed");
+        }
+        let _=std::fs::remove_dir_all(dir);
     }
 }
