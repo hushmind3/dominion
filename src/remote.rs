@@ -436,7 +436,8 @@ mod tests{
         let request=json!({"workerId":"n2","workerEpoch":epoch,"taskId":"write-1",
             "leaseId":lease,"localJobId":"local-1","jobStatus":"completed","verified":true});
         assert!(settle(&state,&request,now+LEASE_MS+1).is_err());
-        assert_eq!(task_status(&state,"write-1").unwrap()["status"],"running");
+        // Expired fenced ownership transitions to review immediately.
+        assert_eq!(task_status(&state,"write-1").unwrap()["status"],"needs_review");
         expire(&state,now+LEASE_MS+2);
         assert_eq!(state.store.get("remote_task","write-1").unwrap()["status"],"needs_review");
         assert!(settle(&state,&request,now+LEASE_MS+3).is_err());
