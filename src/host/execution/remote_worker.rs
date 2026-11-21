@@ -69,17 +69,23 @@ pub async fn run_cli(_args:&[String])->Result<(),String>{
     }
     let client=Client::builder().timeout(Duration::from_secs(120))
         .build().map_err(|e|e.to_string())?;
+    // The gateway credential uses a custom header, which reqwest's default
+    // cross-host redirect filtering does not recognize as sensitive. Never
+    // forward it to a redirect target. Keep inference redirects independent.
+    let gateway_client=Client::builder().timeout(Duration::from_secs(120))
+        .redirect(reqwest::redirect::Policy::none())
+        .build().map_err(|e|e.to_string())?;
     // Preflight local inference first: never claim work that cannot run.
     if std::env::var("DOMINION_WORKER_MODEL_ENDPOINT").is_err()
         || std::env::var("DOMINION_WORKER_MODEL").is_err(){
         return Err("Worker inference endpoint and model must be configured".into());
     }
     let local_model=std::env::var("DOMINION_WORKER_MODEL").unwrap_or_default();
-    gateway_post(&client,&base,&token,"v1/worker/hello",
+    gateway_post(&gateway_client,&base,&token,"v1/worker/hello",
         &json!({"workerId":worker_id,"model":local_model})).await?;
     eprintln!("DOMINION remote worker {} connected (text-only, no tools)",worker_id);
     loop{
-        let response=gateway_post(&client,&base,&token,"v1/worker/claim",
+        let response=gateway_post(&gateway_client,&base,&token,"v1/worker/claim",
             &json!({"workerId":worker_id,"model":local_model})).await?;
         if let Some(task)=response["task"].as_object(){
             let id=task.get("taskId").and_then(Value::as_str).ok_or("Missing task identity")?;
@@ -96,7 +102,7 @@ pub async fn run_cli(_args:&[String])->Result<(),String>{
                 tokio::select!{
                     result=&mut inference=>break result,
                     _=tokio::time::sleep(Duration::from_secs(12))=>{
-                        gateway_post(&client,&base,&token,"v1/worker/heartbeat",
+                        gateway_post(&gateway_client,&base,&token,"v1/worker/heartbeat",
                             &json!({"taskId":id,"leaseId":lease,"workerId":worker_id}))
                             .await?;
                     }
@@ -108,7 +114,7 @@ pub async fn run_cli(_args:&[String])->Result<(),String>{
             };
             // No replay on network ambiguity: the lease is single-use and
             // the coordinator will place an expired unknown result in review.
-            gateway_post(&client,&base,&token,"v1/worker/complete",
+            gateway_post(&gateway_client,&base,&token,"v1/worker/complete",
                 &json!({"taskId":id,"leaseId":lease,"workerId":worker_id,
                     "status":status,"answer":answer,"usage":usage})).await?;
         }else{
