@@ -53,17 +53,22 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-async fn verify_get(client: &reqwest::Client, url: &str, expected: &str) -> bool {
-    let Ok(response) = client.get(url).send().await else {
+async fn verify_get(client: &reqwest::Client, url: &str, expected: &str, expected_len: usize) -> bool {
+    let Ok(mut response) = client.get(url).send().await else {
         return false;
     };
     if !response.status().is_success() {
         return false;
     }
-    match response.bytes().await {
-        Ok(body) => sha256_hex(&body) == expected,
-        Err(_) => false,
+    if response.content_length().is_some_and(|length|length!=expected_len as u64){
+        return false;
     }
+    let mut body=Vec::with_capacity(expected_len.min(1024*1024));
+    while let Some(chunk)=match response.chunk().await{Ok(chunk)=>chunk,Err(_)=>return false}{
+        if body.len().saturating_add(chunk.len())>expected_len{return false;}
+        body.extend_from_slice(&chunk);
+    }
+    body.len()==expected_len && sha256_hex(&body)==expected
 }
 
 pub async fn upload(path: &Path, config: &RemoteConfig) -> RemoteReport {
@@ -121,7 +126,7 @@ pub async fn upload(path: &Path, config: &RemoteConfig) -> RemoteReport {
                     .get("x-dominion-sha256")
                     .and_then(|value| value.to_str().ok())
                     == Some(checksum.as_str());
-                if echoed || verify_get(&client, &url, &checksum).await {
+                if echoed || verify_get(&client, &url, &checksum, bytes.len()).await {
                     return RemoteReport {
                         uploaded: true,
                         verified: true,
