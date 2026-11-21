@@ -8,7 +8,7 @@ import {TokenUsage} from '../components/TokenUsage'
 import {ExecutionInsights} from '../components/ExecutionInsights'
 import {createPortal} from 'react-dom'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
-import {FormEvent,useEffect,useMemo,useRef,useState,type ChangeEvent,type KeyboardEvent} from 'react'
+import {FormEvent,useEffect,useLayoutEffect,useMemo,useRef,useState,type ChangeEvent,type KeyboardEvent} from 'react'
 import {ArrowDown,ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Paperclip,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
 import {Agent,Approval,Attachment,ChatMessage,ChatSession,Provider,get,post,resolveApproval,streamChat,uploadAttachment} from '../api'
 import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
@@ -153,7 +153,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  // Pending attachments must never follow a sidebar/browser-history switch to
  // another conversation. The first send adopting a new session is not a switch.
  const attachmentScope=useRef(current);
- useEffect(()=>{
+ useLayoutEffect(()=>{
   if(attachmentScope.current===current)return;
   const previous=attachmentScope.current;
   attachmentScope.current=current;
