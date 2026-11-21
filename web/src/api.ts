@@ -49,6 +49,21 @@ export const post = <T = any>(url: string, data: unknown) =>
  request<T>(url, {method: 'POST', body: JSON.stringify(data)})
 export const del = (url: string) => request(url, {method: 'DELETE'})
 
+// Use the existing credentialed transport for opaque file bytes; regular
+// get() is JSON-only and static <a> hrefs do not include X-Dominion-Token.
+export async function fetchAttachmentBlob(id:string,signal?:AbortSignal):Promise<Blob>{
+ const response=await apiFetch('/api/attachments/'+encodeURIComponent(id)+'/content',{signal})
+ if(!response.ok){
+  let message='HTTP '+response.status
+  try{
+   const payload=await response.json()
+   if(typeof payload?.error==='string')message=payload.error
+  }catch{/* Non-JSON errors retain HTTP status. */}
+  throw new ApiError(response.status,translateError(message))
+ }
+ return response.blob()
+}
+
 export type ModelOption = {id: string; name?: string; free?: boolean|null; freeStatus?: 'free'|'paid'|'unknown'; freeSource?: string; reasoningEfforts?: string[]; defaultReasoningEffort?: string|null; catalogStale?: boolean}
 export type Approval = {id: string; tool: string; args: unknown; status: string; sessionId: string}
 export async function resolveApproval(id: string, allow: boolean) {

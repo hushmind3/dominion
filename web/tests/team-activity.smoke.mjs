@@ -72,6 +72,7 @@ try{
     if(path.endsWith('/messages'))response=path==='/api/sessions/chat-one/messages'?[
       {id:'owner-layout',session_id:'chat-one',role:'user',
        content:'내 질문은 오른쪽 말풍선에 표시되어야 합니다.',
+       metadata:{attachments:[{id:'fixture-image',name:'photo.png',isImage:true}]},
        created_at:'2026-11-22 00:00:00'},
       {id:'assistant-layout',session_id:'chat-one',role:'assistant',
        content:'답변은 왼쪽에서 편하게 읽을 수 있어야 합니다.',
@@ -98,6 +99,11 @@ try{
       cancelStatusReads++;
       response={stopped:cancelStatusReads>=2,
         active:cancelStatusReads<2,running:cancelStatusReads<2};
+    }
+    if(path==='/api/attachments/fixture-image/content'){
+      await route.fulfill({status:200,contentType:'image/png',
+       body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j45QAAAAASUVORK5CYII=','base64')})
+      return
     }
     if(path==='/api/chat'){
       if(route.request().postDataJSON()?.input==='중단 응답 확인'){
@@ -207,6 +213,17 @@ try{
   assert.equal(await markdownTurn.locator('.md-message a[href="https://example.com"]').count(),1);
   assert.equal(await markdownTurn.locator('script').count(),0,
     'model text must never mount HTML scripts');
+  // Saved files use the same credentialed request as Chat, even if the
+  // server requires the DOMINION token rather than browser cookies.
+  await page.evaluate(async()=>{(await import('/src/api.ts')).setAuthToken('attachment-test-token')})
+  const imageRequest=page.waitForRequest(request=>
+    new URL(request.url()).pathname==='/api/attachments/fixture-image/content')
+  await page.getByRole('button',{name:'photo.png 첨부 열기'}).click()
+  const imageFetch=await imageRequest
+  assert.equal(imageFetch.headers()['x-dominion-token'],'attachment-test-token')
+  await page.getByRole('dialog',{name:'첨부 이미지 미리보기'}).waitFor({timeout:10000})
+  await page.getByRole('button',{name:'미리보기 닫기'}).click()
+  await page.evaluate(async()=>{(await import('/src/api.ts')).setAuthToken('')})
   await chatInput.fill('첫 번째 대화에서만 보낼 미완성 지시');
   await page.evaluate(()=>{window.location.hash='#/chat?session=chat-two'});
   await page.waitForFunction(selector=>document.querySelector(selector)?.value==='',

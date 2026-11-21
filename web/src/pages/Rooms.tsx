@@ -6,6 +6,7 @@ import {useAnchoredPanel} from '../hooks/useAnchoredPanel'
 import {ConversationSwitch} from '../components/WorkspaceShell'
 import {TokenUsage} from '../components/TokenUsage'
 import {MarkdownMessage} from '../components/MarkdownMessage'
+import {AttachmentLink} from '../components/AttachmentLink'
 import {useOwnerProfile} from '../components/OwnerProfile'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
 import {useCallback,useEffect,useMemo,useRef,useState,type ClipboardEvent,type DragEvent,type FormEvent,type SetStateAction} from 'react'
@@ -598,7 +599,7 @@ function TranscriptMessage({message,agent,name,owner,index,showReasoning=true}:{
  return <article className={'room-message '+(owner?'room-message-owner':'room-message-agent')+(message.metadata?.kind==='learning_report'?' room-message-review':'')}><Avatar agent={agent} owner={owner} index={index}/><div className="room-message-main"><div className="room-message-byline"><strong>{name}</strong>{message.metadata?.kind==='learning_report'?<span className="room-agent-tag">{t(message.metadata?.learningScope==='room'||message.metadata?.source==='knowledge'?'rooms.sharedLearning':'rooms.selfReview')}</span>:owner?<span className="room-author-tag">{t('rooms.authorMe')}</span>:<span className="room-agent-tag">{t('rooms.authorAgent')}</span>}<time>{stamp(message.created_at)}</time>{!owner&&message.metadata?.usage?.model&&<span className="room-message-model" title={t('rooms.routeActual')}>{message.metadata.usage.model}</span>}<TokenUsage usage={message.metadata?.usage} className="room-message-usage"/><Button variant="bare" className="room-copy" aria-label={t('rooms.copyAria')} title={t('rooms.copyAria')} onClick={()=>{void navigator.clipboard.writeText(message.content).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),1600)})}}>{copied?<Check size={12}/>:<Copy size={12}/>}</Button></div>{showReasoning&&message.reasoning&&<details className="room-reasoning"><summary>{t('rooms.live.showReasoning')}</summary><pre>{message.reasoning}</pre></details>}<MessageBody text={message.content} owner={owner}/>
    {owner&&Array.isArray(message.metadata?.attachments)&&message.metadata.attachments.length>0&&
     <div className="chat-saved-attachments">
-     {(message.metadata.attachments as {id:string;name:string}[]).map(file=><a key={file.id} href={'/api/attachments/'+encodeURIComponent(file.id)+'/content'} target="_blank" rel="noopener noreferrer"><Paperclip size={13}/><span>{file.name}</span></a>)}
+     {(message.metadata.attachments as {id:string;name:string;isImage?:boolean}[]).map(file=><AttachmentLink key={file.id} file={file}/>)}
     </div>}
    {message.tool_calls?.length?<span className="room-message-tools"><TerminalSquare size={12}/>{t('rooms.toolCallsSummary',{count:message.tool_calls.length})}</span>:null}</div></article>
 }

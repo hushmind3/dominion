@@ -90,6 +90,7 @@ try{
   if(pathname==='/api/rooms/room-model-fixture/messages')response=[{
    id:'owner-layout',session_id:room.sessionId,role:'user',
    content:'방에서 내가 쓴 질문은 오른쪽에 표시합니다.',
+   metadata:{attachments:[{id:'previous-room-file',name:'old-notes.txt',isImage:false}]},
    created_at:'2026-11-22 00:00:00'
   },{
    id:'model-reply',session_id:room.sessionId,role:'assistant',
@@ -133,6 +134,7 @@ try{
  assert.equal(routes.length,2);
  assert.ok(routes.every(text=>text.includes('owner-picked-model')),JSON.stringify(routes));
  await page.locator('.room-message-owner .room-message-text').waitFor({timeout:10000});
+ await page.getByRole('button',{name:'old-notes.txt 첨부 열기'}).waitFor({timeout:10000});
  const messageLayout=await page.locator('.room-message').evaluateAll(rows=>rows.map(row=>{
   const text=row.querySelector('.room-message-text');
   const rect=text?.getBoundingClientRect();
