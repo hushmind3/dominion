@@ -254,8 +254,19 @@ impl Assembler {
                 self.append_text(delta,updates)?;
             }
             for tool in choice["delta"]["tool_calls"].as_array().into_iter().flatten(){
-                let idx=tool["index"].as_u64().ok_or("Native Chat tool delta has no index")?;
-                let idx=usize::try_from(idx).map_err(|_|"Native Chat tool index overflow")?;
+                let idx=if let Some(index)=tool["index"].as_u64() {
+                    usize::try_from(index).map_err(|_|"Native Chat tool index overflow")?
+                } else {
+                    // A few OpenAI-compatible streams omit index on a later
+                    // fragment. Reattach only when the supplied ID matches one
+                    // existing call exactly. Never guess from array position,
+                    // since parallel calls could otherwise exchange arguments.
+                    let id=tool["id"].as_str().filter(|id|!id.is_empty())
+                        .ok_or("Indexless native Chat tool delta has no call ID")?;
+                    self.calls.iter().find_map(|(index,known)|
+                        (known.id==id).then_some(*index))
+                        .ok_or("Indexless native Chat tool delta has no known call ID")?
+                };
                 if idx>=MAX_NATIVE_CALLS {return Err("Native tool call index exceeds limit".into());}
                 let entry=self.calls.entry(idx).or_default();
                 entry.append(tool)?;
@@ -721,6 +732,49 @@ mod tests {
         assert_eq!(call["id"],"call-2");
         assert_eq!(call["function"]["name"],"workspace_read");
         assert_eq!(call["function"]["arguments"],"{}");
+    }
+
+    #[test]
+    fn native_chat_indexless_known_call_delta_preserves_parallel_call_ownership() {
+        let mut stream=Assembler::new(Wire::Chat);
+        for packet in [
+            json!({"choices":[{"index":0,"delta":{"tool_calls":[
+                {"index":0,"id":"call-a","function":{"name":"workspace_read","arguments":"{\"path\":\""}},
+                {"index":1,"id":"call-b","function":{"name":"workspace_read","arguments":"{\"path\":\""}}
+            ]}}]}),
+            json!({"choices":[{"index":0,"delta":{"tool_calls":[
+                {"id":"call-b","function":{"arguments":"b.txt\"}"}},
+                {"id":"call-a","function":{"arguments":"a.txt\"}"}}
+            ]}}]}),
+            json!({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}),
+        ] {
+            stream.feed(Packet::Data(packet)).unwrap();
+        }
+        stream.feed(Packet::Done).unwrap();
+        let settled=stream.finish().unwrap();
+        let calls=&settled["choices"][0]["message"]["tool_calls"];
+        assert_eq!(calls[0]["id"],"call-a");
+        assert_eq!(calls[1]["id"],"call-b");
+        assert_eq!(calls[0]["function"]["arguments"],r#"{"path":"a.txt"}"#);
+        assert_eq!(calls[1]["function"]["arguments"],r#"{"path":"b.txt"}"#);
+    }
+
+    #[test]
+    fn native_chat_indexless_unknown_or_ambiguous_call_fails_closed() {
+        let mut stream=Assembler::new(Wire::Chat);
+        stream.feed(Packet::Data(json!({"choices":[{"delta":{"tool_calls":[
+            {"index":0,"id":"call-a","function":{"name":"workspace_read","arguments":"{"}}
+        ]}}]}))).unwrap();
+        assert!(stream.feed(Packet::Data(json!({"choices":[{"delta":{"tool_calls":[
+            {"id":"call-other","function":{"arguments":"}"}}
+        ]}}]}))).is_err(), "Unknown call ID must not steal another call's arguments");
+        let mut stream=Assembler::new(Wire::Chat);
+        stream.feed(Packet::Data(json!({"choices":[{"delta":{"tool_calls":[
+            {"index":0,"id":"call-a","function":{"name":"workspace_read","arguments":"{"}}
+        ]}}]}))).unwrap();
+        assert!(stream.feed(Packet::Data(json!({"choices":[{"delta":{"tool_calls":[
+            {"function":{"arguments":"}"}}
+        ]}}]}))).is_err(), "Without index or ID, parallel ownership is unknowable");
     }
 
     #[test]
