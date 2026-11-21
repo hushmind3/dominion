@@ -975,27 +975,32 @@ async fn install_from_release(state: &AppState) -> Result<(PathBuf, String), Str
     let binary = found
         .into_iter()
         .find(|path| {
-            path.file_name().and_then(|name| name.to_str()) == Some("llama-server")
-                || path.file_name().and_then(|name| name.to_str()) == Some("llama-server.exe")
+            let is_server = path.file_name().and_then(|name| name.to_str())
+                == Some("llama-server")
+                || path.file_name().and_then(|name| name.to_str()) == Some("llama-server.exe");
+            is_server
+                && std::fs::symlink_metadata(path)
+                    .is_ok_and(|metadata| metadata.file_type().is_file())
         })
         .ok_or("다운로드한 llama.cpp에 llama-server가 없습니다.")?;
     let source_dir = binary.parent().ok_or("llama-server 경로가 올바르지 않습니다.")?;
     let bin_dir = state.config.data_dir.join("bin");
     std::fs::create_dir_all(&bin_dir).map_err(|error| error.to_string())?;
     for entry in std::fs::read_dir(source_dir).map_err(|error| error.to_string())?.flatten() {
+        if !entry.file_type().is_ok_and(|file_type| file_type.is_file()) {
+            continue;
+        }
         let source = entry.path();
-        if source.is_file() {
-            let target = bin_dir.join(entry.file_name());
-            std::fs::copy(&source, &target)
-                .map_err(|error| format!("llama.cpp 파일 복사 실패: {error}"))?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mode = std::fs::metadata(&source)
-                    .map(|meta| meta.permissions().mode())
-                    .unwrap_or(0o755);
-                let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(mode));
-            }
+        let target = bin_dir.join(entry.file_name());
+        std::fs::copy(&source, &target)
+            .map_err(|error| format!("llama.cpp 파일 복사 실패: {error}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&source)
+                .map(|meta| meta.permissions().mode())
+                .unwrap_or(0o755);
+            let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(mode));
         }
     }
     let installed = bin_dir.join(if cfg!(windows) {
