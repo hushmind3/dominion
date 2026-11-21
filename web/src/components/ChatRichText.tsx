@@ -38,7 +38,10 @@ function isTableDivider(line:string):boolean {
 function renderBlocks(text:string):ReactNode[]{
  const lines=text.replace(/\r\n?/g,'\n').split('\n')
  const blocks:ReactNode[]=[]
- const isBlock=(line:string)=>/^\s*```|^#{1,4}\s+|^>\s?|^\s*(?:[-*]|\d+[.)])\s+/.test(line)
+ const isBlock=(line:string,index:number)=>
+  /^\s*```|^#{1,4}\s+|^>\s?|^\s*(?:[-*]|\d+[.)])\s+/.test(line)
+  || /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)
+  || (index+1<lines.length&&line.includes('|')&&isTableDivider(lines[index+1]))
  let i=0
  while(i<lines.length){
   const line=lines[i]
@@ -105,7 +108,7 @@ function renderBlocks(text:string):ReactNode[]{
   }
   const paragraph:string[]=[line]
   i++
-  while(i<lines.length&&lines[i].trim()&&!isBlock(lines[i]))paragraph.push(lines[i++])
+  while(i<lines.length&&lines[i].trim()&&!isBlock(lines[i],i))paragraph.push(lines[i++])
   blocks.push(<p key={blocks.length} className="my-2 whitespace-pre-wrap">{inlineParts(paragraph.join('\n'))}</p>)
  }
  return blocks
