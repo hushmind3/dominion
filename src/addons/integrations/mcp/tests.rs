@@ -243,3 +243,14 @@ async fn modern_http_discovers_and_uses_routed_schema_headers_without_initialize
     assert_eq!(history[2]["region"],"=?base64?7ISc7Jq4?=");
     server.abort();
 }
+
+#[test]
+fn tool_catalog_cache_obeys_modern_server_freshness_instead_of_legacy_ttl() {
+    assert_eq!(list_cache_ttl(&json!({"ttlMs":1000}), true),Duration::ZERO);
+    assert_eq!(list_cache_ttl(&json!({"cacheScope":"no-store","ttlMs":1000}), true),Duration::ZERO);
+    assert_eq!(list_cache_ttl(&json!({"cacheScope":"private","ttlMs":25}), true),
+        Duration::from_millis(25));
+    assert_eq!(list_cache_ttl(&json!({"cacheScope":"public","ttlMs":99999999}), true),
+        Duration::from_millis(300_000));
+    assert_eq!(list_cache_ttl(&json!({}), false),CACHE_TTL);
+}
