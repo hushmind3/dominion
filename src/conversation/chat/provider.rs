@@ -8,6 +8,43 @@ use tokio::sync::mpsc::UnboundedSender;
 const TEXT_TOOL_OPEN: &str = "<tool_call>";
 const TEXT_TOOL_CLOSE: &str = "</tool_call>";
 
+/// Chat and native SDK must reject malformed partial Anthropic tool JSON
+/// instead of silently converting it into an authorized empty object.
+fn parse_anthropic_tool_arguments(partial: &str, initial: &Value) -> Result<Value, String> {
+    let value = if partial.trim().is_empty() {
+        initial.clone()
+    } else {
+        serde_json::from_str::<Value>(partial)
+            .map_err(|error| format!("Invalid Anthropic streamed tool arguments: {error}"))?
+    };
+    if !value.is_object() {
+        return Err("Anthropic streamed tool arguments must be a JSON object".into());
+    }
+    Ok(value)
+}
+
+/// A broken Codex SSE event is a failed paid model turn, not an ignorable
+/// fragment; never infer success from the remaining stream.
+fn parse_codex_stream_event(payload: &str) -> Result<Value, String> {
+    serde_json::from_str(payload)
+        .map_err(|error| format!("Invalid Codex SSE JSON: {error}"))
+}
+
+fn codex_settled_text(output: &[Value]) -> String {
+    let mut text = String::new();
+    for item in output {
+        if item["type"] != "message" || item["role"] != "assistant" { continue; }
+        for part in item["content"].as_array().into_iter().flatten() {
+            if matches!(part["type"].as_str(), Some("output_text" | "text")) {
+                if let Some(content) = part["text"].as_str() {
+                    text.push_str(content);
+                }
+            }
+        }
+    }
+    text
+}
+
 /// Streams visible text while hiding text-protocol tool calls. Small local
 /// models emit `<tool_call>...` as ordinary content; without this buffer the
 /// user sees the raw JSON before the tool actually runs.
@@ -1727,10 +1764,7 @@ async fn stream_codex_once(
             if payload.is_empty() {
                 continue;
             }
-            let piece: Value = match serde_json::from_str(&payload) {
-                Ok(value) => value,
-                Err(_) => continue,
-            };
+            let piece = parse_codex_stream_event(&payload)?;
             match piece["type"].as_str().unwrap_or("") {
                 "response.output_text.delta" => {
                     let delta = piece["delta"].as_str().unwrap_or("");
@@ -1783,6 +1817,16 @@ async fn stream_codex_once(
                         .as_array()
                         .cloned()
                         .unwrap_or_default();
+                    // Some Responses providers send only the settled final
+                    // message, without any output_text.delta frames.
+                    if completion.content.is_empty() {
+                        let settled = codex_settled_text(&output);
+                        if !settled.is_empty() {
+                            completion.first_delta_ms.get_or_insert(started.elapsed().as_millis() as u64);
+                            completion.content.push_str(&settled);
+                            let _ = tx.send(json!({"type":"text","text":settled}));
+                        }
+                    }
                     for call in codex_tool_calls(&output) {
                         if !completion
                             .tool_calls
@@ -1896,7 +1940,7 @@ async fn stream_anthropic_once(
 
     let mut completion = Completion::default();
     let mut calls: Vec<ToolCall> = Vec::new();
-    let mut blocks = std::collections::BTreeMap::<usize, (String, String, String)>::new();
+    let mut blocks = std::collections::BTreeMap::<usize, (String, String, String, Value)>::new();
     let mut buffer = SseBuffer::default();
     let mut stream = response.bytes_stream();
     let mut terminated = false;
@@ -1940,19 +1984,17 @@ async fn stream_anthropic_once(
                     let content = &piece["content_block"];
                     if content["type"].as_str() == Some("tool_use") {
                         let index = piece["index"].as_u64().unwrap_or(0) as usize;
-                        let initial = content["input"]
-                            .as_object()
-                            .filter(|input| !input.is_empty())
-                            .map(|_| content["input"].to_string())
-                            .unwrap_or_default();
-                        blocks.insert(
-                            index,
-                            (
-                                content["id"].as_str().unwrap_or("").to_string(),
-                                content["name"].as_str().unwrap_or("tool").to_string(),
-                                initial,
-                            ),
-                        );
+                        let initial = content.get("input").cloned().unwrap_or_else(|| json!({}));
+                        if !initial.is_object() {
+                            return Err("Anthropic tool_use initial arguments are not an object".into());
+                        }
+                        if blocks.insert(index, (
+                            content["id"].as_str().unwrap_or("").to_string(),
+                            content["name"].as_str().unwrap_or("").to_string(),
+                            String::new(), initial,
+                        )).is_some() {
+                            return Err("Duplicate Anthropic tool_use block index".into());
+                        }
                         if completion.first_delta_ms.is_none() {
                             completion.first_delta_ms = Some(started.elapsed().as_millis() as u64);
                         }
@@ -1992,17 +2034,13 @@ async fn stream_anthropic_once(
                 }
                 "content_block_stop" => {
                     let index = piece["index"].as_u64().unwrap_or(0) as usize;
-                    if let Some((id, name, raw)) = blocks.remove(&index) {
-                        let arguments = if raw.trim().is_empty() {
-                            json!({})
-                        } else {
-                            serde_json::from_str::<Value>(&raw)
-                                .ok()
-                                .filter(Value::is_object)
-                                .unwrap_or_else(|| json!({}))
-                        };
+                    if let Some((id, name, raw, initial)) = blocks.remove(&index) {
+                        let arguments = parse_anthropic_tool_arguments(&raw, &initial)?;
+                        if id.is_empty() || name.is_empty() {
+                            return Err("Anthropic tool_use is missing its call ID or name".into());
+                        }
                         calls.push(ToolCall {
-                            id: if id.is_empty() { uuid::Uuid::new_v4().to_string() } else { id },
+                            id,
                             name,
                             arguments: arguments.to_string(),
                         });
@@ -2013,6 +2051,9 @@ async fn stream_anthropic_once(
                     output_tokens = piece["usage"]["output_tokens"].as_u64().unwrap_or(output_tokens);
                 }
                 "message_stop" => {
+                    if !blocks.is_empty() {
+                        return Err("Anthropic message_stop arrived before tool_use block was closed".into());
+                    }
                     terminated = true;
                     break 'stream;
                 }
@@ -2706,6 +2747,33 @@ mod tests {
         assert_eq!(output, "대체 모델 정상 응답");
         server.abort();
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn chat_anthropic_tool_arguments_are_strict_and_prefer_settled_deltas() {
+        let original = json!({"path":"initial"});
+        assert_eq!(parse_anthropic_tool_arguments("", &original).unwrap(), original);
+        assert_eq!(parse_anthropic_tool_arguments("{\"path\":\"settled\"}", &original).unwrap(),
+            json!({"path":"settled"}));
+        assert!(parse_anthropic_tool_arguments("{\"path\":", &json!({})).is_err());
+        assert!(parse_anthropic_tool_arguments("[1]", &json!({})).is_err());
+        assert!(parse_anthropic_tool_arguments("", &json!([])).is_err());
+    }
+
+    #[test]
+    fn chat_codex_stream_rejects_bad_json_and_recovers_final_only_answer() {
+        assert!(parse_codex_stream_event("{unfinished").is_err());
+        assert_eq!(parse_codex_stream_event("{\"type\":\"response.completed\"}").unwrap()["type"],
+            "response.completed");
+        let output = vec![
+            json!({"type":"reasoning","summary":[]}),
+            json!({"type":"message","role":"assistant","content":[
+                {"type":"output_text","text":"안녕 "},
+                {"type":"output_text","text":"반갑습니다."}
+            ]}),
+            json!({"type":"function_call","name":"workspace_read","arguments":"{}"}),
+        ];
+        assert_eq!(codex_settled_text(&output), "안녕 반갑습니다.");
     }
 
     #[test]
