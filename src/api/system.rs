@@ -23,7 +23,11 @@ pub async fn health() -> Json<Value> {
         "executionKernelOrigin":"dominion-sub3",
         "independentHarness":"dominion-harness",
         "instanceId":std::env::var("DOMINION_ENGINE_INSTANCE").ok(),
+        // "commit" is retained for existing clients. A running binary's
+        // embedded SHA is independent of checkout HEAD, which may advance
+        // while the watch daemon is still building a replacement process.
         "commit": crate::build_identity::running().commit,
+        "binaryBuildSha": crate::build_identity::running().commit,
         "branch": crate::build_identity::running().branch,
         "dirty": crate::build_identity::running().dirty,
         "identitySource": crate::build_identity::running().source,
