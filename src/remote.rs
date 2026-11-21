@@ -28,7 +28,8 @@ const MAX_ARTIFACT_FILES:usize=8;
 /// An artifact is an explicitly authorized, bounded UTF-8 file transfer.
 /// Worker paths are never absolute and cannot address Git metadata.
 pub(crate) fn valid_artifact_path(raw:&str)->bool{
-    if raw.is_empty() || raw.len()>260 || raw.contains('\\') {return false;}
+    if raw.is_empty() || raw.len()>260 || raw.contains('\\')
+        || raw.chars().any(char::is_control){return false;}
     let path=Path::new(raw);
     !path.is_absolute() && path.components().all(|part|match part{
         Component::Normal(name)=>{
@@ -568,6 +569,23 @@ mod tests{
             std::env::remove_var("DOMINION_REMOTE_CLUSTER_TOKEN");
         }
         drop(state);let _=std::fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn artifact_transfer_rejects_tampering_escape_and_duplicate_paths(){
+        assert!(!valid_artifact_path("../escape.rs"));
+        assert!(!valid_artifact_path(".git/config"));
+        assert!(!valid_artifact_path("secret\\nname.rs"));
+        assert!(validate_artifact_paths(&json!(["src/good.rs","src/good.rs"]),false).is_err());
+        assert!(validate_artifact_paths(&json!(["src/file.rs"]),true).is_err());
+        let source=json!(["src/file.rs"]);
+        assert!(validate_received_artifacts(&source,&json!([{
+            "path":"src/file.rs","content":"fn main() {}\\n","sha256":"wrong"
+        }])).is_err());
+        let content="fn main() {}\\n";
+        let accepted=validate_received_artifacts(&source,&json!([{
+            "path":"src/file.rs","content":content,"sha256":digest(content.as_bytes())
+        }])).unwrap();
+        assert_eq!(accepted[0]["sha256"],digest(content.as_bytes()));
     }
     #[test]
     fn remote_job_claim_is_atomic_and_old_epoch_cannot_settle(){
