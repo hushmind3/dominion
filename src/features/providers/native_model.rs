@@ -237,8 +237,11 @@ fn finish(content:String,actions:Vec<Action>,input:Option<u64>,output:Option<u64
 }
 fn parse_chat(value:&Value)->Result<ModelTurn,String> {
     let choice=&value["choices"][0];
-    let reason=choice["finish_reason"].as_str().unwrap_or("");
-    if reason=="length"||reason=="content_filter" {
+    // Non-SSE fallback has no terminal [DONE] frame: the response's own
+    // finish_reason must prove that tool arguments and final text are settled.
+    let reason=choice["finish_reason"].as_str()
+        .ok_or("Native Chat response has no terminal finish_reason")?;
+    if !matches!(reason,"stop"|"tool_calls") {
         return Err(format!("Provider ended a native turn without a complete result: {reason}"));
     }
     let m=&choice["message"];
@@ -250,14 +253,20 @@ fn parse_chat(value:&Value)->Result<ModelTurn,String> {
             f["name"].as_str().ok_or("Native tool name missing")?,
             &f["arguments"])?);
     }
+    if (reason=="tool_calls")!=(!actions.is_empty()) {
+        return Err("Native Chat finish_reason contradicts its tool calls".into());
+    }
     let content=m["content"].as_str().unwrap_or("").to_string();
     finish(content,actions,value["usage"]["prompt_tokens"].as_u64(),
         value["usage"]["completion_tokens"].as_u64())
 }
 fn parse_anthropic(value:&Value)->Result<ModelTurn,String> {
-    if value["stop_reason"]=="max_tokens" {
-        return Err("Anthropic native turn exhausted its output token budget".into());
-    }
+    // The non-streaming Messages response must have the same settled
+    // terminal semantics as the SSE assembler; pause_turn/max_tokens and
+    // unknown future stop reasons must never authorize tool dispatch.
+    let reason=value["stop_reason"].as_str()
+        .ok_or("Anthropic native response has no terminal stop_reason")?;
+    crate::engine::native_stream::validate_anthropic_stop_reason(reason)?;
     let mut parts=Vec::new();let mut actions=Vec::new();
     for block in value["content"].as_array().into_iter().flatten() {
         match block["type"].as_str() {
@@ -269,11 +278,16 @@ fn parse_anthropic(value:&Value)->Result<ModelTurn,String> {
             _=>{}
         }
     }
+    if (reason=="tool_use")!=(!actions.is_empty()) {
+        return Err("Anthropic stop_reason contradicts its tool_use blocks".into());
+    }
     let measured=reported_usage("anthropic",value);
     finish(parts.join("\n"),actions,measured.input,measured.output)
 }
 fn parse_codex(value:&Value)->Result<ModelTurn,String> {
-    if matches!(value["status"].as_str(),Some("failed"|"incomplete")) {
+    // Responses may be queued/in_progress/cancelled/failed/incomplete:
+    // only completed is a usable final model decision.
+    if value["status"]!="completed" {
         return Err(format!("Codex response was not complete: {}",
             value["incomplete_details"]["reason"].as_str()
                 .or_else(||value["error"]["message"].as_str()).unwrap_or("unknown")));
@@ -693,6 +707,53 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_non_stream_model_responses_never_authorize_results() {
+        // Unlike the SSE path, self-hosted Chat and Anthropic may send a
+        // complete JSON body even if generation stopped early or was paused.
+        let chat=|reason:Value,tools:Value|json!({"choices":[{
+            "finish_reason":reason,
+            "message":{"content":"partial work","tool_calls":tools}
+        }]});
+        let empty=json!([]);
+        for reason in [Value::Null,json!("length"),json!("content_filter"),
+            json!("unknown_future_reason")] {
+            assert!(parse_chat(&chat(reason,empty.clone())).is_err());
+        }
+        assert!(parse_chat(&chat(json!("stop"),json!([{
+            "id":"call_1","function":{"name":"workspace_write",
+                "arguments":"{\\"path\\":\\"data.txt\\"}"}
+        }]))).is_err(),"a text stop must not dispatch a tool");
+        assert!(parse_chat(&chat(json!("tool_calls"),empty)).is_err(),
+            "tool_calls stop without a call is not a complete turn");
+        assert!(parse_chat(&chat(json!("stop"),json!([]))).is_ok());
+
+        let anthropic=|reason:Value,tool:bool|json!({
+            "stop_reason":reason,
+            "content":if tool {json!([{"type":"tool_use","id":"tool_1",
+                "name":"workspace_write","input":{"path":"data.txt"}}])}
+                else {json!([{"type":"text","text":"partial work"}])}
+        });
+        for reason in [Value::Null,json!("max_tokens"),json!("pause_turn"),
+            json!("model_context_window_exceeded"),json!("unknown_future_reason")] {
+            assert!(parse_anthropic(&anthropic(reason,false)).is_err());
+        }
+        assert!(parse_anthropic(&anthropic(json!("end_turn"),true)).is_err());
+        assert!(parse_anthropic(&anthropic(json!("tool_use"),false)).is_err());
+        assert!(parse_anthropic(&anthropic(json!("tool_use"),true)).is_ok());
+        assert!(parse_anthropic(&anthropic(json!("end_turn"),false)).is_ok());
+
+        for status in [Value::Null,json!("in_progress"),json!("queued"),
+            json!("cancelled"),json!("failed"),json!("incomplete")] {
+            assert!(parse_codex(&json!({"status":status,
+                "output":[{"type":"message","content":[{
+                    "type":"output_text","text":"partial work"}]}]})).is_err());
+        }
+        assert!(parse_codex(&json!({"status":"completed",
+            "output":[{"type":"message","content":[{
+                "type":"output_text","text":"finished"}]}]})).is_ok());
+    }
+
+    #[test]
     fn native_chat_calls_are_typed_not_json_roleplay() {
         let response=json!({"choices":[{"finish_reason":"tool_calls",
             "message":{"role":"assistant","content":null,"tool_calls":[{
@@ -709,7 +770,7 @@ mod tests {
     }
     #[test]
     fn native_anthropic_and_codex_calls_are_preserved() {
-        let a=parse_anthropic(&json!({"content":[
+        let a=parse_anthropic(&json!({"stop_reason":"tool_use","content":[
             {"type":"tool_use","id":"toolu_1","name":"workspace_read",
                 "input":{"path":"README.md"}}
         ],"usage":{"input_tokens":10,"output_tokens":4}})).unwrap();
@@ -727,7 +788,8 @@ mod tests {
             "input_tokens_details":{"cached_tokens":300}}}));
         assert_eq!((codex.input,codex.output,codex.cache_read),
             (Some(400),Some(100),Some(300)));
-        let anthropic=json!({"content":[{"type":"text","text":"ok"}],
+        let anthropic=json!({"stop_reason":"end_turn",
+            "content":[{"type":"text","text":"ok"}],
             "usage":{"input_tokens":50,"output_tokens":25,
                 "cache_read_input_tokens":600,"cache_creation_input_tokens":200}});
         let result=reported_usage("anthropic",&anthropic);
