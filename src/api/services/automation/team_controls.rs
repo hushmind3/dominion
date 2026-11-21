@@ -267,13 +267,16 @@ mod tests{
     }
     #[tokio::test]
     async fn real_axum_router_exposes_native_team_and_review_controls(){
-        let (state,dir)=fixture();
+        let (mut state,dir)=fixture();
         state.store.put("agent",&json!({"id":"lead","name":"Lead",
             "providerId":"configured","model":"running-model","enabled":true})).unwrap();
         state.store.put("agent",&json!({"id":"worker","name":"Worker",
             "providerId":"configured","model":"running-model","enabled":true})).unwrap();
         let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address=listener.local_addr().unwrap();
+        // The real listener picked a random port. The Host guard must compare
+        // against that bound port, not the fixture's pre-bind placeholder 0.
+        state.config.port=address.port();
         let app=crate::api::router(state.clone());
         let server=tokio::spawn(async move{
             axum::serve(listener,app).await.unwrap();
