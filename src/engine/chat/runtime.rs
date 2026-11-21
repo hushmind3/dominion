@@ -182,6 +182,19 @@ async fn run_turn_with_policy(
     // recovery releases, while a live owner (even across restarts) is refused.
     let _lease = crate::engine::lease::LeaseGuard::acquire(state, &session_id)
         .ok_or("다른 엔진 프로세스가 이 세션을 실행 중입니다.")?;
+    // Admission happens while both the in-process guard and the durable lease
+    // are held. A reconnect/retry of an already-written owner turn may not
+    // create another root task or repeat an effectful agent tool call.
+    if let Some(client_turn_id) = request.client_turn_id.as_deref() {
+        let already_written = state.store.messages(&session_id).iter().any(|message| {
+            message["role"] == "user"
+                && message["metadata"]["authorKind"] == "owner"
+                && message["metadata"]["clientTurnId"].as_str() == Some(client_turn_id)
+        });
+        if already_written {
+            return Err("동일한 요청이 이미 저장되었습니다. 대화 기록을 확인하세요.".into());
+        }
+    }
     if reset_cancel {
         if let Some(generation) = accepted_cancel_generation {
             // The HTTP API captured the epoch before launching this task.
@@ -396,7 +409,8 @@ async fn run_turn_body(
             .store
             .write_message(&json!({
                 "session_id": session_id,"role": "user","content": request.input,
-                "agent_id": request.agent_id,"metadata":{"authorKind":"owner","attachments":attachments},
+                "agent_id": request.agent_id,"metadata":{"authorKind":"owner",
+                    "attachments":attachments,"clientTurnId":request.client_turn_id},
             }))
             .ok_or("사용자 메시지를 저장할 수 없습니다.")?;
         state.bus.message(&user_message);
