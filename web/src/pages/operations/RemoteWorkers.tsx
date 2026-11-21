@@ -38,6 +38,7 @@ export function RemoteWorkersPanel({onAvailability}:{
    setTasks(jobs)
    setEnabled(true)
    setLoaded(true)
+   setError('')
    onAvailability({enabled:true,online:machines.filter(w=>w.online).length,loaded:true})
   }catch(cause){
    if(cause instanceof ApiError && cause.status===503){
@@ -164,7 +165,7 @@ export function RemoteWorkersPanel({onAvailability}:{
      {tasks.length===0?<p className="text-[11px] text-[#8A8176]">{t('아직 요청한 작업이 없습니다.','No remote tasks yet.')}</p>:
      <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
       <div className="grid max-h-64 content-start gap-1 overflow-y-auto">
-       {tasks.slice(0,30).map(task=><button type="button" key={task.id}
+       {tasks.slice(-30).reverse().map(task=><button type="button" key={task.id}
         aria-pressed={selected===task.id} onClick={()=>setSelected(task.id)}
         className={'flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border p-2 text-left text-[11px] '+
          (selected===task.id?'border-[#C7B18F] bg-[#F7F0E5]':'border-[#E7E0D5] bg-white hover:bg-[#FAF7F1]')}>
