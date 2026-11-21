@@ -49,7 +49,7 @@ jobs:
   rust-regressions:
     runs-on: macos-latest
     env:
-      RUST_MIN_STACK: 4194304
+      RUST_MIN_STACK: 8388608
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

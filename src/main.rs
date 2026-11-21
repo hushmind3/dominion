@@ -1,6 +1,6 @@
 fn main() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
-        .thread_stack_size(4 * 1024 * 1024)
+        .thread_stack_size(8 * 1024 * 1024)
         .enable_all()
         .build()
         .unwrap_or_else(|error| {
