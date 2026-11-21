@@ -199,3 +199,51 @@
  .chat-transcript .chat-message-text{font-size:15.5px;line-height:1.75}
  .chat-transcript .chat-message-text--user{padding:11px 15px}
 }
+
+/* Common assistant Markdown, for streamed and persisted chat alike. */
+.chat-transcript .chat-message-text--assistant{white-space:normal}
+.chat-richtext{min-width:0;overflow-wrap:anywhere}
+.chat-richtext> :first-child{margin-top:0}
+.chat-richtext> :last-child{margin-bottom:0}
+.chat-richtext p{margin:0 0 1em;white-space:pre-wrap}
+.chat-richtext h1,.chat-richtext h2,.chat-richtext h3,.chat-richtext h4,.chat-richtext h5,.chat-richtext h6{
+ margin:1.15em 0 .5em;font-weight:700;line-height:1.4;letter-spacing:-.025em;color:#24211D
+}
+.chat-richtext h1{font-size:1.5em}
+.chat-richtext h2{font-size:1.28em}
+.chat-richtext h3{font-size:1.13em}
+.chat-richtext h4,.chat-richtext h5,.chat-richtext h6{font-size:1em}
+.chat-richtext ul,.chat-richtext ol{margin:.5em 0 1em;padding-left:1.65em}
+.chat-richtext ul{list-style:disc}
+.chat-richtext ol{list-style:decimal}
+.chat-richtext li{padding-left:.15em;margin:.2em 0}
+.chat-richtext strong{font-weight:700}
+.chat-richtext a{color:#A94E30;text-decoration:underline;text-underline-offset:3px}
+.chat-richtext a:hover{color:#843C26}
+.chat-richtext :not(pre)>code{
+ padding:.13em .35em;border:1px solid #E6E0D6;border-radius:5px;
+ background:#F3EEE7;font-size:.86em;overflow-wrap:anywhere
+}
+.chat-richtext .chat-code{
+ min-width:0;margin:.8em 0 1.1em;border:1px solid #343943;border-radius:12px;
+ overflow:hidden;background:#22262F;color:#F3F4F6
+}
+.chat-richtext .chat-code-language{
+ padding:6px 13px;border-bottom:1px solid #404651;background:#2D323D;
+ font:500 11px var(--font-sans);color:#CBD5E1
+}
+.chat-richtext pre{
+ overflow-x:auto;max-width:100%;padding:14px 16px;margin:0;
+ font-size:13px;line-height:1.65;white-space:pre;tab-size:2
+}
+.chat-richtext blockquote{
+ border-left:3px solid #C9AD99;padding:.4em 0 .4em 1em;
+ margin:.8em 0;color:#645C55
+}
+.chat-richtext hr{border:0;border-top:1px solid #E7E0D5;margin:1.5em 0}
+.chat-richtext .chat-table-scroll{overflow-x:auto;max-width:100%;margin:1em 0}
+.chat-richtext table{width:max-content;max-width:none;border-collapse:collapse;font-size:.9em}
+.chat-richtext th,.chat-richtext td{
+ border:1px solid #DED7CD;padding:7px 11px;text-align:left;vertical-align:top
+}
+.chat-richtext th{background:#F4F0E9;font-weight:700}

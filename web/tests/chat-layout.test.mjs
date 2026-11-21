@@ -26,5 +26,11 @@ test('conversation text preserves authored line breaks and uses readable typogra
 })
 test('live agent output retains left-anchored layout and the same text style',()=>{
  assert.match(chat,/chat-message chat-message--assistant flex min-w-0 items-start/)
- assert.match(chat,/chat-message-text chat-message-text--assistant min-w-0 whitespace-pre-wrap/)
+ assert.match(chat,/chat-message-text chat-message-text--assistant min-w-0/)
+})
+
+test('assistant live and saved messages render rich text, while owner message stays literal',()=>{
+ assert.match(chat,/import \{ChatRichText\} from '\.\.\/components\/ChatRichText'/)
+ assert.match(chat,/<ChatRichText content=\{live\}\/>/)
+ assert.match(chat,/human\?message\.content:\(message\.content\?<ChatRichText content=\{message\.content\}\/>/)
 })
