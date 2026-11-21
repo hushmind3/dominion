@@ -142,9 +142,9 @@ async function mock(route){
   const before=Number(url.searchParams.get('before'))
   const limit=Number(url.searchParams.get('limit'))
   assert.equal(limit,40,'Native event pagination remains bounded')
-  assert.ok(before===80||before===40,'Unexpected older-event page cursor')
+  assert.ok(before===90||before===80||before===40,'Unexpected older-event page cursor')
   const from=Math.max(0,before-limit)
-  return send(route,{from,to:before,total:87,nextBefore:from||null,
+  return send(route,{from,to:before,total:before===90?97:87,nextBefore:from||null,
    events:Array.from({length:before-from},(_,i)=>({
     kind:i===0&&before===80?'OLDEST_PAGE_MARKER':'historical_'+(from+i),
     detail:{seq:from+i}
@@ -370,6 +370,17 @@ try{
  assert.equal(await olderEvents.locator('li').count(),80)
  assert.equal(await page.getByRole('button',{name:'더 이전 단계 불러오기'}).count(),0,
   'No more history pages remain after receiving the earliest persisted entry')
+ // A running job can append new events after an older page was loaded.
+ // Changed projection boundary invalidates that old page cursor.
+ sdkRuns[0].checkpoint.eventsOmitted=90
+ await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
+ await page.getByText('저장된 실행 단계 · 97').waitFor({timeout:8000})
+ assert.equal(await olderEvents.count(),0,
+  'The stale 80-event prefix must not be displayed after the run grows')
+ await page.getByRole('button',{name:'이전 저장 기록 불러오기'}).click()
+ await olderEvents.getByText('historical_50').waitFor({timeout:8000})
+ assert.equal(await olderEvents.getByText('OLDEST_PAGE_MARKER').count(),0,
+  'The new event boundary must start with its own first history page')
  assert.equal(await page.getByRole('button',{name:'최근 단계만'}).getAttribute('aria-expanded'),'true')
  await page.getByRole('button',{name:'최근 단계만'}).click()
  assert.equal(await history.getByText('verification_pending').count(),0)
