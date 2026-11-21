@@ -61,6 +61,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [steering,setSteering]=useState('')
  const [runs,setRuns]=useState<SdkRun[]>([])
  const [observation,setObservation]=useState('')
+ const [showEventHistory,setShowEventHistory]=useState(false)
  const [run,setRun]=useState<SdkRun|null>(null)
  const [busy,setBusy]=useState(false)
  const [error,setError]=useState('')
@@ -81,6 +82,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const historyEpoch=useRef(0)
  const selectRun=(selected:SdkRun)=>{
   historyEpoch.current+=1
+  setShowEventHistory(false)
   setRun(selected)
   try{window.localStorage.setItem('dominion.native.selectedRun',selected.id)}catch{}
  }
@@ -247,7 +249,8 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const call=run?.checkpoint?.pendingCall
  const needsApproval=status==='awaiting_approval' && call
  const canResume=status==='interrupted'
- const events=(run?.checkpoint?.events||[]).slice(-4)
+ const allEvents=run?.checkpoint?.events||[]
+ const events=allEvents.slice(showEventHistory?-40:-4)
  const toolReceipts=run?.checkpoint?.toolReceipts||[]
  return <section className="mt-4 rounded-xl border border-[#E7E0D5] bg-white">
   <div className="flex items-center gap-2 border-b border-[#F0EAE1] px-4 py-3">
@@ -328,12 +331,35 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     </div>
     <p className="mt-2 break-words text-[11px] text-[#766F67]" title={run.instruction}>{run.instruction}</p>
     <p className="mt-1 text-[10px] text-[#8A8176]">{en?'Strategy':'실행 전략'}: {run.algorithmId||'standard-v1'}</p>
-    {events.length>0&&<div className="mt-3 space-y-1 border-t border-[#E7E0D5] pt-2">
-     {events.map((event,i)=><p key={i} className="text-[11px] text-[#82796D]">
-      {event.kind==='tool_started'?(en?'Running tool':'도구 실행'):
-       event.kind==='model_started'?(en?'Model is working':'모델 판단 중'):
-       event.kind==='verified'?(en?'Result verification':'결과 검증'):event.kind}
-     </p>)}
+    {events.length>0&&<div className="mt-3 min-w-0 border-t border-[#E7E0D5] pt-2">
+     <div className="flex flex-wrap items-center justify-between gap-2">
+      <strong className="text-[11px] text-[#5C544D]">
+       {en?'Recorded run events':'저장된 실행 단계'} · {allEvents.length}
+      </strong>
+      {allEvents.length>4&&<button type="button"
+       aria-expanded={showEventHistory}
+       onClick={()=>setShowEventHistory(value=>!value)}
+       className="min-h-10 rounded-lg px-2 text-[11px] font-semibold text-[#845B47] underline focus-visible:outline-2 focus-visible:outline-offset-2">
+       {showEventHistory
+        ?(en?'Show recent events':'최근 단계만')
+        :(en?'Show earlier events':'이전 단계 보기')}
+      </button>}
+     </div>
+     {showEventHistory&&allEvents.length>40&&<p className="mt-1 text-[10px] text-[#82796D]">
+      {en?`Showing the latest 40 of ${allEvents.length} recorded events`:
+       `저장된 ${allEvents.length}단계 중 최근 40단계를 표시합니다.`}
+     </p>}
+     <ol className="mt-2 max-h-56 space-y-1 overflow-y-auto"
+      aria-label={en?'Run event history':'실행 단계 기록'}>
+      {events.map((event,i)=><li key={allEvents.length-events.length+i}
+       className="break-words rounded-md bg-white px-2 py-1.5 text-[11px] text-[#82796D]">
+       {event.kind==='tool_started'?(en?'Running tool':'도구 실행 중'):
+        event.kind==='tool_completed'?(en?'Tool completed':'도구 실행 완료'):
+        event.kind==='tool_failed'?(en?'Tool failed':'도구 실행 실패'):
+        event.kind==='model_started'?(en?'Model is working':'모델 판단 중'):
+        event.kind==='verified'?(en?'Result verification':'결과 검증'):event.kind}
+      </li>)}
+     </ol>
     </div>}
     {status==='running'&&run.checkpoint?.nativeStream&&<div
       aria-label={en?'Provisional model progress':'확정 전 모델 진행 내용'}
