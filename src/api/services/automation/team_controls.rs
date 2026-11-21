@@ -254,6 +254,43 @@ mod tests{
         (state,dir)
     }
     #[tokio::test]
+    async fn real_axum_router_exposes_native_team_and_review_controls(){
+        let (state,dir)=fixture();
+        state.store.put("agent",&json!({"id":"lead","name":"Lead",
+            "providerId":"configured","model":"running-model","enabled":true})).unwrap();
+        state.store.put("agent",&json!({"id":"worker","name":"Worker",
+            "providerId":"configured","model":"running-model","enabled":true})).unwrap();
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address=listener.local_addr().unwrap();
+        let app=crate::api::router(state.clone());
+        let server=tokio::spawn(async move{
+            axum::serve(listener,app).await.unwrap();
+        });
+        let client=reqwest::Client::new();
+        let endpoint=format!("http://{address}/api/activity/teams");
+        let overview=client.get(&endpoint).send().await.unwrap();
+        assert_eq!(overview.status(),reqwest::StatusCode::OK);
+        let payload=overview.json::<Value>().await.unwrap();
+        assert_eq!(payload["teams"].as_array().unwrap().len(),0);
+        let started=client.post(format!("{endpoint}/start")).json(&json!({
+            "prompt":"Inspect all fixtures","leadAgentId":"lead",
+            "workerAgentIds":["worker"]
+        })).send().await.unwrap();
+        assert_eq!(started.status(),reqwest::StatusCode::ACCEPTED);
+        let job_id=started.json::<Value>().await.unwrap()["jobId"].as_str()
+            .unwrap().to_string();
+        assert_eq!(state.store.get("job",&job_id).unwrap()
+            ["input"]["teamUiWorkerIds"],json!(["worker"]));
+        assert_eq!(client.post(format!("{endpoint}/missing/stop"))
+            .send().await.unwrap().status(),reqwest::StatusCode::NOT_FOUND);
+        assert_eq!(client.get(format!("{endpoint}/missing/artifacts/t-1"))
+            .send().await.unwrap().status(),reqwest::StatusCode::NOT_FOUND);
+        assert_eq!(client.post(format!("{endpoint}/missing/artifacts/t-1/apply"))
+            .json(&json!({"approved":false})).send().await.unwrap().status(),
+            reqwest::StatusCode::BAD_REQUEST);
+        server.abort();drop(state);let _=std::fs::remove_dir_all(dir);
+    }
+    #[tokio::test]
     async fn lead_launch_preserves_selected_workers_in_real_native_job(){
         let (state,dir)=fixture();
         for id in ["lead","worker"]{

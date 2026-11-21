@@ -64,6 +64,35 @@ for(const path of allRoutes){
     failures.push('duplicate API route shape: '+routeMap.get(shape)+' & '+path);
   }else routeMap.set(shape,path);
 }
+// Contract-check every Team UI action against the real mounted API router.
+// This fails closed when a React button points to a non-existent endpoint.
+const teamRoutes=[
+ '/api/activity/teams','/api/activity/teams/start',
+ '/api/activity/teams/:id/stop','/api/activity/teams/:id/resume',
+ '/api/activity/teams/:id/artifacts/:task_id',
+ '/api/activity/teams/:id/artifacts/:task_id/apply',
+ '/api/activity/teams/:id/artifacts/:task_id/reject'
+];
+for(const route of teamRoutes){
+ if(!routeMap.has(route.replace(/:[a-z_]+/g,':parameter'))){
+  failures.push('React Team UI route not mounted by Axum: '+route);
+ }
+}
+const teamControls=content.get('src/api/services/automation/team_controls.rs')||'';
+const activityUi=content.get('web/src/components/TeamActivity.tsx')||'';
+const operationUi=content.get('web/src/pages/Operations.tsx')||'';
+const chatUi=content.get('web/src/pages/Chat.tsx')||'';
+const teamTools=content.get('src/engine/services/tools/tools_team.rs')||'';
+for(const action of ['start','stop','resume','preview','approve_apply','reject']){
+ if(!teamControls.includes('pub async fn '+action+'('))failures.push('Team HTTP handler missing: '+action);
+}
+if(!operationUi.includes('<TeamActivity/>'))failures.push('Existing Activity page does not mount Team UI');
+if(!chatUi.includes('<TeamRunStrip '))failures.push('Existing Chat page does not expose Team status');
+for(const token of ['/start','/resume','/apply','/reject','reviewDigest','remoteWorkers']){
+ if(!activityUi.includes(token))failures.push('Team UI is missing control: '+token);
+}
+if(!teamTools.includes('validate_ui_worker_route'))failures.push('UI-selected Worker routing is not enforced by Rust');
+if(!teamControls.includes('begin_session('))failures.push('UI team resume does not claim Lead session ownership');
 if(router.includes('collections::action'))
   failures.push('unreachable generic collection action route reintroduced');
 if(/pub async fn action\s*\(/.test(collections))
