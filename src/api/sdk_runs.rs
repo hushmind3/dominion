@@ -150,7 +150,15 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
     // Only the host-sealed owner acceptance witness is eligible here.
     // Do not use model-claimed files, re-read the live workspace, or expose
     // raw artifact bytes. A captured file state does NOT imply criteria pass.
-    let final_witness=&job["nativeEvidenceFinal"];
+    let owner_witness=&job["nativeEvidenceFinal"];
+    let kernel_witness=&job["nativeEvidenceKernelFinal"];
+    // Normal Native panel tasks may supply only a tool-success criterion.
+    // The kernel adds independent file/hash checks during execution. Prefer
+    // its witnessed union when available; fall back to explicit owner paths.
+    let (final_witness,evidence_origin)=if
+        kernel_witness["scope"]=="acceptance_artifact_paths_only" &&
+        kernel_witness["entries"].as_object().is_some_and(|entries|!entries.is_empty())
+    {(kernel_witness,"kernel_checks")}else{(owner_witness,"owner_checks")};
     // A resumed job can retain the previous attempt's final witness while
     // queued/running. Never display that historical snapshot as this run's
     // settled outcome until the current run reaches a terminal state.
@@ -165,7 +173,7 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
                     "bytes":entry["bytes"],"sha256":entry["sha256"]
                 })).collect::<Vec<_>>();
                 json!({"captureComplete":final_witness["complete"],
-                    "entries":visible,
+                    "origin":evidence_origin,"entries":visible,
                     "omitted":entries.len().saturating_sub(visible.len())})
             }).unwrap_or(Value::Null)
     }else {Value::Null};
@@ -698,6 +706,8 @@ mod tests{
             "nativeState":{"status":"completed","step":44,"receipts":receipts,
                 "checks":[{"satisfied":true,"explanation":"file exists"}]},
             "nativeEvidenceFinal":{"scope":"acceptance_artifact_paths_only",
+                "complete":true,"entries":{}},
+            "nativeEvidenceKernelFinal":{"scope":"acceptance_artifact_paths_only",
                 "complete":true,"entries":{"summary.md":{"state":"file",
                     "bytes":14,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}});
         state.store.put("job",&job).unwrap();
@@ -712,11 +722,21 @@ mod tests{
         assert_eq!(body["checkpoint"]["verificationChecks"][0]["satisfied"],true);
         let artifacts=&body["checkpoint"]["artifactEvidence"];
         assert_eq!(artifacts["captureComplete"],true);
+        assert_eq!(artifacts["origin"],"kernel_checks");
         assert_eq!(artifacts["entries"][0]["path"],"summary.md");
         assert_eq!(artifacts["entries"][0]["state"],"file");
         assert_eq!(artifacts["entries"][0]["bytes"],14);
         assert_eq!(artifacts["entries"][0]["sha256"].as_str().unwrap().len(),64);
         assert_eq!(artifacts["omitted"],0);
+        let mut old_owner_only=job.clone();
+        old_owner_only["nativeEvidenceFinal"]["entries"]=json!({
+            "summary.md":{"state":"file","bytes":14,
+                "sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+        });
+        old_owner_only["nativeEvidenceKernelFinal"]=Value::Null;
+        assert_eq!(project(&state,&old_owner_only)
+            ["checkpoint"]["artifactEvidence"]["origin"],"owner_checks",
+            "older owner-only snapshots must remain viewable");
         let mut resumed=job.clone();
         resumed["status"]=json!("running");
         assert!(project(&state,&resumed)["checkpoint"]["artifactEvidence"].is_null(),

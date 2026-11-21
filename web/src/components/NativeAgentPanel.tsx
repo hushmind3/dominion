@@ -15,7 +15,7 @@ type SdkRun = {
   verificationChecks?: {satisfied:boolean;explanation?:string}[];
   toolReceipts?: {id:string;tool:string;success:boolean;step:number}[];
   toolReceiptsOmitted?:number;
-  artifactEvidence?: {captureComplete:boolean;omitted:number;
+  artifactEvidence?: {captureComplete:boolean;origin:'kernel_checks'|'owner_checks';omitted:number;
    entries:{path:string;state:string;bytes?:number|null;sha256?:string|null}[]} | null;
  } | null
 }
@@ -308,9 +308,14 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      <summary className="cursor-pointer font-semibold">
       {en?'Captured file evidence':'파일 검증 스냅샷'} · {run.checkpoint?.artifactEvidence?.entries.length}
      </summary>
-     <p className="mt-2 text-[10px] text-[#82796D]">{en?
-      'Workspace file states captured when this run ended. Not a live scan or a claim that all checks passed.':
-      '실행 종료 시 관찰한 파일 상태입니다. 현재 파일과의 일치 또는 전체 검증 통과를 뜻하지 않습니다.'}</p>
+     <p className="mt-2 text-[10px] text-[#82796D]">
+      {run.checkpoint?.artifactEvidence?.origin==='kernel_checks'
+       ?(en?'Host evidence including kernel-derived checks':'커널 추가 검증을 포함한 Host 증거')
+       :(en?'Owner-specified acceptance paths':'사용자 지정 검증 대상')}
+      {' · '}
+      {en?'Captured at run settlement; not a live scan or proof all checks passed.':
+       '실행 종료 시 관찰한 상태이며 현재 파일 상태나 전체 검증 통과를 보장하지 않습니다.'}
+     </p>
      {Boolean(run.checkpoint?.artifactEvidence?.omitted)&&<p className="mt-1 text-[10px] text-[#82796D]">
       {en?`${run.checkpoint?.artifactEvidence?.omitted} earlier files omitted`:
        `파일 ${run.checkpoint?.artifactEvidence?.omitted}건 표시 생략`}

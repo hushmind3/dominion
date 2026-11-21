@@ -236,7 +236,7 @@ try{
     {id:'saved-tool-2',tool:'workspace_write',success:false,step:2}],
    toolReceiptsOmitted:0,verificationChecks:[
     {satisfied:false,explanation:'Expected file content was not found'}],
-   artifactEvidence:{captureComplete:true,omitted:0,
+   artifactEvidence:{captureComplete:true,origin:'kernel_checks',omitted:0,
     entries:[{path:'summary.md',state:'file',bytes:14,
      sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}]}}}
  await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
@@ -251,6 +251,7 @@ try{
   'A failed acceptance check must not be shown as a verified result')
  await page.locator('summary').filter({hasText:'파일 검증 스냅샷'}).click()
  await page.getByText('summary.md').waitFor({timeout:8000})
+ assert.equal(await page.getByText('커널 추가 검증을 포함한 Host 증거').count(),1)
  assert.equal(await page.getByText('SHA-256:',{exact:false}).count(),1)
  assert.equal(await page.locator('summary').filter({hasText:'실제 결과 검증 · 0/1'}).count(),1)
  await screenshot(page,'1440-native-receipts.png')
