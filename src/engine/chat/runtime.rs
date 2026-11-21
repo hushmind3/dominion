@@ -186,12 +186,7 @@ async fn run_turn_with_policy(
     // are held. A reconnect/retry of an already-written owner turn may not
     // create another root task or repeat an effectful agent tool call.
     if let Some(client_turn_id) = request.client_turn_id.as_deref() {
-        let already_written = state.store.messages(&session_id).iter().any(|message| {
-            message["role"] == "user"
-                && message["metadata"]["authorKind"] == "owner"
-                && message["metadata"]["clientTurnId"].as_str() == Some(client_turn_id)
-        });
-        if already_written {
+        if state.store.has_owner_turn_key(&session_id,client_turn_id)? {
             return Err("동일한 요청이 이미 저장되었습니다. 대화 기록을 확인하세요.".into());
         }
     }
