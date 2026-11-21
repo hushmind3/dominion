@@ -22,6 +22,24 @@ const KEY_LEN: usize = 32;
 const STREAM_CHUNK_BYTES: usize = 1024 * 1024;
 const STREAM_HEADER_BYTES: usize = 7 + 4 + 7 + 8;
 
+struct RemoveFileOnDrop(PathBuf);
+
+impl Drop for RemoveFileOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+struct RemoveFilesOnDrop(Vec<PathBuf>);
+
+impl Drop for RemoveFilesOnDrop {
+    fn drop(&mut self) {
+        for path in &self.0 {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct KeyRing {
     active: u32,
@@ -355,36 +373,39 @@ pub fn rotate(state: &AppState, keep_old: bool) -> Result<RotationReport, String
     let previous_version = ring.active_version();
     let directory = state.config.data_dir.join("backups");
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    let mut payloads = Vec::new();
-    for path in backup_files(&directory) {
-        let sealed = std::fs::read(&path).map_err(|error| error.to_string())?;
-        let plain = if KeyRing::is_versioned(&sealed) {
-            ring.decrypt(&sealed)
-                .ok_or_else(|| format!("cannot decrypt {}", path.display()))?
-        } else {
-            // Legacy snapshots were sealed with the vault key.
-            state
-                .vault
-                .open_bytes(&sealed)
-                .ok_or_else(|| format!("legacy backup key unavailable for {}", path.display()))?
-        };
-        payloads.push((path, plain));
-    }
-
     let next = ring.versions().into_iter().max().unwrap_or(0) + 1;
     let mut new_key = [0u8; KEY_LEN];
     rand::thread_rng().fill_bytes(&mut new_key);
     ring.keys.insert(next, new_key);
     ring.active = next;
 
-    // Encrypt to temp files first; originals stay valid until every write
-    // succeeds.
+    // Stage each backup before changing the active key. Version 3 backups are
+    // decrypted and re-encrypted in bounded chunks; older single-message
+    // envelopes still use their historical in-memory decoder one file at a time.
     let mut staged = Vec::new();
-    for (path, plain) in &payloads {
-        let sealed = ring.encrypt_with(next, plain)?;
-        let temp = path.with_extension("enc.tmp");
-        std::fs::write(&temp, &sealed).map_err(|error| error.to_string())?;
-        staged.push((temp, path.clone()));
+    let mut staged_cleanup = RemoveFilesOnDrop(Vec::new());
+    for path in backup_files(&directory) {
+        let temp = directory.join(format!(".rotate-{}.enc.tmp", uuid::Uuid::new_v4()));
+        staged_cleanup.0.push(temp.clone());
+        let mut output = std::fs::File::create(&temp).map_err(|error| error.to_string())?;
+        if KeyRing::is_stream_file(&path).map_err(|error| error.to_string())? {
+            let plain_path = directory.join(format!(".rotate-{}.plain.tmp", uuid::Uuid::new_v4()));
+            let _plain_cleanup = RemoveFileOnDrop(plain_path.clone());
+            let plain_len = ring.decrypt_stream_file_to(&path, &plain_path)?;
+            let mut plaintext = std::fs::File::open(&plain_path).map_err(|error| error.to_string())?;
+            ring.encrypt_reader(&mut plaintext, plain_len, &mut output)?;
+        } else {
+            let sealed = std::fs::read(&path).map_err(|error| error.to_string())?;
+            let plain = if KeyRing::is_versioned(&sealed) {
+                ring.decrypt(&sealed)
+            } else {
+                // Legacy snapshots were sealed with the vault key.
+                state.vault.open_bytes(&sealed)
+            }.ok_or_else(|| format!("cannot decrypt {}", path.display()))?;
+            ring.encrypt_reader(&mut std::io::Cursor::new(&plain), plain.len() as u64, &mut output)?;
+        }
+        output.sync_all().map_err(|error| error.to_string())?;
+        staged.push((temp, path));
     }
     write_private(&key_file(&ring.directory, next), &new_key)?;
     std::fs::write(ring.directory.join("active"), next.to_string())
@@ -403,7 +424,7 @@ pub fn rotate(state: &AppState, keep_old: bool) -> Result<RotationReport, String
     let report = RotationReport {
         active_version: next,
         previous_version,
-        reencrypted: payloads.len(),
+        reencrypted: staged.len(),
         retained_versions: KeyRing::load_or_create(&state.config.data_dir)?.versions(),
     };
     state.store.audit(
