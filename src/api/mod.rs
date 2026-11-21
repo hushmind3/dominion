@@ -340,6 +340,13 @@ pub fn router(state: AppState) -> Router {
             maintenance_guard,
         ))
         .layer(middleware::from_fn_with_state(state.clone(), guard_writes))
+        // Browsers must not read local sessions or API metadata by using a
+        // rebinding DNS name as the HTTP Host/HTTP2 authority. CORS and the
+        // write-only Origin check alone do not protect same-origin rebinding.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            guard_local_host,
+        ))
         .layer(cors)
         .layer(axum::extract::DefaultBodyLimit::max(12 * 1024 * 1024))
         .with_state(state)
@@ -383,6 +390,85 @@ async fn maintenance_guard(State(state): State<AppState>, request: Request, next
         })),
     )
         .into_response()
+}
+
+/// Validate a supplied browser Host on every local-owner API request,
+/// including GET, SSE and credential metadata reads. The standalone product
+/// listens on 127.0.0.1 only; its remote worker gateway is a separate router.
+///
+/// Internal in-process requests may omit Host. A real browser cannot set or
+/// remove its Host header, and HTTP/2 supplies the authority field.
+fn local_host_allowed(request:&Request,port:u16)->bool {
+    let actual=request.headers().get(header::HOST)
+        .and_then(|v|v.to_str().ok())
+        .or_else(||request.uri().authority().map(|v|v.as_str()));
+    match actual {
+        None=>true, // internal tests/in-process invocations, not browser traffic
+        Some(host)=>host.eq_ignore_ascii_case(&format!("127.0.0.1:{port}"))
+            ||host.eq_ignore_ascii_case(&format!("localhost:{port}"))
+    }
+}
+async fn guard_local_host(State(state):State<AppState>,request:Request,next:Next)->Response {
+    if request.uri().path().starts_with("/api/")
+        && !local_host_allowed(&request,state.config.port) {
+        return (StatusCode::FORBIDDEN,Json(json!({
+            "error":"Untrusted Host for local owner API"
+        }))).into_response();
+    }
+    next.run(request).await
+}
+#[cfg(test)]
+mod host_security_tests {
+    use super::*;
+
+    #[test]
+    fn browser_authority_is_exact_loopback_host_and_port() {
+        for (host,expected) in [
+            ("127.0.0.1:4317",true),("localhost:4317",true),
+            ("LOCALHOST:4317",true),("localhost:4318",false),
+            ("attacker.invalid:4317",false),("localhost.attacker.invalid:4317",false),
+            ("127.0.0.1:4317.attacker.invalid",false),("127.0.0.2:4317",false),
+            ("[::1]:4317",false),
+        ] {
+            let request=Request::builder().uri("/api/sessions")
+                .header(header::HOST,host)
+                .body(axum::body::Body::empty()).unwrap();
+            assert_eq!(local_host_allowed(&request,4317),expected,"{host}");
+        }
+    }
+
+    #[tokio::test]
+    async fn dns_rebinding_host_cannot_read_private_owner_api() {
+        let root=std::env::temp_dir().join(format!(
+            "dominion-owner-host-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let listener=tokio::net::TcpListener::bind(("127.0.0.1",0)).await.unwrap();
+        let port=listener.local_addr().unwrap().port();
+        let config=crate::config::Config{
+            port,data_dir:root.clone(),web_dir:root.join("web"),
+            workspace:root.clone(),
+        };
+        let state=AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        state.store.put("session",&json!({"id":"private-session",
+            "title":"PRIVATE OWNER CONTENT"})).unwrap();
+        let server=tokio::spawn(async move {
+            axum::serve(listener,router(state)).await
+        });
+        let url=format!("http://127.0.0.1:{port}/api/sessions");
+        let client=reqwest::Client::new();
+        let valid=client.get(&url).send().await.unwrap();
+        assert_eq!(valid.status(),StatusCode::OK);
+        let wrong=client.get(&url).header(header::HOST,format!("evil.example:{port}"))
+            .send().await.unwrap();
+        assert_eq!(wrong.status(),StatusCode::FORBIDDEN);
+        let wrong_body=wrong.text().await.unwrap();
+        assert!(!wrong_body.contains("PRIVATE OWNER CONTENT"));
+        server.abort();
+        let _=server.await;
+        crate::test_support::cleanup_dir(root);
+    }
 }
 
 /// Rejects cross-origin writes so a random website cannot drive the local
