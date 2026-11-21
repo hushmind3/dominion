@@ -60,3 +60,40 @@ use super::*;
         assert!(text.is_empty() && reasoning.is_empty());
         assert!(completion.content.is_empty() && calls.is_empty());
     }
+
+    #[test]
+    fn final_snapshot_restores_second_tool_after_first_streamed() {
+        let mut completion = Completion::default();
+        let mut calls = vec![ToolCall {
+            id: "call-1".into(), name: "workspace_read".into(),
+            arguments: r#"{"path":"a.txt"}"#.into(),
+        }];
+        merge_final_chat_message(&mut completion, &mut calls, &json!({
+            "tool_calls": [
+                {"id":"call-1","function":{"name":"workspace_read","arguments":r#"{"path":"a.txt"}"#}},
+                {"id":"call-2","function":{"name":"workspace_read","arguments":r#"{"path":"b.txt"}"#}}
+            ]
+        })).unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].id, "call-1");
+        assert_eq!(calls[1].id, "call-2");
+        assert_eq!(calls[1].arguments, r#"{"path":"b.txt"}"#);
+    }
+
+    #[test]
+    fn final_snapshot_completes_partial_streamed_tool_arguments() {
+        let mut completion = Completion::default();
+        let mut calls = vec![ToolCall {
+            id: "call-1".into(), name: "workspace_re".into(),
+            arguments: r#"{"path":"#.into(),
+        }];
+        merge_final_chat_message(&mut completion, &mut calls, &json!({
+            "tool_calls": [{
+                "id":"call-1",
+                "function":{"name":"workspace_read","arguments":r#"{"path":"a.txt"}"#}
+            }]
+        })).unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "workspace_read");
+        assert_eq!(calls[0].arguments, r#"{"path":"a.txt"}"#);
+    }

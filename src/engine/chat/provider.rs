@@ -292,27 +292,40 @@ fn merge_final_chat_message(
             new_reasoning.push_str(suffix);
         }
     }
-    if calls.iter().all(|call| call.name.is_empty()) {
-        if let Some(final_calls) = message["tool_calls"].as_array() {
-            if final_calls.len() > MAX_TOOL_CALLS {
-                return Err("모델이 너무 많은 도구 호출을 반환했습니다.".into());
+    if let Some(final_calls) = message["tool_calls"].as_array() {
+        if final_calls.len() > MAX_TOOL_CALLS {
+            return Err("모델이 너무 많은 도구 호출을 반환했습니다.".into());
+        }
+        if !final_calls.is_empty() {
+            let mut parsed = Vec::with_capacity(final_calls.len());
+            for (index, item) in final_calls.iter().enumerate() {
+                let name = item["function"]["name"]
+                    .as_str()
+                    .filter(|name| !name.is_empty())
+                    .ok_or("모델의 최종 도구 호출에 이름이 없습니다.")?;
+                let id = item["id"].as_str().filter(|id| !id.is_empty())
+                    .or_else(|| calls.get(index).map(|call| call.id.as_str())
+                        .filter(|id| !id.is_empty()))
+                    .map(str::to_string)
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                parsed.push(ToolCall {
+                    id,
+                    name: name.to_string(),
+                    arguments: item["function"]["arguments"]
+                        .as_str().unwrap_or("{}").to_string(),
+                });
             }
-            if !final_calls.is_empty() {
-                let mut parsed = Vec::with_capacity(final_calls.len());
-                for item in final_calls {
-                    let name = item["function"]["name"]
-                        .as_str()
-                        .filter(|name| !name.is_empty())
-                        .ok_or("모델의 최종 도구 호출에 이름이 없습니다.")?;
-                    parsed.push(ToolCall {
-                        id: item["id"].as_str().filter(|id| !id.is_empty())
-                            .map(str::to_string)
-                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
-                        name: name.to_string(),
-                        arguments: item["function"]["arguments"]
-                            .as_str().unwrap_or("{}").to_string(),
-                    });
-                }
+            // Some compatible relays send the full snapshot after streaming
+            // only the first tool, or while an argument is still incomplete.
+            // Complete only a proven prefix; conflicting snapshots must never
+            // replace an already observed tool request.
+            let aligned = parsed.len() >= calls.len()
+                && calls.iter().zip(parsed.iter()).all(|(partial, full)| {
+                    (partial.id.is_empty() || partial.id == full.id)
+                        && full.name.starts_with(&partial.name)
+                        && full.arguments.starts_with(&partial.arguments)
+                });
+            if aligned {
                 *calls = parsed;
             }
         }
