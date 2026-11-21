@@ -380,3 +380,12 @@ test('transcript reconciliation uses authoritative persisted owner IDs, not repe
  assert.match(chat,/!messages\.length&&!showOptimisticOwner&&/)
  assert.match(chat,/if\(!streamStarted\)\{\s*setInput\(previous=>previous\.trim\(\)\?previous:text\)/)
 })
+
+test('stop retains streamed assistant text and restores pre-session unsaved owner prompt',()=>{
+ const chat=source('src/pages/Chat.tsx')
+ assert.match(chat,/if\(optimisticOwner\?\.sessionId===undefined\)/)
+ assert.match(chat,/setInput\(previous=>previous\.trim\(\)\?previous:optimisticOwner\.content\)/)
+ assert.match(chat,/if\(controller\)flushStreamBuffer\(\);\s*controller\?\.abort\(\)/)
+ assert.match(chat,/setBusy\(false\);setLiveApproval\(null\);setToolStatus\(''\);/)
+ assert.doesNotMatch(chat,/controller\?\.abort\(\);clearStreamBuffer\(\);/)
+})
