@@ -652,7 +652,7 @@ async fn run_locked(
             .or_else(||effort_choice.as_deref().map(|effort| effort != "none"))
             .or_else(||(!codex_route).then_some(false));
         let mut request=TurnRequest {
-            session_id:Some(session_id.to_string()),input:owner_text.to_string(),agent_id:Some(agent_id.clone()),provider_id,model,attachment_ids: Vec::new(),tools_enabled:room["toolsEnabled"].as_bool().unwrap_or(false),tools_execution_enabled:true,thinking,auto_learning:room["autoLearning"].as_bool().unwrap_or(false),reasoning_effort,reasoning_language: (input["reasoningLanguage"].as_str().unwrap_or("ko") == "ko").then(|| "ko".into()),
+            session_id:Some(session_id.to_string()),input:owner_text.to_string(),agent_id:Some(agent_id.clone()),provider_id,model,attachment_ids: Vec::new(),tools_enabled:room["toolsEnabled"].as_bool().unwrap_or(false),tools_execution_enabled:true,direct_chat:false,thinking,auto_learning:room["autoLearning"].as_bool().unwrap_or(false),reasoning_effort,reasoning_language: (input["reasoningLanguage"].as_str().unwrap_or("ko") == "ko").then(|| "ko".into()),
             task_id:Some(task_id.clone()),parent_task_id:None,task_revision:task_revision.clone(),verification_owner:Some("self".into()),
             // The invariant room identity, participants, topic, and authority
             // are supplied by room_context::core. The current owner message,
