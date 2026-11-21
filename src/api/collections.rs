@@ -177,36 +177,13 @@ pub async fn one(State(state): State<AppState>, OriginalUri(uri): OriginalUri) -
 pub async fn remove(State(state): State<AppState>, OriginalUri(uri): OriginalUri) -> Response {
     let kind = kind_from_uri(&uri);
     if let Some(id) = id_from_uri(&uri) {
-        if kind == "memory" {
-            // "Delete" means no longer recall this fact, not destroy its
-            // original cited source. A durable tombstone also prevents stale
-            // clients from silently reviving a learned or owner-edited fact.
-            let Some(record)=state.store.get("memory",&id) else {
-                return (StatusCode::NOT_FOUND,Json(json!({
-                    "error":"삭제할 기억을 찾을 수 없습니다."
-                }))).into_response();
-            };
-            if record["status"]!="deleted" {
-                let expected=record["status"].clone();
-                let Some(deleted)=state.store.patch_if(
-                    "memory",&id,"status",&expected,
-                    &json!({"status":"deleted",
-                        "deletedAt":chrono::Utc::now().to_rfc3339(),
-                        "deletedBy":"owner"})
-                ) else {
-                    return (StatusCode::CONFLICT,Json(json!({
-                        "error":"기억 상태가 변경되었습니다. 새로고침 후 다시 확인하세요."
-                    }))).into_response();
-                };
-                state.store.audit("memory.owner_delete",json!({"memoryId":id}));
-                state.bus.record("memory",&deleted);
-            }
-            return Json(json!({"ok":true})).into_response();
-        }
         if kind == "mcp" {
             state.store.remove_secret(&format!("mcp:{id}"));
             crate::integrations::mcp::invalidate(&state);
         }
+        // Deletion means actual removal from the memory store, not a hidden
+        // tombstone. Owner correction is the separate evidence-preserving path.
+        // Original chat/source messages are not modified by deleting a memory.
         state.store.remove(&kind, &id);
         state
             .bus
@@ -397,28 +374,28 @@ mod memory_edit_tests{
     }
 
     #[tokio::test]
-    async fn deleting_memory_preserves_source_evidence_and_blocks_retrieval(){
+    async fn deleting_memory_removes_the_record_while_leaving_source_messages_intact(){
         let state=state();
+        state.store.put("session",&json!({"id":"owner-session"})).unwrap();
+        let owner=state.store.write_message(&json!({
+            "session_id":"owner-session","role":"user","content":"원본 근거"
+        })).unwrap();
         state.store.put("memory",&json!({
             "id":"memory-evidence","status":"active","scope":"session",
             "sessionId":"owner-session","source":"learn",
-            "sourceMessageIds":["immutable-message"],
+            "sourceMessageIds":[owner["id"]],
             "text":"원본에서 추출한 기억"
         })).unwrap();
-        let uri=OriginalUri("/api/memories/memory-evidence".parse().unwrap());
-        let response=remove(State(state.clone()),uri).await;
+        let response=remove(State(state.clone()),
+            OriginalUri("/api/memories/memory-evidence".parse().unwrap())).await;
         assert_eq!(response.status(),StatusCode::OK);
-        let record=state.store.get("memory","memory-evidence").unwrap();
-        assert_eq!(record["status"],"deleted");
-        assert_eq!(record["sourceMessageIds"][0],"immutable-message");
-        assert_eq!(record["text"],"원본에서 추출한 기억");
-        assert!(!crate::engine::memory::retrieval_eligible(&record));
-        let retry=remove(
-            State(state.clone()),
-            OriginalUri("/api/memories/memory-evidence".parse().unwrap())
-        ).await;
-        assert_eq!(retry.status(),StatusCode::OK,"Delete must be idempotent");
-        assert_eq!(state.store.all("memory").len(),1);
+        assert!(state.store.get("memory","memory-evidence").is_none());
+        assert_eq!(state.store.message(owner["id"].as_str().unwrap()).unwrap()["content"],
+            "원본 근거");
+        let retry=remove(State(state.clone()),
+            OriginalUri("/api/memories/memory-evidence".parse().unwrap())).await;
+        assert_eq!(retry.status(),StatusCode::OK);
+        assert!(state.store.all("memory").is_empty());
         let edit=edit_owner_memory(&state,"memory-evidence",&json!({
             "expectedText":"원본에서 추출한 기억","text":"부활 시도"
         }));
