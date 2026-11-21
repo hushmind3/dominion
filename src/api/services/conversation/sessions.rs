@@ -38,8 +38,17 @@ pub async fn delete_session(State(state): State<AppState>, Path(id): Path<String
         || session["kind"] == "room_worker" {
         return error(StatusCode::CONFLICT, "그룹 또는 외부 채널 대화는 해당 화면에서 관리하세요.");
     }
-    let running = state.active.lock().unwrap().contains(&id)
-        || state.store.all("execution").iter().any(|run| {
+    // Share the Chat session lock and durable lease while purging files.
+    // A second process must not start a turn between the running check and
+    // actual deletion, leaving a newly uploaded file orphaned.
+    if !state.begin_session(&id) {
+        return error(StatusCode::CONFLICT, "실행 중인 대화입니다. 중지 완료 후 삭제하세요.");
+    }
+    let _session_guard = state.session_guard(&id);
+    let Some(_lease) = engine::lease::LeaseGuard::acquire(&state, &id) else {
+        return error(StatusCode::CONFLICT, "다른 엔진에서 사용 중인 대화입니다.");
+    };
+    let running = state.store.all("execution").iter().any(|run| {
             run["sessionId"].as_str() == Some(id.as_str()) && run["status"] == "running"
         })
         || state.store.all("job").iter().any(|job| {
@@ -366,6 +375,10 @@ mod deletion_tests {
         assert_eq!(busy.status(), StatusCode::CONFLICT);
         assert!(state.store.get("session", "active").is_some());
         state.end_session("active");
+        let other_process = engine::lease::LeaseGuard::acquire(&state,"active").unwrap();
+        let leased = delete_session(State(state.clone()), Path("active".into())).await;
+        assert_eq!(leased.status(), StatusCode::CONFLICT);
+        drop(other_process);
         state.store.put("job", &json!({
             "id":"pending", "status":"queued", "input":{"sessionId":"active"}
         }));
