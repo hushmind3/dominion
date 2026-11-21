@@ -135,7 +135,7 @@ fn consume_decision(state: &AppState, id: &str, execution_id: &str, operation_id
 }
 
 pub(super) fn close_pending_approvals(state: &AppState, session_id: &str) {
-    for record in state.store.all("approval") {
+    for record in state.store.unresolved_approvals().unwrap_or_default() {
         if record["sessionId"].as_str() != Some(session_id) || record["status"] != "pending" {
             continue;
         }
@@ -165,7 +165,7 @@ pub(super) fn close_pending_approvals(state: &AppState, session_id: &str) {
 pub(super) fn expire_stale_approvals(state: &AppState) -> usize {
     let now = chrono::Utc::now();
     let mut expired = 0;
-    for record in state.store.all("approval") {
+    for record in state.store.unresolved_approvals().unwrap_or_default() {
         if record["status"] != "pending" {
             continue;
         }
