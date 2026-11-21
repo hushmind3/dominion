@@ -31,6 +31,22 @@ test('one Rust Harness owns provider/tool admission, independent strategies only
   assert.ok(!exists('src/engine/core/mod.rs'),'shadow compatibility kernel reintroduced');
 });
 
+test('Chat and SDK share the core continuation gate, not divergent model-round loops',()=>{
+  const chat=source('src/engine/services/conversation/chat/runtime/turn_body.rs');
+  const harness=source('crates/dominion-turn-core/src/agent_loop.rs');
+  const driver=source('crates/dominion-turn-core/src/driver.rs');
+  assert.match(chat,/while let Some\(round\)=harness\.next_round\(/);
+  assert.doesNotMatch(chat,/for round in 0\.\.max_rounds/);
+  assert.match(harness,/pub fn next_round\(/);
+  assert.match(harness,/while self\.next_round\(/);
+  assert.match(harness,/self\.driver\.next_model_round\(/);
+  assert.match(driver,/pub fn next_model_round\(/);
+  assert.match(driver,/if finished \|\| self\.rounds>=self\.max_rounds/);
+  assert.match(chat,/harness\.request_model\(/);
+  assert.match(chat,/harness\.admit_prepared\(/);
+  assert.match(harness,/self\.admit_prepared\(/);
+});
+
 test('all model tools share one effect gateway and writer lock alias',()=>{
   const tools=source('src/engine/services/tools/tools.rs');
   const lease=source('src/engine/services/operations/resource_lock.rs');
