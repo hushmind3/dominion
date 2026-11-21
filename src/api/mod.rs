@@ -402,6 +402,16 @@ async fn no_stale_ui(request: Request, next: Next) -> Response {
 /// While maintenance mode is on, only reads and `/api/system/*` mutations are
 /// allowed. Restore cannot race with normal writes.
 async fn maintenance_guard(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    // A failed rollback or a crash during restore leaves a durable marker.
+    // Do not serve potentially mismatched database/key state until restart
+    // recovery has settled that marker before Store and Vault are opened.
+    if request.uri().path().starts_with("/api/")
+        && crate::engine::restore_transaction::pending(&state.config.data_dir)
+    {
+        return (StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error":"backup restore recovery pending; restart required"}))
+        ).into_response();
+    }
     if !state.maintenance_mode() {
         return next.run(request).await;
     }
