@@ -109,6 +109,7 @@ impl HttpSession {
         let mut session = Self {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(60))
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .map_err(|error| error.to_string())?,
             url,
@@ -161,9 +162,11 @@ impl HttpSession {
                 Ok(true)
             }
             Err(error) if error.starts_with("MCP HTTP 404") => Ok(false),
+            // A compliant older server rejects the 2026 protocol version
+            // with -32022. Retry the existing initialize handshake, but do not
+            // downgrade on a header mismatch (-32020) or auth/validation error.
             Err(error) if error.starts_with("MCP HTTP 400")
-                && !error.contains("-32022")
-                && !error.contains("-32020") => Ok(false),
+                && error.contains("-32022") => Ok(false),
             Err(error)=>Err(error),
         }
     }
