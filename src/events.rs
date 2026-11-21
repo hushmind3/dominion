@@ -85,6 +85,7 @@ impl Bus {
                 event["verified"]=record["verified"].clone();
                 event["evidenceOrigin"]=record["evidenceOrigin"].clone();
                 event["workerJobId"]=record["localJobId"].clone();
+                event["remoteUsage"]=record["usage"].clone();
             }
             events.push(event);
         }
