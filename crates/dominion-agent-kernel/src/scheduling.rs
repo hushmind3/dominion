@@ -11,6 +11,24 @@ pub enum ToolBatch {
     Exclusive { index:usize },
 }
 
+/// The only shell observations proven inert without interpreting shell syntax.
+/// Callers MUST check this exact predicate at both planning and runtime lock
+/// admission. A near match with substitutions, pipes or flags stays exclusive.
+pub fn inert_shell_command(args:&serde_json::Value)->bool{
+    let Some(command)=args["command"].as_str().map(str::trim) else{return false};
+    let mut words=command.split_ascii_whitespace();
+    match words.next(){
+        Some("sleep")=>{
+            let value=words.next().and_then(|text|text.parse::<f64>().ok());
+            words.next().is_none() && value.is_some_and(|seconds|
+                seconds.is_finite() && (0.0..=60.0).contains(&seconds))
+        },
+        Some("pwd"|"whoami"|"uptime"|"date"|"uname"|"id")=>
+            words.next().is_none(),
+        _=>false,
+    }
+}
+
 /// Conservative allowlist: a tool name is eligible for overlapping reads
 /// only when the DOMINION host implements it as a native observation.
 pub fn safe_to_overlap(name:&str)->bool{
@@ -108,6 +126,18 @@ mod tests{
             ParallelRead{start:4,len:4},
             ParallelRead{start:8,len:2}
         ]);
+    }
+    #[test]
+    fn only_literal_inert_shell_observations_qualify_for_unlocked_execution(){
+        use serde_json::json;
+        for command in ["sleep 2.0","sleep 0","sleep 60","date","pwd","id"]{
+            assert!(inert_shell_command(&json!({"command":command})), "{command}");
+        }
+        for command in ["sleep 61","sleep 1; touch bad","sleep $(touch bad)",
+            "sleep 1 && rm -rf x","date > f","uname -a","git status",
+            "cargo test","sleep 1 | cat"]{
+            assert!(!inert_shell_command(&json!({"command":command})), "{command}");
+        }
     }
     #[test]
     fn low_cap_runs_exclusively_in_original_model_order(){

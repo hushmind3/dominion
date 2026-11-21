@@ -11,29 +11,12 @@ fn registry()->&'static Mutex<HashMap<String,Weak<AsyncMutex<()>>>>{
     static REGISTRY:OnceLock<Mutex<HashMap<String,Weak<AsyncMutex<()>>>>>=OnceLock::new();
     REGISTRY.get_or_init(||Mutex::new(HashMap::new()))
 }
-/// Only literal, non-mutating process observations bypass the workspace
-/// writer barrier. This is deliberately narrower than a generic shell
-/// "read-only" heuristic: builds, git commands and arbitrary scripts can
-/// modify files even when their names sound observational.
-fn inert_shell_command(args:&Value)->bool{
-    let Some(command)=args["command"].as_str().map(str::trim) else{return false};
-    let mut words=command.split_ascii_whitespace();
-    match words.next(){
-        Some("sleep")=>{
-            let value=words.next().and_then(|text|text.parse::<f64>().ok());
-            words.next().is_none() && value.is_some_and(|seconds|
-                seconds.is_finite() && (0.0..=60.0).contains(&seconds))
-        },
-        Some("pwd"|"whoami"|"uptime"|"date"|"uname"|"id")=>
-            words.next().is_none(),
-        _=>false,
-    }
-}
 fn key(workspace:&Path,name:&str,args:&Value)->Option<String>{
     let canonical=workspace.canonicalize().unwrap_or_else(|_|workspace.to_path_buf());
     let prefix=canonical.to_string_lossy();
     match name{
-        "shell_exec"|"terminal_exec" if inert_shell_command(args)=>None,
+        "shell_exec"|"terminal_exec"
+            if dominion_agent_kernel::scheduling::inert_shell_command(args)=>None,
         "workspace_write"|"workspace_replace"|"workspace_replace_range"|
         "workspace_apply_patch"|"team_remote_apply"|"shell_exec"|"terminal_exec"|"external_harness_run" =>
             Some(format!("workspace:{prefix}")),

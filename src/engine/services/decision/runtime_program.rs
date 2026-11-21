@@ -1158,7 +1158,15 @@ pub(super) fn execute_nodes<'a>(
                         algorithm["implementation"].as_str().map(str::to_string)
                     })
                     .unwrap_or_else(|| "concurrent".into());
-                    if parallel_mode == "sequential" || schedule.requires_serial() {
+                    // A concurrent ProgramIR can contain nested sequences with
+                    // distinct local targets. Keep the default writer barriers,
+                    // but allow this narrow, SDK-checked disjoint case. The
+                    // native gateway still holds writer leases per tool call.
+                    let disjoint_nested=parallel_mode!="sequential"
+                        && !schedule.has_dependencies
+                        && dominion_agent_loop::task_team::independent_nested_writers(&children);
+                    if parallel_mode == "sequential"
+                        || (schedule.requires_serial() && !disjoint_nested) {
                         let mut paused = false;
                         let mut failure=None::<Value>;
                         let mut used_parallel_waves=false;

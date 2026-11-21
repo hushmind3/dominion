@@ -17,6 +17,89 @@ impl Schedule {
         self.has_dependencies || self.has_writers
     }
 }
+/// A narrow, statically-provable exception for independent nested program
+/// branches. The ordinary Team scheduler remains conservative: top-level
+/// writes and delegates are still exclusive barriers.
+///
+/// Concurrent children may contain only literal inert shell observations,
+/// deterministic local single-file mutations, and control flow over already
+/// resolved ProgramIR values. Every branch must mutate a disjoint explicit
+/// relative path. Any dynamic/unknown tool, external effect, workspace read,
+/// dependency, or ambiguous path fails closed to the existing serial waves.
+/// The host's workspace-wide writer lease still serializes actual writes.
+pub fn independent_nested_writers(nodes:&[Value])->bool{
+    fn access(node:&Value,paths:&mut BTreeSet<String>,has_write:&mut bool)->bool{
+        if node.get("dependsOn").is_some()
+            && node["dependsOn"].as_array().is_none_or(|a|!a.is_empty()){
+            return false;
+        }
+        match node["type"].as_str().unwrap_or(""){
+            "observe"|"verify"=>true,
+            "call_tool"=>{
+                let tool=node["tool"].as_str().unwrap_or("");
+                match tool{
+                    "shell_exec"|"terminal_exec"=>
+                        dominion_agent_kernel::scheduling::inert_shell_command(&node["inputs"]),
+                    "workspace_write"|"workspace_replace"|"workspace_replace_range"=>{
+                        let Some(raw)=node["inputs"]["path"].as_str() else{return false};
+                        let path=std::path::Path::new(raw);
+                        if raw.is_empty() || path.is_absolute() {return false;}
+                        let mut parts=Vec::new();
+                        for part in path.components(){
+                            match part{
+                                std::path::Component::Normal(name)=>{
+                                    parts.push(name.to_string_lossy().to_lowercase());
+                                },
+                                std::path::Component::CurDir=>{},
+                                _=>return false,
+                            }
+                        }
+                        if parts.is_empty(){return false;}
+                        *has_write=true;
+                        paths.insert(parts.join("/"));
+                        true
+                    },
+                    _=>false,
+                }
+            },
+            "sequence"=>{
+                node["nodes"].as_array().is_some_and(|items|
+                    !items.is_empty() && items.iter().all(|item|
+                        access(item,paths,has_write)))
+            },
+            "branch"=>{
+                node["then"].as_array().is_some_and(|items|
+                    items.iter().all(|item|access(item,paths,has_write)))
+                && node["else"].as_array().is_some_and(|items|
+                    items.iter().all(|item|access(item,paths,has_write)))
+            },
+            "loop"=>{
+                let count=node["maxIterations"].as_u64().unwrap_or(0);
+                (1..=16).contains(&count) && node["body"].as_array()
+                    .is_some_and(|items|!items.is_empty() &&
+                        items.iter().all(|item|access(item,paths,has_write)))
+            },
+            _=>false,
+        }
+    }
+    if nodes.len()<2 || nodes.len()>16 {return false;}
+    let mut all_paths=BTreeSet::new();
+    for child in nodes{
+        if !matches!(child["type"].as_str(),Some("sequence"|"branch")){
+            return false;
+        }
+        let mut paths=BTreeSet::new();
+        let mut has_write=false;
+        if !access(child,&mut paths,&mut has_write) || !has_write {
+            return false;
+        }
+        if paths.iter().any(|path|all_paths.contains(path)){
+            return false;
+        }
+        all_paths.extend(paths);
+    }
+    true
+}
 fn writes(node:&Value)->bool{
     match node["type"].as_str().unwrap_or(""){
         "delegate"|"model_decision"|"loop"=>true,
@@ -116,6 +199,38 @@ mod tests{
         ];
         assert!(schedule(&backwards).unwrap_err().contains("cyclic"));
         assert!(!dominion_agent_kernel::scheduling::safe_to_overlap("mcp__other__read"));
+    }
+    #[test]
+    fn disjoint_nested_program_branches_can_overlap_without_write_conflicts(){
+        let a=json!({"id":"s1","type":"sequence","nodes":[
+            {"type":"call_tool","tool":"shell_exec","inputs":{"command":"sleep 2.0"}},
+            {"type":"branch","then":[{"type":"call_tool","tool":"workspace_write",
+                "inputs":{"path":"a.txt","content":"A"}}],"else":[{"type":"call_tool",
+                "tool":"workspace_write","inputs":{"path":"a-alt.txt","content":"A"}}]}
+        ]});
+        let b=json!({"id":"s2","type":"sequence","nodes":[
+            {"type":"call_tool","tool":"shell_exec","inputs":{"command":"sleep 2.0"}},
+            {"type":"loop","maxIterations":1,"body":[{"type":"call_tool",
+                "tool":"workspace_write","inputs":{"path":"b.txt","content":"B"}}]}
+        ]});
+        assert!(independent_nested_writers(&[a.clone(),b.clone()]));
+        assert!(schedule(&[a.clone(),b.clone()]).unwrap().requires_serial(),
+            "ordinary Team admission must stay conservative");
+        let mut same=b.clone();
+        same["nodes"][1]["body"][0]["inputs"]["path"]=json!("a.txt");
+        assert!(!independent_nested_writers(&[a.clone(),same]));
+        let mut dynamic=b.clone();
+        dynamic["nodes"][0]["inputs"]["command"]=json!("sleep 2; rm -rf .");
+        assert!(!independent_nested_writers(&[a.clone(),dynamic]));
+        let mut escaped=b.clone();
+        escaped["nodes"][1]["body"][0]["inputs"]["path"]=json!("../a.txt");
+        assert!(!independent_nested_writers(&[a.clone(),escaped]));
+        let mut unknown=b.clone();
+        unknown["nodes"][0]["tool"]=json!("mcp__arbitrary__read");
+        assert!(!independent_nested_writers(&[a.clone(),unknown]));
+        let mut dependent=b;
+        dependent["dependsOn"]=json!(["s1"]);
+        assert!(!independent_nested_writers(&[a,dependent]));
     }
     #[test]
     fn cycle_unknown_and_custom_mcp_mutations_fail_closed(){
