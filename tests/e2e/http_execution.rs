@@ -247,6 +247,33 @@ fn direct_chat_answers_without_agent_tools_or_action_execution() {
 
 
 
+
+#[test]
+fn direct_chat_search_request_remains_a_model_reply_without_web_tool_or_error() {
+    let _serial=serial();
+    let (port,requests)=scripted_provider(|_|{
+        vec![json!({"choices":[{"delta":{"content":"현재 웹 검색은 실행되지 않았습니다."},"finish_reason":"stop"}]})]
+    });
+    let app=TestApp::new(port,"native");
+    let session=app.post("/api/sessions",&json!({"title":"model-only search wording"}));
+    let id=session["id"].as_str().unwrap();
+    let response=app.chat(&json!({
+        "sessionId":id,"input":"2026년 최신 기술을 웹에서 검색해",
+        "directChat":true,"toolsEnabled":true,"toolsExecutionEnabled":true
+    }));
+    assert!(response.contains("owner_saved"),"{response}");
+    assert!(response.contains("assistant_saved"),"{response}");
+    assert!(!response.contains("도구 실행이 꺼져 있습니다"),"{response}");
+    let requests=requests.lock().unwrap();
+    assert_eq!(requests.len(),1);
+    assert!(requests[0]["tools"].as_array().is_none_or(Vec::is_empty));
+    drop(requests);
+    let executions=app.get("/api/executions");
+    assert_eq!(executions[0]["toolCalls"],0);
+    assert_eq!(executions[0]["taskOutcome"],"answered_unverified");
+}
+
+
 #[test]
 fn chat_mode_switch_removes_and_restores_agent_persona_without_losing_history() {
     let _serial = serial();
