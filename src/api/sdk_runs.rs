@@ -123,11 +123,15 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
         "name":a["tool"],"arguments":a["args"]})).unwrap_or(Value::Null);
     // List and detail responses share this projection. A large historical
     // run must not clone thousands of complete events on every idle poll.
-    // The underlying durable job retains every event; this is a bounded view.
+    // The host stores a bounded newest-first-window plus an exact dropped
+    // count. Legacy records without that count remain compatible.
     let event_rows=job["events"].as_array();
-    let events_omitted=event_rows.map(|rows|rows.len().saturating_sub(60))
+    let events_dropped=job["eventsDropped"].as_u64()
+        .and_then(|n|usize::try_from(n).ok()).unwrap_or(0);
+    let retained_hidden=event_rows.map(|rows|rows.len().saturating_sub(60))
         .unwrap_or(0);
-    let mut events=event_rows.map(|rows|rows.iter().skip(events_omitted)
+    let events_omitted=events_dropped.saturating_add(retained_hidden);
+    let mut events=event_rows.map(|rows|rows.iter().skip(retained_hidden)
         .map(project_run_event).collect::<Vec<_>>()).unwrap_or_default();
     if events.is_empty() {
         // The kernel already persisted these receipts and in-flight intents
@@ -242,7 +246,8 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
             "artifactEvidence":artifact_evidence,
             "pendingCall":approval,"uncertainAction":uncertain_action,
             "nativeStream":stream_progress,"events":events,
-            "eventsOmitted":events_omitted
+            "eventsOmitted":events_omitted,
+            "eventsDropped":events_dropped
         }
     })
 }
@@ -262,18 +267,21 @@ pub async fn events(
         return error(StatusCode::NOT_FOUND,"자동 작업 기록을 찾지 못했습니다.");
     };
     let rows=job["events"].as_array();
-    let total=rows.map(Vec::len).unwrap_or(0);
+    let earliest=job["eventsDropped"].as_u64()
+        .and_then(|n|usize::try_from(n).ok()).unwrap_or(0);
+    let total=earliest.saturating_add(rows.map(Vec::len).unwrap_or(0));
     let end=page.before.unwrap_or(total);
     let limit=page.limit.unwrap_or(40);
-    if end>total || limit==0 || limit>40 {
+    if end<earliest || end>total || limit==0 || limit>40 {
         return error(StatusCode::BAD_REQUEST,
             "이전 기록 페이지의 커서 또는 요청 개수가 유효하지 않습니다.");
     }
-    let start=end.saturating_sub(limit);
-    let events=rows.map(|items|items[start..end].iter()
+    let start=end.saturating_sub(limit).max(earliest);
+    let events=rows.map(|items|items[start-earliest..end-earliest].iter()
         .map(project_run_event).collect::<Vec<_>>()).unwrap_or_default();
     Json(json!({"events":events,"total":total,"from":start,"to":end,
-        "nextBefore":if start==0 {Value::Null}else{json!(start)}})).into_response()
+        "earliestAvailable":earliest,"eventsDropped":earliest,
+        "nextBefore":if start==earliest {Value::Null}else{json!(start)}})).into_response()
 }
 
 /// Reopen only a settled, host-witnessed UTF-8 artifact. The sealed digest
@@ -982,6 +990,44 @@ mod tests{
         assert_eq!(events(State(state.clone()),Path("other-menu".into()),
             Query(EventPageQuery{before:None,limit:None}))
             .await.status(),StatusCode::NOT_FOUND);
+        let _=std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn native_history_cursor_is_absolute_after_bounded_ring_drops(){
+        let (state,root)=temporary_state();
+        let rows=(120..200).map(|i|json!({"type":"step","seq":i}))
+            .collect::<Vec<_>>();
+        let job=json!({"id":"ring-events","kind":"prompt","status":"completed",
+            "input":{"prompt":"long run","clientSurface":"native_agent_panel"},
+            "eventsDropped":120,"events":rows});
+        state.store.put("job",&job).unwrap();
+        let view=project(&state,&job);
+        assert_eq!(view["checkpoint"]["eventsOmitted"],140);
+        assert_eq!(view["checkpoint"]["eventsDropped"],120);
+        assert_eq!(view["checkpoint"]["events"][0]["detail"]["seq"],140);
+        let page=events(State(state.clone()),Path("ring-events".into()),
+            Query(EventPageQuery{before:Some(185),limit:Some(40)})).await;
+        assert_eq!(page.status(),StatusCode::OK);
+        let result:Value=serde_json::from_slice(&to_bytes(page.into_body(),
+            1024*1024).await.unwrap()).unwrap();
+        assert_eq!(result["from"],145);
+        assert_eq!(result["to"],185);
+        assert_eq!(result["total"],200);
+        assert_eq!(result["earliestAvailable"],120);
+        assert_eq!(result["events"][0]["detail"]["seq"],145);
+        assert_eq!(result["events"][39]["detail"]["seq"],184);
+        let last=events(State(state.clone()),Path("ring-events".into()),
+            Query(EventPageQuery{before:Some(145),limit:Some(40)})).await;
+        let last:Value=serde_json::from_slice(&to_bytes(last.into_body(),
+            1024*1024).await.unwrap()).unwrap();
+        assert_eq!(last["from"],120);
+        assert_eq!(last["to"],145);
+        assert!(last["nextBefore"].is_null(),
+            "An owner must not request irretrievably dropped event rows");
+        assert_eq!(events(State(state.clone()),Path("ring-events".into()),
+            Query(EventPageQuery{before:Some(119),limit:Some(40)}))
+            .await.status(),StatusCode::BAD_REQUEST);
         let _=std::fs::remove_dir_all(root);
     }
 
