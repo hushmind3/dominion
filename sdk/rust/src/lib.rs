@@ -53,6 +53,24 @@ impl Job {
     }
 }
 
+/// One versioned execution read-model for chat, rooms, tasks and SDK workers.
+/// Only host-issued identifiers and statuses; no prompts or tool arguments.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct RunView {
+    #[serde(rename="ref")] pub run_ref: harness::RunRef,
+    pub phase: harness::RunPhase,
+    pub status: String,
+    pub terminal: bool,
+    pub review_required: bool,
+    #[serde(default)] pub attempt: Option<u64>,
+    #[serde(default)] pub session_id: Option<String>,
+    #[serde(default)] pub provider_id: Option<String>,
+    #[serde(default)] pub model: Option<String>,
+    #[serde(default)] pub started_at: Option<String>,
+    #[serde(default)] pub finished_at: Option<String>,
+    pub source_journal: String,
+}
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Event {
     pub seq: u64,
@@ -132,6 +150,10 @@ impl Dominion {
     }
     pub async fn health(&self) -> Result<Value, Error> { self.get(&["api", "health"]).await }
     pub async fn status(&self) -> Result<Value, Error> { self.get(&["api", "status"]).await }
+    /// Read the same persistent lifecycle from any Rust product surface.
+    pub async fn get_run(&self,id:&str)->Result<RunView,Error>{
+        self.get(&["api","runs",id]).await
+    }
     pub async fn agents(&self) -> Result<Vec<Value>, Error> { self.get(&["api", "agents"]).await }
     pub async fn providers(&self) -> Result<Vec<Value>, Error> { self.get(&["api", "providers"]).await }
     pub async fn sessions(&self) -> Result<Vec<Value>, Error> { self.get(&["api", "sessions"]).await }
@@ -282,6 +304,20 @@ mod tests {
         let frame = take_sse_frame(&mut buffer).unwrap();
         assert_eq!(decode_sse_frame(&frame).unwrap().unwrap()["seq"], 5);
         assert!(take_sse_frame(&mut buffer).is_none());
+    }
+    #[test]
+    fn canonical_cross_surface_run_view_roundtrips(){
+        let view:RunView=serde_json::from_value(json!({
+            "ref":{"version":1,"surface":"room","runId":"room-1","parentRunId":null},
+            "phase":"waiting_approval","status":"running","terminal":false,
+            "reviewRequired":false,"sourceJournal":"execution"
+        })).unwrap();
+        assert_eq!(view.run_ref.surface,harness::RunSurface::Room);
+        assert_eq!(view.phase,harness::RunPhase::WaitingApproval);
+        assert!(!view.terminal);
+        assert_eq!(serde_json::to_value(&view).unwrap()["ref"]["runId"],"room-1");
+        assert_eq!(Dominion::local().url(&["api","runs","a/b"]).unwrap().path(),
+            "/api/runs/a%2Fb");
     }
     #[test]
     fn terminal_status_is_engine_owned() {
