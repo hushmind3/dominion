@@ -45,13 +45,16 @@ jobs:
           cargo test --bin dominion-rust features::collaboration::workboard::tests
           cargo test --bin dominion-rust features::collaboration::task_team::tests
           cargo test --bin dominion-rust features::collaboration::worktree::tests
+          cargo test -p dominion-agent-runtime --lib
+          cargo test -p dominion-sdk --lib
+          cargo test --bin dominion-rust host::execution::run_state::tests
           cargo test --bin dominion-rust host::execution::run_view::tests
           cargo test --bin dominion-rust api::task_teams::tests
           cargo test --bin dominion-rust host::execution::lease::tests
           cargo test --bin dominion-rust host::execution::jobs::tests
           # Final architecture acceptance: Qwen headless mock CLI, resumed
           # Codex/Claude, bounded stdout and read-only approval; no credentials.
-                    cargo test --bin dominion-rust integrations::agent_bridge::tests
+          cargo test --bin dominion-rust integrations::agent_bridge::tests
           cargo test --bin dominion-rust features::cognition::strategy_eval::tests
           # Retirement cleanup: owner-grounded memory remains, old RSI learning
           # proposals cannot reappear, and old records migrate only once.
@@ -61,7 +64,7 @@ jobs:
           cargo test --bin dominion-rust features::cognition::reflect::tests
           cargo test --bin dominion-rust storage::migrations::tests
           # 150-turn independent Room cursors and periodic cross-process SSE.
-                    cargo test --bin dominion-rust features::collaboration::room_cursor::tests
+          cargo test --bin dominion-rust features::collaboration::room_cursor::tests
           cargo test --bin dominion-rust events::tests
           # Latest main provider UI depends on public, keyless model browsing.
           cargo test --bin dominion-rust api::providers::tests
@@ -108,7 +111,7 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - name: Chat stop UI type safety and production compilation
+      - name: TypeScript type safety, API and SDK contracts (no UI build)
         run: |
           npm ci --prefix web --no-audit --no-fund
           npm run typecheck --prefix web
@@ -117,8 +120,11 @@ jobs:
           node --test scripts/integration-boundary.test.mjs
           node --test scripts/core-boundary.test.mjs
           node --test scripts/algorithm-boundary.test.mjs
-          npm run build --prefix web
+      - name: Visual release bundle (manual workflow only)
+        if: github.event_name == 'workflow_dispatch'
+        run: npm run build --prefix web
       - name: Chromium connection UI walkthrough (desktop and mobile)
+        if: github.event_name == 'workflow_dispatch'
         run: |
           cd web
           npx playwright install --with-deps chromium
