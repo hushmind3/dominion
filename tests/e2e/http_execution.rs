@@ -224,6 +224,7 @@ fn direct_chat_answers_without_agent_tools_or_action_execution() {
         "toolsEnabled":true,"toolsExecutionEnabled":true,
         "autoLearning":true
     }));
+    assert!(stream.contains("owner_saved"), "{stream}");
     assert!(stream.contains("assistant_saved"), "{stream}");
     assert!(!app._root.join("report.txt").exists());
     let calls = calls.lock().unwrap();
