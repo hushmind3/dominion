@@ -638,13 +638,14 @@ async fn install_mlx_runtime(state: &AppState) -> Result<Value, String> {
         "tag": "mlx-lm", "downloaded": 0, "total": 0,
         "file": "python -m venv mlx-runtime", "error": "",
     }));
-    let venv = tokio::time::timeout(
+    let mut venv_command = Command::new(&python);
+    venv_command.args(["-m", "venv"]).arg(&dir);
+    let venv = crate::integrations::local_tools::run_command(
+        &mut venv_command,
         Duration::from_secs(180),
-        Command::new(&python).args(["-m", "venv"]).arg(&dir).output(),
     )
     .await
-    .map_err(|_| "Python 가상환경 생성 시간 초과".to_string())?
-    .map_err(|error| format!("Python 실행 실패: {error}"))?;
+    .map_err(|error| format!("Python 가상환경 생성 실패: {error}"))?;
     if !venv.status.success() {
         return Err(format!(
             "Python 가상환경 생성 실패: {}",
@@ -657,28 +658,28 @@ async fn install_mlx_runtime(state: &AppState) -> Result<Value, String> {
         "tag": "mlx-lm", "downloaded": 0, "total": 0,
         "file": "pip install mlx-lm", "error": "",
     }));
-    let installed = tokio::time::timeout(
+    let mut upgrade_command = Command::new(&pip);
+    upgrade_command.args(["install", "--upgrade", "pip"]);
+    let installed = crate::integrations::local_tools::run_command(
+        &mut upgrade_command,
         Duration::from_secs(900),
-        Command::new(&pip)
-            .args(["install", "--upgrade", "pip"])
-            .output(),
     )
     .await
-    .map_err(|_| "pip 업그레이드 시간 초과".to_string())?
-    .map_err(|error| format!("pip 실행 실패: {error}"))?;
+    .map_err(|error| format!("pip 업그레이드 실패: {error}"))?;
     if !installed.status.success() {
         return Err(format!(
             "pip 업그레이드 실패: {}",
             String::from_utf8_lossy(&installed.stderr).trim()
         ));
     }
-    let installed = tokio::time::timeout(
+    let mut install_command = Command::new(&pip);
+    install_command.args(["install", "mlx-lm"]);
+    let installed = crate::integrations::local_tools::run_command(
+        &mut install_command,
         Duration::from_secs(1800),
-        Command::new(&pip).args(["install", "mlx-lm"]).output(),
     )
     .await
-    .map_err(|_| "mlx-lm 설치 시간 초과".to_string())?
-    .map_err(|error| format!("pip 실행 실패: {error}"))?;
+    .map_err(|error| format!("mlx-lm 설치 실패: {error}"))?;
     if !installed.status.success() {
         return Err(format!(
             "mlx-lm 설치 실패: {}",
@@ -690,14 +691,17 @@ async fn install_mlx_runtime(state: &AppState) -> Result<Value, String> {
         "tag": "mlx-lm", "downloaded": 0, "total": 0,
         "file": "import mlx_lm", "error": "",
     }));
-    let check = tokio::time::timeout(
+    let mut verify_command = Command::new(dir.join(if cfg!(windows) {
+        "Scripts/python.exe"
+    } else {
+        "bin/python"
+    }));
+    verify_command.args(["-c", "import mlx_lm; print(mlx_lm.__version__)"]);
+    let check = crate::integrations::local_tools::run_command(
+        &mut verify_command,
         Duration::from_secs(120),
-        Command::new(dir.join(if cfg!(windows) { "Scripts/python.exe" } else { "bin/python" }))
-            .args(["-c", "import mlx_lm; print(mlx_lm.__version__)"])
-            .output(),
     )
     .await
-    .map_err(|_| "mlx-lm 검증 시간 초과".to_string())?
     .map_err(|error| format!("mlx-lm 검증 실패: {error}"))?;
     if !check.status.success() {
         return Err(format!(
@@ -1030,14 +1034,14 @@ async fn run_llama_install(state: &AppState) -> Result<Value, String> {
             0,
             "brew install llama.cpp",
         ));
-        let result = tokio::time::timeout(
+        let mut command = tokio::process::Command::new(&brew);
+        command.args(["install", "llama.cpp"]);
+        let result = crate::integrations::local_tools::run_command(
+            &mut command,
             Duration::from_secs(900),
-            tokio::process::Command::new(&brew)
-                .args(["install", "llama.cpp"])
-                .output(),
         )
         .await;
-        if let Ok(Ok(output)) = result {
+        if let Ok(output) = result {
             if output.status.success() {
                 set_install(install_progress(
                     "verifying",
@@ -1286,31 +1290,28 @@ pub async fn install_runtime(state: AppState, engine: &str) -> Result<Value, Str
         }));
         let task_state = state.clone();
         tokio::spawn(async move {
-            let result = match tokio::time::timeout(
+            let mut command = Command::new(&brew);
+            command.args(["install", "ollama"]);
+            let result = match crate::integrations::local_tools::run_command(
+                &mut command,
                 Duration::from_secs(900),
-                Command::new(&brew).args(["install", "ollama"]).output(),
             )
             .await
             {
-                Ok(Ok(output)) if output.status.success() => json!({
+                Ok(output) if output.status.success() => json!({
                     "status": "installed", "engine": "ollama", "backend": "homebrew",
                     "tag": "ollama", "downloaded": 0, "total": 0,
                     "file": "", "error": "",
                 }),
-                Ok(Ok(output)) => json!({
+                Ok(output) => json!({
                     "status": "failed", "engine": "ollama", "backend": "homebrew",
                     "tag": "ollama", "downloaded": 0, "total": 0,
                     "file": "", "error": String::from_utf8_lossy(&output.stderr).trim(),
                 }),
-                Ok(Err(error)) => json!({
+                Err(error) => json!({
                     "status": "failed", "engine": "ollama", "backend": "homebrew",
                     "tag": "ollama", "downloaded": 0, "total": 0,
-                    "file": "", "error": error.to_string(),
-                }),
-                Err(_) => json!({
-                    "status": "failed", "engine": "ollama", "backend": "homebrew",
-                    "tag": "ollama", "downloaded": 0, "total": 0,
-                    "file": "", "error": "Ollama installation timed out",
+                    "file": "", "error": error,
                 }),
             };
             set_install(result);
