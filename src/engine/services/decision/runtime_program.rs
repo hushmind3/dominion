@@ -858,6 +858,40 @@ pub(super) fn scope_program_node_ids(node: &Value, prefix: &str) -> Value {
     copy
 }
 
+/// The team assignment is claimed before its first child effect. A process
+/// crash leaves an in-flight record that cannot be automatically replayed.
+/// Checkpoint completion alone never proves that an external tool succeeded.
+fn claim_team_child(
+    ctx:&ProgramCtx<'_>,assignments:&[Value],index:usize,child:&Value,
+    checkpoint:&Value,persist:bool,
+)->Result<(),String>{
+    if !persist{return Ok(());}
+    if child["id"].as_str().is_some_and(|id|
+        crate::engine::program::checkpoint_skip_completed(checkpoint,id)){
+        // A checkpointed child must also have an actual settled assignment.
+        if assignments[index]["status"]=="completed"{return Ok(());}
+        return Err("Task Team completed checkpoint is missing its committed work receipt".into());
+    }
+    crate::engine::task_team_work::claim(ctx.state,&assignments[index])?;
+    Ok(())
+}
+fn settle_team_child(
+    ctx:&ProgramCtx<'_>,assignments:&[Value],index:usize,child:&Value,
+    frame:&ProgramFrame,persist:bool,
+)->Result<(),String>{
+    if !persist{return Ok(());}
+    if assignments[index]["status"]=="completed"{return Ok(());}
+    if frame.paused || frame.failure.is_some(){
+        crate::engine::task_team_work::block(ctx.state,&assignments[index],
+            if frame.paused{"child paused before completion"}
+            else{"child requested revision or observed failure"})?;
+    }else{
+        crate::engine::task_team_work::settle(
+            ctx.state,&assignments[index],child,&frame.checkpoint)?;
+    }
+    Ok(())
+}
+
 /// Executes nodes recursively so Sequence/Branch/Parallel/Loop can contain any
 /// supported node. All side effects go through the same tool gateway.
 #[allow(clippy::too_many_arguments)]
@@ -1057,6 +1091,15 @@ pub(super) fn execute_nodes<'a>(
                     // Resolve every dependency and writer conflict before ANY
                     // branch touches the host tool gateway or workspace.
                     let schedule=dominion_agent_loop::task_team::schedule(&children)?;
+                    let team_assignments=if persist{
+                        let revision=checkpoint["programRevision"].as_str()
+                            .ok_or("Task Team checkpoint revision missing")?;
+                        children.iter().enumerate().map(|(index,child)|
+                            crate::engine::task_team_work::assign(
+                                ctx.state,ctx.session_id,ctx.execution_id,revision,
+                                node_id,index,child
+                            )).collect::<Result<Vec<_>,String>>()?
+                    }else{Vec::new()};
                     let child_ids = children
                         .iter()
                         .map(|child| json!(child["id"]))
@@ -1082,6 +1125,10 @@ pub(super) fn execute_nodes<'a>(
                         let mut failure=None::<Value>;
                         let mut used_parallel_waves=false;
                         for wave in &schedule.waves {
+                            for &index in wave{
+                                claim_team_child(ctx,&team_assignments,index,
+                                    &children[index],&checkpoint,persist)?;
+                            }
                             // Topologically ready independent reads can run
                             // together, even when later writer/delegate waves
                             // require a barrier. Every opaque effect is alone.
@@ -1104,6 +1151,8 @@ pub(super) fn execute_nodes<'a>(
                                 let mut wave_last=serde_json::Map::new();
                                 for (&index,outcome) in wave.iter().zip(outcomes){
                                     let frame=outcome?;
+                                    settle_team_child(ctx,&team_assignments,index,
+                                        &children[index],&frame,persist)?;
                                     let child_id=children[index]["id"].as_str()
                                         .unwrap_or("");
                                     if let Some(map)=frame.resolved.as_object(){
@@ -1139,6 +1188,8 @@ pub(super) fn execute_nodes<'a>(
                                         resolved,checkpoint,budget,op_seq,
                                         depth+1,persist,true,
                                     ).await?;
+                                    settle_team_child(ctx,&team_assignments,index,
+                                        &children[index],&frame,persist)?;
                                     resolved=frame.resolved;
                                     checkpoint=frame.checkpoint;
                                     budget=frame.budget;
@@ -1206,6 +1257,10 @@ pub(super) fn execute_nodes<'a>(
                     // Pre-allocate each branch's model/tool budget and a
                     // disjoint operation sequence range BEFORE concurrency.
                     // Merging counters only after join cannot undo paid tools.
+                    for (index,child) in children.iter().enumerate(){
+                        claim_team_child(ctx,&team_assignments,index,
+                            child,&checkpoint,persist)?;
+                    }
                     let shares=budget.parallel_shares(children.len());
                     let mut reserved_until=op_seq;
                     let mut futures=Vec::new();
@@ -1228,8 +1283,11 @@ pub(super) fn execute_nodes<'a>(
                     let mut paused = false;
                     let mut failure=None::<Value>;
                     let mut parallel_last = serde_json::Map::new();
-                    for (child, result) in children.iter().zip(results.into_iter()) {
+                    for (index,(child, result)) in children.iter()
+                        .zip(results.into_iter()).enumerate(){
                         let frame = result?;
+                        settle_team_child(ctx,&team_assignments,index,
+                            child,&frame,persist)?;
                         let child_id = child["id"].as_str().unwrap_or("");
                         if let Some(map) = frame.resolved.as_object() {
                             for (key, value) in map {
