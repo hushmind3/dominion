@@ -221,6 +221,7 @@ pub(super) fn select_room_tools(
     ];
     // Rank by index rather than cloning every (potentially large) JSON
     // tool schema, including candidates we will drop after top-k selection.
+    let mut explicit = Vec::new();
     let mut scored: Vec<(i32, usize)> = definitions
         .iter().enumerate()
         .filter_map(|(index, definition)| {
@@ -233,9 +234,10 @@ pub(super) fn select_room_tools(
                 if terms.iter().any(|term| lower.contains(term))
                     && tools.contains(&name_lower.as_str())
                 {
-                    // An explicit owner action must survive the bounded
-                    // shortlist even when generic description matches are
-                    // stronger (e.g. "write files and run a command").
+                    // Reserve explicitly requested capabilities before filling
+                    // the bounded shortlist by lexical relevance. A score
+                    // bonus alone can be outranked by a long, generic query.
+                    explicit.push(index);
                     score += 100;
                 }
             }
@@ -265,10 +267,19 @@ pub(super) fn select_room_tools(
     // every owner turn without changing the selected tool SET. Returning
     // score order would rewrite the provider's leading tool schema prefix
     // and unnecessarily invalidate every speaker's cached working view.
-    scored.truncate(8);
-    scored.sort_unstable_by_key(|(_, index)|*index);
+    let mut selected = explicit;
+    selected.sort_unstable();
+    selected.dedup();
+    selected.truncate(8);
+    for (_, index) in scored {
+        if selected.len() == 8 { break; }
+        if !selected.contains(&index) {
+            selected.push(index);
+        }
+    }
+    selected.sort_unstable();
     let mut available=definitions.into_iter().map(Some).collect::<Vec<_>>();
-    scored.into_iter().filter_map(|(_,index)|available[index].take()).collect()
+    selected.into_iter().filter_map(|index|available[index].take()).collect()
 }
 
 /// The historical default advertised the *entire* connected catalog on
