@@ -18,7 +18,7 @@ pub enum Mode { Read,Write }
 impl Default for Mode {fn default()->Self{Self::Read}}
 #[derive(Clone,Copy,Debug,Serialize,Deserialize,PartialEq,Eq,Default)]
 #[serde(rename_all="snake_case")]
-pub enum WorkerRuntime {#[default] Native,Codex,Claude}
+pub enum WorkerRuntime {#[default] Native,Codex,Claude,Qwen}
 #[derive(Clone,Copy,Debug,Serialize,Deserialize,PartialEq,Eq,Default)]
 #[serde(rename_all="snake_case")]
 pub enum Isolation {#[default] Shared,Worktree}
@@ -549,6 +549,16 @@ mod tests {
         team.tasks[0].allowed_tools=vec!["workspace_read".into()];
         team.validate().unwrap();
         team.tasks[1].allowed_tools=vec!["mcp__danger".into()];
+        assert!(team.validate().is_err());
+    }
+    #[test] fn qwen_read_worker_can_join_dependency_graph_but_cannot_write(){
+        let mut team=sample();
+        team.tasks[0].runtime=WorkerRuntime::Qwen;
+        team.tasks[0].provider_id=None;
+        team.tasks[0].agent_id=None;
+        team.tasks[0].checks.clear();
+        assert!(team.validate().is_ok());
+        team.tasks[0].mode=Mode::Write;
         assert!(team.validate().is_err());
     }
     #[test] fn external_workers_cannot_grant_native_effects(){
