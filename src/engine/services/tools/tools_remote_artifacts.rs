@@ -188,7 +188,7 @@ mod tests{
         use crate::{config::Config,db::Store,vault::Vault,state::AppState};
         let root=std::env::temp_dir().join(format!("remote-merge-{}",uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("existing.rs"),"previous\\n").unwrap();
+        std::fs::write(root.join("existing.rs"),"previous\n").unwrap();
         let config=Config{port:0,data_dir:root.clone(),web_dir:root.join("web"),
             workspace:root.clone()};
         let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
@@ -196,14 +196,14 @@ mod tests{
         state.store.put("managed_team",&json!({
             "id":"lead-team","leadSessionId":"lead-session"
         })).unwrap();
-        let content="updated\\n";
+        let content="updated\n";
         state.store.put("remote_task",&json!({
             "id":"remote-job","teamId":"lead-team",
             "status":"completed","readOnly":false,
             "artifactApplyStatus":"pending",
             "artifactPaths":["existing.rs"],
             "artifactBases":[{"path":"existing.rs",
-                "expectedSha256":crate::remote::digest(b"previous\\n")}],
+                "expectedSha256":crate::remote::digest(b"previous\n")}],
             "artifacts":[{"path":"existing.rs","content":content,
                 "sha256":crate::remote::digest(content.as_bytes())}]
         })).unwrap();
