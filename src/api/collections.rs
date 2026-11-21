@@ -241,3 +241,64 @@ pub async fn action(
     }
 }
 
+
+#[cfg(test)]
+mod memory_correction_tests {
+    use super::*;
+    use crate::{config::Config,db::Store,state::AppState,vault::Vault};
+
+    fn fixture() -> (AppState,std::path::PathBuf) {
+        let dir=std::env::temp_dir().join(format!("dominion-memory-edit-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=Config{
+            port:0,data_dir:dir.clone(),web_dir:dir.join("web"),workspace:dir.clone(),
+        };
+        let state=AppState::new(
+            config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()),
+        );
+        (state,dir)
+    }
+
+    #[tokio::test]
+    async fn correcting_memory_keeps_old_provenance_and_atomically_creates_active_revision() {
+        let (state,dir)=fixture();
+        let original=state.store.put("memory",&json!({
+            "text":"기존 사실","scope":"agent","agentId":"a",
+            "partitionKey":"local","sessionId":"s","source":"learn",
+            "status":"active","verification":"source_quote",
+            "sourceMessageIds":["source-1"],"evidenceQuote":"기존 사실",
+            "importance":0.9,
+        })).unwrap();
+        let id=original["id"].as_str().unwrap().to_string();
+        let uri=format!("/api/memories/{id}/correct").parse().unwrap();
+        let response=action(State(state.clone()),OriginalUri(uri.clone()),
+            Json(json!({"text":"수정된 사실"}))).await;
+        assert_eq!(response.status(),StatusCode::OK);
+        let old=state.store.get("memory",&id).unwrap();
+        assert_eq!(old["text"],"기존 사실");
+        assert_eq!(old["status"],"superseded");
+        assert_eq!(old["verification"],"source_quote");
+        assert_eq!(old["sourceMessageIds"],json!(["source-1"]));
+        assert!(!crate::engine::memory::retrieval_eligible(&old));
+        let new_id=old["supersededBy"].as_str().unwrap();
+        let revised=state.store.get("memory",new_id).unwrap();
+        assert_eq!(revised["text"],"수정된 사실");
+        assert_eq!(revised["status"],"active");
+        assert_eq!(revised["scope"],"agent");
+        assert_eq!(revised["agentId"],"a");
+        assert_eq!(revised["source"],"user");
+        assert_eq!(revised["verification"],"owner_correction");
+        assert_eq!(revised["sourceMessageIds"],json!([]));
+        assert_eq!(revised["supersedes"],id);
+        assert!(crate::engine::memory::retrieval_eligible(&revised));
+        assert_ne!(old["revision"],revised["revision"]);
+
+        let retry=action(State(state.clone()),OriginalUri(uri),
+            Json(json!({"text":"수정된 사실"}))).await;
+        assert_eq!(retry.status(),StatusCode::BAD_REQUEST);
+        assert_eq!(state.store.all("memory").len(),2);
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
