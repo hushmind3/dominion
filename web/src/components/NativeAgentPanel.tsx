@@ -147,15 +147,33 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     })
     .finally(()=>{fetching=false})
   }
+  // Reuse App's one authenticated SSE connection instead of opening a
+  // duplicate stream per panel. Throttle matching job updates to two reads
+  // per second; retain the 2.5-second poll for missed events or reconnects.
+  let pushTimer:number|undefined
+  const onRunChange=(event:Event)=>{
+   if(stopPolling.has(run.status))return
+   const detail=(event as CustomEvent<{targets?:string[]}>).detail
+   const targets=detail?.targets
+   if(!Array.isArray(targets)||
+    (!targets.includes('/api/jobs/'+encodeURIComponent(selectedId))&&
+     !targets.includes('/api/sdk/runs/'+encodeURIComponent(selectedId))))return
+   if(pushTimer===undefined){
+    pushTimer=window.setTimeout(()=>{pushTimer=undefined;refresh()},500)
+   }
+  }
   // Terminal jobs do not need repeated idle HTTP/SQLite reads. Keep an
   // on-focus revalidation so cross-tab changes are still observable.
   const timer=stopPolling.has(run.status)?undefined:window.setInterval(refresh,2500)
   window.addEventListener('focus',refresh)
+  window.addEventListener('dominion-data-change',onRunChange)
   document.addEventListener('visibilitychange',refresh)
   return()=>{
    alive=false
    if(timer!==undefined)window.clearInterval(timer)
+   if(pushTimer!==undefined)window.clearTimeout(pushTimer)
    window.removeEventListener('focus',refresh)
+   window.removeEventListener('dominion-data-change',onRunChange)
    document.removeEventListener('visibilitychange',refresh)
   }
  },[run?.id,run?.status])
