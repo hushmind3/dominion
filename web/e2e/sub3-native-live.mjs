@@ -111,7 +111,10 @@ try {
   assert.ok(provider.id,'Provider was not persisted')
   browser=await chromium.launch({headless:true})
   const page=await browser.newPage({viewport:{width:390,height:780}})
-  await page.goto(base,{waitUntil:'domcontentloaded'})
+  // The native panel lives on the existing Home settings page, not Chat.
+  // Use the real hash route so this exercises the mounted React component.
+  await page.goto(`${base}/#/home`,{waitUntil:'domcontentloaded'})
+  await page.locator('#sdk-goal').waitFor()
   await page.locator('#sdk-goal').fill('한 문장으로 일반 개념을 설명해 주세요.')
   await page.getByRole('button',{name:/작업 시작|Start task/}).click()
   const first=await poll('Native text answer',async()=>{
