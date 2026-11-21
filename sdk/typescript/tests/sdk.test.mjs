@@ -203,3 +203,35 @@ test('managed Lead and Worker DAG events are typed on existing SSE cursor',async
   assert.equal(observed[2].workerJobId,'job-1');
   assert.equal(observed[2].verified,true);
 });
+
+test('distributed Rust Worker leases and receipts use the same typed durable SSE cursor',async()=>{
+  const events=[
+    {seq:1,eventSeq:1,type:'run_state',schemaVersion:1,
+      runKind:'remote_task',runId:'remote-task-1',state:'queued',
+      sourceMessageId:null,agentId:'worker-agent',
+      parentRunId:'team-1',nodeId:'research',remoteWorkerId:'node-b'},
+    {seq:2,eventSeq:2,type:'run_state',schemaVersion:1,
+      runKind:'remote_task',runId:'remote-task-1',state:'running',
+      sourceMessageId:null,agentId:'worker-agent',remoteWorkerId:'node-b',
+      leaseUntilMs:123456},
+    {seq:3,eventSeq:3,type:'run_state',schemaVersion:1,
+      runKind:'remote_task',runId:'remote-task-1',state:'completed',
+      sourceMessageId:null,agentId:'worker-agent',remoteWorkerId:'node-b',
+      workerJobId:'local-run-1',verified:true,
+      evidenceOrigin:'remote_worker_reported'}
+  ];
+  const client=new Dominion({fetch:async()=>sse(
+    events.map(event=>'id: '+event.seq+'\ndata: '+JSON.stringify(event)+'\n\n')
+  )});
+  const received=[];
+  for await(const event of client.runEvents({reconnectDelayMs:1})){
+    received.push(event);
+    if(received.length===3)break;
+  }
+  assert.deepEqual(received.map(x=>[x.runKind,x.state]),[
+    ['remote_task','queued'],['remote_task','running'],['remote_task','completed']
+  ]);
+  assert.equal(received[2].evidenceOrigin,'remote_worker_reported');
+  assert.equal(received[2].workerJobId,'local-run-1');
+  assert.equal(received[0].remoteWorkerId,'node-b');
+});
