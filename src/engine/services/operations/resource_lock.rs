@@ -33,6 +33,27 @@ fn key(workspace:&Path,name:&str,args:&Value)->Option<String>{
         _=>None,
     }
 }
+/// A SQLite lease fences a second engine process using the same DB.
+/// Delegations retain no workspace lock, preventing parent/child deadlock.
+pub async fn acquire_durable(
+    state:&crate::state::AppState,workspace:&Path,name:&str,args:&Value,
+    session_id:&str,
+)->Result<Option<crate::engine::lease::LeaseGuard>,String>{
+    let Some(resource)=key(workspace,name,args) else{return Ok(None);};
+    let fingerprint=crate::engine::memory::stable_id(&[&resource]);
+    let scope=format!("resource-writer:{fingerprint}");
+    for _ in 0..100{
+        if state.is_cancelled(session_id){
+            return Err("resource writer was cancelled before acquisition".into());
+        }
+        if let Some(lease)=crate::engine::lease::LeaseGuard::acquire(state,&scope){
+            return Ok(Some(lease));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    Err("workspace resource is held by another writer; no tool was dispatched".into())
+}
+
 pub async fn acquire(workspace:&Path,name:&str,args:&Value)->Option<Guard>{
     let key=key(workspace,name,args)?;
     let lock={
@@ -75,6 +96,32 @@ mod tests{
         assert!(acquire(&a,"workspace_read",&Value::Null).await.is_none());
         assert!(acquire(&a,"delegate_task",&Value::Null).await.is_none());
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn distinct_engine_connections_share_one_durable_workspace_writer_lease(){
+        let dir=std::env::temp_dir().join(format!("lease-writer-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=crate::config::Config{port:0,data_dir:dir.clone(),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let one=crate::state::AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        let two=crate::state::AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        let first=acquire_durable(&one,&dir,"workspace_write",&Value::Null,"a")
+            .await.unwrap().unwrap();
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(250),
+            acquire_durable(&two,&dir,"shell_exec",&Value::Null,"b")
+        ).await.is_err());
+        drop(first);
+        let second=acquire_durable(&two,&dir,"shell_exec",&Value::Null,"b")
+            .await.unwrap().unwrap();
+        drop(second);
+        assert!(acquire_durable(&two,&dir,"workspace_read",&Value::Null,"b")
+            .await.unwrap().is_none());
+        drop(one);drop(two);
+        let _=std::fs::remove_dir_all(dir);
     }
     #[test]
     fn resource_keys_match_workspace_scope_without_crossing_into_browser(){

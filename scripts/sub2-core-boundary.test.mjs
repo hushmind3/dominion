@@ -417,3 +417,13 @@ test('DAG shares the native safe-read allowlist and persists writer fences befor
  assert.match(program,/commit_program_checkpoint\(state, execution_id, checkpoint\)\?/);
  assert.match(program,/depth\+1,persist,true/);
 });
+
+test('product tools share cross-process workspace writer lease without locking nested delegation',()=>{
+ const resources=source('src/engine/services/operations/resource_lock.rs');
+ const native=source('src/engine/services/tools/tools.rs');
+ assert.match(resources,/pub async fn acquire_durable/);
+ assert.match(resources,/LeaseGuard::acquire\(state,&scope\)/);
+ assert.match(resources,/resource-writer:/);
+ assert.match(native,/resource_lock::acquire_durable/);
+ assert.match(resources,/"delegate_task"/);
+});

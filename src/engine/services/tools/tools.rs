@@ -263,6 +263,9 @@ pub async fn execute(
     // race on the same workspace. Safe parallel reads remain unrestricted.
     // Held until the tool returns, including its committed evidence.
     let _resource_guard=crate::engine::resource_lock::acquire(ctx.workspace,name,args).await;
+    let _durable_writer_lease=crate::engine::resource_lock::acquire_durable(
+        ctx.state,ctx.workspace,name,args,ctx.session_id,
+    ).await?;
     match name {
         "workspace_list" => {
             let path = resolve_workspace(ctx.workspace, string_arg(args, "path").unwrap_or("."))?;

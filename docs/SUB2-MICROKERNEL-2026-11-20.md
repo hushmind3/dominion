@@ -257,3 +257,7 @@ ProgramIR의 기존 `parallel` 노드에 `dependsOn` 형제 ID를 정식 지원�
 - 동일 모델 응답 내 중복 도구 호출 ID는 공통 `Driver::validate_call_ids`가 모델-사용 전 거부합니다. Chat 제품에서 **중복된 nonempty ID를 무작위 새 ID로 바꾸던 구형 코드**를 제거했습니다. 누락 ID만 1회 부여하며, standalone Driver와 native Chat이 같은 ID 검사기를 사용합니다.
 - Task Team DAG는 독립 Rust Kernel과 **동일한 `safe_to_overlap` 도구 허용 목록**을 공유합니다. 쓰기·위임은 원본 모델의 호출 순서에 대한 강제 장벽이므로, 뒤쪽 읽기 작업이 그보다 먼저 실행되는 잘못된 위상 정렬을 차단합니다. 미래 읽기에 의존하는 과거 writer는 순환 의존으로 거부합니다.
 - ProgramIR 단독/위임 작업은 도구를 호출하기 **전에** `programCheckpoint.pendingOperationIds`를 SQLite CAS로 커밋하도록 연결했습니다. 실행 중 크래시와 restart에서 이전 효과의 결과를 모를 때 자동 재실행하지 않도록 기존 `restore_program_state`의 pending 거부 규칙을 실제 writer 경로와 연결했습니다. 읽기 병렬 파동 종료 후에도 누적 checkpoint를 보존합니다.
+
+## 2026-11-21 P0: 에이전트와 프로세스 간 Workspace Writer 임대
+
+기존 `resource_lock`의 프로세스 내부 mutex에 SQLite `LeaseGuard`를 결합했습니다. 일반 Chat·Room·Task Team·SDK에서 공통 `tools::execute`를 통과하는 변경 도구는 동일 작업 공간의 writer 임대를 독점한 뒤에만 실행합니다. 하위 에이전트 위임에는 잠금을 유지하지 않아 교착을 피합니다. 10초 안에 임대를 얻지 못하거나 세션이 취소되면 도구를 시작하지 않습니다. 임대는 heartbeat를 갱신하며, 서로 독립된 SQLite 연결 2개로 동일 작업 공간의 동시 writer 차단을 테스트합니다.
