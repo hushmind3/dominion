@@ -86,7 +86,8 @@ export function TeamActivity(){
   ? [queued.value.id===queuedJobId?queued.value:{id:queuedJobId,status:'queued'},...persistedLeads]
   : persistedLeads.map(job=>job.id===queuedJobId&&queued.value.id===job.id?queued.value:job)
  const runnable=agents.value.filter(agent=>agent.id&&agent.providerId&&agent.model&&agent.enabled!==false&&agent.disabled!==true)
- const lead=runnable.find(agent=>agent.id===leadId)||runnable[0]
+ const lead=leadId?runnable.find(agent=>agent.id===leadId):runnable[0]
+ const unavailableLead=Boolean(leadId&&!lead)
  const workers=activity.value.remoteWorkers
  // Remote Agents are registered on their own PCs, not necessarily on the
  // Lead machine. Show their advertised IDs without forging local models.
@@ -105,6 +106,7 @@ export function TeamActivity(){
   && remoteRequired.every(id=>(node.agents||[]).includes(id)))
  const selectedRemote=compatible.some(node=>node.id===remoteId)?remoteId:''
  const invalidRemote=remoteRequired.length>0&&!selectedRemote
+ const unavailableRemote=Boolean(remoteId&&!selectedRemote)
  const inProgress=activity.value.teams.filter(team=>team.status==='running').length
  const reviewCount=activity.value.teams.filter(team=>team.status==='needs_review').length
  // Preserve only the unsent composer state in the current browser tab.
@@ -134,7 +136,7 @@ export function TeamActivity(){
  }
  const launch=async()=>{
   if(!lead||!workerIds.length||!prompt.trim()||busy||invalidRemote
-   ||unavailableWorkers.length>0)return
+   ||unavailableWorkers.length>0||unavailableLead||unavailableRemote)return
   setBusy('launch');setError('');setNotice('')
   try{
    const saved=await post<{status:string;jobId:string}>('/api/activity/teams/start',{
@@ -236,6 +238,7 @@ export function TeamActivity(){
     <label className="text-[11px] font-semibold text-[#5C544A]">{en?'Lead agent':'Lead 에이전트'}
      <SelectInput className="mt-1" value={lead?.id||''} onChange={e=>setLeadId(e.target.value)}>
       {!runnable.length&&<option value="">{en?'Configure an agent first':'먼저 에이전트를 설정하세요'}</option>}
+      {unavailableLead&&<option value="">{en?'Select an available Lead again':'사용 가능한 Lead를 다시 선택하세요'}</option>}
       {runnable.map(a=><option value={a.id} key={a.id}>{a.name} · {a.model}</option>)}
      </SelectInput>
     </label>
@@ -257,13 +260,15 @@ export function TeamActivity(){
     </div>
    </div>
    {invalidRemote&&<p role="alert" className="text-[11px] text-amber-800">{en?'Remote-only agents need an online device that advertises all selected remote IDs.':'원격 전용 에이전트를 선택하려면 해당 ID를 모두 제공하는 온라인 원격 장치를 지정해야 합니다.'}</p>}
-   {unavailableWorkers.length>0&&<p role="alert" className="break-words text-[11px] text-amber-800">{en?'Unavailable selected Workers: ':'현재 사용할 수 없는 Worker: '}{unavailableWorkers.join(', ')}. {en?'Remove them to launch safely.':'초안을 수정하거나 삭제한 뒤 실행하세요.'}</p>}
+   {unavailableLead&&<p role="alert" className="break-words text-[11px] text-amber-800">{en?'The previously selected Lead is unavailable. Select another Lead before launch.':'이전에 선택한 Lead를 사용할 수 없습니다. 다른 Lead를 직접 선택한 뒤 실행하세요.'}</p>}
+   {unavailableRemote&&<div role="alert" className="flex flex-wrap items-center gap-2 text-[11px] text-amber-800"><span>{en?'The selected remote device is unavailable. Choose an available device or switch to local execution.':'선택한 원격 장치를 사용할 수 없습니다. 다른 장치를 선택하거나 로컬 실행으로 전환하세요.'}</span><Button size="sm" variant="ghost" onClick={()=>setRemoteId('')}>{en?'Switch to local':'로컬 실행으로 변경'}</Button></div>}
+   {unavailableWorkers.length>0&&<div role="alert" className="flex flex-wrap items-center gap-2 text-[11px] text-amber-800"><span className="break-words">{en?'Unavailable selected Workers: ':'현재 사용할 수 없는 Worker: '}{unavailableWorkers.join(', ')}</span><Button size="sm" variant="ghost" onClick={()=>{setWorkerIds(ids=>ids.filter(id=>!unavailableWorkers.includes(id)));setRemoteId('')}}>{en?'Remove unavailable Workers':'사용 불가 Worker 제외'}</Button></div>
    <div className="flex flex-wrap items-center justify-between gap-2">
     <div className="flex flex-wrap items-center gap-2">
      <span className="text-[10px] text-[#8A8176]">{en?'Unsent draft stored in this tab':'보내지 않은 초안은 현재 탭에 임시 저장됩니다'}</span>
      {hasDraft&&<Button size="sm" variant="ghost" onClick={discardDraft} disabled={Boolean(busy)}>{en?'Discard draft':'초안 지우기'}</Button>}
     </div>
-    <Button variant="primary" disabled={Boolean(busy)||!prompt.trim()||!lead||workerIds.length<1||invalidRemote||unavailableWorkers.length>0} onClick={()=>void launch()}><Play size={14}/>{busy==='launch'?(en?'Queuing…':'등록 중…'):(en?'Queue Lead task':'Lead 작업 시작')}</Button>
+    <Button variant="primary" disabled={Boolean(busy)||!prompt.trim()||!lead||workerIds.length<1||invalidRemote||unavailableWorkers.length>0||unavailableLead||unavailableRemote} onClick={()=>void launch()}><Play size={14}/>{busy==='launch'?(en?'Queuing…':'등록 중…'):(en?'Queue Lead task':'Lead 작업 시작')}</Button>
    </div>
   </Panel>}
   {error&&<p role="alert" className="mb-3 break-words rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}
