@@ -56,6 +56,31 @@ pub async fn run_turn_background(
     run_turn_with_policy(state, request, tx, false, true, None).await
 }
 
+/// Resume never creates a new paid-generation intent on top of a previously
+/// billed but unobserved turn. Use the task-scoped SQLite index and durable
+/// operation journal; a clean-looking assistant transcript is not proof.
+fn ensure_task_resume_safe(state:&AppState,task_id:&str)->Result<(),String>{
+    let attempts=state.store.task_executions(task_id)?;
+    if attempts.is_empty(){
+        return Err("원본 작업의 실행 기록이 없어 자동 재개할 수 없습니다.".into());
+    }
+    for attempt in &attempts {
+        let snapshot=&attempt["kernelState"];
+        if snapshot["modelInFlight"]==true {
+            return Err("이전 유료 모델 호출의 결과가 불명확합니다. 자동 재호출 대신 실행 기록을 확인하세요.".into());
+        }
+        if snapshot["inFlight"].as_array().is_some_and(|items|!items.is_empty()){
+            return Err("이전 도구 효과의 결과가 불명확합니다. 자동 재실행 대신 실행 기록을 확인하세요.".into());
+        }
+        if let Some(id)=attempt["id"].as_str(){
+            if state.store.run_has_uncertain_operation(id)? {
+                return Err("영속 실행 저널에 미확정 효과가 남아 있어 자동 재개를 차단했습니다.".into());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Resume path for a rejected/woken run: the original owner message is already
 /// stored, so the turn must not append a duplicate user message.
 pub async fn run_turn_resume(
@@ -63,6 +88,10 @@ pub async fn run_turn_resume(
     request: &TurnRequest,
     tx: &UnboundedSender<Value>,
 ) -> Result<Option<Value>, String> {
+    let task_id=request.task_id.as_deref()
+        .filter(|id|!id.trim().is_empty())
+        .ok_or("원본 작업 ID 없이 대화 실행을 자동 재개할 수 없습니다.")?;
+    ensure_task_resume_safe(state,task_id)?;
     run_turn_with_policy(state, request, tx, false, false, None).await
 }
 
@@ -358,6 +387,8 @@ pub(super) use planning::tool_succeeded;
 pub(super) use finalization::{finish_attempt,finalize_execution};
 pub(super) use selection::adjacent_read_batch_end;
 
+#[cfg(test)]
+mod resume_safety_tests;
 #[cfg(test)]
 mod cancellation_watch_tests;
 #[cfg(test)]
