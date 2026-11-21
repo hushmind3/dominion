@@ -174,7 +174,7 @@ async fn list_server(state: &AppState, server: &Value, server_slug:&str) -> Resu
             Some(McpTool {
                 server_name: server_name.clone(),
                 slug: server_slug.to_string(),
-                tool: name,
+                tool: name.clone(),
                 description: tool
                     .get("description")
                     .and_then(|value| value.as_str())
