@@ -112,6 +112,13 @@ fn summary(ctx:&ToolContext<'_>,team:&Value)->Result<Value,String>{
         }else{None};
         let remote=row["remoteTaskId"].as_str()
             .and_then(|id|ctx.store.get("remote_task",id));
+        if remote.as_ref().is_some_and(|task|
+            task["artifactPaths"].as_array().is_some_and(|paths|!paths.is_empty())
+            && task["artifactApplyStatus"]!="applied"){
+            // A remote native Job can be verified while the coordinator's
+            // workspace still has none of the claimed file changes.
+            verified=false;
+        }
         let excerpt=remote.as_ref().and_then(|v|v["answer"].as_str())
             .or_else(||observed.as_ref().and_then(|v|v["content"].as_str()))
             .unwrap_or("").chars().take(1600).collect::<String>();
