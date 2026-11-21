@@ -22,7 +22,7 @@ const original=[
  {id:'model-1',role:'assistant',session_id:'chat-ui',content:
   '## 서식 있는 답변\n**굵은 글씨**와 `inline code`\n\n- 첫 항목\n- 두 번째 항목\n\n| 이름 | 값 |\n| --- | --- |\n| 테스트 | 1 |\n\n```ts\nconst answer = 42\n```\n\n[참고](https://example.com) <img src=x onerror=alert(1)>'}
 ]
-const session={id:'chat-ui',title:'기본 채팅 UI 점검',agentId:'default',providerId:'mock-chat',model:'mock-native'}
+const session={id:'chat-ui',title:'기본 채팅 UI 점검',mode:'chat',agentId:null,providerId:'mock-chat',model:'mock-native'}
 const provider={id:'mock-chat',name:'Mock Chat',kind:'openai',enabled:true,model:'mock-native',baseUrl:'http://127.0.0.1:9/v1'}
 const agent={id:'default',name:'기본값',providerId:'mock-chat',model:'mock-native'}
 let messages=structuredClone(original)
@@ -44,6 +44,11 @@ async function mock(route){
   const body=JSON.parse(req.postData()||'{}')
   requests.push(body)
   assert.equal(body.sessionId,'chat-ui')
+  assert.equal(body.mode,'chat')
+  assert.equal(body.agentId,'')
+  assert.equal(body.toolsEnabled,false)
+  assert.equal(body.toolsExecutionEnabled,false)
+  assert.equal(body.autoLearning,false)
   assert.equal(body.input,'후속 질문도 같은 채팅으로 보내주세요.')
   messages.push({id:'owner-'+(requests.length+1),role:'user',session_id:'chat-ui',content:body.input})
   const reply='### 후속 답변\n**같은 대화**를 이어갑니다.'
@@ -102,6 +107,8 @@ try{
   const file=path.join(output,width+'-chat.png')
   await page.screenshot({path:file,animations:'disabled'})
   assert.ok((await stat(file)).size>3000)
+  assert.equal(await page.getByRole('combobox',{name:'대화 실행 모드'}).inputValue(),'chat')
+  assert.equal(await page.locator('.chat-agent').count(),0)
   await page.locator('.conversation-composer-input').fill('후속 질문도 같은 채팅으로 보내주세요.')
   await page.locator('.conversation-composer-input').press('Enter')
   await page.getByText('후속 답변',{exact:true}).waitFor({timeout:15000})

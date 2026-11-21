@@ -34,3 +34,13 @@ test('assistant live and saved messages render rich text, while owner message st
  assert.match(chat,/<ChatRichText content=\{live\}\/>/)
  assert.match(chat,/human\?message\.content:\(message\.content\?<ChatRichText content=\{message\.content\}\/>/)
 })
+
+test('ordinary chat defaults to direct mode with no agent, tools or autonomous learning',()=>{
+ assert.match(chat,/const mode:ChatMode=/)
+ assert.match(chat,/\?'agent':'chat'\)/)
+ assert.match(chat,/aria-label="대화 실행 모드"/)
+ assert.match(chat,/option value="chat">일반 채팅/)
+ assert.match(chat,/agentMode&&<ExecutionPermissions/)
+ assert.match(chat,/agentMode&&<SelectInput aria-label=\{t\('chat.agentAria'\)\}/)
+ assert.match(chat,/toolsEnabled:agentMode&&toolsEnabled,toolsExecutionEnabled:agentMode&&toolsEnabled,autoLearning:agentMode&&autoLearn/)
+})

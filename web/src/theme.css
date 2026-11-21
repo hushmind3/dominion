@@ -247,3 +247,9 @@
  border:1px solid #DED7CD;padding:7px 11px;text-align:left;vertical-align:top
 }
 .chat-richtext th{background:#F4F0E9;font-weight:700}
+
+/* Plain conversation is default; tools/agent picker only appear in agent mode. */
+.chat-mode{min-width:92px}
+@media(max-width:767px){
+ .chat-composer-options .chat-mode{width:96px!important;font-size:11px!important}
+}

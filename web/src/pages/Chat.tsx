@@ -19,6 +19,7 @@ import {useJob,jobFinished,type JobState} from '../hooks/useJob'
 import {t,useLocale,type LocaleKey} from '../i18n'
 import {translateError} from '../i18n/errors'
 
+type ChatMode='chat'|'agent'
 type LearningResult={memories:number;skill:boolean}
 type LearningJob=JobState & {result?:LearningResult}
 type ModelOverride={scope?:string;providerId:string;model:string}
@@ -46,10 +47,14 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const [serverUsage,setServerUsage]=useState<SessionUsage>({});
  const approvals=useRemote<Approval[]>('/api/approvals',[],active);
  const [input,setInput]=useState('');
+ const [modeChoice,setModeChoice]=useState<{scope?:string;mode:ChatMode}>()
+ const mode:ChatMode=(modeChoice?.scope===current?modeChoice.mode:undefined)??
+  (selectedSession?.mode==='agent'||(!selectedSession?.mode&&Boolean(selectedSession?.agentId))||(!current&&Boolean(initialAgent))?'agent':'chat')
+ const agentMode=mode==='agent'
  const [agentChoice,setAgentChoice]=useState<{scope?:string;id:string}>();
  const [override,setOverride]=useState<ModelOverride>();
  const defaultAgent=agents.value.find(agent=>agent.id==='default')||agents.value.find(agent=>agent.name==='기본값')||agents.value.find(agent=>agent.id==='general');
- const agentId=(agentChoice?.scope===current?agentChoice?.id:undefined)??selectedSession?.agentId??(!current?initialAgent:undefined)??defaultAgent?.id??'';
+ const agentId=agentMode?((agentChoice?.scope===current?agentChoice?.id:undefined)??selectedSession?.agentId??(!current?initialAgent:undefined)??defaultAgent?.id??''):'';
  const activeAgent=agents.value.find(agent=>agent.id===agentId);
  const manual=override&&override.scope===current?override:
   !current&&initialProvider?{providerId:initialProvider,model:initialModel??''}:undefined;
@@ -58,13 +63,13 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const providerId=manual?.providerId??(activeAgent?.providerId||sessionProvider?.id||enabledProviders[0]?.id||'');
  const selectedProvider=enabledProviders.find(provider=>provider.id===providerId);
  const model=manual?.model||((activeAgent?.providerId===providerId?activeAgent.model:'')||
-  (selectedSession?.providerId===providerId&&selectedSession.agentId===agentId?selectedSession.model:'')||selectedProvider?.model||'');
+  (selectedSession?.providerId===providerId&&(!agentMode||selectedSession.agentId===agentId)?selectedSession.model:'')||selectedProvider?.model||'');
  const catalogue=useProviderModels(providerId);
  const {value:models,error:modelError}=catalogue;
  const selectedModel=models.find(item=>item.id===model);
  const canDisableThinking=selectedProvider?.kind!=='codex'||reasoningOptions(selectedModel,true).includes('none');
  const setRoute=(providerId:string,model:string)=>setOverride({scope:current,providerId,model});
- useEffect(()=>{if(!current){setOverride(undefined);setAgentChoice(undefined)}},[initialAgent,initialProvider,initialModel]);
+ useEffect(()=>{if(!current){setOverride(undefined);setAgentChoice(undefined);setModeChoice(undefined)}},[initialAgent,initialProvider,initialModel]);
  const [turnSession,setTurnSession]=useState<string>();
  const [savedMessageId,setSavedMessageId]=useState<string>();
  const [approvalBusy,setApprovalBusy]=useState(false);
@@ -193,12 +198,12 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  };
  const chooseAgent=(id:string)=>{setAgentChoice({scope:current,id});setOverride(undefined)};
  const pickSession=(s:ChatSession)=>{
-  onSession(s.id);setAgentChoice(undefined);setOverride(undefined);
+  onSession(s.id);setAgentChoice(undefined);setOverride(undefined);setModeChoice(undefined);
   setError('');setCommandInfo('');setSlashOpen(false);
   if(window.innerWidth<768)setShowHistory(false);
  };
  const resetLocal=()=>{
-  onSession(undefined);setAgentChoice(undefined);setOverride(undefined);setInput('');
+  onSession(undefined);setAgentChoice(undefined);setOverride(undefined);setModeChoice(undefined);setInput('');
   setError('');setCommandInfo('');setSlashOpen(false);
   if(window.innerWidth<768)setShowHistory(false);
   inputRef.current?.focus({preventScroll:true});
@@ -330,13 +335,14 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   let saved=false;
   try{
    if(!id){
-    const session=await post<ChatSession>('/api/sessions',{title:t('chat.sessionTitle'),agentId,providerId:manual?.providerId,model:manual?.model});
+    const session=await post<ChatSession>('/api/sessions',{title:t('chat.sessionTitle'),mode,agentId:agentMode?agentId:null,providerId:agentMode?manual?.providerId:providerId,model:agentMode?manual?.model:model});
     if(controller.signal.aborted)return;
     id=session.id;
     activeTurnSession.current=id;
     if(view.current===current){
      onSession(id);setTurnSession(id);
-     if(agentId)setAgentChoice({id:agentId,scope:id});
+     setModeChoice({scope:id,mode});
+     if(agentMode&&agentId)setAgentChoice({id:agentId,scope:id});
      if(manual)setOverride({...manual,scope:id});
     }
     void sessions.reload();
@@ -344,8 +350,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    setInput(previous=>previous.trim()===text?'':previous);
    if(inputRef.current)inputRef.current.style.height='';
    await streamChat({
-    sessionId:id,agentId,providerId:manual?.providerId,model:manual?.model,input:text,
-    toolsEnabled,toolsExecutionEnabled:toolsEnabled,autoLearning:autoLearn,
+    sessionId:id,mode,agentId:agentMode?agentId:'',providerId:agentMode?manual?.providerId:providerId,model:agentMode?manual?.model:model,input:text,
+    toolsEnabled:agentMode&&toolsEnabled,toolsExecutionEnabled:agentMode&&toolsEnabled,autoLearning:agentMode&&autoLearn,
     reasoningLanguage:reasoningKo?'ko':'original',reasoningEffort:reasoningEffort||undefined,thinking:selectedProvider?.kind==='codex'?(reasoningEffort==='none'?false:canDisableThinking?thinkingEnabled:undefined):thinkingEnabled,
    },event=>{
     if(controller.signal.aborted||stoppingRef.current||stream.current!==controller)return;
@@ -446,11 +452,17 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      <TextArea ref={inputRef} rows={1} placeholder={t("chat.inputPlaceholder")} value={input} onChange={e=>{const next=e.target.value;setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n'));setSlashActive(0);const el=e.currentTarget;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,180)+'px'}} onKeyDown={appendKey} aria-controls="dominion-slash-menu" aria-expanded={slashOpen} className="conversation-composer-input"/>
      <div className="chat-composer-controls conversation-composer-controls">
       <div className="chat-composer-options conversation-composer-options">
-       <ExecutionPermissions active={active} open={permissionOpen} onOpenChange={open=>{setPermissionOpen(open);if(open){setShowSettings(false);setModelMenu(false)}}} onError={setError} onChanged={label=>setCommandInfo(t('chat.perm.changed',{label}))}/>
-
+       <SelectInput aria-label="대화 실행 모드" title={mode==='chat'?'모델과 직접 대화':'도구를 사용하는 에이전트 실행'}
+        value={mode} disabled={busy||stopping} onChange={e=>{
+         const next=e.target.value as ChatMode;setModeChoice({scope:current,mode:next});
+         setPermissionOpen(false);setShowSettings(false);setError('')
+        }} className="chat-mode !h-7 !w-[102px] !shrink-0 !border-0 !bg-transparent !py-1 !pl-1 !pr-5 !text-[11px] !font-semibold !text-[#5C544A]">
+        <option value="chat">일반 채팅</option><option value="agent">에이전트</option>
+       </SelectInput>
+       {agentMode&&<ExecutionPermissions active={active} open={permissionOpen} onOpenChange={open=>{setPermissionOpen(open);if(open){setShowSettings(false);setModelMenu(false)}}} onError={setError} onChanged={label=>setCommandInfo(t('chat.perm.changed',{label}))}/>}
        <ReasoningSelect value={reasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} model={selectedModel} requireCatalog={selectedProvider?.kind==='codex'} defaultLabel={activeAgent?.reasoningEffort?`에이전트 설정 (${activeAgent.reasoningEffort})`:t('chat.reasoningAuto')} className="chat-reasoning !h-7 !w-auto !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-[#5C544A]"/>
-       <SelectInput aria-label={t('chat.agentAria')} value={agentId} onChange={e=>chooseAgent(e.target.value)} className="chat-agent !h-7 !w-auto !max-w-[140px] !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-[#5C544A]">{agents.value.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</SelectInput>
-       <ConversationSettings open={showSettings} onOpenChange={open=>{setShowSettings(open);if(open){setPermissionOpen(false);setModelMenu(false)}}} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={thinkingEnabled} setThinkingEnabled={setThinkingEnabled} canDisableThinking={canDisableThinking} reasoningEffort={reasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={toolsEnabled} setToolsEnabled={setToolsEnabled} autoLearn={autoLearn} setAutoLearn={setAutoLearn} learning={learning} learnDisabled={!current||Boolean(boundSession)||busy} onLearn={learnSession}/>
+       {agentMode&&<SelectInput aria-label={t('chat.agentAria')} value={agentId} onChange={e=>chooseAgent(e.target.value)} className="chat-agent !h-7 !w-auto !max-w-[140px] !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-[#5C544A]">{agents.value.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</SelectInput>}
+       <ConversationSettings open={showSettings} onOpenChange={open=>{setShowSettings(open);if(open){setPermissionOpen(false);setModelMenu(false)}}} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={thinkingEnabled} setThinkingEnabled={setThinkingEnabled} canDisableThinking={canDisableThinking} reasoningEffort={reasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={agentMode&&toolsEnabled} setToolsEnabled={setToolsEnabled} autoLearn={agentMode&&autoLearn} setAutoLearn={setAutoLearn} learning={learning} learnDisabled={!agentMode||!current||Boolean(boundSession)||busy} onLearn={learnSession}/>
       </div>
       <div className="ml-auto flex items-center gap-2">
        <span className="hidden text-[10px] text-[#9C9388] sm:inline">{t('chat.enterHint')}</span>
