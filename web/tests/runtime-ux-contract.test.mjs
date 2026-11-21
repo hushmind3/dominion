@@ -191,3 +191,18 @@ test('modal keyboard focus stays in topmost dialog and returns to origin',()=>{
  assert.match(dialog,/!event\.shiftKey&&current===last/)
  assert.match(dialog,/origin\.focus\(\{preventScroll: true\}\)/)
 })
+
+test('team outcomes prioritize saved agent answers over raw receipts',()=>{
+ const panel=source('src/components/TeamWorkflowPanel.tsx')
+ const native=source('../src/addons/operations/team_orchestrator.rs')
+ assert.match(panel,/Array\.isArray\(team\.result\?\.nodes\)/)
+ assert.match(panel,/typeof node\.answer==='string'/)
+ assert.match(panel,/실제 AI 작업 결과/)
+ assert.match(panel,/agentNames\?\.\[String\(report\.agentId/)
+ assert.match(panel,/reports\.slice\(0,2\)/)
+ assert.match(panel,/전체 .*개 결과 보기/)
+ assert.match(panel,/원본 작업 영수증/)
+ assert.doesNotMatch(panel,/작업 결과·근거 보기/)
+ assert.match(native,/"nodes":nodes/)
+ assert.match(native,/"answer":output/)
+})
