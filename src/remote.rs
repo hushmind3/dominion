@@ -577,7 +577,7 @@ mod tests{
         assert!(!valid_artifact_path("secret\\nname.rs"));
         assert!(validate_artifact_paths(&json!(["src/good.rs","src/good.rs"]),false).is_err());
         assert!(validate_artifact_paths(&json!(["src/file.rs"]),true).is_err());
-        let source=json!(["src/file.rs"]);
+        let source=vec![json!("src/file.rs")];
         assert!(validate_received_artifacts(&source,&json!([{
             "path":"src/file.rs","content":"fn main() {}\\n","sha256":"wrong"
         }])).is_err());
