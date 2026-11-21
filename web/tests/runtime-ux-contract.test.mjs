@@ -409,3 +409,16 @@ test('failed SSE never blindly resends an already persisted owner instruction',(
  assert.match(chat,/setInput\(previous=>previous\.trim\(\)\?previous:text\)/)
  assert.match(chat,/전송 상태를 확인하지 못했습니다/)
 })
+
+test('pending image previews survive rejected chat attempts and clear only after durable save',()=>{
+ const chat=source('src/pages/Chat.tsx')
+ assert.match(chat,/let releasedSentImages=false/)
+ assert.match(chat,/const releaseSentImages=\(\)=>\{/)
+ assert.match(chat,/if\(releasedSentImages\|\|!pendingImages\.length\)return/)
+ assert.match(chat,/const sentKeys=new Set\(pendingImages\.map\(item=>item\.key\)\)/)
+ assert.match(chat,/setPendingImages\(previous=>previous\.filter\(item=>!sentKeys\.has\(item\.key\)\)\)/)
+ assert.match(chat,/if\(event\.type==='owner_saved'\)\{\s*ownerSaved=true;\s*releaseSentImages\(\)/)
+ assert.match(chat,/if\(event\.type==='assistant_saved'\)\{releaseSentImages\(\)/)
+ assert.match(chat,/if\(persisted\)\{\s*releaseSentImages\(\)/)
+ assert.doesNotMatch(chat,/attachmentIds=uploaded\.map\(item=>item\.id\);\s*pendingImages\.forEach/)
+})
