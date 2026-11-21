@@ -374,6 +374,7 @@ pub fn router(state: AppState) -> Router {
         ))
         .layer(middleware::from_fn_with_state(state.clone(), guard_writes))
         .layer(cors)
+        .layer(middleware::from_fn_with_state(state.clone(), guard_owner_host))
         .layer(axum::extract::DefaultBodyLimit::max(12 * 1024 * 1024))
         .with_state(state)
 }
@@ -435,6 +436,43 @@ fn worker_ingress(path:&str)->bool{
         &&(path.ends_with("/heartbeat")||path.ends_with("/finish")
             ||path.ends_with("/artifact/upload")))
 }
+/// Browser DNS rebinding and forwarded Host spoofing must not make owner
+/// GET endpoints readable. The listener binds loopback; remote Worker ingress
+/// has its own credential, while remote owner control always needs admin auth.
+fn is_local_owner_host(host: &str, port: u16) -> bool {
+    let normalized=host.to_ascii_lowercase();
+    normalized==format!("localhost:{port}")
+        || normalized==format!("127.0.0.1:{port}")
+}
+async fn guard_owner_host(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    let path=request.uri().path();
+    // Remote coordinator endpoints are handled by their dedicated admin token
+    // guard; device ingress is authenticated by per-device credentials.
+    if path.starts_with("/api/remote/") {
+        return next.run(request).await;
+    }
+    let host=request.headers().get(header::HOST)
+        .and_then(|value|value.to_str().ok());
+    let local=host.is_some_and(|host|is_local_owner_host(host,state.config.port));
+    // In-process Router::oneshot unit tests omit the Host header entirely.
+    // Network binaries are compiled without cfg(test) and reject that case.
+    let internal_test_request=cfg!(test) && host.is_none();
+    if local || internal_test_request {
+        return next.run(request).await;
+    }
+    // Explicitly authenticated reverse-proxied owner control is permitted.
+    // Merely choosing a different Host or supplying an Origin cannot grant it.
+    let configured=std::env::var("DOMINION_ADMIN_TOKEN").unwrap_or_default();
+    let presented=request.headers().get("x-dominion-token")
+        .and_then(|value|value.to_str().ok()).unwrap_or("");
+    if !configured.trim().is_empty() && presented==configured {
+        return next.run(request).await;
+    }
+    (StatusCode::FORBIDDEN,
+        Json(json!({"error":"untrusted Host for local owner API"}))
+    ).into_response()
+}
+
 /// Rejects cross-origin writes so a random website cannot drive the local
 /// computer-control API. Owner-controlled distributed endpoints require an
 /// explicit admin secret whenever exposed, regardless of the local default.
@@ -495,6 +533,16 @@ async fn guard_writes(State(state): State<AppState>, request: Request, next: Nex
 #[cfg(test)]
 mod remote_worker_route_tests{
     use super::*;
+    #[test]
+    fn only_loopback_host_and_exact_listener_port_are_local_owner_authority(){
+        assert!(is_local_owner_host("127.0.0.1:4317",4317));
+        assert!(is_local_owner_host("LOCALHOST:4317",4317));
+        for rejected in ["evil.example:4317","localhost.evil:4317",
+            "127.0.0.1:9999","localhost:4318","127.0.0.1",
+            "[::1]:4317","127.0.0.1:4317.evil"] {
+            assert!(!is_local_owner_host(rejected,4317),"{rejected}");
+        }
+    }
     #[test]
     fn remote_machine_write_paths_never_bypass_owner_admin_policy(){
         assert!(worker_ingress("/api/remote/claim"));
