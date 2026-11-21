@@ -408,12 +408,7 @@ pub fn recover(state: &AppState) {
 /// unavailable. The work is kept, not lost, and a later worker picks it up.
 pub fn retry_failed_learning(state: &AppState) -> usize {
     let mut retried = 0;
-    for job in state.store.all("job") {
-        if job["kind"].as_str() != Some("learn")
-            || job["status"].as_str() != Some("failed")
-        {
-            continue;
-        }
+    for job in state.store.failed_learning_jobs().unwrap_or_default() {
         let attempts = job["attempts"].as_u64().unwrap_or(0);
         if attempts >= 3 {
             continue;

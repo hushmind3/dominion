@@ -235,6 +235,10 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_learning_job_history
                  ON records(updated_at DESC,id DESC)
                  WHERE kind='job' AND json_extract(data,'$.kind')='learn';
+             CREATE INDEX IF NOT EXISTS idx_learning_job_failed
+                 ON records(updated_at DESC,id DESC)
+                 WHERE kind='job' AND json_extract(data,'$.kind')='learn'
+                   AND json_extract(data,'$.status')='failed';
              CREATE INDEX IF NOT EXISTS idx_learning_draft_skill_history
                  ON records(updated_at DESC,id DESC)
                  WHERE kind='skill' AND json_extract(data,'$.source')='learn'
@@ -538,6 +542,21 @@ impl Store {
         ).map_err(|e|e.to_string())?;
         let rows=stmt.query_map([i64::try_from(limit).unwrap_or(i64::MAX)],record_from_row)
             .map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// The five-second worker reconciliation sweep only needs failed learning
+    /// jobs; completed prompts and unrelated job histories stay in SQLite.
+    pub fn failed_learning_jobs(&self)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             INDEXED BY idx_learning_job_failed
+             WHERE kind='job' AND json_extract(data,'$.kind')='learn'
+               AND json_extract(data,'$.status')='failed'
+             ORDER BY updated_at DESC,id DESC"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([],record_from_row).map_err(|e|e.to_string())?;
         rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 
