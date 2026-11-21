@@ -42,17 +42,6 @@ pub async fn activate(State(state):State<AppState>,Path(id):Path<String>,
     }
 }
 
-pub async fn statistics(State(state):State<AppState>)->Json<Value>{
-    // One stable global record per kind/revision; the algorithm kernel
-    // already accumulates agent observations into the global projection.
-    let mut stats=state.store.all("algorithm_stat").into_iter()
-        .filter(|s|s["agentId"]=="global")
-        .collect::<Vec<_>>();
-    stats.sort_by(|a,b|a["kind"].as_str().cmp(&b["kind"].as_str())
-        .then_with(||a["revision"].as_str().cmp(&b["revision"].as_str())));
-    Json(json!({"algorithmStats":stats}))
-}
-
 #[cfg(test)]
 mod tests{
     use super::*;
@@ -84,7 +73,7 @@ mod tests{
         assert_eq!(engine::algorithms::variant(&state,"tool.combination"),"parallel-reads");
         engine::algorithms::record_domain_outcome(&state,None,
             "tool.combination","parallel-reads",true);
-        let stats=statistics(State(state.clone())).await.0;
+        let stats=crate::api::agents::synergy(State(state.clone())).await.0;
         assert!(stats["algorithmStats"].as_array().unwrap().iter().any(|s|
             s["kind"]=="tool.combination"&&s["uses"]==1&&s["successes"]==1));
         let invalid=register(State(state),Json(json!({
