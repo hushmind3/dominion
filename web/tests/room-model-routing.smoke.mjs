@@ -131,6 +131,33 @@ try{
  const changedRoutes=await page.locator('.room-route-bar-items > span').allTextContents();
  assert.ok(changedRoutes[0].includes('owner-picked-model'),JSON.stringify(changedRoutes));
  assert.ok(changedRoutes[1].includes('configured-only-model'),JSON.stringify(changedRoutes));
+ // Room drafts survive navigation/reload and retain exact recipient choices.
+ await page.getByRole('button',{name:'설정 닫기',exact:true}).click();
+ const composer=page.locator('.conversation-composer-input');
+ await composer.fill('Room only: 검토 후 요약해 주세요');
+ await page.locator('.conversation-recipients').click();
+ await page.locator('[role="dialog"] button').filter({hasText:'Lead A'}).first().click();
+ const persisted=await page.evaluate(()=>JSON.parse(sessionStorage.getItem(
+  'dominion.room.composer.v1:room-model-fixture')||'null'));
+ assert.equal(persisted.text,'Room only: 검토 후 요약해 주세요');
+ assert.deepEqual(persisted.targets,['lead']);
+ await page.reload({waitUntil:'domcontentloaded'});
+ await composer.waitFor({timeout:10000});
+ assert.equal(await composer.inputValue(),'Room only: 검토 후 요약해 주세요');
+ await page.locator('.conversation-recipients').click();
+ assert.equal(await page.locator('[role="dialog"] button').filter({hasText:'Lead A'})
+  .first().getAttribute('aria-pressed'),'true');
+ // Deleted workers cannot be dropped to auto-routing without an owner choice.
+ await page.evaluate(()=>sessionStorage.setItem('dominion.room.composer.v1:room-model-fixture',
+  JSON.stringify({text:'Do not broadcast this',targets:['removed-agent']})));
+ await page.reload({waitUntil:'domcontentloaded'});
+ await composer.waitFor({timeout:10000});
+ assert.equal(await composer.inputValue(),'Do not broadcast this');
+ await page.getByText('이전에 지정한 참가자',{exact:false}).waitFor({timeout:10000});
+ assert.equal(await page.getByRole('button',{name:'메시지 보내기'}).isDisabled(),true);
+ await page.getByRole('button',{name:'사용할 수 없는 대상 제외'}).click();
+ assert.equal(await composer.inputValue(),'Do not broadcast this');
+ assert.equal(await page.getByRole('button',{name:'메시지 보내기'}).isEnabled(),true);
  const sizes=await page.evaluate(()=>({screen:innerWidth,body:document.documentElement.scrollWidth}));
  assert.ok(sizes.body<=sizes.screen+2,'Room model UI overflows mobile: '+JSON.stringify(sizes));
  assert.deepEqual(errors,[],'Room runtime errors');
