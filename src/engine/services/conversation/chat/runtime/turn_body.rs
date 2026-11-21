@@ -1249,7 +1249,7 @@ pub(super) async fn run_turn_body(
                         "reason":"unchanged gaps and tool outcomes",
                     }));
                     return Err(format!(
-                        "동일한 검증 실패와 도구 결과가 반복되어 추가 모델 호출을 중단했습니다: {}",
+                        "실행 증거가 부족합니다. 동일한 검증 실패와 도구 결과가 반복되어 추가 모델 호출을 중단했습니다: {}",
                         gaps.iter().take(5).map(|gap|gap.chars().take(150)
                             .collect::<String>()).collect::<Vec<_>>().join("; ")
                     ));
