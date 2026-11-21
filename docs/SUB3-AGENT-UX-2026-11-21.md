@@ -42,4 +42,24 @@
 
 기존 `.github/workflows/sub3-product-acceptance.yml`이 `web/**` 변경에 대해 TypeScript 타입 검사, 웹 테스트, SDK 타입·HTTP 계약 테스트, Rust 제품 검사를 수행한다. 이 브랜치의 일반 CI는 데스크톱 설치 파일 또는 프론트 릴리스 빌드를 수행하지 않는다.
 
-실제 OS별 시각적 스크린샷·실제 원격 장치 핸드셰이크는 별도 수동 검증 대상이다.
+## 전체 메뉴·반응형·접근성 고도화 (2026-11-21)
+
+- 대상: 대화, 그룹 대화, 대시보드, 모델 관리, 에이전트, 연결·채널, 메모리, 실행 기록, 설정. 기존 9개 메뉴 유지.
+- WorkspaceSearch.tsx: Ctrl/⌘ K 및 설정 헤더 검색으로 9개 메뉴를 찾는다. 위/아래, Enter, Esc 키보드 지원. 새 상단 메뉴 없음.
+- WorkspaceShell.tsx / theme.css: 모바일 가로 메뉴에서 선택 항목을 보이는 위치로 자동 스크롤. 데스크톱에서 접힌 설정 사이드바가 모바일 메뉴를 감추지 않도록 보정. 포커스 및 화면 넘침·동작 감소 설정 개선.
+- Dialog.tsx: 모달이 열리면 초점을 옮기고, 최상위 모달에서 Tab 순환, Escape 닫기, 닫은 후 기존 초점 복귀. 중첩 창은 최상위만 처리.
+- Models.tsx / Connections.tsx: 긴 탭 목록 가로 스크롤 및 활성 탭 위치 유지.
+- Home.tsx: 첫 시작 모델 연결 안내. Operations.tsx: 실행 가능한 작업 팀을 수동적 로그 앞에 배치.
+- Chat.tsx: 데스크톱 → 휴대폰 화면 전환에서 열린 채팅 이력 목록이 대화를 가리는 문제 수정.
+
+## 실제 브라우저 검증과 범위
+
+- GitHub Actions의 browser-ux: Playwright Chromium과 Vite 개발 서버로 실제 React를 클릭·입력·스크린샷. 프로덕션 릴리스 빌드 없음.
+- 검증 코드: web/scripts/workspace-visual.mjs 및 web/scripts/connection-visual.mjs.
+- 1440/768/390/320px 4개 화면 너비에서 32회 메뉴 방문, 35개 스크린샷, 런타임 오류 0건.
+- 단일 메뉴 검색 Ctrl+K → Enter → Esc, 설정 고급 펼치기, 키보드 포커스, 화면 가로 넘침, 자동 작업 알고리즘·실행 한도 요청, 팀 목표 폴백, 원격 장치 추론 요청을 테스트 픽스처로 검사.
+- 연결 채널 플랫폼 선택·인증·대상 입력·검토·저장, MCP·스킬·플러그인 등의 전체 연결 탭은 별도 Chromium 시나리오에서 18장 추가 캡처. 총 53개 이미지.
+- [기준 전체 CI 통과](https://github.com/hushmind3/dominion-rust/actions/runs/44880099374): 프론트, Rust, Chromium 통과.
+- 테스트 화면이 로딩 중인데 캡처하던 문제를 이후 수정해 실제 페이지 조작 요소가 보인 뒤 촬영한다. 데스크톱→모바일 채팅 서랍 문제도 실제 화면 증거를 바탕으로 수정했다. [후속 실제 브라우저 검증](https://github.com/hushmind3/dominion-rust/actions/runs/44880383321).
+
+실제 실행 브라우저는 GitHub Actions Linux Chromium이다. 사용자의 PC를 조작한 것은 아니며, 모델 비용 결제나 외부 서비스 인증은 수행하지 않는다. 외부 API는 결정적 테스트 픽스처로 대체했으므로 Safari/Firefox 및 실기기, 실제 원격 모델·유료 API·채널 송수신은 별도 운영환경 시험 대상이다.
