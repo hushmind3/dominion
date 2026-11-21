@@ -71,9 +71,9 @@ reply anchor and originating run; `RoomAgentBinding` exposes independent
 `readCursor` state. `GET /api/rooms/:id/events` and both client SDKs
 provide cursor pagination without creating another UI menu or service.
 
-The portable Runtime `harness_steps!` now owns the *single turn iteration
+The Algorithm Harness `crates/dominion-agent-algorithms/src/harness.rs` now owns the *single turn iteration
 source* for both ReActLoop (native and Team) and Chat/Room. Both adapters
-invoke `dispatch_model_turn`, the same typed, journaled paid-model admission
+invoke Runtime's `dispatch_model_turn`, the same typed, journaled paid-model admission
 operator. After write-ahead persistence, cancellation and owner correction
 are checked again; uncertain model calls remain marked in-flight. Chat/Room
 now persist their exact typed `Decision` tape, settled usage and the
@@ -189,7 +189,7 @@ Chat/native upper-loop convergence is claimed from these source edits.
 
 Fast checks on this branch: `cargo test -p dominion-agent-runtime --lib`; `cargo test --bin dominion-rust host::execution::run_state::tests`; `cargo test --bin dominion-rust host::execution::run_view::tests`; `cargo test --bin dominion-rust features::collaboration::room_cursor::tests`; `cargo test --bin dominion-rust features::collaboration::task_team::tests`; `cargo test -p dominion-sdk --lib`; and `npm test --prefix sdk/typescript`.
 
-## 9. Migration boundary still required before claiming one physical model loop
+## 9. Remaining Chat decision-policy migration (shared Harness loop already consolidated)
 
 **Current implementation has one step clock, one paid-model write-ahead
 operator, one tool dispatch scheduler, one Run/Event identity and one durable
