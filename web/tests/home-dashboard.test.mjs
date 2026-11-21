@@ -15,3 +15,10 @@ test('home exposes real owner-actionable pending approvals and uncertain jobs',(
  assert.match(home,/attention\.length>0&&<section role="status"/)
  assert.match(home,/onClick=\{\(\)=>navigate\('activity'\)\}/)
 })
+
+test('home uses measured audit totals rather than fabricated API prices',()=>{
+ assert.match(home,/useRemote<\{calls:number;totalTokens:number;estimatedCalls:number\}>/)
+ assert.match(home,/\/api\/model-usage/)
+ assert.match(home,/data-home-usage/)
+ assert.match(home,/usage\.value\.estimatedCalls>0/)
+})

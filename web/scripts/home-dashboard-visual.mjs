@@ -40,6 +40,7 @@ async function mock(route){
   ||pathname==='/api/remote/workers'||pathname==='/api/remote/tasks'
   ||pathname==='/api/approvals')return reply(route,[])
  if(pathname==='/api/status')return reply(route,{jobs:3,agents:0,providers:1})
+ if(pathname==='/api/model-usage')return reply(route,{calls:3,totalTokens:12345,estimatedCalls:1})
  if(pathname==='/api/model-library/runtime')return reply(route,{status:'idle'})
  return reply(route,[])
 }
@@ -68,6 +69,10 @@ try{
  const jobCount=page.locator('[data-dashboard-metric="activity"] strong')
  assert.equal((await jobCount.textContent()).trim(),'1',
   'Only actual running jobs count as active work')
+ const usage=page.locator('[data-home-usage]')
+ await usage.waitFor({timeout:15000})
+ assert.match(await usage.textContent(),/호출 3회 · 토큰 12,345개/)
+ assert.match(await usage.textContent(),/이 중 1회는 사용량을 추정했습니다/)
  const attention=page.locator('[data-home-attention]')
  await attention.waitFor({timeout:15000})
  assert.match(await attention.textContent(),/승인 또는 수동 검토를 기다리는 작업 2개/)

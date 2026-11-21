@@ -15,6 +15,11 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
  const jobs=useRemote<any[]>('/api/jobs',[])
  const channels=useRemote<any[]>('/api/channels',[])
  const runtime=useRemote<any>('/api/model-library/runtime',{status:'idle'})
+ // This endpoint aggregates the latest audited model calls. Without price
+ // metadata we show tokens/call counts, never fabricate a money figure.
+ const usage=useRemote<{calls:number;totalTokens:number;estimatedCalls:number}>(
+  '/api/model-usage',{calls:0,totalTokens:0,estimatedCalls:0}
+ )
  const enabledProviders=providers.value.filter(p=>p.enabled)
  const authenticatedProviders=enabledProviders.filter((p:any)=>p.hasKey||p.local).length
  const recent=[...jobs.value].sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,6)
@@ -76,6 +81,19 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
     <div className="m-4 mt-2 flex items-center gap-2 rounded-lg bg-[#F7F2EA] px-3 py-2 text-[11px] text-[#7C7469]"><CheckCircle2 size={14}/> {t('dashboard.note')}</div>
    </section>
   </div>
+  <section data-home-usage className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-[#E7E0D5] bg-white px-4 py-3">
+   <div className="min-w-0 flex-1">
+    <h2 className="text-[12px] font-bold text-[#3A342D]">{t('dashboard.usage')}</h2>
+    <p className="mt-1 text-[11px] text-[#817467]">{t('dashboard.usageDetail',{
+      calls:(usage.value.calls||0).toLocaleString(),
+      tokens:(usage.value.totalTokens||0).toLocaleString()
+     })}</p>
+    {usage.value.estimatedCalls>0&&<p className="mt-1 text-[11px] text-[#92673C]">
+     {t('dashboard.usageEstimated',{count:usage.value.estimatedCalls})}</p>}
+   </div>
+   <Button variant="secondary" size="sm" type="button" onClick={()=>navigate('activity')}>
+    {t('dashboard.recent.all')} <ArrowRight size={13}/></Button>
+  </section>
   <NativeAgentPanel providers={providers.value}/>
   <section className="mt-4 rounded-xl border border-[#E7E0D5] bg-white">
    <div className="flex items-center justify-between border-b border-[#F0EAE1] px-4 py-3"><h2 className="text-[13px] font-bold">{t('dashboard.recent')}</h2><Button type="button" onClick={()=>navigate('activity')} className="flex items-center gap-1 text-[11px] font-medium text-[#C96442]">{t('dashboard.recent.all')} <ArrowRight size={13}/></Button></div>
