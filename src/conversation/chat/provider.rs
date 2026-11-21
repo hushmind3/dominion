@@ -3128,6 +3128,109 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn chat_anthropic_stream_refuses_unsettled_and_misbound_tool_effects() {
+        use axum::{routing::post,Router,Json};
+        async fn model(Json(request):Json<Value>)->impl axum::response::IntoResponse {
+            let selected=request["model"].as_str().unwrap_or("");
+            let mut events=vec![json!({"type":"message_start",
+                "message":{"usage":{"input_tokens":7,"output_tokens":0}}})];
+            if selected=="orphan-tool-delta" {
+                events.push(json!({"type":"content_block_delta","index":0,
+                    "delta":{"type":"input_json_delta","partial_json":"{}"}}));
+            }else if selected=="valid-text"||selected=="no-stop"||selected=="max-tokens" {
+                events.extend([
+                    json!({"type":"content_block_start","index":0,
+                        "content_block":{"type":"text","text":""}}),
+                    json!({"type":"content_block_delta","index":0,
+                        "delta":{"type":"text_delta","text":"partial"}}),
+                    json!({"type":"content_block_stop","index":0}),
+                ]);
+            }else {
+                events.extend([
+                    json!({"type":"content_block_start","index":0,
+                        "content_block":{"type":"tool_use","id":"tool-1",
+                            "name":"workspace_read","input":{}}}),
+                    json!({"type":"content_block_delta","index":0,
+                        "delta":{"type":"input_json_delta",
+                            "partial_json":"{\"path\":\"README.md\"}"}}),
+                    json!({"type":"content_block_stop","index":0}),
+                ]);
+                if selected=="duplicate-call" {
+                    events.extend([
+                        json!({"type":"content_block_start","index":1,
+                            "content_block":{"type":"tool_use","id":"tool-1",
+                                "name":"workspace_read","input":{}}}),
+                        json!({"type":"content_block_stop","index":1}),
+                    ]);
+                }
+            }
+            let reason=match selected {
+                "no-stop"=>None,
+                "max-tokens"=>Some("max_tokens"),
+                "end-turn-with-tool"=>Some("end_turn"),
+                "valid-tool"|"duplicate-call"=>Some("tool_use"),
+                _=>Some("end_turn"),
+            };
+            events.push(json!({"type":"message_delta","delta":{"stop_reason":reason},
+                "usage":{"output_tokens":3}}));
+            events.push(json!({"type":"message_stop"}));
+            let wire=events.into_iter().map(|event|
+                format!("event: message\ndata: {event}\n\n")).collect::<String>();
+            ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],wire)
+        }
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr=listener.local_addr().unwrap();
+        let server=tokio::spawn(async move {
+            axum::serve(listener,Router::new().route("/messages",post(model))).await.unwrap();
+        });
+        let root=std::env::temp_dir().join(format!(
+            "dominion-chat-anthropic-finish-{}",uuid::Uuid::new_v4()));
+        let config=crate::config::Config{port:0,data_dir:root.clone(),
+            web_dir:root.join("web"),workspace:root.clone()};
+        let state=AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        let request=TurnRequest::from_value(&json!({
+            "input":"Read a file","sessionId":"anthropic-finish","autoLearning":false
+        })).unwrap();
+        let messages=vec![json!({"role":"user","content":"Read a file"})];
+        let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+        for (name,expected) in [
+            ("no-stop","no settled stop_reason"),
+            ("max-tokens","stopped without a settled turn"),
+            ("orphan-tool-delta","no open tool block"),
+            ("end-turn-with-tool","contradicts streamed tool calls"),
+            ("duplicate-call","duplicate tool call IDs"),
+        ] {
+            let provider=ProviderRef{id:name.into(),name:"Anthropic mock".into(),
+                base_url:format!("http://{addr}"),api_key:"test".into(),
+                model:name.into(),tool_mode:"native".into(),
+                reasoning_protocol:"anthropic".into(),local:false,
+                context_tokens:None,max_output_tokens:Some(256),
+                requests_per_minute:None,kind:"anthropic".into(),account_id:None};
+            let error=stream_completion_once(&state,&reqwest::Client::new(),&provider,
+                &messages,&[],&request,"anthropic-finish",&tx,false).await
+                .err().expect("Unsettled Anthropic call must never authorize an effect");
+            assert!(error.contains(expected),"{name}: {error}");
+        }
+        for (name,tool) in [("valid-text",false),("valid-tool",true)] {
+            let provider=ProviderRef{id:name.into(),name:"Anthropic mock".into(),
+                base_url:format!("http://{addr}"),api_key:"test".into(),
+                model:name.into(),tool_mode:"native".into(),
+                reasoning_protocol:"anthropic".into(),local:false,
+                context_tokens:None,max_output_tokens:Some(256),
+                requests_per_minute:None,kind:"anthropic".into(),account_id:None};
+            let reply=stream_completion_once(&state,&reqwest::Client::new(),&provider,
+                &messages,&[],&request,"anthropic-finish",&tx,false).await.unwrap();
+            assert_eq!(!reply.tool_calls.is_empty(),tool);
+            if tool {assert_eq!(reply.tool_calls[0].id,"tool-1");}
+            else {assert_eq!(reply.content,"partial");}
+        }
+        server.abort();
+        crate::test_support::cleanup_dir(root);
+    }
+
+    #[tokio::test]
     async fn anthropic_native_stream_translates_messages_tools_and_usage() {
         use axum::{routing::post, Router, Json};
         use std::sync::{Arc, Mutex};
