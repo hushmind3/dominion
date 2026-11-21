@@ -145,11 +145,22 @@ fn receipt(state:&AppState,job_id:&str,session_id:&str)->Result<Value,String>{
         .into_iter().filter_map(|run|run["id"].as_str().map(str::to_string))
         .map(|run_id|state.store.execution_operations(&run_id).map(|v|v.len()).unwrap_or(0))
         .sum::<usize>();
+    let usage=state.store.session_usage(session_id);
+    // Only return bounded provider-observed counters. Cost estimates,
+    // raw prompts and provider credentials are never attested as billing.
     Ok(json!({
         "localJobId":job_id,"jobStatus":status,
         "answer":answer,"verified":job["result"]["verified"]==true,
         "verification":job["result"]["verification"],
         "operationCount":operation_count.min(100),
+        "usage":{
+            "calls":usage["calls"],"promptTokens":usage["promptTokens"],
+            "completionTokens":usage["completionTokens"],
+            "totalTokens":usage["totalTokens"],
+            "cachedPromptTokens":usage["cachedPromptTokens"],
+            "cacheObservedCalls":usage["cacheObservedCalls"],
+            "estimatedCalls":usage["estimatedCalls"],
+        },
     }))
 }
 async fn handle_task(
