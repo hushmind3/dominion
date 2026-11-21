@@ -34,6 +34,7 @@ pub fn assign(
         "id":work_id,"kind":"program_team_node",
         "executionId":execution_id,"sessionId":session_id,
         "programRevision":revision,"teamNodeId":parent_id,
+        "sourceMessageId":run["sourceMessageId"],
         "index":index,"nodeId":node["id"],"nodeType":node["type"],
         "agentId":node["agentId"],"dependsOn":node["dependsOn"],
         "status":"assigned","attempt":0,
