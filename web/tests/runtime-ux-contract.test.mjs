@@ -54,3 +54,14 @@ test('original screens use native APIs with measured and estimated token evidenc
  assert.match(usage,/estimatedCalls/)
  assert.match(usage,/auxiliaryObservedTokens/)
 })
+
+test('global permission toggles serialize writes and reflect only confirmed backend policy',()=>{
+ assert.match(operations,/policyWriteInFlight=useRef\(false\)/)
+ assert.match(operations,/if\(policyWriteInFlight\.current\|\|policy\.loading\|\|policy\.error\)return/)
+ assert.match(operations,/const saved=await post<any>\('\/api\/policy',value\)/)
+ assert.match(operations,/policy\.setValue\(saved\)/)
+ assert.match(operations,/refresh\('\/api\/policy'\)/)
+ assert.match(operations,/await policy\.reload\(\)/)
+ assert.match(operations,/disabled=\{policySaving\|\|policy\.loading\|\|Boolean\(policy\.error\)/)
+ assert.match(operations,/\(error\|\|policy\.error\)&&<Notice/)
+})
