@@ -93,6 +93,21 @@ pub(super) fn legacy_http_probe_rejection(error:&str)->bool{
     true
 }
 
+/// An explicit modern UnsupportedProtocolVersionError may advertise only
+/// handshake-era revisions. The probe is read-only, so selecting the newest
+/// shared legacy version here is safe. Never infer a downgrade from 401/403/5xx.
+pub(super) fn advertised_legacy_version(error:&str)->Option<&'static str>{
+    if !error.starts_with("MCP HTTP 400 Bad Request:"){return None;}
+    let body=error.split_once(": ")?.1;
+    let value:Value=serde_json::from_str(body).ok()?;
+    if value["jsonrpc"]!="2.0"||value["error"]["code"]!=-32022 {
+        return None;
+    }
+    let versions=value["error"]["data"]["supported"].as_array()?;
+    ["2025-11-25","2025-06-18","2025-03-26","2024-11-05"]
+        .into_iter().find(|v|versions.iter().any(|item|item.as_str()==Some(v)))
+}
+
 /// An invalid annotated tool is omitted from tools/list, rather than silently
 /// dropping a mandatory header and dispatching an unrouteable external effect.
 pub(super) fn validate_tool_schema(schema:&Value)->Result<(),String>{
@@ -157,6 +172,16 @@ mod tests {
             json!({"type":"object","properties":{"a":{"x-mcp-header":"Bad\rHeader","type":"string"}}}),
             json!({"type":"object","properties":{"a":{"x-mcp-header":"X","type":"number"}}})
         ]{assert!(validate_tool_schema(&schema).is_err());}
+    }
+    #[test]
+    fn modern_version_mismatch_advertises_explicit_safe_legacy_downgrade(){
+        let error=r#"MCP HTTP 400 Bad Request: {"jsonrpc":"2.0","id":1,"error":{"code":-32022,"data":{"supported":["2025-06-18","2025-11-25"]}}}"#;
+        assert_eq!(advertised_legacy_version(error),Some("2025-11-25"));
+        assert_eq!(advertised_legacy_version(
+            r#"MCP HTTP 400 Bad Request: {"jsonrpc":"2.0","error":{"code":-32020,"data":{"supported":["2025-11-25"]}}}"#),
+            None);
+        assert_eq!(advertised_legacy_version(
+            r#"MCP HTTP 401 Unauthorized: {"error":"bad"}"#),None);
     }
     #[test]
     fn modern_jsonrpc_error_is_not_evidence_for_legacy_fallback(){
