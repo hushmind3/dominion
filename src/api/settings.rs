@@ -35,6 +35,49 @@ pub async fn system_prompt_preview(
     }
 }
 
+/// Overrides only the model-facing private-chat system text. Null removes
+/// the override; an empty string explicitly sends an empty system message.
+pub async fn save_system_prompt_override(
+    State(state): State<AppState>, Json(body): Json<Value>,
+) -> Response {
+    let prompt = match body.get("prompt") {
+        Some(Value::String(text)) if text.chars().count() <= 32_000 => Some(text.as_str()),
+        Some(Value::Null) => None,
+        _ => return error(StatusCode::BAD_REQUEST,
+            "prompt는 32000자 이내 문자열이거나 초기화용 null이어야 합니다."),
+    };
+    if body.get("agentId").is_some_and(|v|!v.is_string()) {
+        return error(StatusCode::BAD_REQUEST,"agentId는 문자열이어야 합니다.");
+    }
+    let agent_id=body["agentId"].as_str().filter(|s|!s.is_empty());
+    let (kind,mut record)=if let Some(id)=agent_id {
+        let Some(agent)=state.store.get("agent",id) else {
+            return error(StatusCode::NOT_FOUND,"에이전트를 찾을 수 없습니다.");
+        };
+        ("agent",agent)
+    } else {
+        ("assistant_settings",state.store.get("assistant_settings","global")
+            .unwrap_or_else(||json!({"id":"global","instructions":"","enabled":true})))
+    };
+    if let Some(text)=prompt {
+        record["systemPromptOverride"]=json!(text);
+    } else if let Some(fields)=record.as_object_mut() {
+        fields.remove("systemPromptOverride");
+    }
+    match state.store.put(kind,&record) {
+        Some(saved)=>{
+            state.bus.record(kind,&saved);
+            Json(json!({
+                "agentId":agent_id,
+                "overrideActive":saved["systemPromptOverride"].is_string(),
+                "overrideText":saved["systemPromptOverride"],
+            })).into_response()
+        }
+        None=>error(StatusCode::INTERNAL_SERVER_ERROR,
+            "시스템 프롬프트를 저장하지 못했습니다."),
+    }
+}
+
 pub async fn assistant_settings(State(state): State<AppState>) -> Json<Value> {
     Json(
         state
@@ -63,7 +106,15 @@ pub async fn save_assistant_settings(
     {
         return error(StatusCode::BAD_REQUEST, "enabled는 true/false여야 합니다.");
     }
-    match state.store.put("assistant_settings",&json!({"id":"global","instructions":instructions,"enabled":body["enabled"].as_bool().unwrap_or(true),"source":"owner","updatedAt":chrono::Utc::now().to_rfc3339()})){
+    // Keep full-prompt customization intact when the ordinary owner instruction
+    // editor saves. Otherwise it would unexpectedly reset the prompt mode.
+    let mut saved_settings=state.store.get("assistant_settings","global")
+        .unwrap_or_else(||json!({"id":"global"}));
+    saved_settings["instructions"]=json!(instructions);
+    saved_settings["enabled"]=json!(body["enabled"].as_bool().unwrap_or(true));
+    saved_settings["source"]=json!("owner");
+    saved_settings["updatedAt"]=json!(chrono::Utc::now().to_rfc3339());
+    match state.store.put("assistant_settings",&saved_settings){
         Some(saved)=>{state.bus.record("assistant_settings",&saved);Json(saved).into_response()},None=>error(StatusCode::INTERNAL_SERVER_ERROR,"공통 지침을 저장할 수 없습니다."),
     }
 }

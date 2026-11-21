@@ -90,6 +90,12 @@ pub(crate) fn private_system_prompt_preview(
     );
     let owner = state.store.get("assistant_settings","global")
         .unwrap_or_else(||serde_json::json!({"id":"global","instructions":"","enabled":true}));
+    let own_override=if let Some(agent)=agent.as_ref(){
+        agent["systemPromptOverride"].as_str()
+    }else{owner["systemPromptOverride"].as_str()};
+    let effective_scope=if agent.as_ref().and_then(|a|a["systemPromptOverride"].as_str()).is_some(){
+        Some("agent")
+    }else if owner["systemPromptOverride"].is_string(){Some("global")}else{None};
     let prompt_tokens = room_context::estimate(&compiled.prompt);
     let context_tokens = room_context::estimate(&compiled.dynamic_context);
     Ok(serde_json::json!({
@@ -104,12 +110,15 @@ pub(crate) fn private_system_prompt_preview(
         "agentInstructions":agent.as_ref().and_then(|a|a["systemPrompt"].as_str()).unwrap_or(""),
         "ownerInstructions":owner["instructions"],
         "ownerEnabled":owner["enabled"] != false,
+        "ownOverrideActive":own_override.is_some(),
+        "ownOverrideText":own_override,
+        "effectiveOverrideScope":effective_scope,
         "sessionId":session_id,
         "sampleInput":request.input,
         "toolsEnabled":tools_enabled,
         "reasoningLanguage":if korean_reasoning{"ko"}else{"original"},
         "scope":"private-chat",
-        "note":"현재 코드를 통한 프롬프트 조립 미리보기입니다. 실행 때 선택되는 도구 스키마, 시스템 override, 실제 이전 대화와 캐시 전송 상태는 포함하지 않습니다."
+        "note":"현재 코드를 통한 일반 채팅 프롬프트 조립 미리보기입니다. 직접 편집한 전체 프롬프트는 일반 채팅에서 기본 시스템 지침을 대체합니다. 도구 스키마·실제 이전 대화·캐시 상태는 별도입니다."
     }))
 }
 
@@ -335,6 +344,37 @@ mod private_prompt_preview_tests {
             "preview must not add a user or assistant message");
         assert!(state.store.all("execution").is_empty(),
             "preview must not run or bill a model");
+    }
+
+    #[test]
+    fn full_prompt_editor_overrides_all_builtin_private_text_including_empty() {
+        let state=fixture();
+        state.store.put("agent",&json!({
+            "id":"worker","name":"worker","systemPrompt":"OLD_PERSONA",
+            "systemPromptOverride":"단 1줄만 출력하세요."
+        })).unwrap();
+        state.store.put("assistant_settings",&json!({
+            "id":"global","enabled":true,"instructions":"OLD_OWNER_RULE",
+            "systemPromptOverride":"SHARED_CUSTOM"
+        })).unwrap();
+        let edited=private_system_prompt_preview(
+            &state,None,Some("worker"),"코드 작성",true,true
+        ).unwrap();
+        assert_eq!(edited["systemPrompt"],"단 1줄만 출력하세요.");
+        assert_eq!(edited["ownOverrideActive"],true);
+        assert_eq!(edited["effectiveOverrideScope"],"agent");
+        let fallback=private_system_prompt_preview(&state,None,None,"코드 작성",true,true).unwrap();
+        assert_eq!(fallback["systemPrompt"],"SHARED_CUSTOM");
+        let mut worker=state.store.get("agent","worker").unwrap();
+        worker["systemPromptOverride"]=json!("");
+        state.store.put("agent",&worker).unwrap();
+        let empty=private_system_prompt_preview(&state,None,Some("worker"),"코드 작성",true,true).unwrap();
+        assert_eq!(empty["systemPrompt"],"");
+        assert_eq!(empty["systemTokensEstimated"],0);
+        worker.as_object_mut().unwrap().remove("systemPromptOverride");
+        state.store.put("agent",&worker).unwrap();
+        let inherited=private_system_prompt_preview(&state,None,Some("worker"),"코드 작성",true,true).unwrap();
+        assert_eq!(inherited["systemPrompt"],"SHARED_CUSTOM");
     }
 
     #[test]

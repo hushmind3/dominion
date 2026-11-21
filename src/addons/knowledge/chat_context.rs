@@ -111,12 +111,25 @@ pub(super) fn system_prompt_with_manifest_at(
     let private = !state.store.get("session",session_id)
         .is_some_and(|session|session["roomId"].is_string());
     let social = private && super::context_engine::is_social_turn(query);
-    let (mut prompt,mut identity_items)=identity_prefix(state,request);
-    // Custom persona and owner instructions always survive the fast path.
-    if social && identity_items.is_empty() {
+    // A user-edited full system prompt replaces the built-in narrative for
+    // private chat only. Empty string is intentional (zero static prompt).
+    // Runtime permission checks and tool admission remain in Rust.
+    let custom_prompt = if private {
+        request.agent_id.as_deref().and_then(|id|
+            state.store.get("agent",id).and_then(|agent|
+                agent["systemPromptOverride"].as_str().map(str::to_string)))
+        .or_else(||state.store.get("assistant_settings","global").and_then(|owner|
+            owner["systemPromptOverride"].as_str().map(str::to_string)))
+    } else {None};
+    let (mut prompt,mut identity_items)=match &custom_prompt {
+        Some(text)=>(text.clone(),Vec::new()),
+        None=>identity_prefix(state,request),
+    };
+    // Preserve the normal compiler unchanged when no explicit override exists.
+    if custom_prompt.is_none() && social && identity_items.is_empty() {
         prompt=String::from("당신은 DOMINION입니다. 사용자 언어로 자연스럽고 짧게 답하십시오.");
     }
-    if !social {
+    if custom_prompt.is_none() && !social {
         prompt.push_str(
             "\n당신은 Rust 엔진에서 동작하는 에이전트형 AI 작업 공간 DOMINION입니다. \
              사용자가 다른 언어로 쓰지 않는 한 한국어로 답하십시오.",
@@ -187,7 +200,7 @@ pub(super) fn system_prompt_with_manifest_at(
         prompt.push_str("\n\n");
         prompt.push_str(extra);
     }
-    if request.effective_reasoning_language() == Some("ko") {
+    if custom_prompt.is_none() && request.effective_reasoning_language() == Some("ko") {
         if social { prompt.push_str("\n한국어로 답하십시오."); }
         else {
             prompt.push_str("\n\n언어 지침: 추론·생각의 설명과 최종 답변은 한국어로 작성하십시오. 도구 실행 뒤 이어지는 추론도 한국어로 유지하십시오. 코드·명령어·파일명·고유명사는 원문을 유지하고, 사용자가 다른 언어를 명시하면 그 요청을 따르십시오.");
