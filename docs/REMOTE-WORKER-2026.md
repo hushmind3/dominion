@@ -81,3 +81,13 @@ reported `modelAccounting` is retained as self-reported evidence (not
 coordinator-native token receipts). Lead/Worker synthesis exposes distinct
 `remoteJobId`, `externalRunId` and `executionId` properties rather than
 fabricating a local execution identity for remote work.
+
+## Explicit lease reconciliation
+
+`POST /api/remote/reconcile` moves expired `leased` rows into
+`needs_review` under the SQLite transaction lock and returns their IDs.
+Worker claims perform the same sweep before selecting queued work. A
+concurrent worker heartbeat cannot be overwritten by an obsolete expiry
+observation. Missing evidence can be rejected or cancelled, but never
+accepted as a completed remote task. The TypeScript client exposes
+`reconcileRemoteLeases()`.

@@ -106,3 +106,16 @@ test('remote SDK jobs stay unverified after owner review and use URL-safe identi
   const job=await client.getRemoteJob('remote:job 1');
   assert.equal(job.nativeVerified,false);
 });
+
+test('remote lease reconciliation is explicit and never reports verified work', async () => {
+  const seen=[];
+  const client=new DominionAgentClient({fetch: async (url, options)=>{
+    seen.push({url:String(url),method:options.method});
+    return new Response(JSON.stringify({count:1,needsReview:['remote:unknown']}),{status:200});
+  }});
+  const result=await client.reconcileRemoteLeases();
+  assert.equal(result.count,1);
+  assert.deepEqual(result.needsReview,['remote:unknown']);
+  assert.match(seen[0].url,/\/api\/remote\/reconcile$/);
+  assert.equal(seen[0].method,'POST');
+});

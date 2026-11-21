@@ -36,6 +36,41 @@ fn lease_alive(row:&Value,worker:&str,lease:&str)->bool{
             .and_then(|s|chrono::DateTime::parse_from_rfc3339(s).ok())
             .is_some_and(|until|until>chrono::Utc::now())
 }
+
+fn expired(row:&Value)->bool{
+    row["status"]=="leased"
+        &&row["leaseExpiresAt"].as_str()
+            .and_then(|s|chrono::DateTime::parse_from_rfc3339(s).ok())
+            .is_none_or(|end|end<=chrono::Utc::now())
+}
+fn reconcile_expired(state:&AppState)->Vec<String>{
+    let mut reviewed=Vec::new();
+    // Recheck expiration UNDER the SQLite mutation lock. A heartbeat can
+    // extend the lease between the initial indexed read and this transaction.
+    for row in state.store.all("remote_job"){
+        if !expired(&row){continue;}
+        let Some(id)=row["id"].as_str()else{continue};
+        let result=state.store.mutate_record("remote_job",id,json!({"id":id}),|current|{
+            if !expired(current){return Err("lease_alive".into());}
+            current["status"]=json!("needs_review");
+            current["reviewReason"]=json!("lease_expired_unknown_effects");
+            current["leaseId"]=Value::Null;
+            current["reviewAt"]=json!(chrono::Utc::now().to_rfc3339());
+            Ok(vec![])
+        });
+        if let Ok(saved)=result{
+            state.bus.record("remote_job",&saved);
+            reviewed.push(id.to_string());
+        }
+    }
+    reviewed
+}
+/// Owner-only manual reconciliation; never requeues an unknown remote effect.
+pub async fn reconcile(State(state):State<AppState>)->Json<Value>{
+    let ids=reconcile_expired(&state);
+    Json(json!({"count":ids.len(),"needsReview":ids}))
+}
+
 fn owner_view(mut row:Value)->Value{
     // The remote report and authorization are not equivalent to verification
     // by the coordinator's own native Tool Gateway.
@@ -87,6 +122,9 @@ pub async fn claim(State(state):State<AppState>,headers:HeaderMap,
     let Some(worker)=body["workerId"].as_str().filter(|w|valid_worker_id(w))else{
         return reply(StatusCode::BAD_REQUEST,"유효한 Worker ID가 필요합니다.");
     };
+    // Mark expired leases for owner review. This never redispatches the
+    // ambiguous remote effects, even when a new worker polls for work.
+    reconcile_expired(&state);
     // Only queued tasks may be claimed. A lost or expired lease is review
     // required, not automatic re-execution of unknown remote effects.
     let mut jobs=state.store.all("remote_job");
@@ -160,14 +198,24 @@ pub async fn review(State(state):State<AppState>,Path(id):Path<String>,
     Json(body):Json<Value>)->Response{
     let accepted=body["accept"].as_bool();
     if accepted.is_none(){return reply(StatusCode::BAD_REQUEST,"accept 불리언 값이 필요합니다.");}
-    let result=state.store.patch_if("remote_job",&id,"status",&json!("needs_review"),
-        &json!({"status":if accepted==Some(true){"owner_accepted"}else{"owner_rejected"},
-            "ownerReviewedAt":chrono::Utc::now().to_rfc3339(),
-            "nativeVerified":false}));
+    let result=state.store.mutate_record("remote_job",&id,json!({"id":id}),|row|{
+        if row["status"]!="needs_review"{
+            return Err("remote job not awaiting review".into());
+        }
+        if accepted==Some(true)&&!row["workerReport"].is_object(){
+            return Err("cannot approve missing remote evidence".into());
+        }
+        row["status"]=json!(if accepted==Some(true){
+            "owner_accepted"
+        }else{"owner_rejected"});
+        row["ownerReviewedAt"]=json!(chrono::Utc::now().to_rfc3339());
+        row["nativeVerified"]=json!(false);
+        Ok(vec![])
+    });
     match result{
-        Some(saved)=>{state.bus.record("remote_job",&saved);
+        Ok(saved)=>{state.bus.record("remote_job",&saved);
             Json(owner_view(saved)).into_response()},
-        None=>reply(StatusCode::CONFLICT,"검토할 원격 결과가 없습니다.")
+        Err(_)=>reply(StatusCode::CONFLICT,"검토 가능한 원격 실행 결과가 없습니다.")
     }
 }
 pub async fn cancel(State(state):State<AppState>,Path(id):Path<String>)->Response{
@@ -218,6 +266,31 @@ mod tests{
         assert!(!lease_alive(&state.store.get("remote_job",&id).unwrap(),"worker","token"));
         assert_eq!(state.store.get("remote_job",&id).unwrap()["status"],"cancelled");
         assert_eq!(state.store.get("remote_job",&id).unwrap()["nativeVerified"],false);
+        let _=std::fs::remove_dir_all(&state.config.data_dir);
+    }
+
+    #[tokio::test]
+    async fn expired_remote_lease_is_quarantined_without_requeue_or_fake_review(){
+        let state=fixture();
+        let job=state.store.put("remote_job",&json!({"id":"ticket",
+            "kind":"remote_sdk","status":"leased","workerId":"node-a",
+            "leaseId":"old","leaseExpiresAt":"2026-01-01T00:00:00Z",
+            "instruction":"research"})).unwrap();
+        assert!(expired(&job));
+        let changed=reconcile_expired(&state);
+        assert_eq!(changed,vec!["ticket"]);
+        assert!(reconcile_expired(&state).is_empty());
+        let record=state.store.get("remote_job","ticket").unwrap();
+        assert_eq!(record["status"],"needs_review");
+        assert!(record["leaseId"].is_null());
+        assert_eq!(record["nativeVerified"],Value::Null);
+        let refused=review(State(state.clone()),Path("ticket".into()),
+            Json(json!({"accept":true}))).await;
+        assert_eq!(refused.status(),StatusCode::CONFLICT);
+        let rejected=review(State(state.clone()),Path("ticket".into()),
+            Json(json!({"accept":false}))).await;
+        assert_eq!(rejected.status(),StatusCode::OK);
+        assert_eq!(state.store.get("remote_job","ticket").unwrap()["nativeVerified"],false);
         let _=std::fs::remove_dir_all(&state.config.data_dir);
     }
     #[test]

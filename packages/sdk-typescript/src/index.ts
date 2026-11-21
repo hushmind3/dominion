@@ -201,6 +201,10 @@ export class DominionAgentClient {
     return this.request('POST',
       `/api/remote/jobs/${encodeURIComponent(id)}/cancel`,{},signal);
   }
+  /** Mark expired remote leases for review, never retry unknown effects. */
+  reconcileRemoteLeases(signal?: AbortSignal): Promise<{count:number;needsReview:string[]}> {
+    return this.request('POST','/api/remote/reconcile',{},signal);
+  }
   /** Owner review acknowledges a report; it NEVER grants nativeVerified. */
   reviewRemoteJob(id: string, accept: boolean, signal?: AbortSignal): Promise<RemoteJob> {
     return this.request('POST',
