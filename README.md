@@ -118,6 +118,8 @@ the provider-independent strategy port, optional decisions and ownership rules.
 One owner request enters the Rust API, is compiled into a scoped task,
 passes through provider selection and a bounded model/tool loop, then
 persists results, approvals, tool receipts and verification status in SQLite.
+An optional `clientTurnId` UUID identifies one logical owner message. A retry with the same key is refused after the owner turn is persisted, preventing duplicate tool effects even if its SSE response was interrupted.
+
 A model-generated success message **does not** replace independent completion
 evidence in agent mode. Direct chat answers without attempting external
 actions or marking them verified. Mutating tools and deferred/discovered MCP tools pass the same
