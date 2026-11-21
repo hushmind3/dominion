@@ -40,6 +40,7 @@ jobs:
           cargo test --bin dominion-rust planning_cost_tests
           cargo test --bin dominion-rust shared_sdk_relevance_ignores_tool_parameter_payload
           cargo test --bin dominion-rust conversation::chat::tests
+          cargo test --bin dominion-rust api::collections::memory_edit_tests
           # Keep native nine-participant routing, examples and @mentions honest.
           cargo test --bin dominion-rust features::collaboration::rooms::tests
           cargo test --bin dominion-rust features::collaboration::workboard::tests
@@ -184,6 +185,8 @@ jobs:
         run: node web/scripts/connection-visual.mjs
       - name: Verify direct Chat layout, Markdown and follow-up at three widths
         run: node web/scripts/chat-visual.mjs
+      - name: Verify owner Memory editing, evidence protection and conflict UX
+        run: node web/scripts/memory-edit-visual.mjs
       - name: Attach real browser screenshots and UX reports
         if: always()
         uses: actions/upload-artifact@v4
