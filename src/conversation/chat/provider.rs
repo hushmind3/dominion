@@ -338,16 +338,12 @@ pub(super) fn apply_reasoning_options(
     }
 }
 
-/// Retry transient provider/stream failures only before any content was
-/// published to the client. Replaying a partially streamed answer could repeat
-/// visible text, reasoning, or a tool request, so that case always stops.
+/// Fail over only when the first provider could not have begun generation.
+/// Zero visible deltas does NOT mean zero billed tokens: a transport can fail
+/// after hidden reasoning or tool bytes. Never replay those uncertain calls.
 fn transient_provider_error(error: &str) -> bool {
-    error.contains(" 연결 실패:")
-        || error.contains("스트림 오류:")
-        || error.contains("모델 스트림이 완료 신호 없이 종료")
-        || error.contains("(HTTP 408")
+    error.contains(" 연결 설정 실패(요청 전):")
         || error.contains("(HTTP 429")
-        || error.contains("(HTTP 5")
 }
 
 /// Estimated input room for the declared model context, leaving its
@@ -2686,10 +2682,15 @@ mod tests {
     }
 
     #[test]
-    fn only_transient_failures_are_replayed() {
-        assert!(transient_provider_error("remote 연결 실패: refused"));
-        assert!(transient_provider_error("remote 호출 실패 (HTTP 503 Service Unavailable):"));
-        assert!(transient_provider_error("모델 스트림이 완료 신호 없이 종료되었습니다."));
+    fn only_proven_undelivered_generations_can_fail_over() {
+        assert!(transient_provider_error("remote 연결 설정 실패(요청 전): refused"));
+        assert!(transient_provider_error("remote 호출 실패 (HTTP 429 Too Many Requests):"));
+        assert!(!transient_provider_error("remote 연결 실패: connection reset after POST"));
+        assert!(!transient_provider_error("remote 요청 결과 불명(자동 재시도 금지): timeout"));
+        assert!(!transient_provider_error("remote 호출 실패 (HTTP 503 Service Unavailable):"));
+        assert!(!transient_provider_error("remote 호출 실패 (HTTP 408 Request Timeout):"));
+        assert!(!transient_provider_error("모델 스트림이 완료 신호 없이 종료되었습니다."));
+        assert!(!transient_provider_error("스트림 오류: body interrupted"));
         assert!(!transient_provider_error("모델 응답이 콘텐츠 필터로 중단되었습니다."));
         assert!(!transient_provider_error("실행이 중단되었습니다."));
         assert!(!transient_provider_error("remote 호출 실패 (HTTP 400 Bad Request):"));
