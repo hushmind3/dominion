@@ -40,6 +40,24 @@ export interface RunEventPage {
   historyTruncated: boolean;
   events: RunEventEnvelope[];
 }
+/** Remote workers have independent native SDKs; a report is NOT a core receipt. */
+export interface RemoteJob {
+  id: string;
+  kind: 'remote_sdk';
+  instruction: string;
+  status: 'queued' | 'leased' | 'needs_review' | 'owner_accepted'
+    | 'owner_rejected' | 'cancelled';
+  workerId?: string;
+  leaseExpiresAt?: string;
+  workerReport?: Record<string, unknown>;
+  nativeVerified: false;
+}
+export interface RemoteJobRequest {
+  instruction: string;
+  verifyCommand?: string;
+  maxRounds?: number;
+}
+
 export interface RunEventsOptions {
   after?: number;
   limit?: number;
@@ -166,6 +184,27 @@ export class DominionAgentClient {
       throw new DominionSdkError(detail, response.status);
     }
     return decoded as T;
+  }
+
+  /** Submit work for an explicitly connected remote DOMINION Rust SDK host. */
+  createRemoteJob(input: RemoteJobRequest, signal?: AbortSignal): Promise<RemoteJob> {
+    return this.request('POST','/api/remote/jobs',input,signal);
+  }
+  listRemoteJobs(signal?: AbortSignal): Promise<RemoteJob[]> {
+    return this.request('GET','/api/remote/jobs',undefined,signal);
+  }
+  getRemoteJob(id: string, signal?: AbortSignal): Promise<RemoteJob> {
+    return this.request('GET',
+      `/api/remote/jobs/${encodeURIComponent(id)}`,undefined,signal);
+  }
+  cancelRemoteJob(id: string, signal?: AbortSignal): Promise<RemoteJob> {
+    return this.request('POST',
+      `/api/remote/jobs/${encodeURIComponent(id)}/cancel`,{},signal);
+  }
+  /** Owner review acknowledges a report; it NEVER grants nativeVerified. */
+  reviewRemoteJob(id: string, accept: boolean, signal?: AbortSignal): Promise<RemoteJob> {
+    return this.request('POST',
+      `/api/remote/jobs/${encodeURIComponent(id)}/review`,{accept},signal);
   }
 
   listRuns(signal?: AbortSignal): Promise<AgentRun[]> {

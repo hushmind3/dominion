@@ -84,3 +84,25 @@ test('unadmitted SDK run does not invent an execution timeline', async () => {
   await assert.rejects(client.getRunEvents('sdk'),error=>
     error instanceof DominionSdkError && error.status===409);
 });
+
+test('remote SDK jobs stay unverified after owner review and use URL-safe identity', async () => {
+  const observed=[];
+  const client = new DominionAgentClient({
+    fetch: async (url, request) => {
+      observed.push({url: String(url), method: request.method,
+        body: request.body ? JSON.parse(request.body) : null});
+      return new Response(JSON.stringify({
+        id:'remote:job 1',kind:'remote_sdk',status:'owner_accepted',
+        instruction:'inspect',nativeVerified:false
+      }),{status:200});
+    }
+  });
+  await client.createRemoteJob({instruction:'inspect',maxRounds:4});
+  await client.reviewRemoteJob('remote:job 1',true);
+  assert.match(observed[0].url,/\/api\/remote\/jobs$/);
+  assert.equal(observed[0].body.instruction,'inspect');
+  assert.match(observed[1].url,/\/api\/remote\/jobs\/remote%3Ajob%201\/review$/);
+  assert.deepEqual(observed[1].body,{accept:true});
+  const job=await client.getRemoteJob('remote:job 1');
+  assert.equal(job.nativeVerified,false);
+});

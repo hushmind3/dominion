@@ -89,3 +89,14 @@ For external agents, an `externalRunId` is **not** a native tool receipt.
 `npm test` compiles the client and exercises run cursors, SDK facade lookup,
 explicit 409 for unadmitted runs, approval boundaries and verified-success
 gating. The development GitHub workflow runs this package independently.
+
+## Optional remote Rust workers
+
+`createRemoteJob({instruction, maxRounds, verifyCommand})` submits a
+coordinator-owned task. `listRemoteJobs`, `getRemoteJob`,
+`cancelRemoteJob` and `reviewRemoteJob(id, accept)` operate on the
+coordinator HTTP API. They do not issue a worker credential to the frontend.
+A remote result is always `nativeVerified: false` at the coordinator;
+even an owner-reviewed report cannot impersonate local Tool Gateway evidence.
+
+Worker setup and lease recovery: [Remote Worker](../../docs/REMOTE-WORKER-2026.md).
