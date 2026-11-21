@@ -492,7 +492,7 @@ pub(crate) fn finalize_execution(
         });
         // Never rewind a provider-reported amount already durably settled
         // merely because the transport stopped before host metrics updated.
-        record["kernelState"]["modelCalls"] = json!(counters.model_calls.max(
+        record["kernelState"]["modelCalls"] = json!(u64::from(counters.model_calls).max(
             record["kernelState"]["modelCalls"].as_u64().unwrap_or(0)));
         record["kernelState"]["chargedTokens"] = json!(counters.tokens.max(
             record["kernelState"]["chargedTokens"].as_u64().unwrap_or(0)));
