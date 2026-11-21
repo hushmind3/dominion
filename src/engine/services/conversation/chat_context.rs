@@ -822,6 +822,53 @@ mod tests {
     }
 
     #[test]
+    fn room_context_uses_indexed_owner_safe_cursor_without_old_bot_history() {
+        let (state,dir)=state();
+        state.store.put("room",&json!({"id":"room-1","name":"stress room",
+            "agentIds":["speaker"],"ownerName":"Owner"}));
+        state.store.put("session",&json!({"id":"room-session",
+            "roomId":"room-1","kind":"room"}));
+        let checkpoint=state.store.write_message(&json!({
+            "session_id":"room-session","role":"user","content":"old checkpoint",
+            "metadata":{"authorKind":"owner"}
+        })).unwrap();
+        state.store.put("session_compaction",&json!({
+            "id":"room-session","summary":"ROOM_COMPACTED_OWNER_EVIDENCE",
+            "throughMessageId":checkpoint["id"]
+        }));
+        // Hundreds of automated-channel user rows must not push a legitimate
+        // owner message out of a bounded, source-safe provider window.
+        for index in 0..300 {
+            state.store.write_message(&json!({
+                "session_id":"room-session","role":"user",
+                "agent_id":"automated-bot",
+                "content":format!("BOT_PROMPT_{index} {}", "obsolete".repeat(100)),
+                "metadata":{"authorKind":"bot"}
+            })).unwrap();
+        }
+        state.store.write_message(&json!({
+            "session_id":"room-session","role":"user","content":"current owner goal",
+            "metadata":{"authorKind":"owner"}
+        })).unwrap();
+        state.store.write_message(&json!({
+            "session_id":"room-session","role":"assistant","content":"worker result",
+            "agent_id":"speaker"
+        })).unwrap();
+        let (rows,valid)=state.store.try_recent_room_messages(
+            "room-session",80,checkpoint["id"].as_str()
+        ).unwrap();
+        assert!(valid,"checkpoint cursor must remain valid outside recent history");
+        assert_eq!(rows.len(),2,"SQL must exclude all 300 automated user rows");
+        let rendered=history(&state,"room-session",Some("speaker"),None).unwrap();
+        assert!(rendered.iter().any(|row|row["content"].as_str()
+            .is_some_and(|text|text.contains("ROOM_COMPACTED_OWNER_EVIDENCE"))));
+        assert!(rendered.iter().any(|row|row["content"].as_str()
+            .is_some_and(|text|text.contains("current owner goal"))));
+        assert!(!json!(rendered).to_string().contains("BOT_PROMPT_"));
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn lightweight_greeting_keeps_owner_and_agent_policy_without_native_work_manual(){
         let (state,dir)=state();
         state.store.put("agent",&json!({"id":"greeting-agent","name":"친구",
