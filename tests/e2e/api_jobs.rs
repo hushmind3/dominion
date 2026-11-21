@@ -929,7 +929,7 @@ fn direct_chat_rejects_external_effect_without_executing_tools() {
 #[test]
 fn explicit_direct_chat_does_not_inherit_a_saved_session_agent() {
     let _serial = serial();
-    let (port, _) = scripted_provider(|_| {
+    let (port, requests) = scripted_provider(|_| {
         vec![json!({"choices":[{"delta":{"content":"안녕하세요."},"finish_reason":"stop"}]})]
     });
     let app = TestApp::new(port, "native");
@@ -941,7 +941,7 @@ fn explicit_direct_chat_does_not_inherit_a_saved_session_agent() {
     let stream=app.chat(&json!({
         "sessionId":id,
         "conversationMode":"chat",
-        "input":"안녕하세요",
+        "input":"두 데이터베이스 설계 방식의 장단점을 비교해 주세요",
         "toolsEnabled":true,
         "toolsExecutionEnabled":true,
         "autoLearning":false
@@ -954,6 +954,11 @@ fn explicit_direct_chat_does_not_inherit_a_saved_session_agent() {
     assert!(assistant["agent_id"].is_null(), "{assistant}");
     let saved=app.get(&format!("/api/sessions/{id}"));
     assert_eq!(saved["agentId"],"missing-agent-must-not-be-used");
+    assert_eq!(saved["conversationMode"],"chat");
+    let wire=requests.lock().unwrap();
+    let system=wire[0]["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("일반 대화를 돕는"), "{system}");
+    assert!(!system.contains("작업 공간 루트:"), "{system}");
 }
 
 #[test]

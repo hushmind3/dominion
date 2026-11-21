@@ -64,6 +64,9 @@ function storeChatDraft(scope:string,text:string){
   else sessionStorage.removeItem(chatDraftPrefix+scope)
  }catch{/* Private mode or quota may reject browser storage. */}
 }
+const formatDraftBytes=(bytes:number)=>bytes>=1048576
+ ?(bytes/1048576).toFixed(1)+' MiB'
+ :bytes>=1024?(bytes/1024).toFixed(1)+' KiB':bytes+' B'
 const formatBytes=(bytes:number)=>{
  const gb=Number(bytes||0)/1024/1024/1024
  return gb>=1?gb.toFixed(1)+' GB':Math.max(0,Math.round(Number(bytes||0)/1024/1024))+' MB'
@@ -100,7 +103,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const modeValues=useRef<Record<string,ChatExecutionMode>>({})
  const [,redrawMode]=useState(0)
  const executionMode=Object.hasOwn(modeValues.current,draftScope)?
-  modeValues.current[draftScope]:readChatMode(draftScope,!current&&initialAgent?'agent':'chat')
+  modeValues.current[draftScope]:readChatMode(draftScope,
+   selectedSession?.conversationMode==='agent'||(!current&&initialAgent)?'agent':'chat')
  const setExecutionMode=(mode:ChatExecutionMode)=>{
   modeValues.current[draftScope]=mode
   storeChatMode(draftScope,mode)
@@ -407,7 +411,10 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   setSlashOpen(false);void executeCommand(item.command);
  };
  const send=async(e?:FormEvent)=>{
-  e?.preventDefault();const text=input.trim();const filesToSend=[...draftFiles];if(!text&&!filesToSend.length)return;
+  e?.preventDefault();
+  const filesToSend=[...draftFiles]
+  const text=input.trim()||(filesToSend.length?'첨부한 파일을 확인해 주세요.':'')
+  if(!text)return;
   if(text.startsWith('/')){
    if(busy&&text!=='/stop')return;
    await executeCommand(text);return;
@@ -428,6 +435,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    if(!id){
     const session=await post<ChatSession>('/api/sessions',{
      title:t('chat.sessionTitle'),
+     conversationMode:executionMode,
      agentId:executionMode==='agent'?agentId:undefined,
      providerId:executionMode==='chat'?providerId:manual?.providerId,
      model:executionMode==='chat'?model:manual?.model
@@ -450,6 +458,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     void sessions.reload();
    }
    const attachmentIds:string[]=[]
+   if(filesToSend.length)setToolStatus('첨부 파일 업로드 중…')
    for(const file of filesToSend){
     if(controller.signal.aborted)return
     const reused=uploadedFiles.current.get(file)
@@ -462,6 +471,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     uploadedFiles.current.set(file,{id:uploaded.id,sessionId:id!})
     attachmentIds.push(uploaded.id)
    }
+   setToolStatus('')
    setInput(previous=>previous.trim()===text?'':previous);
    if(inputRef.current)inputRef.current.style.height='';
    await streamChat({
@@ -582,7 +592,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
       <Button type="button" className="chat-execution-mode-option" aria-pressed={executionMode==='agent'} disabled={busy} onClick={()=>setExecutionMode('agent')}><TerminalSquare size={14}/> 에이전트 실행</Button>
       <span className="chat-execution-mode-hint">{executionMode==='chat'?'도구 사용 없이 모델과 대화':'파일·도구·MCP 작업 가능'}</span>
      </div>
-     {draftFiles.length>0&&<div className="chat-file-drafts" aria-label="첨부 대기 파일">{draftFiles.map((file,i)=><span key={i} className="chat-file-chip"><Paperclip size={13}/><span title={file.name}>{file.name}</span><small>{formatBytes(file.size)}</small><button type="button" aria-label={file.name+' 첨부 취소'} disabled={busy} onClick={()=>removeFile(i)}><X size={13}/></button></span>)}</div>}
+     {draftFiles.length>0&&<div className="chat-file-drafts" aria-label="첨부 대기 파일">{draftFiles.map((file,i)=><span key={i} className="chat-file-chip"><Paperclip size={13}/><span title={file.name}>{file.name}</span><small>{formatDraftBytes(file.size)}</small><button type="button" aria-label={file.name+' 첨부 취소'} disabled={busy} onClick={()=>removeFile(i)}><X size={13}/></button></span>)}</div>}
      <input ref={fileInputRef} type="file" className="sr-only" multiple accept="image/png,image/jpeg,image/webp,image/gif,.txt,.md,.csv,.ts,.tsx,.js,.mjs,.json,.py,.rs,.yaml,.yml,.xml,.html,.css,.log,.sql" aria-label="첨부 파일 선택" disabled={busy} onChange={e=>{addFiles(e.currentTarget.files);e.currentTarget.value=''}}/>
      <TextArea ref={inputRef} rows={1} placeholder={t("chat.inputPlaceholder")} value={input} onChange={e=>{const next=e.target.value;setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n'));setSlashActive(0);const el=e.currentTarget;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,180)+'px'}} onKeyDown={appendKey} aria-controls="dominion-slash-menu" aria-expanded={slashOpen} className="conversation-composer-input"/>
      <div className="chat-composer-controls conversation-composer-controls">

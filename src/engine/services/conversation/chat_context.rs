@@ -178,11 +178,19 @@ pub(super) fn system_prompt_with_manifest_at(
     } else {
         prompt.push_str(" 이번 턴에는 도구가 비활성화되어 있습니다. 외부 작업을 수행했다고 말하지 마십시오.");
     }
-    prompt.push_str(&format!(
-        "\n작업 공간 루트: {}\n현재 날짜: {}",
-        state.config.workspace.display(),
-        chrono::Local::now().format("%Y-%m-%d")
-    ));
+    if request.direct_chat {
+        // Direct conversation does not need the user's local directory in the
+        // provider-visible prompt. Keep workspace roots in agent work only.
+        prompt.push_str(&format!(
+            "\n현재 날짜: {}", chrono::Local::now().format("%Y-%m-%d")
+        ));
+    } else {
+        prompt.push_str(&format!(
+            "\n작업 공간 루트: {}\n현재 날짜: {}",
+            state.config.workspace.display(),
+            chrono::Local::now().format("%Y-%m-%d")
+        ));
+    }
     let mut dynamic = String::new();
     let mut items = Vec::new();
     items.append(&mut identity_items);

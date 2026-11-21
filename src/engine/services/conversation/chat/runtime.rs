@@ -226,9 +226,13 @@ async fn run_turn_with_policy(
     session["providerId"] = json!(provider.id);
     session["model"] = json!(provider.model);
     // A room shares a transcript but each speaker keeps its own identity.
-    if session.get("roomId").is_none() && !request.direct_chat {
-        // A temporary plain-chat turn must not erase the saved agent choice.
-        session["agentId"] = json!(request.agent_id);
+    if session.get("roomId").is_none() {
+        // Retain the chosen agent across a temporary plain Chat turn, while
+        // recording the explicit execution mode for a different browser tab.
+        if !request.direct_chat {
+            session["agentId"] = json!(request.agent_id);
+        }
+        session["conversationMode"] = json!(if request.direct_chat { "chat" } else { "agent" });
     }
     state
         .store

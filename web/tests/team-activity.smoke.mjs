@@ -65,7 +65,8 @@ try{
     if(path==='/api/sessions')response=[
       {id:'chat-one',title:'Conversation One',agentId:'lead',providerId:'fixture',model:'fixture'},
       {id:'chat-two',title:'Conversation Two',agentId:'lead',providerId:'fixture',model:'fixture'},
-      {id:'chat-route',title:'Independent route',agentId:'separate',providerId:'fixture',model:'fixture'}
+      {id:'chat-route',title:'Independent route',agentId:'separate',providerId:'fixture',model:'fixture'},
+      {id:'chat-persist',title:'Agent mode persisted server-side',agentId:'separate',providerId:'fixture',model:'fixture',conversationMode:'agent'}
     ];
     if(path.endsWith('/messages'))response=path==='/api/sessions/chat-one/messages'?[
       {id:'owner-layout',session_id:'chat-one',role:'user',
@@ -299,8 +300,17 @@ try{
   const attachedChat=(await attachedChatSeen).postDataJSON();
   assert.deepEqual(attachedChat.attachmentIds,['attachment-fixture']);
   assert.equal(attachedChat.input,'첨부 파일을 읽어줘');
+  // Cross-tab persisted mode fallback must not rely on sessionStorage.
+  await page.evaluate(()=>{
+    sessionStorage.removeItem('dominion.chat.execution-mode.v1:chat-persist')
+    window.location.hash='#/chat?session=chat-persist'
+  });
+  await page.getByRole('button',{name:'에이전트 실행'}).waitFor({timeout:10000});
+  await page.waitForFunction(()=>document.querySelector('button[aria-pressed="true"]')?.textContent?.includes('에이전트 실행'),null,{timeout:10000});
+  await page.reload({waitUntil:'domcontentloaded'});
+  assert.equal(await page.getByRole('button',{name:'에이전트 실행'}).getAttribute('aria-pressed'),'true');
   assert.deepEqual(errors,[], 'Chat/Team React runtime errors');
-  console.log('PASS Chromium route isolation, safe Markdown, attachment upload/send contract');
+  console.log('PASS Chromium route isolation, safe Markdown, attachments, persisted execution mode');
 }finally{
   await browser?.close();
   server.kill('SIGTERM');
