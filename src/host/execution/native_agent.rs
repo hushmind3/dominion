@@ -295,10 +295,9 @@ impl Evidence for FsEvidence {
                 CriterionKind::FileExists=>Ok(path.is_file()),
                 CriterionKind::FileAbsent=>Ok(!path.exists()),
                 CriterionKind::FileContains=>{
-                    if std::fs::metadata(&path).map_err(|e|e.to_string())?.len()>16*1024*1024 {
-                        return Err("Verification file exceeds 16 MiB".into());
-                    }
-                    let content=std::fs::read_to_string(&path).map_err(|e|e.to_string())?;
+                    let bytes=crate::storage::bounded_file::read_bytes(&path,16*1024*1024)
+                        .map_err(|e|e.to_string())?;
+                    let content=String::from_utf8(bytes).map_err(|e|e.to_string())?;
                     Ok(content.contains(criterion.contains.as_deref().unwrap_or("")))
                 }
                 CriterionKind::FileSha256=>{
@@ -307,7 +306,8 @@ impl Evidence for FsEvidence {
                     if !metadata.is_file()||metadata.len()>16*1024*1024{
                         return Err("Artifact hash verification requires a regular file <=16 MiB".into());
                     }
-                    let content=std::fs::read(&path).map_err(|e|e.to_string())?;
+                    let content=crate::storage::bounded_file::read_bytes(&path,16*1024*1024)
+                        .map_err(|e|e.to_string())?;
                     let actual=format!("{:x}",Sha256::digest(&content));
                     Ok(criterion.contains.as_deref().is_some_and(|expected|actual.eq_ignore_ascii_case(expected)))
                 }
