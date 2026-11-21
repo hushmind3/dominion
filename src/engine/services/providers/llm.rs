@@ -3,7 +3,7 @@
 //! `engine::gateway`; this module only builds prompts and parses responses.
 use crate::engine::gateway;
 use crate::state::AppState;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::time::Duration;
 
 async fn try_complete(
