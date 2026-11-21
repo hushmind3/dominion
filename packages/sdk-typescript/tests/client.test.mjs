@@ -156,6 +156,29 @@ test('P3 owner worker enrollment and pinned dispatch have stable SDK contracts',
   assert.deepEqual(seen[4].body,{enabled:false});
 });
 
+test('remote Git artifact requires separate owner review and never native-verifies',async()=>{
+  const observed=[];
+  const client=new DominionAgentClient({fetch:async(url,options)=>{
+    observed.push({url:String(url),method:options.method,
+      body:options.body?JSON.parse(options.body):undefined});
+    const result=options.method==='GET'
+      ?{manifest:{id:'remote-artifact:job',jobId:'remote:job',workerId:'node',
+          patchSha256:'a'.repeat(64),patchBytes:42,baseCommit:'b'.repeat(40),
+          status:'quarantined',nativeVerified:false},patch:'diff --git a/a b/a'}
+      :{id:'remote-artifact:job',jobId:'remote:job',
+          status:'owner_accepted',nativeVerified:false};
+    return new Response(JSON.stringify(result),{status:200});
+  }});
+  const stored=await client.getRemoteArtifact('remote:job');
+  assert.equal(stored.manifest.nativeVerified,false);
+  assert.match(stored.patch,/^diff --git/);
+  const reviewed=await client.reviewRemoteArtifact('remote:job',true);
+  assert.equal(reviewed.nativeVerified,false);
+  assert.match(observed[0].url,/\/api\/remote\/jobs\/remote%3Ajob\/artifact$/);
+  assert.match(observed[1].url,/\/api\/remote\/jobs\/remote%3Ajob\/artifact\/review$/);
+  assert.deepEqual(observed[1].body,{accept:true});
+});
+
 test('room cursor is scoped to the room and never aliases global SSE position', async () => {
   const visited=[];
   const client=new DominionAgentClient({fetch:async url=>{
