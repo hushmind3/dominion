@@ -84,9 +84,24 @@ pub(super) fn focus(history:Vec<Value>,query:&str,is_room:bool,can_reopen:bool)-
         .filter_map(|((at,row),keep)|keep.then_some(
             if can_reopen && at<first_recent {cited_older_owner(row)}else{row}
         )).collect::<Vec<_>>();
-    // The old tool call/result batch is always inert history evidence.
-    // Same-turn tool replies bypass this selector entirely.
-    trace_budget::compact_historical(&retained,if is_action{8}else{2})
+    // A concrete follow-up about the just-produced artifact needs the
+    // original *complete* tool-call/result pairing. A one-line historical
+    // summary is useful for older work but cannot answer exact artifact
+    // questions reliably (or preserve a tool call's original provenance).
+    // Keep only a bounded, protocol-valid recent trace on such follow-ups.
+    // Large reads and write payloads are still compacted by the shared
+    // context-policy kernel; all original records remain in SQLite.
+    let lower=query.to_lowercase();
+    let recent_reference=["방금","직전","바로 전","just","most recent","last "]
+        .iter().any(|word|lower.contains(word));
+    let result_reference=["파일","만든","생성","도구","실행","산출물","결과",
+        "file","artifact","output","tool","result"]
+        .iter().any(|word|lower.contains(word));
+    if recent_reference && result_reference {
+        trace_budget::bounded_tool_trace(&retained,4_096)
+    }else{
+        trace_budget::compact_historical(&retained,if is_action{8}else{2})
+    }
 }
 
 pub(super) fn requires_source_reader(history:&[Value])->bool{
@@ -152,6 +167,27 @@ mod tests{
         assert!(json!(out).to_string().len()<2000);
         assert_eq!(original[3]["tool_call_id"],"fetch-one");
     }
+    #[test]
+    fn recent_artifact_followup_retains_bounded_exact_tool_call_and_result(){
+        let mut h=vec![user("empty-once.md 파일을 만들어줘")];
+        h.push(json!({"role":"assistant","content":"","tool_calls":[{
+            "id":"create-once","type":"function",
+            "function":{"name":"workspace_write",
+                "arguments":"{\\"path\\":\\"empty-once.md\\",\\"content\\":\\"\\"}"}}]}));
+        h.push(json!({"role":"tool","tool_call_id":"create-once",
+            "content":"{\"written\":true,\"path\":\"empty-once.md\"}"}));
+        h.push(assistant("파일을 만들었습니다: empty-once.md"));
+        h.push(user("방금 만든 파일 이름만 말해줘"));
+        let focused=focus(h.clone(),"방금 만든 파일 이름만 말해줘",false,false);
+        assert!(focused.iter().any(|row|row["tool_calls"].as_array()
+            .is_some_and(|calls|calls.iter().any(|call|call["id"]=="create-once"))));
+        assert!(focused.iter().any(|row|row["role"]=="tool"
+            && row["tool_call_id"]=="create-once"));
+        let unrelated=focus(h,"오늘 날씨 알려줘",false,false);
+        assert!(!unrelated.iter().any(|row|row["tool_calls"].is_array()),
+            "ordinary chat should not replay protocol-level historical tool calls");
+    }
+
     #[test]
     fn code_continue_keeps_goal_and_recent_tool_paths_not_old_file_body(){
         let mut h=vec![user("도미니언 Rust 코드 고쳐"),assistant("계획")];
