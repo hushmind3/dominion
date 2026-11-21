@@ -124,8 +124,19 @@ const adapterContract=adapter+['model_phase','tool_phase'].map(name=>
 ).join('\n')
 const chatPaths=[
  ['src/engine/chat/runtime.rs',1600],
- ['src/addons/integrations/chat_product.rs',2200],
- ['src/engine/chat/provider.rs',2200],
+ ['src/addons/integrations/chat_product.rs',900],
+ ['src/addons/integrations/chat_product/model_phase.rs',850],
+ ['src/addons/integrations/chat_product/tool_phase.rs',950],
+ ['src/addons/integrations/chat_product/round_state.rs',160],
+ ['src/engine/chat/provider.rs',900],
+ ['src/engine/chat/provider/context_budget.rs',400],
+ ['src/engine/chat/provider/compat.rs',550],
+ ['src/engine/chat/provider/anthropic.rs',500],
+ ['src/engine/chat/provider/codex.rs',600],
+ ['src/addons/integrations/mcp.rs',500],
+ ['src/addons/integrations/mcp/stdio.rs',350],
+ ['src/addons/integrations/mcp/http.rs',500],
+ ['src/addons/integrations/mcp/schema.rs',300],
  ['src/addons/strategies/chat_program.rs',1200],
  ['src/engine/chat/runtime/tool_dispatch.rs',900],
  ['src/engine/chat/runtime/finalization.rs',1100],
@@ -142,6 +153,22 @@ for(const [file,maxLines] of chatPaths){
  const lines=content.split('\n').length
  if(lines>maxLines)throw Error('Runtime module grew past '+maxLines+' lines: '+file+' ('+lines+')')
 }
+// File size alone does not enforce responsibility isolation.
+if(['fn anthropic_messages(', 'fn codex_input(', 'fn fit_tool_context(']
+  .some(marker=>chatProvider.includes(marker)))
+  throw Error('Provider dispatcher regained a wire codec or context-budget implementation')
+if(!adapter.includes('pub(super) model_round: ModelRound')||
+   !adapter.includes('pub(super) tool_round: ToolRound')||
+   adapter.includes('pub(super) round_calls: Vec<'))
+  throw Error('Product Host lost typed model/tool round boundaries')
+const mcpClient=readFileSync(path.join(root,'src/addons/integrations/mcp/http.rs'),'utf8')
+const mcpSchema=readFileSync(path.join(root,'src/addons/integrations/mcp/schema.rs'),'utf8')
+if(!mcpClient.includes('"server/discover"')||
+   !mcpClient.includes('"Mcp-Method"')||
+   !mcpClient.includes('modern_params(')||
+   !mcpSchema.includes('pub(super) fn projected_headers('))
+  throw Error('Modern MCP discovery, routing or parameter admission was lost')
+
 for(const file of ['src/engine/chat/runtime.rs','src/addons/integrations/chat_product.rs',
     'src/engine/chat/runtime/tool_dispatch.rs','src/engine/chat/runtime/finalization.rs']){
  if(/\.all\("execution_operation"\)/.test(readFileSync(path.join(root,file),'utf8')))
