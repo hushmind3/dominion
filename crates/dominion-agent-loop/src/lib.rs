@@ -68,78 +68,16 @@ pub struct RunResult {
     pub tool_calls:usize,
     pub workflow:&'static str,
 }
-/// Standalone workflow implementation: any provider/tool host can implement
-/// the two ports without importing the Dominion product or database.
+/// Public SDK shim. Core Harness owns the independent provider/tool loop.
+pub use dominion_turn_core::agent_loop::PortRunResult as RunResult;
 pub async fn run<A:AgentLoop,M:ModelPort,T:ToolPort>(
     policy:&mut A,driver:&mut Driver,model:&mut M,tools:&mut T,
     history:&mut Vec<Value>,visible_tools:&[Value],tools_enabled:bool,
     has_plan:bool,
 )->Result<RunResult,String>{
-    let mut harness=Harness::new(driver,policy);
-    let mut rounds=0usize;
-    let mut dispatched=0usize;
-    loop{
-        let response:ModelResponse=harness.request_model(
-            model.cancelled()||tools.cancelled(),
-            model.complete(history,visible_tools),
-        ).await?;
-        rounds+=1;
-        let prepared=harness.prepare_response(
-            response.calls.iter().map(|call|(call.id.as_str(),call.name.as_str())),
-            has_plan,tools_enabled,
-        ).map_err(str::to_string)?;
-        match prepared.step(){
-            Step::Answer=>{
-                history.push(json!({"role":"assistant","content":response.content}));
-                return Ok(RunResult{
-                    response:response.content,model_rounds:rounds,
-                    tool_calls:dispatched,workflow:harness.workflow(),
-                });
-            }
-            Step::Execute{..}=>{
-                // Reserve the full batch before any external effect. A
-                // hidden tool, duplicate call ID or exhausted budget denies
-                // every call in the proposal, not just the later ones.
-                harness.admit_prepared(&prepared,visible_tools,tools_enabled)
-                    .map_err(str::to_string)?;
-                let calls=response.calls.iter().map(|c|json!({
-                    "id":c.id,"type":"function",
-                    "function":{"name":c.name,"arguments":c.arguments.to_string()}
-                })).collect::<Vec<_>>();
-                history.push(json!({"role":"assistant","content":response.content,
-                    "tool_calls":calls}));
-                for (index,call) in response.calls.iter().enumerate() {
-                    if model.cancelled()||tools.cancelled(){
-                        // Complete transcript pairing without claiming that any
-                        // remaining call reached the host.
-                        for skipped in &response.calls[index..] {
-                            history.push(ToolFeedback::not_dispatched(&skipped.id,
-                                "execution cancelled").provider_message());
-                        }
-                        return Err("execution cancelled".into());
-                    }
-                    match tools.dispatch(call).await {
-                        Ok(output)=>{
-                            history.push(ToolFeedback::from_value(&call.id,&output)
-                                .provider_message());
-                            dispatched+=1;
-                        }
-                        Err(error)=>{
-                            // A transport error cannot establish whether an
-                            // external effect happened: never auto-replay it.
-                            history.push(ToolFeedback::outcome_unknown(&call.id,&error)
-                                .provider_message());
-                            for skipped in &response.calls[index+1..] {
-                                history.push(ToolFeedback::not_dispatched(&skipped.id,
-                                    "prior tool failure").provider_message());
-                            }
-                            return Err(error);
-                        }
-                    }
-                }
-            }
-        }
-    }
+    Harness::new(driver,policy).drive_ports(
+        model,tools,history,visible_tools,tools_enabled,has_plan
+    ).await
 }
 #[cfg(test)]
 mod tests{

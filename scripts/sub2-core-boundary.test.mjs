@@ -364,8 +364,10 @@ test('both agent loops share one tool transcript protocol and persisted feedback
  const dispatch=source('src/engine/services/conversation/chat/runtime/tool_calls.rs');
  assert.match(core,/pub struct ToolFeedback/);
  assert.match(core,/pub fn provider_message/);
- assert.match(independent,/ToolFeedback::outcome_unknown/);
- assert.match(independent,/ToolFeedback::not_dispatched/);
+ assert.match(core,/ToolFeedback::outcome_unknown/);
+ assert.match(core,/ToolFeedback::not_dispatched/);
+ assert.match(independent,/\.drive_ports\(/);
+ assert.match(core,/pub async fn drive_ports/);
  assert.match(chat,/ToolFeedback::from_content/);
  assert.match(dispatch,/ToolFeedback::from_value/);
  assert.match(dispatch,/"content":feedback\.content/);

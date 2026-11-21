@@ -295,3 +295,7 @@ ProgramIR의 기존 `parallel` 노드에 `dependsOn` 형제 ID를 정식 지원�
 ## 2026-11-21 P0: 실행 전 Worker 자동 대체
 
 ProgramIR `delegate`에서 최대 4개의 `fallbackAgentIds`를 지정할 수 있습니다. 원래 에이전트가 로컬 Registry에서 없어졌거나 비활성화됐을 때, 배정이 아직 `assigned`인 경우에 한해 실제 등록된 후보를 결정적으로 선택합니다. SQLite `patch_if_all_merge`로 상태와 현재 에이전트를 동시에 검사하고 원본 ID·대체 ID·근거를 영속 기록합니다. 실행이 시작된 상태(`running`)나 `needs_review`/불명확한 효과는 자동 재배정하지 않으며 실제 `delegate_task` 허가/승인 계약은 그대로 유지합니다.
+
+## 2026-11-21 P0: 중복 standalone 실행 루프 제거
+
+`dominion-agent-loop::run`에서 직접 모델→도구 반복 실행하던 약 3KB 구간을 `dominion-turn-core::agent_loop::Harness::drive_ports`로 물리 이관했습니다. 기존 외부 Rust SDK `RunResult`는 Core 결과 타입을 재수출해 유지하고, 별도 알고리즘은 전략 구현만 보유합니다. 네이티브 Chat은 동일 Harness의 요청·응답 준비·배치 승인 인터페이스를 이미 사용하며, 채팅 스트리밍과 도구 영속 기록은 호스트 어댑터로 유지합니다.

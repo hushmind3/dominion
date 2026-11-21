@@ -44,6 +44,13 @@ impl ToolFeedback {
     }
 }
 
+#[derive(Debug)]
+pub struct PortRunResult{
+    pub response:String,
+    pub model_rounds:usize,
+    pub tool_calls:usize,
+    pub workflow:&'static str,
+}
 #[derive(Clone,Debug,PartialEq)]
 pub struct ToolRequest {
     pub id:String,
@@ -130,6 +137,78 @@ impl<'a,A:AgentLoop+?Sized> Harness<'a,A>{
         visible_tools:&[Value],enabled:bool,
     )->Result<(),&'static str>{
         self.driver.admit_batch(calls,visible_tools,enabled)
+    }
+    /// Core-owned port execution: no parallel product-side model/tool loop
+    /// in the standalone strategy crate. Host owns actual approvals/effects.
+    pub async fn drive_ports<M:ModelPort,T:ToolPort>(
+        &mut self,model:&mut M,tools:&mut T,
+        history:&mut Vec<Value>,visible_tools:&[Value],
+        tools_enabled:bool,has_plan:bool,
+    )->Result<PortRunResult,String>{
+    let mut rounds=0usize;
+    let mut dispatched=0usize;
+    loop{
+        let response:ModelResponse=self.request_model(
+            model.cancelled()||tools.cancelled(),
+            model.complete(history,visible_tools),
+        ).await?;
+        rounds+=1;
+        let prepared=self.prepare_response(
+            response.calls.iter().map(|call|(call.id.as_str(),call.name.as_str())),
+            has_plan,tools_enabled,
+        ).map_err(str::to_string)?;
+        match prepared.step(){
+            Step::Answer=>{
+                history.push(json!({"role":"assistant","content":response.content}));
+                return Ok(PortRunResult{
+                    response:response.content,model_rounds:rounds,
+                    tool_calls:dispatched,workflow:self.workflow(),
+                });
+            }
+            Step::Execute{..}=>{
+                // Reserve the full batch before any external effect. A
+                // hidden tool, duplicate call ID or exhausted budget denies
+                // every call in the proposal, not just the later ones.
+                self.admit_prepared(&prepared,visible_tools,tools_enabled)
+                    .map_err(str::to_string)?;
+                let calls=response.calls.iter().map(|c|json!({
+                    "id":c.id,"type":"function",
+                    "function":{"name":c.name,"arguments":c.arguments.to_string()}
+                })).collect::<Vec<_>>();
+                history.push(json!({"role":"assistant","content":response.content,
+                    "tool_calls":calls}));
+                for (index,call) in response.calls.iter().enumerate() {
+                    if model.cancelled()||tools.cancelled(){
+                        // Complete transcript pairing without claiming that any
+                        // remaining call reached the host.
+                        for skipped in &response.calls[index..] {
+                            history.push(ToolFeedback::not_dispatched(&skipped.id,
+                                "execution cancelled").provider_message());
+                        }
+                        return Err("execution cancelled".into());
+                    }
+                    match tools.dispatch(call).await {
+                        Ok(output)=>{
+                            history.push(ToolFeedback::from_value(&call.id,&output)
+                                .provider_message());
+                            dispatched+=1;
+                        }
+                        Err(error)=>{
+                            // A transport error cannot establish whether an
+                            // external effect happened: never auto-replay it.
+                            history.push(ToolFeedback::outcome_unknown(&call.id,&error)
+                                .provider_message());
+                            for skipped in &response.calls[index+1..] {
+                                history.push(ToolFeedback::not_dispatched(&skipped.id,
+                                    "prior tool failure").provider_message());
+                            }
+                            return Err(error);
+                        }
+                    }
+                }
+            }
+        }
+    }
     }
 }
 
