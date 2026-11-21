@@ -363,10 +363,11 @@ fn a_model_generated_intervention_runs_and_refutes_its_hypothesis() {
             let content = json!({
                 "hypotheses":[{
                     "id":hypothesis,"claim":"the command environment is wrong",
+                    "evidenceIds":["current-failure"],
                     "predictions":[{"predicate":prediction}]
                 }],
                 "interventions":[{
-                    "id":intervention,"hypothesisIds":[hypothesis],
+                    "id":intervention,"evidenceIds":["current-failure"],"hypothesisIds":[hypothesis],
                     "tool":"workspace_write",
                     "inputs":{"path":format!("adapt{}.txt", *count),"content":"OK"},
                     "expectedChecks":["file_exists"],"estimatedCost":0.1
@@ -405,6 +406,9 @@ fn a_model_generated_intervention_runs_and_refutes_its_hypothesis() {
             .is_some_and(|items| !items.is_empty())
     );
     assert!(model_adaptation["selected"]["id"].is_string());
+    assert_eq!(model_adaptation["actionCertificate"]["evidenceIds"],
+        json!(["current-failure"]),
+        "model-generated repair must cite the real failed action");
     let refuted = model_adaptation["hypothesisResults"]
         .as_array()
         .unwrap()
@@ -519,8 +523,8 @@ fn consecutive_failed_adaptations_stop_the_no_progress_loop() {
                 ("h2", "i2", "exit 10")
             };
             let content = json!({
-                "hypotheses":[{"id":hypothesis,"claim":"still wrong","predictions":[{"predicate":{"type":"equals","from":"result","path":"/exitCode","value":0}}]}],
-                "interventions":[{"id":intervention,"hypothesisIds":[hypothesis],"tool":"shell_exec","inputs":{"command":command},"expectedChecks":["x"],"estimatedCost":0.1}]
+                "hypotheses":[{"id":hypothesis,"claim":"still wrong","evidenceIds":["current-failure"],"predictions":[{"predicate":{"type":"equals","from":"result","path":"/exitCode","value":0}}]}],
+                "interventions":[{"id":intervention,"evidenceIds":["current-failure"],"hypothesisIds":[hypothesis],"tool":"shell_exec","inputs":{"command":command},"expectedChecks":["x"],"estimatedCost":0.1}]
             }).to_string();
             return vec![json!({"choices":[{"delta":{"content":content},"finish_reason":"stop"}]})];
         }
@@ -568,10 +572,11 @@ fn a_mid_adaptation_restart_restores_hypotheses_and_does_not_repeat_completed_st
                 "hypotheses":[{
                     "id":"h1",
                     "claim":"the shell environment cannot run this command",
+                    "evidenceIds":["current-failure"],
                     "predictions":[{"predicate":{"type":"equals","from":"result","path":"/exitCode","value":0}}]
                 }],
                 "interventions":[{
-                    "id":"i1","hypothesisIds":["h1"],"tool":"workspace_write",
+                    "id":"i1","evidenceIds":["current-failure"],"hypothesisIds":["h1"],"tool":"workspace_write",
                     "inputs":{"path":"adapt.txt","content":"ADAPT"},
                     "expectedChecks":["file_exists"],"estimatedCost":0.1
                 }]
@@ -662,6 +667,9 @@ fn a_mid_adaptation_restart_restores_hypotheses_and_does_not_repeat_completed_st
         .and_then(|items| items.iter().find(|item| item["selected"]["id"] == "i1"))
         .expect("restored adaptation record");
     assert_eq!(adaptation["hypotheses"][0]["id"], "h1", "{adaptation}");
+    assert_eq!(adaptation["actionCertificate"]["evidenceIds"],
+        json!(["current-failure"]),
+        "the recovered intervention must retain its original evidence certificate");
     assert_eq!(
         adaptation["selected"]["tool"], "workspace_write",
         "{adaptation}"
