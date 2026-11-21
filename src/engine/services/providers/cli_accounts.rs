@@ -4,11 +4,14 @@
 //! When a packaged OAuth app is configured the native OAuth flow wins.
 use reqwest::{Method,Url};
 use serde_json::{json,Value};
+use std::io::Read;
 use std::process::{Command,Output,Stdio};
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration,Instant};
 use tokio::io::{AsyncRead,AsyncReadExt};
 
 const MAX_CLI_OUTPUT_BYTES:usize=64*1024;
+const CLI_STATUS_TIMEOUT:Duration=Duration::from_secs(5);
 
 #[derive(Debug)]
 pub(crate) enum CliOutputError { Spawn, Timeout, OutputLimit, Io }
@@ -97,9 +100,64 @@ fn executable(provider:&str)->Option<std::path::PathBuf>{
     }
     None
 }
-fn cli_output(provider:&str,args:&[&str])->Option<std::process::Output>{
-    Command::new(executable(provider)?).args(args)
-        .stdin(Stdio::null()).output().ok()
+fn capture_std_pipe<R:Read>(mut pipe:R)->std::io::Result<(Vec<u8>,bool)>{
+    let mut bytes=Vec::new();
+    let mut buffer=[0u8;4096];
+    let mut exceeded=false;
+    loop{
+        let count=pipe.read(&mut buffer)?;
+        if count==0{break;}
+        let retained=count.min(MAX_CLI_OUTPUT_BYTES.saturating_sub(bytes.len()));
+        bytes.extend_from_slice(&buffer[..retained]);
+        exceeded|=retained<count;
+    }
+    Ok((bytes,exceeded))
+}
+
+fn cli_output(provider:&str,args:&[&str])->Option<Output>{
+    let mut child=Command::new(executable(provider)?)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn().ok()?;
+    let stdout=child.stdout.take()?;
+    let stderr=child.stderr.take()?;
+    let stdout_reader=thread::Builder::new().name("cli-status-stdout".into())
+        .spawn(move||capture_std_pipe(stdout));
+    let stdout_reader=match stdout_reader{
+        Ok(reader)=>reader,
+        Err(_)=>{let _=child.kill();let _=child.wait();return None;}
+    };
+    let stderr_reader=thread::Builder::new().name("cli-status-stderr".into())
+        .spawn(move||capture_std_pipe(stderr));
+    let stderr_reader=match stderr_reader{
+        Ok(reader)=>reader,
+        Err(_)=>{
+            let _=child.kill();
+            let _=child.wait();
+            let _=stdout_reader.join();
+            return None;
+        }
+    };
+    let deadline=Instant::now()+CLI_STATUS_TIMEOUT;
+    let status=loop{
+        match child.try_wait(){
+            Ok(Some(status))=>break status,
+            Ok(None) if Instant::now()<deadline=>thread::sleep(Duration::from_millis(20)),
+            _=>{
+                let _=child.kill();
+                let _=child.wait();
+                let _=stdout_reader.join();
+                let _=stderr_reader.join();
+                return None;
+            }
+        }
+    };
+    let (stdout,stdout_exceeded)=stdout_reader.join().ok()?.ok()?;
+    let (stderr,stderr_exceeded)=stderr_reader.join().ok()?.ok()?;
+    if stdout_exceeded||stderr_exceeded{return None;}
+    Some(Output{status,stdout,stderr})
 }
 fn status_from_google(data:&Value)->LocalStatus{
     let scopes=match data.get("scopes"){
