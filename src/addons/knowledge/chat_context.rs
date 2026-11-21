@@ -828,8 +828,12 @@ mod tests {
         state.store.put("session", &json!({"id":"private:capabilities"})).unwrap();
         state.store.put("agent_growth", &json!({
             "id":"a", "agentId":"a", "runs":3,
-            "guidance":[{"id":"failure:a:old","text":"STALE_TOOL_FAILURE_MEMORY",
-                "confidence":0.9,"revision":"v1"}]
+            "guidance":[
+                {"id":"failure:a:old","text":"STALE_TOOL_FAILURE_MEMORY",
+                    "confidence":0.9,"revision":"v1"},
+                {"id":"failure:a:verified","text":"VERIFIED_TASK_RECOVERY_LESSON",
+                    "confidence":0.9,"revision":"v2","evidenceBasis":"failed_execution"}
+            ]
         })).unwrap();
         state.store.put("skill", &json!({
             "id":"capability-skill", "scope":"global", "name":"할수있냐",
@@ -850,8 +854,14 @@ mod tests {
             "explicit skill request must still retrieve relevant knowledge");
         let task=system_prompt_with_manifest_at(
             &state,&request,"private:capabilities","그 작업으로 뭘 할 수 있어?",None,None);
-        assert!(task.dynamic_context.contains("STALE_TOOL_FAILURE_MEMORY"),
-            "a referential follow-up must retain its task context");
+        // The old failure text has no real failed-execution receipt. It must
+        // stay stored for inspection, but cannot return to the wire.
+        assert!(!task.dynamic_context.contains("STALE_TOOL_FAILURE_MEMORY"),
+            "legacy unverified failure guidance must remain quarantined");
+        assert!(task.dynamic_context.contains("VERIFIED_TASK_RECOVERY_LESSON"),
+            "a referential task must retain verified agent guidance");
+        assert!(state.store.get("agent_growth","a").unwrap()["guidance"]
+            .as_array().unwrap().len()==2,"historical guidance must not be deleted");
         let _=std::fs::remove_dir_all(dir);
     }
 
