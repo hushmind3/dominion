@@ -89,12 +89,9 @@ fn native_reply(state:&AppState,id:&str,response:Response)->Response {
 }
 
 pub async fn list(State(state):State<AppState>)->Json<Value>{
-    let mut entries=state.store.all("job").into_iter()
-        .filter(|job|job["kind"]=="prompt"
-            && job["input"]["clientSurface"]=="native_agent_panel"
-            && job["input"]["harnessCompat"]==true)
+    let mut entries=state.store.recent_compat_sdk_jobs(30).unwrap_or_default().into_iter()
         .map(|job|native_view(&state,&job)).collect::<Vec<_>>();
-    entries.extend(state.store.all("sdk_run").into_iter()
+    entries.extend(state.store.recent_records("sdk_run",30).unwrap_or_default().into_iter()
         .map(|entry|legacy_view(&state,entry)));
     entries.truncate(30);
     Json(json!(entries))

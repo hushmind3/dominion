@@ -253,6 +253,13 @@ impl Store {
                WHERE kind='job' AND json_extract(data,'$.kind')='prompt'
                  AND json_extract(data,'$.input.clientSurface')='native_agent_panel'
                  AND COALESCE(json_extract(data,'$.input.harnessCompat'),0)<>1;
+             CREATE INDEX IF NOT EXISTS idx_sdk_compat_job_history
+               ON records(updated_at DESC,id DESC)
+               WHERE kind='job' AND json_extract(data,'$.kind')='prompt'
+                 AND json_extract(data,'$.input.clientSurface')='native_agent_panel'
+                 AND json_extract(data,'$.input.harnessCompat')=1;
+             CREATE INDEX IF NOT EXISTS idx_sdk_archive_history
+               ON records(updated_at DESC,id DESC) WHERE kind='sdk_run';
              CREATE INDEX IF NOT EXISTS idx_team_job_history
                ON records(json_extract(data,'$.queuedAt') DESC,id DESC)
                WHERE kind='job' AND json_extract(data,'$.kind')='team';
@@ -416,6 +423,36 @@ impl Store {
              ORDER BY json_extract(data,'$.queuedAt') DESC,id DESC LIMIT ?1"
         ).map_err(|e|e.to_string())?;
         let rows=stmt.query_map([i64::try_from(limit).unwrap_or(i64::MAX)],
+            record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// The compatibility SDK view only displays the latest 30 rows. Keep the
+    /// history bound in SQLite so old jobs are never materialized per request.
+    pub fn recent_compat_sdk_jobs(&self,limit:usize)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             INDEXED BY idx_sdk_compat_job_history
+             WHERE kind='job' AND json_extract(data,'$.kind')='prompt'
+               AND json_extract(data,'$.input.clientSurface')='native_agent_panel'
+               AND json_extract(data,'$.input.harnessCompat')=1
+             ORDER BY updated_at DESC,id DESC LIMIT ?1"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([i64::try_from(limit).unwrap_or(i64::MAX)],record_from_row)
+            .map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// Bounded newest-first read for archive collections that have no JSON
+    /// predicate. The kind remains a bound SQL parameter, never query text.
+    pub fn recent_records(&self,kind:&str,limit:usize)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind=?1 ORDER BY updated_at DESC,id DESC LIMIT ?2"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map(rusqlite::params![kind,i64::try_from(limit).unwrap_or(i64::MAX)],
             record_from_row).map_err(|e|e.to_string())?;
         rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
