@@ -38,7 +38,8 @@ fn reconcile_expired(state:&AppState)->Vec<String>{
     let mut reviewed=Vec::new();
     // Recheck expiration UNDER the SQLite mutation lock. A heartbeat can
     // extend the lease between the initial indexed read and this transaction.
-    for row in state.store.all("remote_job"){
+    for row in state.store.leased_remote_jobs()
+        .unwrap_or_else(|_|state.store.all("remote_job")){
         if !expired(&row){continue;}
         let Some(id)=row["id"].as_str()else{continue};
         let result=state.store.mutate_record("remote_job",id,json!({"id":id}),|current|{
@@ -138,9 +139,8 @@ pub async fn claim(State(state):State<AppState>,headers:HeaderMap,
     reconcile_expired(&state);
     // Only queued tasks may be claimed. A lost or expired lease is review
     // required, not automatic re-execution of unknown remote effects.
-    let mut jobs=state.store.all("remote_job");
-    jobs.sort_by(|a,b|a["createdAt"].as_str().unwrap_or("")
-        .cmp(b["createdAt"].as_str().unwrap_or("")));
+    let jobs=state.store.queued_remote_jobs()
+        .unwrap_or_else(|_|state.store.all("remote_job"));
     for row in jobs.into_iter().filter(|r|r["status"]=="queued"
         &&remote_registry::eligible(&state,r,worker)).take(100){
         let Some(id)=row["id"].as_str()else{continue};
