@@ -3,6 +3,7 @@
 //! Uploads retry, verify the remote copy by SHA-256 (echo header or GET), and
 //! never delete the local snapshot on remote failure. Outcomes are audited.
 use crate::state::AppState;
+use futures_util::StreamExt;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -49,26 +50,81 @@ pub fn from_env() -> Option<RemoteConfig> {
     })
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+async fn sha256_file(path: &Path) -> Result<String, String> {
+    use tokio::io::AsyncReadExt;
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut buffer = [0u8; 64 * 1024];
+    let mut hasher = Sha256::new();
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .await
+            .map_err(|error| error.to_string())?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
-async fn verify_get(client: &reqwest::Client, url: &str, expected: &str) -> bool {
+fn file_stream(
+    path: std::path::PathBuf,
+) -> impl futures_util::Stream<Item = Result<Vec<u8>, std::io::Error>> + Send + 'static {
+    async_stream::try_stream! {
+        use tokio::io::AsyncReadExt;
+        let mut file=tokio::fs::File::open(path).await?;
+        let mut buffer=vec![0u8;64*1024];
+        loop{
+            let read=file.read(&mut buffer).await?;
+            if read==0{break;}
+            yield buffer[..read].to_vec();
+        }
+    }
+}
+
+async fn verify_get(client: &reqwest::Client, url: &str, expected: &str, size: u64) -> bool {
     let Ok(response) = client.get(url).send().await else {
         return false;
     };
-    if !response.status().is_success() {
+    if !response.status().is_success()
+        || response
+            .content_length()
+            .is_some_and(|length| length != size)
+    {
         return false;
     }
-    match response.bytes().await {
-        Ok(body) => sha256_hex(&body) == expected,
-        Err(_) => false,
+    let mut stream = response.bytes_stream();
+    let mut hasher = Sha256::new();
+    let mut received = 0u64;
+    while let Some(chunk) = stream.next().await {
+        let Ok(chunk) = chunk else {
+            return false;
+        };
+        received = received.saturating_add(chunk.len() as u64);
+        if received > size {
+            return false;
+        }
+        hasher.update(&chunk);
     }
+    received == size && format!("{:x}", hasher.finalize()) == expected
 }
 
 pub async fn upload(path: &Path, config: &RemoteConfig) -> RemoteReport {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
+    let size = match tokio::fs::metadata(path).await {
+        Ok(metadata) if metadata.is_file() => metadata.len(),
+        Ok(_) => {
+            return RemoteReport {
+                uploaded: false,
+                verified: false,
+                url: String::new(),
+                sha256: String::new(),
+                attempts: 0,
+                error: "backup target is not a regular file".into(),
+            }
+        }
         Err(error) => {
             return RemoteReport {
                 uploaded: false,
@@ -80,7 +136,34 @@ pub async fn upload(path: &Path, config: &RemoteConfig) -> RemoteReport {
             }
         }
     };
-    let checksum = sha256_hex(&bytes);
+    let checksum = match sha256_file(path).await {
+        Ok(checksum) => checksum,
+        Err(error) => {
+            return RemoteReport {
+                uploaded: false,
+                verified: false,
+                url: String::new(),
+                sha256: String::new(),
+                attempts: 0,
+                error,
+            }
+        }
+    };
+    if tokio::fs::metadata(path)
+        .await
+        .map(|metadata| metadata.len())
+        .ok()
+        != Some(size)
+    {
+        return RemoteReport {
+            uploaded: false,
+            verified: false,
+            url: String::new(),
+            sha256: checksum,
+            attempts: 0,
+            error: "local backup changed while calculating checksum".into(),
+        };
+    }
     let name = path
         .file_name()
         .and_then(|value| value.to_str())
@@ -88,6 +171,9 @@ pub async fn upload(path: &Path, config: &RemoteConfig) -> RemoteReport {
     let url = format!("{}/{}", config.base_url.trim_end_matches('/'), name);
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(config.timeout_secs))
+        // The remote endpoint may redirect. Do not forward the backup body
+        // or its optional bearer credential to a different host.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
     {
         Ok(client) => client,
@@ -104,12 +190,19 @@ pub async fn upload(path: &Path, config: &RemoteConfig) -> RemoteReport {
     };
     let total_attempts = config.retries.saturating_add(1);
     let mut last_error = String::new();
+    let mut attempts = 0;
     for attempt in 1..=total_attempts {
+        attempts = attempt;
+        if sha256_file(path).await.as_deref() != Ok(checksum.as_str()) {
+            last_error = "local backup changed after checksum calculation".into();
+            break;
+        }
         let mut request = client
             .put(&url)
             .header("Content-Type", "application/octet-stream")
             .header("x-dominion-sha256", &checksum)
-            .body(bytes.clone());
+            .header(reqwest::header::CONTENT_LENGTH, size)
+            .body(reqwest::Body::wrap_stream(file_stream(path.to_path_buf())));
         if !config.token.is_empty() {
             request = request.bearer_auth(&config.token);
         }
@@ -120,7 +213,9 @@ pub async fn upload(path: &Path, config: &RemoteConfig) -> RemoteReport {
                     .get("x-dominion-sha256")
                     .and_then(|value| value.to_str().ok())
                     == Some(checksum.as_str());
-                if echoed || verify_get(&client, &url, &checksum).await {
+                let source_unchanged = sha256_file(path).await.as_deref() == Ok(checksum.as_str());
+                if source_unchanged && (echoed || verify_get(&client, &url, &checksum, size).await)
+                {
                     return RemoteReport {
                         uploaded: true,
                         verified: true,
@@ -148,15 +243,12 @@ pub async fn upload(path: &Path, config: &RemoteConfig) -> RemoteReport {
         verified: false,
         url,
         sha256: checksum,
-        attempts: total_attempts,
+        attempts,
         error: last_error,
     }
 }
 
-pub async fn upload_if_configured(
-    state: &AppState,
-    path: &Path,
-) -> Option<RemoteReport> {
+pub async fn upload_if_configured(state: &AppState, path: &Path) -> Option<RemoteReport> {
     let config = from_env()?;
     let report = upload(path, &config).await;
     if report.uploaded && report.verified {
