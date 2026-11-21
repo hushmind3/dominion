@@ -112,15 +112,17 @@ fn native_job(
         stored_session["parallelReadOnly"]!=readonly{
         return Err("Remote session identity mismatch; refusing replay".into());
     }
-    let input=json!({
+    let mut input=json!({
         "prompt":prompt,"agentId":agent_id,
         "providerId":agent["providerId"],"model":agent["model"],
         "sessionId":session_id,"remoteTaskId":task_id,
         "toolsEnabled":true,"toolsExecutionEnabled":true,
         "autonomous":true,"maxAutonomousAttempts":2,
         "parallelDelegationReadOnly":readonly,
-        "successCriteria":task["successCriteria"],
     });
+    if task["successCriteria"].is_array(){
+        input["successCriteria"]=task["successCriteria"].clone();
+    }
     let job=engine::jobs::enqueue_once(state,&local_id,"prompt",input)
         .ok_or("Remote task already used this local job ID with different arguments")?;
     if job["status"]=="queued"{
