@@ -100,6 +100,69 @@ async fn follows_real_file_writes_then_independent_check() {
     assert!(journal.0.lock().unwrap().last().unwrap().in_flight.is_empty());
     let _=std::fs::remove_dir_all(root);
 }
+
+#[tokio::test]
+async fn paid_model_settlement_never_releases_fence_before_decision_receipt() {
+    let (model,tools,evidence,journal,request,root)=test_env(vec![
+        json!({"plan":["write exact content"],"actions":[{"id":"a","tool":"write",
+            "arguments":{"path":"artifact.txt","content":"hello"},"dependsOn":[]}]}),
+        json!({"plan":[],"actions":[],"answer":"verified"})
+    ]);
+    let output=Kernel{model:&model,tools:&tools,evidence:&evidence,journal:&journal}
+        .run(request).await.unwrap();
+    assert!(matches!(output.status,Status::Completed));
+    let snapshots=journal.0.lock().unwrap();
+    assert!(snapshots.iter().any(|s|s.model_in_flight && s.model_calls>0),
+        "usage is durably charged before model observation is finalized");
+    for snapshot in snapshots.iter() {
+        if snapshot.model_calls>0 && matches!(&snapshot.status,Status::Running)
+            && !snapshot.model_in_flight {
+            assert!(!snapshot.decision_tape.is_empty()
+                || snapshot.checks.iter().any(|check|
+                    check.criterion.tool.as_deref()==Some("decision_parse")),
+                "paid generation fence released before outcome was durable");
+        }
+    }
+    drop(snapshots);
+    let _=std::fs::remove_dir_all(root);
+}
+
+#[derive(Default)]
+struct CrashBeforeDecisionCommit(Mutex<Vec<Snapshot>>);
+impl Journal for CrashBeforeDecisionCommit {
+    fn save(&self, snapshot:&Snapshot)->Result<(),String>{
+        if snapshot.model_calls>0 && !snapshot.model_in_flight
+            && !snapshot.decision_tape.is_empty() {
+            return Err("simulated crash before atomic model observation commit".into());
+        }
+        self.0.lock().unwrap().push(snapshot.clone());
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn interrupted_model_decision_commit_fails_closed_without_paid_replay() {
+    let (model,tools,evidence,_journal,request,root)=test_env(vec![
+        json!({"plan":["write the file"],"actions":[{"id":"a","tool":"write",
+            "arguments":{"path":"artifact.txt","content":"hello"},"dependsOn":[]}]})
+    ]);
+    let journal=CrashBeforeDecisionCommit::default();
+    let kernel=Kernel{model:&model,tools:&tools,evidence:&evidence,journal:&journal};
+    assert!(kernel.run(request.clone()).await.is_err(),
+        "failed durable settlement must stop the execution");
+    let saved=journal.0.lock().unwrap().last().unwrap().clone();
+    assert_eq!(saved.model_calls,1,"the paid call remains budgeted");
+    assert!(saved.model_in_flight,"uncertain response must retain replay fence");
+    assert!(saved.decision_tape.is_empty(),"no uncommitted decision may appear");
+    assert!(kernel.resume(request,saved).await.is_err(),
+        "an interrupted paid observation requires review, never another call");
+    assert_eq!(tools.writes.load(Ordering::SeqCst),0,
+        "no proposed effect may run without a durable model observation");
+    assert!(model.0.lock().unwrap().is_empty(),
+        "the model was consumed exactly once");
+    let _=std::fs::remove_dir_all(root);
+}
+
 #[tokio::test]
 async fn unsupported_success_claim_does_not_complete() {
     let (model,tools,evidence,journal,mut request,root)=test_env(vec![
