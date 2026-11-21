@@ -193,9 +193,33 @@ try {
   assert.ok(receipts.some(receipt=>receipt.tool==='workspace_write'&&receipt.success),
     'A real durable successful tool receipt is missing')
   assert.ok(requests.length>=3,'The model must observe a real tool receipt before finalizing')
+  // Real SQLite snapshot → scoped history API → browser receipt re-open.
+  // Paging history may not trigger a second model call or tool side effect.
+  const beforeHistoryRequests=requests.length
+  const receiptPage=await httpJson(
+   `${base}/api/sdk/runs/${encodeURIComponent(finished.id)}/receipts?limit=40`)
+  assert.equal(receiptPage.total,receipts.length)
+  assert.ok(receiptPage.receipts.some(entry=>receipts.some(saved=>
+   saved.id===entry.id&&saved.tool===entry.tool&&saved.success===entry.success)),
+   'Native receipts API must project actual Rust kernel operations')
+  assert.ok(!JSON.stringify(receiptPage).includes('SUB3_VERIFIED'),
+   'Tool receipt pages may not include input content or raw output')
+  assert.ok(receiptPage.receipts.every(entry=>!('arguments' in entry)&&!('result' in entry)))
+  const eventPage=await httpJson(
+   `${base}/api/sdk/runs/${encodeURIComponent(finished.id)}/events?limit=40`)
+  assert.ok(Array.isArray(eventPage.events))
+  assert.equal(typeof eventPage.total,'number')
+  assert.equal(requests.length,beforeHistoryRequests,
+   'Read-only evidence paging cannot replay a paid provider generation')
   await page.reload({waitUntil:'domcontentloaded'})
   const afterRefresh=await httpJson(`${base}/api/sdk/runs/${writer.id}`)
   assert.equal(afterRefresh.phase,'succeeded')
+  const savedReceipt=receiptPage.receipts.find(entry=>entry.tool==='workspace_write')
+  assert.ok(savedReceipt)
+  const receiptSummary=page.locator('summary').filter({hasText:/도구 실행 기록|Recorded tool calls/})
+  await receiptSummary.waitFor({timeout:10000})
+  await receiptSummary.click()
+  await page.getByText(savedReceipt.id,{exact:false}).waitFor({timeout:10000})
   // A denied exact approval cannot be re-used to authorize the rejected write.
   await page.locator('#sdk-goal').fill('sub3-deny.txt 파일에 SUB3_VERIFIED를 작성해 주세요.')
   await page.getByRole('button',{name:/작업 시작|Start task/}).click()
