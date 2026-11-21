@@ -135,13 +135,14 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     })
     .finally(()=>{fetching=false})
   }
-  // Approval may be resolved on another tab, and an interrupted run may
-  // change after reconnection. Keep server state authoritative on focus.
-  const timer=window.setInterval(refresh,stopPolling.has(run.status)?15000:2500)
+  // Terminal jobs do not need repeated idle HTTP/SQLite reads. Keep an
+  // on-focus revalidation so cross-tab changes are still observable.
+  const timer=stopPolling.has(run.status)?undefined:window.setInterval(refresh,2500)
   window.addEventListener('focus',refresh)
   document.addEventListener('visibilitychange',refresh)
   return()=>{
-   alive=false;window.clearInterval(timer)
+   alive=false
+   if(timer!==undefined)window.clearInterval(timer)
    window.removeEventListener('focus',refresh)
    document.removeEventListener('visibilitychange',refresh)
   }
