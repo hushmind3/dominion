@@ -985,7 +985,27 @@ impl Store {
             matches!(current,"cancelled"|"interrupted")
                 && execution["status"].as_str()!=Some(current)
         ) {
-            return Ok(FinalizeOutcome::Conflict);
+            // Narrow exception: the SAME durable run was owner-cancelled
+            // during an already dispatched, uncertain paid model/effect.
+            // Only transition to manual review when BOTH the committed
+            // checkpoint and the finalizer carry a live write-ahead fence.
+            // Never allow completed/succeeded to override owner cancellation.
+            let pending_in_finalizer=execution["kernelState"]["modelInFlight"]==true
+                ||execution["kernelState"]["inFlight"].as_array()
+                    .is_some_and(|actions|!actions.is_empty());
+            let persisted_pending:i64=tx.query_row(
+                "SELECT CASE WHEN
+                   COALESCE(json_extract(data,'$.kernelState.modelInFlight'),0)=1
+                   OR COALESCE(json_array_length(json_extract(data,'$.kernelState.inFlight')),0)>0
+                 THEN 1 ELSE 0 END
+                 FROM records WHERE kind='execution' AND id=?1",
+                [execution_id],|row|row.get(0)
+            ).map_err(|error|error.to_string())?;
+            if execution["status"]!="needs_review" ||
+                !pending_in_finalizer || persisted_pending!=1 ||
+                execution["ownerCancellationRequested"]!=true {
+                return Ok(FinalizeOutcome::Conflict);
+            }
         }
         upsert_tx(&tx, "execution", execution)?;
         for improvement in improvements {
