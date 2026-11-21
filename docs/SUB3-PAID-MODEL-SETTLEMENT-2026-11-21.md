@@ -35,6 +35,13 @@ The product's `Journal` implementation still supplies atomic SQLite
 persistence. The SDK `Journal` trait remains stable. This patch changes
 the ordering of durable observations, not the model/provider protocol.
 
+The shared runtime `dispatch_batch` also refuses ALL tool dispatch while
+`Snapshot.model_in_flight=true`. This makes model-observation settlement a
+kernel-level prerequisite, including for direct Chat/Room adapter callers,
+instead of trusting the higher-level call sequence to avoid a race.
+`crates/dominion-agent-runtime/src/dispatch.rs` now has a no-effect
+regression which asserts zero tool invocations on an unsettled paid turn.
+
 ## Crash-injection regression
 
 `crates/dominion-agent-sdk/tests/kernel.rs` includes:
