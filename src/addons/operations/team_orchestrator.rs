@@ -92,8 +92,16 @@ fn validate(plan:&Value,roster:&[Value])->Result<Vec<Step>,String>{
     }
     Ok(steps)
 }
+fn remote_plan_rule(allowed:bool)->&'static str{
+    if allowed{
+        "Optional remoteWorker:true is permitted ONLY on profile=general research steps.          Remote SDK results require owner review and never count as native verified tools."
+    }else{
+        "Do not propose remoteWorker:true; remote delegation is not authorized."
+    }
+}
 async fn model_plan(
     ctx:&ToolContext<'_>,goal:&str,roster:&[Value],execution_id:&str,
+    remote_allowed:bool,
 )->Result<Value,String>{
     let session=ctx.store.get("session",ctx.session_id).ok_or("Lead 세션이 없습니다.")?;
     let lead=ctx.agent_id.and_then(|id|ctx.store.get("agent",id));
@@ -113,7 +121,8 @@ async fn model_plan(
         reference earlier IDs. For every implementation step add a later verification \
         step directly depending on it. Use general for read-only research outside git; \
         implementation and verification require clean git worktrees. No invented agents.";
-    let text=format!("GOAL:\n{goal}\nAVAILABLE AGENTS:\n{}",json!(pool));
+    let text=format!("GOAL:\n{goal}\nREMOTE WORKER POLICY:\n{}\nAVAILABLE AGENTS:\n{}",
+        remote_plan_rule(remote_allowed),json!(pool));
     let answer=crate::engine::llm::complete_for_execution(
         ctx.state,provider,model,system,&text,Some(ctx.session_id),
         execution_id,"team_planning").await?;
@@ -132,7 +141,8 @@ pub async fn start(ctx:&ToolContext<'_>,args:&Value,execution_id:&str)->Result<V
     let pool=agents(ctx.state,ctx.session_id);
     if pool.is_empty(){return Err("모델을 연결한 Worker 에이전트가 없습니다.".into());}
     let proposed=if args["steps"].is_array(){json!({"steps":args["steps"]})}
-        else if args["steps"].is_null(){model_plan(ctx,goal,&pool,execution_id).await?}
+        else if args["steps"].is_null(){model_plan(ctx,goal,&pool,execution_id,
+            args["allowRemoteWorkers"]==true).await?}
         else{return Err("steps는 배열이어야 합니다.".into())};
     let plan=validate(&proposed,&pool)?;
     if plan.iter().any(|s|s.remote){
@@ -577,6 +587,8 @@ mod tests{
     }
     #[test]
     fn rejects_cyclic_foreign_and_unverified_proposals(){
+        assert!(remote_plan_rule(true).contains("remoteWorker:true"));
+        assert!(remote_plan_rule(false).contains("not authorized"));
         let roster=vec![json!({"id":"a"}),json!({"id":"b"})];
         let plan=json!({"steps":[
             {"id":"read","profile":"general","prompt":"Inspect source","agentId":"a"},
