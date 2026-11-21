@@ -62,7 +62,12 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
     // Record the replay fence BEFORE publishing the remote work ticket.
     ctx.checkpoint(json!({"sessionId":session,"remoteJobId":remote_id,
         "promptState":{"inFlight":true}}))?;
+    let parent_execution=ctx.state.store.get("job",team_id)
+        .and_then(|team|team["executionId"].as_str().map(str::to_string))
+        .filter(|id|ctx.state.store.get("execution",id)
+            .is_some_and(|run|run["sessionId"]==parent));
     let candidate=json!({"id":remote_id,"kind":"remote_sdk","status":"queued",
+        "executionId":parent_execution,
         "sourceJobId":id,"teamJobId":team_id,"sessionId":session,
         "parentSessionId":parent,"instruction":text,"maxRounds":24,
         "attempts":0,"nativeVerified":false,
@@ -95,7 +100,9 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
                 "metadata":{"authorKind":"agent","verification":"remote_owner_reviewed",
                     "remoteJobId":remote_id,"remoteWorkerId":record["workerId"],
                     "remoteNativeExecutionId":record["workerReport"]["remoteNativeExecutionId"],
-                    "remoteRuntime":"dominion_sdk","nativeToolReceipts":false}
+                    "remoteRuntime":"dominion_sdk",
+                    "remoteModelAccounting":record["workerReport"]["modelAccounting"],
+                    "nativeToolReceipts":false}
             })).ok_or("remote report could not be journaled")?;
             ctx.state.bus.message(&saved);
             let result=json!({"sessionId":session,"messageId":saved["id"],
@@ -189,6 +196,27 @@ mod tests{
         let result=run(&ctx,&job).await.unwrap();
         assert_eq!(result["remoteJobId"],remote);
         assert_eq!(state.store.all("remote_job").len(),1);
+        let _=std::fs::remove_dir_all(&state.config.data_dir);
+    }
+
+    #[tokio::test]
+    async fn remote_ticket_stream_is_correlated_only_to_the_real_lead_execution(){
+        let (state,job)=sample();
+        state.store.put("execution",&json!({"id":"lead-native","sessionId":"lead",
+            "status":"running"})).unwrap();
+        let mut team=state.store.get("job","team").unwrap();
+        team["executionId"]=json!("lead-native");
+        state.store.put("job",&team).unwrap();
+        let first=run(&JobContext::new(state.clone(),"worker".into()),&job)
+            .await.unwrap_err();
+        assert!(first.starts_with("deferred:"));
+        let timeline=state.bus.replay_run("lead-native",0,100);
+        assert!(timeline.iter().any(|event|
+            event.event_type=="record"
+            &&event.run_ref.execution_id=="lead-native"));
+        let remote=state.store.get("remote_job","remote:worker").unwrap();
+        assert_eq!(remote["executionId"],"lead-native");
+        assert!(state.bus.replay_run("remote:worker",0,100).is_empty());
         let _=std::fs::remove_dir_all(&state.config.data_dir);
     }
     #[test]

@@ -71,3 +71,13 @@ provenance-checked assistant message; its evidence level is
 for that acceptance. Restarts, unknown effects and expired leases do not
 automatically rerun work. Implementation/verification stay local because a
 cross-device Git patch transfer and verifier proof is not implemented.
+
+## Correlation and cost provenance
+
+The coordinator attaches a remote ticket to its **existing Lead native
+execution ID** only after verifying the owning Team and Lead session. The
+remote device's own `remoteNativeExecutionId` is a separate namespace. Its
+reported `modelAccounting` is retained as self-reported evidence (not
+coordinator-native token receipts). Lead/Worker synthesis exposes distinct
+`remoteJobId`, `externalRunId` and `executionId` properties rather than
+fabricating a local execution identity for remote work.

@@ -137,6 +137,7 @@ async fn execute(client:&Client,cfg:&Config,job:&Value)->Result<(),String>{
                     "remoteNativeExecutionId":row["runRef"]["executionId"],
                     "remoteVerifiedClaim":row["verified"]==true,
                     "taskOutcome":row["taskOutcome"],
+                    "modelAccounting":row["modelAccounting"],
                     "answer":row["answer"].as_str().unwrap_or("")
                         .chars().take(12_000).collect::<String>(),
                     "nativeVerified":false

@@ -273,10 +273,13 @@ fn verified_result(state:&AppState,job:&Value)->Result<Value,String>{
     if output.is_empty(){return Err("Worker가 빈 응답을 제출했습니다.".into());}
     Ok(json!({"stepId":step,"jobId":job["id"],"agentId":job["input"]["agentId"],
         "profile":job["input"]["delegationProfile"],
-        "executionId":if evidence=="remote_owner_reviewed"{
-            Value::Null
-        }else{json!(execution)},
-        "remoteJobId":job["result"]["remoteJobId"],"messageId":id,
+        "executionId":if matches!(evidence,
+            "remote_owner_reviewed"|"external_report"){Value::Null}else{json!(execution)},
+        "remoteJobId":job["result"]["remoteJobId"],
+        "externalRunId":if evidence=="external_report" {json!(execution)}
+            else{Value::Null},
+        "remoteNativeExecutionId":msg["metadata"]["remoteNativeExecutionId"],
+        "messageId":id,
         "evidenceLevel":evidence,"patchSha256":job["delegationPatchSha256"],
         "answer":output.chars().take(1800).collect::<String>()}))
 }
@@ -298,7 +301,10 @@ pub fn dependency_evidence(state:&AppState,job:&Value)->Result<String,String>{
             .collect::<String>();
         notes.push(format!("Step {}, execution or receipt {}, evidence type {}, frozen patch {}:\n{}",
             result["stepId"].as_str().unwrap_or(""),
-            result["executionId"].as_str().unwrap_or(""),
+            result["executionId"].as_str()
+                .or_else(||result["externalRunId"].as_str())
+                .or_else(||result["remoteJobId"].as_str())
+                .unwrap_or(""),
             result["evidenceLevel"].as_str().unwrap_or(""),
             result["patchSha256"].as_str().unwrap_or("none"),
             excerpt));
