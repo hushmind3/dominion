@@ -583,6 +583,21 @@ mod tests{
         drop(state);let _=std::fs::remove_dir_all(dir);
     }
     #[test]
+    fn remote_source_bytes_never_enter_global_sse_events(){
+        let (state,dir)=state();
+        let row=json!({"id":"remote-secret","status":"completed","agentId":"coder",
+            "artifacts":[{"path":"src/code.rs","sha256":"digest",
+                "content":"SENSITIVE_SOURCE_BYTES"}]});
+        state.store.put("remote_task",&row).unwrap();
+        publish_task(&state,&row);
+        let events=state.bus.replay(0,10);
+        assert!(!events.is_empty());
+        assert!(!events.iter().any(|event|event.to_string().contains("SENSITIVE_SOURCE_BYTES")));
+        assert_eq!(state.store.get("remote_task","remote-secret").unwrap()
+            ["artifacts"][0]["content"],"SENSITIVE_SOURCE_BYTES");
+        drop(state);let _=std::fs::remove_dir_all(dir);
+    }
+    #[test]
     fn artifact_transfer_rejects_tampering_escape_and_duplicate_paths(){
         assert!(!valid_artifact_path("../escape.rs"));
         assert!(!valid_artifact_path(".git/config"));
