@@ -68,7 +68,8 @@ try{
    uploadedRoomAttachments.push(route.request().postDataJSON());
    const uploaded=uploadedRoomAttachments.at(-1);
    response={id:uploaded.name==='notes.txt'?'room-uploaded-note':'room-uploaded-'+uploaded.name,
-    name:uploaded.name,size:Buffer.from(uploaded.data,'base64').length,supportedForModel:'text'};
+    name:uploaded.name,size:Buffer.from(uploaded.data,'base64').length,
+    sessionId:room.sessionId,supportedForModel:'text'};
   }
   if(pathname==='/api/rooms'){
    if(route.request().method()==='POST'){
@@ -76,6 +77,10 @@ try{
     room={...room,...saved};
     response=room;
    }else response=[room];
+  }
+  if(pathname==='/api/rooms/room-model-fixture/reset'){
+   room={...room,sessionId:'room:reset-session',status:'idle'};
+   response={sessionId:room.sessionId};
   }
   if(pathname==='/api/rooms/room-model-fixture/state')response={
    room,sessionId:room.sessionId,jobs:[],executions:[],learningJobs:[],
@@ -250,6 +255,19 @@ try{
  assert.equal(await composer.inputValue(),'그룹에서 작성 중인 원문은 유지');
  assert.ok(uploadedRoomAttachments.some(file=>file.name==='pasted.txt'));
  assert.ok(uploadedRoomAttachments.some(file=>file.name==='dropped.txt'));
+ // Reset keeps the owner text/recipient draft but cannot reuse an upload
+ // scoped to the previous Room transcript, or its stale idempotency nonce.
+ page.once('dialog',dialog=>dialog.accept());
+ const roomReset=page.waitForResponse(response=>
+  new URL(response.url()).pathname==='/api/rooms/room-model-fixture/reset');
+ await page.getByRole('button',{name:'대화 초기화'}).click();
+ await roomReset;
+ await page.getByText('dropped.txt',{exact:true}).waitFor({state:'detached',timeout:10000});
+ assert.equal(await composer.inputValue(),'그룹에서 작성 중인 원문은 유지');
+ const afterReset=await page.evaluate(()=>JSON.parse(sessionStorage.getItem(
+  'dominion.room.composer.v1:room-model-fixture')||'null'));
+ assert.deepEqual(afterReset.attachments,[]);
+ assert.equal(afterReset.attempt,undefined);
  const sizes=await page.evaluate(()=>({screen:innerWidth,body:document.documentElement.scrollWidth}));
  assert.ok(sizes.body<=sizes.screen+2,'Room model UI overflows mobile: '+JSON.stringify(sizes));
  assert.deepEqual(errors,[],'Room runtime errors');
