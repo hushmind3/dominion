@@ -86,14 +86,14 @@ pub(super) fn prepare_model<'a>(
                     }
                 }
             }
-            turn.model_started = std::time::Instant::now();
-            turn.model_offset_ms = turn.turn_started.elapsed().as_millis() as u64;
-            turn.round_tools = if turn.force_final {
+            turn.model_round.model_started = std::time::Instant::now();
+            turn.model_round.model_offset_ms = turn.turn_started.elapsed().as_millis() as u64;
+            turn.model_round.round_tools = if turn.force_final {
                 Vec::new()
             } else {
                 turn.tool_definitions.clone()
             };
-            if !turn.round_tools.is_empty() {
+            if !turn.model_round.round_tools.is_empty() {
                 let tool_schema_budget = turn
                     .provider
                     .context_tokens
@@ -107,28 +107,28 @@ pub(super) fn prepare_model<'a>(
                         ((tokens.saturating_sub(reserve) as usize) * 4 / 2).clamp(4_000, 60_000)
                     })
                     .unwrap_or(60_000);
-                turn.round_tools = trim_tool_definitions(
-                    std::mem::take(&mut turn.round_tools),
+                turn.model_round.round_tools = trim_tool_definitions(
+                    std::mem::take(&mut turn.model_round.round_tools),
                     tool_schema_budget,
                 );
             }
-            turn.wire_messages = turn.messages.clone();
+            turn.model_round.wire_messages = turn.messages.clone();
             if turn.is_room {
                 if let Some(mut execution) = turn.state.store.get("execution", turn.execution_id) {
                     execution["inputContext"]["preparedInputTokensEstimate"] =
                         json!(crate::engine::chat::room_context::input_estimate(
-                            &turn.wire_messages,
-                            &turn.round_tools
+                            &turn.model_round.wire_messages,
+                            &turn.model_round.round_tools
                         ));
                     execution["inputContext"]["preProviderDigest"] =
                         json!(crate::engine::memory::stable_id(&[
-                            &json!({"messages":turn.wire_messages,"tools":turn.round_tools})
+                            &json!({"messages":turn.model_round.wire_messages,"tools":turn.model_round.round_tools})
                                 .to_string()
                         ]));
                     turn.state.store.put("execution", &execution);
                 }
             }
-            Ok(turn.round_tools.clone())
+            Ok(turn.model_round.round_tools.clone())
         })
     }
 
@@ -147,8 +147,8 @@ pub(super) fn model<'a>(
                 turn.state,
                 &turn.client,
                 &turn.provider,
-                &turn.wire_messages,
-                &turn.round_tools,
+                &turn.model_round.wire_messages,
+                &turn.model_round.round_tools,
                 &turn.request,
                 turn.session_id,
                 turn.tx,
@@ -157,12 +157,12 @@ pub(super) fn model<'a>(
             .await;
             {
                 let mut counters = turn.metrics.lock().unwrap();
-                counters.model_elapsed_ms += turn.model_started.elapsed().as_millis() as u64;
+                counters.model_elapsed_ms += turn.model_round.model_started.elapsed().as_millis() as u64;
                 if counters.first_token_ms.is_none() {
                     if let Ok((completion, _effective_provider)) = &completion_result {
                         counters.first_token_ms = completion
                             .first_delta_ms
-                            .map(|ms| turn.model_offset_ms + ms);
+                            .map(|ms| turn.model_round.model_offset_ms + ms);
                     }
                 }
             }
@@ -240,7 +240,7 @@ pub(super) fn observe_model<'a>(
                             .as_u64()
                             .unwrap_or_else(|| {
                                 crate::engine::chat::room_context::input_estimate(
-                                    &turn.wire_messages,&turn.round_tools,
+                                    &turn.model_round.wire_messages,&turn.model_round.round_tools,
                                 ) as u64
                             })
                     },
@@ -254,7 +254,7 @@ pub(super) fn observe_model<'a>(
                 )
             };
             turn.prompt_tokens_total += call_prompt;
-            turn.completion_tokens_total += call_completion;
+            turn.model_round.completion_tokens_total += call_completion;
             if completion.usage_exact {
                 if let Some(cached) = completion.cached_prompt_tokens {
                     turn.cached_prompt_tokens_total = turn
@@ -319,7 +319,7 @@ pub(super) fn observe_model<'a>(
                             Value::Null
                         };
                     execution["inputContext"]["providerOutputTokens"] =
-                        json!(turn.completion_tokens_total);
+                        json!(turn.model_round.completion_tokens_total);
                     execution["inputContext"]["providerUsageExact"] = json!(!turn.usage_estimated);
                     execution["lastModelFinishReason"] = json!(completion.finish_reason);
                     turn.state.store.put("execution", &execution);
@@ -350,7 +350,7 @@ pub(super) fn observe_model<'a>(
                 completion.tool_calls.clear();
             }
 
-            if has_dsml_call && turn.round_tools.is_empty() {
+            if has_dsml_call && turn.model_round.round_tools.is_empty() {
                 return Err("모델이 이번 턴에 제공되지 않은 도구를 호출하려 했습니다.".into());
             }
             if completion.tool_calls.is_empty()
@@ -392,7 +392,7 @@ pub(super) fn observe_model<'a>(
             } else {
                 ModelDecision::Tools
             };
-            turn.completion = Some(completion);
+            turn.model_round.completion = Some(completion);
             Ok(decision)
         })
     }
@@ -404,7 +404,7 @@ pub(super) fn verify<'a>(turn: &'a mut MainTurn<'_>, ctx: &'a mut Context<'_>) -
             }
 
             let round = ctx.round;
-            let completion = turn.completion.take().ok_or("모델 응답이 없습니다.")?;
+            let completion = turn.model_round.completion.take().ok_or("모델 응답이 없습니다.")?;
 
             {
                 let mut operations = turn
