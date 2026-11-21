@@ -181,6 +181,9 @@ jobs:
           # Verify HTTP room persistence and 9-speaker routing end to end.
           cargo test --test e2e persistent_room_http_flow_keeps_owner_once_and_shares_peer_context -- --test-threads=1
           cargo test --test e2e a_short_greeting_reaches_all_nine_when_the_turn_cap_covers_the_roster -- --test-threads=1
+          # Sub2 completion gate: execute the complete locked workspace lib suite,
+          # not just selected green regressions that could hide the P0 five.
+          cargo test --locked --workspace --lib -- --test-threads=2
 
   frontend-typecheck:
     runs-on: ubuntu-latest
@@ -195,6 +198,7 @@ jobs:
         run: |
           npm ci --prefix web --ignore-scripts
           npm --prefix web run typecheck
+          npm --prefix web run build
           # Development CI intentionally skips Vite production build.
           # Release packaging owns build artifacts; keep sub2 iterations fast.
           node --experimental-strip-types --test web/tests/*.test.mjs
@@ -205,3 +209,19 @@ jobs:
           node --test scripts/sub2-compare.test.mjs
           ./web/node_modules/.bin/tsc -p sdk/typescript/tsconfig.json
           node --test sdk/typescript/tests/sdk.test.mjs
+
+  chromium-team-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      - name: Install frontend and Chromium test browser
+        run: |
+          npm ci --prefix web --ignore-scripts
+          ./web/node_modules/.bin/playwright install --with-deps chromium
+      - name: Mobile Chromium Team controls and approval-status smoke
+        run: node web/tests/team-activity.smoke.mjs
