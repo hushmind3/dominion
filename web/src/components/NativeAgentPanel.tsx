@@ -7,6 +7,9 @@ type SdkState = {state: string; detail?: {call_id?: string; tool?: string}}
 type RunEvent={kind:string;detail:unknown}
 type RunEventsPage={events:RunEvent[];total:number;from:number;to:number;nextBefore:number|null}
 type OlderRunHistory={runId:string;boundary:number;events:RunEvent[];nextBefore:number|null;total:number}
+type ToolReceipt={id:string;tool:string;success:boolean;step:number}
+type ReceiptPage={receipts:ToolReceipt[];total:number;from:number;to:number;nextBefore:number|null}
+type OlderReceipts={runId:string;boundary:number;receipts:ToolReceipt[];nextBefore:number|null}
 type SdkRun = {
  id: string; status: string; instruction: string; answer?: string; error?: string;
  algorithmId?:string; algorithmRevision?:string;
@@ -21,7 +24,7 @@ type SdkRun = {
   eventsOmitted?:number;
   eventsDropped?:number;
   verificationChecks?: {satisfied:boolean;explanation?:string}[];
-  toolReceipts?: {id:string;tool:string;success:boolean;step:number}[];
+  toolReceipts?: ToolReceipt[];
   toolReceiptsOmitted?:number;
   artifactEvidence?: {captureComplete:boolean;origin:'kernel_checks'|'owner_checks';omitted:number;
    entries:{path:string;state:string;bytes?:number|null;sha256?:string|null}[]} | null;
@@ -68,6 +71,9 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [observation,setObservation]=useState('')
  const [showEventHistory,setShowEventHistory]=useState(false)
  const [olderHistory,setOlderHistory]=useState<OlderRunHistory|null>(null)
+ const [olderReceipts,setOlderReceipts]=useState<OlderReceipts|null>(null)
+ const [loadingReceipts,setLoadingReceipts]=useState(false)
+ const [receiptPageError,setReceiptPageError]=useState<{runId:string;message:string}|null>(null)
  const [loadingHistory,setLoadingHistory]=useState(false)
  const [historyPageError,setHistoryPageError]=useState<{runId:string;message:string}|null>(null)
  const [run,setRun]=useState<SdkRun|null>(null)
@@ -89,10 +95,15 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  // Only persist the chosen job ID; server receipts remain authoritative.
  const historyEpoch=useRef(0)
  const eventPageEpoch=useRef(0)
+ const receiptPageEpoch=useRef(0)
  const selectRun=(selected:SdkRun)=>{
   historyEpoch.current+=1
   eventPageEpoch.current+=1
+  receiptPageEpoch.current+=1
   setLoadingHistory(false)
+  setLoadingReceipts(false)
+  setOlderReceipts(null)
+  setReceiptPageError(null)
   setShowEventHistory(false)
   setOlderHistory(null)
   setHistoryPageError(null)
@@ -309,6 +320,37 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    if(requestEpoch===eventPageEpoch.current)setLoadingHistory(false)
   }
  }
+ const loadOlderReceipts=async()=>{
+  if(!run||loadingReceipts)return
+  const runId=run.id
+  const boundary=run.checkpoint?.toolReceiptsOmitted??0
+  const requestEpoch=++receiptPageEpoch.current
+  const existing=olderReceipts?.runId===runId&&olderReceipts.boundary===boundary
+   ?olderReceipts:null
+  const before=existing?existing.nextBefore:boundary
+  if(!before)return
+  setLoadingReceipts(true)
+  setReceiptPageError(null)
+  try{
+   const page=await get<ReceiptPage>(
+    `/api/sdk/runs/${encodeURIComponent(runId)}/receipts?before=${before}&limit=40`)
+   if(page.to!==before||page.from>page.to||page.total<page.to||
+    page.receipts.length!==page.to-page.from)throw Error(
+     en?'Invalid tool receipt page from server':'서버 도구 영수증 페이지가 올바르지 않습니다.')
+   if(requestEpoch!==receiptPageEpoch.current)return
+   setOlderReceipts(previous=>previous?.runId===runId&&
+    previous.boundary===boundary&&existing
+    ?{runId,boundary,receipts:[...page.receipts,...previous.receipts],
+      nextBefore:page.nextBefore}
+    :{runId,boundary,receipts:page.receipts,nextBefore:page.nextBefore})
+  }catch(e){
+   if(requestEpoch===receiptPageEpoch.current){
+    setReceiptPageError({runId,message:(e as Error).message})
+   }
+  }finally{
+   if(requestEpoch===receiptPageEpoch.current)setLoadingReceipts(false)
+  }
+ }
  const status=run?.status||''
  const call=run?.checkpoint?.pendingCall
  const needsApproval=status==='awaiting_approval' && call
@@ -321,6 +363,9 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   olderHistory?.boundary===eventsOmitted?olderHistory:null
  const events=allEvents.slice(showEventHistory?-40:-4)
  const toolReceipts=run?.checkpoint?.toolReceipts||[]
+ const toolReceiptsOmitted=run?.checkpoint?.toolReceiptsOmitted??0
+ const loadedReceipts=olderReceipts?.runId===run?.id&&
+  olderReceipts?.boundary===toolReceiptsOmitted?olderReceipts:null
  return <section className="mt-4 rounded-xl border border-[#E7E0D5] bg-white">
   <div className="flex items-center gap-2 border-b border-[#F0EAE1] px-4 py-3">
    <Sparkles size={17} className="text-[#AF5B3A]"/>
@@ -502,7 +547,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      </div>
     </div>}
     {run.answer||run.checkpoint?.answer?<div className="mt-3 whitespace-pre-wrap break-words border-t border-[#E7E0D5] pt-3 text-[12px]">{run.answer||run.checkpoint?.answer}</div>:null}
-    {toolReceipts.length>0&&<details className="mt-3 min-w-0 rounded-lg border border-[#E7E0D5] bg-white p-3 text-[11px]">
+    {(toolReceipts.length>0||toolReceiptsOmitted>0)&&<details className="mt-3 min-w-0 rounded-lg border border-[#E7E0D5] bg-white p-3 text-[11px]">
      <summary className="cursor-pointer font-semibold">
       {en?'Recorded tool calls':'도구 실행 기록'} · {run.checkpoint?.toolCalls??toolReceipts.length}
      </summary>
@@ -525,6 +570,33 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
        </span>
       </li>)}
      </ol>
+     {toolReceiptsOmitted>0&&<div className="mt-3 rounded-lg border border-[#E7E0D5] bg-[#FAF8F4] p-2">
+      {loadedReceipts&&loadedReceipts.receipts.length>0&&<div>
+       <p className="text-[11px] font-semibold text-[#5C544D]">
+        {en?`Loaded ${loadedReceipts.receipts.length} older tool receipts`:
+         `이전 도구 영수증 ${loadedReceipts.receipts.length}건 불러옴`}
+       </p>
+       <ol className="mt-2 max-h-48 space-y-1 overflow-y-auto"
+        aria-label={en?'Older saved tool receipts':'이전 저장 도구 영수증'}>
+        {loadedReceipts.receipts.map(receipt=><li key={receipt.id}
+         className="min-w-0 break-all rounded-md bg-white px-2 py-1.5 text-[11px]">
+         <strong>{receipt.tool}</strong> · {receipt.id} · {en?'Step':'회차'} {receipt.step}
+         {' · '}{receipt.success?(en?'Succeeded':'성공'):(en?'Failed':'실패')}
+        </li>)}
+       </ol>
+      </div>}
+      {(!loadedReceipts||loadedReceipts.nextBefore!==null)&&<button type="button"
+       disabled={loadingReceipts} onClick={()=>void loadOlderReceipts()}
+       className="mt-2 min-h-10 rounded-lg border border-[#E7E0D5] bg-white px-3 text-[11px] font-semibold text-[#845B47] disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2">
+       {loadingReceipts?(en?'Loading…':'불러오는 중…'):
+        loadedReceipts?(en?'Load earlier receipts':'더 이전 영수증 불러오기'):
+         (en?'Load saved older receipts':'이전 도구 영수증 불러오기')}
+      </button>}
+      {receiptPageError?.runId===run.id&&<p role="alert"
+       className="mt-2 break-words text-[11px] text-rose-700">
+       {receiptPageError.message}
+      </p>}
+     </div>}
     </details>}
     {Boolean(run.checkpoint?.artifactEvidence?.entries?.length)&&<details
      className="mt-3 min-w-0 rounded-lg border border-[#E7E0D5] bg-white p-3 text-[11px]">
