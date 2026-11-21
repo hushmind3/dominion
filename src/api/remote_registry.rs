@@ -89,10 +89,24 @@ pub fn eligible(state:&AppState,row:&Value,worker:&str)->bool{
     if required.is_empty()&&row["targetWorkerId"].is_null(){return true;}
     matches_capabilities(state,worker,&required)
 }
+fn liveness_due(last:&Value)->bool{
+    last.as_str().and_then(|s|chrono::DateTime::parse_from_rfc3339(s).ok())
+        .is_none_or(|stamp|stamp<=chrono::Utc::now()-chrono::Duration::seconds(30))
+}
 pub fn seen(state:&AppState,worker:&str){
-    if let Some(row)=state.store.patch_if("remote_worker",worker,"status",&json!("enabled"),
-        &json!({"lastSeenAt":chrono::Utc::now().to_rfc3339()})){
-        state.bus.record("remote_worker",&public(row));
+    // Polling every three seconds must not append one durable SSE event per
+    // machine per poll. Double-check freshness under the SQLite CAS lock.
+    let Some(snapshot)=state.store.get("remote_worker",worker)else{return;};
+    if !liveness_due(&snapshot["lastSeenAt"]){return;}
+    if let Ok(saved)=state.store.mutate_record("remote_worker",worker,
+        json!({"id":worker}),|row|{
+            if row["status"]!="enabled"||!liveness_due(&row["lastSeenAt"]){
+                return Err("worker liveness already committed".into());
+            }
+            row["lastSeenAt"]=json!(chrono::Utc::now().to_rfc3339());
+            Ok(vec![])
+        }){
+        state.bus.record("remote_worker",&public(saved));
     }
 }
 /// POST /api/remote/workers is owner-only. Return the credential exactly once.
@@ -210,6 +224,22 @@ mod tests{
     async fn state_fn_for_test(app:&AppState)->Response{
         super::state(State(app.clone()),Path("gpu".into()),
             Json(json!({"enabled":false}))).await
+    }
+    #[test]
+    fn liveness_is_throttled_and_only_registered_workers_emit_durable_updates(){
+        let state=sample();
+        assert!(liveness_due(&json!("2026-01-01T00:00:00Z")));
+        seen(&state,"unknown");
+        assert!(state.store.get("remote_worker","unknown").is_none());
+        state.store.put("remote_worker",&json!({"id":"node","status":"enabled",
+            "lastSeenAt":"2026-01-01T00:00:00Z"})).unwrap();
+        seen(&state,"node");
+        let first=state.store.get("remote_worker","node").unwrap();
+        assert!(!liveness_due(&first["lastSeenAt"]));
+        let stamp=first["lastSeenAt"].clone();
+        seen(&state,"node");
+        assert_eq!(state.store.get("remote_worker","node").unwrap()["lastSeenAt"],stamp);
+        let _=std::fs::remove_dir_all(&state.config.data_dir);
     }
     #[test]
     fn scheduler_filters_pinned_and_capability_jobs_without_trusting_self_report(){
