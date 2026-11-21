@@ -263,8 +263,10 @@ impl Kernel<'_> {
             self.journal.save(&run)?;
             // A cancellation or owner correction may arrive while the
             // write-ahead intent is being saved. No provider call has begun.
-            let cancelled_after_fence=self.journal.cancelled(&request.id);
-            let redirected_after_fence=self.journal.directive(&request.id)? != current_directive;
+            let fence=runtime::dispatch_fence(self.journal,&request.id,
+                current_directive.as_deref())?;
+            let cancelled_after_fence=fence==runtime::DispatchFence::Cancelled;
+            let redirected_after_fence=fence==runtime::DispatchFence::OwnerChanged;
             if cancelled_after_fence || redirected_after_fence {
                 run.model_in_flight=false;
                 if cancelled_after_fence {

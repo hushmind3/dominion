@@ -90,6 +90,29 @@ impl RunPhase {
         Some(next)
     }
 }
+/// One committed Room event. The ordinal is a per-room SQLite sequence.
+#[derive(Debug,Clone,PartialEq,Eq,Serialize,Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct RoomEvent {
+    pub version:u16,
+    pub room_id:String,
+    pub session_id:String,
+    pub seq:u64,
+    pub event_id:String,
+    pub author:String,
+    pub reply_to:Option<String>,
+    pub origin_run:Option<String>,
+    pub kind:String,
+}
+#[derive(Debug,Clone,PartialEq,Eq,Serialize,Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct RoomAgentBinding {
+    pub room_id:String,
+    pub agent_id:String,
+    pub session_id:String,
+    pub read_cursor:u64,
+    pub state:String,
+}
 #[derive(Debug,Clone,PartialEq,Eq,Serialize,Deserialize)]
 #[serde(rename_all="camelCase")]
 pub struct RunRef {
@@ -146,6 +169,18 @@ mod tests {
         assert_eq!(RunPhase::Running.advance(RunTransition::Fail),Some(RunPhase::Failed));
         assert_eq!(RunPhase::Queued.advance(RunTransition::Interrupt),
             Some(RunPhase::Interrupted));
+    }
+    #[test] fn per_room_events_roundtrip_without_rebinding_agent_cursor(){
+        let event=RoomEvent{version:1,room_id:"r".into(),
+            session_id:"room:r".into(),seq:4,event_id:"e4".into(),
+            author:"a".into(),reply_to:Some("e1".into()),
+            origin_run:Some("run".into()),kind:"agent_message".into()};
+        let raw=serde_json::to_value(&event).unwrap();
+        assert_eq!(raw["originRun"],"run");
+        assert_eq!(serde_json::from_value::<RoomEvent>(raw).unwrap(),event);
+        let binding=RoomAgentBinding{room_id:"r".into(),agent_id:"b".into(),
+            session_id:"room:r".into(),read_cursor:2,state:"bound".into()};
+        assert_eq!(serde_json::to_value(binding).unwrap()["readCursor"],2);
     }
     #[test] fn typed_ref_roundtrips_without_unscoped_parent(){
         let r=RunRef::new(RunSurface::Team,"job:123",Some("team:0".into())).unwrap();

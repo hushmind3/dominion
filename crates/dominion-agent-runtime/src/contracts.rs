@@ -157,6 +157,19 @@ pub trait Tools: Send + Sync {
 pub trait Evidence: Send + Sync {
     fn check<'a>(&'a self, criterion: &'a Criterion) -> BoxFuture<'a, Result<bool, String>>;
 }
+/// The single post-write-ahead admission check used by both the streaming
+/// conversation transport and the native AgentLoop. This code cannot issue
+/// model calls or effects on its own.
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum DispatchFence {Proceed,Cancelled,OwnerChanged}
+pub fn dispatch_fence(journal:&dyn Journal,run_id:&str,
+    directive_before:Option<&str>)->Result<DispatchFence,String>{
+    if journal.cancelled(run_id){return Ok(DispatchFence::Cancelled);}
+    if journal.directive(run_id)?.as_deref()!=directive_before{
+        return Ok(DispatchFence::OwnerChanged);
+    }
+    Ok(DispatchFence::Proceed)
+}
 pub trait Journal: Send + Sync {
     /// Must durably persist before an action, or the action must not execute.
     fn save(&self, snapshot: &Snapshot) -> Result<(), String>;
@@ -165,6 +178,24 @@ pub trait Journal: Send + Sync {
     fn directive(&self, _id: &str) -> Result<Option<String>, String> { Ok(None) }
 }
 
+#[cfg(test)]
+mod dispatch_fence_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool,Ordering};
+    struct JournalStub {cancelled:AtomicBool,directive:Option<String>}
+    impl Journal for JournalStub {
+        fn save(&self,_:&Snapshot)->Result<(),String>{Ok(())}
+        fn cancelled(&self,_:&str)->bool{self.cancelled.load(Ordering::SeqCst)}
+        fn directive(&self,_:&str)->Result<Option<String>,String>{Ok(self.directive.clone())}
+    }
+    #[test] fn one_post_intent_fence_guards_cancellation_and_owner_changes(){
+        let j=JournalStub{cancelled:AtomicBool::new(false),directive:Some("corrected".into())};
+        assert_eq!(dispatch_fence(&j,"run",None).unwrap(),DispatchFence::OwnerChanged);
+        assert_eq!(dispatch_fence(&j,"run",Some("corrected")).unwrap(),DispatchFence::Proceed);
+        j.cancelled.store(true,Ordering::SeqCst);
+        assert_eq!(dispatch_fence(&j,"run",Some("corrected")).unwrap(),DispatchFence::Cancelled);
+    }
+}
 /// Native tool protocols may retain additional host data (stream events,
 /// receipts and message framing) without forcing the model through JSON prose.
 
