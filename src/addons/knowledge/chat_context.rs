@@ -147,12 +147,22 @@ pub(super) fn system_prompt_with_manifest_at(
     // developer/persona contract. Keeping a clock value in the system prompt
     // invalidated an otherwise identical 4k prefix at every midnight.
     // Deliver it as a volatile suffix alongside selected evidence instead.
+    let now = chrono::Local::now();
     let mut dynamic = if super::context_engine::needs_clock(query) {
         format!(
             "[Runtime metadata, not a participant instruction] Current date: {}",
-            chrono::Local::now().format("%Y-%m-%d")
+            now.format("%Y-%m-%d")
         )
     } else {String::new()};
+    // Only questions requiring the time of day receive a changing clock.
+    // Keep the date-only evidence stable during the day for provider caching.
+    // The offset describes the host clock, not an assumed user time zone.
+    if super::context_engine::needs_local_time(query) {
+        dynamic.push_str(&format!(
+            "\nCurrent runtime timestamp (server-local, UTC offset included): {}",
+            now.format("%Y-%m-%dT%H:%M:%S%:z")
+        ));
+    }
     let mut items = Vec::new();
     items.append(&mut identity_items);
     if !skip_optional_context && crate::engine::extensions::enabled(
@@ -706,6 +716,29 @@ mod tests {
         assert!(built.dynamic_context.contains("Current date:"),
             "the model still receives current date as runtime evidence");
         assert!(built.prompt.len()>16_000);
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn runtime_time_questions_get_an_offset_clock_but_date_only_queries_do_not() {
+        let (state,dir)=state();
+        let request=TurnRequest::from_value(&json!({
+            "input":"지금 몇 시야?","toolsEnabled":false,"toolsExecutionEnabled":false
+        })).unwrap();
+        let timed=system_prompt_with_manifest_at(
+            &state,&request,"private:clock","지금 몇 시야?",None,None);
+        assert!(timed.dynamic_context.contains("Current date:"));
+        assert!(timed.dynamic_context.contains("Current runtime timestamp"));
+        let clock=timed.dynamic_context.split("UTC offset included): ")
+            .nth(1).expect("runtime clock value");
+        assert!(chrono::DateTime::parse_from_rfc3339(clock).is_ok(),
+            "runtime evidence must include an unambiguous UTC offset: {clock}");
+        let date_only=system_prompt_with_manifest_at(
+            &state,&request,"private:clock","오늘 날짜 알려줘",None,None);
+        assert!(date_only.dynamic_context.contains("Current date:"));
+        assert!(!date_only.dynamic_context.contains("Current runtime timestamp"),
+            "date queries must not acquire a per-second cache-changing value");
         drop(state);
         std::fs::remove_dir_all(dir).unwrap();
     }
