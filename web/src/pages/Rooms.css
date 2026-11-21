@@ -115,7 +115,7 @@
 .room-reasoning{font-size:12px}
 .room-message-text pre{max-width:100%;font-size:12px;line-height:1.65}
 @media(max-width:839px){
- .room-message-owner .room-message-main{max-width:85%}
+ .room-message-owner .room-message-main{max-width:76%}
  .room-message-text{font-size:15px;line-height:1.7}
  .room-message-byline strong{font-size:12px}
  .room-message-byline time{font-size:10px}
