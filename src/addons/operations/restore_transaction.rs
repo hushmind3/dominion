@@ -43,14 +43,21 @@ fn cleanup(dir:&Path){
     let _=fs::remove_file(database);
     let _=fs::remove_file(key);
 }
-fn mark_committed(dir:&Path)->Result<(),String>{
+fn mark_committed_with_sync(
+    dir:&Path,
+    sync_directory:impl FnOnce(&Path)->Result<(),String>,
+)->Result<(),String>{
     let (marker,_,_)=paths(dir);
     fs::remove_file(marker).map_err(|error|format!("restore commit marker: {error}"))?;
-    // If a power failure replays the marker, recovery still chooses the old,
-    // consistent pair. Both outcomes are valid.
-    let _=sync_parent(dir);
+    // The removal must be durable before discarding either rollback file.
+    // If directory sync fails, a crash may resurrect the marker. Preserve
+    // both rollback files so startup can safely recover the original pair.
+    sync_directory(dir).map_err(|error|format!("restore commit directory sync: {error}"))?;
     cleanup(dir);
     Ok(())
+}
+fn mark_committed(dir:&Path)->Result<(),String>{
+    mark_committed_with_sync(dir,sync_parent)
 }
 fn stage_copy(from:&Path,to:&Path)->Result<(),String>{
     fs::copy(from,to).map_err(|error|error.to_string())?;
@@ -286,6 +293,30 @@ mod tests{
         assert!(!db.exists()&&!key.exists());
         old_still_readable(&state);
         drop(state);
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn failed_directory_sync_keeps_rollback_pair_for_crash_replay(){
+        let (state,bytes,key,dir)=fixture();
+        let tx=Transaction::begin(&state).unwrap();
+        state.store.replace_database(&bytes).unwrap();
+        state.vault.restore_primary(key).unwrap();
+        sync_pair(&state).unwrap();
+        let error=mark_committed_with_sync(&dir, |_|Err("injected directory sync failure".into()))
+            .unwrap_err();
+        assert!(error.contains("restore commit directory sync"));
+        assert!(dir.join(OLD_DB).is_file(),"old database must survive sync failure");
+        assert!(dir.join(OLD_KEY).is_file(),"old key must survive sync failure");
+        // A power cut can replay a marker deletion that was not synced.
+        fs::write(dir.join(MARKER),b"DOMINION_RESTORE_ROLLBACK_V1\\n").unwrap();
+        drop(tx);
+        drop(state);
+        let config=Config{port:0,data_dir:dir.clone(),web_dir:dir.join("web"),workspace:dir.clone()};
+        assert!(recover_before_open(&config.db_path(),&config.key_path()).unwrap());
+        let reopened=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        old_still_readable(&reopened);
+        drop(reopened);
         fs::remove_dir_all(dir).unwrap();
     }
     #[test]
