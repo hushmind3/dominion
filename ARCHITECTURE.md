@@ -157,11 +157,11 @@ Preserve existing navigation and API surfaces. Operations/Task Teams are present
 | One *physical upper model-turn loop* | Both routes now use the same Rust step-loop source and write-ahead model operator; Chat still owns separate context/protocol-specific decision flow rather than invoking `AgentLoop::execute` | **Shared execution clock/model admission complete; final policy-loop convergence pending** |
 | Room Chat / independent agent cursors | Per-room SQLite `room_events.seq`, atomic agent `throughSeq`, 150-turn coverage | Implemented |
 | Separate Task Team graph | Native/CLI workers, dependency DAG, read parallelism, writer lease, worktree owner promotion | Implemented |
-| Local/API Model Gateway | Per-model context/tool capability and pinned provider identity | Implemented |
+| Local/API Model Gateway | Per-model context, max-output, streaming, reasoning and tool capability admission before paid Chat/fallback dispatch; pinned provider identity | Implemented for declared profiles; runtime cross-vendor capability probes are separate |
 | External Codex/Claude/Qwen AgentBridge | Independent scoped read-only external sessions, Codex JSON-RPC approval explicitly declined and audit-journaled, host observations not native receipts | Implemented in read-only mode |
-| Long-term correction / strategy evidence | Source-grounded memory and bounded strategy-evaluation modules | Existing implementation |
+| Long-term correction / strategy evidence | Source-grounded memory, owner correction priority, 150-turn recall with SQLite restart regression and bounded strategy-evaluation modules | Implemented deterministic regression; real-model answer-quality measurement is separate |
 | React/Tauri/SQLite durable source | Existing UI and REST/SSE contracts, local-first Host and Tauri sidecar | Existing implementation |
-| Distributed remote Gateway/Worker | Opt-in loopback-only authenticated gateway, outbound HTTPS/tunnel worker CLI, text-only remote Task Team worker, lease CAS/unknown-outcome review | Implemented for read-only inference; remote workspace writes intentionally not authorized |
+| Distributed remote Gateway/Worker | Opt-in loopback-only authenticated gateway, outbound HTTPS/tunnel worker CLI, durable per-device registration, owner-visible liveness/model inventory, text-only remote Team worker, lease CAS/unknown-outcome review | Implemented for multi-device read-only inference; remote workspace writes intentionally not authorized |
 
 The original document says not to rename/recreate crates merely for labels. The
 current names `dominion-agent-runtime`, `dominion-agent-algorithms` and
