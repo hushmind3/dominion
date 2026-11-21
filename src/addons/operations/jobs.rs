@@ -357,6 +357,11 @@ pub fn start(state: AppState) {
     let dispatch_state = state.clone();
     tokio::spawn(async move {
         loop {
+            // A restore transaction must never race newly claimed worker jobs.
+            if dispatch_state.maintenance_mode() {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                continue;
+            }
             // A single dispatcher checks the durable queue once per wake,
             // not once per worker every 400 ms when the queue is empty.
             // Team coordinators must not occupy all worker slots while
@@ -369,6 +374,7 @@ pub fn start(state: AppState) {
                 }
             }
             while let Ok(permit) = capacity.clone().try_acquire_owned() {
+                if dispatch_state.maintenance_mode() { drop(permit); break; }
                 let Some(job) = next_queued(&dispatch_state) else {
                     drop(permit);
                     break;
@@ -404,7 +410,8 @@ pub fn start(state: AppState) {
         loop {
             tokio::select! {
                 _ = tick.tick() => {
-                    if dirty && crate::engine::extensions::globally_enabled(
+                    if !maintenance_state.maintenance_mode()
+                        && dirty && crate::engine::extensions::globally_enabled(
                         &maintenance_state,crate::engine::extensions::Extension::Memory) {
                         crate::engine::agent_growth::sweep(&maintenance_state);
                         crate::engine::distill::sweep(&maintenance_state);
@@ -512,6 +519,7 @@ fn next_queued(state: &AppState) -> Option<Value> {
 /// parent waiting on a child can never deadlock the worker pool.
 pub fn start_now(state: AppState, job_id: String) {
     tokio::spawn(async move {
+        if state.maintenance_mode() {return;}
         let Some(job) = state.store.get("job", &job_id) else {
             return;
         };
