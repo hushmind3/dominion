@@ -29,6 +29,25 @@ pub(super) fn is_social_turn(query: &str) -> bool {
     })
 }
 
+/// A generic request to describe the assistant's capabilities is not a
+/// request to recall user memories, old tool failures or stored procedures.
+/// Match complete phrases only: "그 작업으로 뭘 할 수 있어?" still needs
+/// its preceding task and knowledge. The durable transcript is untouched.
+pub(super) fn is_generic_capabilities_turn(query: &str) -> bool {
+    let compact = query.chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect::<String>();
+    matches!(compact.as_str(),
+        "뭐할수있냐" | "뭐할수잇냐" | "뭐할수있어" | "뭐할수있나요" |
+        "뭘할수있냐" | "뭘할수있어" | "뭘할수있나요" |
+        "무엇을할수있어" | "무엇을할수있나요" |
+        "너뭐할수있어" | "넌뭐할수있어" | "너는뭐할수있어" |
+        "너뭐할줄알아" | "기능이뭐야" | "무슨기능있어" |
+        "whatcanyoudo" | "whatdoyoudo"
+    )
+}
+
 /// Date is task evidence, not an instruction. Most "hello"/code/reflection
 /// turns have no reason to rebill a changing clock field every request.
 pub(super) fn needs_clock(query:&str) -> bool {
@@ -163,6 +182,19 @@ mod tests {
             assert!(!is_social_turn(work), "{work}");
         }
     }
+    #[test]
+    fn generic_capability_question_skips_optional_recall_not_task_followups() {
+        for query in ["뭐할수있냐", "뭐할수잇냐", "뭘 할 수 있어?",
+            "무엇을 할 수 있나요?", "What can you do?"] {
+            assert!(is_generic_capabilities_turn(query), "{query}");
+            assert!(!is_social_turn(query), "capability questions are not greetings");
+        }
+        for query in ["아까 작업으로 뭘 할 수 있어?", "그 도구는 뭐 할 수 있어?",
+            "내 프로젝트에 어떤 기능이 있지?", "계속해", "이전에 한 거 확인해"] {
+            assert!(!is_generic_capabilities_turn(query), "{query}");
+        }
+    }
+
     #[test]
     fn context_compiler_reserves_output_and_scales_with_local_model_capacity() {
         use crate::{config::Config,db::Store,vault::Vault};
