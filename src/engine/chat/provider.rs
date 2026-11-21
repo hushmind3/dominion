@@ -2124,7 +2124,7 @@ mod final_chat_message_tests {
             &mut completion, &mut calls,
             &json!({"content":"안녕하세요","reasoning_content":"reason",
                 "tool_calls":[{"id":"call-1","function":{
-                    "name":"workspace_read","arguments":"{\\\"path\\\":\\\"x\\\"}"}}]}),
+                    "name":"workspace_read","arguments":"{}"}}]}),
         ).unwrap();
         assert_eq!(text, "안녕하세요");
         assert_eq!(reasoning, "reason");
