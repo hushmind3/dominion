@@ -567,13 +567,53 @@ pub async fn team_launch(
         let args=json!({"goal":goal,"maxParallel":parallel});
         let workspace=session["workspaceDir"].as_str().filter(|s|!s.is_empty())
             .map(std::path::PathBuf::from).unwrap_or_else(||state.config.workspace.clone());
+        let session_snapshot=session.clone();
+        let room_ref=id.clone();
         tokio::spawn(async move{
-            let ctx=crate::engine::tools::ToolContext{
-                workspace:&workspace,store:&task_state.store,state:&task_state,
-                session_id:&session_ref,agent_id:None,
-                tools_enabled:true,tools_execution_enabled:true,
-            };
-            let result=crate::engine::tools::execute(&ctx,"team_execute",&args,&launch_ref).await;
+            let result:Result<Value,String>=async{
+                // Native Room turns already hold room-run while speaking.
+                // This owner action must never replace their active budget.
+                let room_lock=format!("room-run:{room_ref}");
+                if !task_state.begin_session(&room_lock){
+                    return Err("그룹 대화가 진행 중입니다. 완료 후 Team을 실행하세요.".into());
+                }
+                let _room_guard=task_state.session_guard(&room_lock);
+                if !task_state.begin_session(&session_ref){
+                    return Err("그룹 세션에서 다른 실행이 진행 중입니다.".into());
+                }
+                let _session_guard=task_state.session_guard(&session_ref);
+                let latest=task_state.store.get("room",&room_ref)
+                    .ok_or("그룹방이 삭제되었습니다.")?;
+                if latest["toolsEnabled"]!=true||task_state.is_cancelled(&session_ref){
+                    return Err("그룹 도구 권한이 꺼졌거나 실행이 중단되었습니다.".into());
+                }
+                let execution=json!({"id":launch_ref,"kind":"team_launch",
+                    "sessionId":session_ref,"roomId":room_ref,"status":"running",
+                    "startedAt":chrono::Utc::now().to_rfc3339()});
+                let document=task_state.store.put_if_absent("execution",&execution)
+                    .ok_or("Team 실행 기록을 예약하지 못했습니다.")?;
+                task_state.bus.record("execution",&document);
+                // team_execute needs an ACTIVE parent budget binding.
+                // Using a separate tool call without this guard only displays
+                // UI and then fails at enqueue_team.
+                let budget=crate::engine::execution_budget::begin(
+                    &task_state,&session_snapshot,&launch_ref)?;
+                let ctx=crate::engine::tools::ToolContext{
+                    workspace:&workspace,store:&task_state.store,state:&task_state,
+                    session_id:&session_ref,agent_id:None,
+                    tools_enabled:true,tools_execution_enabled:true,
+                };
+                let outcome=crate::engine::tools::execute(
+                    &ctx,"team_execute",&args,&launch_ref).await;
+                drop(budget);
+                let patch=json!({"status":if outcome.is_ok(){"completed"}else{"failed"},
+                    "finishedAt":chrono::Utc::now().to_rfc3339()});
+                if let Some(updated)=task_state.store.patch_if("execution",&launch_ref,
+                    "status",&json!("running"),&patch){
+                    task_state.bus.record("execution",&updated);
+                }
+                outcome
+            }.await;
             let (status,patch)=match result{
                 Ok(info)=>("queued",json!({"status":"queued","jobId":info["jobId"],
                     "steps":info["steps"],"finishedPlanningAt":chrono::Utc::now().to_rfc3339()})),
