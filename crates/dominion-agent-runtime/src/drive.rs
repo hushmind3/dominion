@@ -76,6 +76,28 @@ where F:FnOnce()->Fut,Fut:std::future::Future<Output=Result<T,String>>
         Err(error)=>Ok(ModelAttempt::Uncertain(error)),
     }
 }
+/// Persist provider usage and the validated model decision in the SAME
+/// checkpoint that releases the paid-generation fence. Chat and native SDK
+/// hosts may format their own messages, but neither may clear this marker
+/// without recording the model observation. A failed journal write restores
+/// the in-memory fence so no caller can continue to dispatch effects.
+pub fn settle_model_turn(
+    journal:&dyn crate::Journal,
+    snapshot:&mut crate::Snapshot,
+    decision:crate::Decision,
+)->Result<(),String>{
+    if !snapshot.model_in_flight {
+        return Err("Cannot settle a model turn without a durable generation intent".into());
+    }
+    snapshot.decision_tape.push(decision);
+    snapshot.model_in_flight=false;
+    if let Err(error)=journal.save(snapshot) {
+        snapshot.model_in_flight=true;
+        snapshot.decision_tape.pop();
+        return Err(error);
+    }
+    Ok(())
+}
 #[cfg(test)]
 mod tests{
     use super::*;
@@ -162,6 +184,34 @@ mod tests{
             ||async{Err::<(),String>("connection died after charge".into())})).unwrap();
         assert!(matches!(failed,ModelAttempt::Uncertain(_)));
         assert!(run.model_in_flight);
+    }
+    #[test] fn paid_model_settlement_is_atomic_and_cannot_repeat() {
+        let journal=ModelJournal{seen:std::sync::Mutex::new(Vec::new()),
+            cancel_after_intent:false,directive:None,
+            cancel:std::sync::atomic::AtomicBool::new(false)};
+        let mut run=snapshot();
+        let outcome=ready(dispatch_model_turn(&journal,&mut run,None,
+            ||async{Ok::<_,String>("answer")})).unwrap();
+        assert!(matches!(outcome,ModelAttempt::Completed("answer")));
+        run.model_calls=1;
+        run.charged_tokens=17;
+        settle_model_turn(&journal,&mut run,crate::Decision{
+            plan:Vec::new(),actions:Vec::new(),answer:Some("answer".into())
+        }).unwrap();
+        assert!(!run.model_in_flight);
+        assert_eq!(run.decision_tape.len(),1);
+        let saved=journal.seen.lock().unwrap();
+        assert_eq!(saved.len(),2);
+        assert!(saved[0].model_in_flight);
+        assert!(!saved[1].model_in_flight);
+        assert_eq!(saved[1].model_calls,1);
+        assert_eq!(saved[1].charged_tokens,17);
+        assert_eq!(saved[1].decision_tape[0].answer.as_deref(),Some("answer"));
+        drop(saved);
+        assert!(settle_model_turn(&journal,&mut run,crate::Decision{
+            plan:Vec::new(),actions:Vec::new(),answer:Some("duplicate".into())
+        }).is_err());
+        assert_eq!(run.decision_tape.len(),1);
     }
     #[test]fn shared_cursor_is_deterministic_across_chat_and_native_resume(){
         let mut first=HarnessDrive::new(3).unwrap();
