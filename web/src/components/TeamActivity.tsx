@@ -53,8 +53,21 @@ export function TeamActivity(){
  const runnable=agents.value.filter(agent=>agent.id&&agent.providerId&&agent.model&&agent.enabled!==false&&agent.disabled!==true)
  const lead=runnable.find(agent=>agent.id===leadId)||runnable[0]
  const workers=activity.value.remoteWorkers
- const compatible=workers.filter(node=>node.online&&workerIds.some(id=>(node.agents||[]).includes(id)))
+ // Remote Agents are registered on their own PCs, not necessarily on the
+ // Lead machine. Show their advertised IDs without forging local models.
+ const remoteOnly=[...new Set(workers.filter(node=>node.online)
+  .flatMap(node=>node.agents||[]))].filter(id=>id.length>0&&
+   !runnable.some(agent=>agent.id===id)).slice(0,64)
+ const workerChoices=[
+  ...runnable.map(agent=>({id:agent.id,name:agent.name,remoteOnly:false})),
+  ...remoteOnly.map(id=>({id,name:id,remoteOnly:true}))
+ ]
+ const remoteRequired=workerIds.filter(id=>remoteOnly.includes(id))
+ const compatible=workers.filter(node=>node.online
+  && workerIds.some(id=>(node.agents||[]).includes(id))
+  && remoteRequired.every(id=>(node.agents||[]).includes(id)))
  const selectedRemote=compatible.some(node=>node.id===remoteId)?remoteId:''
+ const invalidRemote=remoteRequired.length>0&&!selectedRemote
  const inProgress=activity.value.teams.filter(team=>team.status==='running').length
  const reviewCount=activity.value.teams.filter(team=>team.status==='needs_review').length
  useEffect(()=>{
@@ -69,7 +82,7 @@ export function TeamActivity(){
  }
  const reload=()=>{void activity.reload();refresh('/api/activity/teams','/api/jobs')}
  const launch=async()=>{
-  if(!lead||!workerIds.length||!prompt.trim()||busy)return
+  if(!lead||!workerIds.length||!prompt.trim()||busy||invalidRemote)return
   setBusy('launch');setError('');setNotice('')
   try{
    const saved=await post<{status:string;jobId:string}>('/api/activity/teams/start',{
@@ -173,14 +186,15 @@ export function TeamActivity(){
    <div>
     <div className="mb-1 flex items-center justify-between text-[11px] font-semibold text-[#5C544A]"><span>{en?'Worker agents (up to 8)':'Worker 에이전트 선택 (최대 8)'}</span><span>{workerIds.length}/8</span></div>
     <div className="grid max-h-40 gap-1 overflow-y-auto rounded-xl border border-[#E7E0D5] bg-white p-2 sm:grid-cols-2">
-     {runnable.map(a=><label key={a.id} className="flex min-w-0 cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-[11px] hover:bg-[#FAF7F1]">
+     {workerChoices.map(a=><label key={a.id} className="flex min-w-0 cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-[11px] hover:bg-[#FAF7F1]">
       <TextInput type="checkbox" checked={workerIds.includes(a.id)} disabled={!workerIds.includes(a.id)&&workerIds.length>=8} onChange={e=>toggle(a.id,e.target.checked)}/>
-      <span className="min-w-0 truncate">{a.name} <small className="text-[#8A8176]">({a.id})</small></span>
+      <span className="min-w-0 truncate">{a.name} <small className="text-[#8A8176]">({a.id}) {a.remoteOnly?(en?'Remote only':'원격 전용'):''}</small></span>
      </label>)}
-     {!runnable.length&&<p className="px-2 text-xs text-[#8A8176]">{en?'No runnable agents.':'실행 가능한 에이전트가 없습니다.'}</p>}
+     {!workerChoices.length&&<p className="px-2 text-xs text-[#8A8176]">{en?'No runnable agents.':'실행 가능한 에이전트가 없습니다.'}</p>}
     </div>
    </div>
-   <div className="flex justify-end"><Button variant="primary" disabled={Boolean(busy)||!prompt.trim()||!lead||workerIds.length<1} onClick={()=>void launch()}><Play size={14}/>{busy==='launch'?(en?'Queuing…':'등록 중…'):(en?'Queue Lead task':'Lead 작업 시작')}</Button></div>
+   {invalidRemote&&<p role="alert" className="text-[11px] text-amber-800">{en?'Remote-only agents need an online device that advertises all selected remote IDs.':'원격 전용 에이전트를 선택하려면 해당 ID를 모두 제공하는 온라인 원격 장치를 지정해야 합니다.'}</p>}
+   <div className="flex justify-end"><Button variant="primary" disabled={Boolean(busy)||!prompt.trim()||!lead||workerIds.length<1||invalidRemote} onClick={()=>void launch()}><Play size={14}/>{busy==='launch'?(en?'Queuing…':'등록 중…'):(en?'Queue Lead task':'Lead 작업 시작')}</Button></div>
   </Panel>}
   {error&&<p role="alert" className="mb-3 break-words rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}
   {notice&&<p role="status" className="mb-3 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-xs text-[#5C544A]">{notice}</p>}
