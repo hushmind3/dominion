@@ -120,6 +120,42 @@ test('remote lease reconciliation is explicit and never reports verified work', 
   assert.equal(seen[0].method,'POST');
 });
 
+
+test('P3 owner worker enrollment and pinned dispatch have stable SDK contracts',async()=>{
+  const seen=[];
+  const client=new DominionAgentClient({fetch:async(url,request)=>{
+    const path=String(url),body=request.body?JSON.parse(request.body):null;
+    seen.push({path,body,method:request.method});
+    let result;
+    if(path.endsWith('/api/remote/workers')&&request.method==='GET'){
+      result=[{id:'node-1',kind:'remote_worker',status:'enabled',
+        protocolVersion:1,capabilities:['sdk']}];
+    }else if(path.endsWith('/api/remote/workers')||path.endsWith('/rotate')){
+      result={worker:{id:'node-1',status:'enabled',capabilities:['sdk']},token:'once'};
+    }else if(path.endsWith('/state')){
+      result={id:'node-1',status:'disabled',capabilities:['sdk']};
+    }else{
+      result={id:'remote:job',kind:'remote_sdk',status:'queued',
+        nativeVerified:false,instruction:'inspect',
+        targetWorkerId:'node-1',requiredCapabilities:['sdk']};
+    }
+    return new Response(JSON.stringify(result),{status:200});
+  }});
+  const enrollment=await client.enrollRemoteWorker('node-1',['sdk']);
+  assert.equal(enrollment.token,'once');
+  const workers=await client.listRemoteWorkers();
+  assert.equal(workers[0].token,undefined);
+  await client.createRemoteJob({instruction:'inspect',
+    targetWorkerId:'node-1',requiredCapabilities:['sdk']});
+  await client.rotateRemoteWorkerToken('node-1');
+  await client.setRemoteWorkerEnabled('node-1',false);
+  assert.deepEqual(seen[0].body,{workerId:'node-1',capabilities:['sdk']});
+  assert.equal(seen[2].body.targetWorkerId,'node-1');
+  assert.deepEqual(seen[2].body.requiredCapabilities,['sdk']);
+  assert.match(seen[3].path,/\/remote\/workers\/node-1\/rotate$/);
+  assert.deepEqual(seen[4].body,{enabled:false});
+});
+
 test('room cursor is scoped to the room and never aliases global SSE position', async () => {
   const visited=[];
   const client=new DominionAgentClient({fetch:async url=>{
