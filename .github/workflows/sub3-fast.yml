@@ -23,6 +23,7 @@ jobs:
           node-version: '24'
       - run: node scripts/check-runtime-architecture.mjs
       - run: node --check web/e2e/sub3-native-live.mjs
+      - run: node --check scripts/mcp-echo-modern-server.mjs
       - run: npm install --prefix sdk/typescript --no-package-lock --ignore-scripts --no-audit
       - run: npm test --prefix sdk/typescript
 
