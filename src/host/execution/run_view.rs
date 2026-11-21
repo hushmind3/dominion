@@ -43,6 +43,7 @@ pub fn normalize(store:&Store,kind:&str,record:&Value)->Option<Value>{
         "providerId":record["nativeRoute"]["providerId"],
         "model":record["nativeRoute"]["model"],
         "reviewRequired":phase==RunPhase::NeedsReview,
+        "ownerActionRequired":matches!(phase,RunPhase::WaitingApproval|RunPhase::NeedsReview),
         "startedAt":record["startedAt"],
         "finishedAt":record["finishedAt"],
         "sourceJournal":kind
@@ -80,6 +81,9 @@ mod tests{
         assert_eq!(chat["ref"]["surface"],"chat");
         assert_eq!(chat["phase"],"waiting_approval");
         assert_eq!(chat["terminal"],false);
+        assert_eq!(chat["ownerActionRequired"],true);
+        assert_eq!(lookup(&store,"team").unwrap()["ownerActionRequired"],false);
+        assert_eq!(lookup(&store,"worker").unwrap()["ownerActionRequired"],true);
     }
     #[test] fn parent_id_and_child_status_are_independent(){
         let store=Store::open(std::path::Path::new(":memory:")).unwrap();
