@@ -446,7 +446,7 @@ test('ProgramIR Task Team requires durable claimed worker and committed tool evi
  assert.match(team,/pub fn settle\(/);
  assert.match(team,/execution_operations\(execution\)/);
  assert.match(team,/task_team_work/);
- assert.match(runtime,/let team_assignments=if persist/);
+ assert.match(runtime,/let mut team_assignments=if persist/);
  assert.match(runtime,/claim_team_child/);
  assert.match(runtime,/settle_team_child/);
 });
