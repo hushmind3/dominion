@@ -71,6 +71,9 @@ One worker owns a nonce-bound 180-second lease at a time. Expired in-flight
 work transitions to `needs_review`; it is **never silently requeued**, as a
 remote paid model call may have finished during transport loss. An old worker's
 late result cannot overwrite owner cancellation or another worker's record.
+A coordinator startup sweep and a 15-second periodic reconciliation also
+move expired in-flight remote tasks to `needs_review` even if no worker
+ever reconnects; this never automatically replays a paid inference.
 
 The 120-second HTTP timeout is shorter than the lease; no prolonged inference
 is admitted in v1. Remote write/merge or multi-GPU sharding is outside the

@@ -51,6 +51,34 @@ async fn serve(mut config: Config, open_browser: bool, parent_bound: bool) -> Re
     let vault = Vault::open(&config.key_path());
     let state = AppState::new(config.clone(), store, vault);
     migrations::run(&state)?;
+    if std::env::var("DOMINION_REMOTE_WORKERS").ok().as_deref()==Some("1"){
+        let reviewed=state.store.review_expired_remote_tasks()?;
+        if reviewed>0 {
+            state.store.audit("remote.lease_recovery",
+                serde_json::json!({"reviewRequired":reviewed,"reason":"startup"}));
+        }
+        // No worker may reconnect: reconcile uncertain paid model calls
+        // independently, without requeueing or re-executing remote effects.
+        let sweep=state.clone();
+        tokio::spawn(async move{
+            let mut ticker=tokio::time::interval(
+                std::time::Duration::from_secs(15));
+            loop {
+                ticker.tick().await;
+                match sweep.store.review_expired_remote_tasks(){
+                    Ok(n) if n>0=>{
+                        sweep.store.audit("remote.lease_recovery",
+                            serde_json::json!({"reviewRequired":n,"reason":"periodic"}));
+                        sweep.bus.emit(serde_json::json!({
+                            "type":"remote_review_required","count":n}));
+                    },
+                    Err(error)=>sweep.store.audit("remote.lease_recovery_failed",
+                        serde_json::json!({"error":error})),
+                    _=>{}
+                }
+            }
+        });
+    }
     integrations::accounts::oauth::purge_retired_grants(&state);
     // OAuth polls live in memory; a restart cannot complete an in-flight
     // login, so do not leave a stale device code visible in the UI.

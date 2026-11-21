@@ -47,6 +47,7 @@ jobs:
           cargo test --bin dominion-rust features::collaboration::worktree::tests
           cargo test -p dominion-agent-runtime --lib
           cargo test --bin dominion-rust api::remote_workers::tests::remote_http_roundtrip_requires_token_and_fences_owner_cancel -- --test-threads=1
+          cargo test --bin dominion-rust storage::sqlite::tests::crashed_remote_worker_requires_review_without_another_worker_claim
           cargo test --bin dominion-rust storage::sqlite::tests::remote_claim_is_unique_and_terminal_receipts_are_fenced
           cargo test --bin dominion-rust storage::sqlite::tests::expired_remote_lease_requires_owner_review_and_cannot_replay
           cargo test --bin dominion-rust host::execution::remote_worker::tests

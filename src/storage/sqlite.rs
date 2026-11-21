@@ -241,7 +241,11 @@ impl Store {
              -- Indexed executable policy lookup, not full history/stat scans.
              CREATE INDEX IF NOT EXISTS idx_algorithm_kind_lookup
                  ON records(json_extract(data,'$.kind'),id)
-                 WHERE kind='algorithm';",
+                 WHERE kind='algorithm';
+             CREATE INDEX IF NOT EXISTS idx_remote_active_lease
+                 ON records(json_extract(data,'$.leaseExpiresAtMs'))
+                 WHERE kind='remote_task'
+                   AND json_extract(data,'$.status')='running';",
         )?;
         // Older databases predate reasoning/tool columns.
         for (column, decl) in [
@@ -758,6 +762,31 @@ impl Store {
         tx.commit().ok()?;
         drop(conn);
         self.get("execution", &execution_id)
+    }
+
+    /// Reconcile remote paid inference whose owner-bound lease expired.
+    /// Run on startup and periodically even if no workers reconnect.
+    /// This UPDATE is atomic with claims and settlements and cannot restart
+    /// speculative remote model calls or overwrite completed/cancelled tasks.
+    pub fn review_expired_remote_tasks(&self)->Result<usize,String>{
+        let now=chrono::Utc::now().timestamp_millis();
+        let ended=chrono::Utc::now().to_rfc3339();
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        conn.execute(
+            "UPDATE records
+             SET data=json_set(data,
+                '$.status','needs_review',
+                '$.phase','needs_review',
+                '$.reviewReason',?2,
+                '$.finishedAt',?3),
+                updated_at=datetime('now')
+             WHERE kind='remote_task'
+               AND json_extract(data,'$.status')='running'
+               AND CAST(json_extract(data,'$.leaseExpiresAtMs') AS INTEGER)<=?1",
+            params![now,
+                "Remote lease expired with unknown model outcome; owner review required, no replay",
+                ended]
+        ).map_err(|e|e.to_string())
     }
 
     /// Claim a remote compute-only task under the same SQLite transaction as
@@ -2752,6 +2781,23 @@ mod tests {
         store.cancel_remote_task(second).unwrap().unwrap();
         assert!(store.finish_remote_task(second,"worker-b",second_lease,
             "completed","late",&Value::Null).unwrap().is_none());
+    }
+    #[test]
+    fn crashed_remote_worker_requires_review_without_another_worker_claim(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.put("remote_task",&json!({"id":"remote:crash","status":"queued",
+            "prompt":"paid inference","queuedAt":"1"})).unwrap();
+        let claimed=store.claim_remote_task("workstation").unwrap().unwrap();
+        let task=claimed["taskId"].as_str().unwrap();
+        store.patch_if("remote_task",task,"status",&json!("running"),
+            &json!({"leaseExpiresAtMs":0})).unwrap();
+        assert_eq!(store.review_expired_remote_tasks().unwrap(),1);
+        assert_eq!(store.review_expired_remote_tasks().unwrap(),0);
+        let saved=store.get("remote_task",task).unwrap();
+        assert_eq!(saved["status"],"needs_review");
+        assert!(saved["reviewReason"].as_str().unwrap().contains("no replay"));
+        assert!(store.claim_remote_task("replacement").unwrap().is_none());
+        assert!(store.cancel_remote_task(task).unwrap().is_none());
     }
     #[test]
     fn expired_remote_lease_requires_owner_review_and_cannot_replay(){
