@@ -11,6 +11,7 @@ type SdkRun = {
   state?: SdkState; rounds?: number; toolCalls?: number; answer?: string;
   usage?: {prompt_tokens:number; completion_tokens:number; cached_prompt_tokens:number};
   pendingCall?: {id:string; name:string; arguments:unknown} | null;
+  uncertainAction?: {id:string; tool:string; targetPath?:string|null} | null;
   events?: {kind:string; detail:unknown}[];
   verificationChecks?: {satisfied:boolean;explanation?:string}[];
   toolReceipts?: {id:string;tool:string;success:boolean;step:number}[];
@@ -365,8 +366,19 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
       {en?'Send correction':'수정 지시 전달'}</button>
     </div>}
     {status==='in_doubt'&&<div className="mt-3 rounded-lg border border-[#E5C4AB] bg-white p-3">
+     {run.checkpoint?.uncertainAction&&<div aria-label={en?'Uncertain tool to inspect':'수동 복구 대상'} className="mb-3 min-w-0 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-950">
+      <p className="font-semibold">{en?'Unconfirmed tool invocation':'결과 미확정 도구 호출'}</p>
+      <p className="mt-1 break-all">{run.checkpoint.uncertainAction.tool}</p>
+      <p className="mt-1 break-all text-[10px]">{en?'Call ID':'호출 ID'}: {run.checkpoint.uncertainAction.id}</p>
+      {run.checkpoint.uncertainAction.targetPath&&<p className="mt-1 break-all text-[10px]">
+       {en?'Inspect this path':'확인할 파일'}: {run.checkpoint.uncertainAction.targetPath}
+      </p>}
+      <p className="mt-2 text-[10px] text-amber-900">{en?
+       'This identifies the unsettled call, not proof that it ran. Sensitive arguments are hidden.':
+       '실행 대상만 표시합니다. 실제 실행 여부는 확인 전이며 비밀값을 포함한 인수는 숨깁니다.'}</p>
+     </div>}
      <p className="text-[11px] text-[#A54027]">
-      {en?'The interrupted tool may have changed files. Inspect the workspace before continuing.':'중단 직전 도구가 파일을 변경했을 수 있습니다. 실제 상태를 확인한 뒤 기록하세요.'}
+      {en?'The interrupted tool outcome is unknown. Inspect the affected target before continuing.':'중단 직전 도구의 실행 결과가 불분명합니다. 영향을 받았을 수 있는 대상을 확인한 뒤 기록하세요.'}
      </p>
      <label htmlFor="sdk-observation" className="mt-3 block text-[11px] font-semibold">
       {en?'What did you observe?':'확인한 작업 결과'}

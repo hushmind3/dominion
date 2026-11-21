@@ -275,6 +275,19 @@ try{
  assert.equal(await page.getByText('SHA-256:',{exact:false}).count(),1)
  assert.equal(await page.locator('summary').filter({hasText:'실제 결과 검증 · 0/1'}).count(),1)
  await screenshot(page,'1440-native-receipts.png')
+ // Manual recovery shows the exact server-projected unresolved call and file.
+ sdkRuns[0]={...sdkRuns[0],status:'in_doubt',answer:undefined,
+  checkpoint:{...sdkRuns[0].checkpoint,uncertainAction:{
+   id:'unknown-write-9',tool:'workspace_write',targetPath:'src/broken-file.rs'
+  },toolReceipts:[],verificationChecks:[]}}
+ await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
+ const uncertain=page.getByLabel('수동 복구 대상')
+ await uncertain.waitFor({timeout:8000})
+ assert.equal(await uncertain.getByText('workspace_write').count(),1)
+ assert.equal(await uncertain.getByText('호출 ID: unknown-write-9').count(),1)
+ assert.equal(await uncertain.getByText('확인할 파일: src/broken-file.rs').count(),1)
+ assert.equal(await uncertain.getByText('비밀값을 포함한 인수는 숨깁니다.',{exact:false}).count(),1)
+ await screenshot(page,'1440-native-manual-recovery.png')
  // Team composer and remote worker use backend contracts, no fake completion.
  await open(page,'activity')
  const team=page.locator('[aria-label="작업 팀"]')

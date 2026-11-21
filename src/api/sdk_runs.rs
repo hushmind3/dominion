@@ -177,6 +177,20 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
                     "omitted":entries.len().saturating_sub(visible.len())})
             }).unwrap_or(Value::Null)
     }else {Value::Null};
+    // A single uncertain call is actionable only when its identity is visible.
+    // Never expose the stored raw arguments, secrets or shell command.
+    let uncertain_action=if status=="in_doubt" {
+        let action=&snapshot["inFlight"][0];
+        let tool=action["tool"].as_str().unwrap_or("");
+        let target=if matches!(tool,
+            "workspace_write"|"workspace_replace"|"workspace_replace_range"
+            |"workspace_read"|"workspace_read_range"
+            |"file_write"|"file_replace"|"file_read") {
+            action["arguments"]["path"].as_str()
+                .filter(|path|!path.is_empty() && path.chars().count()<=300)
+        }else{None};
+        json!({"id":action["id"],"tool":tool,"targetPath":target})
+    }else{Value::Null};
     json!({
         "id":job["id"],"status":status,"phase":phase,
         "instruction":job["input"]["prompt"],
@@ -197,7 +211,7 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
             "verificationChecks":snapshot["checks"],
             "toolReceipts":tool_receipts,"toolReceiptsOmitted":omitted_receipts,
             "artifactEvidence":artifact_evidence,
-            "pendingCall":approval,"events":events
+            "pendingCall":approval,"uncertainAction":uncertain_action,"events":events
         }
     })
 }
@@ -730,8 +744,12 @@ mod tests{
         assert_eq!(view["checkpoint"]["events"][1]["kind"],"tool_started");
         working["status"]=json!("needs_review");
         working["nativeState"]["status"]=json!("needs_review");
-        assert_eq!(project(&state,&working)["status"],"in_doubt",
+        let projected=project(&state,&working);
+        assert_eq!(projected["status"],"in_doubt",
             "single uncertain tool can be reconciled in the main UI");
+        assert_eq!(projected["checkpoint"]["uncertainAction"]["tool"],"workspace_read_range");
+        assert_eq!(projected["checkpoint"]["uncertainAction"]["id"],"call-2");
+        assert!(projected["checkpoint"]["uncertainAction"]["targetPath"].is_null());
         working["nativeState"]["modelInFlight"]=json!(true);
         assert_eq!(project(&state,&working)["status"],"needs_review",
             "a paid model uncertainty must never display tool reconciliation controls");
@@ -787,6 +805,7 @@ mod tests{
         assert_eq!(visible[0]["id"],"call-3");
         assert_eq!(visible[39]["id"],"call-42");
         assert_eq!(visible[39]["success"],false);
+        assert!(body["checkpoint"]["uncertainAction"].is_null());
         assert_eq!(body["checkpoint"]["verificationChecks"][0]["satisfied"],true);
         let artifacts=&body["checkpoint"]["artifactEvidence"];
         assert_eq!(artifacts["captureComplete"],true);
@@ -940,6 +959,13 @@ mod tests{
             }
         });
         state.store.put("job",&original).unwrap();
+        let paused=project(&state,&original);
+        assert_eq!(paused["status"],"in_doubt");
+        assert_eq!(paused["checkpoint"]["uncertainAction"],json!({
+            "id":"tool-1","tool":"workspace_write","targetPath":"result.txt"
+        }));
+        assert!(!paused.to_string().contains("hello"),
+            "the uncertain action content must not appear in the UI projection");
         state.store.put("execution_operation",&json!({
             "id":"native-op-reconcile-job-tool-1","runId":id,
             "tool":"workspace_write",
@@ -953,6 +979,7 @@ mod tests{
             &to_bytes(result.into_body(),1024*1024).await.unwrap()).unwrap();
         assert_eq!(response["status"],"interrupted",
             "main UI must render its real Resume control after reconciliation");
+        assert!(response["checkpoint"]["uncertainAction"].is_null());
         let saved=state.store.get("job",id).unwrap();
         assert_eq!(saved["status"],"interrupted");
         assert_eq!(saved["nativeInFlight"],false);
