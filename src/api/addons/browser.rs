@@ -4,6 +4,9 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
+use tokio::io::AsyncReadExt;
+
+const MAX_SCREENSHOT_BYTES: u64 = 32 * 1024 * 1024;
 
 use crate::engine::browser;
 use crate::state::AppState;
@@ -46,8 +49,18 @@ pub async fn screenshot(State(state): State<AppState>) -> Response {
     let Some(path) = latest_screenshot(&state) else {
         return (StatusCode::NOT_FOUND, "아직 캡처한 화면이 없습니다.").into_response();
     };
-    match std::fs::read(&path) {
-        Ok(bytes) => (
+    let file = match tokio::fs::File::open(&path).await {
+        Ok(file) => file,
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
+        }
+    };
+    let mut bytes = Vec::new();
+    match file.take(MAX_SCREENSHOT_BYTES + 1).read_to_end(&mut bytes).await {
+        Ok(_) if bytes.len() as u64 > MAX_SCREENSHOT_BYTES => {
+            (StatusCode::PAYLOAD_TOO_LARGE, "스크린샷 파일이 너무 큽니다.").into_response()
+        }
+        Ok(_) => (
             [
                 (header::CONTENT_TYPE, "image/png"),
                 (header::CACHE_CONTROL, "no-store"),
