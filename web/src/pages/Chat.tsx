@@ -1,5 +1,5 @@
 import {ConversationSettings} from '../components/ConversationSettings'
-import {usePersistentConversationToggle,usePersistentReasoningEffort} from '../hooks/usePersistentConversationPreference'
+import {usePersistentConversationToggle,usePersistentReasoningEffort,usePersistentKoreanReasoning} from '../hooks/usePersistentConversationPreference'
 import {compatibleConversationEffort} from '../conversationPreferences'
 import {ExecutionPermissions} from '../components/ExecutionPermissions'
 import {ConversationSwitch} from '../components/WorkspaceShell'
@@ -10,7 +10,7 @@ import {createPortal} from 'react-dom'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormEvent,useEffect,useMemo,useRef,useState,type ChangeEvent,type KeyboardEvent} from 'react'
 import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Paperclip,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
-import {Agent,Approval,Attachment,ChatMessage,ChatSession,Provider,get,post,resolveApproval,streamChat,koreanReasoningEnabled,uploadAttachment} from '../api'
+import {Agent,Approval,Attachment,ChatMessage,ChatSession,Provider,get,post,resolveApproval,streamChat,uploadAttachment} from '../api'
 import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
 import {ModelPicker} from '../components/ModelPicker'
@@ -74,7 +74,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const job=useJob<LearningJob>(learningJob?'/api/jobs/'+encodeURIComponent(learningJob.id):null);
  const approval=(liveApproval?.sessionId===current?liveApproval:null)||
   approvals.value.find(item=>item.sessionId===current&&item.status==='pending');
- const [error,setError]=useState(''),[busy,setBusy]=useState(false),[live,setLive]=useState(''),[thought,setThought]=useState(''),[thinking,setThinking]=useState(false),[reasoningKo,setReasoningKo]=useState(koreanReasoningEnabled),[showSettings,setShowSettings]=useState(false),[showHistory,setShowHistory]=useState(()=>{try{if(window.innerWidth<768)return false;return localStorage.getItem('dominion.chat.sidebar')!=='0'}catch{return true}}),[toolStatus,setToolStatus]=useState('');
+ const [error,setError]=useState(''),[busy,setBusy]=useState(false),[live,setLive]=useState(''),[thought,setThought]=useState(''),[thinking,setThinking]=useState(false),[showSettings,setShowSettings]=useState(false),[showHistory,setShowHistory]=useState(()=>{try{if(window.innerWidth<768)return false;return localStorage.getItem('dominion.chat.sidebar')!=='0'}catch{return true}}),[toolStatus,setToolStatus]=useState('');
+ const [reasoningKo,setReasoningKo]=usePersistentKoreanReasoning();
  const [showReasoning,setShowReasoning]=usePersistentConversationToggle('showReasoning');
  const [toolsEnabled,setToolsEnabled]=usePersistentConversationToggle('toolsEnabled');
  const [thinkingEnabled,setThinkingEnabled]=usePersistentConversationToggle('thinkingEnabled');
@@ -415,7 +416,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   }
   if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void send();}
  };
- useEffect(()=>{if(!active){setModelMenu(false);setPermissionOpen(false);setShowSettings(false);setSlashOpen(false)}else setReasoningKo(koreanReasoningEnabled())},[active]);
+ useEffect(()=>{if(!active){setModelMenu(false);setPermissionOpen(false);setShowSettings(false);setSlashOpen(false)}},[active]);
  return <div className={'relative grid h-dvh min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] bg-[#FFFDF9] '+(showHistory?'md:grid-cols-[232px_minmax(0,1fr)]':'')}>
   {showHistory&&<Button type="button" aria-label={t('chat.listCollapse')} className="absolute inset-0 z-20 !h-auto !w-auto cursor-default !rounded-none !border-0 !bg-slate-900/30 md:hidden" onClick={()=>setShowHistory(false)}/>}
   <aside className={'flex min-h-0 flex-col overflow-hidden border-r border-[#E7E0D5] bg-[#FAF7F1] '+(showHistory?'max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:w-[232px] max-md:shadow-2xl':'hidden')}>

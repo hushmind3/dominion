@@ -1,5 +1,5 @@
 import {ConversationSettings} from '../components/ConversationSettings'
-import {usePersistentConversationToggle,usePersistentReasoningEffort} from '../hooks/usePersistentConversationPreference'
+import {usePersistentConversationToggle,usePersistentReasoningEffort,usePersistentKoreanReasoning} from '../hooks/usePersistentConversationPreference'
 import {matchesRoomRefresh,type RefreshScope} from '../refreshEvents'
 import {ExecutionPermissions} from '../components/ExecutionPermissions'
 import {createPortal} from 'react-dom'
@@ -12,7 +12,7 @@ import {useOwnerProfile} from '../components/OwnerProfile'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
 import {useCallback,useEffect,useMemo,useRef,useState,type ChangeEvent,type FormEvent} from 'react'
 import {Activity,ArrowDown,ArrowRight,ArrowUp,AtSign,BookOpenText,Bot,Check,ChevronDown,ChevronLeft,ChevronRight,Clock3,Copy,FileText,Hash,LoaderCircle,MessageCircle,MoreHorizontal,Menu,PanelLeft,Paperclip,Settings,Network,Plus,RefreshCw,RotateCcw,Settings2,ShieldCheck,Square,TerminalSquare,Trash2,UserRound,UsersRound,X} from 'lucide-react'
-import {get,post,del,resolveApproval,koreanReasoningEnabled,uploadAttachment,type Agent,type Attachment,type ChatMessage,type ModelOption,type Provider} from '../api'
+import {get,post,del,resolveApproval,uploadAttachment,type Agent,type Attachment,type ChatMessage,type ModelOption,type Provider} from '../api'
 import {Button,TextArea,TextInput,SelectInput} from '../components/Primitives'
 import {DialogBackdrop,DialogPanel} from '../components/Dialog'
 import {FormField,Notice,refresh,useRemote} from '../components/UI'
@@ -157,13 +157,14 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
  const messageUsageTotal=useMemo(()=>messages.reduce((sum,message)=>sum+(Number(message.metadata?.usage?.totalTokens)||0),0),[messages])
  const usageTotal=feed.usage?.totalTokens||messageUsageTotal
  const [loading,setLoading]=useState(true),[loadError,setLoadError]=useState(''),[error,setError]=useState('')
- const [showSettings,setShowSettings]=useState(false),[reasoningKo,setReasoningKo]=useState(koreanReasoningEnabled),[optionsBusy,setOptionsBusy]=useState(false)
+ const [showSettings,setShowSettings]=useState(false),[optionsBusy,setOptionsBusy]=useState(false)
+ const [reasoningKo,setReasoningKo]=usePersistentKoreanReasoning()
  const [showReasoning,setShowReasoning]=usePersistentConversationToggle('showReasoning')
  const [thinkingEnabled,setThinkingEnabled]=usePersistentConversationToggle('thinkingEnabled')
  const [reasoningEffort,setReasoningEffort]=usePersistentReasoningEffort()
  const [permissionOpen,setPermissionOpen]=useState(false),[recipientsOpen,setRecipientsOpen]=useState(false)
  const recipientsPanel=useAnchoredPanel(recipientsOpen,()=>setRecipientsOpen(false),280,'top')
- useEffect(()=>{if(!visibleView){setRecipientsOpen(false);setPermissionOpen(false);setShowSettings(false)}else setReasoningKo(koreanReasoningEnabled())},[visibleView])
+ useEffect(()=>{if(!visibleView){setRecipientsOpen(false);setPermissionOpen(false);setShowSettings(false)}},[visibleView])
  const [input,setInput]=useState(''),[targets,setTargets]=useState<string[]>([]),[sending,setSending]=useState(false),[stopping,setStopping]=useState(false)
  const [inspector,setInspector]=useState(false),[draft,setDraft]=useState<RoomDraft>(()=>draftOf(room)),[dirty,setDirty]=useState(false),[saving,setSaving]=useState(false),[saved,setSaved]=useState(false)
  const [knowledgeOpen,setKnowledgeOpen]=useState(false),[knowledge,setKnowledge]=useState<any[]>([]),[knowledgeBusy,setKnowledgeBusy]=useState(false),[knowledgeNotice,setKnowledgeNotice]=useState('')

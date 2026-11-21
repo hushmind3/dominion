@@ -1,4 +1,5 @@
 import {useEffect,useState} from 'react'
+import {koreanReasoningEnabled,koreanReasoningKey} from '../api'
 import {
  conversationPreferenceEvent,conversationToggleKey,conversationEffortKey,
  readConversationToggle,writeConversationToggle,readConversationEffort,writeConversationEffort,
@@ -35,4 +36,15 @@ export function usePersistentConversationToggle(name:ConversationToggle):[boolea
 export function usePersistentReasoningEffort():[string,(value:string)=>void] {
  const [value,setValue]=usePreferenceSync(conversationEffortKey,readConversationEffort)
  return [value,(next:string)=>{setValue(next);writeConversationEffort(next)}]
+}
+
+export function usePersistentKoreanReasoning():[boolean,(value:boolean)=>void] {
+ const [value,setValue]=usePreferenceSync(koreanReasoningKey,koreanReasoningEnabled)
+ return [value,(next:boolean)=>{
+  setValue(next)
+  try{
+   localStorage.setItem(koreanReasoningKey,next?'1':'0')
+   window.dispatchEvent(new Event(conversationPreferenceEvent))
+  }catch{}
+ }]
 }
