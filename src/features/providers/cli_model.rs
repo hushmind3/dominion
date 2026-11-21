@@ -5,6 +5,55 @@ use serde_json::{json,Value};
 use std::{path::PathBuf,process::Stdio,time::Duration};
 use tokio::process::Command;
 
+const MAX_CLI_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+
+async fn read_capped(
+    stream: impl tokio::io::AsyncRead + Unpin,
+    limit: usize,
+) -> std::io::Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let mut bytes = Vec::new();
+    stream
+        .take((limit as u64).saturating_add(1))
+        .read_to_end(&mut bytes)
+        .await?;
+    if bytes.len() > limit {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("CLI output exceeded the {limit} byte limit"),
+        ));
+    }
+    Ok(bytes)
+}
+
+async fn output_capped(
+    command: &mut Command,
+    timeout: Duration,
+) -> Result<std::process::Output, String> {
+    command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let stdout = child.stdout.take().ok_or("CLI stdout is unavailable")?;
+    let stderr = child.stderr.take().ok_or("CLI stderr is unavailable")?;
+    let outcome = tokio::time::timeout(timeout, async {
+        let (status, stdout, stderr) = tokio::try_join!(
+            child.wait(),
+            read_capped(stdout, MAX_CLI_OUTPUT_BYTES),
+            read_capped(stderr, MAX_CLI_OUTPUT_BYTES),
+        )?;
+        Ok::<_, std::io::Error>(std::process::Output {
+            status,
+            stdout,
+            stderr,
+        })
+    })
+    .await
+    .map_err(|_| "CLI process timed out".to_string())?;
+    outcome.map_err(|error| error.to_string())
+}
+
 fn executable(name:&str)->Option<PathBuf>{
  let mut dirs=Vec::new();
  if let Some(h)=std::env::var_os("HOME").map(PathBuf::from){
@@ -108,8 +157,7 @@ pub async fn generate(source:&str,model:&str,messages:&[Value])->Result<String,S
  if source=="claude"{command.env_remove("ANTHROPIC_API_KEY");}
  if source=="gemini"{command.env_remove("GEMINI_API_KEY").env_remove("GOOGLE_API_KEY");}
  prep(&mut command);
- let output=tokio::time::timeout(Duration::from_secs(240),command.output()).await
-  .map_err(|_|format!("{source} CLI 모델 호출 시간이 초과됐습니다."))?
+ let output=output_capped(&mut command,Duration::from_secs(240)).await
   .map_err(|error|format!("{source} CLI 실행 실패: {error}"))?;
  if !output.status.success(){
   let err=String::from_utf8_lossy(&output.stderr);
@@ -129,8 +177,8 @@ pub async fn models(source:&str)->Result<Vec<Value>,String>{
  let exe=binary("opencode")?;
  let mut command=Command::new(exe);
  command.arg("models");prep(&mut command);
- let output=tokio::time::timeout(Duration::from_secs(20),command.output()).await
-  .map_err(|_|"OpenCode 모델 조회 시간 초과".to_string())?.map_err(|e|e.to_string())?;
+ let output=output_capped(&mut command,Duration::from_secs(20)).await
+  .map_err(|e|format!("OpenCode 모델 조회 실패: {e}"))?;
  if !output.status.success(){return Err(String::from_utf8_lossy(&output.stderr).chars().take(220).collect());}
  let stdout=String::from_utf8_lossy(&output.stdout);
  let rows=stdout.lines().map(str::trim)
