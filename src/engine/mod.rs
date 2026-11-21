@@ -14,7 +14,7 @@ pub mod tools;
 // Execution correctness remains in the standalone dominion-core crate.
 pub use crate::addons::{
     compact, obligation_repair, program, reasoning, delegation_worktree, jobs, wake, job_control,
-    agent_growth, distill, experience, learning, memory, principle, reflect, room_knowledge, skills, adaptation, adaptation_loop, algorithm_eval, algorithms, debate, decompose, episode, improve, plan_quality, policy_patch, preflight_fixture, procedure, attachments, bridge, browser, channel_adapter, cli_model, code_index, codex_oauth, dev, discord, extensions, gateway, mcp, models, oauth, personas, room_state, rooms, telegram, backup_keys, maintenance, remote_backup, vault_rotation
+    agent_growth, distill, experience, learning, memory, principle, reflect, room_knowledge, skills, adaptation, adaptation_loop, algorithm_eval, algorithms, debate, decompose, episode, improve, plan_quality, policy_patch, preflight_fixture, procedure, attachments, bridge, browser, channel_adapter, cli_model, code_index, codex_oauth, dev, discord, extensions, gateway, mcp, models, oauth, personas, room_state, rooms, telegram, backup_keys, maintenance, remote_backup, vault_rotation, restore_transaction
 };
 
 use crate::state::AppState;
