@@ -151,7 +151,13 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
     // Do not use model-claimed files, re-read the live workspace, or expose
     // raw artifact bytes. A captured file state does NOT imply criteria pass.
     let final_witness=&job["nativeEvidenceFinal"];
-    let artifact_evidence=if final_witness["scope"]=="acceptance_artifact_paths_only" {
+    // A resumed job can retain the previous attempt's final witness while
+    // queued/running. Never display that historical snapshot as this run's
+    // settled outcome until the current run reaches a terminal state.
+    let terminal=matches!(job["status"].as_str(),
+        Some("completed"|"failed"|"cancelled"|"needs_review"));
+    let artifact_evidence=if terminal &&
+        final_witness["scope"]=="acceptance_artifact_paths_only" {
         final_witness["entries"].as_object().filter(|entries|!entries.is_empty())
             .map(|entries|{
                 let visible=entries.iter().take(30).map(|(path,entry)|json!({
@@ -711,6 +717,10 @@ mod tests{
         assert_eq!(artifacts["entries"][0]["bytes"],14);
         assert_eq!(artifacts["entries"][0]["sha256"].as_str().unwrap().len(),64);
         assert_eq!(artifacts["omitted"],0);
+        let mut resumed=job.clone();
+        resumed["status"]=json!("running");
+        assert!(project(&state,&resumed)["checkpoint"]["artifactEvidence"].is_null(),
+            "a running rerun must not show an earlier final artifact snapshot");
         assert!(!body.to_string().contains("PRIVATE-CREDENTIAL"));
         assert!(!body.to_string().contains("PRIVATE-TOOL-OUTPUT"));
         // Test the same API handlers serving the actual Native frontend.
