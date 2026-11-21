@@ -124,6 +124,7 @@ impl AppState {
             let matches = [
                 "/sessionId",
                 "/input/sessionId",
+                "/input/parentSessionId",
                 "/goalState/sessionId",
                 "/roomState/sessionId",
                 "/workflowState/sessionId",
@@ -135,6 +136,16 @@ impl AppState {
                     if let Some(saved) = self.store.patch_if("job",id,"status",&job["status"],&serde_json::json!({
                         "status":"cancelled","cancelRequested":true,"finishedAt":chrono::Utc::now().to_rfc3339(),"error":"사용자 요청으로 실행이 중단되었습니다."
                     })) { self.bus.record("job",&saved); }
+                }
+            }
+        }
+        // Cancel native P3 worker tasks through the same owner-session
+        // tombstone. Queued work is cancelled; active work receives a
+        // heartbeat-delivered stop request, never a replay to another node.
+        for team in self.store.all("managed_team") {
+            if team["leadSessionId"]==session_id {
+                if let Some(team_id)=team["id"].as_str() {
+                    crate::remote::cancel_team(self,team_id);
                 }
             }
         }
