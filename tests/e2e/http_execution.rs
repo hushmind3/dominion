@@ -289,6 +289,45 @@ fn client_turn_idempotency_prevents_duplicate_owner_effects_and_model_calls() {
 }
 
 
+
+#[test]
+fn duplicate_client_turn_id_cannot_repeat_a_real_agent_file_write() {
+    let _serial=serial();
+    let (port,requests)=scripted_provider(|request|{
+        let saw_tool=request["messages"].as_array()
+            .is_some_and(|messages|messages.iter().any(|message|message["role"]=="tool"));
+        if saw_tool {
+            vec![json!({"choices":[{"delta":{"content":"파일 생성을 확인했습니다."},"finish_reason":"stop"}]})]
+        } else {
+            vec![json!({"choices":[{"delta":{"tool_calls":[{
+                "index":0,"id":"write-once","type":"function",
+                "function":{"name":"workspace_write",
+                    "arguments":"{\"path\":\"single-write.txt\",\"content\":\"created-once\"}"}
+            }]},"finish_reason":"tool_calls"}]})]
+        }
+    });
+    let app=TestApp::new(port,"native");
+    app.post("/api/policy",&json!({"autoApproveAll":true}));
+    let session=app.post("/api/sessions",&json!({"title":"write exactly once"}));
+    let id=session["id"].as_str().unwrap();
+    let key="00000000-0000-4000-8000-000000000044";
+    let body=json!({
+        "sessionId":id,"input":"single-write.txt 파일을 만들어줘",
+        "clientTurnId":key,"toolsEnabled":true,"autoLearning":false
+    });
+    let first=app.chat(&body);
+    assert!(first.contains("assistant_saved"),"{first}");
+    assert_eq!(std::fs::read_to_string(app._root.join("single-write.txt")).unwrap(),"created-once");
+    let calls_before=requests.lock().unwrap().len();
+    assert!(calls_before>=2);
+    let duplicate=app.chat(&body);
+    assert!(duplicate.contains("동일한 요청이 이미 저장되었습니다"),"{duplicate}");
+    assert!(!duplicate.contains("assistant_saved"),"{duplicate}");
+    assert_eq!(requests.lock().unwrap().len(),calls_before);
+    assert_eq!(std::fs::read_to_string(app._root.join("single-write.txt")).unwrap(),"created-once");
+}
+
+
 #[test]
 fn direct_chat_search_request_remains_a_model_reply_without_web_tool_or_error() {
     let _serial=serial();
