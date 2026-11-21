@@ -109,8 +109,10 @@ jobs:
         run: |
           cargo test --locked --bin dominion-rust stop_before_native_turn_starts_does_not_clear_newer_cancellation
           cargo test --locked --bin dominion-rust user_stop_preempts_silent_model_stream_and_next_turn_succeeds
-      - name: Streamable HTTP MCP and concurrent capability discovery (dev profile)
-        run: cargo test --locked --bin dominion-rust addons::mcp::tests
+      - name: Legacy/2026 MCP interoperability and typed schema admission (dev profile)
+        run: |
+          cargo test --locked --bin dominion-rust addons::mcp::tests
+          cargo test --locked --bin dominion-rust addons::mcp::schema::tests
       - name: Execution-scoped auxiliary model receipts and token coverage (dev profile)
         run: |
           cargo test --locked --bin dominion-rust engine::llm::
