@@ -29,7 +29,7 @@ type ModelOverride={scope?:string;providerId:string;model:string}
 type InstalledModel={id:string;repo:string;label:string;format:string;bytes:number;source?:string}
 type Runtime={status:string;id?:string;name?:string;model?:string;error?:string}
 type PendingImage={key:string;file:File;preview:string}
-type OptimisticOwner={sessionId:string|undefined;content:string;lastSeenMessageId:string|undefined}
+type OptimisticOwner={sessionId:string|undefined;content:string;lastSeenMessageId:string|undefined;persistedId?:string}
 const ATTACH_ALLOWED=['image/png','image/jpeg','image/webp','image/gif']
 const ATTACH_LIMIT=8
 const formatBytes=(bytes:number)=>{
@@ -174,8 +174,10 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const lastSeenOwnerIndex=optimisticOwner?.lastSeenMessageId
   ?messages.findIndex(message=>message.id===optimisticOwner.lastSeenMessageId):-1;
  const ownerReceived=Boolean(optimisticOwner&&messages.some((message,index)=>
-  index>lastSeenOwnerIndex&&message.role==='user'&&message.content===optimisticOwner.content));
- const showOptimisticOwner=Boolean(optimisticOwner?.sessionId===current&&!ownerReceived&&(busy||savedMessageId));
+  optimisticOwner.persistedId
+   ?message.id===optimisticOwner.persistedId
+   :index>lastSeenOwnerIndex&&message.role==='user'&&message.content===optimisticOwner.content));
+ const showOptimisticOwner=Boolean(optimisticOwner?.sessionId===current&&!ownerReceived&&(busy||optimisticOwner?.persistedId||savedMessageId));
  const slashItems=slashOpen?slashCandidates(input,agents.value,models):[];
  const transcriptRevision=JSON.stringify([messages.at(-1)?.id,messages.length,showOptimisticOwner,busy&&viewingTurn,viewingTurn?live.length:0,viewingTurn?thought.length:0,viewingTurn?toolStatus:'',approval?.id]);
  const usageRevision=JSON.stringify([messages.at(-1)?.id,messages.length]);
@@ -401,6 +403,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   jumpDown();
   let id=current;
   let streamStarted=false;
+  let ownerSaved=false;
   try{
    if(!id){
     const session=await post<ChatSession>('/api/sessions',{title:t('chat.sessionTitle'),agentId:agentMode?agentId:undefined,
@@ -444,6 +447,11 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     reasoningLanguage:reasoningKo?'ko':'original',reasoningEffort:effectiveReasoningEffort||undefined,thinking:selectedProvider?.kind==='codex'?(effectiveReasoningEffort==='none'?false:canDisableThinking?effectiveThinkingEnabled:undefined):effectiveThinkingEnabled,
    },event=>{
     if(controller.signal.aborted||stoppingRef.current||stream.current!==controller)return;
+    if(event.type==='owner_saved'){
+     ownerSaved=true;
+     setOptimisticOwner(previous=>previous?.sessionId===id?{...previous,persistedId:String(event.messageId)}:previous);
+     refresh('/api/sessions/'+encodeURIComponent(id!)+'/messages');
+    }
     if(event.type==='assistant_saved'){flushStreamBuffer();setSavedMessageId(event.messageId);refresh('/api/sessions',...(id?['/api/sessions/'+encodeURIComponent(id)+'/messages']:[]));}
     if(event.type==='text')queueStreamDelta('text',event.text);
     if(event.type==='reasoning')queueStreamDelta('reasoning',event.text);
@@ -460,7 +468,14 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     // Restore it without overwriting anything typed while the upload ran.
     // Once the stream starts, its accepted/persisted state is unknown and
     // blind restoration would invite duplicate tool actions on retry.
-    if(!streamStarted)setInput(previous=>previous.trim()?previous:text);
+    if(!streamStarted){
+     setInput(previous=>previous.trim()?previous:text);
+     setOptimisticOwner(previous=>previous?.sessionId===id?undefined:previous);
+    }
+    // If the stream started but never acknowledged the owner turn, leave the
+    // current draft alone until a persisted-message fetch can distinguish
+    // transport loss from a server-side admission failure.
+    if(streamStarted&&!ownerSaved)void transcript.reload();
     setError(translateError((e as Error).message));
    }
   }finally{
@@ -535,7 +550,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      <Button size="icon" variant="ghost" className="conversation-settings" title={t('nav.settings')} aria-label={t('nav.settings')} onClick={openSettings}><Settings size={18}/></Button>
     </div>
    </header>
-   <div ref={scrollRef} onScroll={onScroll} data-chat-scroll aria-label={t('ui.label.conversations')} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{!messages.length&&!(busy&&viewingTurn)?<div className="mx-auto flex min-h-full max-w-xl flex-col justify-center px-5 py-8">
+   <div ref={scrollRef} onScroll={onScroll} data-chat-scroll aria-label={t('ui.label.conversations')} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{!messages.length&&!showOptimisticOwner&&!(busy&&viewingTurn)?<div className="mx-auto flex min-h-full max-w-xl flex-col justify-center px-5 py-8">
     <div className="mb-6 flex items-center gap-3"><span className="grid size-11 place-items-center rounded-2xl bg-[#F7E8E1] text-[#C96442]"><Sparkles size={22}/></span><div><h1 className="text-[24px] font-bold tracking-[-.03em] text-[#24211D]">{t('chat.newChatHeading')}</h1><p className="mt-1 text-[13px] text-[#8A8176]">{t('chat.newChatDesc')}</p></div></div>
     <div className="rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-5"><div className="mb-2 text-[11px] font-semibold text-[#8A8176]">{t('chat.examples')}</div>{[t('chat.example1'),t('chat.example2'),t('chat.example3')].map(example=><Button type="button" key={example} onClick={()=>{setInput(example);inputRef.current?.focus({preventScroll:true})}} className="flex w-full items-center justify-between border-t border-[#EFE9DF] px-2 py-3 text-left text-[12px] text-[#5C544A] hover:bg-[#FFFDF9]">{example}<ArrowRight size={14} className="shrink-0 text-[#9C9388]"/></Button>)}</div>
     {!model&&<Button type="button" onClick={openModels} className="mt-4 inline-flex items-center gap-2 self-start text-[12px] font-semibold text-[#C96442]"><Compass size={15}/> {t('chat.connectFirst')} <ArrowRight size={14}/></Button>}
