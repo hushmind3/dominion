@@ -554,7 +554,7 @@ fn token_budget_is_enforced_from_stream_usage() {
 }
 
 #[test]
-fn reviewer_repairs_a_claim_with_a_real_tool() {
+fn reviewer_repairs_a_claim_without_auto_adopting_unreviewed_strategy() {
     let _serial = serial();
     let (port, _) = scripted_provider(|request| {
         let messages = request["messages"].as_array().unwrap();
@@ -601,13 +601,15 @@ fn reviewer_repairs_a_claim_with_a_real_tool() {
     );
     assert_eq!(app.get("/api/executions")[0]["status"], "completed");
     let improvements = app.get("/api/improvements");
+    // The real file and verified receipt prove the repair, not promotion
+    // of an unreviewed strategy. Owner consent is now required for adoption.
     assert!(
-        improvements.as_array().unwrap().iter().any(|item| {
+        !improvements.as_array().unwrap().iter().any(|item| {
             item["kind"] == "strategy"
                 && item["status"] == "adopted"
                 && item["text"].as_str().unwrap_or("").contains("workspace_write")
         }),
-        "reviewer strategy was not adopted: {improvements}"
+        "reviewer suggestion was automatically adopted without owner review: {improvements}"
     );
 }
 
