@@ -513,6 +513,101 @@ pub async fn send_message(
 ) -> Response {
     response(submit(&state, &id, &body))
 }
+/// The owner explicitly launches native Team execution for this room.
+/// Persist an idempotent request BEFORE doing any potentially paid planning.
+pub async fn team_launch(
+    State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>
+)->Response{
+    response((||{
+        let goal=body["goal"].as_str().map(str::trim).filter(|s|!s.is_empty()&&s.len()<=4000)
+            .ok_or_else(||bad("Team 목표는 1~4000바이트여야 합니다."))?;
+        let nonce=body["clientRequestId"].as_str()
+            .filter(|s|uuid::Uuid::parse_str(s).is_ok())
+            .ok_or_else(||bad("Team 요청 ID가 올바르지 않습니다."))?;
+        let parallel=body["maxParallel"].as_u64().unwrap_or(3);
+        if !(1..=4).contains(&parallel) {return Err(bad("동시 Worker는 1~4명입니다."));}
+        if !body.is_object()||body.as_object().is_some_and(|o|
+            o.keys().any(|k|!matches!(k.as_str(),"goal"|"clientRequestId"|"maxParallel"))) {
+            return Err(bad("Team 목표와 실행 설정만 지정할 수 있습니다."));
+        }
+        let _guard=lock(&state,&id)?;
+        let config=room(&state,&id)?;
+        let session=rooms::ensure_room_session(&state,&id).map_err(bad)?;
+        let session_id=session["id"].as_str().ok_or_else(||failed("그룹 세션이 없습니다."))?;
+        let launch_id=format!("room-team-launch:{}",memory::stable_id(&[&id,nonce]));
+        if let Some(previous)=state.store.get("room_team_launch",&launch_id) {
+            if previous["roomId"]!=id||previous["sessionId"]!=session_id
+                ||previous["goal"]!=goal||previous["maxParallel"]!=parallel{
+                return Err(conflict("같은 Team 요청 ID로 다른 작업을 시작할 수 없습니다."));
+            }
+            return Ok(previous);
+        }
+        if config["toolsEnabled"]!=true||session["readOnly"]==true
+            ||session["toolsEnabled"]==false||session["toolsExecutionEnabled"]==false{
+            return Err((StatusCode::FORBIDDEN,"그룹 도구 사용 권한을 먼저 켜세요.".into()));
+        }
+        if state.is_cancelled(session_id){
+            return Err(conflict("중단된 그룹 세션입니다. 세션 상태를 확인하세요."));
+        }
+        let launch=json!({"id":launch_id,"roomId":id,"sessionId":session_id,
+            "status":"planning","goal":goal,"maxParallel":parallel,
+            "createdAt":chrono::Utc::now().to_rfc3339(),
+            "clientRequestId":nonce,"jobId":null,"error":null});
+        let saved=match state.store.put_if_absent("room_team_launch",&launch){
+            Some(saved)=>saved,
+            None=>return state.store.get("room_team_launch",&launch_id)
+                .filter(|old|old["roomId"]==id&&old["sessionId"]==session_id
+                    &&old["goal"]==goal&&old["maxParallel"]==parallel)
+                .ok_or_else(||conflict("요청 ID가 이미 사용됐거나 예약 상태가 불확실합니다.")),
+        };
+        state.bus.record("room_team_launch",&saved);
+        let task_state=state.clone();
+        let launch_ref=launch_id.clone();
+        let session_ref=session_id.to_string();
+        let args=json!({"goal":goal,"maxParallel":parallel});
+        let workspace=session["workspaceDir"].as_str().filter(|s|!s.is_empty())
+            .map(std::path::PathBuf::from).unwrap_or_else(||state.config.workspace.clone());
+        tokio::spawn(async move{
+            let ctx=crate::engine::tools::ToolContext{
+                workspace:&workspace,store:&task_state.store,state:&task_state,
+                session_id:&session_ref,agent_id:None,
+                tools_enabled:true,tools_execution_enabled:true,
+            };
+            let result=crate::engine::tools::execute(&ctx,"team_execute",&args,&launch_ref).await;
+            let (status,patch)=match result{
+                Ok(info)=>("queued",json!({"status":"queued","jobId":info["jobId"],
+                    "steps":info["steps"],"finishedPlanningAt":chrono::Utc::now().to_rfc3339()})),
+                Err(error)=>("failed",json!({"status":"failed","error":error,
+                    "finishedPlanningAt":chrono::Utc::now().to_rfc3339()})),
+            };
+            if let Some(updated)=task_state.store.patch_if("room_team_launch",&launch_ref,
+                "status",&json!("planning"),&patch){
+                task_state.bus.record("room_team_launch",&updated);
+                task_state.store.audit("room.team_launch_settled",
+                    json!({"roomId":updated["roomId"],"launchId":launch_ref,
+                        "jobId":updated["jobId"],"status":status}));
+            }else{
+                task_state.store.audit("room.team_launch_settle_failed",
+                    json!({"launchId":launch_ref,"status":status}));
+            }
+        });
+        Ok(saved)
+    })())
+}
+/// Read only the launch receipt bound to this room; never another group's job.
+pub async fn team_launch_status(
+    State(state):State<AppState>,Path((id,launch_id)):Path<(String,String)>
+)->Response{
+    response((||{
+        let config=room(&state,&id)?;
+        let session_id=config["sessionId"].as_str().ok_or_else(||failed("그룹 세션이 없습니다."))?;
+        let row=state.store.get("room_team_launch",&launch_id)
+            .filter(|v|v["roomId"]==id&&v["sessionId"]==session_id)
+            .ok_or((StatusCode::NOT_FOUND,"이 그룹의 Team 실행을 찾을 수 없습니다.".into()))?;
+        Ok(row)
+    })())
+}
+
 /// The historical /run endpoint uses exactly the same persisted owner flow.
 pub async fn run(
     State(state): State<AppState>,
