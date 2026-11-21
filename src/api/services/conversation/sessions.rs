@@ -28,13 +28,32 @@ pub async fn get_session(State(state): State<AppState>, Path(id): Path<String>) 
     }
 }
 
-pub async fn delete_session(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
-    state.store.remove("session", &id);
+pub async fn delete_session(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let Some(session) = state.store.get("session", &id) else {
+        return error(StatusCode::NOT_FOUND, "세션을 찾을 수 없습니다.");
+    };
+    // A Room or channel owns its transcript. Deleting it through the private
+    // Chat endpoint would detach live work and revoke another owner's files.
+    if !session["roomId"].is_null() || !session["channelContext"].is_null()
+        || session["kind"] == "room_worker" {
+        return error(StatusCode::CONFLICT, "그룹 또는 외부 채널 대화는 해당 화면에서 관리하세요.");
+    }
+    let running = state.active.lock().unwrap().contains(&id)
+        || state.store.all("execution").iter().any(|run| {
+            run["sessionId"].as_str() == Some(id.as_str()) && run["status"] == "running"
+        });
+    if running {
+        return error(StatusCode::CONFLICT, "실행 중인 대화입니다. 중지 완료 후 삭제하세요.");
+    }
+    if let Err(message) = engine::attachments::purge_session(&state, &id) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, &message);
+    }
+    if !state.store.remove("session", &id) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "대화 기록을 삭제하지 못했습니다.");
+    }
     state.store.clear_messages(&id);
-    state
-        .bus
-        .emit(json!({ "type": "record", "kind": "session", "removed": id }));
-    Json(json!({ "ok": true }))
+    state.bus.emit(json!({ "type": "record", "kind": "session", "removed": id }));
+    Json(json!({ "ok": true })).into_response()
 }
 
 pub async fn session_messages(
