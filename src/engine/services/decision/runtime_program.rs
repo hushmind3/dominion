@@ -862,17 +862,23 @@ pub(super) fn scope_program_node_ids(node: &Value, prefix: &str) -> Value {
 /// crash leaves an in-flight record that cannot be automatically replayed.
 /// Checkpoint completion alone never proves that an external tool succeeded.
 fn claim_team_child(
-    ctx:&ProgramCtx<'_>,assignments:&[Value],index:usize,child:&Value,
+    ctx:&ProgramCtx<'_>,assignments:&mut [Value],index:usize,child:&mut Value,
     checkpoint:&Value,persist:bool,
 )->Result<(),String>{
     if !persist{return Ok(());}
     if child["id"].as_str().is_some_and(|id|
         crate::engine::program::checkpoint_skip_completed(checkpoint,id)){
-        // A checkpointed child must also have an actual settled assignment.
         if assignments[index]["status"]=="completed"{return Ok(());}
         return Err("Task Team completed checkpoint is missing its committed work receipt".into());
     }
-    crate::engine::task_team_work::claim(ctx.state,&assignments[index])?;
+    let selected=crate::engine::task_team_work::reassign_unstarted(
+        ctx.state,&assignments[index],child)?;
+    if child["type"]=="delegate"{
+        if let Some(agent_id)=selected["agentId"].as_str(){
+            child["agentId"]=json!(agent_id);
+        }
+    }
+    assignments[index]=crate::engine::task_team_work::claim(ctx.state,&selected)?;
     Ok(())
 }
 fn settle_team_child(
@@ -1112,11 +1118,11 @@ pub(super) fn execute_nodes<'a>(
                     mark_program_completed(&mut checkpoint, node_id);
                 }
                 "parallel" => {
-                    let children = node["nodes"].as_array().cloned().unwrap_or_default();
+                    let mut children = node["nodes"].as_array().cloned().unwrap_or_default();
                     // Resolve every dependency and writer conflict before ANY
                     // branch touches the host tool gateway or workspace.
                     let schedule=dominion_agent_loop::task_team::schedule(&children)?;
-                    let team_assignments=if persist{
+                    let mut team_assignments=if persist{
                         let revision=checkpoint["programRevision"].as_str()
                             .ok_or("Task Team checkpoint revision missing")?;
                         // Historical ProgramIR may omit a parallel parent ID.
@@ -1158,8 +1164,8 @@ pub(super) fn execute_nodes<'a>(
                         let mut used_parallel_waves=false;
                         for wave in &schedule.waves {
                             for &index in wave{
-                                claim_team_child(ctx,&team_assignments,index,
-                                    &children[index],&checkpoint,persist)?;
+                                claim_team_child(ctx,&mut team_assignments,index,
+                                    &mut children[index],&checkpoint,persist)?;
                             }
                             // Topologically ready independent reads can run
                             // together, even when later writer/delegate waves
@@ -1290,9 +1296,9 @@ pub(super) fn execute_nodes<'a>(
                     // Pre-allocate each branch's model/tool budget and a
                     // disjoint operation sequence range BEFORE concurrency.
                     // Merging counters only after join cannot undo paid tools.
-                    for (index,child) in children.iter().enumerate(){
-                        claim_team_child(ctx,&team_assignments,index,
-                            child,&checkpoint,persist)?;
+                    for index in 0..children.len(){
+                        claim_team_child(ctx,&mut team_assignments,index,
+                            &mut children[index],&checkpoint,persist)?;
                     }
                     let shares=budget.parallel_shares(children.len());
                     let mut reserved_until=op_seq;
