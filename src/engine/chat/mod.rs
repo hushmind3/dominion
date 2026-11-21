@@ -430,6 +430,20 @@ mod direct_chat_request_tests {
     }
 
     #[test]
+    fn client_turn_ids_are_optional_validated_uuids() {
+        let request=TurnRequest::from_value(&json!({
+            "input":"다시 시도","clientTurnId":"00000000-0000-4000-8000-000000000042"
+        })).unwrap();
+        assert_eq!(request.client_turn_id.as_deref(),
+            Some("00000000-0000-4000-8000-000000000042"));
+        assert!(TurnRequest::from_value(&json!({
+            "input":"다시 시도","clientTurnId":"invalid-turn-id"
+        })).is_err());
+        let legacy=TurnRequest::from_value(&json!({"input":"레거시"})).unwrap();
+        assert!(legacy.client_turn_id.is_none());
+    }
+
+    #[test]
     fn existing_agent_requests_remain_unchanged() {
         let request = TurnRequest::from_value(&json!({
             "input":"작업해","agentId":"existing-agent","toolsEnabled":true,
