@@ -552,7 +552,7 @@ fn a_model_generated_intervention_runs_and_refutes_its_hypothesis() {
     });
     let app = TestApp::new(port, "native");
     app.post("/api/policy", &json!({"autoApproveAll":true}));
-    let _ = app.chat(&json!({"input":"adapt1.txt와 adapt2.txt 파일을 만들어줘","autoLearning":false}));
+    let _ = app.chat(&json!({"input":"adapt1.txt와 adapt2.txt 파일을 확인해줘","autoLearning":false}));
     assert_eq!(
         std::fs::read_to_string(app._root.join("adapt1.txt")).unwrap_or_default(),
         "OK"
@@ -780,7 +780,7 @@ fn a_mid_adaptation_restart_restores_hypotheses_and_does_not_repeat_completed_st
     assert_eq!(activated["active"]["status"], "active", "{activated}");
     let root = app._root.clone();
     let handle = app.chat_async(&json!({
-        "input":"step1.txt와 step2.txt 파일을 만들어줘",
+        "input":"step1.txt와 step2.txt 파일을 확인해줘",
         "autoLearning":false
     }));
     let deadline = Instant::now() + Duration::from_secs(10);

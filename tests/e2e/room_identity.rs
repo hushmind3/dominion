@@ -38,6 +38,14 @@ fn private_chat_selects_one_current_context_and_evicts_old_long_input() {
         "private chat must not keep rebilling old 24KB messages");
 }
 
+/// Automatic context compaction is a real, separate model call. It must not be
+/// mistaken for a second chat call on the same owner turn.
+fn is_compaction(body:&Value)->bool{
+    body["messages"].as_array().and_then(|messages|messages.first())
+        .and_then(|message|message["content"].as_str())
+        .is_some_and(|text|text.starts_with("Summarize prior conversation for continuation."))
+}
+
 /// Measures the actual provider-wire JSON requests; this is not a claimed
 /// billed-token percentage (the fake provider's usage is synthetic).
 fn private_chat_wire_budget_probe(turns:usize) {
@@ -61,14 +69,17 @@ fn private_chat_wire_budget_probe(turns:usize) {
         inputs.push(message);
     }
     let seen=requests.lock().unwrap();
-    assert_eq!(seen.len(),turns,"each owner turn should require exactly one model call");
-    let observed=seen.iter().map(|body|body.to_string().len()).sum::<usize>();
-    let static_bytes=seen[0]["messages"][0].to_string().len();
+    // Automatic context compaction is a real, separate model call. It must not
+    // be mistaken for a second chat call on the same owner turn.
+    let chat_requests=seen.iter().filter(|body|!is_compaction(body)).collect::<Vec<_>>();
+    assert_eq!(chat_requests.len(),turns,"each owner turn should require exactly one chat model call");
+    let observed=chat_requests.iter().map(|body|body.to_string().len()).sum::<usize>();
+    let static_bytes=chat_requests[0]["messages"][0].to_string().len();
     let naive=(0..turns).map(|i|static_bytes+
         inputs[..=i].iter().map(String::len).sum::<usize>()).sum::<usize>();
     assert!(observed<naive,
         "selected private context should cost less than full unbounded replay: observed {observed} vs {naive}");
-    let last=seen.last().unwrap().to_string();
+    let last=chat_requests.last().unwrap().to_string();
     assert!(last.contains(&format!("WIRE_OWNER_TURN_{:03}",turns-1)));
     assert!(!last.contains("WIRE_OWNER_TURN_000_"),
         "old four-kilobyte owner turns should not stay in final context");
@@ -84,8 +95,9 @@ fn private_chat_wire_budget_probe(turns:usize) {
         "toolsEnabled":true,"autoLearning":false,"thinking":false}));
     assert!(greeting.contains("cost-fixture-ack"));
     let calls=requests.lock().unwrap();
-    assert_eq!(calls.len(),turns+1);
-    let social=&calls[turns];
+    let mut chat_calls=calls.iter().filter(|body|!is_compaction(body)).cloned().collect::<Vec<_>>();
+    assert_eq!(chat_calls.len(),turns+1);
+    let social=chat_calls.pop().unwrap();
     let social_messages=social["messages"].as_array().unwrap();
     assert_eq!(social_messages.len(),2,
         "an ordinary greeting after a long task must carry only identity and current owner text");

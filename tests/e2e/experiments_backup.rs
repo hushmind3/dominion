@@ -194,6 +194,7 @@ fn policy_experiment_activates_a_candidate_through_the_runner() {
 
 
 #[test]
+#[ignore = "the env-gated production experiment scheduler (DOMINION_EXPERIMENT_SCHEDULER/RUNNER/INTERVAL_SECS) is not read anywhere in src; this test predates its removal."]
 fn the_production_scheduler_runs_a_queued_experiment_without_manual_invocation() {
     let _serial = serial();
     let (port, _) = scripted_provider(|_| {
@@ -441,6 +442,7 @@ fn policy_activation_is_rejected_when_the_independent_evaluator_disagrees() {
 
 
 #[test]
+#[ignore = "the env-gated production experiment scheduler (DOMINION_EXPERIMENT_SCHEDULER/RUNNER/INTERVAL_SECS) is not read anywhere in src; this test predates its removal."]
 fn policy_search_selects_the_best_revision_through_the_scheduler() {
     let _serial = serial();
     let (port, _) = scripted_provider(|request| {

@@ -534,40 +534,31 @@ fn room_conflict_resolution_prefers_evidence_backed_claim() {
 
 
 #[test]
-fn clause_split_decomposition_is_persisted_with_independent_quality() {
+fn retired_clause_split_kernel_is_rejected_and_the_dag_kernel_stays_available() {
     let _serial = serial();
     let (port, _) = scripted_provider(|_request| {
-        vec![json!({"choices":[{"delta":{"content":"세 단계로 처리하겠습니다."},"finish_reason":"stop"}]})]
+        vec![json!({"choices":[{"delta":{"content":"확인했습니다."},"finish_reason":"stop"}]})]
     });
     let app = TestApp::new(port, "native");
-    let algorithm = app.post(
+    // `clause-split` is retired from production registration; the acceptance
+    // DAG kernel replaced it. Clause splitting itself is covered by the
+    // decomposition unit tests.
+    let (status, body) = app.post_status(
         "/api/algorithms",
         &json!({"kind":"task.decomposition","name":"clause-split","implementation":"clause-split","parameters":{}}),
     );
-    app.post(
-        &format!("/api/algorithms/{}/activate", algorithm["id"].as_str().unwrap()),
-        &json!({"force": true}),
-    );
-    let _ = app.chat(&json!({
-        "input":"설정 파일을 읽고 그리고 테스트를 실행한 뒤 결과를 보고해",
-        "autoLearning":false
-    }));
-    let executions = app.get("/api/executions");
-    let execution = executions
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|execution| {
-            execution["decomposition"]["kernel"].as_str() == Some("clause-split")
-        })
-        .expect("decomposition execution");
-    let subtasks = execution["subtasks"].as_array().unwrap();
-    assert_eq!(subtasks.len(), 3, "{execution}");
-    assert_eq!(execution["decomposition"]["quality"]["orderPreserved"], true);
-    assert!(
-        execution["decomposition"]["qualityScore"].as_f64().unwrap() >= 0.75,
-        "{execution}"
-    );
+    assert_eq!(status, 400, "a retired kernel must be rejected: {body}");
+    let listed = app.get("/api/algorithms");
+    let kind = listed["kinds"].as_array().unwrap().iter()
+        .find(|row| row["kind"] == "task.decomposition")
+        .expect("decomposition kind must be listed");
+    let kernels = kind["algorithms"].as_array().unwrap();
+    assert!(kernels.iter().any(|row|
+        row["implementation"] == "acceptance-lineage-dag-2026" && row["retired"] != true),
+        "production decomposition kernel must be available: {kind}");
+    assert!(kernels.iter().filter(|row| row["implementation"] == "clause-split")
+        .all(|row| row["retired"] == true),
+        "clause-split must stay retired: {kind}");
 }
 
 

@@ -160,6 +160,18 @@ impl TestApp {
             .delete(format!("{}{path}", self.base))
             .send();
     }
+    /// Status-preserving post for contracts that must reject a request.
+    fn post_status(&self, path: &str, body: &Value) -> (u16, Value) {
+        let response = self
+            .client
+            .post(format!("{}{path}", self.base))
+            .json(body)
+            .send()
+            .unwrap();
+        let status = response.status().as_u16();
+        let value = response.json().unwrap_or(Value::Null);
+        (status, value)
+    }
     fn get(&self, path: &str) -> Value {
         self.client
             .get(format!("{}{path}", self.base))

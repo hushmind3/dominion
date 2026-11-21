@@ -101,7 +101,8 @@ async fn real_chat_request_has_bound_image_common_prompt_native_reasoning_and_ti
         .with_state(captured.clone());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let state = temp_state();
-    state.store.put("provider",&json!({"id":"p","baseUrl":format!("http://{addr}"),"model":"deepseek-fixture","enabled":true}));
+    state.store.put("provider",&json!({"id":"p","baseUrl":format!("http://{addr}"),"model":"deepseek-fixture","enabled":true,
+        "capabilities":{"vision":true}}));
     state
         .store
         .put("session", &json!({"id":"s","providerId":"p"}));
@@ -519,7 +520,7 @@ async fn ordinary_chat_runs_native_tools_through_the_imported_rust_kernel() {
         row["kind"] == "tool.combination" && row["implementation"] == "parallel-reads").unwrap();
     crate::engine::algorithms::activate(&state, parallel["id"].as_str().unwrap()).unwrap();
     let request = TurnRequest::from_value(&json!({"sessionId":"kernel-chat",
-        "input":"현재 상황을 설명해줘","autoLearning":false})).unwrap();
+        "input":"a.txt와 b.txt 파일을 읽어서 상황을 설명해줘","autoLearning":false})).unwrap();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let saved = tokio::time::timeout(Duration::from_secs(5), run_turn(&state, &request, &tx))
         .await.unwrap().unwrap().unwrap();
