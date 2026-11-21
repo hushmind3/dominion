@@ -717,8 +717,8 @@ function Message({message,agentName,showReasoning}:{message:ChatMessage;agentNam
    {showReasoning&&message.reasoning&&<details className="mb-3 max-h-56 overflow-y-auto rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-[11px] leading-5 text-[#7C7469]" open={open}><summary className="cursor-pointer select-none" onClick={e=>{e.preventDefault();setOpen(v=>!v)}}><BrainCircuit size={14} className="inline"/> {t('chat.reasoningProcess',{count:message.reasoning.length.toLocaleString()})} <ChevronRight size={13} className="inline"/></summary><div className="mt-2 whitespace-pre-wrap">{message.reasoning}</div></details>}
    {(message.content||!human)&&<div className="chat-turn-text">{human?message.content:<MarkdownMessage text={message.content||(!human&&message.tool_calls?.length?t('chat.toolRequest'):'')}/>}</div>}
    {human&&attached.length>0&&<div className="chat-saved-attachments">{attached.map(file=><AttachmentLink key={file.id} file={file}/>)}</div>}
-   {!human&&sources.length>0&&<details className="chat-web-sources" aria-label="검색 출처">
-    <summary>검색 출처 {sources.length}개</summary>
+   {!human&&sources.length>0&&<details className="chat-web-sources" aria-label="웹 검색 결과">
+    <summary>웹 검색 결과 {sources.length}개</summary>
     <div>{sources.map((source,i)=><a key={source.url} href={source.url} target="_blank" rel="noopener noreferrer">
      <span className="chat-web-source-number">{i+1}</span>
      <span className="chat-web-source-title">{source.title}</span>

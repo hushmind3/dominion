@@ -222,7 +222,7 @@ try{
   assert.equal(await markdownTurn.locator('.md-message a[href="https://example.com"]').count(),1);
   assert.equal(await markdownTurn.locator('script').count(),0,
     'model text must never mount HTML scripts');
-  await markdownTurn.getByText('검색 출처 1개').click();
+  await markdownTurn.getByText('웹 검색 결과 1개').click();
   assert.equal(await markdownTurn.locator('.chat-web-sources a').count(),1);
   assert.equal(await markdownTurn.locator('.chat-web-sources a').first().getAttribute('href'),
     'https://example.com/report');
