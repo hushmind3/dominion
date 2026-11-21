@@ -4,11 +4,12 @@ use axum::{extract::{Path,State},http::StatusCode,response::{IntoResponse,Respon
 use crate::state::AppState;
 use serde::Deserialize;
 use serde_json::{json,Value};
-use std::{collections::HashMap,path::{Path as FilePath,PathBuf},process::Stdio,sync::{Arc,OnceLock},time::{Duration,UNIX_EPOCH}};
+use std::{collections::HashMap,path::{Path as FilePath,PathBuf},process::{Output,Stdio},sync::{Arc,OnceLock},time::{Duration,UNIX_EPOCH}};
 use tokio::{io::{AsyncRead,AsyncReadExt,AsyncWriteExt},process::{ChildStdin,Command},sync::{Mutex,oneshot}};
 use super::response::error;
 
 const MAX_GEMINI_CREDENTIAL_BYTES: u64 = 256 * 1024;
+const MAX_CLI_OUTPUT_BYTES: usize = 64 * 1024;
 
 #[derive(Deserialize,Default)]
 pub struct StartBody { #[serde(default)] provider:Option<String> }
@@ -59,6 +60,43 @@ fn credential_marker(source:&str)->Option<u128>{
         Some(m.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_nanos() ^ u128::from(m.len()))
     }).max()
 }
+async fn read_cli_stream<R:AsyncRead+Unpin>(mut stream:R)->Result<Vec<u8>,()> {
+    let mut bytes=Vec::new();
+    let mut buffer=[0u8;4096];
+    let mut exceeded=false;
+    loop{
+        let count=stream.read(&mut buffer).await.map_err(|_|())?;
+        if count==0{break;}
+        let remaining=MAX_CLI_OUTPUT_BYTES.saturating_sub(bytes.len());
+        let retained=count.min(remaining);
+        bytes.extend_from_slice(&buffer[..retained]);
+        exceeded|=retained<count;
+    }
+    if exceeded{Err(())}else{Ok(bytes)}
+}
+async fn run_cli(executable:PathBuf,args:&[&str],limit:Duration)->Result<Output,()> {
+    let mut child=Command::new(executable)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|_|())?;
+    let stdout=child.stdout.take().ok_or(())?;
+    let stderr=child.stderr.take().ok_or(())?;
+    tokio::time::timeout(limit,async{
+        let (stdout,stderr,status)=tokio::join!(
+            read_cli_stream(stdout),
+            read_cli_stream(stderr),
+            child.wait(),
+        );
+        match (stdout,stderr,status){
+            (Ok(stdout),Ok(stderr),Ok(status))=>Ok(Output{status,stdout,stderr}),
+            _=>Err(()),
+        }
+    }).await.map_err(|_|())?
+}
 fn authorization_url(text:&str)->Option<String>{
     for (pos,_) in text.match_indices("https://"){
         let candidate:String=text[pos..].chars().take(3200)
@@ -86,10 +124,8 @@ fn github_device_code(text:&str)->Option<String>{
 }
 async fn import_cli_github(state:&AppState)->Result<(),String>{
     let exe=binary("gh").ok_or("GitHub CLI가 설치되지 않았습니다.")?;
-    let output=tokio::time::timeout(Duration::from_secs(10),Command::new(exe)
-        .args(["auth","token","--hostname","github.com"]).kill_on_drop(true).output())
-        .await.map_err(|_|"GitHub CLI 토큰 조회 시간 초과")?
-        .map_err(|e|format!("GitHub CLI 토큰 조회 실패: {e}"))?;
+    let output=run_cli(exe,&["auth","token","--hostname","github.com"],Duration::from_secs(10))
+        .await.map_err(|_|"GitHub CLI 토큰 조회 실패 또는 출력 제한 초과")?;
     if !output.status.success(){return Err("GitHub CLI에 로그인한 계정이 없습니다.".into());}
     let access=String::from_utf8(output.stdout).map_err(|_|"GitHub CLI 토큰 인코딩 오류")?;
     crate::engine::oauth::link_github_cli_account(state,access.trim()).await
@@ -111,8 +147,7 @@ pub(super) async fn credential_verified(source:&str)->bool{
     let name=match source{"claude"=>"claude","opencode"=>"opencode","github"=>"gh",_=>return false};
     let Some(exe)=binary(name)else{return false;};
     let args:&[&str]=match source{"claude"=>&["auth","status"],"github"=>&["auth","status","--hostname","github.com"],_=>&["auth","list","--format","json"]};
-    let output=tokio::time::timeout(Duration::from_secs(5),Command::new(exe).args(args).kill_on_drop(true).output()).await;
-    let Ok(Ok(output))=output else{return false;};
+    let Ok(output)=run_cli(exe,args,Duration::from_secs(5)).await else{return false;};
     if !output.status.success(){return false;}
     if source=="github"{return true;}
     let Ok(value)=serde_json::from_slice::<Value>(&output.stdout)else{return false;};
