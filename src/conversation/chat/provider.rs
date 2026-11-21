@@ -176,6 +176,15 @@ pub(crate) fn select_provider(
         .ok_or("이 API에서 사용할 모델을 선택하거나 모델 ID를 입력하세요.")?;
 
     let route = crate::engine::gateway::route_from_provider(state, &provider, Some(&model))?;
+    // Capability negotiation happens before provider admission and paid
+    // generation. A CLI transport is a complete-result adapter, not SSE.
+    if route.kind!="cli" {
+        route.capabilities.require_streaming()?;
+    }
+    if route.tool_mode=="native" && request.tools_enabled
+        && request.tools_execution_enabled {
+        route.capabilities.require_native_tools()?;
+    }
     Ok(ProviderRef {
         id: route.id,
         name: route.name,

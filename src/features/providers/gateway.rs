@@ -53,6 +53,13 @@ impl ModelCapabilities {
     }
     /// Unknown is allowed only for legacy native-capable endpoints; an
     /// explicit negative is a hard rejection before any billable request.
+    /// Streaming UI must never dispatch an explicitly non-streaming endpoint.
+    /// Unknown capabilities retain compatibility with unprobed local servers.
+    pub fn require_streaming(&self)->Result<(),String>{
+        if self.streaming==Some(false){
+            Err("선택한 모델·엔드포인트는 스트리밍 응답을 지원하지 않습니다.".into())
+        }else{Ok(())}
+    }
     pub fn require_native_tools(&self)->Result<(),String>{
         if self.tool_calling==Some(false){
             Err("이 모델·엔드포인트 조합은 네이티브 도구 호출을 지원하지 않습니다.".into())
@@ -250,8 +257,9 @@ pub fn route_from_provider(
         .as_u64()
         .or_else(||provider["capabilities"]["contextTokens"].as_u64())
         .or_else(||provider["contextTokens"].as_u64());
-    let max_output_tokens = provider["capabilities"]["maxOutputTokens"]
+    let max_output_tokens = provider["modelCapabilities"][model.as_str()]["maxOutputTokens"]
         .as_u64()
+        .or_else(||provider["capabilities"]["maxOutputTokens"].as_u64())
         .or_else(|| provider["maxOutputTokens"].as_u64());
     let tool_mode=default_tool_mode(provider,&kind);
     let capabilities=ModelCapabilities::from_provider(provider,&model,&tool_mode);
@@ -264,7 +272,9 @@ pub fn route_from_provider(
         tool_mode,
         reasoning_protocol: default_reasoning_protocol(provider, &kind, &model, &id),
         local,
-        disable_thinking: disable_thinking(provider, local),
+        disable_thinking:capabilities.reasoning
+            .map(|supported|!supported)
+            .unwrap_or_else(||disable_thinking(provider,local)),
         context_tokens,
         max_output_tokens,
         requests_per_minute: provider["requestsPerMinute"]
@@ -781,6 +791,28 @@ mod tests {
         assert!(compat.require_native_tools().is_err());
     }
 
+    #[test]
+    fn exact_endpoint_streaming_output_and_reasoning_capabilities_guard_dispatch(){
+        let state=state();
+        state.store.put("provider",&json!({"id":"caps-local","baseUrl":"http://127.0.0.1:14444/v1",
+            "name":"local","model":"capable","local":true,"toolMode":"native",
+            "capabilities":{"streaming":true,"thinking":true,"maxOutputTokens":8192},
+            "modelCapabilities":{"limited":{"streaming":false,
+                "reasoningSupported":false,"maxOutputTokens":512,
+                "toolCalling":false},"capable":{"streaming":true,
+                "reasoningSupported":true,"maxOutputTokens":2048,
+                "toolCalling":true}}})).unwrap();
+        let rejected=resolve(&state,"caps-local",Some("limited")).unwrap();
+        assert!(rejected.capabilities.require_streaming().is_err());
+        assert!(rejected.capabilities.require_native_tools().is_err());
+        assert!(rejected.disable_thinking);
+        assert_eq!(rejected.max_output_tokens,Some(512));
+        let supported=resolve(&state,"caps-local",Some("capable")).unwrap();
+        assert!(supported.capabilities.require_streaming().is_ok());
+        assert!(supported.capabilities.require_native_tools().is_ok());
+        assert!(!supported.disable_thinking);
+        assert_eq!(supported.max_output_tokens,Some(2048));
+    }
     #[test]
     fn exact_model_context_and_native_tool_support_override_provider_defaults(){
         let state=state();
