@@ -12,7 +12,7 @@ use chacha20poly1305::{
 use rand::RngCore;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 const MAGIC: &[u8; 7] = b"DOMBAK2";
@@ -40,6 +40,21 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+fn read_key(path: &Path) -> Option<[u8; KEY_LEN]> {
+    let file = std::fs::File::open(path).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(KEY_LEN + 1);
+    file.take((KEY_LEN + 1) as u64).read_to_end(&mut bytes).ok()?;
+    if bytes.len() != KEY_LEN {
+        return None;
+    }
+    let mut key = [0u8; KEY_LEN];
+    key.copy_from_slice(&bytes);
+    Some(key)
+}
+
 impl KeyRing {
     pub fn load_or_create(data_dir: &Path) -> Result<Self, String> {
         let directory = data_dir.join("backup-keys");
@@ -55,12 +70,8 @@ impl KeyRing {
                 else {
                     continue;
                 };
-                if let Ok(bytes) = std::fs::read(entry.path()) {
-                    if bytes.len() == KEY_LEN {
-                        let mut key = [0u8; KEY_LEN];
-                        key.copy_from_slice(&bytes);
-                        keys.insert(version, key);
-                    }
+                if let Some(key) = read_key(&entry.path()) {
+                    keys.insert(version, key);
                 }
             }
         }
