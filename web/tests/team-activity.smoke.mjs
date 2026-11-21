@@ -314,8 +314,17 @@ try{
     return button?.getAttribute('aria-pressed')==='true';
   },null,{timeout:10000});
   assert.equal(await page.getByRole('button',{name:'에이전트 실행'}).getAttribute('aria-pressed'),'true');
+  await page.getByRole('button',{name:'대화 목록 펼치기'}).click();
+  const historySearch=page.getByRole('searchbox',{name:'대화 목록 검색'});
+  await historySearch.fill('independent');
+  assert.equal(await page.locator('aside').getByRole('button',{name:'Independent route'}).count(),1);
+  assert.equal(await page.locator('aside').getByRole('button',{name:'Conversation One'}).count(),0);
+  await historySearch.fill('없는 대화 이름');
+  await page.getByText('일치하는 대화가 없습니다.').waitFor({timeout:10000});
+  await page.getByRole('button',{name:'검색 지우기'}).click();
+  assert.equal(await page.locator('aside').getByRole('button',{name:'Conversation One'}).count(),1);
   assert.deepEqual(errors,[], 'Chat/Team React runtime errors');
-  console.log('PASS Chromium route isolation, safe Markdown, attachments, persisted execution mode');
+  console.log('PASS Chromium route isolation, Markdown, attachments, mode persistence and history search');
 }finally{
   await browser?.close();
   server.kill('SIGTERM');

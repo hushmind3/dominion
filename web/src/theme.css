@@ -158,3 +158,11 @@
 .chat-saved-attachments{display:flex;justify-content:flex-end;gap:5px;flex-wrap:wrap;margin-top:6px}
 .chat-saved-attachments a{display:inline-flex;align-items:center;gap:5px;max-width:100%;border:1px solid #E6D9CA;background:#F4EEE4;border-radius:9px;padding:7px 10px;text-decoration:none;color:#675746;font-size:12px;overflow-wrap:anywhere}
 .chat-saved-attachments a:hover{background:#EAE0D4}
+
+/* Find long-lived conversations without changing the app navigation. */
+.chat-session-search{display:flex;align-items:center;gap:7px;margin:0 12px 10px;padding:6px 9px;min-height:33px;border:1px solid #E5DED2;border-radius:9px;background:#FFFDF9;color:#A19686}
+.chat-session-search:focus-within{border-color:#C9AE92;box-shadow:0 0 0 2px #E8D8C27A}
+.chat-session-search input{min-width:0;flex:1;width:100%;border:0;outline:0;background:transparent;color:#403932;font-size:12px}
+.chat-session-search input::placeholder{color:#A99B8B}
+.chat-session-search button{display:grid;place-items:center;border:0;border-radius:5px;background:transparent;color:#948575;padding:3px}
+.chat-session-search button:hover{background:#F2E9DF}
