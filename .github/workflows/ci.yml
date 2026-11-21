@@ -48,6 +48,8 @@ concurrency:
 jobs:
   rust-regressions:
     runs-on: macos-latest
+    env:
+      RUST_MIN_STACK: 4194304
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
