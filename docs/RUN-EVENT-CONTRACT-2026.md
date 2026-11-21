@@ -63,3 +63,20 @@ broadcast a false committed event. All Bus clones share this ordering lock.
 The reconnect contract is tested with 6 concurrent producers × 40 events,
 followed by process recreation. This does **not** imply multi-process writable
 SQLite event bus support; DOMINION currently uses one local Rust server.
+
+## Live external agent control planes (2026-11-21)
+
+Optional `codex-app-server` launches `codex app-server` and speaks
+bidirectional line-delimited App Server requests. Optional `qwen-acp` launches
+`qwen --acp` and uses ACP session negotiation, prompt updates and permission
+requests. Both are opt-in **isolated inspection** workers, not native model
+providers or authorization bypasses.
+
+Live progress is journalled as `external_agent_event` with bounded text,
+`jobId`, `externalRunId`, and an actual parent `executionId` only when
+previously proven. Server-initiated approval requests persist as ordinary
+DOMINION `approval` records. Existing `GET /api/approvals` and
+`POST /api/approvals` control them; no approval is automatically granted.
+Unsupported privilege-escalation RPC methods are denied. Disconnects and
+cancellations invalidate pending approval requests. Native tool receipts
+are never fabricated for work an external CLI executed in its own process.

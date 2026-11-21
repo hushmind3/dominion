@@ -114,6 +114,25 @@ fn forward(context:&JobContext,kind:ExternalAgent,session:&str,
     if let Some(text)=text{event["text"]=json!(text.chars().take(2000).collect::<String>());}
     context.state.bus.emit(event);
 }
+
+fn interrupt_orphan_approvals(context:&JobContext,external_id:&str){
+    // A protocol disconnect invalidates all still-pending decisions, even if
+    // the owner browser will later submit a stale approval button.
+    for row in context.state.store.all("approval").into_iter().filter(|r|
+        r["source"]=="external_agent_rpc"
+        &&r["externalRunId"]==external_id
+        &&r["status"]=="pending"){
+        let Some(id)=row["id"].as_str()else{continue};
+        context.state.approvals.lock().unwrap().remove(id);
+        if let Some(saved)=context.state.store.patch_if(
+            "approval",id,"status",&json!("pending"),
+            &json!({"status":"interrupted","decision":"connection_closed",
+                "decidedAt":chrono::Utc::now().to_rfc3339()})){
+            context.state.bus.approval(&saved);
+        }
+    }
+}
+
 pub(super) async fn run(
     context:&JobContext,kind:ExternalAgent,session:&str,workspace:&Path,
     prompt:&str,resume:Option<&str>,generation:u64,parent:&str,
@@ -274,6 +293,7 @@ pub(super) async fn run(
         let _=child.start_kill();
     }
     let _=timeout(Duration::from_secs(2),child.wait()).await;
+    interrupt_orphan_approvals(context,external_id);
     loop_result.map_err(|_|"외부 에이전트 RPC 실행 제한 180초를 초과했습니다.".to_string())??;
     let answer=answer.trim().chars().take(MAX_ANSWER).collect::<String>();
     if answer.is_empty(){return Err("외부 에이전트의 검증 가능한 답변이 없습니다.".into());}

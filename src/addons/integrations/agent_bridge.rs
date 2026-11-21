@@ -378,6 +378,21 @@ pub async fn inspect(
 mod tests{
     use super::*;
 
+
+    #[test]
+    fn new_protocol_modes_use_real_cli_binaries_and_explicit_safe_args(){
+        let (codex,args)=ExternalAgent::CodexServer.command("ignored");
+        assert_eq!(codex,"codex");
+        assert_eq!(args,vec!["app-server"]);
+        let (qwen,args)=ExternalAgent::QwenAcp.command("ignored");
+        assert_eq!(qwen,"qwen");
+        assert!(args.contains(&"--acp".to_string()));
+        assert!(args.contains(&"plan".to_string()));
+        assert!(ExternalAgent::CodexServer.protocol());
+        assert!(ExternalAgent::QwenAcp.protocol());
+        assert!(!ExternalAgent::Codex.protocol());
+        assert!(ExternalAgent::parse("user-provided-command").is_err());
+    }
     #[test]
     fn external_parent_correlation_requires_a_real_owning_lead_execution(){
         let dir=std::env::temp_dir().join(format!(
