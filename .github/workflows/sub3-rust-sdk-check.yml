@@ -49,6 +49,9 @@ jobs:
           cargo test -p dominion-sdk --lib
           cargo test -p dominion-agent-sdk --test kernel
           cargo test -p dominion-agent-sdk --test kernel_replanning
+          # Real kernel tool search -> host dispatch -> durable receipt tests.
+          # Without this line, new progressive-discovery tests compiled but never ran.
+          cargo test -p dominion-agent-sdk --test progressive_tool_discovery
           cargo test -p dominion-agent-sdk --test algorithm_policy_injection
           cargo test --bin dominion-rust features::cognition::profiles::tests
           cargo test --bin dominion-rust api::jobs::algorithm_profile_api_tests
