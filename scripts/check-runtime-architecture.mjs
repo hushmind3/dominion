@@ -94,7 +94,7 @@ has('src/integrations/mcp/modern.rs',
   ['2026-07-28','io.modelcontextprotocol/protocolVersion',
    'io.modelcontextprotocol/clientCapabilities','Mcp-Method',
    'Mcp-Name','Mcp-Param-','validate_tool_schema']);
-const mcpRoot=text('src/integrations/mcp.rs').split('\\n').length;
+const mcpRoot=text('src/integrations/mcp.rs').split('\n').length;
 assert.ok(mcpRoot<900,'MCP transport must keep protocol and tests in separate modules');
 has('src/integrations/agent_bridge.rs',['run_codex','run_claude','run_qwen']);
 has('src/api/remote_workers.rs',['gateway_router','worker_authorized',
