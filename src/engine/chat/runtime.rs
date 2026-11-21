@@ -68,6 +68,22 @@ fn bounded_contract_intent(input: &str) -> String {
 /// The owner instruction, not an archived research objective, defines the task.
 fn task_input<'a>(_session:&Value,input:&'a str)->&'a str {input}
 
+/// Resolve explicit, agent and provider controls once before any model call.
+/// A none effort or thinking=false cannot be replaced by a stored default.
+fn resolve_reasoning_effort(
+    explicit_effort: Option<&str>,
+    thinking: Option<bool>,
+    agent_effort: Option<&str>,
+    provider_effort: Option<&str>,
+    provider_kind: &str,
+) -> (Option<String>, Option<bool>) {
+    if thinking == Some(false) || explicit_effort == Some("none") {
+        return ((provider_kind == "codex").then(|| "none".to_string()), Some(false));
+    }
+    (explicit_effort.or(agent_effort).or(provider_effort).map(str::to_string), thinking)
+}
+
+
 pub async fn run_turn(
     state: &AppState,
     request: &TurnRequest,
@@ -182,29 +198,24 @@ async fn run_turn_with_policy(
             .and_then(Value::as_str)
             .map(str::to_string);
     }
-    // The owner's explicit off switch wins over saved agent/provider defaults,
-    // including a previously selected non-none effort tier.
-    let off_requested = request.thinking == Some(false);
-    if let Some(id) = &request.agent_id {
-        let agent = state.store.get("agent", id)
-            .ok_or_else(||format!("에이전트를 찾을 수 없습니다: {id}"))?;
-        if !off_requested && request.reasoning_effort.is_none() {
-            request.reasoning_effort = agent["reasoningEffort"].as_str()
-                .filter(|value|!value.is_empty()).map(str::to_string);
-        }
-        if request.thinking.is_none() { request.thinking = agent["thinking"].as_bool(); }
+    let agent = if let Some(id) = &request.agent_id {
+        Some(state.store.get("agent", id)
+            .ok_or_else(||format!("에이전트를 찾을 수 없습니다: {id}"))?)
+    } else { None };
+    if request.thinking.is_none() {
+        request.thinking = agent.as_ref().and_then(|value|value["thinking"].as_bool());
     }
     let provider = select_provider(state, &request, &session)?;
-    // Codex uses reasoning.effort=none. Other providers use the explicit
-    // thinking=false control, without an inherited reasoning_effort that
-    // could re-enable inference in the provider adapter.
-    if off_requested {
-        request.reasoning_effort = (provider.kind == "codex").then(|| "none".into());
-    }
-    if !off_requested && request.reasoning_effort.is_none() {
-        request.reasoning_effort = state.store.get("provider", &provider.id)
-            .and_then(|record|record["reasoningEffort"].as_str().filter(|value|!value.is_empty()).map(str::to_string));
-    }
+    let provider_settings = state.store.get("provider", &provider.id);
+    let (effort, thinking) = resolve_reasoning_effort(
+        request.reasoning_effort.as_deref(),
+        request.thinking,
+        agent.as_ref().and_then(|value|value["reasoningEffort"].as_str()),
+        provider_settings.as_ref().and_then(|value|value["reasoningEffort"].as_str()),
+        &provider.kind,
+    );
+    request.reasoning_effort = effort;
+    request.thinking = thinking;
     request.provider_id = Some(provider.id.clone());
     request.model = Some(provider.model.clone());
     let mut session = session;
