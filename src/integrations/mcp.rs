@@ -1,4 +1,5 @@
 use crate::state::AppState;
+mod modern;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::Path;
@@ -24,6 +25,15 @@ impl LiveSession {
         match self {
             Self::Stdio(session)=>session.request(method,params).await,
             Self::Http(session)=>session.request(method,params).await,
+        }
+    }
+    fn is_modern(&self)->bool{
+        matches!(self,Self::Http(HttpSession{modern:true,..}))
+    }
+    async fn request_tool(&mut self,params:Value,schema:&Value)->Result<Value,String>{
+        match self {
+            Self::Stdio(session)=>session.request("tools/call",params).await,
+            Self::Http(session)=>session.request_tool(params,schema).await,
         }
     }
 }
@@ -193,6 +203,7 @@ async fn list_server(state: &AppState, server: &Value) -> Result<Vec<McpTool>, S
     let server_slug = slug(&server_name);
     let (identity,mut session)=checkout_session(state,server).await?;
     let outcome=session.request("tools/list",json!({})).await;
+    let modern=session.is_modern();
     if outcome.is_ok(){return_session(state,server,identity,session);}
     let result=outcome?;
 
@@ -205,6 +216,11 @@ async fn list_server(state: &AppState, server: &Value) -> Result<Vec<McpTool>, S
     Ok(tools
         .into_iter()
         .filter_map(|tool| {
+            // 2026 HTTP requires every x-mcp-header annotation to be valid.
+            // Drop an invalid declaration, not its required routing headers.
+            if modern && modern::validate_tool_schema(&tool["inputSchema"]).is_err(){
+                return None;
+            }
             let name = tool
                 .get("name")
                 .and_then(|value| value.as_str())?
@@ -300,7 +316,26 @@ pub async fn call(state: &AppState, qualified: &str, args: &Value) -> Result<Val
 
     let params = json!({ "name": tool_name, "arguments": args });
     let (identity,mut session)=checkout_session(state,&server).await?;
-    let result=session.request("tools/call",params).await;
+    let result=if session.is_modern(){
+        // Modern HTTP tools can require schema-declared Mcp-Param-* headers.
+        // Read the live manifest on the SAME transport before dispatch.
+        match session.request("tools/list",json!({})).await {
+            Ok(list)=>{
+                let found=list["tools"].as_array().into_iter().flatten()
+                    .filter(|tool|tool["name"].as_str()==Some(tool_name))
+                    .collect::<Vec<_>>();
+                if found.len()!=1{Err("MCP tool absent or duplicated on live server".into())}
+                else {
+                    let schema=&found[0]["inputSchema"];
+                    match modern::validate_tool_schema(schema){
+                        Ok(())=>session.request_tool(params,schema).await,
+                        Err(error)=>Err(error),
+                    }
+                }
+            },
+            Err(error)=>Err(error),
+        }
+    }else{session.request("tools/call",params).await};
     // A failed call may have applied an effect. Never replay it: discard the
     // possibly broken session and return its error to the Rust agent journal.
     if result.is_ok(){return_session(state,&server,identity,session);}
@@ -361,7 +396,7 @@ pub(crate) async fn call_pinned(state:&AppState,qualified:&str,args:&Value,
  let outcome=async {
   let fresh=session.request("tools/list",json!({})).await?;
   verify_pinned_tool(&fresh,tool_name,schema,description)?;
-  session.request("tools/call",params).await
+  session.request_tool(params,schema).await
  }.await;
  if outcome.is_ok(){return_session(state,server,identity,session);}
  outcome
