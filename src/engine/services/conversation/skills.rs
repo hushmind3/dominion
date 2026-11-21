@@ -1,6 +1,14 @@
 use crate::state::AppState;
 use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
+use std::{
+    io::Read,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    thread,
+    time::{Duration, Instant},
+};
+
+const MAX_SKILL_HEADER_BYTES: u64 = 64 * 1024;
 
 /// Skill catalog: scans SKILL.md trees and installs a copy into the data dir.
 /// No Node process is involved; this is plain Rust filesystem work.
@@ -50,7 +58,7 @@ fn walk(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
         };
         if file_type.is_dir() {
             walk(&path, depth + 1, found);
-        } else if name == "SKILL.md" {
+        } else if file_type.is_file() && name == "SKILL.md" {
             found.push(path);
         }
     }
@@ -78,8 +86,21 @@ fn frontmatter(text: &str) -> (String, String) {
     (name, description)
 }
 
+fn read_skill_header(path: &Path) -> std::io::Result<String> {
+    let file = std::fs::File::open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "SKILL.md is not a regular file",
+        ));
+    }
+    let mut bytes = Vec::with_capacity(MAX_SKILL_HEADER_BYTES as usize);
+    file.take(MAX_SKILL_HEADER_BYTES).read_to_end(&mut bytes)?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
 fn item(path: &Path, source: &str) -> Option<Value> {
-    let text = std::fs::read_to_string(path).ok()?;
+    let text = read_skill_header(path).ok()?;
     let (mut name, description) = frontmatter(&text);
     if name.is_empty() {
         name = path
@@ -133,18 +154,31 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
         let target = to.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
             copy_dir(&entry.path(), &target)?;
-        } else {
+        } else if file_type.is_file() {
             std::fs::copy(entry.path(), target)?;
+        } else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Skill contains an unsupported file type: {}", entry.path().display()),
+            ));
         }
     }
     Ok(())
 }
 
+struct TempTree(PathBuf);
+impl Drop for TempTree {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 fn install(state: &AppState, source_dir: &Path) -> Result<Value, String> {
     let skill_file = source_dir.join("SKILL.md");
-    let text = std::fs::read_to_string(&skill_file)
+    let text = read_skill_header(&skill_file)
         .map_err(|error| format!("SKILL.md 읽기 실패: {error}"))?;
     let (mut name, description) = frontmatter(&text);
     if name.is_empty() {
@@ -216,13 +250,36 @@ pub fn import_repo(state: &AppState, repo: &str) -> Result<Value, String> {
         return Err("https:// 또는 git@ 저장소 URL만 지원합니다.".into());
     }
     let temp = std::env::temp_dir().join(format!("dominion-skills-{}", uuid::Uuid::new_v4()));
-    let output = std::process::Command::new("git")
-        .args(["clone", "--depth", "1", repo])
+    let _cleanup = TempTree(temp.clone());
+    let mut child = Command::new("git")
+        .args(["clone", "--depth", "1", "--quiet", "--no-recurse-submodules", repo])
         .arg(&temp)
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_LFS_SKIP_SMUDGE", "1")
+        .spawn()
         .map_err(|error| error.to_string())?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(100)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("Git 저장소 복제 시간이 120초를 초과했습니다.".into());
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("Git 저장소 복제 상태를 확인하지 못했습니다: {error}"));
+            }
+        }
+    };
+    if !status.success() {
+        return Err(format!("Git 저장소 복제가 실패했습니다 (exit {status})."));
     }
 
     let mut found = Vec::new();
@@ -241,7 +298,6 @@ pub fn import_repo(state: &AppState, repo: &str) -> Result<Value, String> {
             }
         }
     }
-    let _ = std::fs::remove_dir_all(&temp);
     if added == 0 {
         return Err("저장소에서 SKILL.md를 찾지 못했습니다.".into());
     }

@@ -111,10 +111,17 @@ pub async fn import_skill_repo(State(state): State<AppState>, Json(body): Json<V
     let repo = body
         .get("repo")
         .and_then(|value| value.as_str())
-        .unwrap_or("");
-    match engine::skills::import_repo(&state, repo) {
-        Ok(result) => Json(result).into_response(),
-        Err(message) => error(StatusCode::BAD_REQUEST, &message),
+        .unwrap_or("")
+        .to_string();
+    let result = tokio::task::spawn_blocking(move || engine::skills::import_repo(&state, &repo))
+        .await;
+    match result {
+        Ok(Ok(result)) => Json(result).into_response(),
+        Ok(Err(message)) => error(StatusCode::BAD_REQUEST, &message),
+        Err(join_error) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("스킬 저장소 작업이 중단되었습니다: {join_error}"),
+        ),
     }
 }
 
