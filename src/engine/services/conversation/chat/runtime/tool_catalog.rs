@@ -32,7 +32,9 @@ fn no_tools_required(request:&TurnRequest,session:&Value,acceptance:&Option<(Str
             .any(|term|text.contains(term))
         && !["파일","문서","폴더","웹","검색","사이트","링크","url",
             "http","github","깃허브","이전","방금","앞에서","그거",
-            "이거","저거","계속","이어","첨부","pdf","텍스트 파일"]
+            "이거","저거","계속","이어","첨부","pdf","텍스트 파일",
+            ".md",".txt",".docx",".html",".py",".rs",".json",
+            "src/","docs/","/mnt/","/workspace/"]
             .iter().any(|term|text.contains(term));
     inline_translation
 }
