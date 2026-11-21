@@ -10,7 +10,7 @@ type Job={
  delegationPatchSha256?:string;integrationStatus?:string;
  input?:{
   goal?:string;prompt?:string;sessionId?:string;parentSessionId?:string;agentId?:string;
-  teamJobId?:string;teamStepId?:string;delegationProfile?:string;externalRuntime?:string|null;
+  teamJobId?:string;teamStepId?:string;delegation?:boolean;delegationProfile?:string;externalRuntime?:string|null;
   dependsOnJobIds?:string[];resumeFromJobId?:string|null;remoteWorker?:boolean;
   maxParallel?:number;plan?:Step[];childJobIds?:string[];
  }
@@ -108,11 +108,15 @@ export function TeamWorkflowPanel({jobs,filterSessionId}:{jobs?:Job[];filterSess
   &&(!filterSessionId||j.input?.sessionId===filterSessionId)).sort((a,b)=>(b.queuedAt||'').localeCompare(a.queuedAt||'')).slice(0,8),[rows,filterSessionId])
  const standaloneExternal=useMemo(()=>rows.filter(j=>Boolean(j.input?.externalRuntime)&&!j.input?.teamJobId
   &&(!filterSessionId||j.input?.parentSessionId===filterSessionId)).slice(0,10),[rows,filterSessionId])
+ const dependentJobs=useMemo(()=>rows.filter(j=>j.input?.delegation===true&&!j.input?.teamJobId
+  &&(j.input?.dependsOnJobIds?.length||0)>0
+  &&(!filterSessionId||j.input?.parentSessionId===filterSessionId)).slice(0,18),[rows,filterSessionId])
+ const independentStates=useMemo(()=>Object.fromEntries(rows.map(j=>[j.id,j.status||'queued'])),[rows])
  const jobMap=useMemo(()=>new Map(rows.map(j=>[j.id,j])),[rows])
  const [opened,setOpened]=useState<string[]>([])
  const toggle=(id:string)=>setOpened(old=>old.includes(id)?old.filter(x=>x!==id):[...old,id])
  const refresh=()=>{if(jobs===undefined)void remote.reload()}
- if(!parentTeams.length&&!standaloneExternal.length&&!remote.loading)return null
+ if(!parentTeams.length&&!standaloneExternal.length&&!dependentJobs.length&&!remote.loading)return null
  return <Panel className="mt-4 min-w-0 overflow-hidden">
   <button type="button" aria-expanded={expanded} onClick={()=>setExpanded(x=>!x)}
    className="flex w-full flex-wrap items-center justify-between gap-2 p-4 text-left hover:bg-[#FAF7F1]">
@@ -144,6 +148,13 @@ export function TeamWorkflowPanel({jobs,filterSessionId}:{jobs?:Job[];filterSess
      </div>}
     </div>
    })}
+   {dependentJobs.length>0&&<section className="rounded-xl border border-[#E7E0D5] bg-[#FCFAF6] p-3">
+    <h3 className="mb-2 flex items-center gap-2 text-[12px] font-bold"><GitBranch size={14}/>{en?'Dependent delegated jobs':'의존성 있는 개별 위임 작업'}</h3>
+    <p className="mb-2 text-[10px] text-[#8A8176]">{en?'The arrows below represent durable sibling job dependencies, not inferred order.':'개별 위임 작업의 저장된 선행 작업 ID를 그대로 표시합니다. 화면 순서로 의존성을 추정하지 않습니다.'}</p>
+    <div className="space-y-2">{dependentJobs.map(job=><WorkerStep key={job.id} job={job} ids={independentStates} onCreated={refresh}
+      step={{id:job.input?.teamStepId||job.id.slice(0,8),jobId:job.id,agentId:job.input?.agentId,
+       profile:job.input?.delegationProfile,dependsOn:job.input?.dependsOnJobIds}}/>)}</div>
+   </section>}
    {standaloneExternal.length>0&&<section className="rounded-xl border border-[#E7E0D5] bg-[#FCFAF6] p-3">
     <h3 className="mb-2 flex items-center gap-2 text-[12px] font-bold"><Layers3 size={14}/>{en?'Standalone external inspections':'독립 외부 조사 기록'}</h3>
     <div className="space-y-2">{standaloneExternal.map(job=><div key={job.id} className="rounded-lg border border-[#EFE9DF] bg-white p-3">
