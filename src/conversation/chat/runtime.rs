@@ -220,7 +220,7 @@ async fn run_turn_with_policy(
     session["providerId"] = json!(provider.id);
     session["model"] = json!(provider.model);
     // A room shares a transcript but each speaker keeps its own identity.
-    if session.get("roomId").is_none() {
+    if !session["roomId"].is_string() {
         session["agentId"] = json!(request.agent_id);
         if record_input {
             session["mode"] = json!(if plain_mode { "chat" } else { "agent" });
