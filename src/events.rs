@@ -77,6 +77,14 @@ impl Bus {
             }else if kind=="managed_team"{
                 event["parentRunId"]=record["originRunId"].clone();
                 event["verified"]=record["evidenceVerified"].clone();
+            }else if kind=="remote_task"{
+                event["parentRunId"]=record["teamId"].clone();
+                event["nodeId"]=record["nodeId"].clone();
+                event["remoteWorkerId"]=record["workerId"].clone();
+                event["leaseUntilMs"]=record["leaseUntilMs"].clone();
+                event["verified"]=record["verified"].clone();
+                event["evidenceOrigin"]=record["evidenceOrigin"].clone();
+                event["workerJobId"]=record["localJobId"].clone();
             }
             events.push(event);
         }
@@ -167,6 +175,27 @@ mod tests {
         assert!(!recent.is_empty());
         assert_eq!(recent.last().unwrap()["index"], 599);
         assert!(recent.len() <= 600);
+    }
+    #[test]
+    fn remote_worker_receipts_replay_on_the_same_sequenced_sse_contract(){
+        let bus=Bus::new(store());
+        bus.record("remote_task",&json!({"id":"remote-1","status":"queued",
+            "teamId":"team-1","nodeId":"inspect","workerId":"worker-b",
+            "agentId":"reader"}));
+        bus.record("remote_task",&json!({"id":"remote-1","status":"running",
+            "teamId":"team-1","nodeId":"inspect","workerId":"worker-b",
+            "leaseUntilMs":1024,"agentId":"reader"}));
+        bus.record("remote_task",&json!({"id":"remote-1","status":"completed",
+            "teamId":"team-1","nodeId":"inspect","workerId":"worker-b",
+            "localJobId":"native-1","verified":true,
+            "evidenceOrigin":"remote_worker_reported","agentId":"reader"}));
+        let events=bus.replay(0,10);
+        assert_eq!(events.len(),6);
+        assert_eq!(events[1]["runKind"],"remote_task");
+        assert_eq!(events[3]["state"],"running");
+        assert_eq!(events[5]["remoteWorkerId"],"worker-b");
+        assert_eq!(events[5]["workerJobId"],"native-1");
+        assert_eq!(events[5]["eventSeq"],6);
     }
     #[test]
     fn managed_lead_worker_events_share_one_durable_journal(){
