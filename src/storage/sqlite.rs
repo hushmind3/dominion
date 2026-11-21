@@ -243,6 +243,19 @@ impl Store {
                  ON records(json_extract(data,'$.kind'),id)
                  WHERE kind='algorithm';",
         )?;
+        // Older databases predate reasoning/tool columns.
+        for (column, decl) in [
+            ("reasoning", "TEXT NOT NULL DEFAULT ''"),
+            ("agent_id", "TEXT"),
+            ("tool_calls", "TEXT"),
+            ("tool_call_id", "TEXT"),
+            ("metadata", "TEXT NOT NULL DEFAULT '{}'"),
+        ] {
+            let _ = conn.execute(
+                &format!("ALTER TABLE messages ADD COLUMN {column} {decl}"),
+                [],
+            );
+        }
         // Backfill pre-trigger transcripts once. The new trigger covers every
         // later writer without a process-local room counter.
         conn.execute_batch(
@@ -259,19 +272,6 @@ impl Store {
                          ELSE 'message' END
              FROM messages WHERE session_id LIKE 'room:%';"
         )?;
-        // Older databases predate reasoning/tool columns.
-        for (column, decl) in [
-            ("reasoning", "TEXT NOT NULL DEFAULT ''"),
-            ("agent_id", "TEXT"),
-            ("tool_calls", "TEXT"),
-            ("tool_call_id", "TEXT"),
-            ("metadata", "TEXT NOT NULL DEFAULT '{}'"),
-        ] {
-            let _ = conn.execute(
-                &format!("ALTER TABLE messages ADD COLUMN {column} {decl}"),
-                [],
-            );
-        }
         conn.execute(
             "INSERT OR IGNORE INTO adaptation_schema(version, applied_at) VALUES(1, datetime('now'))",
             [],
@@ -2506,6 +2506,34 @@ mod tests {
         assert_eq!(store.messages("room:a").len(),before);
     }
 
+    #[test]
+    fn legacy_room_transcripts_migrate_before_event_backfill(){
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-legacy-room-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file=dir.join("legacy.sqlite");
+        {
+            let legacy=Connection::open(&file).unwrap();
+            legacy.execute_batch(
+                "CREATE TABLE messages(
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL DEFAULT '',
+                    created_at TEXT DEFAULT (datetime('now'))
+                );
+                INSERT INTO messages(id,session_id,role,content)
+                VALUES('old-user','room:legacy','user','original');"
+            ).unwrap();
+        }
+        let upgraded=Store::open(&file).unwrap();
+        let events=upgraded.room_events("room:legacy",0,10).unwrap();
+        assert_eq!(events.len(),1);
+        assert_eq!(events[0]["eventId"],"old-user");
+        assert_eq!(events[0]["seq"],1);
+        drop(upgraded);
+        let _=std::fs::remove_dir_all(dir);
+    }
     #[test]
     fn room_events_commit_150_messages_in_order_and_survive_restart(){
         let dir=std::env::temp_dir().join(format!(
