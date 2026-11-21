@@ -533,6 +533,57 @@
     }
 
     #[test]
+    fn unknown_paid_generation_is_needs_review_even_after_owner_cancel(){
+        let (state,dir)=state();
+        let id="sub3-paid-uncertain";
+        state.store.put("execution",&json!({
+            "id":id,"sessionId":"s-unknown","taskId":id,
+            "status":"running","phase":"running","request":"write a file",
+            "acceptancePassed":false,"acceptanceText":null,
+            "strategyCandidates":[],"appliedImprovementIds":[],
+            "kernelState":{"status":"running","modelInFlight":true,
+                "inFlight":[],"modelCalls":1,"chargedTokens":54}
+        })).unwrap();
+        state.cancel_session("s-unknown");
+        let metrics=std::sync::Mutex::new(Metrics::default());
+        finalize_execution(&state,id,&Err("stream disconnected".into()),&metrics);
+        let actual=state.store.get("execution",id).unwrap();
+        assert_eq!(actual["status"],"needs_review","{actual}");
+        assert_eq!(actual["phase"],"needs_review","{actual}");
+        assert_eq!(actual["kernelState"]["status"],"needs_review");
+        assert_eq!(actual["kernelState"]["modelInFlight"],true);
+        assert_eq!(actual["kernelState"]["chargedTokens"],54,
+            "a lost HTTP observation must not erase already-accounted tokens");
+        assert_eq!(actual["kernelState"]["modelCalls"],1);
+        assert_eq!(actual["ownerCancellationRequested"],true);
+        assert_ne!(actual["taskOutcome"],"succeeded");
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn unknown_tool_effect_blocks_a_successful_final_answer(){
+        let (state,dir)=state();
+        let id="sub3-tool-uncertain";
+        state.store.put("execution",&json!({
+            "id":id,"sessionId":"s-effect","taskId":id,
+            "status":"running","phase":"running","request":"edit a document",
+            "acceptancePassed":false,"acceptanceText":null,
+            "strategyCandidates":[],"appliedImprovementIds":[],
+            "kernelState":{"status":"running","modelInFlight":false,
+                "inFlight":[{"id":"write-a","tool":"workspace_write",
+                    "arguments":{"path":"doc.txt","content":"X"},
+                    "dependsOn":[]}],"modelCalls":1,"chargedTokens":25}
+        })).unwrap();
+        let metrics=std::sync::Mutex::new(Metrics::default());
+        finalize_execution(&state,id,&Ok(None),&metrics);
+        let actual=state.store.get("execution",id).unwrap();
+        assert_eq!(actual["status"],"needs_review","{actual}");
+        assert_eq!(actual["kernelState"]["inFlight"][0]["id"],"write-a");
+        assert_ne!(actual["taskOutcome"],"succeeded","a model answer is not proof");
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn cancelled_and_failed_are_not_success() {
         assert_eq!(
             determine_task_outcome(&execution("cancelled", true, json!("check"))),
