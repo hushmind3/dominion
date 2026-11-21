@@ -73,9 +73,29 @@ pub(super) fn tool_name(definition: &Value) -> &str {
         .unwrap_or("")
 }
 
+/// Short follow-up imperatives are real work requests even without a resource
+/// noun in the last message. The persisted transcript supplies the target;
+/// do not strip tools just because the owner said "그럼 빨리해".
+/// Question forms remain explanation-only by default.
+fn action_followup(input:&str)->bool {
+    let trimmed=input.trim();
+    if trimmed.ends_with(['?', '？']) { return false; }
+    let normalized=trimmed.chars().filter(|ch|
+        !ch.is_whitespace() && !matches!(ch,'!'|'！'|'.'|'。'|'~'|'～')
+    ).flat_map(char::to_lowercase).collect::<String>();
+    [
+        "빨리해","빨리해라","얼른해","얼른해라","어서해",
+        "바로해","지금해","그럼해","그거해","그걸해",
+        "이거해","이걸해","마저해","끝까지해","시작해",
+        "착수해","처리해","진행시켜","진행해라","바로진행해",
+        "전수점검해","다음거해",
+    ].iter().any(|suffix|normalized.ends_with(suffix))
+}
+
 /// Private conversation does not need a schema catalog solely because the
 /// user enabled tools. Actual tool actions still use the same native gateway.
 pub(super) fn private_tool_request(input:&str)->bool {
+    if action_followup(input) { return true; }
     let q=input.trim().to_lowercase();
     if matches!(q.as_str(),"메인"|"main"|"계속"|"계속해"|"다음 단계"|"다음단계"){
         return true;
@@ -132,8 +152,14 @@ mod private_tool_request_tests {
             "러스트 테스트 돌려줘","메인","이어서 작업해",
             "깃허브에서 코드 수정해","검색 좀 해줘",
             "코드 리뷰해줘","파일 확인해",
-            "workspace_list 도구로 작업 환경을 확인해","계속 확인"] {
+            "workspace_list 도구로 작업 환경을 확인해","계속 확인",
+            "그럼 빨리해","바로 해","마저 해","끝까지 해",
+            "그거 해","처리해","전수점검해","얼른 해라"] {
             assert!(private_tool_request(q),"{q}");
+        }
+        for q in ["왜 빨리해?", "그걸 해?", "아까 빠르게 했나요?",
+            "잘 부탁해", "Rust 장점을 설명해줘"] {
+            assert!(!private_tool_request(q),"{q} should not expose work tools");
         }
     }
 }
