@@ -2,8 +2,20 @@
 //! The coordinator cannot claim native verified tool receipts for remote work.
 use crate::{addons::{jobs::JobContext,team_orchestrator},state::AppState};
 use serde_json::{json,Value};
-use chrono::Utc;
+use chrono::{DateTime,NaiveDateTime,Utc};
 
+fn expired_ticket(row:&Value)->bool{
+    // Store::record_from_row projects SQLite created_at as a space-separated
+    // UTC timestamp. The explicit enqueuedAt field is stable RFC3339.
+    let started=row["enqueuedAt"].as_str()
+        .and_then(|s|DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt|dt.with_timezone(&Utc))
+        .or_else(||row["createdAt"].as_str()
+            .and_then(|s|NaiveDateTime::parse_from_str(s,"%Y-%m-%d %H:%M:%S").ok())
+            .map(|dt|dt.and_utc()));
+    started.is_none_or(|when|Utc::now().signed_duration_since(when)
+        >chrono::Duration::hours(1))
+}
 fn owns(state:&AppState,job:&Value)->Result<(),String>{
     let team_id=job["input"]["teamJobId"].as_str().ok_or("remote team missing")?;
     let id=job["id"].as_str().ok_or("remote child missing")?;
@@ -71,7 +83,8 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
         "sourceJobId":id,"teamJobId":team_id,"sessionId":session,
         "parentSessionId":parent,"instruction":text,"maxRounds":24,
         "attempts":0,"nativeVerified":false,
-        "createdAt":chrono::Utc::now().to_rfc3339()});
+        "createdAt":chrono::Utc::now().to_rfc3339(),
+        "enqueuedAt":chrono::Utc::now().to_rfc3339()});
     if let Some(created)=ctx.state.store.put_if_absent("remote_job",&candidate){
         ctx.state.bus.record("remote_job",&created);
     }
@@ -127,11 +140,7 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
             Some("queued"|"leased"|"needs_review")=>{},
             _=>return Err("invalid remote job state".into())
         }
-        let stale=record["createdAt"].as_str()
-            .and_then(|s|chrono::DateTime::parse_from_rfc3339(s).ok())
-            .is_none_or(|created|Utc::now().signed_duration_since(created)
-                >chrono::Duration::hours(1));
-        if stale{
+        if expired_ticket(&record){
             for status in ["queued","leased"]{
                 change(&ctx.state,&remote_id,status,"needs_review","deadline_unknown");
             }
@@ -218,6 +227,17 @@ mod tests{
         assert_eq!(remote["executionId"],"lead-native");
         assert!(state.bus.replay_run("remote:worker",0,100).is_empty());
         let _=std::fs::remove_dir_all(&state.config.data_dir);
+    }
+    #[test]
+    fn sqlite_created_at_and_explicit_enqueued_at_both_preserve_deadline(){
+        let row=json!({"createdAt":"2026-11-21 02:25:00",
+            "enqueuedAt":Utc::now().to_rfc3339()});
+        assert!(!expired_ticket(&row));
+        let old=json!({"createdAt":(Utc::now()-chrono::Duration::minutes(2))
+            .format("%Y-%m-%d %H:%M:%S").to_string()});
+        assert!(!expired_ticket(&old));
+        let expired=json!({"createdAt":"2026-01-01 00:00:00"});
+        assert!(expired_ticket(&expired));
     }
     #[test]
     fn foreign_or_unreviewed_remote_results_are_rejected(){
