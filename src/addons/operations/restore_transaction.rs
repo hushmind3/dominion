@@ -2,7 +2,7 @@
 //! the database or the vault key changes. Startup restores the previous pair
 //! if a process dies at any point before successful migration/commit.
 use crate::state::AppState;
-use std::{fs, io::{self, Write}, path::{Path,PathBuf}};
+use std::{fs, io::Write, path::{Path,PathBuf}};
 
 const MARKER: &str = ".restore-in-progress";
 const OLD_DB: &str = ".restore-rollback.sqlite";
@@ -30,6 +30,11 @@ fn private(path:&Path)->Result<(),String>{
     Ok(())
 }
 pub fn pending(dir:&Path)->bool{dir.join(MARKER).exists()}
+fn sync_pair(state:&AppState)->Result<(),String>{
+    state.store.sync_database_for_restore()?;
+    sync_file(state.vault.key_path())?;
+    sync_parent(&state.config.data_dir)
+}
 fn paths(dir:&Path)->(PathBuf,PathBuf,PathBuf){
     (dir.join(MARKER),dir.join(OLD_DB),dir.join(OLD_KEY))
 }
@@ -59,7 +64,14 @@ fn stage_copy(from:&Path,to:&Path)->Result<(),String>{
 pub fn recover_before_open(db_path:&Path,key_path:&Path)->Result<bool,String>{
     let dir=db_path.parent().ok_or("restore database has no parent")?;
     let (marker,old_db,old_key)=paths(dir);
-    if !marker.exists(){ return Ok(false); }
+    if !marker.exists(){
+        // A crash before intent creation or after a completed commit may leave
+        // sensitive staging files. They are no longer needed without a marker.
+        cleanup(dir);
+        let _=fs::remove_file(dir.join(".restore-recovery.sqlite.tmp"));
+        let _=fs::remove_file(dir.join(".restore-recovery.key.tmp"));
+        return Ok(false);
+    }
     if !old_db.is_file() || !old_key.is_file(){
         return Err("Incomplete restore rollback files: startup halted to protect secrets".into());
     }
@@ -117,6 +129,7 @@ impl Transaction {
             .map_err(|e|format!("restore rollback database: {e}"))?;
         state.vault.restore_primary(self.old_key)
             .map_err(|e|format!("restore rollback key: {e}"))?;
+        sync_pair(state)?;
         mark_committed(&self.directory)
     }
     fn commit(self)->Result<(),String>{mark_committed(&self.directory)}
@@ -134,6 +147,10 @@ where F:FnOnce(&AppState)->Result<(),String>{
         state.store.replace_database(bytes)?;
         state.vault.restore_primary(target_key).map_err(|e|e.to_string())?;
         migrate(state)?;
+        // Both new files and migrated WAL data must be durable *before*
+        // clearing the recovery marker, otherwise a power cut can orphan
+        // encrypted secrets against the wrong restored key.
+        sync_pair(state)?;
         Ok::<(),String>(())
     })();
     match attempt {
@@ -217,6 +234,33 @@ mod tests{
             Vault::open(&config.key_path()));
         old_still_readable(&reopened);
         drop(reopened);
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn crash_after_vault_key_swap_rolls_back_both_durable_files(){
+        let (state,bytes,key,dir)=fixture();
+        let transaction=Transaction::begin(&state).unwrap();
+        state.store.replace_database(&bytes).unwrap();
+        state.vault.restore_primary(key).unwrap();
+        // Process dies with K1 and the new DB on disk, but before migration
+        // and commit marker removal. Startup must recover the original pair.
+        drop(transaction);
+        drop(state);
+        let config=Config{port:0,data_dir:dir.clone(),web_dir:dir.join("web"),workspace:dir.clone()};
+        assert!(recover_before_open(&config.db_path(),&config.key_path()).unwrap());
+        let restarted=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        old_still_readable(&restarted);
+        drop(restarted);
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn malformed_snapshot_fails_before_creating_restore_intent(){
+        let (state,_bytes,key,dir)=fixture();
+        assert!(apply(&state,b"not a sqlite snapshot",key,|_|Ok(())).is_err());
+        assert!(!pending(&dir));
+        old_still_readable(&state);
+        drop(state);
         fs::remove_dir_all(dir).unwrap();
     }
     #[test]
