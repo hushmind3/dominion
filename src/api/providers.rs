@@ -3,6 +3,7 @@ use axum::{extract::{Path,State},http::StatusCode,response::{IntoResponse,Respon
 use serde_json::{json,Value};
 use std::sync::{Arc,Mutex,OnceLock};
 use std::time::{Duration,Instant};
+use std::{fs::File,io::{self,Read},path::Path as FsPath};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use super::response::error;
@@ -18,11 +19,25 @@ fn codex_home_file(name: &str) -> Option<std::path::PathBuf> {
         .map(|home| home.join(name))
 }
 
+fn read_limited_utf8(path: impl AsRef<FsPath>, max_bytes: u64) -> io::Result<String> {
+    let mut bytes = Vec::new();
+    File::open(path)?.take(max_bytes + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "local file exceeds size limit"));
+    }
+    String::from_utf8(bytes)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+const MAX_LOCAL_AUTH_BYTES: u64 = 1024 * 1024;
+const MAX_CODEX_CONFIG_BYTES: u64 = 1024 * 1024;
+const MAX_CODEX_MODEL_CACHE_BYTES: u64 = 8 * 1024 * 1024;
+
 /// Codex stores a ChatGPT OAuth session in ~/.codex/auth.json. Only the
 /// presence and account are exposed to the UI; tokens never leave the vault.
 fn codex_auth() -> Result<Value, String> {
     let path = codex_home_file("auth.json").ok_or("CODEX_HOME/HOME 환경변수를 찾을 수 없습니다.")?;
-    let text = std::fs::read_to_string(&path)
+    let text = read_limited_utf8(&path, MAX_LOCAL_AUTH_BYTES)
         .map_err(|_| "Codex 로그인 정보를 찾을 수 없습니다. Codex 앱에서 먼저 로그인하세요.")?;
     let value: Value = serde_json::from_str(&text)
         .map_err(|_| "Codex 로그인 정보 형식을 읽을 수 없습니다.")?;
@@ -47,7 +62,7 @@ fn opencode_auth() -> Option<Value> {
     .iter()
     .filter_map(|relative| home_file(relative))
     .find_map(|path| {
-        std::fs::read_to_string(path)
+        read_limited_utf8(path, MAX_LOCAL_AUTH_BYTES)
             .ok()
             .and_then(|text| serde_json::from_str::<Value>(&text).ok())
     })
@@ -421,7 +436,7 @@ pub async fn public_openrouter_free_catalog(State(state):State<AppState>)->Json<
 
 fn codex_model() -> String {
     if let Some(path) = codex_home_file("config.toml") {
-        if let Ok(text) = std::fs::read_to_string(path) {
+        if let Ok(text) = read_limited_utf8(path, MAX_CODEX_CONFIG_BYTES) {
             for line in text.lines() {
                 let line = line.trim();
                 if let Some(value) = line.strip_prefix("model = ") {
@@ -1809,7 +1824,7 @@ async fn codex_models_live(
             .find(|part|part.chars().next().is_some_and(|c|c.is_ascii_digit()))
             .map(str::to_string));
     let cache_version = codex_home_file("models_cache.json")
-        .and_then(|path|std::fs::read_to_string(path).ok())
+        .and_then(|path|read_limited_utf8(path, MAX_CODEX_MODEL_CACHE_BYTES).ok())
         .and_then(|text|serde_json::from_str::<Value>(&text).ok())
         .and_then(|value|value["client_version"].as_str().map(str::to_string));
     if let Some(version) = cli_version.or(cache_version) {
@@ -1904,7 +1919,7 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
                     auth["tokens"]["account_id"].as_str().map(str::to_string)
                 ).as_deref() == Some(account) {
                     if let Some(path) = codex_home_file("models_cache.json") {
-                        if let Ok(contents) = std::fs::read_to_string(path) {
+                        if let Ok(contents) = read_limited_utf8(path, MAX_CODEX_MODEL_CACHE_BYTES) {
                             if let Ok(value) = serde_json::from_str::<Value>(&contents) {
                                 if let Ok(mut rows) = parse_codex_models(&value) {
                                     for row in &mut rows {
