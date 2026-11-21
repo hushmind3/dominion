@@ -309,6 +309,11 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    // A STOP must preserve already streamed text, even when the native
    // execution was cancelled before the assistant answer was saved.
    if(controller)flushStreamBuffer();
+   // STOP during attachment upload or before the owner-save acknowledgment
+   // must keep the unsent prompt available. A retry reuses clientTurnId, so
+   // an already-persisted operation still cannot run twice.
+   if(optimisticOwner?.sessionId===id&&!optimisticOwner.persistedId)
+    setInput(previous=>previous.trim()?previous:optimisticOwner.content);
    controller?.abort();
    if(stream.current===controller){
     stream.current=null;activeTurnSession.current=undefined;
