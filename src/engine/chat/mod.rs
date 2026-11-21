@@ -266,6 +266,7 @@ struct Completion {
     // None means the provider did not report cache usage, not a cache miss.
     cached_prompt_tokens: Option<u64>,
     usage_exact: bool,
+    finish_reason: Option<String>,
     first_delta_ms: Option<u64>,
 }
 
