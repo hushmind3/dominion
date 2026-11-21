@@ -297,3 +297,67 @@ pub async fn learn(State(state):State<AppState>,Path(id):Path<String>,Json(body)
         }
     }
 }
+
+
+#[cfg(test)]
+mod deletion_tests {
+    use super::*;
+    use base64::{engine::general_purpose::STANDARD, Engine};
+
+    fn fixture() -> (AppState, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!("dominion-delete-chat-{}", uuid::Uuid::new_v4()));
+        let config = crate::config::Config {
+            port: 0,
+            data_dir: root.clone(),
+            web_dir: root.join("web"),
+            workspace: root.clone(),
+        };
+        let state = AppState::new(
+            config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()),
+        );
+        (state, root)
+    }
+
+    #[tokio::test]
+    async fn deleted_private_chat_removes_file_bytes_and_record_but_preserves_other_session() {
+        let (state, root) = fixture();
+        state.store.put("session", &json!({"id":"one"}));
+        state.store.put("session", &json!({"id":"two"}));
+        let one = engine::attachments::upload(&state, &json!({
+            "sessionId":"one", "name":"private.txt", "data":STANDARD.encode("private bytes")
+        })).unwrap();
+        let two = engine::attachments::upload(&state, &json!({
+            "sessionId":"two", "name":"other.txt", "data":STANDARD.encode("other bytes")
+        })).unwrap();
+        let one_id = one["id"].as_str().unwrap().to_string();
+        let two_id = two["id"].as_str().unwrap().to_string();
+        let disk = root.join("attachments").join(format!("{one_id}.bin"));
+        assert!(disk.exists());
+        let response = delete_session(State(state.clone()), Path("one".into())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(state.store.get("session", "one").is_none());
+        assert!(state.store.get("attachment", &one_id).is_none());
+        assert!(!disk.exists(), "private file bytes must be erased after deleting chat");
+        assert!(engine::attachments::read(&state, &one_id).is_err());
+        assert!(engine::attachments::read(&state, &two_id).is_ok());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn deletion_refuses_active_chat_and_room_owned_transcripts() {
+        let (state, root) = fixture();
+        state.store.put("session", &json!({"id":"active"}));
+        state.store.put("session", &json!({"id":"group","roomId":"room-1"}));
+        assert!(state.begin_session("active"));
+        let busy = delete_session(State(state.clone()), Path("active".into())).await;
+        assert_eq!(busy.status(), StatusCode::CONFLICT);
+        assert!(state.store.get("session", "active").is_some());
+        state.end_session("active");
+        let group = delete_session(State(state.clone()), Path("group".into())).await;
+        assert_eq!(group.status(), StatusCode::CONFLICT);
+        assert!(state.store.get("session", "group").is_some());
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
