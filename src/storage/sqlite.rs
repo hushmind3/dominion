@@ -1225,6 +1225,17 @@ impl Store {
         rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 
+    /// Resolve a pre-sequence legacy Room cursor from the historical message
+    /// identity. Read-only: no old cursor or source transcript is rewritten.
+    pub fn room_event_seq(&self,session_id:&str,event_id:&str)->Option<u64>{
+        let conn=self.conn.lock().ok()?;
+        let value:Option<i64>=conn.query_row(
+            "SELECT seq FROM room_events WHERE session_id=?1 AND event_id=?2",
+            params![session_id,event_id],|row|row.get(0)
+        ).optional().ok()?;
+        value.and_then(|seq|u64::try_from(seq).ok())
+    }
+
     /// Error-preserving variant for model-context assembly. A database failure
     /// must abort the turn, not look like a session with no history.
     pub fn try_messages(&self, session_id: &str) -> Result<Vec<Value>, String> {

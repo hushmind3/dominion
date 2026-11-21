@@ -338,7 +338,11 @@ pub async fn events(
                 let saved=state.store.get("room_read_cursor",&key);
                 json!({"roomId":id,"agentId":agent,"sessionId":session_id,
                     "readCursor":saved.as_ref()
-                        .and_then(|c|c["throughSeq"].as_u64()).unwrap_or(0),
+                        .and_then(|c|c["throughSeq"].as_u64())
+                        .or_else(||saved.as_ref()
+                            .and_then(|c|c["throughMessageId"].as_str())
+                            .and_then(|anchor|state.store.room_event_seq(session_id,anchor)))
+                        .unwrap_or(0),
                     "state":"bound"})
             }).collect::<Vec<_>>();
         Ok(json!({"roomId":id,"sessionId":session_id,"events":rows,
