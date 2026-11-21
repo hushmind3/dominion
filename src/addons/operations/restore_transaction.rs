@@ -264,6 +264,31 @@ mod tests{
         fs::remove_dir_all(dir).unwrap();
     }
     #[test]
+    fn missing_rollback_material_halts_startup_instead_of_opening_wrong_key(){
+        let (state,bytes,_key,dir)=fixture();
+        let tx=Transaction::begin(&state).unwrap();
+        state.store.replace_database(&bytes).unwrap();
+        drop(tx);
+        drop(state);
+        fs::remove_file(dir.join(OLD_KEY)).unwrap();
+        let config=Config{port:0,data_dir:dir.clone(),web_dir:dir.join("web"),workspace:dir.clone()};
+        assert!(recover_before_open(&config.db_path(),&config.key_path()).is_err());
+        assert!(pending(&dir),"incomplete recovery must remain quarantined");
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn orphaned_rollback_material_is_pruned_when_no_restore_was_started(){
+        let (state,_bytes,_key,dir)=fixture();
+        let (_,db,key)=paths(&dir);
+        fs::write(&db,b"stale snapshot").unwrap();
+        fs::write(&key,b"stale key").unwrap();
+        assert!(!recover_before_open(&state.config.db_path(),&state.config.key_path()).unwrap());
+        assert!(!db.exists()&&!key.exists());
+        old_still_readable(&state);
+        drop(state);
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn successful_restore_restarts_with_matching_key_and_database(){
         let (state,bytes,key,dir)=fixture();
         apply(&state,&bytes,key,|_|Ok(())).unwrap();
