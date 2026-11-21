@@ -1,6 +1,5 @@
-//! A source checkout is observed once at runtime; release builds can embed
-//! immutable identity through explicit DOMINION_RELEASE_* environment variables.
-use std::process::Command;
+//! Immutable revision recorded when Rust was compiled. Never substitute
+//! the HEAD of a checkout that may move while an older binary is running.
 use std::sync::OnceLock;
 
 pub struct Identity {
@@ -10,33 +9,28 @@ pub struct Identity {
     pub source: &'static str,
 }
 
-fn git(args: &[&str]) -> Option<String> {
-    let output=Command::new("git").arg("-C").arg(env!("CARGO_MANIFEST_DIR"))
-        .args(args).output().ok()?;
-    if !output.status.success(){return None;}
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
 pub fn running() -> &'static Identity {
     static BUILD:OnceLock<Identity>=OnceLock::new();
     BUILD.get_or_init(||{
-        if let Some(commit)=option_env!("DOMINION_BUILD_COMMIT").filter(|v|!v.is_empty()){
-            return Identity {
-                commit:commit.to_string(),
-                branch:option_env!("DOMINION_BUILD_BRANCH").unwrap_or("unknown").into(),
-                dirty:option_env!("DOMINION_BUILD_DIRTY").and_then(|v|v.parse::<bool>().ok()),
-                source:"embedded-release",
-            };
-        }
-        let commit=git(&["rev-parse","HEAD"]).filter(|s|!s.is_empty());
-        let branch=git(&["rev-parse","--abbrev-ref","HEAD"]).filter(|s|!s.is_empty());
-        let dirty=git(&["status","--porcelain","--untracked-files=no"])
-            .map(|output|!output.is_empty());
-        let source=if commit.is_some(){"source-checkout"}else{"unavailable"};
-        Identity {
-            commit:commit.unwrap_or_else(||"unknown".into()),
-            branch:branch.unwrap_or_else(||"unknown".into()),
-            dirty,source,
+        let commit=option_env!("DOMINION_BUILD_COMMIT")
+            .filter(|v|v.len()==40&&v.bytes().all(|b|b.is_ascii_hexdigit()));
+        match commit {
+            Some(commit)=>Identity {
+                commit:commit.to_owned(),
+                branch:option_env!("DOMINION_BUILD_BRANCH")
+                    .unwrap_or("unknown").to_owned(),
+                dirty:option_env!("DOMINION_BUILD_DIRTY")
+                    .and_then(|v|v.parse::<bool>().ok()),
+                source:match option_env!("DOMINION_BUILD_IDENTITY_SOURCE") {
+                    Some("embedded-release")=>"embedded-release",
+                    Some("embedded-build")=>"embedded-build",
+                    _=>"embedded-build",
+                },
+            },
+            None=>Identity {
+                commit:"unknown".into(),branch:"unknown".into(),
+                dirty:None,source:"unavailable",
+            }
         }
     })
 }
@@ -45,9 +39,17 @@ pub fn running() -> &'static Identity {
 mod tests {
     use super::*;
     #[test]
-    fn identity_source_is_explicit() {
+    fn health_identity_is_from_binary_or_explicitly_unknown(){
         let identity=running();
-        assert!(!identity.commit.is_empty());
-        assert!(matches!(identity.source,"embedded-release"|"source-checkout"|"unavailable"));
+        assert!(matches!(identity.source,
+            "embedded-release"|"embedded-build"|"unavailable"));
+        if identity.source=="unavailable" {
+            assert_eq!(identity.commit,"unknown");
+        }else{
+            assert_eq!(identity.commit.len(),40);
+            assert!(identity.commit.bytes().all(|b|b.is_ascii_hexdigit()));
+        }
+        assert_ne!(identity.source,"source-checkout",
+            "a moving Git worktree is not evidence of the running binary");
     }
 }
