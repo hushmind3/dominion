@@ -900,6 +900,32 @@ fn tools_disabled_action_is_failed_not_succeeded() {
 }
 
 #[test]
+fn direct_chat_rejects_external_effect_without_executing_tools() {
+    let _serial = serial();
+    let (port, _) = scripted_provider(|_| {
+        vec![json!({"choices":[{"delta":{"content":"만들었습니다."},"finish_reason":"stop"}]})]
+    });
+    let app = TestApp::new(port, "native");
+    app.post("/api/policy", &json!({"autoApproveAll":true}));
+    let session = app.post("/api/sessions", &json!({"title":"direct conversation"}));
+    let stream = app.chat(&json!({
+        "sessionId":session["id"],
+        "input":"no-tools-report.txt 파일을 만들어줘",
+        "toolsEnabled":false,
+        "toolsExecutionEnabled":false,
+        "autoLearning":false
+    }));
+    assert!(stream.contains("error"), "{stream}");
+    assert!(!app._root.join("no-tools-report.txt").exists());
+    let executions=app.get("/api/executions");
+    let execution=executions.as_array().unwrap().iter()
+        .find(|row|row["sessionId"]==session["id"])
+        .expect("direct chat execution");
+    assert_eq!(execution["status"],"failed");
+    assert_eq!(execution["taskOutcome"],"failed");
+}
+
+#[test]
 fn benchmark_identity_reports_the_isolated_roots() {
     let _serial = serial();
     let port = start_mock_provider();
