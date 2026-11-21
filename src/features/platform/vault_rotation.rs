@@ -9,6 +9,14 @@ use rand::RngCore;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
+struct RemoveFileOnDrop(PathBuf);
+
+impl Drop for RemoveFileOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 #[derive(Debug)]
 pub struct RotationReport {
     pub secrets_reencrypted: usize,
@@ -97,14 +105,30 @@ pub fn rotate(state: &AppState, keep_old: bool) -> Result<RotationReport, String
     let ring = crate::engine::backup_keys::KeyRing::load_or_create(&state.config.data_dir)?;
     let mut migrated = 0;
     for path in legacy_backups(state) {
-        let sealed = std::fs::read(&path).map_err(|error| error.to_string())?;
-        let plain = state
-            .vault
-            .open_bytes(&sealed)
-            .ok_or_else(|| format!("legacy backup key unavailable for {}", path.display()))?;
-        let resealed = ring.encrypt(&plain)?;
-        let temp = path.with_extension("enc.tmp");
-        std::fs::write(&temp, resealed).map_err(|error| error.to_string())?;
+        let plain = {
+            let sealed = std::fs::read(&path).map_err(|error| error.to_string())?;
+            state
+                .vault
+                .open_bytes(&sealed)
+                .ok_or_else(|| format!("legacy backup key unavailable for {}", path.display()))?
+        };
+        let temp = path.with_file_name(format!(
+            ".vault-rotate-{}.enc.tmp",
+            uuid::Uuid::new_v4()
+        ));
+        let _cleanup = RemoveFileOnDrop(temp.clone());
+        let mut output = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .map_err(|error| error.to_string())?;
+        ring.encrypt_reader(
+            &mut std::io::Cursor::new(&plain[..]),
+            plain.len() as u64,
+            &mut output,
+        )?;
+        output.sync_all().map_err(|error| error.to_string())?;
+        drop(output);
         std::fs::rename(&temp, &path).map_err(|error| error.to_string())?;
         migrated += 1;
     }
