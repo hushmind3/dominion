@@ -74,6 +74,36 @@ pub(super) fn configured_ids()->Vec<String>{
     adapters().into_iter().map(|entry|entry.id).collect()
 }
 
+/// The owner can discover resumable Codex/Claude/Qwen adapter sessions
+/// without knowing private remote thread IDs or touching another agent's
+/// workspace. Snapshot only: no CLI process is launched by this query.
+pub(super) fn sessions(ctx:&ToolContext<'_>)->Value{
+    let configured=adapters();
+    let mut rows=ctx.store.all("external_agent_session").into_iter()
+        .filter(|row|row["sessionId"]==ctx.session_id
+            &&row["agentId"].as_str()==ctx.agent_id
+            &&row["workspace"]==ctx.workspace.to_string_lossy().as_ref())
+        .map(|row|{
+            let spec=configured.iter().find(|item|row["harnessId"]==item.id);
+            let compatible=spec.is_some_and(|item|
+                row["adapterVersion"]==adapter_version(item));
+            json!({
+                "bridgeSessionId":row["id"],"harnessId":row["harnessId"],
+                "status":row["status"],
+                "resumeAvailable":compatible && row["status"]=="ready",
+                "adapterVersionMatches":compatible,
+                "requiresInspection":row["status"]=="needs_review"
+                    ||row["status"]=="running",
+                "lastUsedAt":row["lastUsedAt"],
+                "lastCompleted":row["lastCompleted"],
+                "lastOutcomeUnknown":row["lastOutcomeUnknown"],
+            })
+        }).collect::<Vec<_>>();
+    rows.sort_by(|a,b|a["bridgeSessionId"].as_str().cmp(&b["bridgeSessionId"].as_str()));
+    json!({"sessions":rows,"configuredHarnesses":
+        configured.into_iter().map(|spec|spec.id).collect::<Vec<_>>(),
+        "note":"Only owner-scoped bridge IDs are exposed; external tool permissions remain delegated"})
+}
 fn safe_remote_id(id:&str)->bool{
     !id.is_empty() && id.len()<=160 && id.bytes().all(|b|
         b.is_ascii_alphanumeric()||matches!(b,b'-'|b'_'|b':'|b'.'))
@@ -295,6 +325,36 @@ async fn run_with_spec(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn session_inventory_does_not_expose_private_remote_ids_or_foreign_owners(){
+        let dir=std::env::temp_dir().join(format!("bridge-status-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=crate::config::Config{port:0,data_dir:dir.clone(),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=crate::state::AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        state.store.put("external_agent_session",&json!({
+            "id":"shared","harnessId":"codex","adapterVersion":"old",
+            "sessionId":"parent","agentId":"a","workspace":dir.to_string_lossy(),
+            "remoteSessionId":"PRIVATE-THREAD","status":"ready",
+        })).unwrap();
+        state.store.put("external_agent_session",&json!({
+            "id":"foreign","harnessId":"codex","adapterVersion":"old",
+            "sessionId":"different","agentId":"b","workspace":dir.to_string_lossy(),
+            "remoteSessionId":"OTHER-THREAD","status":"ready",
+        })).unwrap();
+        let ctx=ToolContext{workspace:&dir,store:&state.store,state:&state,
+            session_id:"parent",agent_id:Some("a"),
+            tools_enabled:true,tools_execution_enabled:true};
+        let output=sessions(&ctx);
+        assert_eq!(output["sessions"].as_array().unwrap().len(),1);
+        assert_eq!(output["sessions"][0]["bridgeSessionId"],"shared");
+        assert_eq!(output["sessions"][0]["resumeAvailable"],false);
+        assert!(!output.to_string().contains("PRIVATE-THREAD"));
+        assert!(!output.to_string().contains("OTHER-THREAD"));
+        drop(state);let _=std::fs::remove_dir_all(dir);
+    }
     #[test]
     fn only_operator_provided_adapters_can_be_selected(){
         let list=parse_adapters(r#"{
