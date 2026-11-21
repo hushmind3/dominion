@@ -82,10 +82,11 @@ fixture no longer consumes a successful HTTP response body twice.
 Native mobile control sizes and focus outlines were widened in the existing
 panel, without adding new menus.
 
-Known validation edge: if the *durably stored execution status* was already
-marked `cancelled` by a concurrent owner action, SQLite's finalization CAS may
-reject a later proposed transition to `needs_review` rather than overriding
-the owner's terminal status. The model/tool fencing and original checkpoint
-remain authoritative for replay prevention. That race should be reproduced
-with a process-level cancellation test before changing the transaction
-contract; do not claim it is completely closed.
+Cancellation-review conflict now has an explicit, narrow SQLite transaction
+rule: an already-cancelled run may be finalized as `needs_review` only when
+the finalizer asserts owner cancellation and BOTH the persisted and proposed
+snapshots contain an unacknowledged paid model/tool fence. Completed runs and
+forged/stale reviews remain terminal. SQLite regression fixtures cover valid
+review upgrades, missing fences, and missing owner-cancel authority. Full
+process-level timing verification remains unexecuted in this authoring
+environment; do not claim that the crash race is end-to-end proven.
