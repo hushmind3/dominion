@@ -39,7 +39,16 @@ pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec
 /// do not attach an unrelated operation manual or memory retrieval batch.
 /// Long owner instructions remain exact even when this costs more tokens.
 pub(super) fn lightweight_chat_prompt(state:&AppState,request:&TurnRequest)->PromptContext{
-    let mut prompt=String::from("DOMINION. 사용자의 언어로 자연스럽고 간결하게 답하십시오.");
+    let mut prompt=String::from(if request.direct_chat {
+        "DOMINION. 당신은 사용자의 일반 대화를 돕는 AI 어시스턴트입니다. 사용자의 언어로 자연스럽고 정확하게 답하십시오."
+    }else{
+        "DOMINION. 사용자의 언어로 자연스럽고 간결하게 답하십시오."
+    });
+    if request.direct_chat {
+        prompt.push_str(&format!(
+            "\n현재 날짜: {}",chrono::Local::now().format("%Y-%m-%d")
+        ));
+    }
     let mut items=Vec::new();
     if let Some(agent)=request.agent_id.as_deref().and_then(|id|state.store.get("agent",id)){
         prompt.push_str(&format!("\n활성 에이전트: {} (id: {}).",
