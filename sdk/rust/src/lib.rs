@@ -49,7 +49,8 @@ pub struct Job {
 }
 impl Job {
     pub fn is_terminal(&self) -> bool {
-        matches!(self.status.as_str(), "completed" | "failed" | "cancelled" | "interrupted" | "needs_review")
+        harness::RunPhase::from_host_status(&self.status)
+            .is_some_and(|phase|phase.terminal())
     }
 }
 
@@ -358,7 +359,8 @@ mod tests {
     }
     #[test]
     fn terminal_status_is_engine_owned() {
-        for status in ["completed","failed","cancelled","interrupted","needs_review"] {
+        for status in ["completed","succeeded","failed","denied","exhausted",
+            "cancelled","interrupted","needs_review","in_doubt"] {
             let job = Job { id: "j".into(), kind: "prompt".into(), status: status.into(),
                 input: Value::Null,result:Value::Null,error:None,session_id:None,
                 attempts:0,step_index:0,step_total:0 };
