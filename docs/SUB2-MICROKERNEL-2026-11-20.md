@@ -287,3 +287,7 @@ ProgramIR의 기존 `parallel` 노드에 `dependsOn` 형제 ID를 정식 지원�
 ### P0: 익명 팀 구버전 ProgramIR 호환 및 증거 누락 시 격리
 
 과거 ProgramIR에서 `parallel.id`가 없더라도 서로 다른 팀이 동일한 `task_team_work` ID를 공유하지 않도록 구조 해시와 깊이·위치로 결정적 범위를 만들었습니다. 작업 완료 영수증이 DB에 없으면 `running→needs_review`를 기록하고 의존 작업 실행을 차단합니다. 주인 메시지 ID가 실행 레코드에 존재하면 Worker 상태 이벤트까지 그대로 전달하며 없는 경우는 임의로 추정하지 않습니다.
+
+### P0: Worker 결과 병합·팀 검증
+
+각 Task Team 파동이 끝나고 실제 작업 결과가 `task_team_work`에 기록된 뒤, 모든 자식이 완료됐음을 SQLite에서 재조회해 단일 `task_team_result`를 생성합니다. 결과에는 멤버별 도구 영수증 ID, 미검증/실패 관측 상태, 실측 `evidenceVerified`, 실패 개수를 포함합니다. 모델의 완료 문장은 어떤 성공 근거로도 인정하지 않습니다. `onFailure:continue` 없이 실패한 도구가 들어 있으면 팀 완료를 막고 검토 대상으로 격리합니다. 합쳐진 보고서 ID는 ProgramIR 체크포인트의 `teamResultRefs`에 저장하고, 재시작 시 중복 보고서를 생성하지 않도록 결정적 ID를 사용합니다.
