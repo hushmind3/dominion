@@ -10,13 +10,15 @@ use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
 use std::{collections::{HashMap,HashSet},sync::{Arc,LazyLock,Mutex},time::{Duration,Instant}};
 use tokio::sync::Mutex as AsyncMutex;
-use tokio_tungstenite::{tungstenite::{client::IntoClientRequest,http::HeaderValue,Message},
+use tokio_tungstenite::{connect_async_with_config,
+    tungstenite::{client::IntoClientRequest,http::HeaderValue,protocol::WebSocketConfig,Message},
     WebSocketStream,MaybeTlsStream};
 
 type Socket=WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 const MAX_AGE:Duration=Duration::from_secs(50*60);
 const IDLE_TIMEOUT:Duration=Duration::from_secs(180);
 const MAX_JOB_CHAINS:usize=64;
+const MAX_WS_MESSAGE_BYTES:usize=2*1024*1024;
 
 #[derive(Debug)]
 pub(crate) enum WsError {
@@ -195,8 +197,13 @@ async fn connect(route:&gateway::Route,account:&str,access:&str,transport_sessio
         let header=HeaderValue::from_str(&value).map_err(|e|e.to_string())?;
         headers.insert(name,header);
     }
+    let config=WebSocketConfig {
+        max_message_size:Some(MAX_WS_MESSAGE_BYTES),
+        max_frame_size:Some(MAX_WS_MESSAGE_BYTES),
+        ..WebSocketConfig::default()
+    };
     tokio::time::timeout(Duration::from_secs(20),
-        tokio_tungstenite::connect_async(request)).await
+        connect_async_with_config(request,Some(config),false)).await
         .map_err(|_|"Codex native WebSocket connect timeout".to_string())?
         .map(|(socket,_)|socket).map_err(|e|format!("Codex native WebSocket connect: {e}"))
 }
