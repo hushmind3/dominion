@@ -92,35 +92,47 @@ pub async fn events(
         })
         .unwrap_or(0);
     let bus = state.bus.clone();
-    let backlog = bus.replay(after, 500);
+    // Subscribe before the replay snapshot; otherwise events between replay
+    // and subscribe would never reach this connection.
     let mut receiver = bus.subscribe();
     let stream = async_stream::stream! {
         let mut last = after;
-        for value in backlog {
-            let seq = value["seq"].as_u64().unwrap_or(0);
-            last = last.max(seq);
-            yield Ok(Event::default().id(seq.to_string()).data(value.to_string()));
+        // Replay every available page, not only the first 500 global events.
+        // The persistent journal is bounded, but can still exceed one page.
+        loop {
+            let page=bus.replay(last,500);
+            if page.is_empty(){break;}
+            let len=page.len();
+            for value in page {
+                let seq=value["seq"].as_u64().unwrap_or(0);
+                if seq<=last{continue;}
+                last=seq;
+                yield Ok(Event::default().id(seq.to_string()).data(value.to_string()));
+            }
+            if len<500{break;}
         }
         loop {
             match receiver.recv().await {
                 Ok(value) => {
-                    let seq = value["seq"].as_u64().unwrap_or(0);
-                    if seq <= last {
-                        continue;
-                    }
-                    last = seq;
+                    let seq=value["seq"].as_u64().unwrap_or(0);
+                    if seq<=last{continue;}
+                    last=seq;
                     yield Ok(Event::default().id(seq.to_string()).data(value.to_string()));
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    // The live buffer is bounded. Replay the gap from the
-                    // durable log instead of silently dropping writes.
-                    for value in bus.replay(last, 500) {
-                        let seq = value["seq"].as_u64().unwrap_or(0);
-                        if seq <= last {
-                            continue;
+                    // A lagging receiver cannot jump directly to the latest
+                    // broadcast; drain every surviving durable page first.
+                    loop {
+                        let page=bus.replay(last,500);
+                        if page.is_empty(){break;}
+                        let len=page.len();
+                        for value in page {
+                            let seq=value["seq"].as_u64().unwrap_or(0);
+                            if seq<=last{continue;}
+                            last=seq;
+                            yield Ok(Event::default().id(seq.to_string()).data(value.to_string()));
                         }
-                        last = seq;
-                        yield Ok(Event::default().id(seq.to_string()).data(value.to_string()));
+                        if len<500{break;}
                     }
                 }
                 Err(_) => break,
