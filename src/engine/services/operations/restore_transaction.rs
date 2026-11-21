@@ -3,6 +3,7 @@
 //! On restart the previous pair is recovered before Store/Vault are opened.
 use crate::{config::Config,state::AppState};
 use std::{fs,io::Write,path::Path,sync::{Mutex,OnceLock}};
+use sha2::{Digest, Sha256};
 
 const DB_ROLLBACK:&str=".restore-rollback.sqlite";
 const KEY_ROLLBACK:&str=".restore-rollback.key";
@@ -67,6 +68,73 @@ pub fn recover_pending(config:&Config)->Result<(),String>{
     sync(dir)?;
     finish(dir)
 }
+/// A DOMVAULT1 snapshot contains SQLite and the vault key, but not the
+/// original attachment directory. Refuse a restore that would resurrect dead
+/// attachment IDs and falsely report a usable transcript. Legacy records
+/// without SHA256 still require exact byte length; new records verify SHA256.
+/// The verification SQLite file is temporary and never mutates the live DB.
+fn verify_snapshot_attachments(state:&AppState, db_bytes:&[u8]) -> Result<(),String> {
+    if !db_bytes.starts_with(b"SQLite format 3\0") {
+        return Err("복구 대상이 올바른 SQLite 데이터베이스가 아닙니다.".into());
+    }
+    let probe=state.config.data_dir.join(format!(
+        ".verify-attachments-{}.sqlite",uuid::Uuid::new_v4()
+    ));
+    fs::write(&probe,db_bytes).map_err(|e|format!("복구 검증 파일 생성 실패: {e}"))?;
+    let result=(|| -> Result<(),String> {
+        let conn=rusqlite::Connection::open_with_flags(&probe,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e|format!("복구 스냅샷 열기 실패: {e}"))?;
+        let mut stmt=conn.prepare(
+            "SELECT id,data FROM records WHERE kind='attachment'"
+        ).map_err(|e|format!("복구 첨부 목록 조회 실패: {e}"))?;
+        let mut rows=stmt.query([]).map_err(|e|e.to_string())?;
+        let root=state.config.data_dir.canonicalize()
+            .map_err(|_|"첨부 검증용 데이터 경로를 열 수 없습니다.")?;
+        let mut folder:Option<std::path::PathBuf>=None;
+        while let Some(row)=rows.next().map_err(|e|e.to_string())? {
+            let id:String=row.get(0).map_err(|e|e.to_string())?;
+            let metadata:String=row.get(1).map_err(|e|e.to_string())?;
+            uuid::Uuid::parse_str(&id)
+                .map_err(|_|"복구 대상에 잘못된 첨부 ID가 있습니다.".to_string())?;
+            let record:serde_json::Value=serde_json::from_str(&metadata)
+                .map_err(|_|"복구 첨부 기록이 손상되었습니다.".to_string())?;
+            let size=record["size"].as_u64()
+                .filter(|size|*size<=crate::engine::attachments::MAX_FILE as u64)
+                .ok_or("복구 첨부 파일 크기가 잘못되었습니다.")?;
+            if folder.is_none() {
+                let path=root.join("attachments").canonicalize()
+                    .map_err(|_|"복구 대상의 원본 첨부파일 저장 폴더가 없습니다.")?;
+                if !path.starts_with(&root) {
+                    return Err("첨부 저장 폴더가 복구 경계를 벗어났습니다.".into());
+                }
+                folder=Some(path);
+            }
+            let directory=folder.as_ref().ok_or("첨부 폴더가 없습니다.")?;
+            let path=directory.join(format!("{id}.bin")).canonicalize()
+                .map_err(|_|format!("복구 대상의 첨부 원본 {id}이 현재 저장소에 없습니다."))?;
+            if path.parent()!=Some(directory.as_path()) {
+                return Err("복구 첨부 원본이 저장 폴더를 벗어났습니다.".into());
+            }
+            let actual=fs::metadata(&path)
+                .map_err(|_|format!("첨부 {id}의 크기를 확인할 수 없습니다."))?;
+            if !actual.is_file() || actual.len()!=size {
+                return Err(format!("복구 첨부 {id}의 크기가 원본 기록과 다릅니다."));
+            }
+            if let Some(expected)=record["sha256"].as_str() {
+                let bytes=fs::read(&path)
+                    .map_err(|_|format!("복구 첨부 {id}을 읽을 수 없습니다."))?;
+                if format!("{:x}",Sha256::digest(&bytes))!=expected {
+                    return Err(format!("복구 첨부 {id}의 SHA-256 검증에 실패했습니다."));
+                }
+            }
+        }
+        Ok(())
+    })();
+    let _=fs::remove_file(&probe);
+    result
+}
+
 /// Restore a verified backup. Old DB and key remain available until DB
 /// swap, vault installation and migrations all succeed. Rollback is guarded
 /// by the same marker used after power loss or process termination.
@@ -76,6 +144,9 @@ pub fn restore(state:&AppState,bytes:&[u8],key:Option<[u8;32]>)->Result<(),Strin
     if dir.join(MARKER).exists(){
         return Err("interrupted restore needs recovery on restart".into());
     }
+    // Validate file references before any rollback marker or database swap.
+    // Existing encrypted backups never contained the original uploads.
+    verify_snapshot_attachments(state,bytes)?;
     let old_db=dir.join(DB_ROLLBACK);
     let old_key=dir.join(KEY_ROLLBACK);
     state.store.backup_to(&old_db)?;
