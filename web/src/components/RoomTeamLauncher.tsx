@@ -1,5 +1,5 @@
 import {useEffect,useRef,useState,type FormEvent} from 'react'
-import {AlertCircle,ArrowRight,Clock3,LoaderCircle,RefreshCw,Settings2,ShieldCheck,Sparkles,UsersRound} from 'lucide-react'
+import {AlertCircle,ArrowRight,Clock3,LoaderCircle,RefreshCw,Settings2,ShieldCheck,UsersRound} from 'lucide-react'
 import {post} from '../api'
 import {Button,SelectInput,TextArea} from './Primitives'
 import {Notice,refresh,useRemote} from './UI'

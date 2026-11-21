@@ -85,3 +85,42 @@
 .room-header>.conversation-settings{width:28px;height:32px;flex-shrink:0;color:#5C544A}.room-empty-header>.conversation-settings{margin-left:auto}.room-list-toggle{flex-shrink:0;padding:5px}
 
 .group-settings-trigger{flex-shrink:0}
+
+
+/* Room collaboration has its own readable task workspace. Do not alter the
+   global navigation or shrink the active chat transcript when it opens. */
+.room-team-dialog{width:min(100%,860px);max-width:860px;background:#FFFDF9}
+.room-team-dialog-header{position:sticky;top:0;z-index:3;display:flex;align-items:flex-start;justify-content:space-between;gap:16px;border-bottom:1px solid #E8DFD2;background:#FFFDF9;padding:23px 26px 19px}
+.room-team-eyebrow{font-size:11px;font-weight:750;letter-spacing:.09em;color:#A4583E}
+#root .room-team-dialog-header h2{margin:5px 0 6px;font-size:21px!important;line-height:1.35;font-weight:750;color:#342E27}
+.room-team-dialog-header p{max-width:620px;margin:0;font-size:13px;line-height:1.65;color:#7C7469}
+.room-team-dialog-content{padding:24px 26px 30px}
+.room-team-workspace{display:flex;min-width:0;flex-direction:column;gap:24px;color:#3A342D}
+.room-team-members{border:1px solid #E5D9CB;border-radius:16px;padding:17px 19px;background:#F8F3EA}
+.room-team-agent-list{display:flex;flex-wrap:wrap;gap:7px;margin-top:14px}
+.room-team-agent-chip{display:inline-flex;align-items:center;min-height:31px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid #E4D9CC;border-radius:999px;background:#FFFDFA;padding:5px 11px;font-size:12px;font-weight:600;color:#67594C}
+.room-team-section-number{display:inline-grid;flex-shrink:0;place-items:center;width:36px;height:36px;border-radius:12px;background:#EEE4D7;color:#A4583E;font-size:15px;font-weight:750}
+.room-team-permission{display:flex;flex-wrap:wrap;align-items:center;gap:13px;border:1px solid #F0D6B0;border-radius:13px;background:#FFF8ED;padding:14px;color:#8F642F}
+.room-team-advanced{border:1px solid #E5DCCE;border-radius:12px;background:#FBF8F3;padding:12px 15px}
+.room-team-advanced summary{list-style:none;min-height:28px}
+.room-team-advanced summary::-webkit-details-marker{display:none}
+.room-team-advanced summary::after{content:"⌄";margin-left:6px;font-size:17px;line-height:1;transition:transform .15s}
+.room-team-advanced[open] summary::after{transform:rotate(180deg)}
+.room-team-results{border-top:1px solid #E8DFD2;padding-top:24px}
+.room-team-launch-status{display:flex;align-items:flex-start;gap:12px;margin-top:16px;border:1px solid #E8D9BE;border-radius:12px;background:#FFFAF1;padding:14px;color:#8C6840}
+.room-team-launch-status-error{border-color:#F2C9C9;background:#FFF5F5;color:#A23E3E}
+.room-team-dialog button:focus-visible,.room-team-dialog a:focus-visible,.room-team-dialog summary:focus-visible,.room-team-trigger:focus-visible{outline:2px solid #A4583E;outline-offset:3px}
+.room-team-trigger{background:#F9F0E7!important;border-color:#E9D5C4!important;color:#8E4D34!important;font-weight:700!important}
+.room-team-trigger:hover,.room-team-trigger[aria-expanded="true"]{background:#F4E2D3!important}
+@media(max-width:639px){
+ .room-team-dialog{max-height:100dvh!important;height:100dvh;border:0;border-radius:0!important}
+ .room-team-dialog-header{padding:18px 17px 15px}
+ #root .room-team-dialog-header h2{font-size:19px!important}
+ .room-team-dialog-content{padding:18px 16px 28px}
+ .room-team-workspace{gap:20px}
+ .room-team-members{padding:15px}
+ .room-team-permission{align-items:flex-start}
+}
+@media(prefers-reduced-motion:reduce){
+ .room-team-advanced summary::after{transition:none}
+}
