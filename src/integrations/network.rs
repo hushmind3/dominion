@@ -149,7 +149,14 @@ pub(crate) async fn web_search(query: &str) -> Result<Value, String> {
         .send()
         .await
         .map_err(|error| error.to_string())?;
-    let html = response.text().await.map_err(|error| error.to_string())?;
+    let mut response=response;
+    let mut bytes=Vec::new();
+    while let Some(chunk)=response.chunk().await.map_err(|error|error.to_string())? {
+        if append_http_chunk(&mut bytes,&chunk) {
+            return Err("web_search 응답이 1 MiB 크기 제한을 초과했습니다.".into());
+        }
+    }
+    let html=String::from_utf8_lossy(&bytes);
     let mut results = Vec::new();
     for chunk in html.split("result__a").skip(1).take(10) {
         let Some(href_start) = chunk.find("href=\"") else {
