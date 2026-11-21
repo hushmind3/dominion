@@ -232,6 +232,14 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_job_active_status
                  ON records(kind, json_extract(data,'$.status'), json_extract(data,'$.queuedAt'))
                  WHERE kind='job';
+             CREATE INDEX IF NOT EXISTS idx_learning_job_history
+                 ON records(updated_at DESC,id DESC)
+                 WHERE kind='job' AND json_extract(data,'$.kind')='learn';
+             CREATE INDEX IF NOT EXISTS idx_learning_draft_skill_history
+                 ON records(updated_at DESC,id DESC)
+                 WHERE kind='skill' AND json_extract(data,'$.source')='learn'
+                   AND json_extract(data,'$.enabled')=0
+                   AND json_extract(data,'$.status')='draft';
              CREATE INDEX IF NOT EXISTS idx_operation_run
                  ON records(json_extract(data,'$.runId'))
                  WHERE kind='execution_operation';
@@ -489,6 +497,61 @@ impl Store {
         ).map_err(|e|e.to_string())?;
         let rows=stmt.query_map(rusqlite::params![kind,i64::try_from(limit).unwrap_or(i64::MAX)],
             record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// SQL-side aggregation for the memory overview avoids deserializing the
+    /// entire memory table just to render four category counters.
+    pub fn memory_overview_groups(&self)->Result<Vec<(String,String,usize)>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT 'type',CASE WHEN json_type(data,'$.type')='text'
+                    THEN json_extract(data,'$.type') ELSE 'fact' END,COUNT(*)
+             FROM records WHERE kind='memory' GROUP BY 2
+             UNION ALL
+             SELECT 'source',CASE WHEN json_type(data,'$.source')='text'
+                    THEN json_extract(data,'$.source') ELSE 'owner' END,COUNT(*)
+             FROM records WHERE kind='memory' GROUP BY 2
+             UNION ALL
+             SELECT 'status',CASE WHEN json_type(data,'$.status')='text'
+                    THEN json_extract(data,'$.status') ELSE 'active' END,COUNT(*)
+             FROM records WHERE kind='memory' GROUP BY 2
+             UNION ALL
+             SELECT 'scope',CASE WHEN json_type(data,'$.scope')='text'
+                    THEN json_extract(data,'$.scope') ELSE 'shared' END,COUNT(*)
+             FROM records WHERE kind='memory' GROUP BY 2"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([],|row|Ok((
+            row.get::<_,String>(0)?,row.get::<_,String>(1)?,
+            row.get::<_,i64>(2)?.max(0) as usize,
+        ))).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    pub fn recent_learning_jobs(&self,limit:usize)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             INDEXED BY idx_learning_job_history
+             WHERE kind='job' AND json_extract(data,'$.kind')='learn'
+             ORDER BY updated_at DESC,id DESC LIMIT ?1"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([i64::try_from(limit).unwrap_or(i64::MAX)],record_from_row)
+            .map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    pub fn recent_learning_draft_skills(&self,limit:usize)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             INDEXED BY idx_learning_draft_skill_history
+             WHERE kind='skill' AND json_extract(data,'$.source')='learn'
+               AND json_extract(data,'$.enabled')=0 AND json_extract(data,'$.status')='draft'
+             ORDER BY updated_at DESC,id DESC LIMIT ?1"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([i64::try_from(limit).unwrap_or(i64::MAX)],record_from_row)
+            .map_err(|e|e.to_string())?;
         rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 
