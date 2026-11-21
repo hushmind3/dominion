@@ -91,6 +91,30 @@ pub(super) fn pure_greeting(input:&str)->bool {
         "고마워"|"고마워요"|"감사합니다")
 }
 
+/// Only context-free explanatory requests can skip tool discovery safely.
+/// A deictic follow-up, evidence/source lookup, recent/current fact or owner
+/// work request must retain the existing authorized tool and history path.
+pub(super) fn standalone_explanation(input:&str)->bool {
+    let lower=input.trim().to_lowercase();
+    if lower.len()>500 || lower.chars().count()<4 {return false;}
+    const CONTEXT:&[&str]=&[
+        "그거","그것","이거","이것","저거","위에서","앞에서","방금","아까",
+        "전에","이전","이어","계속","다시","지난","현재","최신","오늘","지금",
+        "실시간","출처","원문","원본","링크","근거","자료","첨부","내가",
+        "우리","내 ","my ","our ","this ","that ","above","previous",
+        "검색","찾아","조사","확인","읽어","수정","작성","저장","실행",
+        "빌드","테스트","코드","파일","깃허브","github","브랜치",
+        "url","http","계정","예약","메시지","업로드","전송",
+        "원화","환율","가격","날씨","속보"
+    ];
+    if CONTEXT.iter().any(|word|lower.contains(word)) {return false;}
+    ["뭐야","뭔가요","뭐예요","무엇인가","무엇인가요",
+     "개념 설명","개념을 설명","원리 설명","뜻을 설명",
+     "설명해줘","설명해주세요","어떤 뜻","무슨 뜻",
+     "차이가 뭐","차이점 설명","what is ","explain ","define "]
+        .iter().any(|word|lower.contains(word))
+}
+
 /// Casual room turns carry zero tool schemas. Action requests select the
 /// exact native schemas the harness judges relevant; no model call is used.
 pub(super) fn room_tool_request(input: &str) -> bool {
@@ -396,6 +420,21 @@ mod room_catalog_cache_tests {
             "안녕하세요. 어제 작업 이어서 해주세요","웹 검색해줘",
             "비용 계산해줘","이것 좀 설명해줘"] {
             assert!(!pure_greeting(input),"{input}");
+        }
+    }
+
+    #[test]
+    fn context_free_explanations_skip_unrelated_tools_without_losing_followups(){
+        for question in ["양자 얽힘이 뭐야?","추상화 원리 설명해줘",
+            "이론과 가설의 차이가 뭐야?","What is an event loop?"] {
+            assert!(standalone_explanation(question),"{question}");
+        }
+        for request in ["그거 설명해줘","아까 원문 링크 설명해줘",
+            "전에 하던 작업 계속해","오늘 최신 뉴스 설명해줘",
+            "파일 구조 설명해줘","깃허브 브랜치 설명해줘",
+            "업로드한 자료 설명해줘","내 계정 상태 설명해줘",
+            "웹 검색해줘","그런데 어제 이야기 기억해?"] {
+            assert!(!standalone_explanation(request),"{request}");
         }
     }
 
