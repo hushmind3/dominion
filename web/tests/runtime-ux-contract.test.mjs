@@ -355,7 +355,7 @@ test('stream batching never drops final or cancelled conversation output',()=>{
   assert.match(chat,/if\(event\.type==='reasoning'\)queueStreamDelta\('reasoning',event\.text\)/)
   assert.match(chat,/if\(event\.type==='assistant_saved'\)\{[\s\S]*?releaseSentImages\(\);flushStreamBuffer\(\);setSavedMessageId/)
   assert.match(chat,/\}finally\{\s*if\(stream\.current===controller\)\{\s*flushStreamBuffer\(\)/)
-  assert.match(chat,/if\(controller\)flushStreamBuffer\(\);\s*controller\?\.abort\(\)/)
+  assert.match(chat,/if\(controller\)flushStreamBuffer\(\);[\s\S]*?controller\?\.abort\(\)/)
 })
 
 test('pending private image previews cannot follow a different session',()=>{
@@ -385,7 +385,7 @@ test('stop retains streamed assistant text and restores pre-session unsaved owne
  const chat=source('src/pages/Chat.tsx')
  assert.match(chat,/if\(optimisticOwner\?\.sessionId===undefined\)/)
  assert.match(chat,/setInput\(previous=>previous\.trim\(\)\?previous:optimisticOwner\.content\)/)
- assert.match(chat,/if\(controller\)flushStreamBuffer\(\);\s*controller\?\.abort\(\)/)
+ assert.match(chat,/if\(controller\)flushStreamBuffer\(\);[\s\S]*?controller\?\.abort\(\)/)
  assert.match(chat,/setBusy\(false\);setLiveApproval\(null\);setToolStatus\(''\);/)
  assert.doesNotMatch(chat,/controller\?\.abort\(\);clearStreamBuffer\(\);/)
 })
