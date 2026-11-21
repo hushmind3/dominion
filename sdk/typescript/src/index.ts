@@ -74,7 +74,7 @@ export interface RunRef {
  version:1;surface:RunSurface;runId:string;parentRunId:string|null;
 }
 export interface RunView {
- ref:RunRef;phase:RunPhase;status:string;terminal:boolean;reviewRequired:boolean;
+ ref:RunRef;phase:RunPhase;status:string;terminal:boolean;reviewRequired:boolean;ownerActionRequired:boolean;
  attempt:number|null;sessionId:string|null;providerId:string|null;model:string|null;
  startedAt:string|null;finishedAt:string|null;sourceJournal:'job'|'execution';
 }
