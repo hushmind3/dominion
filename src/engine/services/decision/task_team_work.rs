@@ -110,8 +110,21 @@ pub fn claim(state:&AppState,assigned:&Value)->Result<Value,String>{
     // A stale worker cannot claim after a competing process reassigned
     // this still-queued work. Compare the status AND the exact worker ID
     // atomically before granting any delegation authority.
-    let guards=[("status",json!("assigned")),
-        ("agentId",assigned["agentId"].clone())];
+    // Work IDs are deterministic, but the caller's snapshot must still
+    // belong to the same execution/revision/node. A valid worker ID is not
+    // enough to claim a different scoped task after replay or recovery.
+    let guards=[
+        ("status",json!("assigned")),
+        ("agentId",assigned["agentId"].clone()),
+        ("executionId",assigned["executionId"].clone()),
+        ("sessionId",assigned["sessionId"].clone()),
+        ("programRevision",assigned["programRevision"].clone()),
+        ("teamNodeId",assigned["teamNodeId"].clone()),
+        ("index",assigned["index"].clone()),
+        ("nodeId",assigned["nodeId"].clone()),
+        ("nodeType",assigned["nodeType"].clone()),
+        ("requestedAgentId",assigned["requestedAgentId"].clone()),
+    ];
     let refs=guards.iter().map(|(key,value)|(*key,value)).collect::<Vec<_>>();
     let saved=state.store.patch_if_all_merge("task_team_work",id,&refs,
         &json!({"status":"running","attempt":1,
@@ -308,6 +321,16 @@ mod tests{
         assert_eq!(first["status"],"assigned");
         assert_eq!(assign(&state,"s","run-a","r1","team",0,&node).unwrap()["id"],first["id"]);
         assert!(assign(&state,"wrong","run-a","r1","team",0,&node).is_err());
+        let mut wrong_scope=first.clone();
+        wrong_scope["teamNodeId"]=json!("other-team");
+        assert!(claim(&state,&wrong_scope).is_err(),
+            "a reused work ID must not claim another team scope");
+        let mut wrong_revision=first.clone();
+        wrong_revision["programRevision"]=json!("other-revision");
+        assert!(claim(&state,&wrong_revision).is_err(),
+            "a reused work ID must not claim another program revision");
+        assert_eq!(state.store.get("task_team_work",
+            first["id"].as_str().unwrap()).unwrap()["status"],"assigned");
         let live=claim(&state,&first).unwrap();
         assert!(claim(&state,&first).is_err());
         let checkpoint=json!({"completedOperationIds":["write"]});
