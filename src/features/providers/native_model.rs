@@ -337,10 +337,12 @@ pub(crate) struct StreamProgress<'a> {
     events:usize,
     visible:String,
     calls:Vec<Value>,
+    last_recorded:std::time::Instant,
 }
 impl<'a> StreamProgress<'a> {
     pub(crate) fn new(state:Option<&'a AppState>,session:&'a str,job_id:Option<&'a str>,protocol:&'static str)->Self {
-        Self {state,session,job_id,protocol,events:0,visible:String::new(),calls:Vec::new()}
+        Self {state,session,job_id,protocol,events:0,visible:String::new(),
+            calls:Vec::new(),last_recorded:std::time::Instant::now()}
     }
     pub(crate) fn record(&self,stage:&str)->Result<(),String> {
         let (Some(state),Some(job_id))=(self.state,self.job_id)else{return Ok(());};
@@ -366,6 +368,7 @@ impl<'a> StreamProgress<'a> {
         ->Result<(),String> {
         for change in changes {
             self.events+=1;
+            let mut urgent=false;
             match change {
                 crate::engine::native_stream::Update::Text(text)=>{
                     self.visible.push_str(&text);
@@ -387,12 +390,18 @@ impl<'a> StreamProgress<'a> {
                                 "event":{"type":"model_tool_pending","id":id,"name":name}}));
                         }
                     }
-                    self.record("receiving")?;
+                    urgent=true;
                 }
             }
-            // Persist the first real delta promptly for the owner panel.
-            // Subsequent deltas remain batched to avoid a SQLite write per token.
-            if self.events==1 || self.events%24==0 {self.record("receiving")?;}
+            // A slow provider may take many seconds to emit 24 deltas. Bound
+            // the owner panel's staleness without writing one SQLite row per
+            // token: first delta, meaningful tool transition, every 24
+            // events, or at most one time-driven update per 600 ms.
+            if urgent || self.events==1 || self.events%24==0
+                || self.last_recorded.elapsed()>=Duration::from_millis(600) {
+                self.record("receiving")?;
+                self.last_recorded=std::time::Instant::now();
+            }
         }
         Ok(())
     }
@@ -903,6 +912,33 @@ mod tests {
         assert_eq!(stored["nativeStream"]["executable"],false,
             "A stream preview never authorizes a tool effect");
     }
+    #[test]
+    fn slow_native_stream_refreshes_preview_without_per_token_disk_writes(){
+        let state=mock_state("http://127.0.0.1:9","openai");
+        state.store.put("job",&json!({
+            "id":"slow-preview","kind":"prompt","status":"running",
+            "sessionId":"slow-session"
+        })).unwrap();
+        let mut progress=StreamProgress::new(
+            Some(&state),"slow-session",Some("slow-preview"),"chat");
+        progress.updates(vec![
+            crate::engine::native_stream::Update::Text("first".into())
+        ]).unwrap();
+        progress.updates(vec![
+            crate::engine::native_stream::Update::Text(" second".into())
+        ]).unwrap();
+        assert_eq!(state.store.get("job","slow-preview").unwrap()
+            ["nativeStream"]["visibleTail"],"first",
+            "Rapid token fragments must remain batched");
+        progress.last_recorded=std::time::Instant::now()-Duration::from_secs(1);
+        progress.updates(vec![
+            crate::engine::native_stream::Update::Text(" third".into())
+        ]).unwrap();
+        assert_eq!(state.store.get("job","slow-preview").unwrap()
+            ["nativeStream"]["visibleTail"],"first second third",
+            "A slow token stream must not leave the UI stale for 24 events");
+    }
+
     #[tokio::test]
     async fn native_openai_compatible_http_wire_returns_structured_sdk_action() {
         use axum::{routing::post,Router,Json};
