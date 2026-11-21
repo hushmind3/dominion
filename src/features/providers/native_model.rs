@@ -721,7 +721,7 @@ mod tests {
         }
         assert!(parse_chat(&chat(json!("stop"),json!([{
             "id":"call_1","function":{"name":"workspace_write",
-                "arguments":"{\\"path\\":\\"data.txt\\"}"}
+                "arguments":r#"{"path":"data.txt"}"#}
         }]))).is_err(),"a text stop must not dispatch a tool");
         assert!(parse_chat(&chat(json!("tool_calls"),empty)).is_err(),
             "tool_calls stop without a call is not a complete turn");
