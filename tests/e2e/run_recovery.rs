@@ -384,6 +384,15 @@ fn live_restore_requires_maintenance_and_preserves_backup_executions() {
         vec![json!({"choices":[{"delta":{"content":"복구 드릴 응답"},"finish_reason":"stop"}]})]
     });
     let app = TestApp::new(port, "native");
+    // Real HTTP request, not only a CORS header test: a DNS-rebound owner GET
+    // must be refused even though it targets the 127.0.0.1 listener.
+    let hostile = app.client
+        .get(format!("{}/api/sessions", app.base))
+        .header(reqwest::header::HOST, "untrusted.example:4317")
+        .send().unwrap();
+    assert_eq!(hostile.status(), reqwest::StatusCode::FORBIDDEN);
+    assert!(app.get("/api/sessions").is_array(),
+        "ordinary loopback owner reads must remain available");
     let stream = app.chat(&json!({"input":"복구 드릴 작업","autoLearning":false}));
     assert!(!stream.contains("\"type\":\"error\""), "{stream}");
     let executions = app.get("/api/executions");
