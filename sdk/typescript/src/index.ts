@@ -173,7 +173,8 @@ export class Dominion {
   private token: string;
   private readonly fetcher: typeof fetch;
   constructor(options: ClientOptions = {}) {
-    this.baseUrl = (options.baseUrl ?? 'http://127.0.0.1:4317').replace(/\/+$/, '');
+    // Match this candidate's Rust default. Explicit baseUrl can target another instance.
+    this.baseUrl = (options.baseUrl ?? 'http://127.0.0.1:4321').replace(/\/+$/, '');
     if (this.baseUrl && !/^https?:\/\//i.test(this.baseUrl)) throw new TypeError('baseUrl must be HTTP(S) or empty for same-origin');
     this.token = options.token?.trim() ?? '';
     this.fetcher = options.fetch ?? globalThis.fetch.bind(globalThis);
