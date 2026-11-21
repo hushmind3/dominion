@@ -39,6 +39,12 @@ fn plan(nodes:&[Value])->Result<Vec<Vec<usize>>,String>{
         if node.get("readOnly").is_some()&&!node["readOnly"].is_boolean(){
             return Err(format!("{id}: readOnly must be boolean"));
         }
+        if node["artifactPaths"].is_array() || node.get("artifactPaths").is_some(){
+            if !node["remoteWorkerId"].is_string(){
+                return Err("artifactPaths require a remote Worker".into());
+            }
+            crate::remote::validate_artifact_paths(&node["artifactPaths"],node["readOnly"]!=false)?;
+        }
         if let Some(remote)=node.get("remoteWorkerId").filter(|v|!v.is_null()){
             let id=remote.as_str().ok_or("remoteWorkerId must be a string")?;
             if id.is_empty() || id.len()>80 ||
@@ -78,7 +84,8 @@ fn member(ctx:&ToolContext<'_>,team_id:&str,node:&Value)->Result<Value,String>{
         || saved["dependsOn"]!=node["dependsOn"]
         || saved["readOnly"]!=json!(node["readOnly"]!=false)
         || saved["successCriteria"]!=node["successCriteria"]
-        || saved["remoteWorkerId"]!=node["remoteWorkerId"]{
+        || saved["remoteWorkerId"]!=node["remoteWorkerId"]
+        || saved["artifactPaths"]!=node["artifactPaths"]{
         return Err("Managed team task identity or plan changed after commit".into());
     }
     Ok(saved)
@@ -118,6 +125,9 @@ fn summary(ctx:&ToolContext<'_>,team:&Value)->Result<Value,String>{
             "acceptanceCheckCount":row["successCriteria"].as_array().map_or(0,Vec::len),
             "status":status,"jobId":row["jobId"],
             "remoteWorkerId":row["remoteWorkerId"],"remoteTaskId":row["remoteTaskId"],
+            "artifactPaths":row["artifactPaths"],
+            "artifactApplyStatus":remote.as_ref()
+                .map(|v|v["artifactApplyStatus"].clone()).unwrap_or(Value::Null),
             "remoteUsage":remote.as_ref().map(|task|task["usage"].clone()).unwrap_or(Value::Null),
             "sessionId":row["workerSessionId"],
             "verified":row["verified"]==true,
@@ -313,7 +323,7 @@ async fn launch(ctx:&ToolContext<'_>,team_id:&str,node:&Value,nodes:&[Value])->R
     ctx.state.bus.record("managed_team_task",&claim);
     let prompt=format!("{}{}",node["prompt"].as_str().unwrap_or(""),sources);
     if node["remoteWorkerId"].is_string(){
-        let committed=crate::remote::submit(ctx.state,team_id,node,&prompt);
+        let committed=crate::remote::submit(ctx.state,team_id,node,&prompt,ctx.workspace);
         match committed{
             Ok(task)=>{
                 let saved=ctx.store.patch_if("managed_team_task",id,"status",
@@ -405,6 +415,7 @@ fn create(ctx:&ToolContext<'_>,args:&Value,run_id:&str)->Result<Value,String>{
             "prompt":node["prompt"],"dependsOn":node["dependsOn"],
             "readOnly":node["readOnly"]!=false,
             "remoteWorkerId":node["remoteWorkerId"],
+            "artifactPaths":node["artifactPaths"],
             "successCriteria":node["successCriteria"],
             "status":"assigned",
         });
