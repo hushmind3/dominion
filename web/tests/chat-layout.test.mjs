@@ -69,3 +69,10 @@ test('chat drafts are tab-local and scoped to the current conversation',()=>{
  assert.match(hook,/current\.key===key\?current\.text:read\(key\)/)
  assert.match(chat,/if\(!current\)setInput\(''\)/)
 })
+
+test('Room message drafts are per room, restored on remount and cleared only on committed send',()=>{
+ const rooms=readFileSync(root+'src/pages/Rooms.tsx','utf8')
+ assert.match(rooms,/useChatDraft\('room:'\+room\.id\)/)
+ assert.match(rooms,/setInput\(''\);if\(inputRef\.current\)inputRef\.current\.style\.height=''\;setTargets\(\[\]\)/)
+ assert.match(rooms,/if\(!creating\|\|saving\)return/)
+})

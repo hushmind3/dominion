@@ -14,6 +14,7 @@ import {Button,TextArea,TextInput,SelectInput} from '../components/Primitives'
 import {DialogBackdrop,DialogPanel} from '../components/Dialog'
 import {FormField,Notice,refresh,useRemote} from '../components/UI'
 import {ReasoningSelect} from '../components/ReasoningSelect'
+import {useChatDraft} from '../hooks/useChatDraft'
 import './Rooms.css'
 import {t,useLocale,getLocale,type LocaleKey} from '../i18n'
 import {translateError} from '../i18n/errors'
@@ -155,7 +156,10 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
  const [reasoningEffort,setReasoningEffort]=useState(''),[permissionOpen,setPermissionOpen]=useState(false),[recipientsOpen,setRecipientsOpen]=useState(false)
  const recipientsPanel=useAnchoredPanel(recipientsOpen,()=>setRecipientsOpen(false),280,'top')
  useEffect(()=>{if(!visibleView){setRecipientsOpen(false);setPermissionOpen(false);setShowSettings(false)}else setReasoningKo(koreanReasoningEnabled())},[visibleView])
- const [input,setInput]=useState(''),[targets,setTargets]=useState<string[]>([]),[sending,setSending]=useState(false),[stopping,setStopping]=useState(false)
+ // Switching rooms remounts this conversation. Preserve its unsent owner
+ // message in a room-specific tab draft, never carry it to another room.
+ const [input,setInput]=useChatDraft('room:'+room.id)
+ const [targets,setTargets]=useState<string[]>([]),[sending,setSending]=useState(false),[stopping,setStopping]=useState(false)
  const [inspector,setInspector]=useState(false),[draft,setDraft]=useState<RoomDraft>(()=>draftOf(room)),[dirty,setDirty]=useState(false),[saving,setSaving]=useState(false),[saved,setSaved]=useState(false)
  const [knowledgeOpen,setKnowledgeOpen]=useState(false),[knowledge,setKnowledge]=useState<any[]>([]),[knowledgeBusy,setKnowledgeBusy]=useState(false),[knowledgeNotice,setKnowledgeNotice]=useState('')
  const [approvalBusy,setApprovalBusy]=useState('')
