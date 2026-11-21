@@ -26,12 +26,22 @@ type InputContext = {
  requiredOverBudget?:boolean;
  providerPromptTokens?:number|null;
  providerCachedPromptTokens?:number|null;
+ providerNewPromptTokens?:number|null;
+ providerOutputTokens?:number|null;
+ providerContextTokens?:number|null;
  modelCallUsage?:ModelCallUsage[];
 }
 type ExecutionEvidence = {
  id:string;status?:string;contextPolicy?:string;
  modelCalls?:number;toolCalls?:number;tokens?:number;
  discoveredTools?:string[];inputContext?:InputContext;
+ modelAccounting?:{
+  usageComplete?:boolean;tokenScope?:string;primaryTokens?:number|null;
+  auxiliaryObservedTokens?:number|null;observedTotalTokens?:number|null;
+  auxiliaryLogicalCalls?:number|null;primaryCalls?:number|null;reason?:string|null;
+ };
+ taskOutcome?:string|null;verified?:boolean;acceptancePassed?:boolean;
+ failureClass?:string|null;reason?:string|null;
 }
 const fmt=(value?:number|null):string=>
  typeof value==='number'&&Number.isFinite(value)?value.toLocaleString():'—'
@@ -51,6 +61,16 @@ export function ExecutionInsights({executionId,compact=false}:{executionId:strin
  const firstPrompt=first?.usageExact?first.promptTokens:
   first?.estimatedPromptTokens??ctx?.totalInputTokens
  const schemaCount=record?.discoveredTools?.length
+ const accounting=record?.modelAccounting
+ const exactCalls=calls.filter(call=>call.usageExact===true).length
+ const estimatedCalls=calls.filter(call=>call.usageExact===false).length
+ const totalCalls=calls.length
+ const exactAggregate=totalCalls>0&&estimatedCalls===0&&exactCalls===totalCalls
+ const cached=ctx?.providerCachedPromptTokens
+ const promptTotal=ctx?.providerPromptTokens
+ const outputTotal=ctx?.providerOutputTokens
+ const uncached=ctx?.providerNewPromptTokens
+ const verified=record?.verified===true||record?.taskOutcome==='succeeded'
  const entries=[
   [en?'System':'시스템',ctx?.systemTokens],
   [en?'Past conversation':'이전 대화',ctx?.historyTokens],
@@ -86,6 +106,39 @@ export function ExecutionInsights({executionId,compact=false}:{executionId:strin
       <span className="truncate text-[#8A8176]">{label}</span><strong className="shrink-0">{fmt(value)}</strong>
      </div>)}
     </div>
+    <div className="mt-3 rounded-lg border border-[#EFE9DF] bg-white p-3">
+     <div className="flex flex-wrap items-center justify-between gap-2">
+      <strong className="text-[11px] text-[#3A342D]">{en?'Model token accounting':'모델 토큰 정산'}</strong>
+      <span className={'rounded-md px-2 py-0.5 text-[10px] '+(exactAggregate?'bg-emerald-50 text-emerald-800':'bg-[#F3EEE5] text-[#7C7469]')}>
+       {exactAggregate?(en?'Provider measured':'전부 공급자 실측'):estimatedCalls>0?(en?'Includes estimates':'추정값 포함'):(en?'Measurement unavailable':'실측 여부 미상')}
+      </span>
+     </div>
+     <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
+      <div><small className="block text-[#8A8176]">{en?'Input total':'입력 합계'}</small><strong>{fmt(promptTotal)}</strong></div>
+      <div><small className="block text-[#8A8176]">{en?'Cached input':'캐시 입력'}</small><strong>{fmt(cached)}</strong></div>
+      <div><small className="block text-[#8A8176]">{en?'New input':'신규 입력'}</small><strong>{fmt(uncached)}</strong></div>
+      <div><small className="block text-[#8A8176]">{en?'Output total':'출력 합계'}</small><strong>{fmt(outputTotal)}</strong></div>
+     </div>
+     <p className="mt-2 text-[10px] text-[#8A8176]">{en?'Provider calls measured':'공급자 실측 호출'} {exactCalls} / {totalCalls} · {en?'Estimated calls':'추정 호출'} {estimatedCalls}</p>
+     {accounting&&<div className="mt-2 flex flex-wrap gap-3 border-t border-[#EFE9DF] pt-2 text-[10px]">
+      <span>{en?'Primary tokens':'주 모델 토큰'}: {fmt(accounting.primaryTokens)}</span>
+      <span>{en?'Auxiliary tokens':'보조 모델 토큰'}: {fmt(accounting.auxiliaryObservedTokens)}</span>
+      <span>{en?'Total observed':'기록된 전체'}: {fmt(accounting.observedTotalTokens)}</span>
+      <span>{accounting.usageComplete?(en?'Complete receipt coverage':'호출 기록 완비'):(en?'Partial receipt coverage':'호출 기록 일부 누락')}</span>
+     </div>}
+     <p className="mt-2 text-[10px] text-[#8A8176]">{en
+      ?'KRW cost: unavailable without an attributable provider price. No price is fabricated.'
+      :'원화 비용: 호출별 공급자 단가가 연결되지 않아 표시하지 않습니다. 임의 비용은 계산하지 않습니다.'}</p>
+    </div>
+    {(record.taskOutcome||record.reason||record.failureClass)&&<div className="mt-3 rounded-lg border border-[#EFE9DF] bg-white p-3 text-[11px]">
+     <strong>{en?'Execution verification':'실행 검증·결과'}</strong>
+     <div className="mt-1 flex flex-wrap gap-2">
+      <span className={'rounded border px-2 py-0.5 '+(verified?'border-emerald-200 bg-emerald-50 text-emerald-800':'border-amber-200 bg-amber-50 text-amber-800')}>{verified?(en?'Verified success':'성공 검증'):(record.taskOutcome||'unverified')}</span>
+      {record.acceptancePassed===true&&<span>{en?'Acceptance checks passed':'수락 조건 통과'}</span>}
+     </div>
+     {record.failureClass&&<p className="mt-1 text-rose-700">{record.failureClass}</p>}
+     {record.reason&&<p className="mt-1 break-words text-rose-700">{record.reason}</p>}
+    </div>}
     <p className="mt-2 text-[10px] leading-4 text-[#8A8176]">{en
       ?'Breakdown values are pre-send estimates. Per-call values use provider reports when available; cache misses are never inferred from missing data.'
       :'구성별 숫자는 전송 전 추정치입니다. 호출별 수치는 가능한 경우 공급자 실측값을 사용하며, 캐시 정보가 없으면 0으로 표시하지 않습니다.'}</p>
