@@ -295,11 +295,16 @@ fn parse_codex(value:&Value)->Result<ModelTurn,String> {
     let mut parts=Vec::new();let mut actions=Vec::new();
     for item in value["output"].as_array().into_iter().flatten() {
         match item["type"].as_str() {
-            Some("function_call")=>actions.push(decode_call(
-                item["call_id"].as_str().or_else(||item["id"].as_str())
-                    .ok_or("Codex function call missing id")?,
-                item["name"].as_str().ok_or("Codex function call missing name")?,
-                &item["arguments"])?),
+            Some("function_call")=>{
+                if item["status"].as_str().is_some_and(|status|status!="completed") {
+                    return Err("Codex returned an incomplete function_call item".into());
+                }
+                actions.push(decode_call(
+                    item["call_id"].as_str().or_else(||item["id"].as_str())
+                        .ok_or("Codex function call missing id")?,
+                    item["name"].as_str().ok_or("Codex function call missing name")?,
+                    &item["arguments"])?);
+            },
             Some("message")=>for block in item["content"].as_array().into_iter().flatten(){
                 if matches!(block["type"].as_str(),Some("output_text"|"text")) {
                     if let Some(text)=block["text"].as_str() {parts.push(text.to_string());}
@@ -866,6 +871,21 @@ mod tests {
         ],None,None).is_err());
         assert!(decode_call("call","read",&json!("[1]")).is_err());
     }
+    #[test]
+    fn native_codex_refuses_incomplete_per_item_function_call_even_if_response_completed(){
+        let result=json!({"status":"completed","output":[{
+            "type":"function_call","status":"incomplete",
+            "call_id":"pending-1","name":"workspace_read",
+            "arguments":"{}"
+        }]});
+        assert!(parse_codex(&result).is_err(),
+            "An incomplete tool item must never become an SDK action");
+        let mut settled=result;
+        settled["output"][0]["status"]=json!("completed");
+        let accepted=parse_codex(&settled).unwrap();
+        assert_eq!(accepted.decision.unwrap().actions[0].id,"pending-1");
+    }
+
     #[test]
     fn native_codex_sse_requires_terminal_success_and_complete_output() {
         let raw=format!("event: response.completed\ndata: {}\n\n",
