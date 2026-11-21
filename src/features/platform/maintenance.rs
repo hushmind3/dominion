@@ -69,8 +69,9 @@ fn offsite_directory() -> Option<PathBuf> {
 pub fn create_snapshot(state: &AppState) -> Result<PathBuf, String> {
     let directory = state.config.data_dir.join("backups");
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let id = uuid::Uuid::new_v4();
     let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
-    let temp = directory.join(format!(".backup-{}.tmp", uuid::Uuid::new_v4()));
+    let temp = directory.join(format!(".backup-{id}.tmp"));
     let _cleanup = RemoveFileOnDrop(temp.clone());
     state.store.backup_to(&temp)?;
     let bytes = std::fs::read(&temp).map_err(|error| error.to_string())?;
@@ -81,8 +82,11 @@ pub fn create_snapshot(state: &AppState) -> Result<PathBuf, String> {
     container.extend_from_slice(&state.vault.primary_key());
     container.extend_from_slice(&bytes);
     let sealed = ring.encrypt(&container)?;
-    let path = directory.join(format!("dominion-{stamp}.sqlite.enc"));
-    std::fs::write(&path, &sealed).map_err(|error| error.to_string())?;
+    let staged = directory.join(format!(".backup-{id}.enc.tmp"));
+    let _staged_cleanup = RemoveFileOnDrop(staged.clone());
+    std::fs::write(&staged, &sealed).map_err(|error| error.to_string())?;
+    let path = directory.join(format!("dominion-{stamp}-{id}.sqlite.enc"));
+    std::fs::rename(&staged, &path).map_err(|error| error.to_string())?;
     if let Some(offsite) = offsite_directory() {
         std::fs::create_dir_all(&offsite).map_err(|error| error.to_string())?;
         std::fs::copy(&path, offsite.join(path.file_name().unwrap_or_default()))
