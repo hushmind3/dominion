@@ -263,6 +263,9 @@ pub fn route_from_provider(
         .or_else(|| provider["maxOutputTokens"].as_u64());
     let tool_mode=default_tool_mode(provider,&kind);
     let capabilities=ModelCapabilities::from_provider(provider,&model,&tool_mode);
+    let disable_thinking=capabilities.reasoning
+        .map(|supported|!supported)
+        .unwrap_or_else(||disable_thinking(provider,local));
     Ok(Route {
         capabilities,
         name: provider["name"]
@@ -272,9 +275,7 @@ pub fn route_from_provider(
         tool_mode,
         reasoning_protocol: default_reasoning_protocol(provider, &kind, &model, &id),
         local,
-        disable_thinking:capabilities.reasoning
-            .map(|supported|!supported)
-            .unwrap_or_else(||disable_thinking(provider,local)),
+        disable_thinking,
         context_tokens,
         max_output_tokens,
         requests_per_minute: provider["requestsPerMinute"]
