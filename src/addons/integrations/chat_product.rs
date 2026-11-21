@@ -137,7 +137,7 @@ impl Host for MainTurn<'_> {
             // Explicit research is an owner instruction with an observable
             // postcondition. The model must not bypass it by writing fluent
             // unsourced prose. Keep ordinary chats on the zero-search path.
-            if !self.is_room {
+            if !self.is_room && !self.request.direct_chat {
                 let observations=tool_dispatch::run_required_web_search(
                     self.state,&self.request,self.tx,self.session_id,
                     self.execution_id,&mut self.op_seq,metrics,
