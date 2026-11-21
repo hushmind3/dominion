@@ -348,7 +348,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     activeTurnSession.current=id;
     if(view.current===current){
      onSession(id);setTurnSession(id);
-     setPendingOwner(previous=>previous?.scope===current?{...previous,scope:id}:previous);
+     setPendingOwner(previous=>previous&&previous.scope===current?{...previous,scope:id}:previous);
      setModeChoice({scope:id,mode});
      if(agentMode&&agentId)setAgentChoice({id:agentId,scope:id});
      if(manual)setOverride({...manual,scope:id});
@@ -378,7 +378,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     setError(translateError((e as Error).message));
     // A failed stream can follow a persisted owner message; do not fabricate
     // a successful send or automatically retry an uncertain paid request.
-    setPendingOwner(previous=>previous?.scope===id?{...previous,failed:true}:previous);
+    setPendingOwner(previous=>previous&&previous.scope===id?{...previous,failed:true}:previous);
    }
   }finally{
    if(stream.current===controller){
