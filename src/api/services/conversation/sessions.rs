@@ -41,7 +41,7 @@ fn private_transcript_has_pending_work(state: &AppState, id: &str) -> bool {
                 })
         })
         || state.store.all("managed_team").iter().any(|team| {
-            team["leadSessionId"] == id && team["status"] == "running"
+            team["leadSessionId"].as_str() == Some(id) && team["status"] == "running"
         })
 }
 
@@ -450,6 +450,43 @@ mod deletion_tests {
         assert!(engine::attachments::read(&state, &one_id).is_err());
         assert!(engine::attachments::read(&state, &two_id).is_ok());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn clearing_private_chat_revokes_uploaded_file_bytes_but_retains_session() {
+        let (state, root) = fixture();
+        state.store.put("session",&json!({"id":"source","title":"long running chat"}));
+        let file = engine::attachments::upload(&state,&json!({
+            "sessionId":"source","name":"old.txt",
+            "data":STANDARD.encode("revoke these bytes when clearing conversation")
+        })).unwrap();
+        let id = file["id"].as_str().unwrap().to_owned();
+        state.store.write_message(&json!({
+            "session_id":"source","role":"user","content":"summarize",
+            "metadata":{"attachments":[file]}
+        })).unwrap();
+        let cleared=clear_session(State(state.clone()),Path("source".into())).await;
+        assert_eq!(cleared.status(),StatusCode::OK);
+        assert!(state.store.get("session","source").is_some());
+        assert!(state.store.messages("source").is_empty());
+        assert!(engine::attachments::read(&state,&id).is_err());
+        let _=std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn clearing_refuses_room_transcript_and_unfinished_queued_job() {
+        let (state, root) = fixture();
+        state.store.put("session",&json!({"id":"room-s","roomId":"room-1"}));
+        state.store.put("session",&json!({"id":"private"}));
+        let rejected=clear_session(State(state.clone()),Path("room-s".into())).await;
+        assert_eq!(rejected.status(),StatusCode::CONFLICT);
+        state.store.put("job",&json!({
+            "id":"queued-work","status":"queued","input":{"sessionId":"private"}
+        }));
+        let rejected=clear_session(State(state.clone()),Path("private".into())).await;
+        assert_eq!(rejected.status(),StatusCode::CONFLICT);
+        state.store.remove("job","queued-work");
+        let _=std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]
