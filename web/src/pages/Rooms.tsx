@@ -8,7 +8,7 @@ import {TokenUsage} from '../components/TokenUsage'
 import {MarkdownMessage} from '../components/MarkdownMessage'
 import {useOwnerProfile} from '../components/OwnerProfile'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
-import {useCallback,useEffect,useMemo,useRef,useState,type FormEvent,type SetStateAction} from 'react'
+import {useCallback,useEffect,useMemo,useRef,useState,type ClipboardEvent,type DragEvent,type FormEvent,type SetStateAction} from 'react'
 import {Activity,ArrowDown,ArrowRight,ArrowUp,AtSign,BookOpenText,Bot,Check,ChevronDown,ChevronLeft,ChevronRight,Clock3,Copy,FileText,Hash,LoaderCircle,MessageCircle,MoreHorizontal,Menu,PanelLeft,Paperclip,Settings,Network,Plus,RefreshCw,RotateCcw,Settings2,ShieldCheck,Square,TerminalSquare,Trash2,UserRound,UsersRound,X} from 'lucide-react'
 import {get,post,del,resolveApproval,koreanReasoningEnabled,type Agent,type ChatMessage,type ModelOption,type Provider} from '../api'
 import {Button,TextArea,TextInput,SelectInput} from '../components/Primitives'
@@ -283,7 +283,7 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
  })
  useEffect(()=>storeRoomComposer(room.id,composer),[room.id,composer])
  const [sending,setSending]=useState(false),[stopping,setStopping]=useState(false)
- const [uploading,setUploading]=useState(false)
+ const [uploading,setUploading]=useState(false),[draggingFile,setDraggingFile]=useState(false)
  const uploadBusy=useRef(false)
  const roomFileInput=useRef<HTMLInputElement>(null)
  const attachRoomFiles=async(files:FileList|null)=>{
@@ -310,6 +310,17 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
    }
   }catch(error){if(mounted.current)setError((error as Error).message)}
   finally{uploadBusy.current=false;if(mounted.current)setUploading(false)}
+ }
+ const handleRoomDrop=(event:DragEvent<HTMLFormElement>)=>{
+  setDraggingFile(false)
+  if(!event.dataTransfer.files.length)return
+  event.preventDefault()
+  void attachRoomFiles(event.dataTransfer.files)
+ }
+ const handleRoomPaste=(event:ClipboardEvent<HTMLTextAreaElement>)=>{
+  if(!event.clipboardData.files.length)return
+  event.preventDefault()
+  void attachRoomFiles(event.clipboardData.files)
  }
  const removeRoomAttachment=(id:string)=>{
   setComposer(previous=>({...previous,
@@ -542,11 +553,14 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
      <span>이전에 지정한 참가자 {staleTargets.join(', ')}는 현재 방에 없습니다. 전송 대상을 다시 선택해 주세요.</span>
      <Button variant="ghost" size="sm" onClick={()=>setTargets(previous=>previous.filter(id=>current.agentIds.includes(id)))}>사용할 수 없는 대상 제외</Button>
     </div>}
-    <form className="conversation-composer" onSubmit={send}>
+    <form className={'conversation-composer'+(draggingFile?' chat-composer-drop':'')} onSubmit={send}
+     onDragOver={event=>{if(Array.from(event.dataTransfer.types).includes('Files')){event.preventDefault();setDraggingFile(true)}}}
+     onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node))setDraggingFile(false)}}
+     onDrop={handleRoomDrop}>
      {composer.attachments.length>0&&<div className="chat-file-drafts" aria-label="그룹 첨부 대기 파일">{composer.attachments.map(file=><span key={file.id} className="chat-file-chip"><Paperclip size={13}/><span title={file.name}>{file.name}</span><small>{formatRoomAttachmentSize(file.size)}</small><button type="button" aria-label={file.name+' 첨부 취소'} disabled={sending||uploading} onClick={()=>removeRoomAttachment(file.id)}><X size={13}/></button></span>)}</div>}
      {uploading&&<div className="room-attachment-uploading" role="status"><LoaderCircle size={13} className="animate-spin"/>첨부 파일 업로드 중…</div>}
      <input ref={roomFileInput} type="file" className="sr-only" multiple accept="image/png,image/jpeg,image/webp,image/gif,.txt,.md,.csv,.ts,.tsx,.js,.mjs,.json,.py,.rs,.yaml,.yml,.xml,.html,.css,.log,.sql" aria-label="그룹 첨부 파일 선택" disabled={sending||uploading} onChange={event=>{void attachRoomFiles(event.currentTarget.files);event.currentTarget.value=''}}/>
-     <TextArea ref={inputRef} className="conversation-composer-input" aria-label={t('rooms.messageAria')} placeholder={mode==='mentioned'?t('rooms.mentionPlaceholder'):t('chat.inputPlaceholder')} value={input} onChange={e=>{setInput(e.target.value);e.currentTarget.style.height='auto';e.currentTarget.style.height=Math.min(e.currentTarget.scrollHeight,180)+'px'}} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();void send()}}} rows={1} disabled={sending}/>
+     <TextArea ref={inputRef} className="conversation-composer-input" aria-label={t('rooms.messageAria')} placeholder={mode==='mentioned'?t('rooms.mentionPlaceholder'):t('chat.inputPlaceholder')} value={input} onChange={e=>{setInput(e.target.value);e.currentTarget.style.height='auto';e.currentTarget.style.height=Math.min(e.currentTarget.scrollHeight,180)+'px'}} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();void send()}}} onPaste={handleRoomPaste} rows={1} disabled={sending||uploading}/>
      <div className="chat-composer-controls conversation-composer-controls">
       <div className="chat-composer-options conversation-composer-options">
        <Button type="button" variant="ghost" disabled={sending||uploading} className="chat-file-add" title="그룹에 이미지 또는 텍스트 파일 첨부" onClick={()=>roomFileInput.current?.click()}><Paperclip size={15}/><span className="hidden sm:inline">첨부</span></Button>

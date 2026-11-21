@@ -66,7 +66,9 @@ try{
   }
   if(pathname==='/api/attachments'&&route.request().method()==='POST'){
    uploadedRoomAttachments.push(route.request().postDataJSON());
-   response={id:'room-uploaded-note',name:'notes.txt',size:14,supportedForModel:'text'};
+   const uploaded=uploadedRoomAttachments.at(-1);
+   response={id:uploaded.name==='notes.txt'?'room-uploaded-note':'room-uploaded-'+uploaded.name,
+    name:uploaded.name,size:Buffer.from(uploaded.data,'base64').length,supportedForModel:'text'};
   }
   if(pathname==='/api/rooms'){
    if(route.request().method()==='POST'){
@@ -227,6 +229,25 @@ try{
  assert.equal(uploadedRoomAttachments.length,1,'retries must reuse uploaded bytes by ID');
  assert.equal(submittedMessages[1].clientMessageId,firstId,
   'reload plus retry cannot spawn a second server-owned Room job');
+ // Room paste/drop is handled by the same existing Rust room attachment API.
+ await composer.fill('그룹에서 작성 중인 원문은 유지');
+ await composer.evaluate(input=>{
+  const dt=new DataTransfer()
+  dt.items.add(new File(['pasted content'],'pasted.txt',{type:'text/plain'}))
+  input.dispatchEvent(new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:dt}))
+ });
+ await page.getByText('pasted.txt',{exact:true}).waitFor({timeout:10000});
+ assert.equal(await composer.inputValue(),'그룹에서 작성 중인 원문은 유지');
+ await page.getByRole('button',{name:'pasted.txt 첨부 취소'}).click();
+ await page.locator('form.conversation-composer').evaluate(form=>{
+  const dt=new DataTransfer()
+  dt.items.add(new File(['dropped content'],'dropped.txt',{type:'text/plain'}))
+  form.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:dt}))
+ });
+ await page.getByText('dropped.txt',{exact:true}).waitFor({timeout:10000});
+ assert.equal(await composer.inputValue(),'그룹에서 작성 중인 원문은 유지');
+ assert.ok(uploadedRoomAttachments.some(file=>file.name==='pasted.txt'));
+ assert.ok(uploadedRoomAttachments.some(file=>file.name==='dropped.txt'));
  const sizes=await page.evaluate(()=>({screen:innerWidth,body:document.documentElement.scrollWidth}));
  assert.ok(sizes.body<=sizes.screen+2,'Room model UI overflows mobile: '+JSON.stringify(sizes));
  assert.deepEqual(errors,[],'Room runtime errors');
