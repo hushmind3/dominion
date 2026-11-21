@@ -332,6 +332,7 @@ dependencies = [
 name = "dominion-agent-loop"
 version = "0.1.0"
 dependencies = [
+ "dominion-agent-kernel",
  "dominion-turn-core",
  "serde_json",
  "tokio",
