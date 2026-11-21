@@ -427,3 +427,10 @@ test('product tools share cross-process workspace writer lease without locking n
  assert.match(native,/resource_lock::acquire_durable/);
  assert.match(resources,/"delegate_task"/);
 });
+
+test('nested ProgramIR revisions cannot be swallowed by parent DAG waves',()=>{
+ const runtime=source('src/engine/services/decision/runtime_program.rs');
+ assert.match(runtime,/if frame\.paused \|\| frame\.failure\.is_some\(\)/);
+ assert.match(runtime,/if paused \|\| failure\.is_some\(\)/);
+ assert.match(runtime,/if failure\.is_none\(\)\{failure=frame\.failure;\}/);
+});
