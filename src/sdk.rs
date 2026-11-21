@@ -55,6 +55,9 @@ impl Dominion {
             .map_err(|error|format!("cannot create data directory: {error}"))?;
         let config=Config{port:options.port,data_dir:options.data_dir,
             web_dir:options.web_dir,workspace:options.workspace};
+        // A restore interrupted by process death must be rolled back before
+        // SQLite or the key vault can expose a mismatched DB/key pair.
+        engine::restore_transaction::recover_pending(&config)?;
         let store=Store::open(&config.db_path()).map_err(|error|error.to_string())?;
         let vault=Vault::open(&config.key_path());
         let state=AppState::new(config,store,vault);
