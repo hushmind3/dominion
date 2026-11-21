@@ -660,8 +660,8 @@ mod tests{
             "unresolved operation journal must outrank a clean-looking SDK snapshot");
         let _=std::fs::remove_dir_all(root);
     }
-    #[test]
-    fn native_completed_run_exposes_bounded_durable_receipts_without_tool_secrets(){
+    #[tokio::test]
+    async fn native_completed_run_exposes_bounded_durable_receipts_without_tool_secrets(){
         let (state,root)=temporary_state();
         let mut receipts=Vec::new();
         for n in 0..43 {
@@ -686,8 +686,15 @@ mod tests{
         assert_eq!(body["checkpoint"]["verificationChecks"][0]["satisfied"],true);
         assert!(!body.to_string().contains("PRIVATE-CREDENTIAL"));
         assert!(!body.to_string().contains("PRIVATE-TOOL-OUTPUT"));
-        let listed=project(&state,&state.store.get("job","completed-review").unwrap());
-        assert_eq!(listed["checkpoint"]["toolReceipts"],body["checkpoint"]["toolReceipts"]);
+        // Test the same API handlers serving the actual Native frontend.
+        let response=one(State(state.clone()),Path("completed-review".into())).await;
+        assert_eq!(response.status(),StatusCode::OK);
+        let bytes=to_bytes(response.into_body(),1024*1024).await.unwrap();
+        let reopened:Value=serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(reopened["checkpoint"]["toolReceipts"],body["checkpoint"]["toolReceipts"]);
+        let Json(history)=list(State(state.clone())).await;
+        assert_eq!(history[0]["checkpoint"]["toolReceipts"],body["checkpoint"]["toolReceipts"]);
+        assert!(!bytes.windows(18).any(|part|part==b"PRIVATE-CREDENTIAL"));
         crate::test_support::cleanup_dir(root);
     }
     #[test]

@@ -229,7 +229,7 @@ try{
   'Stale poll resurrected an already refused tool approval')
  // A terminal run must re-open its durable tool summary, not merely
  // its assistant prose. Fixture fields match the Rust SDK projection.
- sdkRuns[0]={...sdkRuns[0],status:'completed',answer:'Completed locally',
+ sdkRuns[0]={...sdkRuns[0],status:'failed',answer:'No verified result',
   checkpoint:{...sdkRuns[0].checkpoint,toolCalls:2,
    toolReceipts:[
     {id:'saved-tool-1',tool:'workspace_read',success:true,step:1},
@@ -237,12 +237,15 @@ try{
    toolReceiptsOmitted:0,verificationChecks:[
     {satisfied:false,explanation:'Expected file content was not found'}]}}
  await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
- await page.getByText('Completed locally').waitFor({timeout:8000})
+ await page.getByText('No verified result').waitFor({timeout:8000})
  await page.locator('summary').filter({hasText:'도구 실행 기록'}).click()
  await page.getByText('saved-tool-2').waitFor({timeout:8000})
  assert.equal(await page.getByText('도구 실패').count(),1)
- assert.equal(await page.getByText('저장된 도구 실행 영수증입니다.').count(),0,
-  'The explanation must not be treated as a verification result control')
+ assert.equal(await page.getByText('도구 성공').count(),1)
+ assert.equal(await page.getByText('저장된 도구 실행 영수증입니다.').count(),1,
+  'Tool receipt origin must be identified separately from acceptance checks')
+ assert.equal(await page.locator('summary').filter({hasText:'실제 결과 검증 · 0/1'}).count(),1,
+  'A failed acceptance check must not be shown as a verified result')
  await screenshot(page,'1440-native-receipts.png')
  // Team composer and remote worker use backend contracts, no fake completion.
  await open(page,'activity')
