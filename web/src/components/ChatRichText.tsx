@@ -7,7 +7,7 @@ function inlineParts(text:string):ReactNode[]{
  const parts:ReactNode[]=[]
  let last=0
  for(const match of text.matchAll(pattern)){
-  const index=match.index
+  const index=match.index??last
   if(index>last)parts.push(text.slice(last,index))
   const token=match[0]
   if(token.startsWith('**')){
