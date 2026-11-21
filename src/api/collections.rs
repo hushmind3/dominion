@@ -184,6 +184,7 @@ pub async fn action(
                 "goal": body.get("goal").or_else(|| body.get("input")).cloned().unwrap_or(json!("")),
             }),
         ),
+        ("memory", "edit") => edit_owner_memory(&state, &id, &body),
         ("skill", "export") => match state.store.get("skill", &id) {
             Some(skill) => Json(skill).into_response(),
             None => (
@@ -208,5 +209,132 @@ fn enqueue_job(state: &AppState, kind: &str, input: Value) -> Response {
             Json(json!({ "error": "작업을 만들 수 없습니다." })),
         )
             .into_response(),
+    }
+}
+
+
+/// Correct only an owner-authored active memory, preserving its scope and
+/// provenance. A stale editor cannot overwrite a correction or revive an
+/// archived/superseded fact: all three guards are checked in one SQLite CAS.
+fn edit_owner_memory(state:&AppState,id:&str,body:&Value)->Response{
+    let Some(text)=body["text"].as_str()
+        .map(str::trim).filter(|value|!value.is_empty()&&value.chars().count()<=16_000)
+    else{return (StatusCode::BAD_REQUEST,Json(json!({
+        "error":"수정할 기억은 1~16000자여야 합니다."
+    }))).into_response()};
+    let Some(expected)=body["expectedText"].as_str()else{
+        return (StatusCode::BAD_REQUEST,Json(json!({
+            "error":"기억의 이전 원문이 필요합니다."
+        }))).into_response();
+    };
+    let Some(current)=state.store.get("memory",id)else{
+        return (StatusCode::NOT_FOUND,Json(json!({
+            "error":"수정할 기억을 찾을 수 없습니다."
+        }))).into_response();
+    };
+    if current["source"]!="user"||current["status"]!="active"{
+        return (StatusCode::CONFLICT,Json(json!({
+            "error":"사용자가 직접 저장한 활성 기억만 수정할 수 있습니다."
+        }))).into_response();
+    }
+    if current["text"].as_str()!=Some(expected){
+        return (StatusCode::CONFLICT,Json(json!({
+            "error":"기억이 이미 변경되었습니다. 새로고침 후 다시 확인하세요."
+        }))).into_response();
+    }
+    if text==expected{return Json(current).into_response();}
+    let at=chrono::Utc::now().to_rfc3339();
+    let mut history=current["editHistory"].as_array().cloned().unwrap_or_default();
+    history.push(json!({"text":expected,"editedAt":at,"by":"owner"}));
+    if history.len()>10{history.drain(..history.len()-10);}
+    let expected_status=json!("active");
+    let expected_source=json!("user");
+    let edited=state.store.patch_if_all("memory",id,&[
+        ("text",&current["text"]),
+        ("status",&expected_status),
+        ("source",&expected_source),
+    ],&json!({
+        "text":text,"editedAt":at,"editedBy":"owner","editHistory":history
+    }));
+    let Some(edited)=edited else{
+        return (StatusCode::CONFLICT,Json(json!({
+            "error":"기억이 이미 변경되었습니다. 새로고침 후 다시 확인하세요."
+        }))).into_response();
+    };
+    state.store.audit("memory.owner_edit",json!({
+        "memoryId":id,"at":at,"oldLength":expected.chars().count(),
+        "newLength":text.chars().count()
+    }));
+    state.bus.record("memory",&edited);
+    Json(edited).into_response()
+}
+
+#[cfg(test)]
+mod memory_edit_tests{
+    use super::*;
+    fn state()->AppState{
+        let root=std::env::temp_dir().join(format!("dominion-memory-edit-{}",uuid::Uuid::new_v4()));
+        let config=crate::config::Config{
+            port:0,data_dir:root.clone(),web_dir:root.join("web"),workspace:root
+        };
+        let store=crate::db::Store::open(&config.db_path()).unwrap();
+        let vault=crate::vault::Vault::open(&config.key_path());
+        AppState::new(config,store,vault)
+    }
+
+    #[test]
+    fn editing_owner_memory_preserves_scope_and_history_and_rejects_stale_edits(){
+        let state=state();
+        let original=json!({
+            "id":"manual-1","text":"선호하는 이동수단: 버스",
+            "scope":"agent","agentId":"some-agent","partitionKey":"local",
+            "status":"active","source":"user","importance":0.8
+        });
+        state.store.put("memory",&original).unwrap();
+        let first=edit_owner_memory(&state,"manual-1",&json!({
+            "expectedText":"선호하는 이동수단: 버스",
+            "text":"선호하는 이동수단: 지하철"
+        }));
+        assert_eq!(first.status(),StatusCode::OK);
+        let updated=state.store.get("memory","manual-1").unwrap();
+        assert_eq!(updated["text"],"선호하는 이동수단: 지하철");
+        assert_eq!(updated["agentId"],"some-agent");
+        assert_eq!(updated["partitionKey"],"local");
+        assert_eq!(updated["importance"],0.8);
+        assert_eq!(updated["editHistory"][0]["text"],"선호하는 이동수단: 버스");
+        let stale=edit_owner_memory(&state,"manual-1",&json!({
+            "expectedText":"선호하는 이동수단: 버스","text":"오래된 수정"
+        }));
+        assert_eq!(stale.status(),StatusCode::CONFLICT);
+        assert_eq!(state.store.get("memory","manual-1").unwrap()["text"],updated["text"]);
+        state.store.patch_if("memory","manual-1","status",&json!("active"),
+            &json!({"status":"archived"})).unwrap();
+        let archive=edit_owner_memory(&state,"manual-1",&json!({
+            "expectedText":"선호하는 이동수단: 지하철","text":"재활성화 시도"
+        }));
+        assert_eq!(archive.status(),StatusCode::CONFLICT);
+        assert_eq!(state.store.get("memory","manual-1").unwrap()["status"],"archived");
+    }
+
+    #[test]
+    fn learned_evidence_cannot_be_rewritten_using_owner_edit(){
+        let state=state();
+        state.store.put("memory",&json!({
+            "id":"learned","text":"출처 근거","source":"learn","status":"active",
+            "sourceMessageIds":["source-1"],"scope":"session"
+        })).unwrap();
+        let denied=edit_owner_memory(&state,"learned",&json!({
+            "expectedText":"출처 근거","text":"위조된 근거"
+        }));
+        assert_eq!(denied.status(),StatusCode::CONFLICT);
+        assert_eq!(state.store.get("memory","learned").unwrap()["text"],"출처 근거");
+        let absent=edit_owner_memory(&state,"missing",&json!({
+            "expectedText":"a","text":"b"
+        }));
+        assert_eq!(absent.status(),StatusCode::NOT_FOUND);
+        let empty=edit_owner_memory(&state,"learned",&json!({
+            "expectedText":"출처 근거","text":" "
+        }));
+        assert_eq!(empty.status(),StatusCode::BAD_REQUEST);
     }
 }
