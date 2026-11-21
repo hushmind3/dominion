@@ -74,7 +74,9 @@ fn prune_crashed_plaintext(directory:&Path)->usize {
     for entry in entries.flatten(){
         let path=entry.path();
         let Some(name)=path.file_name().and_then(|name|name.to_str()) else{continue};
-        if !name.starts_with("snapshot-") || !name.ends_with(".sqlite"){continue}
+        let Some(id)=name.strip_prefix("snapshot-")
+            .and_then(|value|value.strip_suffix(".sqlite")) else{continue};
+        if uuid::Uuid::parse_str(id).is_err(){continue}
         let Ok(metadata)=std::fs::symlink_metadata(&path) else{continue};
         if !metadata.file_type().is_file() { continue }
         if !metadata.modified().ok().and_then(|time|time.elapsed().ok())
@@ -278,9 +280,9 @@ mod tests {
             "dominion-backup-stage-test-{}",uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        let stale=dir.join("snapshot-older.sqlite");
-        let recent=dir.join("snapshot-recent.sqlite");
-        let unrelated=dir.join("user-owned.sqlite");
+        let stale=dir.join(format!("snapshot-{}.sqlite",uuid::Uuid::new_v4()));
+        let recent=dir.join(format!("snapshot-{}.sqlite",uuid::Uuid::new_v4()));
+        let unrelated=dir.join("snapshot-user-owned.sqlite");
         for path in [&stale,&recent,&unrelated]{
             std::fs::write(path,b"plaintext").unwrap();
         }
