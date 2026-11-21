@@ -203,6 +203,35 @@ impl Dominion {
     pub async fn resolve_approval(&self, id: &str, allow: bool) -> Result<Value, Error> {
         self.post(&["api", "approvals"], json!({"id":id,"allow":allow})).await
     }
+    /// Native Team DAG creation shares the same persisted job queue and Kernel.
+    pub async fn create_task_team(&self,plan:Value)->Result<Value,Error>{
+        self.post(&["api","task-teams"],plan).await
+    }
+    pub async fn task_teams(&self)->Result<Vec<Value>,Error>{
+        self.get(&["api","task-teams"]).await
+    }
+    pub async fn task_team(&self,id:&str)->Result<Value,Error>{
+        self.get(&["api","task-teams",id]).await
+    }
+    pub async fn cancel_task_team(&self,id:&str)->Result<Value,Error>{
+        self.post(&["api","task-teams",id,"cancel"],json!({})).await
+    }
+    /// Starts a fresh owner-confirmed Team with new child IDs; no prior effects replayed.
+    pub async fn retry_task_team(&self,id:&str)->Result<Value,Error>{
+        self.post(&["api","task-teams",id,"retry"],json!({"confirm":true})).await
+    }
+    pub async fn team_bridges(&self)->Result<Value,Error>{
+        self.get(&["api","task-teams","bridges"]).await
+    }
+    pub async fn preview_team_worktree(&self,team:&str,task:&str)->Result<Value,Error>{
+        self.get(&["api","task-teams",team,"worktrees",task,"preview"]).await
+    }
+    /// Only stages an exact digest-approved patch; it never pushes or commits.
+    pub async fn promote_team_worktree(&self,team:&str,task:&str,
+        expected_diff_sha256:&str)->Result<Value,Error>{
+        self.post(&["api","task-teams",team,"worktrees",task,"promote"],
+            json!({"confirm":true,"expectedDiffSha256":expected_diff_sha256})).await
+    }
     pub async fn rooms(&self) -> Result<Vec<Value>, Error> { self.get(&["api", "rooms"]).await }
     pub async fn run_room(&self, id: &str, goal: &str) -> Result<Value, Error> {
         self.post(&["api", "rooms", id, "run"], json!({"goal":goal})).await
@@ -318,6 +347,14 @@ mod tests {
         assert_eq!(serde_json::to_value(&view).unwrap()["ref"]["runId"],"room-1");
         assert_eq!(Dominion::local().url(&["api","runs","a/b"]).unwrap().path(),
             "/api/runs/a%2Fb");
+    }
+    #[test]
+    fn team_review_routes_remain_scoped_to_task_ids(){
+        let client=Dominion::local();
+        let path=client.url(&["api","task-teams","lead/a","worktrees",
+            "task/b","preview"]).unwrap();
+        assert_eq!(path.path(),
+            "/api/task-teams/lead%2Fa/worktrees/task%2Fb/preview");
     }
     #[test]
     fn terminal_status_is_engine_owned() {
