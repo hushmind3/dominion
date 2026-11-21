@@ -196,6 +196,32 @@ mod tests {
         assert_eq!(continuation[0].seq,4);
         assert_eq!(continuation[0].run_ref.lifecycle,Some(RunLifecycle::Completed));
     }
+
+    #[test]
+    fn durable_global_cursor_drains_more_than_one_reconnect_page_without_gaps(){
+        let store=store();
+        let bus=Bus::new(store.clone());
+        for n in 0..1_205 {bus.emit(json!({"type":"progress","n":n}));}
+        let mut cursor=0u64;
+        let mut observed=Vec::new();
+        loop {
+            let page=bus.replay(cursor,500);
+            if page.is_empty(){break;}
+            let page_len=page.len();
+            for event in page {
+                let seq=event["seq"].as_u64().unwrap();
+                assert!(seq>cursor,"duplicate cursor on reconnect");
+                cursor=seq;
+                observed.push(event["n"].as_u64().unwrap());
+            }
+            if page_len<500{break;}
+        }
+        assert_eq!(observed.len(),1_205);
+        assert_eq!(observed[0],0);
+        assert_eq!(observed.last(),Some(&1204));
+        let resumed=Bus::new(store);
+        assert!(resumed.replay(cursor,500).is_empty());
+    }
     #[test]
     fn the_log_is_bounded_without_losing_recent_events() {
         let store = store();
