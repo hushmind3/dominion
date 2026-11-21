@@ -13,9 +13,8 @@ const vite=spawn(process.execPath,[resolve(root,'node_modules/vite/bin/vite.js')
  '--host','127.0.0.1','--port',String(port),'--strictPort'],{
  cwd:root,stdio:['ignore','pipe','pipe']
 });
-let browser,releaseGap;
-const gapGate=new Promise(resolve=>{releaseGap=resolve});
-let sessionsRead=0,sseConnections=0;
+let browser;
+let sessionsRead=0,sseConnections=0,gapArmed=false,gapSent=false;
 let sessions=[{id:'gap-session',title:'Before reconnect',agentId:'agent-a',
  providerId:'provider-a',model:'fixture'}];
 async function waitForServer(){
@@ -36,8 +35,10 @@ try{
   const path=new URL(route.request().url()).pathname;
   if(path==='/api/events'){
    sseConnections++;
-   if(sseConnections===1){
-    await gapGate;
+   // A pending route.fulfill can stall initial browser loading. Let the
+   // first SSE complete, then send a gap on EventSource's native reconnect.
+   if(gapArmed&&!gapSent){
+    gapSent=true;
     await route.fulfill({status:200,contentType:'text/event-stream',
      body:'id: 0\ndata: '+JSON.stringify({type:'event_gap',resyncRequired:true,
       reason:'cursor_ahead_of_journal'})+'\n\n'});
@@ -63,13 +64,13 @@ try{
  await page.getByText('Before reconnect',{exact:true}).first().waitFor({timeout:10000});
  const before=sessionsRead;
  sessions=[{...sessions[0],title:'After reconnect'}];
- releaseGap();
- await page.getByText('After reconnect',{exact:true}).first().waitFor({timeout:10000});
+ gapArmed=true;
+ await page.getByText('After reconnect',{exact:true}).first().waitFor({timeout:15000});
+ assert.ok(gapSent,'EventSource must reconnect and receive the journal gap');
  assert.ok(sessionsRead>before,'SSE gap must invalidate mounted /api/sessions');
  assert.deepEqual(errors,[],'React runtime errors during gap resync');
  console.log('PASS Chromium SSE gap refreshes mounted Chat without reload');
 }finally{
- releaseGap?.();
  await browser?.close();
  vite.kill('SIGTERM');
 }
