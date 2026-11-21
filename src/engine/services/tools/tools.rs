@@ -190,6 +190,9 @@ pub fn definitions() -> Vec<Value> {
                 "bridgeSessionId":text("Optional DOMINION-issued owner-scoped session UUID for a configured external resume"),
                 "timeoutSeconds":{"type":"integer","minimum":5,"maximum":600},
             }),vec!["harnessId","prompt"])));
+        defs.push(tool("external_harness_sessions",
+            "List owner-scoped durable Codex, Claude or Qwen bridge sessions and safe-resume eligibility without exposing remote thread IDs",
+            object(json!({}),vec![])));
     }
     defs
 }
@@ -266,7 +269,7 @@ pub fn ui_tool_allowed(policy:&Value,name:&str)->bool{
     if name.starts_with("mcp__") && policy["mcpEnabled"]!=true{return false;}
     if matches!(name,"web_search"|"http_fetch") && policy["webEnabled"]!=true{return false;}
     if matches!(name,"delegate_task"|"delegate_parallel"|"task_status"|"task_result"|
-        "team_execute"|"team_status"|"external_harness_run") && policy["subagentsEnabled"]!=true{return false;}
+        "team_execute"|"team_status"|"external_harness_sessions"|"external_harness_run") && policy["subagentsEnabled"]!=true{return false;}
     true
 }
 
@@ -608,6 +611,7 @@ pub async fn execute(
         "team_status" => team::status(ctx,args),
         "delegate_task" => delegate(ctx, args).await,
         "external_harness_run" => external_harness::run(ctx,args).await,
+        "external_harness_sessions" => Ok(external_harness::sessions(ctx)),
         "delegate_parallel" => delegate_parallel(ctx,args).await,
         "task_status" => task_payload(ctx, args, false),
         "task_result" => task_payload(ctx, args, true),
