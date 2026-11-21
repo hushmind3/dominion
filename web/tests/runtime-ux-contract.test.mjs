@@ -422,3 +422,11 @@ test('pending image previews survive rejected chat attempts and clear only after
  assert.match(chat,/if\(persisted\)\{\s*releaseSentImages\(\)/)
  assert.doesNotMatch(chat,/attachmentIds=uploaded\.map\(item=>item\.id\);\s*pendingImages\.forEach/)
 })
+
+test('streaming and persisted assistant replies share the same width and message selectors',()=>{
+ const chat=source('src/pages/Chat.tsx')
+ const css=source('src/theme.css')
+ assert.match(chat,/data-message data-message-role="assistant"/)
+ assert.match(chat,/chat-message-body relative min-w-0 flex-1/)
+ assert.match(css,/\.page-chat \.chat-message--assistant>\.chat-message-body\{max-width:760px;min-width:0\}/)
+})
