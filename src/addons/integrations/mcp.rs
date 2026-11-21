@@ -12,7 +12,7 @@ mod stdio;
 #[path = "mcp/http.rs"]
 mod http;
 use stdio::StdioSession;
-use http::{HttpSession, sse_event_boundary, sse_response_event};
+use http::{HttpSession, HttpEra, sse_event_boundary, sse_response_event};
 #[cfg(test)]
 #[path = "mcp/tests.rs"]
 mod tests;
