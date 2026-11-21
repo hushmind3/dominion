@@ -965,6 +965,113 @@ mod tests{
         assert!(!bytes.windows(18).any(|part|part==b"PRIVATE-CREDENTIAL"));
         crate::test_support::cleanup_dir(root);
     }
+    #[tokio::test]
+    async fn sealed_native_artifact_can_be_reopened_without_a_new_tool_call(){
+        use dominion_sdk::harness::{Criterion,CriterionKind};
+        let (state,root)=temporary_state();
+        std::fs::create_dir_all(&state.config.workspace).unwrap();
+        let target=state.config.workspace.join("result.txt");
+        std::fs::write(&target,"Verified output 🧠").unwrap();
+        let witness=crate::host::execution::native_evidence::artifact_witness(
+            &state.config.workspace,&[Criterion{
+                kind:CriterionKind::FileExists,path:Some("result.txt".into()),
+                contains:None,tool:None,
+            }]);
+        assert_eq!(witness["entries"]["result.txt"]["state"],"file");
+        state.store.put("job",&json!({"id":"native-artifact-1",
+            "kind":"prompt","status":"completed",
+            "input":{"prompt":"Save result.txt","clientSurface":"native_agent_panel"},
+            "nativeEvidenceKernelFinal":witness})).unwrap();
+
+        let viewed=artifact_preview(State(state.clone()),
+            Path("native-artifact-1".into()),
+            Json(json!({"path":"result.txt"}))).await;
+        assert_eq!(viewed.status(),StatusCode::OK);
+        assert_eq!(viewed.headers().get(axum::http::header::CACHE_CONTROL)
+            .and_then(|v|v.to_str().ok()),Some("private, no-store"));
+        let body:Value=serde_json::from_slice(
+            &to_bytes(viewed.into_body(),256*1024).await.unwrap()).unwrap();
+        assert_eq!(body["content"],"Verified output 🧠");
+        assert_eq!(body["verifiedAgainst"],"settled_host_witness");
+        assert_eq!(body["sha256"],witness["entries"]["result.txt"]["sha256"]);
+
+        // Even if a different file is on disk, the run's owner-witness cannot
+        // be used as a generic workspace file reader.
+        std::fs::write(state.config.workspace.join("private.txt"),"SECRET").unwrap();
+        assert_eq!(artifact_preview(State(state.clone()),
+            Path("native-artifact-1".into()),
+            Json(json!({"path":"private.txt"}))).await.status(),StatusCode::NOT_FOUND);
+        assert_eq!(artifact_preview(State(state.clone()),
+            Path("some-other-run".into()),
+            Json(json!({"path":"result.txt"}))).await.status(),StatusCode::NOT_FOUND);
+        assert_eq!(artifact_preview(State(state.clone()),
+            Path("native-artifact-1".into()),
+            Json(json!({"path":"../private.txt"}))).await.status(),StatusCode::NOT_FOUND);
+
+        // Reopened content is tied to the saved hash, not a newer edit.
+        std::fs::write(&target,"Changed after completion").unwrap();
+        assert_eq!(artifact_preview(State(state.clone()),
+            Path("native-artifact-1".into()),
+            Json(json!({"path":"result.txt"}))).await.status(),StatusCode::CONFLICT);
+        state.store.patch_if("job","native-artifact-1","status",
+            &json!("completed"),&json!({"status":"running"})).unwrap();
+        assert_eq!(artifact_preview(State(state.clone()),
+            Path("native-artifact-1".into()),
+            Json(json!({"path":"result.txt"}))).await.status(),StatusCode::CONFLICT);
+        crate::test_support::cleanup_dir(root);
+    }
+
+    #[tokio::test]
+    async fn artifact_preview_rejects_large_binary_and_symlinked_outputs(){
+        use dominion_sdk::harness::{Criterion,CriterionKind};
+        let (state,root)=temporary_state();
+        std::fs::create_dir_all(&state.config.workspace).unwrap();
+        let witness=|name:&str|{
+            crate::host::execution::native_evidence::artifact_witness(
+                &state.config.workspace,&[Criterion{
+                    kind:CriterionKind::FileExists,path:Some(name.into()),
+                    contains:None,tool:None,
+                }])
+        };
+        let target=state.config.workspace.join("binary.txt");
+        std::fs::write(&target,[0xff,0xfe,0x00]).unwrap();
+        state.store.put("job",&json!({"id":"binary-output","kind":"prompt",
+            "status":"completed","input":{"clientSurface":"native_agent_panel"},
+            "nativeEvidenceKernelFinal":witness("binary.txt")})).unwrap();
+        assert_eq!(artifact_preview(State(state.clone()),Path("binary-output".into()),
+            Json(json!({"path":"binary.txt"}))).await.status(),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+        let big=state.config.workspace.join("large.txt");
+        std::fs::write(&big,vec![b'A';128*1024+1]).unwrap();
+        state.store.put("job",&json!({"id":"large-output","kind":"prompt",
+            "status":"completed","input":{"clientSurface":"native_agent_panel"},
+            "nativeEvidenceKernelFinal":witness("large.txt")})).unwrap();
+        assert_eq!(artifact_preview(State(state.clone()),Path("large-output".into()),
+            Json(json!({"path":"large.txt"}))).await.status(),
+            StatusCode::PAYLOAD_TOO_LARGE);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let inner=state.config.workspace.join("linked.txt");
+            std::fs::write(&inner,"Original").unwrap();
+            state.store.put("job",&json!({"id":"linked-output","kind":"prompt",
+                "status":"completed","input":{"clientSurface":"native_agent_panel"},
+                "nativeEvidenceKernelFinal":witness("linked.txt")})).unwrap();
+            std::fs::remove_file(&inner).unwrap();
+            let outside=root.join("outside.txt");
+            std::fs::write(&outside,"Original").unwrap();
+            symlink(&outside,&inner).unwrap();
+            assert_eq!(artifact_preview(State(state.clone()),
+                Path("linked-output".into()),
+                Json(json!({"path":"linked.txt"}))).await.status(),
+                StatusCode::BAD_REQUEST,
+                "an identical-hash file outside the workspace must remain inaccessible");
+        }
+        crate::test_support::cleanup_dir(root);
+    }
+
     #[test]
     fn sdk_status_uses_scoped_approval_and_uncertain_receipt_queries(){
         let (state,root)=temporary_state();
