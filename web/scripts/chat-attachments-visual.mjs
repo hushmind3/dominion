@@ -22,6 +22,7 @@ let messages=[]
 let downloaded=0
 let chatRequests=0
 const sample=Buffer.from('A local owner note for the model')
+const photo=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRncAAAAASUVORK5CYII=','base64')
 const reply=(route,obj,status=200)=>route.fulfill({
  status,contentType:'application/json',body:JSON.stringify(obj)
 })
@@ -50,13 +51,15 @@ async function mock(route){
  if(pathname==='/api/attachments'&&method==='POST'){
   const body=JSON.parse(request.postData()||'{}')
   assert.equal(body.sessionId,'file-chat')
-  assert.equal(body.name,'owner-note.txt')
-  assert.equal(Buffer.from(body.data,'base64').toString('utf8'),sample.toString('utf8'))
+  assert.ok(['owner-note.txt','photo.png'].includes(body.name))
+  assert.deepEqual(Buffer.from(body.data,'base64'),body.name==='photo.png'?photo:sample)
+  assert.equal(body.mimeType,body.name==='photo.png'?'image/png':'text/plain')
   const id='attachment-'+(uploadIds.length+1)
   uploadIds.push(id)
   return reply(route,{
-   id,name:body.name,mimeType:'text/plain; charset=utf-8',
-   isImage:false,sessionId:'file-chat',size:sample.length
+   id,name:body.name,mimeType:body.mimeType,
+   isImage:body.name==='photo.png',sessionId:'file-chat',
+   size:body.name==='photo.png'?photo.length:sample.length
   })
  }
  if(pathname==='/api/chat'&&method==='POST'){
@@ -68,10 +71,10 @@ async function mock(route){
   assert.equal(body.input,'첨부 파일을 확인해 주세요.')
   assert.deepEqual(body.attachmentIds,uploadIds)
   messages.push({id:'owner1',role:'user',session_id:'file-chat',content:body.input,
-   metadata:{attachments:[{
-    id:'attachment-1',name:'owner-note.txt',size:sample.length,
-    isImage:false
-   }]}})
+   metadata:{attachments:[
+    {id:'attachment-1',name:'owner-note.txt',size:sample.length,isImage:false},
+    {id:'attachment-2',name:'photo.png',size:photo.length,isImage:true}
+   ]}})
   messages.push({id:'assistant1',role:'assistant',session_id:'file-chat',
    content:'첨부를 확인했습니다.'})
   const events=[
@@ -111,14 +114,16 @@ try{
  await page.route('**/api/**',mock)
  await page.goto(base+'/#/chat',{waitUntil:'domcontentloaded'})
  const sender=page.getByRole('button',{name:'보내기'})
- await page.locator('input[type="file"][aria-label="파일 첨부"]').setInputFiles([{
-  name:'owner-note.txt',mimeType:'text/plain',buffer:sample
- }])
+ await page.locator('input[type="file"][aria-label="파일 첨부"]').setInputFiles([
+  {name:'owner-note.txt',mimeType:'text/plain',buffer:sample},
+  {name:'photo.png',mimeType:'image/png',buffer:photo}
+ ])
  await page.getByText('owner-note.txt',{exact:true}).first().waitFor()
+ await page.getByText('photo.png',{exact:true}).first().waitFor()
  assert.equal(await sender.isDisabled(),false,'Files alone must enable Send')
  await sender.click()
  await page.getByText('첨부를 확인했습니다.',{exact:true}).waitFor({timeout:15000})
- assert.equal(uploadIds.length,1,'File must be uploaded exactly once')
+ assert.equal(uploadIds.length,2,'Each file/image must be uploaded exactly once')
  assert.equal(chatRequests,1,'Only one model turn should be submitted')
  const owner=page.locator('[data-role="user"]')
  await owner.first().waitFor()

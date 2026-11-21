@@ -974,3 +974,59 @@ async fn plain_chat_can_explain_tool_markup_as_text_without_executing_it(){
     server.abort();
     let _=std::fs::remove_dir_all(&state.config.data_dir);
 }
+
+#[tokio::test]
+async fn plain_chat_transmits_real_session_bound_image_bytes_to_vision_provider(){
+    use axum::{extract::State,routing::post,Json,Router};
+    use axum::response::IntoResponse;
+    use base64::Engine;
+    let captured=std::sync::Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+    async fn model(
+        State(captured):State<std::sync::Arc<std::sync::Mutex<Vec<Value>>>>,
+        Json(body):Json<Value>
+    )->axum::response::Response{
+        captured.lock().unwrap().push(body);
+        let frames=format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+            json!({"choices":[{"delta":{"content":"이미지를 전달받았습니다."}}]}),
+            json!({"choices":[{"delta":{},"finish_reason":"stop"}],
+                "usage":{"prompt_tokens":35,"completion_tokens":8,"total_tokens":43}}));
+        ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],frames).into_response()
+    }
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr=listener.local_addr().unwrap();
+    let app=Router::new().route("/chat/completions",post(model)).with_state(captured.clone());
+    let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+    let state=temp_state();
+    state.store.put("provider",&json!({
+        "id":"vision-provider","baseUrl":format!("http://{addr}"),
+        "model":"vision-test","enabled":true,"kind":"openai"
+    }));
+    state.store.put("session",&json!({"id":"image-chat","providerId":"vision-provider"}));
+    let file=crate::engine::attachments::upload(&state,&json!({
+        "sessionId":"image-chat","name":"diagram.png","mimeType":"image/png",
+        "data":base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\r\n\x1a\nfixture")
+    })).unwrap();
+    let request=TurnRequest::from_value(&json!({
+        "sessionId":"image-chat","providerId":"vision-provider","model":"vision-test",
+        "input":"이 그림을 설명해 주세요.","attachmentIds":[file["id"]],
+        "toolsEnabled":false,"toolsExecutionEnabled":false
+    })).unwrap();
+    let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+    let saved=tokio::time::timeout(Duration::from_secs(15),
+        run_turn_plain(&state,&request,&tx)).await.unwrap().unwrap().unwrap();
+    assert_eq!(saved["content"],"이미지를 전달받았습니다.");
+    let calls=captured.lock().unwrap();
+    assert_eq!(calls.len(),1);
+    assert!(calls[0].get("tools").is_none());
+    let owner=calls[0]["messages"].as_array().unwrap().iter()
+        .find(|item|item["role"]=="user").unwrap();
+    assert_eq!(owner["content"][1]["type"],"image_url");
+    assert!(owner["content"][1]["image_url"]["url"].as_str().unwrap()
+        .starts_with("data:image/png;base64,"));
+    let owner_record=state.store.messages("image-chat").into_iter()
+        .find(|item|item["role"]=="user").unwrap();
+    assert_eq!(owner_record["metadata"]["attachments"][0]["id"],file["id"]);
+    assert_eq!(state.store.all("execution_operation").len(),0);
+    server.abort();
+    let _=std::fs::remove_dir_all(&state.config.data_dir);
+}
