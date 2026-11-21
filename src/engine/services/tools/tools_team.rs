@@ -209,7 +209,7 @@ fn summary(ctx:&ToolContext<'_>,team:&Value)->Result<Value,String>{
                 "Remote Writer files await Lead approval: use team_remote_apply({teamId, remoteTaskId}) for each pending task, then team_execute({teamId}) to resume"
             }else if blocked {"Review failed or uncertain workers; do not automatically replay effects"}
             else if complete {"Use task_result(jobId) for full native operation evidence"}
-            else {"Resume safely with team_execute({teamId}) or poll team_status({teamId})"},
+            else {"The native Team scheduler advances ready waves after real worker receipts; poll team_status({teamId}) for evidence or use team_execute({teamId}) for an explicit recovery tick"},
     }))
 }
 /// Observe terminal job state from the SAME session-bound job record. This is
@@ -620,7 +620,7 @@ pub(super) fn status(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
     let id=args["teamId"].as_str().filter(|s|!s.is_empty()).ok_or("teamId required")?;
     let team=read_team(ctx,id)?;
     // This call never starts work or implicitly commits an observed job as
-    // success. Resume with team_execute when new dependencies become ready.
+    // success. The existing Job dispatcher owns automatic wave continuation.
     if let Some(tasks)=team["tasks"].as_array(){
         if let Some(id)=team["id"].as_str(){
             for node in tasks{
