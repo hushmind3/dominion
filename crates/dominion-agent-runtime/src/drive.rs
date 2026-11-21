@@ -98,6 +98,25 @@ pub fn settle_model_turn(
     }
     Ok(())
 }
+/// A model response was received, accounted for, but its decision is rejected
+/// (for example, malformed tool JSON or an over-budget answer). The caller
+/// must journal the actual usage and rejection reason in Snapshot status,
+/// checks or the host execution record BEFORE releasing the paid-call fence.
+/// Rejection never creates an executable decision or a success receipt.
+pub fn settle_rejected_model_turn(
+    journal:&dyn crate::Journal,
+    snapshot:&mut crate::Snapshot,
+)->Result<(),String>{
+    if !snapshot.model_in_flight {
+        return Err("Cannot discard a model response without a durable generation intent".into());
+    }
+    snapshot.model_in_flight=false;
+    if let Err(error)=journal.save(snapshot) {
+        snapshot.model_in_flight=true;
+        return Err(error);
+    }
+    Ok(())
+}
 #[cfg(test)]
 mod tests{
     use super::*;
@@ -256,4 +275,43 @@ mod tests{
         assert!(HarnessDrive::new(0).is_err());
         assert!(HarnessDrive::new(201).is_err());
     }
+    #[test]
+    fn rejected_paid_reply_preserves_usage_and_cannot_be_replayed_as_decision(){
+        let journal=ModelJournal{seen:std::sync::Mutex::new(Vec::new()),
+            cancel_after_intent:false,directive:None,
+            cancel:std::sync::atomic::AtomicBool::new(false)};
+        let mut run=snapshot();
+        run.model_in_flight=true;
+        run.charged_tokens=314;
+        run.model_calls=1;
+        run.error=Some("Invalid streamed tool arguments".into());
+        settle_rejected_model_turn(&journal,&mut run).unwrap();
+        assert!(!run.model_in_flight);
+        assert_eq!(run.charged_tokens,314);
+        assert_eq!(run.model_calls,1);
+        assert!(run.decision_tape.is_empty());
+        assert_eq!(journal.seen.lock().unwrap()[0].error.as_deref(),
+            Some("Invalid streamed tool arguments"));
+        assert!(settle_rejected_model_turn(&journal,&mut run).is_err());
+    }
+
+    #[test]
+    fn rejected_reply_failed_persistence_retains_paid_fence(){
+        struct RejectRelease;
+        impl crate::Journal for RejectRelease {
+            fn save(&self,snapshot:&crate::Snapshot)->Result<(),String>{
+                if snapshot.model_in_flight{Ok(())}
+                else{Err("checkpoint cannot be saved".into())}
+            }
+        }
+        let mut run=snapshot();
+        run.model_in_flight=true;
+        run.charged_tokens=314;
+        let result=settle_rejected_model_turn(&RejectRelease,&mut run);
+        assert!(result.is_err());
+        assert!(run.model_in_flight);
+        assert!(run.decision_tape.is_empty());
+        assert_eq!(run.charged_tokens,314);
+    }
+
 }
