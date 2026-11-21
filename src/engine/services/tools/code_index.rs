@@ -8,7 +8,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::{Path, PathBuf},
+    io::Read,
+    path::{Component, Path, PathBuf},
     time::Instant,
 };
 
@@ -64,19 +65,14 @@ fn is_source(path: &Path) -> bool {
 fn collect_files(source: &Path) -> Vec<PathBuf> {
     let mut roots = vec![source.join("src"), source.join("tests")];
     for extra in ["web/src", "src-tauri/src", "scripts", ".github/workflows"] {
-        let path = source.join(extra);
-        if path.is_dir() {
-            roots.push(path);
-        }
+        roots.push(source.join(extra));
     }
     for file in ["Cargo.toml", "web/package.json", "README.md"] {
-        let path = source.join(file);
-        if path.is_file() {
-            roots.push(path);
-        }
+        roots.push(source.join(file));
     }
+    let roots = roots.into_iter().filter(|path| no_symlink_components(source, path));
     let mut files = Vec::new();
-    let mut stack = roots;
+    let mut stack = roots.collect::<Vec<_>>();
     while let Some(path) = stack.pop() {
         if path.is_file() {
             if is_source(&path) {
@@ -109,6 +105,58 @@ fn collect_files(source: &Path) -> Vec<PathBuf> {
     files.sort();
     files.dedup();
     files
+}
+
+fn no_symlink_components(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        let Component::Normal(part) = component else {
+            return false;
+        };
+        current.push(part);
+        let Ok(metadata) = std::fs::symlink_metadata(&current) else {
+            return false;
+        };
+        if metadata.file_type().is_symlink() {
+            return false;
+        }
+    }
+    true
+}
+
+fn read_source_limited(source: &Path, relative: &str) -> Result<Vec<u8>, String> {
+    let root = source.canonicalize().map_err(|error| error.to_string())?;
+    let relative_path = Path::new(relative);
+    if relative_path.as_os_str().is_empty()
+        || relative_path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err("source path is not workspace-relative".into());
+    }
+    let path = root
+        .join(relative_path)
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    if !path.starts_with(&root) {
+        return Err("source path escapes the indexed workspace".into());
+    }
+    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
+        return Err("source file exceeds the index size limit".into());
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() as u64 > MAX_FILE_BYTES {
+        return Err("source file grew beyond the index size limit".into());
+    }
+    Ok(bytes)
 }
 
 fn symbol_name(rest: &str) -> String {
@@ -519,12 +567,6 @@ pub fn refresh(state: &AppState, source: &Path) -> Result<Value, String> {
     let mut reused = 0u64;
     let mut removed = 0u64;
     for path in collect_files(&source) {
-        let Ok(metadata) = path.metadata() else {
-            continue;
-        };
-        if !metadata.is_file() || metadata.len() > MAX_FILE_BYTES {
-            continue;
-        }
         let Ok(relative) = path.strip_prefix(&source) else {
             continue;
         };
@@ -532,7 +574,7 @@ pub fn refresh(state: &AppState, source: &Path) -> Result<Value, String> {
         if !seen.insert(relative.clone()) {
             continue;
         }
-        let Ok(bytes) = std::fs::read(&path) else {
+        let Ok(bytes) = read_source_limited(&source, &relative) else {
             continue;
         };
         let hash = digest(&bytes);
@@ -987,7 +1029,7 @@ pub fn bounded_focus_context(
     let Some(indexed) = state.store.get(FILE_KIND, &file_id(index_id, path)) else {
         return Some(format!("\n### 대상 파일: {path}\n색인에 이 파일이 없어 발췌를 만들지 못했습니다. workspace_read_range로 필요한 구간을 확인하세요.\n"));
     };
-    let Ok(bytes) = std::fs::read(source.join(path)) else {
+    let Ok(bytes) = read_source_limited(source, path) else {
         return Some(format!("\n### 대상 파일: {path}\n파일을 읽지 못했습니다. workspace_read_range로 필요한 구간을 확인하세요.\n"));
     };
     let hash = digest(&bytes);
