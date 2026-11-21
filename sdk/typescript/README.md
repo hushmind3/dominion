@@ -89,3 +89,9 @@ Attachment records are scoped to a real session or room; Rust enforces
 per-file (8 MiB), per-turn (8 files / 24 MiB) limits and validates image bytes.
 `attachments.content(id)` reads bytes with the same authenticated SDK client.
 Chat POST requests are never automatically retried.
+When Rust emits an in-band `error` SSE event, `streamChat` first delivers the
+event to the callback and then rejects with `ChatTurnFailedError`, preserving
+the original `.event` for diagnostics. Rust may append `done` after the error;
+this terminator never upgrades a failed turn into success. The
+`assistant_saved` event records a persisted final answer.
+
