@@ -471,19 +471,33 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    },controller.signal);
   }catch(e){
    if(!controller.signal.aborted&&view.current===id){
-    // Failed uploads or request preparation never wrote the owner turn.
-    // Restore it without overwriting anything typed while the upload ran.
-    // Once the stream starts, its accepted/persisted state is unknown and
-    // blind restoration would invite duplicate tool actions on retry.
+    let notice=translateError((e as Error).message);
+    // A failed upload or pre-stream request cannot have persisted the owner
+    // input. After SSE begins, reconcile against SQLite before offering retry:
+    // blindly restoring it can duplicate an effectful agent instruction.
     if(!streamStarted){
      setInput(previous=>previous.trim()?previous:text);
      setOptimisticOwner(previous=>previous?.sessionId===id?undefined:previous);
+    }else if(!ownerSaved&&id){
+     let persisted:ChatMessage|undefined;
+     let lookupFailed=false;
+     try{
+      const rows=await get<ChatMessage[]>('/api/sessions/'+encodeURIComponent(id)+'/messages');
+      const oldId=messages.at(-1)?.id;
+      const lastIndex=oldId?rows.findIndex(row=>row.id===oldId):-1;
+      persisted=rows.find((row,index)=>index>lastIndex&&row.role==='user'&&row.content===text);
+     }catch{lookupFailed=true;}
+     if(view.current===id){
+      if(persisted){
+       setOptimisticOwner(previous=>previous?.sessionId===id?{...previous,persistedId:persisted!.id}:previous);
+      }else{
+       setInput(previous=>previous.trim()?previous:text);
+       setOptimisticOwner(previous=>previous?.sessionId===id?undefined:previous);
+       if(lookupFailed)notice+=' · 전송 상태를 확인하지 못했습니다. 재전송 전 대화 기록을 확인하세요.';
+      }
+     }
     }
-    // If the stream started but never acknowledged the owner turn, leave the
-    // current draft alone until a persisted-message fetch can distinguish
-    // transport loss from a server-side admission failure.
-    if(streamStarted&&!ownerSaved)void transcript.reload();
-    setError(translateError((e as Error).message));
+    if(view.current===id)setError(notice);
    }
   }finally{
    if(stream.current===controller){
