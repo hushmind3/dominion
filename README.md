@@ -27,6 +27,12 @@ execution receipts and user-controlled workspace boundaries in the application.
 - **Model choice:** bring OpenAI / Anthropic API credentials, or connect supported
   local inference endpoints such as Ollama, llama.cpp and LM Studio.
   Explicit per-endpoint tool/text capability denials are enforced on fallback.
+- **Direct chat vs. agent execution:** New private conversations start in
+  direct model-chat mode. The existing composer lets you select an agent when
+  you want tool execution, approvals and verified work. Direct chat disables
+  agent-specific instructions, tool calls and automatic learning while keeping
+  its transcript and model usage in the native execution journal; older
+  agent-bound sessions keep their agent mode.
 - **2026 private-chat request admission:** plain greetings and informational
   prompts avoid loading native/MCP tool schemas merely because tools are
   enabled; explicit file/web/work actions keep the standard native admission
@@ -113,7 +119,8 @@ One owner request enters the Rust API, is compiled into a scoped task,
 passes through provider selection and a bounded model/tool loop, then
 persists results, approvals, tool receipts and verification status in SQLite.
 A model-generated success message **does not** replace independent completion
-evidence. Mutating tools and deferred/discovered MCP tools pass the same
+ evidence in agent mode. Direct chat answers without attempting external
+actions or marking them verified. Mutating tools and deferred/discovered MCP tools pass the same
 permission, schema, cancellation and effect journal gates.
 
 ### Context and token accounting
@@ -121,7 +128,8 @@ permission, schema, cancellation and effect journal gates.
 Ordinary **1:1 chat** uses a separate [private Context Engine](src/engine/chat/context_engine.rs).
 The [SQLite store](src/db.rs) retains the original conversation and evidence;
 only model-visible history, contextual retrieval and tool contracts are selected.
-Full owner instructions and persona are preserved.
+Owner instructions remain; agent persona instructions apply in agent mode,
+not in direct model chat.
 
 - **Stable stateful prefix:** An unchanged contextual snapshot is anchored once
   before the transcript; edits or revocations trigger an explicit rebase.
