@@ -76,6 +76,21 @@ pub(super) fn tool_name(definition: &Value) -> &str {
         .unwrap_or("")
 }
 
+/// Exact greetings need neither tools nor progressive tool-discovery
+/// schemas. Do not generalize this to deictic followups ("그거 확인해",
+/// "계속해") or requests with attachments; the turn host owns that context.
+pub(super) fn pure_greeting(input:&str)->bool {
+    let normalized=input.chars()
+        .filter(|ch| !ch.is_whitespace() && !matches!(ch,'!'|'?'|'.'|'~'|'。'))
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    matches!(normalized.as_str(),
+        "안녕"|"안녕하세요"|"안녕하세요반가워요"|"반가워요"|
+        "반갑습니다"|"좋은아침"|"좋은아침입니다"|
+        "hi"|"hello"|"hey"|"thanks"|"thankyou"|
+        "고마워"|"고마워요"|"감사합니다")
+}
+
 /// Casual room turns carry zero tool schemas. Action requests select the
 /// exact native schemas the harness judges relevant; no model call is used.
 pub(super) fn room_tool_request(input: &str) -> bool {
@@ -370,6 +385,18 @@ mod room_catalog_cache_tests {
             "ownerActivated":true});
         assert_eq!(select_chat_tools(tools.clone(),"안녕하세요",&explicit),tools,
             "the owner can explicitly restore the full catalog");
+    }
+
+    #[test]
+    fn exact_greetings_skip_tools_without_hiding_followup_capabilities() {
+        for input in ["안녕","안녕하세요 반가워요","안녕하세요!","hello","감사합니다"] {
+            assert!(pure_greeting(input),"{input}");
+        }
+        for input in ["계속해","그거 확인해","안녕 파일 읽어줘",
+            "안녕하세요. 어제 작업 이어서 해주세요","웹 검색해줘",
+            "비용 계산해줘","이것 좀 설명해줘"] {
+            assert!(!pure_greeting(input),"{input}");
+        }
     }
 
     #[test]
