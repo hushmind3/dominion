@@ -2,6 +2,44 @@
 use super::*;
 
 #[test]
+fn thinking_off_overrides_saved_agent_and_provider_settings_on_wire() {
+    let _serial=serial();
+    let (port, requests)=scripted_provider(|_|vec![json!({
+        "choices":[{"delta":{"content":"off-ack"},"finish_reason":"stop"}],
+        "usage":{"prompt_tokens":28,"completion_tokens":3,"total_tokens":31}
+    })]);
+    let app=TestApp::new(port,"native");
+    let provider=app.get("/api/providers").as_array().unwrap()[0].clone();
+    let mut configured=provider.clone();
+    configured["reasoningProtocol"]=json!("deepseek");
+    configured["reasoningEffort"]=json!("high");
+    app.post("/api/providers",&configured);
+    let agent=app.post("/api/agents",&json!({
+        "name":"effort-agent","systemPrompt":"standalone",
+        "reasoningEffort":"high"
+    }));
+    let session=app.post("/api/sessions",&json!({
+        "title":"thinking off","agentId":agent["id"],
+        "providerId":configured["id"],"model":configured["model"]
+    }));
+    let stream=app.chat(&json!({
+        "sessionId":session["id"],"agentId":agent["id"],
+        "providerId":configured["id"],"model":configured["model"],
+        "input":"안녕","thinking":false,"toolsEnabled":false,
+        "toolsExecutionEnabled":false,"autoLearning":false
+    }));
+    assert!(stream.contains("off-ack"),"{stream}");
+    let captured=requests.lock().unwrap();
+    assert_eq!(captured.len(),1);
+    assert_eq!(captured[0]["thinking"]["type"],"disabled",
+        "explicit off must reach DeepSeek wire even with saved high tier");
+    assert!(captured[0].get("reasoning_effort").is_none(),
+        "a saved reasoning tier must not silently re-enable thinking");
+    assert!(captured[0].get("tools").is_none(),
+        "disabled tool access must not leak tool schemas");
+}
+
+#[test]
 fn shared_agent_empty_and_reset_prompts_match_real_provider_wire() {
     let _serial=serial();
     let (port, requests)=scripted_provider(|_|vec![json!({
