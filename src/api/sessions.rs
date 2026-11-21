@@ -26,13 +26,53 @@ pub async fn get_session(State(state): State<AppState>, Path(id): Path<String>) 
     }
 }
 
-pub async fn delete_session(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
-    state.store.remove("session", &id);
+// Private-chat mutations must never erase or rebind Room/channel transcripts.
+// Reuse the live turn's lock so owner actions cannot race an active conversation.
+fn lock_private_session(
+    state: &AppState,
+    id: &str,
+) -> Result<(crate::state::SessionGuard, Value), Response> {
+    if !state.begin_session(id) {
+        return Err(error(StatusCode::CONFLICT, "진행 중인 대화가 있습니다. 완료 후 다시 시도하세요."));
+    }
+    let guard = state.session_guard(id);
+    let Some(session) = state.store.get("session", id) else {
+        return Err(error(StatusCode::NOT_FOUND, "세션을 찾을 수 없습니다."));
+    };
+    if !session["roomId"].is_null()
+        || !session["channelContext"].is_null()
+        || matches!(session["kind"].as_str(), Some("room" | "channel"))
+    {
+        return Err(error(
+            StatusCode::CONFLICT,
+            "회의실·외부 채널 대화 기록은 해당 대화 화면에서 관리하세요.",
+        ));
+    }
+    let running = state.store.active_executions_indexed().map_err(|_| {
+        error(StatusCode::INTERNAL_SERVER_ERROR, "실행 중인 작업을 확인할 수 없습니다.")
+    })?;
+    if running.iter().any(|execution| execution["sessionId"] == id) {
+        return Err(error(
+            StatusCode::CONFLICT,
+            "실행 중인 작업이 있습니다. 완료 후 다시 시도하세요.",
+        ));
+    }
+    Ok((guard, session))
+}
+
+pub async fn delete_session(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let (_guard, _session) = match lock_private_session(&state, &id) {
+        Ok(locked) => locked,
+        Err(response) => return response,
+    };
+    if !state.store.remove("session", &id) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "대화 삭제에 실패했습니다.");
+    }
     state.store.clear_messages(&id);
     state
         .bus
         .emit(json!({ "type": "record", "kind": "session", "removed": id }));
-    Json(json!({ "ok": true }))
+    Json(json!({ "ok": true })).into_response()
 }
 
 pub async fn session_messages(
@@ -54,8 +94,9 @@ pub async fn rename_session(
     Path(id): Path<String>,
     Json(body): Json<Value>,
 ) -> Response {
-    let Some(mut session) = state.store.get("session", &id) else {
-        return error(StatusCode::NOT_FOUND, "세션을 찾을 수 없습니다.");
+    let (_guard, mut session) = match lock_private_session(&state, &id) {
+        Ok(locked) => locked,
+        Err(response) => return response,
     };
     let title = body
         .get("title")
@@ -72,17 +113,22 @@ pub async fn rename_session(
     Json(saved).into_response()
 }
 
-pub async fn clear_session(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
+pub async fn clear_session(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let (_guard, _session) = match lock_private_session(&state, &id) {
+        Ok(locked) => locked,
+        Err(response) => return response,
+    };
     state.store.clear_messages(&id);
     state
         .bus
         .emit(json!({ "type": "record", "kind": "session", "id": id }));
-    Json(json!({ "ok": true }))
+    Json(json!({ "ok": true })).into_response()
 }
 
 pub async fn fork_session(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    let Some(source) = state.store.get("session", &id) else {
-        return error(StatusCode::NOT_FOUND, "세션을 찾을 수 없습니다.");
+    let (_guard, source) = match lock_private_session(&state, &id) {
+        Ok(locked) => locked,
+        Err(response) => return response,
     };
     let mut fork = source.clone();
     if let Value::Object(ref mut map) = fork {
@@ -150,6 +196,11 @@ pub async fn compact_session(
     Path(id): Path<String>,
     Json(body): Json<Value>,
 ) -> Response {
+    // Compaction rewrites a transcript; the Room/channel owner must control it.
+    let (_guard, _session) = match lock_private_session(&state, &id) {
+        Ok(locked) => locked,
+        Err(response) => return response,
+    };
     let provider_id = body
         .get("providerId")
         .and_then(|value| value.as_str())
