@@ -63,7 +63,7 @@ pub(super) fn begin_tools<'a>(
             // the shared Rust kernel only batches adjacent independent observations.
             turn.tool_round.round_calls = completion.tool_calls.clone();
             if ordering_kernel == "read-first"
-                && turn
+                && turn.tool_round
                     .round_calls
                     .iter()
                     .any(|call| !tool_is_read_only(&call.name))
@@ -468,7 +468,7 @@ pub(super) fn dispatch_tool<'a>(
                     for ((index, _, _), result) in prepared.into_iter().zip(results) {
                         turn.tool_round.dispatched.insert(index, result);
                     }
-                    let observed = turn
+                    let observed = turn.tool_round
                         .dispatched
                         .remove(&call_index)
                         .ok_or("도구 배치 결과가 없습니다.")?;
