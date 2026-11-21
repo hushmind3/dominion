@@ -1,5 +1,6 @@
 //! Scheduled maintenance: bounded database backups.
 use crate::state::AppState;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -65,6 +66,22 @@ impl Drop for PlaintextSnapshot {
     }
 }
 
+fn write_private_backup(path:&Path,bytes:&[u8])->Result<(),String>{
+    let mut options=std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]{
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file=options.open(path).map_err(|error|error.to_string())?;
+    if let Err(error)=file.write_all(bytes).and_then(|()|file.sync_all()){
+        drop(file);
+        let _=std::fs::remove_file(path);
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
 /// Reclaim plaintext VACUUM outputs stranded by a power failure. Only files
 /// with our exact generated prefix/suffix inside the private staging folder
 /// and older than a full day are eligible. Active huge snapshots are safe.
@@ -124,12 +141,20 @@ pub fn create_snapshot(state: &AppState) -> Result<PathBuf, String> {
     let path = directory.join(format!(
         "dominion-{stamp}-{}.sqlite.enc",uuid::Uuid::new_v4().simple()
     ));
-    std::fs::write(&path, &sealed).map_err(|error| error.to_string())?;
+    write_private_backup(&path,&sealed)?;
 
     if let Some(offsite) = offsite_directory() {
         std::fs::create_dir_all(&offsite).map_err(|error| error.to_string())?;
-        std::fs::copy(&path, offsite.join(path.file_name().unwrap_or_default()))
-            .map_err(|error| error.to_string())?;
+        let name=path.file_name().and_then(|name|name.to_str()).unwrap_or("backup.enc");
+        let destination=offsite.join(name);
+        let temporary=offsite.join(format!(".{name}.tmp-{}",uuid::Uuid::new_v4()));
+        write_private_backup(&temporary,&sealed)?;
+        if let Err(error)=std::fs::rename(&temporary,&destination){
+            let _=std::fs::remove_file(&temporary);
+            return Err(error.to_string());
+        }
+        std::fs::File::open(&offsite).and_then(|dir|dir.sync_all())
+            .map_err(|error|error.to_string())?;
         prune_backups(&offsite, keep_count());
     }
     prune_backups(&directory, keep_count());
@@ -224,6 +249,12 @@ mod tests {
         );
         let path = create_snapshot(&state).unwrap();
         assert_eq!(path.extension().and_then(|value| value.to_str()), Some("enc"));
+        #[cfg(unix)]{
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode()&0o777,0o600);
+            assert_eq!(std::fs::metadata(dir.join("backups/.plaintext-staging"))
+                .unwrap().permissions().mode()&0o777,0o700);
+        }
         let sealed = std::fs::read(&path).unwrap();
         assert!(!sealed.starts_with(b"SQLite format 3"));
         let plain =

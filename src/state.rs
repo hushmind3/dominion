@@ -136,7 +136,10 @@ impl AppState {
     /// against restore and maintenance-mode shutdown.
     pub fn begin_maintenance_write(&self)->bool{
         let Ok(_gate)=self.maintenance_gate.lock() else{return false};
-        if !self.maintenance_mode()||self.restore_is_in_progress(){return false;}
+        if !self.maintenance_mode()||self.restore_is_in_progress()
+            ||self.active_api_writes.load(std::sync::atomic::Ordering::SeqCst)>0{
+            return false;
+        }
         self.active_api_writes.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
         true
     }

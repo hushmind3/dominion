@@ -455,6 +455,12 @@ pub async fn rotate_backup_keys(
         )
             .into_response();
     }
+    if crate::engine::restore_transaction::has_active_work(&state){
+        return (
+            axum::http::StatusCode::CONFLICT,
+            Json(json!({"error":"실행 중인 대화나 작업이 끝난 뒤 백업 키를 회전하세요."})),
+        ).into_response();
+    }
     let keep_old = body["keepOld"].as_bool().unwrap_or(false);
     match crate::engine::backup_keys::rotate(&state, keep_old) {
         Ok(report) => Json(json!({
@@ -489,6 +495,12 @@ pub async fn rotate_secret_key(
             Json(json!({"error":"secret key 회전은 유지보수 모드에서만 가능합니다."})),
         )
             .into_response();
+    }
+    if crate::engine::restore_transaction::has_active_work(&state){
+        return (
+            axum::http::StatusCode::CONFLICT,
+            Json(json!({"error":"실행 중인 대화나 작업이 끝난 뒤 secret key를 회전하세요."})),
+        ).into_response();
     }
     let keep_old = body["keepOld"].as_bool().unwrap_or(false);
     match crate::engine::vault_rotation::rotate(&state, keep_old) {
