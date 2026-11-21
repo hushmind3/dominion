@@ -2089,6 +2089,7 @@ async fn stream_anthropic_once(
     let mut buffer = SseBuffer::default();
     let mut stream = response.bytes_stream();
     let mut terminated = false;
+    let mut message_started=false;
     let mut stop_reason:Option<String> = None;
     let mut text_pending = String::new();
     let mut in_text_tool_call = false;
@@ -2120,6 +2121,12 @@ async fn stream_anthropic_once(
                 .map_err(|_| "Anthropic 스트림 JSON이 올바르지 않습니다.")?;
             match piece["type"].as_str().unwrap_or("") {
                 "message_start" => {
+                    // A model gateway must never splice another generation
+                    // into an existing paid turn and combine tool arguments.
+                    if message_started {
+                        return Err("Duplicate Anthropic message_start in a single turn".into());
+                    }
+                    message_started=true;
                     input_reported=piece["message"]["usage"]["input_tokens"].as_u64().is_some();
                     input_tokens = piece["message"]["usage"]["input_tokens"].as_u64().unwrap_or(0);
                     cache_read_reported = piece["message"]["usage"]["cache_read_input_tokens"].as_u64().is_some();
@@ -3222,7 +3229,13 @@ mod tests {
             let selected=request["model"].as_str().unwrap_or("");
             let mut events=vec![json!({"type":"message_start",
                 "message":{"usage":{"input_tokens":7,"output_tokens":0}}})];
-            if selected=="valid-initial-text" {
+            if selected=="spliced-message" {
+                events.push(json!({"type":"content_block_start","index":0,
+                    "content_block":{"type":"tool_use","id":"half-write",
+                        "name":"workspace_write","input":{}}}));
+                events.push(json!({"type":"message_start",
+                    "message":{"usage":{"input_tokens":2}}}));
+            }else if selected=="valid-initial-text" {
                 events.extend([
                     json!({"type":"content_block_start","index":0,
                         "content_block":{"type":"text","text":"initial-only"}}),
@@ -3293,6 +3306,7 @@ mod tests {
             ("no-stop","no settled stop_reason"),
             ("max-tokens","stopped without a settled turn"),
             ("orphan-tool-delta","no open tool block"),
+            ("spliced-message","Duplicate Anthropic message_start"),
             ("end-turn-with-tool","contradicts streamed tool calls"),
             ("duplicate-call","duplicate tool call IDs"),
         ] {
