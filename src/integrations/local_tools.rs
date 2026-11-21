@@ -37,13 +37,13 @@ pub fn definitions() -> Vec<Value> {
     let text = |description: &str| json!({ "type": "string", "description": description });
 
     let mut definitions = vec![
-        tool("workspace_list", "List files and folders in the workspace", object(json!({"path": text("Relative folder path")}), vec![])),
+        tool("workspace_list", "List files and folders in the workspace. Large folders return at most 200 entries; pass nextCursor as cursor to read the next page.", object(json!({"path": text("Relative folder path"), "cursor": text("nextCursor returned by the prior page"), "limit": json!({"type":"integer","minimum":1,"maximum":500})}), vec![])),
         tool("workspace_read", "Read a UTF-8 file from the workspace", object(json!({"path": text("Relative file path")}), vec!["path"])),
         tool("workspace_read_range", "Read only a line range from a workspace file. Use the line numbers from the repository index instead of reading a large file end to end.", object(json!({"path": text("Relative file path"), "startLine": json!({"type":"integer","minimum":1}), "endLine": json!({"type":"integer","minimum":1, "description":"Inclusive end line; at most 400 lines are returned"})}), vec!["path","startLine"])),
         tool("workspace_replace_range", "Replace a previously read inclusive line range with newText only. Use startLine/endLine and sourceSha256 returned by workspace_read_range; old text is not required.", object(json!({"path": text("Relative file path"), "startLine": json!({"type":"integer","minimum":1}), "endLine": json!({"type":"integer","minimum":1,"description":"Inclusive line number; at most 120 lines"}), "newText": text("Replacement lines (without old source text)"), "expectedSha256": text("Exact sourceSha256 from the successful prior read")}), vec!["path","startLine","endLine","newText","expectedSha256"])),
         tool("workspace_replace", "Replace one exact block in a workspace file without resending the whole file (approval required). oldText must occur exactly once.", object(json!({"path": text("Relative file path"), "oldText": text("Exact existing text to replace; must occur exactly once"), "newText": text("Replacement text"), "expectedSha256": text("Optional SHA-256 observed before editing")}), vec!["path","oldText","newText"])),
         tool("workspace_write", "Write a UTF-8 file inside the workspace (approval required)", object(json!({"path": text("Relative file path"), "content": text("UTF-8 content")}), vec!["path", "content"])),
-        tool("file_list", "List any folder on this computer using an absolute path", object(json!({"path": text("Absolute folder path")}), vec!["path"])),
+        tool("file_list", "List any folder on this computer using an absolute path. Large folders return at most 200 entries; pass nextCursor as cursor to read the next page.", object(json!({"path": text("Absolute folder path"), "cursor": text("nextCursor returned by the prior page"), "limit": json!({"type":"integer","minimum":1,"maximum":500})}), vec!["path"])),
         tool("file_read", "Read any UTF-8 text file using an absolute path", object(json!({"path": text("Absolute file path")}), vec!["path"])),
         tool("file_write", "Create or overwrite any file using an absolute path (approval required)", object(json!({"path": text("Absolute file path"), "content": text("UTF-8 content")}), vec!["path", "content"])),
         tool("shell_exec", "Run a shell command on this computer and return stdout/stderr (approval required)", object(json!({"command": text("Shell command line"), "cwd": text("Optional absolute working directory")}), vec!["command"])),
@@ -104,7 +104,7 @@ pub async fn execute(
     match name {
         "workspace_list" => {
             let path = resolve_workspace(ctx.workspace, string_arg(args, "path").unwrap_or("."))?;
-            list_dir(&path).await
+            list_dir(&path,args).await
         }
         "workspace_read" => {
             let path = resolve_workspace(ctx.workspace, &required_arg(args, "path")?)?;
@@ -177,7 +177,7 @@ pub async fn execute(
         }
         "file_list" => {
             let path = PathBuf::from(required_arg(args, "path")?);
-            list_dir(&path).await
+            list_dir(&path,args).await
         }
         "file_read" => {
             let path = PathBuf::from(required_arg(args, "path")?);
@@ -453,27 +453,37 @@ fn canonical_target(path: &Path) -> std::io::Result<PathBuf> {
     }
 }
 
-async fn list_dir(path: &Path) -> Result<Value, String> {
-    let mut entries = Vec::new();
+async fn list_dir(path: &Path,args:&Value) -> Result<Value, String> {
+    let limit=args["limit"].as_u64().unwrap_or(200).clamp(1,500) as usize;
+    let cursor=args["cursor"].as_str();
+    let mut page=std::collections::BTreeMap::<String,Value>::new();
     let mut reader = tokio::fs::read_dir(path)
         .await
         .map_err(|error| format!("{}: {error}", path.display()))?;
-    while let Ok(Some(entry)) = reader.next_entry().await {
+    loop {
+        let entry=match reader.next_entry().await {
+            Ok(Some(entry))=>entry,
+            Ok(None)=>break,
+            Err(error)=>return Err(format!("{}: {error}",path.display())),
+        };
+        let name=entry.file_name().to_string_lossy().into_owned();
+        if cursor.is_some_and(|cursor|name.as_str()<=cursor){continue;}
         let metadata = entry.metadata().await.ok();
-        entries.push(json!({
-            "name": entry.file_name().to_string_lossy(),
+        page.insert(name.clone(),json!({
+            "name": name,
             "path": entry.path().to_string_lossy(),
             "type": if metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false) { "dir" } else { "file" },
             "size": metadata.as_ref().map(|m| m.len()).unwrap_or(0),
         }));
+        if page.len()>limit+1 {
+            if let Some(last)=page.keys().next_back().cloned(){page.remove(&last);}
+        }
     }
-    entries.sort_by(|a, b| {
-        a["name"]
-            .as_str()
-            .unwrap_or("")
-            .cmp(b["name"].as_str().unwrap_or(""))
-    });
-    Ok(json!({ "path": path.to_string_lossy(), "entries": entries }))
+    let truncated=page.len()>limit;
+    let entries=page.values().take(limit).cloned().collect::<Vec<_>>();
+    let next_cursor=truncated.then(||entries.last().and_then(|item|item["name"].as_str()).unwrap_or(""));
+    Ok(json!({"path":path.to_string_lossy(),"entries":entries,
+        "limit":limit,"truncated":truncated,"nextCursor":next_cursor}))
 }
 
 async fn read_text(path: &Path) -> Result<Value, String> {
