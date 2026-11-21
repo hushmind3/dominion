@@ -154,6 +154,10 @@ pub(super) fn select_room_tools(
             &["team_workers", "team_execute", "team_status", "delegate_task"],
         ),
         (
+            &["원격 산출물", "원격 파일", "파일 반영", "artifact merge", "remote artifact", "remote merge"],
+            &["team_remote_apply", "team_status"],
+        ),
+        (
             &["동료에게", "봇에게", "전달해", "메시지 보내", "peer", "inbox", "받은편지함"],
             &["room_peer_send", "room_peer_inbox"],
         ),
@@ -335,10 +339,13 @@ pub(super) fn select_tool_definitions(
     // selected core allows that category. No configured adapter: no schema.
     let team_intent=["팀","협업","team","lead","worker","멀티에이전트"]
         .iter().any(|word|query.to_lowercase().contains(word));
+    let merge_intent=["원격 산출물","원격 파일","파일 반영","artifact merge","remote artifact","remote merge"]
+        .iter().any(|word|query.to_lowercase().contains(word));
     let external_intent=["external harness","외부 실행기","codex","claude code","qwen code"]
         .iter().any(|word|query.to_lowercase().contains(word));
     let delegated=|name:&str|core.contains("delegate_task") && (
         (matches!(name,"team_workers"|"team_execute"|"team_status") && team_intent)
+        || (name=="team_remote_apply" && merge_intent)
         || name=="external_harness_run"
         || (name=="external_harness_sessions" && external_intent)
     );
