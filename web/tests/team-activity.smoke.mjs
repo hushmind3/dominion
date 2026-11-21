@@ -73,7 +73,10 @@ try{
        created_at:'2026-11-22 00:00:00'},
       {id:'assistant-layout',session_id:'chat-one',role:'assistant',
        content:'답변은 왼쪽에서 편하게 읽을 수 있어야 합니다.',
-       agent_id:'lead',created_at:'2026-11-22 00:00:01'}
+       agent_id:'lead',created_at:'2026-11-22 00:00:01'},
+      {id:'assistant-markdown',session_id:'chat-one',role:'assistant',
+       content:'## 결과 제목\n\n- 첫 번째 항목\n- 두 번째 항목\n\n```tsx\nconst count = 2\n```\n\n| 구분 | 결과 |\n| --- | --- |\n| A | B |\n\n[참조](https://example.com) <script>alert(1)</script>',
+       agent_id:'lead',created_at:'2026-11-22 00:00:02'}
     ]:[];
     if(path.endsWith('/usage'))response={totalTokens:0};
     if(path==='/api/model-library/runtime')response={status:'idle'};
@@ -174,6 +177,14 @@ try{
     'owner bubble must not overflow mobile: '+JSON.stringify(chatLayout));
   assert.ok(assistant.fontSize>=15&&owner.fontSize>=15,
     'chat content must be comfortably readable: '+JSON.stringify(chatLayout));
+  const markdownTurn=page.locator('[data-message]').filter({hasText:'결과 제목'});
+  assert.equal(await markdownTurn.locator('.md-message h2').count(),1);
+  assert.equal(await markdownTurn.locator('.md-message li').count(),2);
+  assert.equal(await markdownTurn.locator('.md-message pre code').innerText(),'const count = 2');
+  assert.equal(await markdownTurn.locator('.md-message table tbody td').count(),2);
+  assert.equal(await markdownTurn.locator('.md-message a[href="https://example.com"]').count(),1);
+  assert.equal(await markdownTurn.locator('script').count(),0,
+    'model text must never mount HTML scripts');
   await chatInput.fill('첫 번째 대화에서만 보낼 미완성 지시');
   await page.evaluate(()=>{window.location.hash='#/chat?session=chat-two'});
   await page.waitForFunction(selector=>document.querySelector(selector)?.value==='',
