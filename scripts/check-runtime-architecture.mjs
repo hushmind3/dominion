@@ -57,6 +57,13 @@ has('src/conversation/chat/runtime/turn.rs',
   ['settle_rejected_chat_turn','settle_rejected_model_turn']);
 has('src/conversation/chat/runtime/turn.rs',
   ['let lightweight_chat =','(!lightweight_chat || discovery["ownerActivated"]==true)']);
+has('build.rs',['DOMINION_BUILD_COMMIT','DOMINION_BUILD_IDENTITY_SOURCE',
+  'watch_git_path("HEAD")']);
+has('src/build_identity.rs',['embedded-build','embedded-release','unavailable']);
+assert.ok(!text('src/build_identity.rs').includes('source:"source-checkout"'),
+  'health may not label moving checkout HEAD as a binary revision');
+has('src/api/system.rs',['"binaryBuildSha": crate::build_identity::running().commit']);
+
 assert.ok(!text('src/conversation/chat/runtime/turn.rs').includes('pure_chat_greeting'),
   'obsolete pure_chat_greeting reference prevents product Rust compilation');
 has('src/conversation/chat/provider.rs',
