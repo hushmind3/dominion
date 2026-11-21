@@ -783,7 +783,7 @@ impl Store {
     )->Option<Value>{
         let changes=patch.as_object()?;
         if changes.contains_key("id") || expected.is_empty() ||
-            expected.iter().any(|(field,_)|field.is_empty()||*field=="id") {
+            expected.iter().any(|(field,_)|field.is_empty()) {
             return None;
         }
         let mut conn=self.conn.lock().ok()?;
@@ -2571,6 +2571,17 @@ mod tests {
         let _=std::fs::remove_dir_all(dir);
     }
 
+    #[test]
+    fn id_guarded_legacy_compare_and_patch_remains_compatible(){
+        let store=Store::open(std::path::Path::new(":memory:")).unwrap();
+        store.put("room",&json!({"id":"room-id","maxTurns":9})).unwrap();
+        let updated=store.patch_if("room","room-id","id",&json!("room-id"),
+            &json!({"maxTurns":1})).unwrap();
+        assert_eq!(updated["maxTurns"],1);
+        assert_eq!(updated["id"],"room-id");
+        assert!(store.patch_if("room","room-id","id",&json!("foreign"),
+            &json!({"maxTurns":2})).is_none());
+    }
     #[test]
     fn dual_field_cas_rejects_stale_phase_and_completed_run_revival(){
         let store=Store::open(std::path::Path::new(":memory:")).unwrap();
