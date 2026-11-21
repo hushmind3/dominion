@@ -1,6 +1,39 @@
 //! MCP http transport and contract.
 use super::*;
 
+const MODERN_VERSION: &str = "2026-07-28";
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum HttpEra { Modern, Legacy }
+
+#[derive(serde::Deserialize)]
+struct DiscoverResult {
+    #[serde(rename = "supportedVersions")]
+    supported_versions: Vec<String>,
+    #[serde(default)]
+    capabilities: Value,
+}
+
+fn modern_params(mut params: Value) -> Value {
+    if !params.is_object() { params = json!({}); }
+    params["_meta"] = json!({
+        "io.modelcontextprotocol/protocolVersion": MODERN_VERSION,
+        "io.modelcontextprotocol/clientInfo": {
+            "name":"dominion-rust", "version":env!("CARGO_PKG_VERSION")
+        },
+        "io.modelcontextprotocol/clientCapabilities": {}
+    });
+    params
+}
+
+/// Encode transport routing values according to MCP's 2026 header-sentinel rule.
+fn header_value(raw:&str)->String{
+    let plain = !raw.is_empty() && raw.trim()==raw && raw.bytes().all(|byte|byte>=32&&byte<=126)
+        && !(raw.starts_with("=?base64?")&&raw.ends_with("?="));
+    if plain {return raw.to_string();}
+    use base64::Engine as _;
+    format!("=?base64?{}?=",base64::engine::general_purpose::STANDARD.encode(raw.as_bytes()))
+}
+
 const MAX_SSE_EVENT_BYTES: usize = 2 * 1024 * 1024;
 
 /// A request-scoped SSE stream can remain open after its JSON-RPC response.
@@ -59,12 +92,12 @@ pub(super) struct HttpSession {
     pub(super) session: Option<String>,
     pub(super) token: Option<String>,
     pub(super) next_id: u64,
+    pub(super) era: HttpEra,
 }
 
 impl HttpSession {
-    /// Full MCP handshake: initialize, capture Mcp-Session-Id, then
-    /// notifications/initialized. Stateless one-shot requests fail against
-    /// spec-compliant Streamable HTTP servers.
+    /// Probe 2026-07-28 discovery first. Old servers retain their initialize
+    /// handshake, session id and notifications/initialized behavior.
     pub(super) async fn open(record: &Value, state: &AppState) -> Result<Self, String> {
         let url = record
             .get("url")
@@ -90,7 +123,10 @@ impl HttpSession {
             session: None,
             token,
             next_id: 1,
+            era: HttpEra::Modern,
         };
+        if session.discover_modern().await? { return Ok(session); }
+        session.era = HttpEra::Legacy;
 
         session
             .request(
@@ -104,6 +140,38 @@ impl HttpSession {
             .await?;
         session.notify("notifications/initialized", json!({})).await;
         Ok(session)
+    }
+
+    pub(super) fn modern(&self) -> bool { self.era == HttpEra::Modern }
+
+    async fn discover_modern(&mut self) -> Result<bool, String> {
+        let id=self.next_id;
+        self.next_id+=1;
+        let payload=json!({"jsonrpc":"2.0","id":id,"method":"server/discover",
+            "params":modern_params(json!({}))});
+        match self.post(&payload).await {
+            Ok(value) => {
+                let Some(result)=value.get("result") else {
+                    return if value["error"]["code"] == -32601 { Ok(false) }
+                        else { Err(format!("MCP discovery error: {}",value["error"])) };
+                };
+                // Old test/legacy servers may answer unknown methods with an
+                // empty success. Only a schema-valid discovery selects modern.
+                if result.get("supportedVersions").is_none() { return Ok(false); }
+                let discovered: DiscoverResult=serde_json::from_value(result.clone())
+                    .map_err(|error|format!("MCP discovery schema: {error}"))?;
+                if !discovered.supported_versions.iter().any(|version|version==MODERN_VERSION) {
+                    return Err("MCP 서버가 2026-07-28을 지원하지 않습니다.".into());
+                }
+                let _capabilities=discovered.capabilities;
+                Ok(true)
+            }
+            Err(error) if error.starts_with("MCP HTTP 404") => Ok(false),
+            Err(error) if error.starts_with("MCP HTTP 400")
+                && !error.contains("-32022")
+                && !error.contains("-32020") => Ok(false),
+            Err(error)=>Err(error),
+        }
     }
 
     async fn notify(&mut self, method: &str, params: Value) {
@@ -123,7 +191,7 @@ impl HttpSession {
             "jsonrpc": "2.0",
             "id": id,
             "method": method,
-            "params": params,
+            "params": if self.modern(){modern_params(params)}else{params},
         });
         let value = self.post(&payload).await?;
         if let Some(error) = value.get("error") {
@@ -139,8 +207,21 @@ impl HttpSession {
             .header("content-type", "application/json")
             .header("accept", "application/json, text/event-stream")
             .json(payload);
-        if let Some(session) = &self.session {
-            request = request.header("mcp-session-id", session);
+        if self.modern() {
+            let method=payload["method"].as_str().ok_or("MCP 요청 메서드가 없습니다.")?;
+            request=request.header("MCP-Protocol-Version",MODERN_VERSION)
+                .header("Mcp-Method",method);
+            if matches!(method,"tools/call"|"resources/read"|"prompts/get") {
+                let name=payload["params"]["name"].as_str()
+                    .or_else(||payload["params"]["uri"].as_str())
+                    .ok_or("MCP 요청 이름 또는 URI가 없습니다.")?;
+                request=request.header("Mcp-Name",header_value(name));
+            }
+        }
+        if !self.modern() {
+            if let Some(session) = &self.session {
+                request = request.header("mcp-session-id", session);
+            }
         }
         if let Some(token) = &self.token {
             request = request.header("authorization", format!("Bearer {token}"));
@@ -160,7 +241,7 @@ impl HttpSession {
             .get("mcp-session-id")
             .and_then(|value| value.to_str().ok())
         {
-            self.session = Some(session.to_string());
+            if !self.modern() { self.session = Some(session.to_string()); }
         }
         let content_type = response
             .headers()
