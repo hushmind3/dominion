@@ -952,10 +952,19 @@ fn explicit_direct_chat_does_not_inherit_a_saved_session_agent() {
     let assistant=messages.as_array().unwrap().iter()
         .find(|row|row["role"]=="assistant").expect("assistant response");
     assert!(assistant["agent_id"].is_null(), "{assistant}");
+    assert_eq!(assistant["metadata"]["authorKind"],"model");
+    assert_eq!(assistant["metadata"]["conversationMode"],"chat");
     let saved=app.get(&format!("/api/sessions/{id}"));
     assert_eq!(saved["agentId"],"missing-agent-must-not-be-used");
     assert_eq!(saved["conversationMode"],"chat");
+    let executions=app.get("/api/executions");
+    let trace=executions.as_array().unwrap().iter()
+        .find(|row|row["sessionId"]==session["id"]).expect("execution");
+    assert_eq!(trace["planningAdmission"]["secondaryPlannerRequested"],false);
+    assert_eq!(trace["budget"]["maxRounds"],1);
+    assert_eq!(trace["budget"]["maxTools"],0);
     let wire=requests.lock().unwrap();
+    assert_eq!(wire.len(),1,"direct Chat should use exactly one model call");
     let system=wire[0]["messages"][0]["content"].as_str().unwrap();
     assert!(system.contains("일반 대화를 돕는"), "{system}");
     assert!(!system.contains("작업 공간 루트:"), "{system}");
@@ -999,6 +1008,8 @@ fn direct_chat_web_search_exposes_only_public_read_tools_and_no_agent() {
     let assistant=rows.as_array().unwrap().iter()
         .find(|row|row["role"]=="assistant").expect("saved answer");
     assert!(assistant["agent_id"].is_null(),"{assistant}");
+    assert_eq!(assistant["metadata"]["authorKind"],"model");
+    assert_eq!(assistant["metadata"]["webSearch"],true);
     assert!(app.get("/api/experience").as_array().unwrap().is_empty());
 }
 

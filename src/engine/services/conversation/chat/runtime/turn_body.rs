@@ -32,7 +32,9 @@ pub(super) async fn run_turn_body(
     let mut acceptance_retries = 0usize;
     let mut last_repair_signature:Option<String> = None;
     let mut procedure_repairs = 0usize;
-    let recovery_policy = decision_policy.active("recovery");
+    let recovery_policy = if request.direct_chat {None}else{
+        decision_policy.active("recovery")
+    };
     let program_policy = if request.direct_chat { None } else { decision_policy.active("execution") };
     // The file guard is opt-in: an operator or a verified policy must
     // activate mutation.preflight before it applies. No automatic promotion.
@@ -70,7 +72,15 @@ pub(super) async fn run_turn_body(
         crate::engine::turn_policy::TurnPolicy::recovery_limits(recovery_policy.as_ref());
     let mut op_seq = 0u64;
 
-    let mut metadata = json!({"authorKind":"agent","roomId":session.get("roomId"),"replyToMessageId":reply_to,"executionId":execution_id,"taskId":task_id,"reasoningLanguageRequested":request.reasoning_language,"reasoningTranslated":false});
+    let mut metadata = json!({
+        "authorKind":if request.direct_chat{"model"}else{"agent"},
+        "conversationMode":if request.direct_chat{"chat"}else{"agent"},
+        "webSearch":request.direct_chat&&request.web_search,
+        "roomId":session.get("roomId"),"replyToMessageId":reply_to,
+        "executionId":execution_id,"taskId":task_id,
+        "reasoningLanguageRequested":request.reasoning_language,
+        "reasoningTranslated":false
+    });
 
     let mut provider = select_provider(state, request, &session)?;
     let allow_provider_fallback = true;
@@ -83,8 +93,10 @@ pub(super) async fn run_turn_body(
     }
     // A direct web lookup has no reason to run an autonomous multi-tool job.
     if request.direct_chat {
-        max_rounds=max_rounds.min(5);
-        max_tools=max_tools.min(6);
+        // Ordinary Chat uses one model round and no tool budget. Explicit
+        // public web lookup keeps a short read-only search/result cycle.
+        max_rounds=if request.web_search{max_rounds.min(5)}else{1};
+        max_tools=if request.web_search{max_tools.min(6)}else{0};
     }
     let elapsed_limit=MAX_ELAPSED;
     let super::tool_catalog::Catalog{
@@ -301,7 +313,9 @@ pub(super) async fn run_turn_body(
     // Action requests get an explicit plan before tools. A versioned policy in
     // the planning slot can override the built-in heuristic; no active policy
     // means the existing behaviour is unchanged.
-    let planning_policy = decision_policy.active("planning");
+    let planning_policy = if request.direct_chat {None}else{
+        decision_policy.active("planning")
+    };
     if let Some(policy) = &planning_policy {
         context_items.push(json!({
             "kind": "planning_policy",
@@ -329,7 +343,11 @@ pub(super) async fn run_turn_body(
     // Deterministic decomposition runs before any model call. It gives the
     // turn an engine-owned ordered sub-goal list and an independently graded
     // signal that does not depend on whole-task success.
-    let decomposition=decision_policy.decompose_request(task_input(&session,&request.input));
+    let decomposition=if request.direct_chat{
+        json!({"kernel":"direct-conversation","subtasks":[]})
+    }else{
+        decision_policy.decompose_request(task_input(&session,&request.input))
+    };
     let subtask_count = decomposition["subtasks"]
         .as_array()
         .map(Vec::len)
@@ -360,11 +378,12 @@ pub(super) async fn run_turn_body(
     let native_contract_plan=!is_room
         && planning_policy.is_none()
         && crate::engine::turn_policy::TurnPolicy::skip_extra_planner(&request.input,&acceptance);
-    let plan_requested=crate::engine::turn_policy::TurnPolicy::plan_requested(
-        planning_policy.as_ref(),request.input.chars().count(),plan_heuristic,
-        previous_panel_answer,native_contract_plan,
-        session["sdkUiPolicy"]["planningMode"].as_str(),
-    );
+    let plan_requested=!request.direct_chat
+        && crate::engine::turn_policy::TurnPolicy::plan_requested(
+            planning_policy.as_ref(),request.input.chars().count(),plan_heuristic,
+            previous_panel_answer,native_contract_plan,
+            session["sdkUiPolicy"]["planningMode"].as_str(),
+        );
     if let Some(mut execution)=state.store.get("execution",execution_id){
         execution["planningAdmission"]=json!({
             "secondaryPlannerRequested":plan_requested,
@@ -375,7 +394,13 @@ pub(super) async fn run_turn_body(
         });
         let _=state.store.put("execution",&execution);
     }
-    let mut agent_loop=decision_policy.workflow(plan_requested);
+    // Keep plain conversation independent of installed agent-loop
+    // algorithms. Model-backed Chat may still use a bounded public web loop.
+    let mut agent_loop=if request.direct_chat{
+        dominion_agent_loop::select_named(None,false)
+    }else{
+        decision_policy.workflow(plan_requested)
+    };
     let mut plan_digest: Option<String> = None;
     if acceptance.is_some()
         && request.tools_enabled
