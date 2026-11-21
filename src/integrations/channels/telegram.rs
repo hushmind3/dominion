@@ -61,8 +61,11 @@ impl Client {
             .await
             .map_err(|_| "Telegram 네트워크 요청의 결과를 확인할 수 없습니다.".to_string())?;
         let status = response.status();
-        let result: Value = response
-            .json()
+        let result: Value = crate::integrations::network::read_bounded_json(
+            response,
+            2 * 1024 * 1024,
+            "Telegram API",
+        )
             .await
             .map_err(|_| "Telegram 응답 형식을 확인할 수 없습니다.")?;
         if !status.is_success() || result["ok"] != true {

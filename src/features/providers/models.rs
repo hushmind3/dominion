@@ -819,7 +819,7 @@ async fn install_from_release(state: &AppState) -> Result<(PathBuf, String), Str
         return Err("이 플랫폼의 llama.cpp 자동 설치 자산이 없습니다.".into());
     }
     let client = reqwest::Client::new();
-    let release = client
+    let release_response = client
         .get("https://api.github.com/repos/ggml-org/llama.cpp/releases/latest")
         .header("User-Agent", "dominion-rust")
         .timeout(Duration::from_secs(30))
@@ -827,8 +827,12 @@ async fn install_from_release(state: &AppState) -> Result<(PathBuf, String), Str
         .await
         .map_err(|error| format!("llama.cpp 릴리스 조회 실패: {error}"))?
         .error_for_status()
-        .map_err(|error| format!("llama.cpp 릴리스 HTTP 오류: {error}"))?
-        .json::<Value>()
+        .map_err(|error| format!("llama.cpp 릴리스 HTTP 오류: {error}"))?;
+    let release = crate::integrations::network::read_bounded_json(
+        release_response,
+        4 * 1024 * 1024,
+        "llama.cpp 릴리스",
+    )
         .await
         .map_err(|error| format!("llama.cpp 릴리스 응답 오류: {error}"))?;
     let asset = release["assets"]
@@ -1663,7 +1667,13 @@ async fn load_mlx_from_dir(
             .await
         {
             if response.status().is_success() {
-                if let Ok(value) = response.json::<Value>().await {
+                if let Ok(value) = crate::integrations::network::read_bounded_json(
+                    response,
+                    1024 * 1024,
+                    "LM Studio model list",
+                )
+                .await
+                {
                     if let Some(served) = value["data"]
                         .as_array()
                         .and_then(|models| models.first())
@@ -1806,7 +1816,13 @@ pub async fn load(state: &AppState, id: &str, context: u64) -> Result<Value, Str
             .await
         {
             if response.status().is_success()
-                && response.json::<Value>().await.is_ok_and(|data| {
+                && crate::integrations::network::read_bounded_json(
+                    response,
+                    1024 * 1024,
+                    "llama.cpp model list",
+                )
+                .await
+                .is_ok_and(|data| {
                     data["data"].as_array().is_some_and(|models| models.iter().any(|model| model["id"] == id))
                 })
             {
