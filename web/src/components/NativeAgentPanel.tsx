@@ -13,6 +13,8 @@ type SdkRun = {
   pendingCall?: {id:string; name:string; arguments:unknown} | null;
   events?: {kind:string; detail:unknown}[];
   verificationChecks?: {satisfied:boolean;explanation?:string}[];
+  toolReceipts?: {id:string;tool:string;success:boolean;step:number}[];
+  toolReceiptsOmitted?:number;
  } | null
 }
 const running = new Set(['queued', 'running'])
@@ -169,6 +171,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const needsApproval=status==='awaiting_approval' && call
  const canResume=status==='interrupted'
  const events=(run?.checkpoint?.events||[]).slice(-4)
+ const toolReceipts=run?.checkpoint?.toolReceipts||[]
  return <section className="mt-4 rounded-xl border border-[#E7E0D5] bg-white">
   <div className="flex items-center gap-2 border-b border-[#F0EAE1] px-4 py-3">
    <Sparkles size={17} className="text-[#AF5B3A]"/>
@@ -274,6 +277,30 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      </div>
     </div>}
     {run.answer||run.checkpoint?.answer?<div className="mt-3 whitespace-pre-wrap break-words border-t border-[#E7E0D5] pt-3 text-[12px]">{run.answer||run.checkpoint?.answer}</div>:null}
+    {toolReceipts.length>0&&<details className="mt-3 min-w-0 rounded-lg border border-[#E7E0D5] bg-white p-3 text-[11px]">
+     <summary className="cursor-pointer font-semibold">
+      {en?'Recorded tool calls':'도구 실행 기록'} · {run.checkpoint?.toolCalls??toolReceipts.length}
+     </summary>
+     <p className="mt-2 text-[10px] text-[#82796D]">{en?
+      'These are persisted tool receipts, not independent proof that the requested result was achieved.':
+      '저장된 도구 실행 영수증입니다. 요청 결과의 독립 검증과는 구분됩니다.'}</p>
+     {Boolean(run.checkpoint?.toolReceiptsOmitted)&&<p className="mt-1 text-[10px] text-[#82796D]">
+      {en?`${run.checkpoint?.toolReceiptsOmitted} earlier entries not shown`:
+       `이전 기록 ${run.checkpoint?.toolReceiptsOmitted}건은 표시 생략`}
+     </p>}
+     <ol className="mt-2 max-h-64 space-y-1 overflow-y-auto" aria-label={en?'Persisted tool receipts':'저장된 도구 영수증'}>
+      {toolReceipts.map((receipt,i)=><li key={receipt.id||i}
+       className="flex min-w-0 flex-wrap items-start justify-between gap-2 rounded-lg bg-[#F8F6F2] p-2">
+       <span className="min-w-0 break-all">
+        <strong className="block text-[#51483F]">{receipt.tool}</strong>
+        <span className="text-[10px] text-[#82796D]">{en?'Call ID':'호출 ID'}: {receipt.id} · {en?'Step':'회차'} {receipt.step}</span>
+       </span>
+       <span className={receipt.success?'font-semibold text-emerald-700':'font-semibold text-rose-700'}>
+        {receipt.success?(en?'Tool succeeded':'도구 성공'):(en?'Tool failed':'도구 실패')}
+       </span>
+      </li>)}
+     </ol>
+    </details>}
     {run.checkpoint?.verificationChecks?.length?
      <details className="mt-3 rounded-lg border border-[#E7E0D5] bg-white p-3 text-[11px]">
       <summary className="cursor-pointer font-semibold">{en?'Actual acceptance checks':'실제 결과 검증'} · {run.checkpoint.verificationChecks.filter(c=>c.satisfied).length}/{run.checkpoint.verificationChecks.length}</summary>

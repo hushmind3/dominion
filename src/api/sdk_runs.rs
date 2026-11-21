@@ -136,6 +136,17 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
             }
         }
     }
+    // This is an owner-visible, bounded projection of durable kernel receipts,
+    // not the raw tool result or its potentially sensitive arguments. A tool
+    // receipt is evidence of dispatch, NOT independent acceptance verification.
+    let all_receipts=snapshot["receipts"].as_array();
+    let tool_receipts=all_receipts.map(|receipts|receipts.iter().rev().take(40).rev()
+        .map(|receipt|json!({
+            "id":receipt["id"],"tool":receipt["tool"],
+            "success":receipt["success"],"step":receipt["step"]
+        })).collect::<Vec<_>>()).unwrap_or_default();
+    let omitted_receipts=all_receipts.map(|receipts|
+        receipts.len().saturating_sub(tool_receipts.len())).unwrap_or(0);
     json!({
         "id":job["id"],"status":status,"phase":phase,
         "instruction":job["input"]["prompt"],
@@ -154,6 +165,7 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
             "toolBudget":job["input"]["limits"]["maxToolCalls"],
             "answer":snapshot["answer"],"usage":usage,
             "verificationChecks":snapshot["checks"],
+            "toolReceipts":tool_receipts,"toolReceiptsOmitted":omitted_receipts,
             "pendingCall":approval,"events":events
         }
     })
@@ -647,6 +659,36 @@ mod tests{
         assert_eq!(project(&state,&working)["status"],"failed",
             "unresolved operation journal must outrank a clean-looking SDK snapshot");
         let _=std::fs::remove_dir_all(root);
+    }
+    #[test]
+    fn native_completed_run_exposes_bounded_durable_receipts_without_tool_secrets(){
+        let (state,root)=temporary_state();
+        let mut receipts=Vec::new();
+        for n in 0..43 {
+            receipts.push(json!({"id":format!("call-{n}"),"tool":"workspace_write",
+                "arguments":{"path":"secret.txt","apiKey":"PRIVATE-CREDENTIAL"},
+                "result":{"stdout":"PRIVATE-TOOL-OUTPUT"},"success":n!=42,
+                "step":n+1}));
+        }
+        let job=json!({"id":"completed-review","kind":"prompt","status":"completed",
+            "input":{"clientSurface":"native_agent_panel","prompt":"Inspect changes"},
+            "nativeState":{"status":"completed","step":44,"receipts":receipts,
+                "checks":[{"satisfied":true,"explanation":"file exists"}]}});
+        state.store.put("job",&job).unwrap();
+        let body=project(&state,&job);
+        let visible=body["checkpoint"]["toolReceipts"].as_array().unwrap();
+        assert_eq!(body["checkpoint"]["toolCalls"],43);
+        assert_eq!(body["checkpoint"]["toolReceiptsOmitted"],3);
+        assert_eq!(visible.len(),40);
+        assert_eq!(visible[0]["id"],"call-3");
+        assert_eq!(visible[39]["id"],"call-42");
+        assert_eq!(visible[39]["success"],false);
+        assert_eq!(body["checkpoint"]["verificationChecks"][0]["satisfied"],true);
+        assert!(!body.to_string().contains("PRIVATE-CREDENTIAL"));
+        assert!(!body.to_string().contains("PRIVATE-TOOL-OUTPUT"));
+        let listed=project(&state,&state.store.get("job","completed-review").unwrap());
+        assert_eq!(listed["checkpoint"]["toolReceipts"],body["checkpoint"]["toolReceipts"]);
+        crate::test_support::cleanup_dir(root);
     }
     #[test]
     fn sdk_status_uses_scoped_approval_and_uncertain_receipt_queries(){
