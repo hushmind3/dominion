@@ -29,7 +29,7 @@ for(const p of [
 assert.ok(!existsSync(path.join(root,'src/engine')),
   'The retired mixed engine directory must not return');
 has('crates/dominion-agent-runtime/src/contracts.rs',
-  ['pub trait AgentLoop','pub trait AgentPorts','dispatch_fence']);
+  ['pub trait AgentLoop','pub struct AgentPorts','dispatch_fence']);
 has('crates/dominion-agent-runtime/src/run_contract.rs',
   ['pub enum RunSurface','pub enum RunPhase','pub struct RoomEvent']);
 has('crates/dominion-agent-algorithms/src/agent_loop.rs',
