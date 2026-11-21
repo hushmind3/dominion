@@ -103,6 +103,36 @@ pub fn upload(state: &AppState, body: &Value) -> Result<Value, String> {
         }
     }
 }
+/// Explicitly deleting a private transcript must also revoke its immutable
+/// attachment IDs and remove their on-disk bytes. Never sweep Room or other
+/// sessions here: their histories belong to different owners/lifecycles.
+pub fn purge_session(state: &AppState, session_id: &str) -> Result<usize, String> {
+    let files: Vec<Value> = state.store.all("attachment").into_iter()
+        .filter(|file| file["sessionId"].as_str() == Some(session_id)).collect();
+    if files.is_empty() {
+        return Ok(0);
+    }
+    let root = directory(state)?;
+    let mut removed = 0;
+    for record in files {
+        let id = record["id"].as_str().ok_or("첨부 ID가 올바르지 않습니다.")?;
+        uuid::Uuid::parse_str(id).map_err(|_| "첨부 ID가 올바르지 않습니다.")?;
+        let path = root.join(format!("{id}.bin"));
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err("첨부 파일을 삭제할 수 없습니다. 대화는 보존됩니다.".into()),
+        }
+        // If metadata deletion fails, retain the session so that a later
+        // delete can retry; do not claim its private files are all gone.
+        if !state.store.remove("attachment", id) {
+            return Err("첨부 기록을 삭제할 수 없습니다. 대화는 보존됩니다.".into());
+        }
+        removed += 1;
+    }
+    Ok(removed)
+}
+
 pub fn read(state: &AppState, id: &str) -> Result<(Value, Vec<u8>), String> {
     uuid::Uuid::parse_str(id).map_err(|_| "첨부 ID가 유효하지 않습니다.")?;
     let record = state
