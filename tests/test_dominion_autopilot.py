@@ -108,6 +108,23 @@ print(json.dumps({'summary':'code review only','feedback':{
         self.assertTrue(all(r['status']=='needs_review_uncommitted' for r in latest['results']))
         self.assertEqual(git(self.remote,'rev-parse','refs/heads/main'),self.original_head)
 
+
+    def test_sensitive_commit_blocks_automatic_publish(self):
+        self.agent.write_text("import pathlib,subprocess\npathlib.Path('.env').write_text('key=x')\nsubprocess.run(['git','add','-f','.env'],check=True)\nsubprocess.run(['git','-c','user.name=Bot','-c','user.email=bot@example.invalid','commit','-m','unsafe'],check=True)\n")
+        self.assertEqual(a.main(['--repo',str(self.repo),'--state',str(self.state),
+                     '--agent-command',self.command,'--skip-judge','--publish','--cooldown','0']),0)
+        results=json.loads((self.state/'latest_round.json').read_text())['results']
+        self.assertTrue(all(r['status']=='needs_review_sensitive_paths' for r in results))
+        self.assertTrue(all(r['risky_paths']==['.env'] for r in results))
+        self.assertEqual(git(self.remote,'rev-parse','refs/heads/main'),self.original_head)
+
+    def test_singleton_lock(self):
+        path=self.state/'autopilot.lock'
+        with a.singleton_lock(path):
+            with self.assertRaises(RuntimeError):
+                with a.singleton_lock(path):
+                    pass
+
     def test_state_inside_repo_rejected(self):
         with self.assertRaises(SystemExit):
             a.main(['--repo',str(self.repo),'--state',str(self.repo/'state'),
