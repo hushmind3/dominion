@@ -6,6 +6,9 @@ use crate::{
 use std::future::IntoFuture;
 
 pub async fn run(args: Vec<String>) -> Result<(), String> {
+    if args.first().map(String::as_str)==Some("remote-worker") {
+        return crate::remote::run_worker().await;
+    }
     if platform::handle_control(&args)? {
         return Ok(());
     }
@@ -43,6 +46,9 @@ async fn serve(mut config: Config, open_browser: bool, parent_bound: bool) -> Re
     let runtime = crate::sdk::Dominion::from_config(config.clone())?;
     runtime.start()?;
     let state = runtime.shared_state();
+    // P3 uses its own opt-in *remote-only* endpoint listener. The existing
+    // desktop UI stays bound to 127.0.0.1 and is not exposed to peers.
+    crate::remote::start_control_plane(state.clone()).await?;
     let app = api::router(state);
     println!(
         "DOMINION (rust engine) listening on http://127.0.0.1:{}",
