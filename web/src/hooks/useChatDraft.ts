@@ -11,7 +11,7 @@ export function useChatDraft(scope:string|undefined):[
  const drafts=useRef(new Map<string,string>())
  const activeScope=useRef(key)
  const latest=useRef('')
- const migration=useRef<string>()
+ const migration=useRef<string|undefined>(undefined)
  const [value,updateValue]=useState('')
 
  useLayoutEffect(()=>{
