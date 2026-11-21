@@ -1,16 +1,18 @@
 import {useEffect, useState} from 'react'
-import {Check, Play, RefreshCw, ShieldAlert, Square, Sparkles} from 'lucide-react'
+import {Check, Play, RefreshCw, ShieldAlert, Square, Sparkles, MessageSquareText} from 'lucide-react'
 import {get, post, type Provider} from '../api'
 import {useLocale} from '../i18n'
 
 type SdkState = {state: string; detail?: {call_id?: string; tool?: string}}
 type SdkRun = {
  id: string; status: string; instruction: string; answer?: string; error?: string;
+ algorithmId?:string; algorithmRevision?:string;
  checkpoint?: {
   state?: SdkState; rounds?: number; toolCalls?: number; answer?: string;
   usage?: {prompt_tokens:number; completion_tokens:number; cached_prompt_tokens:number};
   pendingCall?: {id:string; name:string; arguments:unknown} | null;
   events?: {kind:string; detail:unknown}[];
+  verificationChecks?: {satisfied:boolean;explanation?:string}[];
  } | null
 }
 const running = new Set(['queued', 'running'])
@@ -29,13 +31,19 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [instruction,setInstruction]=useState('')
  const [providerId,setProviderId]=useState('')
  const [verification,setVerification]=useState('')
+ const [algorithmId,setAlgorithmId]=useState<'standard-v1'|'focused-v1'>('standard-v1')
+ const [maxRounds,setMaxRounds]=useState(24)
+ const [steering,setSteering]=useState('')
+ const [runs,setRuns]=useState<SdkRun[]>([])
  const [observation,setObservation]=useState('')
  const [run,setRun]=useState<SdkRun|null>(null)
  const [busy,setBusy]=useState(false)
  const [error,setError]=useState('')
  useEffect(()=>{
   let alive=true
-  get<SdkRun[]>('/api/sdk/runs').then(list=>{if(alive&&list.length)setRun(list[0])}).catch(()=>{})
+  get<SdkRun[]>('/api/sdk/runs').then(list=>{
+   if(alive){setRuns(list);if(list.length)setRun(list[0])}
+  }).catch(()=>{})
   return()=>{alive=false}
  },[])
  useEffect(()=>{
@@ -54,9 +62,11 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   try{
    const created=await post<SdkRun>('/api/sdk/runs',{
     instruction:instruction.trim(),providerId:providerId||undefined,
-    verifyCommand:verification.trim()||undefined
+    verifyCommand:verification.trim()||undefined,algorithmId,maxRounds
    })
    setRun(created)
+   setRuns(rows=>[created,...rows.filter(row=>row.id!==created.id)].slice(0,30))
+   setSteering('')
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
@@ -66,9 +76,11 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   try{
    const call=run.checkpoint?.pendingCall
    if(kind==='approve'&&!call?.id)throw Error(en?'Missing approval details':'승인할 도구 정보를 찾지 못했습니다.')
-   await post(`/api/sdk/runs/${encodeURIComponent(run.id)}/${kind}`,
+   const updated=await post<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}/${kind}`,
     kind==='approve'?{callId:call!.id}:{})
-   setRun({...run,status:kind==='cancel'?'cancelled':'running'})
+   // The host, not the button click, determines the actual next phase.
+   setRun(updated)
+   setRuns(rows=>rows.map(row=>row.id===updated.id?updated:row))
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
@@ -82,10 +94,32 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
+ const steer=async()=>{
+  if(!run||busy||!running.has(run.status)||!steering.trim())return
+  setBusy(true);setError('')
+  try{
+   const updated=await post<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}/steer`,{
+    instruction:steering.trim(),mode:'append'
+   })
+   setRun(updated);setSteering('')
+  }catch(e){setError((e as Error).message)}
+  finally{setBusy(false)}
+ }
+ const reload=async()=>{
+  setError('')
+  try{
+   const list=await get<SdkRun[]>('/api/sdk/runs')
+   setRuns(list)
+   if(run?.id){
+    const selected=list.find(row=>row.id===run.id)
+    if(selected)setRun(selected)
+   }
+  }catch(e){setError((e as Error).message)}
+ }
  const status=run?.status||''
  const call=run?.checkpoint?.pendingCall
  const needsApproval=status==='awaiting_approval' && call
- const canResume=['interrupted','failed'].includes(status)
+ const canResume=status==='interrupted'
  const events=(run?.checkpoint?.events||[]).slice(-4)
  return <section className="mt-4 rounded-xl border border-[#E7E0D5] bg-white">
   <div className="flex items-center gap-2 border-b border-[#F0EAE1] px-4 py-3">
@@ -115,7 +149,23 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     </button>
    </div>
    <details className="text-[11px] text-[#746A5F]">
-    <summary className="cursor-pointer select-none">{en?'Optional: verify the result with a command':'선택 사항: 명령어로 결과 검증'}</summary>
+    <summary className="cursor-pointer select-none">{en?'Advanced: strategy, budget and verification':'고급 설정: 전략 · 실행 한도 · 결과 검증'}</summary>
+    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+     <label className="grid gap-1">{en?'Execution strategy':'실행 전략'}
+      <select value={algorithmId} onChange={e=>setAlgorithmId(e.target.value as 'standard-v1'|'focused-v1')}
+       className="h-9 w-full rounded-lg border border-[#E7E0D5] bg-white px-3 text-[12px]">
+       <option value="standard-v1">{en?'Standard · balanced':'기본 · 균형'}</option>
+       <option value="focused-v1">{en?'Focused · compact context':'집중 · 압축 문맥'}</option>
+      </select></label>
+     <label className="grid gap-1">{en?'Maximum model rounds':'최대 모델 판단 회수'}
+      <select value={maxRounds} onChange={e=>setMaxRounds(Number(e.target.value))}
+       className="h-9 w-full rounded-lg border border-[#E7E0D5] bg-white px-3 text-[12px]">
+       {[12,24,40,80].map(n=><option key={n} value={n}>{n}</option>)}
+      </select></label>
+    </div>
+    <p className="mt-2 text-[10px]">{en?
+     'These limits are enforced by the Rust kernel, not by the model.':
+     '실행 한도는 모델 요청이 아니라 Rust 커널에서 적용합니다.'}</p>
     <label className="mt-2 block" htmlFor="sdk-verify">
      {en?'Verification command (runs after the agent finishes)':'검증 명령어 (작업 결과를 확인할 때 실행)'}
     </label>
@@ -123,6 +173,21 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      maxLength={2048} placeholder="cargo test"
      className="mt-1 h-9 w-full rounded-lg border border-[#E7E0D5] px-3 text-[12px]"/>
    </details>
+   {runs.length>0&&<div className="flex min-w-0 flex-wrap items-end gap-2 rounded-lg bg-[#FAF7F1] p-2">
+    <label htmlFor="sdk-history" className="grid min-w-0 flex-1 gap-1 text-[11px] text-[#746A5F]">
+     {en?'Previous tasks':'이전 자동 작업'}
+     <select id="sdk-history" className="h-9 min-w-0 rounded-lg border border-[#E7E0D5] bg-white px-2 text-[12px]"
+      value={run?.id||''} onChange={e=>{
+       const item=runs.find(row=>row.id===e.target.value)
+       if(item){setRun(item);setSteering('')}
+      }}>
+      {runs.map(item=><option key={item.id} value={item.id}>
+       {item.status} · {item.instruction.slice(0,75)}</option>)}
+     </select></label>
+    <button type="button" className="rounded-lg border border-[#E7E0D5] bg-white p-2"
+     aria-label={en?'Refresh task history':'작업 이력 새로고침'}
+     onClick={()=>void reload()}><RefreshCw size={16}/></button>
+   </div>}
    {error&&<p role="alert" className="rounded-lg bg-[#FFF3EE] p-3 text-[11px] text-[#A54027]">{error}</p>}
    {run&&<div className="rounded-xl border border-[#E7E0D5] bg-[#FCFBF9] p-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -133,6 +198,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     </p>}
     </div>
     <p className="mt-2 line-clamp-2 text-[11px] text-[#766F67]">{run.instruction}</p>
+    <p className="mt-1 text-[10px] text-[#8A8176]">{en?'Strategy':'실행 전략'}: {run.algorithmId||'standard-v1'}</p>
     {events.length>0&&<div className="mt-3 space-y-1 border-t border-[#E7E0D5] pt-2">
      {events.map((event,i)=><p key={i} className="text-[11px] text-[#82796D]">
       {event.kind==='tool_started'?(en?'Running tool':'도구 실행'):
@@ -152,6 +218,15 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      </button>
     </div>}
     {run.answer||run.checkpoint?.answer?<div className="mt-3 whitespace-pre-wrap break-words border-t border-[#E7E0D5] pt-3 text-[12px]">{run.answer||run.checkpoint?.answer}</div>:null}
+    {run.checkpoint?.verificationChecks?.length?
+     <details className="mt-3 rounded-lg border border-[#E7E0D5] bg-white p-3 text-[11px]">
+      <summary className="cursor-pointer font-semibold">{en?'Actual acceptance checks':'실제 결과 검증'} · {run.checkpoint.verificationChecks.filter(c=>c.satisfied).length}/{run.checkpoint.verificationChecks.length}</summary>
+      <ul className="mt-2 grid gap-1">
+       {run.checkpoint.verificationChecks.map((check,i)=><li key={i}
+        className={check.satisfied?'text-emerald-700':'text-amber-800'}>
+        {check.satisfied?'✓':'!'} {check.explanation||'—'}</li>)}
+      </ul>
+     </details>:null}
     {run.error&&<p className="mt-2 text-[11px] text-[#A54027]">{run.error}</p>}
     <div className="mt-3 flex gap-2">
      {running.has(status)&&<button type="button" disabled={busy} onClick={()=>void action('cancel')} className="flex items-center gap-1 rounded-lg border border-[#E7E0D5] px-3 py-2 text-[11px]">
@@ -161,6 +236,17 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
       <RefreshCw size={13}/>{en?'Resume':'재개'}
      </button>}
     </div>
+    {running.has(status)&&<div className="mt-3 rounded-lg border border-[#E7E0D5] bg-white p-3">
+     <div className="flex items-center gap-2 text-[11px] font-semibold"><MessageSquareText size={14}/>
+      {en?'Correct the task while it is running':'진행 중 작업 지시 추가'}</div>
+     <textarea rows={2} maxLength={16000} value={steering}
+      onChange={e=>setSteering(e.target.value)}
+      placeholder={en?'Add a correction or new constraint for the next model turn.':'다음 모델 판단에 반영할 정정이나 추가 조건을 입력하세요.'}
+      className="mt-2 w-full rounded-lg border border-[#E7E0D5] bg-[#FCFBF9] p-2 text-[11px]"/>
+     <button type="button" disabled={busy||!steering.trim()} onClick={()=>void steer()}
+      className="mt-2 rounded-lg bg-[#A4583E] px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-40">
+      {en?'Send correction':'수정 지시 전달'}</button>
+    </div>}
     {status==='in_doubt'&&<div className="mt-3 rounded-lg border border-[#E5C4AB] bg-white p-3">
      <p className="text-[11px] text-[#A54027]">
       {en?'The interrupted tool may have changed files. Inspect the workspace before continuing.':'중단 직전 도구가 파일을 변경했을 수 있습니다. 실제 상태를 확인한 뒤 기록하세요.'}
