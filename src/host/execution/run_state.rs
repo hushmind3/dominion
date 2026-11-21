@@ -16,62 +16,24 @@ pub const FAILED: &str = "failed";
 pub const CANCELLED: &str = "cancelled";
 pub const INTERRUPTED: &str = "interrupted";
 
-pub fn is_terminal(phase: &str) -> bool {
-    matches!(phase, SUCCEEDED | FAILED | CANCELLED | INTERRUPTED)
+/// The portable kernel owns the lifecycle language. Product adapters
+/// translate only the host event name, never implement their own state rules.
+pub fn is_terminal(phase:&str)->bool {
+    dominion_agent_sdk::RunPhase::from_host_status(phase)
+        .is_some_and(|phase|phase.terminal())
 }
 
-/// Returns the next phase, or None for an illegal transition. Repeating the
-/// current phase is treated as idempotent.
-pub fn transition(current: &str, event: &str) -> Option<&'static str> {
-    let next = match event {
-        "start" => match current {
-            QUEUED | RUNNING => RUNNING,
-            _ => return None,
-        },
-        "approval_requested" => match current {
-            RUNNING | WAITING_APPROVAL => WAITING_APPROVAL,
-            _ => return None,
-        },
-        "approval_resolved" => match current {
-            WAITING_APPROVAL | RUNNING => RUNNING,
-            _ => return None,
-        },
-        "verify" => match current {
-            RUNNING | VERIFYING => VERIFYING,
-            _ => return None,
-        },
-        "finalize" => match current {
-            RUNNING | VERIFYING | WAITING_APPROVAL | FINALIZING => FINALIZING,
-            _ => return None,
-        },
-        "succeed" => match current {
-            FINALIZING | RUNNING | VERIFYING | SUCCEEDED => SUCCEEDED,
-            _ => return None,
-        },
-        "fail" => match current {
-            _ if is_terminal(current) => return None,
-            _ => FAILED,
-        },
-        "cancel" => match current {
-            _ if current == CANCELLED => CANCELLED,
-            _ if is_terminal(current) => return None,
-            _ => CANCELLED,
-        },
-        "interrupt" => match current {
-            _ if current == INTERRUPTED => INTERRUPTED,
-            _ if is_terminal(current) => return None,
-            _ => INTERRUPTED,
-        },
-        _ => return None,
-    };
-    Some(next)
+/// A deterministic adapter onto the portable RunPhase reducer.
+pub fn transition(current:&str,event:&str)->Option<&'static str>{
+    use dominion_agent_sdk::runtime::run_contract::RunTransition;
+    let phase=dominion_agent_sdk::RunPhase::from_host_status(current)?;
+    let transition=RunTransition::from_host_event(event)?;
+    phase.advance(transition).map(|next|next.as_str())
 }
 
-pub fn phase_for_status(status: &str) -> &'static str {
-    // Product status and SDK jobs use the same typed lifecycle vocabulary.
-    use dominion_agent_sdk::RunPhase;
-    RunPhase::from_host_status(status)
-        .unwrap_or(RunPhase::Failed).as_str()
+pub fn phase_for_status(status:&str)->&'static str{
+    dominion_agent_sdk::RunPhase::from_host_status(status)
+        .unwrap_or(dominion_agent_sdk::RunPhase::NeedsReview).as_str()
 }
 
 /// Applies one event to the durable execution record. An illegal transition is
@@ -79,7 +41,12 @@ pub fn phase_for_status(status: &str) -> &'static str {
 pub fn apply(state: &AppState, execution_id: &str, event: &str) -> Option<Value> {
     let mut execution = state.store.get("execution", execution_id)?;
     let current = execution["phase"].as_str().unwrap_or(QUEUED).to_string();
-    let Some(next) = transition(&current, event) else {
+    // Status is the durable outcome, even when a migrated execution still
+    // carries a stale non-terminal phase. A caller cannot revive it.
+    let outcome = execution["status"].as_str().unwrap_or("");
+    let committed_terminal = is_terminal(outcome);
+    let next = if committed_terminal {None} else {transition(&current,event)};
+    let Some(next) = next else {
         state.store.audit(
             "run.phase_rejected",
             json!({"executionId": execution_id, "phase": current, "event": event}),
@@ -121,6 +88,33 @@ mod tests {
         );
         assert_eq!(transition(FINALIZING, "interrupt"), Some(INTERRUPTED));
         assert!(transition(INTERRUPTED, "start").is_none());
+    }
+
+    #[test]
+    fn review_is_terminal_and_unknown_phase_fails_closed(){
+        assert!(is_terminal("needs_review"));
+        assert!(is_terminal("in_doubt"));
+        assert!(!is_terminal("running"));
+        assert_eq!(phase_for_status("future_vendor_status"),"needs_review");
+        assert_eq!(transition("needs_review","start"),None);
+        assert_eq!(transition("running","review_requested"),Some("needs_review"));
+    }
+    #[test]
+    fn persisted_terminal_status_cannot_be_revived_by_stale_phase(){
+        use crate::state::AppState;
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-run-reducer-{}",uuid::Uuid::new_v4()));
+        let config=crate::config::Config{
+            port:0,data_dir:dir.clone(),web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(config.clone(),crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        state.store.put("execution",&json!({
+            "id":"finished","status":"completed","phase":"running"})).unwrap();
+        let result=apply(&state,"finished","start").unwrap();
+        assert_eq!(result["phase"],"running");
+        assert_eq!(result["status"],"completed");
+        drop(state);
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]
