@@ -16,14 +16,15 @@ type SdkRun = {
  } | null
 }
 const running = new Set(['queued', 'running'])
-const stopPolling = new Set(['completed','failed','cancelled','exhausted','denied','awaiting_approval','interrupted','in_doubt'])
+const stopPolling = new Set(['completed','failed','cancelled','exhausted','denied'])
 const stateNames:Record<string,[string,string]>={
  queued:['대기 중','Queued'], running:['작업 진행 중','Working'],
  completed:['완료','Completed'], failed:['실패','Failed'],
  cancelled:['중단됨','Stopped'], exhausted:['실행 한도 도달','Limit reached'],
  awaiting_approval:['실행 승인 필요','Needs approval'],
  in_doubt:['수동 확인 필요','Needs manual review'],
- interrupted:['재개 필요','Resume required'], denied:['실행 거부됨','Denied']
+ interrupted:['재개 가능','Resumable'], denied:['실행 거부됨','Denied'],
+ needs_review:['검토 필요 · 자동 재실행 중지','Review required · replay blocked']
 }
 export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const locale=useLocale()
@@ -39,6 +40,13 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [run,setRun]=useState<SdkRun|null>(null)
  const [busy,setBusy]=useState(false)
  const [error,setError]=useState('')
+ const [disconnected,setDisconnected]=useState(false)
+ // A late response from a different selected task must never replace the active run.
+ const updateRun=(next:SdkRun)=>{
+  setRun(current=>current?.id===next.id?next:current)
+  setRuns(rows=>rows.some(row=>row.id===next.id)
+   ?rows.map(row=>row.id===next.id?next:row):[next,...rows].slice(0,30))
+ }
  useEffect(()=>{
   let alive=true
   get<SdkRun[]>('/api/sdk/runs').then(list=>{
@@ -47,17 +55,28 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   return()=>{alive=false}
  },[])
  useEffect(()=>{
-  if(!run?.id || stopPolling.has(run.status)) return
+  if(!run?.id)return
   let alive=true
-  const timer=setInterval(()=>{
-   get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}`)
-    .then(next=>{if(alive){
-     setRun(next)
-     setRuns(rows=>rows.map(row=>row.id===next.id?next:row))
-    }})
-    .catch(e=>{if(alive)setError((e as Error).message)})
-  },1500)
-  return()=>{alive=false;clearInterval(timer)}
+  let fetching=false
+  const selectedId=run.id
+  const refresh=()=>{
+   if(!alive||fetching||document.visibilityState==='hidden')return
+   fetching=true
+   get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(selectedId)}`)
+    .then(next=>{if(alive){updateRun(next);setDisconnected(false)}})
+    .catch(()=>{if(alive)setDisconnected(true)})
+    .finally(()=>{fetching=false})
+  }
+  // Approval may be resolved on another tab, and an interrupted run may
+  // change after reconnection. Keep server state authoritative on focus.
+  const timer=window.setInterval(refresh,stopPolling.has(run.status)?15000:2500)
+  window.addEventListener('focus',refresh)
+  document.addEventListener('visibilitychange',refresh)
+  return()=>{
+   alive=false;window.clearInterval(timer)
+   window.removeEventListener('focus',refresh)
+   document.removeEventListener('visibilitychange',refresh)
+  }
  },[run?.id,run?.status])
  const start=async()=>{
   if(!instruction.trim()||busy)return
@@ -78,13 +97,20 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   setBusy(true);setError('')
   try{
    const call=run.checkpoint?.pendingCall
-   if((kind==='approve'||kind==='deny')&&!call?.id)
-    throw Error(en?'Missing approval details':'승인 대상 도구 정보를 찾지 못했습니다.')
+   if(kind==='approve'||kind==='deny'){
+    if(run.status!=='awaiting_approval'||!call?.id)
+     throw Error(en?'Missing approval details':'승인 대상 도구 정보를 찾지 못했습니다.')
+    // Confirm the exact live call against the server before allowing effects.
+    const latest=await get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}`)
+    if(latest.status!=='awaiting_approval'||latest.checkpoint?.pendingCall?.id!==call.id){
+     updateRun(latest)
+     throw Error(en?'The approval target changed. Review the new request.':'승인 대상이 변경됐습니다. 새 요청을 확인해 주세요.')
+    }
+   }
    const updated=await post<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}/${kind}`,
     kind==='approve'||kind==='deny'?{callId:call!.id}:{})
    // The host, not the button click, determines the actual next phase.
-   setRun(updated)
-   setRuns(rows=>rows.map(row=>row.id===updated.id?updated:row))
+   updateRun(updated)
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
@@ -94,7 +120,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   try{
    const updated=await post<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}/reconcile`,
     {applied,details:observation.trim()})
-   setRun(updated);setObservation('')
+   updateRun(updated);setObservation('')
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
@@ -105,7 +131,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    const updated=await post<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}/steer`,{
     instruction:steering.trim(),mode:'append'
    })
-   setRun(updated);setSteering('')
+   updateRun(updated);setSteering('')
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
@@ -114,6 +140,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   try{
    const list=await get<SdkRun[]>('/api/sdk/runs')
    setRuns(list)
+   setDisconnected(false)
    if(run?.id){
     const selected=list.find(row=>row.id===run.id)
     if(selected)setRun(selected)
@@ -183,7 +210,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      <select id="sdk-history" className="h-9 min-w-0 rounded-lg border border-[#E7E0D5] bg-white px-2 text-[12px]"
       value={run?.id||''} onChange={e=>{
        const item=runs.find(row=>row.id===e.target.value)
-       if(item){setRun(item);setSteering('')}
+       if(item){setRun(item);setSteering('');setObservation('');setError('')}
       }}>
       {runs.map(item=><option key={item.id} value={item.id}>
        {item.status} · {item.instruction.slice(0,75)}</option>)}
@@ -192,16 +219,17 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      aria-label={en?'Refresh task history':'작업 이력 새로고침'}
      onClick={()=>void reload()}><RefreshCw size={16}/></button>
    </div>}
+   {disconnected&&<p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">{en?'Connection lost. Actions may have changed; reconnecting to the server.':'서버 연결이 끊겼습니다. 실행 상태가 바뀌었을 수 있어 재연결 후 다시 확인합니다.'}</p>}
    {error&&<p role="alert" className="rounded-lg bg-[#FFF3EE] p-3 text-[11px] text-[#A54027]">{error}</p>}
    {run&&<div className="rounded-xl border border-[#E7E0D5] bg-[#FCFBF9] p-3">
-    <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className="flex flex-wrap items-center justify-between gap-2" aria-live="polite" aria-atomic="true">
      <strong className="text-[12px]">{en?stateNames[status]?.[1]||status:stateNames[status]?.[0]||status}</strong>
      <span className="text-[11px] text-[#82796D]">{run.checkpoint?.rounds??0} {en?'rounds':'회 판단'} · {run.checkpoint?.toolCalls??0} {en?'actions':'회 도구 실행'}</span>
     {run.checkpoint?.usage&&<p className="mt-2 text-[11px] text-[#82796D]">
      {en?'Provider-reported tokens':'제공자 보고 토큰'}: {run.checkpoint.usage.prompt_tokens.toLocaleString()} {en?'input':'입력'} · {run.checkpoint.usage.completion_tokens.toLocaleString()} {en?'output':'출력'} · {run.checkpoint.usage.cached_prompt_tokens.toLocaleString()} {en?'cached input':'캐시 입력'}
     </p>}
     </div>
-    <p className="mt-2 line-clamp-2 text-[11px] text-[#766F67]">{run.instruction}</p>
+    <p className="mt-2 break-words text-[11px] text-[#766F67]" title={run.instruction}>{run.instruction}</p>
     <p className="mt-1 text-[10px] text-[#8A8176]">{en?'Strategy':'실행 전략'}: {run.algorithmId||'standard-v1'}</p>
     {events.length>0&&<div className="mt-3 space-y-1 border-t border-[#E7E0D5] pt-2">
      {events.map((event,i)=><p key={i} className="text-[11px] text-[#82796D]">
@@ -214,15 +242,16 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      <div className="flex items-center gap-2 text-[12px] font-semibold"><ShieldAlert size={16}/>
       {en?'Review before allowing this action':'아래 작업을 확인하고 승인하세요'}
      </div>
-     <div className="mt-2 text-[11px] font-semibold">{call.name}</div>
+     <div className="mt-2 break-words text-[11px] font-semibold">{call.name}</div>
+     <p className="mt-1 break-all text-[10px] text-[#766F67]">{en?'Exact call ID':'정확한 호출 ID'}: {call.id}</p>
      <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-[#F5F2EE] p-3 text-[11px]">{JSON.stringify(call.arguments,null,2)}</pre>
      <div className="mt-3 flex flex-wrap gap-2">
       <button type="button" disabled={busy} onClick={()=>void action('approve')}
-       className="flex items-center gap-2 rounded-lg bg-[#A4583E] px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-40">
+       className="flex min-h-11 items-center gap-2 rounded-lg bg-[#A4583E] px-4 py-2 text-[12px] font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#A4583E] disabled:opacity-40">
        <Check size={14}/>{en?'Approve this action only':'이 작업 1회 승인'}
       </button>
       <button type="button" disabled={busy} onClick={()=>void action('deny')}
-       className="flex items-center gap-2 rounded-lg border border-rose-200 bg-white px-3 py-2 text-[11px] font-semibold text-rose-700 disabled:opacity-40">
+       className="flex min-h-11 items-center gap-2 rounded-lg border border-rose-200 bg-white px-4 py-2 text-[12px] font-semibold text-rose-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-700 disabled:opacity-40">
        <Square size={13}/>{en?'Refuse this action':'이 도구 실행 거부'}
       </button>
      </div>
@@ -237,12 +266,13 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
         {check.satisfied?'✓':'!'} {check.explanation||'—'}</li>)}
       </ul>
      </details>:null}
+    {status==='needs_review'&&<p role="status" className="mt-2 text-[11px] text-[#8A4C16]">{en?'The server requires review. No paid call or uncertain effect will be replayed automatically.':'서버가 검토를 요구하고 있습니다. 결과가 불분명한 유료 호출이나 변경 작업은 자동으로 재실행하지 않습니다.'}</p>}
     {run.error&&<p className="mt-2 text-[11px] text-[#A54027]">{run.error}</p>}
     <div className="mt-3 flex gap-2">
-     {running.has(status)&&<button type="button" disabled={busy} onClick={()=>void action('cancel')} className="flex items-center gap-1 rounded-lg border border-[#E7E0D5] px-3 py-2 text-[11px]">
+     {running.has(status)&&<button type="button" disabled={busy} onClick={()=>void action('cancel')} className="flex min-h-11 items-center gap-1 rounded-lg border border-[#E7E0D5] px-4 py-2 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2">
       <Square size={13}/>{en?'Stop':'중단'}
      </button>}
-     {canResume&&<button type="button" disabled={busy} onClick={()=>void action('resume')} className="flex items-center gap-1 rounded-lg border border-[#E7E0D5] px-3 py-2 text-[11px]">
+     {canResume&&<button type="button" disabled={busy} onClick={()=>void action('resume')} className="flex min-h-11 items-center gap-1 rounded-lg border border-[#E7E0D5] px-4 py-2 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2">
       <RefreshCw size={13}/>{en?'Resume':'재개'}
      </button>}
     </div>
