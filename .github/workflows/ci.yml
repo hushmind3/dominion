@@ -287,3 +287,15 @@ jobs:
         run: |
           npm install --prefix packages/sdk-typescript --no-audit --no-fund
           npm test --prefix packages/sdk-typescript
+
+  end-to-end-runtime:
+    # The real binary, a scripted provider and the HTTP/SSE contracts drifted
+    # for weeks because only one e2e test ran in CI. Run the whole suite.
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Real process, fake provider, HTTP/SSE, persistence and wire budget
+        run: cargo test --locked --test e2e
