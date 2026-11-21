@@ -81,6 +81,10 @@ try{
    return;
   }
   if(pathname==='/api/rooms/room-model-fixture/messages')response=[{
+   id:'owner-layout',session_id:room.sessionId,role:'user',
+   content:'방에서 내가 쓴 질문은 오른쪽에 표시합니다.',
+   created_at:'2026-11-22 00:00:00'
+  },{
    id:'model-reply',session_id:room.sessionId,role:'assistant',
    content:'Recorded real model',agent_id:'lead',
    created_at:'2026-11-21 00:00:00',
@@ -121,6 +125,20 @@ try{
  const routes=await page.locator('.room-route-bar-items > span').allTextContents();
  assert.equal(routes.length,2);
  assert.ok(routes.every(text=>text.includes('owner-picked-model')),JSON.stringify(routes));
+ await page.locator('.room-message-owner .room-message-text').waitFor({timeout:10000});
+ const messageLayout=await page.locator('.room-message').evaluateAll(rows=>rows.map(row=>{
+  const text=row.querySelector('.room-message-text');
+  const rect=text?.getBoundingClientRect();
+  return {owner:row.classList.contains('room-message-owner'),left:rect?.left||0,
+   right:rect?.right||0,fontSize:parseFloat(text?getComputedStyle(text).fontSize:'0')};
+ }));
+ const own=messageLayout.find(row=>row.owner),reply=messageLayout.find(row=>!row.owner);
+ assert.ok(own&&reply,JSON.stringify(messageLayout));
+ assert.ok(own.left>reply.left+40,
+  'Room owner must appear on right and AI reply on left: '+JSON.stringify(messageLayout));
+ assert.ok(own.right<=390,'Room bubble must fit mobile: '+JSON.stringify(messageLayout));
+ assert.ok(own.fontSize>=15&&reply.fontSize>=15,
+  'Room transcript text must remain readable on mobile: '+JSON.stringify(messageLayout));
  assert.ok(await page.getByText('recorded-model',{exact:true}).first().isVisible(),
   'each saved reply must expose its ACTUAL model, not just the configured route');
  // The configured model remains selectable when /models is not available.
