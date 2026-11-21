@@ -102,7 +102,9 @@ function WorkerStep({step,job,ids,onCreated}:{step:Step;job?:Job;ids:Record<stri
 export function TeamWorkflowPanel({jobs,filterSessionId}:{jobs?:Job[];filterSessionId?:string}){
  const en=useLocale()==='en'
  const [expanded,setExpanded]=useState(false)
- const remote=useRemote<Job[]>(jobs===undefined?'/api/jobs':null,[],false)
+ // Room panels own the job subscription when no parent supplies one.
+ // Native job record events refresh worker status without a manual reload.
+ const remote=useRemote<Job[]>(jobs===undefined?'/api/jobs':null,[])
  const rows=jobs??remote.value
  const parentTeams=useMemo(()=>rows.filter(j=>j.kind==='team'&&Array.isArray(j.input?.plan)
   &&(!filterSessionId||j.input?.sessionId===filterSessionId)).sort((a,b)=>(b.queuedAt||'').localeCompare(a.queuedAt||'')).slice(0,8),[rows,filterSessionId])

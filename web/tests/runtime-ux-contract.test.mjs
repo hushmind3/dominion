@@ -86,3 +86,12 @@ test('backup, restore and key rotation commands prevent duplicate requests befor
  assert.match(backup,/await post\('\/api\/system\/restore'/)
  assert.match(backup,/await post<\{activeVersion: number/)
 })
+
+test('room Team panel refreshes from native job events without manual reload',()=>{
+ const team=source('src/components/TeamWorkflowPanel.tsx')
+ const refresh=source('src/refreshEvents.ts')
+ assert.match(team,/useRemote<Job\[\]>\(jobs===undefined\?'\/api\/jobs':null,\[\]\)/)
+ assert.doesNotMatch(team,/useRemote<Job\[\]>\(jobs===undefined\?'\/api\/jobs':null,\[\],false\)/)
+ assert.match(refresh,/case 'job':add\('\/api\/jobs'\)/)
+ assert.match(team,/jobMap\.get\(step\.jobId\)\?\.status/)
+})
