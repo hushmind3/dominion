@@ -67,6 +67,17 @@ impl Bus {
                 event["dependsOn"]=record["dependsOn"].clone();
                 event["evidenceStatus"]=record["evidence"]["kind"].clone();
             }
+            if kind=="managed_team_task"{
+                event["parentRunId"]=record["teamId"].clone();
+                event["nodeId"]=record["nodeId"].clone();
+                event["dependsOn"]=record["dependsOn"].clone();
+                event["evidenceStatus"]=record["status"].clone();
+                event["verified"]=record["verified"].clone();
+                event["workerJobId"]=record["jobId"].clone();
+            }else if kind=="managed_team"{
+                event["parentRunId"]=record["originRunId"].clone();
+                event["verified"]=record["evidenceVerified"].clone();
+            }
             events.push(event);
         }
         self.emit_many(events);
@@ -156,6 +167,29 @@ mod tests {
         assert!(!recent.is_empty());
         assert_eq!(recent.last().unwrap()["index"], 599);
         assert!(recent.len() <= 600);
+    }
+    #[test]
+    fn managed_lead_worker_events_share_one_durable_journal(){
+        let bus=Bus::new(store());
+        bus.record("managed_team",&json!({"id":"team-1","status":"running",
+            "originRunId":"chat-1","leadAgentId":"lead"}));
+        bus.record("managed_team_task",&json!({
+            "id":"node-1","status":"launching","teamId":"team-1",
+            "nodeId":"research","dependsOn":[],"agentId":"worker"
+        }));
+        bus.record("managed_team_task",&json!({
+            "id":"node-1","status":"completed","teamId":"team-1",
+            "nodeId":"research","dependsOn":[],"agentId":"worker",
+            "verified":true,"jobId":"job-1"
+        }));
+        let events=bus.replay(0,10);
+        assert_eq!(events.len(),6);
+        assert_eq!(events[1]["parentRunId"],"chat-1");
+        assert_eq!(events[3]["runKind"],"managed_team_task");
+        assert_eq!(events[3]["state"],"queued");
+        assert_eq!(events[5]["workerJobId"],"job-1");
+        assert_eq!(events[5]["state"],"completed");
+        assert_eq!(events[5]["eventSeq"],6);
     }
     #[test]
     fn team_worker_events_include_parent_id_and_replay_after_restart(){
