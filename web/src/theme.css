@@ -66,6 +66,38 @@
 .chat-header{height:56px;min-height:56px}
 @media(max-width:767px){.conversation-switch button{padding:4px 5px;font-size:10px;gap:3px}.conversation-switch button svg{width:14px;height:14px}.chat-header .chat-model-controls>select{width:64px!important;font-size:10px!important}.chat-header .chat-model-controls>button[aria-haspopup="dialog"]{min-width:40px!important}.chat-header>div:last-child>button{width:26px}.chat-header>div:first-of-type>button{width:26px}.chat-header{gap:3px}}
 
+/* Distinct chat roles, scoped to the private Chat page (Room stays intact). */
+.page-chat .chat-transcript{gap:28px}
+.page-chat .chat-message{width:100%;align-items:flex-start}
+.page-chat .chat-message--user{justify-content:flex-end}
+.page-chat .chat-message--user>.chat-message-body{
+ flex:0 1 auto;width:fit-content;max-width:min(78%,680px);display:flex;flex-direction:column;align-items:flex-end
+}
+.page-chat .chat-message--assistant>.chat-message-body{max-width:760px;min-width:0}
+.page-chat .chat-message-author{font-size:12px;line-height:1.4;letter-spacing:0;color:#6C6258}
+.page-chat .chat-message-content{font-family:var(--font-sans);font-size:16px;line-height:1.75;letter-spacing:-.012em;overflow-wrap:anywhere}
+.page-chat .chat-message-content--user{
+ width:fit-content;max-width:100%;padding:11px 17px;border:1px solid #E8E0D4;
+ border-radius:18px 18px 6px 18px;background:#F3EEE5;
+ white-space:pre-wrap;word-break:break-word;color:#342D25
+}
+.page-chat .chat-message-content--assistant{
+ width:100%;white-space:pre-wrap;word-break:break-word;color:#292622
+}
+.page-chat .chat-message--user .chat-message-author{text-align:right}
+.page-chat .chat-message--user a{align-self:flex-end}
+@media(max-width:767px){
+ .page-chat .chat-transcript{gap:24px;padding-left:14px;padding-right:14px}
+ .page-chat .chat-message--user>.chat-message-body{max-width:88%}
+ .page-chat .chat-message-content{font-size:15px;line-height:1.72}
+ .page-chat .chat-message-content--user{padding:10px 14px}
+ .page-chat .chat-message--assistant{gap:9px}
+ .page-chat .chat-message--assistant>div:first-child{width:30px;height:30px}
+}
+@media(prefers-reduced-motion:reduce){
+ .page-chat [data-chat-scroll]{scroll-behavior:auto}
+}
+
 /* One composer surface for direct and group conversations. */
 .conversation-composer-wrap{flex-shrink:0;padding:8px 16px max(8px,env(safe-area-inset-bottom));background:#FFFDF9}
 .conversation-composer{overflow:visible;border:1px solid #E1D9CC;border-radius:16px;background:#FFFDF9;box-shadow:0 8px 30px rgba(36,33,29,.08)}
