@@ -18,6 +18,12 @@ pub async fn dispatch_batch<D: Dispatcher>(
     if !run.in_flight.is_empty() {
         return Err("이전 도구 실행의 결과를 먼저 확인해야 합니다.".into());
     }
+    // A model that may still be in flight has not produced a committed
+    // decision yet. A caller must settle that paid observation before the
+    // shared tool lane can perform even a read, much less a side effect.
+    if run.model_in_flight {
+        return Err("모델 응답의 영속 기록을 완료하기 전에는 도구를 실행할 수 없습니다.".into());
+    }
     // A new owner directive invalidates the entire pending batch.
     // Recheck between checkpoints: earlier tool receipts remain durable,
     // but no later side effect may execute under the abandoned instruction.
@@ -110,3 +116,58 @@ pub async fn dispatch_batch<D: Dispatcher>(
     Ok(outputs)
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize,Ordering};
+
+    struct NoEffect(AtomicUsize);
+    impl Dispatcher for NoEffect {
+        type Output = ();
+        fn execute<'a>(&'a self,_action:&'a Action)
+            -> crate::BoxFuture<'a,Result<crate::DispatchResult<Self::Output>,String>> {
+            self.0.fetch_add(1,Ordering::SeqCst);
+            Box::pin(async {Ok(crate::DispatchResult {
+                output:(),observation:json!({"ok":true}),success:true
+            })})
+        }
+    }
+    struct InMemoryJournal;
+    impl Journal for InMemoryJournal {
+        fn save(&self,_:&Snapshot)->Result<(),String>{Ok(())}
+    }
+    fn ready<T>(f:impl std::future::Future<Output=T>)->T {
+        use std::future::Future;
+        let waker=std::task::Waker::noop();
+        let mut context=std::task::Context::from_waker(waker);
+        let mut pending=Box::pin(f);
+        match Future::poll(pending.as_mut(),&mut context) {
+            std::task::Poll::Ready(value)=>value,
+            std::task::Poll::Pending=>panic!("unexpected pending dispatch")
+        }
+    }
+
+    #[test]
+    fn model_in_flight_blocks_tool_dispatch_before_any_host_effect() {
+        let req=crate::RunRequest {
+            id:"run-guard".into(),instruction:"read a file".into(),
+            owner_instructions:String::new(),strategy:crate::Strategy::Balanced,
+            limits:crate::Limits::default(),allowed_tools:vec!["read".into()],
+            checks:Vec::new(),require_evidence:false
+        };
+        let mut run=Snapshot::from_request(&req);
+        run.model_in_flight=true;
+        let dispatcher=NoEffect(AtomicUsize::new(0));
+        let actions=[Action {
+            id:"read-1".into(),tool:"read".into(),
+            arguments:json!({}),depends_on:Vec::new()
+        }];
+        let outcome=ready(dispatch_batch(&mut run,&actions,&dispatcher,&InMemoryJournal));
+        assert!(outcome.is_err());
+        assert!(run.in_flight.is_empty());
+        assert!(run.receipts.is_empty());
+        assert!(run.model_in_flight);
+        assert_eq!(dispatcher.0.load(Ordering::SeqCst),0);
+    }
+}
