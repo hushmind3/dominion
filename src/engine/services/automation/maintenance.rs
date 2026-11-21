@@ -65,6 +65,25 @@ impl Drop for PlaintextSnapshot {
     }
 }
 
+/// Reclaim plaintext VACUUM outputs stranded by a power failure. Only files
+/// with our exact generated prefix/suffix inside the private staging folder
+/// and older than a full day are eligible. Active huge snapshots are safe.
+fn prune_crashed_plaintext(directory:&Path)->usize {
+    let Ok(entries)=std::fs::read_dir(directory) else{return 0};
+    let mut recovered=0;
+    for entry in entries.flatten(){
+        let path=entry.path();
+        let Some(name)=path.file_name().and_then(|name|name.to_str()) else{continue};
+        if !name.starts_with("snapshot-") || !name.ends_with(".sqlite"){continue}
+        let Ok(metadata)=std::fs::symlink_metadata(&path) else{continue};
+        if !metadata.file_type().is_file() { continue }
+        if !metadata.modified().ok().and_then(|time|time.elapsed().ok())
+            .is_some_and(|age|age>Duration::from_secs(24*60*60)) { continue }
+        if std::fs::remove_file(&path).is_ok(){recovered+=1}
+    }
+    recovered
+}
+
 /// Creates an encrypted snapshot. Plaintext SQLite is always staged inside a
 /// private owner-only directory and removed on every success/error path.
 pub fn create_snapshot(state: &AppState) -> Result<PathBuf, String> {
@@ -79,6 +98,11 @@ pub fn create_snapshot(state: &AppState) -> Result<PathBuf, String> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&private,
             std::fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;
+    }
+    let reclaimed=prune_crashed_plaintext(&private);
+    if reclaimed>0 {
+        state.store.audit("backup.plaintext_crash_cleanup",
+            serde_json::json!({"count":reclaimed}));
     }
     let temp = private.join(format!("snapshot-{}.sqlite", uuid::Uuid::new_v4()));
     let cleanup=PlaintextSnapshot(temp.clone());
@@ -245,6 +269,30 @@ mod tests {
             assert_eq!(std::fs::metadata(&staging).unwrap().permissions().mode()&0o777,
                 0o700,"staging directory must be inaccessible to other users");
         }
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn crash_plaintext_cleanup_only_removes_aged_owned_snapshot_files() {
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-backup-stage-test-{}",uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let stale=dir.join("snapshot-older.sqlite");
+        let recent=dir.join("snapshot-recent.sqlite");
+        let unrelated=dir.join("user-owned.sqlite");
+        for path in [&stale,&recent,&unrelated]{
+            std::fs::write(path,b"plaintext").unwrap();
+        }
+        let old=std::time::SystemTime::now()-Duration::from_secs(48*60*60);
+        for path in [&stale,&unrelated]{
+            let file=std::fs::OpenOptions::new().write(true).open(path).unwrap();
+            file.set_times(std::fs::FileTimes::new().set_modified(old)).unwrap();
+        }
+        assert_eq!(prune_crashed_plaintext(&dir),1);
+        assert!(!stale.exists());
+        assert!(recent.exists(),"active snapshot is never deleted");
+        assert!(unrelated.exists(),"foreign files are not treated as temp data");
         let _=std::fs::remove_dir_all(dir);
     }
 
