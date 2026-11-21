@@ -620,7 +620,7 @@ pub async fn execute(
         "room_peer_inbox" => room_peer::inbox(ctx),
         "team_execute" => team::execute(ctx,args,run_id).await,
         "team_status" => team::status(ctx,args),
-        "team_remote_apply" => remote_artifacts::apply(ctx,args).await,
+        "team_remote_apply" => remote_artifacts::apply(ctx,args,run_id).await,
         "team_workers" => Ok(team::workers(ctx)),
         "delegate_task" => delegate(ctx, args).await,
         "external_harness_run" => external_harness::run(ctx,args).await,
