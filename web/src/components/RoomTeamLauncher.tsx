@@ -6,8 +6,20 @@ import {Notice,refresh,useRemote} from './UI'
 import {TeamWorkflowPanel} from './TeamWorkflowPanel'
 import {useLocale} from '../i18n'
 
-type Launch={id:string;roomId:string;sessionId:string;status:'planning'|'queued'|'failed';goal:string;maxParallel:number;jobId?:string|null;error?:string|null}
+type Launch={id:string;roomId:string;sessionId:string;status:'planning'|'queued'|'failed'|'uncertain';goal:string;maxParallel:number;jobId?:string|null;error?:string|null}
+type PendingLaunch={goal:string;maxParallel:number;requestId:string}
 const storageKey=(roomId:string)=>'dominion.room.team.launch.'+roomId
+const pendingKey=(roomId:string)=>'dominion.room.team.pending.'+roomId
+function readPending(roomId:string):PendingLaunch|null{
+ try{
+  const p=JSON.parse(localStorage.getItem(pendingKey(roomId))||'null') as Partial<PendingLaunch>|null
+  if(p&&typeof p.goal==='string'&&p.goal.length>0&&p.goal.length<=4000&&
+   typeof p.requestId==='string'&&/^[\da-f-]{36}$/i.test(p.requestId)&&
+   typeof p.maxParallel==='number'&&p.maxParallel>=1&&p.maxParallel<=4)
+   return {goal:p.goal,maxParallel:p.maxParallel,requestId:p.requestId}
+ }catch{}
+ return null
+}
 
 /** Room-native Team composer. Always an explicit user action; not a new agent
  * executor. Server persists the nonce before paid planning and owns the DAG. */
@@ -16,9 +28,11 @@ export function RoomTeamLauncher({roomId,sessionId,participantCount,toolsEnabled
  onEnableTools:()=>Promise<void>;active:boolean
 }){
  const en=useLocale()==='en'
- const [goal,setGoal]=useState('')
- const [parallel,setParallel]=useState(3)
- const [requestId,setRequestId]=useState<string|null>(null)
+ const restored=useRef(readPending(roomId))
+ const [goal,setGoal]=useState(restored.current?.goal||'')
+ const [parallel,setParallel]=useState(restored.current?.maxParallel||3)
+ const [requestId,setRequestId]=useState<string|null>(restored.current?.requestId||null)
+ const [recovered,setRecovered]=useState(Boolean(restored.current))
  const [launchId,setLaunchId]=useState<string|null>(()=>{
   try{return localStorage.getItem(storageKey(roomId))}catch{return null}
  })
@@ -42,18 +56,28 @@ export function RoomTeamLauncher({roomId,sessionId,participantCount,toolsEnabled
   inFlight.current=true;setBusy(true);setError('')
   const id=requestId||crypto.randomUUID()
   setRequestId(id)
+  try{localStorage.setItem(pendingKey(roomId),JSON.stringify({
+   goal:trimmed,maxParallel:parallel,requestId:id
+  }))}catch{}
   try{
    const result=await post<Launch>('/api/rooms/'+encodeURIComponent(roomId)+'/team-launches',{
     goal:trimmed,maxParallel:parallel,clientRequestId:id,
    })
    setLaunchId(result.id)
-   try{localStorage.setItem(storageKey(roomId),result.id)}catch{}
-   setRequestId(null);setGoal('')
+   try{
+    localStorage.setItem(storageKey(roomId),result.id)
+    localStorage.removeItem(pendingKey(roomId))
+   }catch{}
+   setRecovered(false);setRequestId(null);setGoal('')
    refresh('/api/jobs')
   }catch(e){setError((e as Error).message)}
   finally{inFlight.current=false;setBusy(false)}
  }
- const failed=launch.value.status==='failed'
+ const failed=launch.value.status==='failed'||launch.value.status==='uncertain'
+ const clearPending=()=>{
+  try{localStorage.removeItem(pendingKey(roomId))}catch{}
+  setRequestId(null);setRecovered(false)
+ }
  return <div className="min-w-0 space-y-3">
   <div className="flex flex-wrap items-center justify-between gap-2">
    <div className="flex min-w-0 items-center gap-2">
@@ -72,16 +96,19 @@ export function RoomTeamLauncher({roomId,sessionId,participantCount,toolsEnabled
    <p className="flex-1 text-[11px] text-amber-900">{en?'Room tools are off. Enable tools to launch Team.':'그룹 도구 사용이 꺼져 있습니다. Team 실행 전 먼저 켜야 합니다.'}</p>
    <Button size="sm" onClick={()=>void onEnableTools()}>{en?'Enable room tools':'그룹 도구 켜기'}</Button>
   </div>}
+  {recovered&&requestId&&<p role="status" className="text-[11px] text-amber-800">
+   {en?'An earlier launch may have reached the server. Submitting the same goal reuses its original request ID.':'이전 요청의 응답이 끊겼을 수 있습니다. 같은 목표로 다시 누르면 이전 요청 ID를 재사용합니다.'}
+  </p>}
   <form className="flex min-w-0 flex-col gap-2" onSubmit={event=>void start(event)}>
    <label className="text-[11px] font-semibold text-[#5C544A]" htmlFor={'team-goal-'+roomId}>{en?'Team goal':'Team 작업 목표'}</label>
    <TextArea id={'team-goal-'+roomId} rows={2} maxLength={4000} value={goal}
-    onChange={e=>{setGoal(e.target.value);setRequestId(null)}} disabled={busy}
+    onChange={e=>{setGoal(e.target.value);clearPending()}} disabled={busy}
     placeholder={en?'Describe work and the expected outcome…':'예: 버그를 조사하고 수정안을 만든 뒤 독립 검증해줘'}
     className="!min-h-16 !resize-y !bg-white !text-xs"/>
    <div className="flex flex-wrap items-center gap-2">
     <label className="flex items-center gap-2 text-[11px] text-[#6F675D]">{en?'Parallel workers':'동시 Worker'}
      <SelectInput className="!w-20 !py-1.5 !text-xs" value={parallel} disabled={busy}
-      onChange={e=>{setParallel(Number(e.target.value));setRequestId(null)}}>
+      onChange={e=>{setParallel(Number(e.target.value));clearPending()}}>
       {[1,2,3,4].map(n=><option key={n} value={n}>{n}</option>)}
      </SelectInput>
     </label>
@@ -98,11 +125,14 @@ export function RoomTeamLauncher({roomId,sessionId,participantCount,toolsEnabled
     {launch.value.status==='planning'?<LoaderCircle size={13} className="animate-spin"/>:
      failed?<ShieldCheck size={13} className="text-rose-600"/>:<Check size={13} className="text-emerald-600"/>}
     <strong>{launch.value.status==='planning'?(en?'Lead is planning…':'Lead가 작업 계획 생성 중…'):
+     launch.value.status==='uncertain'?(en?'Previous planning outcome uncertain':'이전 계획 요청 상태 불확실'):
      failed?(en?'Team launch failed':'Team 실행 요청 실패'):(en?'Worker jobs queued':'Team Worker 작업 예약 완료')}</strong>
     {launch.value.jobId&&<span className="break-all font-mono text-[10px]">{launch.value.jobId}</span>}
    </div>
    {failed&&<p role="alert" className="mt-1 text-rose-700">{launch.value.error||'Team 계획 생성에 실패했습니다.'}</p>}
-   {failed&&<p className="mt-1 text-[#8A8176]">{en?'A new explicit request is required to retry; previous paid calls are never replayed automatically.':'이전 유료 호출은 자동 재실행하지 않습니다. 다시 실행하려면 직접 요청하세요.'}</p>}
+   {failed&&<p className="mt-1 text-[#8A8176]">{launch.value.status==='uncertain'
+    ?(en?'Check the status before creating a new request; the old call may have incurred costs.':'새 요청을 만들기 전에 상태를 확인하세요. 이전 호출에서 비용이 발생했을 수 있습니다.')
+    :(en?'A new explicit request is required to retry; previous paid calls are never replayed automatically.':'이전 유료 호출은 자동 재실행하지 않습니다. 다시 실행하려면 직접 요청하세요.')}</p>}
   </div>}
   <TeamWorkflowPanel filterSessionId={sessionId}/>
  </div>

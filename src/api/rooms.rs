@@ -641,9 +641,19 @@ pub async fn team_launch_status(
     response((||{
         let config=room(&state,&id)?;
         let session_id=config["sessionId"].as_str().ok_or_else(||failed("그룹 세션이 없습니다."))?;
-        let row=state.store.get("room_team_launch",&launch_id)
+        let mut row=state.store.get("room_team_launch",&launch_id)
             .filter(|v|v["roomId"]==id&&v["sessionId"]==session_id)
             .ok_or((StatusCode::NOT_FOUND,"이 그룹의 Team 실행을 찾을 수 없습니다.".into()))?;
+        // A process restart can interrupt a paid planning call. Never
+        // automatically replay it or leave the UI spinning indefinitely.
+        // This is an observation only: a delayed settlement can still win.
+        if row["status"]=="planning"&&row["createdAt"].as_str()
+            .and_then(|s|chrono::DateTime::parse_from_rfc3339(s).ok())
+            .is_some_and(|at|chrono::Utc::now().signed_duration_since(at)
+                >chrono::Duration::minutes(15)) {
+            row["status"]=json!("uncertain");
+            row["error"]=json!("계획 생성이 중단되었거나 오래 걸렸습니다. 이전 호출의 정산 상태를 확인하세요.");
+        }
         Ok(row)
     })())
 }
