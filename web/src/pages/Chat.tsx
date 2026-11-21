@@ -2,6 +2,7 @@ import {ConversationSettings} from '../components/ConversationSettings'
 import {ExecutionPermissions} from '../components/ExecutionPermissions'
 import {ConversationSwitch} from '../components/WorkspaceShell'
 import {TokenUsage} from '../components/TokenUsage'
+import {ExecutionInsights} from '../components/ExecutionInsights'
 import {OwnerAvatar,useOwnerProfile} from '../components/OwnerProfile'
 import {createPortal} from 'react-dom'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
@@ -500,6 +501,8 @@ function Message({message,agentName,showReasoning}:{message:ChatMessage;agentNam
      :<a key={item.id} href={item.url} target="_blank" rel="noreferrer" className="rounded-lg border border-[#E7E0D5] bg-white px-2 py-1 text-[11px] text-[#5C544A] hover:bg-[#FAF7F1]">{item.name}</a>)}
    </div>}
    {!human&&message.content&&<Button className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] text-[#7C7469] hover:bg-[#F3EEE5]" onClick={()=>navigator.clipboard.writeText(message.content)} title={t('chat.copy')}><Copy size={14}/></Button>}
+   {!human&&typeof message.metadata?.executionId==='string'&&
+    <ExecutionInsights executionId={message.metadata.executionId} compact/>}
   </div>
  </div>
 }
