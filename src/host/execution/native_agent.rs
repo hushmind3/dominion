@@ -100,12 +100,14 @@ fn verified_tool_result(name: &str, value: Value) -> Result<Value,String> {
     if value["isError"] == true || value["success"] == false
         || value["ok"] == false || value.get("error").is_some_and(|v| !v.is_null())
     {
-        return Err(format!("{name} returned an error: {}",value));
+        return Err(format!("{name} returned an error: {}",
+            diagnostic_tail(&value.to_string(),3000)));
     }
     if matches!(name,"workspace_write"|"workspace_replace"|"workspace_replace_range"|"file_write")
         && value["written"]!=true
     {
-        return Err(format!("{name} produced no confirmed file write: {value}"));
+        return Err(format!("{name} produced no confirmed file write: {}",
+            diagnostic_tail(&value.to_string(),3000)));
     }
     if matches!(name,"shell_exec"|"terminal_exec") {
         match value.get("exitCode").and_then(Value::as_i64) {
@@ -120,7 +122,8 @@ fn verified_tool_result(name: &str, value: Value) -> Result<Value,String> {
     if let Some(code)=value.get("statusCode").and_then(Value::as_u64)
         .or_else(||value.get("status").and_then(Value::as_u64))
     {
-        if code>=400 { return Err(format!("{name} HTTP {code}: {value}")); }
+        if code>=400 {return Err(format!("{name} HTTP {code}: {}",
+            diagnostic_tail(&value.to_string(),3000)));}
     }
     Ok(value)
 }
@@ -794,6 +797,25 @@ mod native_result_tests {
             json!({"written":true,"replaced":true})).is_ok());
         assert!(verified_tool_result("workspace_read",json!({"content":"ok"})).is_ok());
     }
+    #[test]
+    fn large_tool_errors_remain_bounded_and_preserve_actionable_tail(){
+        let long="unrelated log line ".repeat(40_000);
+        for (tool,body) in [
+            ("mcp__worker__call",json!({"isError":true,
+                "message":format!("{long}ROOT_CAUSE_AT_END")})),
+            ("http_fetch",json!({"statusCode":503,
+                "body":format!("{long}HTTP_ERROR_AT_END")})),
+            ("workspace_write",json!({"written":false,
+                "message":format!("{long}NO_WRITE_AT_END")})),
+        ]{
+            let error=verified_tool_result(tool,body).unwrap_err();
+            assert!(error.len()<4000,
+                "A massive failed observation must not bloat durable receipts");
+            assert!(error.contains("_AT_END"),
+                "Keep the latest actionable diagnosis instead of only a prefix");
+        }
+    }
+
     #[test]
     fn native_cancelled_generation_writes_terminal_checkpoint_even_after_cancel_flag() {
         use crate::{config::Config,db::Store,vault::Vault};
