@@ -1014,7 +1014,7 @@ fn direct_chat_web_lookup_does_not_grant_workspace_write_even_if_model_forces_it
         vec![json!({"choices":[{"delta":{
             "tool_calls":[{"index":0,"id":"forbidden-write","type":"function",
                 "function":{"name":"workspace_write",
-                    "arguments":"{\\\"path\\\":\\\"blocked-web-work.txt\\\",\\\"content\\\":\\\"owned\\\"}"}}]
+                    "arguments":"{\"path\":\"blocked-web-work.txt\",\"content\":\"owned\"}"}}]
         },"finish_reason":"tool_calls"}]})]
     });
     let app=TestApp::new(port,"native");
