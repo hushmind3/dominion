@@ -204,6 +204,47 @@ fn ordinary_chat_rejects_word_only_completion() {
 }
 
 
+
+#[test]
+fn direct_chat_answers_without_agent_tools_or_action_execution() {
+    let _serial = serial();
+    let (port, calls) = scripted_provider(|_| {
+        vec![json!({"choices":[{"delta":{"content":"일반 채팅에서는 실행하지 않고 설명만 드립니다."},"finish_reason":"stop"}]})]
+    });
+    let app = TestApp::new(port, "native");
+    // The stored agent is deliberately missing. Direct chat must not try to
+    // resolve it or interpret a file request as an agent job.
+    let session = app.post("/api/sessions", &json!({
+        "title":"direct conversation","agentId":"missing-agent"
+    }));
+    let id = session["id"].as_str().unwrap();
+    let stream = app.chat(&json!({
+        "sessionId":id,"input":"report.txt 파일을 만들어줘",
+        "agentId":"missing-agent","directChat":true,
+        "toolsEnabled":true,"toolsExecutionEnabled":true,
+        "autoLearning":true
+    }));
+    assert!(stream.contains("assistant_saved"), "{stream}");
+    assert!(!app._root.join("report.txt").exists());
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 1, "a direct chat requires just one model call");
+    let wire = &calls[0];
+    assert!(wire["tools"].as_array().is_none_or(Vec::is_empty));
+    let prompt = wire["messages"][0]["content"].as_str().unwrap_or("");
+    assert!(prompt.contains("DOMINION 대화형 AI"), "{prompt}");
+    assert!(!prompt.contains("에이전트형 AI 작업 공간"), "{prompt}");
+    drop(calls);
+
+    let saved = app.get(&format!("/api/sessions/{id}"));
+    assert_eq!(saved["chatMode"], "chat");
+    assert!(saved["agentId"].is_null());
+    let messages = app.get(&format!("/api/sessions/{id}/messages"));
+    assert_eq!(messages.as_array().unwrap().len(), 2);
+    assert_eq!(messages[1]["role"], "assistant");
+    assert_eq!(app.get("/api/executions")[0]["taskOutcome"], "answered_unverified");
+}
+
+
 #[test]
 fn ordinary_chat_accepts_real_tool_evidence() {
     let _serial = serial();
