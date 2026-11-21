@@ -15,6 +15,7 @@ const server=spawn(process.execPath,[resolve(root,'node_modules/vite/bin/vite.js
 });
 let browser;
 let selectedModelRequest=false;
+const submittedMessages=[];
 let room={
  id:'room-model-fixture',name:'Model mapping room',
  agentIds:['lead','researcher'],routingMode:'discussion',rounds:1,maxTurns:2,
@@ -72,6 +73,13 @@ try{
   if(pathname==='/api/rooms/room-model-fixture/state')response={
    room,sessionId:room.sessionId,jobs:[],executions:[],learningJobs:[],
    operations:[],approvals:[],status:'idle'};
+  if(pathname==='/api/rooms/room-model-fixture/messages'
+    &&route.request().method()==='POST'){
+   submittedMessages.push(route.request().postDataJSON());
+   await route.fulfill({status:503,contentType:'application/json',
+    body:JSON.stringify({error:'temporary-room-unavailable'})});
+   return;
+  }
   if(pathname==='/api/rooms/room-model-fixture/messages')response=[{
    id:'model-reply',session_id:room.sessionId,role:'assistant',
    content:'Recorded real model',agent_id:'lead',
@@ -158,6 +166,32 @@ try{
  await page.getByRole('button',{name:'사용할 수 없는 대상 제외'}).click();
  assert.equal(await composer.inputValue(),'Do not broadcast this');
  assert.equal(await page.getByRole('button',{name:'메시지 보내기'}).isEnabled(),true);
+ // An uncertain HTTP result must not lose the committed-operation nonce.
+ // Rust E2E covers server deduplication; Chromium verifies the real form
+ // resends the SAME nonce after reopening the tab.
+ await composer.fill('Retry the same Room task');
+ const submit=page.getByRole('button',{name:'메시지 보내기'});
+ const firstResponse=page.waitForResponse(response=>
+  response.url().endsWith('/api/rooms/room-model-fixture/messages')
+  &&response.request().method()==='POST',{timeout:10000});
+ await submit.click();
+ await firstResponse;
+ await page.getByText('temporary-room-unavailable',{exact:false})
+  .waitFor({timeout:10000});
+ assert.equal(submittedMessages.length,1);
+ const firstId=submittedMessages[0].clientMessageId;
+ assert.ok(firstId,'the first request must carry an idempotency key');
+ await page.reload({waitUntil:'domcontentloaded'});
+ await composer.waitFor({timeout:10000});
+ assert.equal(await composer.inputValue(),'Retry the same Room task');
+ const retryResponse=page.waitForResponse(response=>
+  response.url().endsWith('/api/rooms/room-model-fixture/messages')
+  &&response.request().method()==='POST',{timeout:10000});
+ await submit.click();
+ await retryResponse;
+ assert.equal(submittedMessages.length,2);
+ assert.equal(submittedMessages[1].clientMessageId,firstId,
+  'reload plus retry cannot spawn a second server-owned Room job');
  const sizes=await page.evaluate(()=>({screen:innerWidth,body:document.documentElement.scrollWidth}));
  assert.ok(sizes.body<=sizes.screen+2,'Room model UI overflows mobile: '+JSON.stringify(sizes));
  assert.deepEqual(errors,[],'Room runtime errors');
