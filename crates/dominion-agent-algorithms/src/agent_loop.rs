@@ -349,12 +349,10 @@ impl Kernel<'_> {
             // Store the MODEL decision, before any host action or acceptance
             // outcome, so historical failures are reproducible offline.
             // This is durable evidence, never authority to re-execute effects.
-            run.decision_tape.push(decision.clone());
-            // Clearing the in-flight marker BEFORE saving this decision would
-            // allow crash recovery to issue a second paid call with no durable
-            // record of the first result. Settle both in the SAME snapshot.
-            run.model_in_flight = false;
-            self.journal.save(&run)?;
+            // Shared atomic settlement: decision + already charged usage
+            // become durable together with releasing the paid-call fence.
+            // Chat streaming uses the same operator through the SDK facade.
+            runtime::settle_model_turn(self.journal,&mut run,decision.clone())?;
             if decision.plan.len() <= 32 {
                 run.plan = decision.plan.into_iter().map(|s| s.chars().take(400).collect()).collect();
             }
