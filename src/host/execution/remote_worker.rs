@@ -74,10 +74,13 @@ pub async fn run_cli(_args:&[String])->Result<(),String>{
         || std::env::var("DOMINION_WORKER_MODEL").is_err(){
         return Err("Worker inference endpoint and model must be configured".into());
     }
+    let local_model=std::env::var("DOMINION_WORKER_MODEL").unwrap_or_default();
+    gateway_post(&client,&base,&token,"v1/worker/hello",
+        &json!({"workerId":worker_id,"model":local_model})).await?;
     eprintln!("DOMINION remote worker {} connected (text-only, no tools)",worker_id);
     loop{
         let response=gateway_post(&client,&base,&token,"v1/worker/claim",
-            &json!({"workerId":worker_id})).await?;
+            &json!({"workerId":worker_id,"model":local_model})).await?;
         if let Some(task)=response["task"].as_object(){
             let id=task.get("taskId").and_then(Value::as_str).ok_or("Missing task identity")?;
             let lease=task.get("leaseId").and_then(Value::as_str).ok_or("Missing lease")?;

@@ -203,10 +203,12 @@ test('remote inference SDK uses owner paths and preserves unverified evidence',a
   const result=await sdk.remoteWorkers.get('remote:a/b');
   await sdk.remoteWorkers.cancel('remote:a/b');
   await sdk.remoteWorkers.list();
+  await sdk.remoteWorkers.workers();
   assert.equal(result.result.verified,false);
   assert.deepEqual(calls.map(c=>new URL(c.url).pathname),[
     '/api/remote/tasks','/api/remote/tasks/remote%3Aa%2Fb',
-    '/api/remote/tasks/remote%3Aa%2Fb/cancel','/api/remote/tasks'
+    '/api/remote/tasks/remote%3Aa%2Fb/cancel','/api/remote/tasks',
+    '/api/remote/workers'
   ]);
   assert.deepEqual(JSON.parse(calls[0].init.body),
     {prompt:'Inspect architecture',maxTokens:768});

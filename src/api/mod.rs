@@ -120,6 +120,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/tasks", get(tasks::list))
         .route("/api/tasks/:id", get(tasks::one))
         .route("/api/runs/:id",get(runs::one))
+        .route("/api/remote/workers",get(remote_workers::owner_workers))
         .route("/api/remote/tasks",get(remote_workers::owner_list).post(remote_workers::owner_create))
         .route("/api/remote/tasks/:id",get(remote_workers::owner_one))
         .route("/api/remote/tasks/:id/cancel",post(remote_workers::owner_cancel))

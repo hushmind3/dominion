@@ -102,6 +102,10 @@ export interface TeamTask {
   agentId?:string;providerId?:string;model?:string;
   allowedTools?:string[];checks?:unknown[];
 }
+export interface RemoteWorker {
+  workerId:string;model:string;capabilities:string[];
+  lastSeenAt:string;online:boolean;
+}
 export interface RemoteTask {
   id:string;status:string;phase:string;workerId?:string;
   result?:{answer?:string;usage?:unknown;verified?:false;evidenceGrade?:string};
@@ -215,6 +219,7 @@ export class Dominion{
   }
   readonly health=()=>this.request<{ok:boolean;engine:string;runtime:string}>('GET','/api/health');
   readonly remoteWorkers={
+    workers:()=>this.request<RemoteWorker[]>('GET','/api/remote/workers'),
     submit:(prompt:string,options:{parentRunId?:string;maxTokens?:number}={})=>
       this.request<{id:string;runId:string;status:string;sourceJournal:string}>(
         'POST','/api/remote/tasks',{prompt,...options}),

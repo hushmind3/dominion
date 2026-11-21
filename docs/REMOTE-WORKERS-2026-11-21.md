@@ -18,6 +18,7 @@ Use a private VPN with TLS termination or SSH local forwarding to reach the
 gateway from another device. Only these isolated endpoints are present:
 
 - `GET /v1/worker/health`
+- `POST /v1/worker/hello` (register a stable worker identity and model)
 - `POST /v1/worker/claim`
 - `POST /v1/worker/heartbeat`
 - `POST /v1/worker/complete`
@@ -27,6 +28,7 @@ MCP, filesystem, shell or owner-secret API is exposed on this listener.
 
 The local owner creates and reads work through:
 
+- `GET /api/remote/workers` (known machines, model IDs, 30-second online state; no secrets)
 - `POST /api/remote/tasks` (body `{"prompt":"...","maxTokens":2048}`)
 - `GET /api/remote/tasks`
 - `GET /api/remote/tasks/:id`
@@ -50,7 +52,10 @@ Set:
 - `DOMINION_WORKER_MODEL=<installed-local-model>`
 - Optional `DOMINION_WORKER_MODEL_KEY` (stays **on the worker**, never sent to coordinator)
 
-Run `dominion-rust remote-worker`. It claims one bounded text-inference task,
+Run `dominion-rust remote-worker`. It registers its own model identity,
+refreshes presence on every claim/heartbeat and remains visible to the
+owner's Rust/TypeScript SDK machine inventory even after going offline.
+It claims one bounded text-inference task,
 runs inference on its own endpoint and returns one text receipt with reported
 usage. No arbitrary executable code, shell, shared workspace access or
 provider API key is transmitted by the coordinator.

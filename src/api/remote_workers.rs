@@ -61,6 +61,7 @@ fn task_id(value:&Value)->Result<&str,Response>{
 pub fn gateway_router(state:AppState)->Router{
     Router::new()
         .route("/v1/worker/health",get(worker_health))
+        .route("/v1/worker/hello",post(worker_hello))
         .route("/v1/worker/claim",post(worker_claim))
         .route("/v1/worker/heartbeat",post(worker_heartbeat))
         .route("/v1/worker/complete",post(worker_complete))
@@ -72,11 +73,46 @@ async fn worker_health(headers:HeaderMap)->Response{
     Json(json!({"protocol":"dominion-remote-v1","capabilities":["text_inference"],
         "sandbox":"no_tools","heartbeat":true})).into_response()
 }
+/// Durable worker registry. A machine advertises only the model ID and
+/// permitted capability set, never its API key or private local endpoint.
+/// Claim and heartbeat refresh the lease to survive coordinator restarts.
+fn register_worker(state:&AppState,worker:&str,model:Option<&str>)
+    ->Result<Value,String>{
+    let current=state.store.get("remote_worker",worker);
+    let model=model.or_else(||current.as_ref()
+        .and_then(|row|row["model"].as_str()));
+    let model=model.filter(|m|!m.is_empty()&&m.len()<=160)
+        .unwrap_or("unspecified");
+    let now=chrono::Utc::now();
+    let row=json!({"id":worker,"kind":"inference_worker",
+        "model":model,"capabilities":["text_inference"],
+        "lastSeenAt":now.to_rfc3339(),
+        "lastSeenAtMs":now.timestamp_millis()});
+    state.store.put("remote_worker",&row).ok_or(
+        "Could not durably record remote worker presence".into())
+}
+async fn worker_hello(
+    State(state):State<AppState>,headers:HeaderMap,Json(body):Json<Value>
+)->Response{
+    if let Err(e)=require_worker(&headers){return e;}
+    let worker=match worker_id(&body){Ok(id)=>id,Err(e)=>return e};
+    match register_worker(&state,worker,body["model"].as_str()){
+        Ok(row)=>Json(json!({"workerId":worker,
+            "capabilities":row["capabilities"],
+            "protocol":"dominion-remote-v1","registered":true})).into_response(),
+        Err(_)=>json_error(StatusCode::INTERNAL_SERVER_ERROR,
+            "Remote worker registration unavailable")
+    }
+}
 async fn worker_claim(
     State(state):State<AppState>,headers:HeaderMap,Json(body):Json<Value>
 )->Response{
     if let Err(e)=require_worker(&headers){return e;}
     let worker=match worker_id(&body){Ok(id)=>id,Err(e)=>return e};
+    if register_worker(&state,worker,body["model"].as_str()).is_err(){
+        return json_error(StatusCode::INTERNAL_SERVER_ERROR,
+            "Remote worker registry unavailable");
+    }
     match state.store.claim_remote_task(worker) {
         Ok(task)=>{
             if let Some(value)=&task {state.store.audit("remote.claim",
@@ -93,6 +129,10 @@ async fn worker_heartbeat(
     let worker=match worker_id(&body){Ok(id)=>id,Err(e)=>return e};
     let lease=match lease_id(&body){Ok(id)=>id,Err(e)=>return e};
     let task=match task_id(&body){Ok(id)=>id,Err(e)=>return e};
+    if register_worker(&state,worker,None).is_err(){
+        return json_error(StatusCode::INTERNAL_SERVER_ERROR,
+            "Remote worker heartbeat registry unavailable");
+    }
     match state.store.heartbeat_remote_task(task,worker,lease){
         Ok(true)=>Json(json!({"ok":true})).into_response(),
         _=>json_error(StatusCode::CONFLICT,"Stale, cancelled or expired worker lease")
@@ -152,6 +192,22 @@ pub async fn owner_create(
         }
         None=>json_error(StatusCode::INTERNAL_SERVER_ERROR,"Remote queue unavailable")
     }
+}
+/// The owner can see which machines can actually receive work without
+/// adding another UI navigation item or exposing their secrets.
+pub async fn owner_workers(State(state):State<AppState>)->Response{
+    if let Err(e)=control_ready(){return e;}
+    let now=chrono::Utc::now().timestamp_millis();
+    let mut workers=state.store.all("remote_worker");
+    workers.sort_by(|a,b|a["id"].as_str().cmp(&b["id"].as_str()));
+    let result=workers.into_iter().map(|worker|{
+        let last=worker["lastSeenAtMs"].as_i64().unwrap_or(0);
+        let online=last>0&&now.saturating_sub(last)<30_000;
+        json!({"workerId":worker["id"],"model":worker["model"],
+            "capabilities":worker["capabilities"],"lastSeenAt":worker["lastSeenAt"],
+            "online":online})
+    }).collect::<Vec<_>>();
+    Json(json!(result)).into_response()
 }
 pub async fn owner_list(State(state):State<AppState>)->Response{
     if let Err(e)=control_ready(){return e;}
@@ -214,6 +270,20 @@ mod tests {
         let rejected=client.post(format!("{base}/v1/worker/claim"))
             .json(&json!({"workerId":"w"})).send().await.unwrap();
         assert_eq!(rejected.status(),StatusCode::UNAUTHORIZED);
+        let unauthorized_registration=client.post(format!("{base}/v1/worker/hello"))
+            .json(&json!({"workerId":"w","model":"local-27b"})).send().await.unwrap();
+        assert_eq!(unauthorized_registration.status(),StatusCode::UNAUTHORIZED);
+        let hello=client.post(format!("{base}/v1/worker/hello"))
+            .header("x-dominion-worker-token",&token)
+            .json(&json!({"workerId":"w","model":"local-27b"})).send().await.unwrap();
+        assert_eq!(hello.status(),StatusCode::OK);
+        let visible=owner_workers(State(state.clone())).await;
+        let bytes=axum::body::to_bytes(visible.into_body(),8192).await.unwrap();
+        let machines:Value=serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(machines[0]["workerId"],"w");
+        assert_eq!(machines[0]["model"],"local-27b");
+        assert_eq!(machines[0]["online"],true);
+        assert_eq!(machines[0]["capabilities"],json!(["text_inference"]));
         let owner=owner_create(State(state.clone()),
             Json(json!({"prompt":"Remote text reasoning"}))).await;
         assert_eq!(owner.status(),StatusCode::ACCEPTED);
@@ -242,6 +312,12 @@ mod tests {
             .send().await.unwrap();
         assert_eq!(late.status(),StatusCode::CONFLICT);
         assert_eq!(state.store.get("remote_task",id).unwrap()["status"],"cancelled");
+        state.store.patch_if("remote_worker","w","id",&json!("w"),
+            &json!({"lastSeenAtMs":0})).unwrap();
+        let visible=owner_workers(State(state.clone())).await;
+        let bytes=axum::body::to_bytes(visible.into_body(),8192).await.unwrap();
+        let machines:Value=serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(machines[0]["online"],false);
         server.abort();
         match previous_enabled{Some(v)=>std::env::set_var("DOMINION_REMOTE_WORKERS",v),
             None=>std::env::remove_var("DOMINION_REMOTE_WORKERS")}

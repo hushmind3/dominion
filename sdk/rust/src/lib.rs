@@ -248,6 +248,10 @@ impl Dominion {
         self.post(&["api","remote","tasks"],
             json!({"prompt":prompt,"maxTokens":max_tokens})).await
     }
+    /// Durable per-machine inventory, model ID and current liveness.
+    pub async fn remote_workers(&self)->Result<Vec<Value>,Error>{
+        self.get(&["api","remote","workers"]).await
+    }
     pub async fn remote_tasks(&self)->Result<Vec<Value>,Error>{
         self.get(&["api","remote","tasks"]).await
     }
