@@ -33,6 +33,7 @@ pub mod models;
 pub mod oauth;
 pub mod personas;
 pub mod rooms;
+pub mod remote_workers;
 
 use crate::state::AppState;
 use axum::{
@@ -119,6 +120,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/tasks", get(tasks::list))
         .route("/api/tasks/:id", get(tasks::one))
         .route("/api/runs/:id",get(runs::one))
+        .route("/api/remote/tasks",get(remote_workers::owner_list).post(remote_workers::owner_create))
+        .route("/api/remote/tasks/:id",get(remote_workers::owner_one))
+        .route("/api/remote/tasks/:id/cancel",post(remote_workers::owner_cancel))
         .route("/api/task-teams",get(task_teams::list).post(task_teams::create))
         .route("/api/task-teams/:id",get(task_teams::one))
         .route("/api/task-teams/:id/cancel",post(task_teams::cancel))

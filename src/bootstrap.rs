@@ -6,6 +6,9 @@ use crate::{
 use std::future::IntoFuture;
 
 pub async fn run(args: Vec<String>) -> Result<(), String> {
+    if args.first().map(String::as_str)==Some("remote-worker"){
+        return crate::host::execution::remote_worker::run_cli(&args[1..]).await;
+    }
     if platform::handle_control(&args)? {
         return Ok(());
     }
@@ -78,6 +81,30 @@ async fn serve(mut config: Config, open_browser: bool, parent_bound: bool) -> Re
         });
     }
     integrations::start(state.clone());
+    if std::env::var("DOMINION_REMOTE_WORKERS").ok().as_deref()==Some("1"){
+        // Default off, explicitly configured loopback-only listener. A remote
+        // device joins through a private TLS/SSH tunnel, never raw product API.
+        let token=std::env::var("DOMINION_REMOTE_WORKER_TOKEN")
+            .map_err(|_|"Remote workers require DOMINION_REMOTE_WORKER_TOKEN")?;
+        if token.len()<32||token.len()>1024||!token.is_ascii()||
+            token.chars().any(char::is_whitespace){
+            return Err("Remote worker token must be 32-1024 non-whitespace ASCII bytes".into());
+        }
+        let port=std::env::var("DOMINION_REMOTE_PORT").ok()
+            .and_then(|s|s.parse::<u16>().ok()).filter(|p|*p>0)
+            .ok_or("Remote gateway requires a nonzero DOMINION_REMOTE_PORT")?;
+        if port==config.port{
+            return Err("Remote worker port must differ from product API port".into());
+        }
+        let remote_listener=tokio::net::TcpListener::bind(("127.0.0.1",port))
+            .await.map_err(|e|format!("remote gateway bind: {e}"))?;
+        let remote_router=api::remote_workers::gateway_router(state.clone());
+        tokio::spawn(async move {
+            if let Err(error)=axum::serve(remote_listener,remote_router).await{
+                eprintln!("Remote worker gateway stopped: {error}");
+            }
+        });
+    }
     let app = api::router(state);
     println!(
         "DOMINION (rust engine) listening on http://127.0.0.1:{}",

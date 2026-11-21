@@ -13,6 +13,7 @@ pub fn normalize(store:&Store,kind:&str,record:&Value)->Option<Value>{
             Some("external_agent")=>RunSurface::ExternalAgent,
             _=>RunSurface::Sdk,
         },
+        "remote_task"=>RunSurface::ExternalAgent,
         "execution"=>{
             if record["roomId"].is_string()||record["roomRunId"].is_string(){
                 RunSurface::Room
@@ -53,6 +54,7 @@ pub fn lookup(store:&Store,id:&str)->Option<Value>{
     if id.len()>256||id.trim().is_empty(){return None;}
     store.get("job",id).map(|record|("job",record))
         .or_else(||store.get("execution",id).map(|record|("execution",record)))
+        .or_else(||store.get("remote_task",id).map(|record|("remote_task",record)))
         .and_then(|(kind,record)|normalize(store,kind,&record))
 }
 #[cfg(test)]

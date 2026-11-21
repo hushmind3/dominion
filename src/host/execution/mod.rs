@@ -11,6 +11,7 @@ pub mod recovery;
 pub mod jobs;
 pub mod lease;
 pub mod run_state;
+pub mod remote_worker;
 pub(crate) mod run_view;
 
 
