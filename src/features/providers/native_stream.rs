@@ -92,12 +92,20 @@ struct Call {id:String,name:String,args:String}
 impl Call {
     fn append(&mut self,value:&Value)->Result<(),String> {
         if let Some(id)=value["id"].as_str(){
-            if self.id.len()+id.len()>256{return Err("Native call ID exceeds limit".into());}
-            self.id.push_str(id);
+            // Some compatible endpoints resend the unchanged call ID in each
+            // argument delta. Do not turn repeated metadata into a new ID;
+            // still concatenate genuinely fragmented identifiers.
+            if self.id != id {
+                if self.id.len()+id.len()>256{return Err("Native call ID exceeds limit".into());}
+                self.id.push_str(id);
+            }
         }
         if let Some(name)=value["function"]["name"].as_str(){
-            if self.name.len()+name.len()>256{return Err("Native call name exceeds limit".into());}
-            self.name.push_str(name);
+            // Function names may also be repeated with later argument chunks.
+            if self.name != name {
+                if self.name.len()+name.len()>256{return Err("Native call name exceeds limit".into());}
+                self.name.push_str(name);
+            }
         }
         if let Some(args)=value["function"]["arguments"].as_str(){
             if self.args.len()+args.len()>MAX_ARGUMENT_BYTES {
@@ -669,6 +677,52 @@ mod tests {
         assert_eq!(v["choices"][0]["message"]["tool_calls"][0]["id"],"idA");
         assert_eq!(v["choices"][0]["message"]["tool_calls"][1]["id"],"idB");
     }
+    #[test]
+    fn native_chat_repeated_tool_identity_metadata_is_not_concatenated() {
+        let mut stream=Assembler::new(Wire::Chat);
+        for packet in [
+            json!({"choices":[{"index":0,"delta":{"tool_calls":[{
+                "index":0,"id":"call-1",
+                "function":{"name":"workspace_read","arguments":"{\\\"path\\\":\\\""}
+            }]}}]}),
+            json!({"choices":[{"index":0,"delta":{"tool_calls":[{
+                "index":0,"id":"call-1",
+                "function":{"name":"workspace_read","arguments":"src/lib.rs\\\"}"}
+            }]}}]}),
+            json!({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}),
+        ] {
+            stream.feed(Packet::Data(packet)).unwrap();
+        }
+        stream.feed(Packet::Done).unwrap();
+        let settled=stream.finish().unwrap();
+        let call=&settled["choices"][0]["message"]["tool_calls"][0];
+        assert_eq!(call["id"],"call-1");
+        assert_eq!(call["function"]["name"],"workspace_read");
+        assert_eq!(call["function"]["arguments"],r#"{"path":"src/lib.rs"}"#);
+    }
+
+    #[test]
+    fn native_chat_genuinely_fragmented_tool_identity_still_assembles() {
+        let mut stream=Assembler::new(Wire::Chat);
+        for packet in [
+            json!({"choices":[{"index":0,"delta":{"tool_calls":[{
+                "index":0,"id":"call","function":{"name":"workspace_","arguments":"{"}
+            }]}}]}),
+            json!({"choices":[{"index":0,"delta":{"tool_calls":[{
+                "index":0,"id":"-2","function":{"name":"read","arguments":"}"}
+            }]}}]}),
+            json!({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}),
+        ] {
+            stream.feed(Packet::Data(packet)).unwrap();
+        }
+        stream.feed(Packet::Done).unwrap();
+        let settled=stream.finish().unwrap();
+        let call=&settled["choices"][0]["message"]["tool_calls"][0];
+        assert_eq!(call["id"],"call-2");
+        assert_eq!(call["function"]["name"],"workspace_read");
+        assert_eq!(call["function"]["arguments"],"{}");
+    }
+
     #[test]
     fn native_sse_anthropic_partial_json_and_settlement() {
         let mut a=Assembler::new(Wire::Anthropic);
