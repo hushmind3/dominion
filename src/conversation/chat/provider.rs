@@ -1134,6 +1134,7 @@ async fn stream_completion_once_body(
     let mut buffer = SseBuffer::default();
     let mut stream = response.bytes_stream();
     let mut terminated = false;
+    let mut final_reason: Option<String> = None;
     let mut text_pending = String::new();
     let mut in_text_tool_call = false;
 
@@ -1199,13 +1200,39 @@ async fn stream_completion_once_body(
                     }
                 }
             }
+            let already_finished = final_reason.is_some();
             if let Some(reason) = piece["choices"][0]["finish_reason"].as_str() {
-                if reason == "content_filter" {
-                    return Err("모델 응답이 콘텐츠 필터로 중단되었습니다.".into());
+                if let Some(previous) = final_reason.as_deref() {
+                    if previous != reason {
+                        return Err("모델 스트림의 종료 이유가 중간에 변경되었습니다.".into());
+                    }
                 }
-                // Small/local models often hit the token limit. Keep the partial
-                // answer instead of failing the whole turn.
-                terminated = true;
+                match reason {
+                    "stop" | "tool_calls" => {
+                        terminated = true;
+                        final_reason = Some(reason.to_owned());
+                    }
+                    "length" => return Err(
+                        "모델 응답이 출력 제한으로 잘렸습니다. 미완성 답변은 완료로 저장하지 않습니다.".into()),
+                    "content_filter" => return Err(
+                        "모델 응답이 콘텐츠 필터로 중단되었습니다.".into()),
+                    _ => return Err(format!(
+                        "모델 응답이 정상 종료되지 않았습니다 (finish_reason={reason}).")),
+                }
+            }
+            if already_finished {
+                let delta = &piece["choices"][0]["delta"];
+                if delta["content"].as_str().is_some_and(|text| !text.is_empty())
+                    || delta["reasoning_content"].as_str()
+                        .is_some_and(|text| !text.is_empty())
+                    || delta["reasoning"].as_str()
+                        .is_some_and(|text| !text.is_empty())
+                    || delta["tool_calls"].as_array()
+                        .is_some_and(|tools| !tools.is_empty())
+                    || piece["choices"][0].get("message").is_some()
+                {
+                    return Err("모델이 종료 이후 새로운 응답이나 도구 호출을 보냈습니다.".into());
+                }
             }
             // Complete-message-only Chat compatibility, including a final
             // usage-only packet with empty choices. Never append a settled
@@ -1280,10 +1307,22 @@ async fn stream_completion_once_body(
 
             if let Some(tool_calls) = delta.get("tool_calls").and_then(|value| value.as_array()) {
                 for call in tool_calls {
-                    let index = call
-                        .get("index")
-                        .and_then(|value| value.as_u64())
-                        .unwrap_or(calls.len() as u64) as usize;
+                    let index = if let Some(index) = call.get("index").and_then(Value::as_u64) {
+                        usize::try_from(index).map_err(|_| "도구 호출 인덱스가 범위를 벗어났습니다.")?
+                    } else {
+                        // Only a known, unique call ID can restore an indexless
+                        // fragment. Array-position guesses can cross-wire writes.
+                        let id = call.get("id").and_then(Value::as_str)
+                            .filter(|id| !id.is_empty())
+                            .ok_or("인덱스 없는 도구 조각에 호출 ID도 없습니다.")?;
+                        let matches = calls.iter().enumerate()
+                            .filter(|(_, existing)| existing.id == id)
+                            .map(|(index, _)| index).collect::<Vec<_>>();
+                        if matches.len() != 1 {
+                            return Err("인덱스 없는 도구 조각의 호출 대상을 확정할 수 없습니다.".into());
+                        }
+                        matches[0]
+                    };
                     if index >= MAX_TOOL_CALLS {
                         return Err("모델이 너무 많은 도구 호출을 반환했습니다.".into());
                     }
@@ -1297,12 +1336,17 @@ async fn stream_completion_once_body(
                     let slot = &mut calls[index];
                     if let Some(id) = call.get("id").and_then(|value| value.as_str()) {
                         if !id.is_empty() {
+                            if !slot.id.is_empty() && slot.id != id {
+                                return Err("모델 도구 호출 ID가 같은 인덱스에서 바뀌었습니다.".into());
+                            }
                             slot.id = id.to_string();
                         }
                     }
                     if let Some(function) = call.get("function") {
                         if let Some(name) = function.get("name").and_then(|value| value.as_str()) {
-                            slot.name.push_str(name);
+                            if slot.name != name {
+                                slot.name.push_str(name);
+                            }
                         }
                         if let Some(arguments) =
                             function.get("arguments").and_then(|value| value.as_str())
@@ -1328,20 +1372,27 @@ async fn stream_completion_once_body(
     {
         let _ = tx.send(json!({ "type": "text", "text": text_pending }));
     }
-    if !terminated {
-        return Err("모델 스트림이 완료 신호 없이 종료되었습니다.".into());
+    if !terminated || final_reason.is_none() {
+        return Err("모델 스트림이 정상 완료 신호 없이 종료되었습니다.".into());
     }
-
-    completion.tool_calls = calls
-        .into_iter()
-        .filter(|call| !call.name.is_empty())
-        .map(|mut call| {
-            if call.id.is_empty() {
-                call.id = uuid::Uuid::new_v4().to_string();
-            }
-            call
-        })
-        .collect();
+    if (final_reason.as_deref() == Some("tool_calls")) != !calls.is_empty() {
+        return Err("모델 스트림 종료 이유와 도구 호출이 일치하지 않습니다.".into());
+    }
+    let mut seen_call_ids = std::collections::HashSet::new();
+    for call in &calls {
+        if call.id.is_empty() || call.name.is_empty() || call.arguments.is_empty() {
+            return Err("모델 도구 호출의 ID·이름·인수가 완성되지 않았습니다.".into());
+        }
+        if !seen_call_ids.insert(call.id.as_str()) {
+            return Err("모델이 중복된 도구 호출 ID를 반환했습니다.".into());
+        }
+        let args: Value = serde_json::from_str(&call.arguments)
+            .map_err(|_| "모델이 완성되지 않은 도구 인수를 반환했습니다.")?;
+        if !args.is_object() {
+            return Err("모델 도구 인수는 JSON 객체여야 합니다.".into());
+        }
+    }
+    completion.tool_calls = calls;
 
     let (prompt_tokens, completion_tokens) = if completion.usage_exact {
         (completion.prompt_tokens, completion.completion_tokens)
