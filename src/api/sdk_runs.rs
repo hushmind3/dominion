@@ -264,9 +264,9 @@ pub async fn cancel(State(state):State<AppState>,Path(id):Path<String>)->Respons
     if !response.status().is_success(){return response;}
     one(State(state),Path(id)).await
 }
-pub async fn approve(
-    State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>
-)->Response{
+// Approval and refusal both bind the exact live call ID to the current
+// owner-visible SDK run. Refusal cannot be redirected to another session.
+async fn resolve_scoped_tool(state:AppState,id:String,body:Value,allow:bool)->Response{
     let Some(job)=prompt_job(&state,&id) else {
         return error(StatusCode::NOT_FOUND,"SDK 작업을 찾지 못했습니다.");
     };
@@ -277,9 +277,19 @@ pub async fn approve(
         return error(StatusCode::CONFLICT,"승인 대상 도구 ID가 변경되었습니다.");
     }
     let response=approvals::resolve_approval(
-        State(state.clone()),Json(json!({"id":a["id"],"allow":true}))).await;
+        State(state.clone()),Json(json!({"id":a["id"],"allow":allow}))).await;
     if !response.status().is_success(){return response;}
     one(State(state),Path(id)).await
+}
+pub async fn approve(
+    State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>
+)->Response{
+    resolve_scoped_tool(state,id,body,true).await
+}
+pub async fn deny(
+    State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>
+)->Response{
+    resolve_scoped_tool(state,id,body,false).await
 }
 pub async fn resume(State(state):State<AppState>,Path(id):Path<String>)->Response{
     let Some(job)=prompt_job(&state,&id) else {
@@ -558,6 +568,31 @@ mod tests{
             Json(json!({"callId":"approved-call"}))).await.status(),StatusCode::CONFLICT,
             "a decided tool must not be approved a second time");
         let _=std::fs::remove_dir_all(root);
+    }
+    #[tokio::test]
+    async fn owner_can_refuse_one_exact_live_native_tool_without_approving_others(){
+        let (state,root)=temporary_state();
+        state.store.put("job",&json!({"id":"deny-job","kind":"prompt",
+            "status":"running","sessionId":"deny-session",
+            "input":{"prompt":"Inspect risky change","clientSurface":"native_agent_panel"}})).unwrap();
+        state.store.put("approval",&json!({"id":"deny-call",
+            "status":"pending","sessionId":"deny-session","runId":"deny-job",
+            "tool":"workspace_write","args":{"path":"src/secret.rs"}})).unwrap();
+        let (sender,receiver)=tokio::sync::oneshot::channel();
+        state.approvals.lock().unwrap().insert("deny-call".into(),sender);
+        let mismatched=deny(State(state.clone()),Path("deny-job".into()),
+            Json(json!({"callId":"some-other-call"}))).await;
+        assert_eq!(mismatched.status(),StatusCode::CONFLICT);
+        assert_eq!(state.store.get("approval","deny-call").unwrap()["status"],"pending");
+        let refused=deny(State(state.clone()),Path("deny-job".into()),
+            Json(json!({"callId":"deny-call"}))).await;
+        assert_eq!(refused.status(),StatusCode::OK);
+        assert_eq!(receiver.await.unwrap(),false,"The host must reject the actual action");
+        assert_eq!(state.store.get("approval","deny-call").unwrap()["status"],"denied");
+        assert_eq!(state.store.get("approval","deny-call").unwrap()["decision"],"deny");
+        assert_eq!(approve(State(state.clone()),Path("deny-job".into()),
+            Json(json!({"callId":"deny-call"}))).await.status(),StatusCode::CONFLICT);
+        crate::test_support::cleanup_dir(root);
     }
     #[test]
     fn main_ui_projects_only_real_progress_and_recoverable_states(){
