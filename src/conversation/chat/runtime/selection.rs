@@ -131,7 +131,7 @@ pub(super) fn room_tool_request(input: &str) -> bool {
         "재시도", "복구", "실패", "오류", "retry", "recover", "failed", "failure", "error",
         "스킬", "메모리", "브라우저", "깃허브", "github", "구글", "google", "지메일", "gmail",
         "메일", "드라이브", "drive", "캘린더", "calendar", "일정", "docs", "shell", "file", "read",
-        "write", "run", "search", "fetch", "install", "build", "test", "tool",
+        "write", "run", "execute", "command", "commands", "search", "fetch", "install", "build", "test", "tool",
         "browser", "memory", "task",
     ]
     .iter()
@@ -190,7 +190,7 @@ pub(super) fn select_room_tools(
         ),
         (
             &[
-                "실행", "명령", "터미널", "빌드", "테스트", "설치", "shell", "run", "build", "test", "install",
+                "실행", "명령", "터미널", "빌드", "테스트", "설치", "shell", "run", "execute", "command", "commands", "build", "test", "install",
                 "재시도", "복구", "실패", "오류", "retry", "recover", "failed", "failure", "error",
             ],
             &["shell_exec", "terminal_exec"],
