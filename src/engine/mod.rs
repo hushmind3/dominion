@@ -1,6 +1,8 @@
-//! Minimal natural-language execution kernel with external product services.
-//! Only core/ owns the conversational execution path. All other Rust
-//! capabilities are source-isolated; historical engine:: paths stay stable.
+//! Product composition root for a single Rust Harness execution contract.
+//! dominion-turn-core owns model/tool admission and shared RunState semantics;
+//! swappable algorithms stay in separate crates. The product services below
+//! adapt real providers, SQLite, rooms, jobs, tools and optional integrations.
+//! No second agent loop, side-channel approvals or independent effect owner.
 pub mod addons;
 pub use dominion_turn_core as core;
 pub use addons::{browser,bridge,channel_adapter,discord,github_work,google_work,mcp,telegram};
