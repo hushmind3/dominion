@@ -115,6 +115,8 @@ jobs:
           cargo test --locked --bin dominion-rust addons::mcp::schema::tests
       - name: Crash-atomic database and vault restore (dev profile)
         run: cargo test --locked --bin dominion-rust addons::restore_transaction::tests
+      - name: Context relevance and verified failure-guidance quarantine (dev profile)
+        run: cargo test --locked --bin dominion-rust engine::chat::context::tests
       - name: Execution-scoped auxiliary model receipts and token coverage (dev profile)
         run: |
           cargo test --locked --bin dominion-rust engine::llm::
