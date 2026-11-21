@@ -569,6 +569,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
 }
 function Message({message,agentName,showReasoning}:{message:ChatMessage;agentName?:string;showReasoning?:boolean}){
  const [open,setOpen]=useState(true)
+ const [downloadError,setDownloadError]=useState('')
  const human=message.role==='user'
  const files=(human&&Array.isArray(message.metadata?.attachments)?message.metadata.attachments:[])
   .filter((item):item is {id:string;name:string;isImage?:boolean}=>!!item&&typeof item==='object'
@@ -592,8 +593,9 @@ function Message({message,agentName,showReasoning}:{message:ChatMessage;agentNam
       const url=URL.createObjectURL(blob),link=document.createElement('a')
       link.href=url;link.download=file.name;link.click()
       window.setTimeout(()=>URL.revokeObjectURL(url),1000)
-     }catch{window.alert(t('chat.fileDownloadFailed'))}
+     }catch{setDownloadError(t('chat.fileDownloadFailed'))}
     }}><FileText size={12}/><span className="max-w-[180px] truncate">{file.name}</span></button>)}</div>}
+   {downloadError&&<div role="status" className="mt-1 text-xs text-rose-700">{downloadError}</div>}
    {usedMemories.length>0&&<details className="chat-message-memories mt-2 rounded-lg border border-[#E7E0D5] bg-[#FAF7F1] px-3 py-2 text-[11px] leading-5 text-[#665D51]">
     <summary className="cursor-pointer select-none font-medium">{t('chat.usedMemories',{count:usedMemories.length})}</summary>
     <div className="mt-2 grid gap-2">{usedMemories.map(item=><div key={item.id} className="break-words border-t border-[#E7E0D5] pt-2 whitespace-pre-wrap">{item.text}</div>)}</div>
