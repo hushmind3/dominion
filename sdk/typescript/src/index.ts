@@ -41,6 +41,23 @@ export type RoutingMode='default'|'quality_cost';
 export type AlgorithmId='standard-v1'|'focused-v1';
 export interface Job extends RecordItem {kind:string;status:string;input?:unknown;result?:unknown;error?:string;sessionId?:string;stepIndex?:number;stepTotal?:number;
  nativeRoute?:NativeRouteSelection;nativeModelUsage?:NativeModelUsage;nativeAlgorithm?:{format:number;id:AlgorithmId;revision:string};nativeState?:{chargedTokens?:number;modelCalls?:number;modelInFlight?:boolean;algorithmId?:AlgorithmId}}
+export interface NativeRunEvent {kind:string;detail:unknown}
+export interface NativeToolReceipt {id:string;tool:string;success:boolean;step:number}
+export interface NativeRunEventPage {
+ events:NativeRunEvent[];from:number;to:number;total:number;nextBefore:number|null;
+ earliestAvailable:number;eventsDropped:number;
+}
+export interface NativeRunReceiptPage {
+ receipts:NativeToolReceipt[];from:number;to:number;total:number;nextBefore:number|null;
+}
+const nativeHistoryQuery=(before:number|undefined,limit:number):string=>{
+ if(!Number.isSafeInteger(limit)||limit<1||limit>40)
+  throw new Error('Native history page limit must be between 1 and 40');
+ if(before!==undefined&&(!Number.isSafeInteger(before)||before<0))
+  throw new Error('Native history cursor must be a non-negative safe integer');
+ return '?limit='+limit+(before===undefined?'':'&before='+before);
+}
+
 /** Persisted Rust native job state shared with the autonomous UI. */
 export interface NativeRun {
  id:string;status:string;instruction:string;answer?:string|null;error?:string|null;
@@ -49,7 +66,8 @@ export interface NativeRun {
   state?:{state:string};rounds?:number;toolCalls?:number;answer?:string|null;
   usage?:{prompt_tokens:number;completion_tokens:number;cached_prompt_tokens:number}|null;
   pendingCall?:{id:string;name:string;arguments:unknown}|null;
-  events?:Array<{kind:string;detail:unknown}>;
+  events?:NativeRunEvent[];eventsOmitted?:number;eventsDropped?:number;
+  toolReceipts?:NativeToolReceipt[];toolReceiptsOmitted?:number;
   verificationChecks?:Array<{criterion:{type:string;path?:string;contains?:string};satisfied:boolean;explanation:string}>;
  }|null;
 }
@@ -285,6 +303,10 @@ export class Dominion{
     list:()=>this.request<NativeRun[]>('GET','/api/sdk/runs'),
     start:(input:NativeRunRequest)=>this.request<NativeRun>('POST','/api/sdk/runs',input),
     get:(runId:string)=>this.request<NativeRun>('GET','/api/sdk/runs/'+id(runId)),
+    events:(runId:string,before?:number,limit=40)=>this.request<NativeRunEventPage>('GET',
+      '/api/sdk/runs/'+id(runId)+'/events'+nativeHistoryQuery(before,limit)),
+    receipts:(runId:string,before?:number,limit=40)=>this.request<NativeRunReceiptPage>('GET',
+      '/api/sdk/runs/'+id(runId)+'/receipts'+nativeHistoryQuery(before,limit)),
     replay:(runId:string)=>this.request<NativeReplay>('GET','/api/sdk/runs/'+id(runId)+'/replay'),
     compare:(baselineId:string,candidateId:string)=>this.request<NativePairedComparison>(
       'POST','/api/sdk/runs/'+id(baselineId)+'/compare',{candidateRunId:candidateId}),
