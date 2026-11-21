@@ -11,6 +11,8 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 mod stdio;
 #[path = "mcp/http.rs"]
 mod http;
+#[path = "mcp/schema.rs"]
+mod schema;
 use stdio::StdioSession;
 use http::{HttpSession, HttpEra, sse_event_boundary, sse_response_event};
 #[cfg(test)]
@@ -145,14 +147,15 @@ async fn list_server(state: &AppState, server: &Value, server_slug:&str) -> Resu
         .and_then(|value| value.as_str())
         .unwrap_or("stdio");
 
-    let result = if transport == "http" {
+    let (result, modern_http) = if transport == "http" {
         let mut session = HttpSession::open(server, state).await?;
-        session.request("tools/list", json!({})).await?
+        let result = session.request("tools/list", json!({})).await?;
+        (result, session.modern())
     } else {
         let mut session = StdioSession::open(server, &state.config.workspace).await?;
         let result = session.request("tools/list", json!({})).await;
         drop(session);
-        result?
+        (result?, false)
     };
 
     let tools = result
@@ -177,10 +180,19 @@ async fn list_server(state: &AppState, server: &Value, server_slug:&str) -> Resu
                     .and_then(|value| value.as_str())
                     .unwrap_or("")
                     .to_string(),
-                schema: tool
-                    .get("inputSchema")
-                    .cloned()
-                    .unwrap_or_else(|| json!({ "type": "object", "properties": {} })),
+                schema: {
+                    let schema=tool.get("inputSchema").cloned()
+                        .unwrap_or_else(||json!({"type":"object","properties":{}}));
+                    if modern_http {
+                        if let Err(error)=schema::validate(&schema) {
+                            state.store.audit("mcp.schema_rejected",json!({
+                                "server":server_name,"tool":name,"reason":error
+                            }));
+                            return None;
+                        }
+                    }
+                    schema
+                },
             })
         })
         .collect())
@@ -251,6 +263,12 @@ pub async fn call(state: &AppState, qualified: &str, args: &Value) -> Result<Val
 
     if transport == "http" {
         let mut session = HttpSession::open(server, state).await?;
+        if session.modern() {
+            let definition=tools(state).await.into_iter()
+                .find(|item|item.slug==server_slug&&item.tool==tool_name)
+                .ok_or("MCP 도구 스키마를 검증할 수 없습니다.")?;
+            session.set_tool_schema(definition.schema);
+        }
         session.request("tools/call", params).await
     } else {
         let mut session = StdioSession::open(server, &state.config.workspace).await?;
