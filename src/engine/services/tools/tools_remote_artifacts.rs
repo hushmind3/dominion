@@ -267,6 +267,37 @@ mod tests{
         assert_eq!(replay["alreadyApplied"],true);
         drop(ctx);drop(state);let _=std::fs::remove_dir_all(root);
     }
+    #[tokio::test]
+    async fn cancelled_team_cannot_claim_a_remote_file_effect(){
+        use crate::{config::Config,db::Store,vault::Vault,state::AppState};
+        let root=std::env::temp_dir().join(format!("remote-cancel-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("existing.rs"),"original\\n").unwrap();
+        let config=Config{port:0,data_dir:root.clone(),web_dir:root.join("web"),
+            workspace:root.clone()};
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        state.store.put("managed_team",&json!({"id":"cancelled-team",
+            "status":"cancelled","cancelRequested":true,"leadSessionId":"lead-s"})).unwrap();
+        state.store.put("remote_task",&json!({
+            "id":"remote-1","teamId":"cancelled-team","status":"completed",
+            "readOnly":false,"artifactApplyStatus":"pending",
+            "artifactPaths":["existing.rs"],
+            "artifactBases":[{"path":"existing.rs",
+                "expectedSha256":crate::remote::digest(b"original\\n")}],
+            "artifacts":[{"path":"existing.rs","content":"unsafe-new\\n",
+                "sha256":crate::remote::digest(b"unsafe-new\\n")}]
+        })).unwrap();
+        let ctx=ToolContext{workspace:&root,store:&state.store,state:&state,
+            session_id:"lead-s",agent_id:Some("lead"),
+            tools_enabled:true,tools_execution_enabled:true};
+        let args=json!({"teamId":"cancelled-team","remoteTaskId":"remote-1"});
+        assert!(apply(&ctx,&args,"run-late").await.is_err());
+        assert_eq!(std::fs::read_to_string(root.join("existing.rs")).unwrap(),"original\\n");
+        assert_eq!(state.store.get("remote_task","remote-1").unwrap()
+            ["artifactApplyStatus"],"pending");
+        drop(ctx);drop(state);let _=std::fs::remove_dir_all(root);
+    }
     #[test]
     fn rejects_artifact_path_escape_and_symlink_destinations(){
         assert!(!crate::remote::valid_artifact_path("../outside"));

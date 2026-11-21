@@ -254,6 +254,32 @@ mod tests{
         (state,dir)
     }
     #[tokio::test]
+    async fn lead_launch_preserves_selected_workers_in_real_native_job(){
+        let (state,dir)=fixture();
+        for id in ["lead","worker"]{
+            state.store.put("agent",&json!({"id":id,"name":id,
+                "providerId":"provider-1","model":"model-1","enabled":true})).unwrap();
+        }
+        let result=start(State(state.clone()),Json(json!({
+            "prompt":"Inspect the repository and report test failures",
+            "leadAgentId":"lead","workerAgentIds":["worker"]
+        }))).await;
+        assert_eq!(result.status(),StatusCode::ACCEPTED);
+        let jobs=state.store.all("job");
+        assert_eq!(jobs.len(),1);
+        assert_eq!(jobs[0]["kind"],"prompt");
+        assert_eq!(jobs[0]["input"]["uiSource"],"team_activity");
+        assert_eq!(jobs[0]["input"]["teamUiWorkerIds"],json!(["worker"]));
+        assert_eq!(state.store.all("managed_team").len(),0);
+        let bad=start(State(state.clone()),Json(json!({
+            "prompt":"Inspect repository","leadAgentId":"lead",
+            "workerAgentIds":["unknown-agent"]
+        }))).await;
+        assert_eq!(bad.status(),StatusCode::BAD_REQUEST);
+        assert_eq!(state.store.all("job").len(),1);
+        drop(state);let _=std::fs::remove_dir_all(dir);
+    }
+    #[tokio::test]
     async fn stopping_one_team_is_durable_and_does_not_stop_other_team(){
         let (state,dir)=fixture();
         state.store.put("session",&json!({"id":"lead-session"})).unwrap();
