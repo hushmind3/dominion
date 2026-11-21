@@ -761,6 +761,34 @@ fn correction_turn_failure_still_enqueues_reflection() {
 }
 
 #[test]
+fn sub3_standalone_explanation_uses_zero_tool_schemas_over_real_http_sse() {
+    let _serial=serial();
+    let (port, observed)=scripted_provider(|_| {
+        vec![json!({"choices":[{"index":0,"finish_reason":"stop",
+            "message":{"role":"assistant","content":"양자 얽힘은 두 계의 상관관계입니다."}}],
+            "usage":{"prompt_tokens":20,"completion_tokens":12,
+                "total_tokens":32}})]
+    });
+    let app=TestApp::new(port,"native");
+    let session=app.post("/api/sessions",&json!({"title":"sub3 lightweight question"}));
+    let stream=app.chat(&json!({"sessionId":session["id"],
+        "input":"양자 얽힘이 뭐야?","toolsEnabled":true,
+        "toolsExecutionEnabled":true,"autoLearning":false}));
+    assert!(stream.contains("assistant_saved"),"Chat did not settle: {stream}");
+    assert!(stream.contains("양자 얽힘"),"Final-only SSE body was lost: {stream}");
+    let requests=observed.lock().unwrap();
+    assert_eq!(requests.len(),1,"A standalone explanation must make exactly one paid model call");
+    assert!(requests[0]["tools"].as_array().is_none_or(Vec::is_empty),
+        "MCP schemas must not be sent for a context-free explanation: {}",requests[0]);
+    drop(requests);
+    let messages=app.get(&format!("/api/sessions/{}/messages",
+        session["id"].as_str().unwrap()));
+    assert!(messages.as_array().unwrap().iter().any(|message|
+        message["role"]=="assistant" &&
+        message["content"].as_str().unwrap_or("").contains("양자 얽힘")));
+}
+
+#[test]
 fn completed_chat_without_verification_is_not_a_success() {
     let _serial = serial();
     let (port, _) = scripted_provider(|_| {
