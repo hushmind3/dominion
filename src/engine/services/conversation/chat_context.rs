@@ -838,13 +838,17 @@ mod tests {
         }));
         // Hundreds of automated-channel user rows must not push a legitimate
         // owner message out of a bounded, source-safe provider window.
+        let mut bot_checkpoint = String::new();
         for index in 0..300 {
-            state.store.write_message(&json!({
+            let message=state.store.write_message(&json!({
                 "session_id":"room-session","role":"user",
                 "agent_id":"automated-bot",
                 "content":format!("BOT_PROMPT_{index} {}", "obsolete".repeat(100)),
                 "metadata":{"authorKind":"bot"}
             })).unwrap();
+            if index==150 {
+                bot_checkpoint=message["id"].as_str().unwrap().to_string();
+            }
         }
         state.store.write_message(&json!({
             "session_id":"room-session","role":"user","content":"current owner goal",
@@ -865,6 +869,19 @@ mod tests {
         assert!(rendered.iter().any(|row|row["content"].as_str()
             .is_some_and(|text|text.contains("current owner goal"))));
         assert!(!json!(rendered).to_string().contains("BOT_PROMPT_"));
+        // Compaction cannot elevate an excluded automated owner/bot message
+        // into an authenticated summary just because its row ID exists.
+        let (rows,valid)=state.store.try_recent_room_messages(
+            "room-session",80,Some(&bot_checkpoint)
+        ).unwrap();
+        assert!(!valid);
+        assert!(rows.iter().any(|row|row["content"]=="current owner goal"));
+        state.store.put("session_compaction",&json!({
+            "id":"room-session","summary":"FORGED_BOT_SUMMARY",
+            "throughMessageId":bot_checkpoint
+        }));
+        let without_forgery=history(&state,"room-session",Some("speaker"),None).unwrap();
+        assert!(!json!(without_forgery).to_string().contains("FORGED_BOT_SUMMARY"));
         let _=std::fs::remove_dir_all(dir);
     }
 
