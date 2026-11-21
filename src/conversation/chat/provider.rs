@@ -1595,6 +1595,17 @@ pub(super) fn codex_tool_calls(output: &[Value]) -> Vec<super::ToolCall> {
     calls
 }
 
+/// The Responses event name alone does not prove provider completion.
+fn require_settled_codex_response(response:&Value)->Result<(),String>{
+    if response["status"]!="completed" {
+        return Err("Codex response.completed had non-completed status".into());
+    }
+    if !response["output"].is_array() {
+        return Err("Codex completed response has no final output array".into());
+    }
+    Ok(())
+}
+
 /// Merge only complete, structurally valid Codex function-call items.
  // A repeated terminal copy is harmless only if its ID, tool and arguments
  // match the earlier streamed item exactly.
@@ -1937,9 +1948,7 @@ async fn stream_codex_once(
                     // Completion event names are not enough. The provider's
                     // final response must explicitly be in completed state.
                     // Native SDK already enforces this same terminal rule.
-                    if piece["response"]["status"]!="completed" {
-                        return Err("Codex response.completed had non-completed status".into());
-                    }
+                    require_settled_codex_response(&piece["response"])?;
                     if let Some(usage) = piece["response"]["usage"].as_object() {
                         completion.cached_prompt_tokens = cached_prompt_tokens(&json!(usage));
                         completion.prompt_tokens =
@@ -2957,6 +2966,21 @@ mod tests {
         ] {
             assert!(settled_chat_message(&bad).is_err());
         }
+    }
+
+    #[test]
+    fn codex_completion_event_requires_real_provider_terminal_output(){
+        for status in ["queued","in_progress","failed","incomplete","cancelled"]{
+            assert!(require_settled_codex_response(&json!({
+                "status":status,"output":[]
+            })).is_err(),"{status} cannot settle a paid model turn");
+        }
+        assert!(require_settled_codex_response(&json!({
+            "status":"completed","output":null
+        })).is_err(),"Final response output must be present");
+        assert!(require_settled_codex_response(&json!({
+            "status":"completed","output":[]
+        })).is_ok(),"Empty final output remains subject to normal answer validation");
     }
 
     #[test]
