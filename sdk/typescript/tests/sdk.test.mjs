@@ -199,6 +199,19 @@ test('native run wait returns at approval/recovery instead of hanging for comple
   await assert.rejects(()=>sdk.nativeRuns.wait('r',{signal:cancelled.signal}),error=>error.name==='AbortError');
   assert.equal(reads,2,'aborted waits must not send a request');
 });
+test('portable terminal status aliases are identical for native and job SDK waits',async()=>{
+  const terminal=['completed','succeeded','failed','denied','exhausted',
+    'cancelled','interrupted','needs_review','in_doubt'];
+  const {terminalHostStatus}=await import('../dist/index.js');
+  for(const status of terminal)assert.equal(terminalHostStatus(status),true,status);
+  for(const status of ['queued','running','waiting_approval','unknown'])
+    assert.equal(terminalHostStatus(status),false,status);
+  let count=0;
+  const sdk=new Dominion({fetch:async()=>{count++;return reply({
+    id:'j',kind:'prompt',status:'exhausted'});}});
+  assert.equal((await sdk.waitJob('j',{timeoutMs:100})).status,'exhausted');
+  assert.equal(count,1);
+});
 test('native wait treats needs_review as an actionable state',async()=>{
   const sdk=new Dominion({fetch:async()=>reply({
     id:'needs-review',instruction:'Apply patch',status:'needs_review'})});
