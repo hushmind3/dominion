@@ -153,6 +153,18 @@ async function mock(route){
     detail:{seq:from+i}
    }))})
  }
+ if(n==='/api/sdk/runs/sdk-ux-1/receipts'&&m==='GET'){
+  const before=Number(url.searchParams.get('before'))
+  const limit=Number(url.searchParams.get('limit'))
+  assert.equal(limit,40,'Tool receipt pagination remains bounded')
+  assert.ok(before===50||before===10,'Unexpected native receipt page cursor')
+  const from=Math.max(0,before-limit)
+  return send(route,{from,to:before,total:52,nextBefore:from||null,
+   receipts:Array.from({length:before-from},(_,i)=>({
+    id:'old-tool-'+(from+i),tool:'workspace_read',
+    success:true,step:from+i
+   }))})
+ }
  if(n.startsWith('/api/sdk/runs/')&&m==='GET'){
   requests.sdkDetailReads++
   const id=n.slice('/api/sdk/runs/'.length)
@@ -340,7 +352,7 @@ try{
    toolReceipts:[
     {id:'saved-tool-1',tool:'workspace_read',success:true,step:1},
     {id:'saved-tool-2',tool:'workspace_write',success:false,step:2}],
-   toolReceiptsOmitted:0,verificationChecks:[
+   toolReceiptsOmitted:50,verificationChecks:[
     {satisfied:false,explanation:'Expected file content was not found'}],
    artifactEvidence:{captureComplete:true,origin:'kernel_checks',omitted:0,
     entries:[{path:'summary.md',state:'file',bytes:14,
@@ -405,6 +417,15 @@ try{
  assert.equal(await page.getByText('도구 성공').count(),1)
  assert.equal(await page.getByText('저장된 도구 실행 영수증입니다.').count(),1,
   'Tool receipt origin must be identified separately from acceptance checks')
+ await page.getByRole('button',{name:'이전 도구 영수증 불러오기'}).click()
+ const olderToolReceipts=page.getByRole('list',{name:'이전 저장 도구 영수증'})
+ await olderToolReceipts.getByText('old-tool-10').waitFor({timeout:8000})
+ assert.equal(await olderToolReceipts.locator('li').count(),40)
+ await page.getByRole('button',{name:'더 이전 영수증 불러오기'}).click()
+ await olderToolReceipts.getByText('old-tool-0').waitFor({timeout:8000})
+ assert.equal(await olderToolReceipts.locator('li').count(),50)
+ assert.equal(await page.getByRole('button',{name:'더 이전 영수증 불러오기'}).count(),0,
+  'All persisted tool receipts must be accessible without exposing inputs')
  assert.equal(await page.locator('summary').filter({hasText:'실제 결과 검증 · 0/1'}).count(),1,
   'A failed acceptance check must not be shown as a verified result')
  await page.locator('summary').filter({hasText:'파일 검증 스냅샷'}).click()
