@@ -154,14 +154,14 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    <details className="text-[11px] text-[#746A5F]">
     <summary className="cursor-pointer select-none">{en?'Advanced: strategy, budget and verification':'고급 설정: 전략 · 실행 한도 · 결과 검증'}</summary>
     <div className="mt-3 grid gap-3 sm:grid-cols-2">
-     <label className="grid gap-1">{en?'Execution strategy':'실행 전략'}
-      <select value={algorithmId} onChange={e=>setAlgorithmId(e.target.value as 'standard-v1'|'focused-v1')}
+     <label className="grid gap-1" htmlFor="sdk-strategy">{en?'Execution strategy':'실행 전략'}
+      <select id="sdk-strategy" value={algorithmId} onChange={e=>setAlgorithmId(e.target.value as 'standard-v1'|'focused-v1')}
        className="h-9 w-full rounded-lg border border-[#E7E0D5] bg-white px-3 text-[12px]">
        <option value="standard-v1">{en?'Standard · balanced':'기본 · 균형'}</option>
        <option value="focused-v1">{en?'Focused · compact context':'집중 · 압축 문맥'}</option>
       </select></label>
-     <label className="grid gap-1">{en?'Maximum model rounds':'최대 모델 판단 회수'}
-      <select value={maxRounds} onChange={e=>setMaxRounds(Number(e.target.value))}
+     <label className="grid gap-1" htmlFor="sdk-rounds">{en?'Maximum model rounds':'최대 모델 판단 회수'}
+      <select id="sdk-rounds" value={maxRounds} onChange={e=>setMaxRounds(Number(e.target.value))}
        className="h-9 w-full rounded-lg border border-[#E7E0D5] bg-white px-3 text-[12px]">
        {[12,24,40,80].map(n=><option key={n} value={n}>{n}</option>)}
       </select></label>
