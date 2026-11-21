@@ -1818,42 +1818,121 @@ pub(crate) async fn http_fetch_page(url: &str, offset: usize, page_chars: usize)
     Err("http_fetch 리다이렉션 상한을 초과했습니다.".into())
 }
 
-async fn web_search(query: &str) -> Result<Value, String> {
-    let response = reqwest::Client::new()
-        .post("https://html.duckduckgo.com/html/")
-        .form(&[("q", query)])
-        .timeout(Duration::from_secs(25))
-        .header(
-            "User-Agent",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-        )
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    let html = response.text().await.map_err(|error| error.to_string())?;
-    let mut results = Vec::new();
-    for chunk in html.split("result__a").skip(1).take(10) {
-        let Some(href_start) = chunk.find("href=\"") else {
+/// Parse only real absolute web links. A search provider returning an HTTP 202
+/// challenge must not be mistaken for a legitimate zero-result query.
+fn ddg_html_results(html:&str)->Vec<Value>{
+    let mut results=Vec::new();
+    for chunk in html.split("result__a").skip(1).take(20) {
+        let Some(start)=chunk.find("href=\"") else{continue};
+        let rest=&chunk[start+6..];
+        let Some(end)=rest.find('"') else{continue};
+        let href=decode_ddg(&rest[..end]);
+        let title=rest[end..].find('>').map(|position|{
+            let tail=&rest[end+position+1..];
+            let close=tail.find("</a>").unwrap_or(tail.len().min(200));
+            strip_html(&tail[..close]).trim().to_string()
+        }).unwrap_or_default();
+        if title.is_empty() || !reqwest::Url::parse(&href).is_ok_and(|url|
+            matches!(url.scheme(),"http"|"https")){
             continue;
-        };
-        let rest = &chunk[href_start + 6..];
-        let Some(href_end) = rest.find('"') else {
-            continue;
-        };
-        let href = decode_ddg(&rest[..href_end]);
-        let title = rest[href_end..]
-            .find('>')
-            .map(|start| {
-                let tail = &rest[href_end + start + 1..];
-                let end = tail.find("</a>").unwrap_or(tail.len().min(200));
-                strip_html(&tail[..end]).trim().to_string()
-            })
-            .unwrap_or_default();
-        if !href.is_empty() && !title.is_empty() {
-            results.push(json!({ "title": title, "url": href }));
         }
+        if results.iter().any(|row:&Value|row["url"]==href){continue}
+        results.push(json!({"title":title,"url":href}));
+        if results.len()>=10{break}
     }
-    Ok(json!({ "query": query, "results": results }))
+    results
+}
+
+fn rss_tag(item:&str,tag:&str)->Option<String>{
+    let open=format!("<{tag}>");
+    let close=format!("</{tag}>");
+    let after=item.get(item.find(&open)?+open.len()..)?;
+    let raw=after.get(..after.find(&close)?)?.trim();
+    let raw=raw.strip_prefix("<![CDATA[")
+        .and_then(|text|text.strip_suffix("]]>"))
+        .unwrap_or(raw);
+    Some(strip_html(raw))
+}
+
+/// Bing publishes a public RSS interface for ordinary web search. A private
+/// API key and a second model are not needed when DDG throttles anonymous HTML.
+fn bing_rss_results(xml:&str)->Vec<Value>{
+    if !xml.contains("<rss")&&!xml.contains("<item>"){return Vec::new()}
+    let mut results=Vec::new();
+    for segment in xml.split("<item>").skip(1).take(20){
+        let Some((item,_))=segment.split_once("</item>")else{continue};
+        let Some(title)=rss_tag(item,"title").filter(|v|!v.is_empty())else{continue};
+        let Some(url)=rss_tag(item,"link")else{continue};
+        if !reqwest::Url::parse(&url).is_ok_and(|link|
+            matches!(link.scheme(),"http"|"https")){continue}
+        if results.iter().any(|row:&Value|row["url"]==url){continue}
+        let snippet=rss_tag(item,"description").unwrap_or_default()
+            .chars().take(360).collect::<String>();
+        results.push(json!({"title":title,"url":url,"snippet":snippet}));
+        if results.len()>=10{break}
+    }
+    results
+}
+
+async fn web_search(query:&str)->Result<Value,String>{
+    let client=reqwest::Client::builder()
+        .timeout(Duration::from_secs(16))
+        .build().map_err(|error|error.to_string())?;
+    let mut primary_error=String::from("DuckDuckGo did not return usable search results");
+    match client.post("https://html.duckduckgo.com/html/")
+        .form(&[("q",query)])
+        .header("User-Agent","Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36")
+        .header("Accept","text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .header("Accept-Language","ko-KR,ko;q=0.9,en;q=0.8")
+        .send().await {
+        Ok(response)=>{
+            let status=response.status();
+            if status.as_u16()==202 {
+                primary_error="DuckDuckGo bot challenge (HTTP 202)".into();
+            }else if !status.is_success(){
+                primary_error=format!("DuckDuckGo HTTP {status}");
+            }else{
+                match response.bytes().await {
+                    Ok(bytes) if bytes.len()<=1024*1024=>{
+                        let html=String::from_utf8_lossy(&bytes);
+                        let results=ddg_html_results(&html);
+                        if !results.is_empty(){
+                            return Ok(json!({"query":query,"engine":"duckduckgo","results":results}));
+                        }
+                        primary_error=if html.contains("anomaly")||html.contains("challenge"){
+                            "DuckDuckGo anti-bot challenge".into()
+                        }else{"DuckDuckGo returned no parseable links".into()};
+                    }
+                    Ok(_)=>primary_error="DuckDuckGo search page exceeded 1 MiB".into(),
+                    Err(error)=>primary_error=format!("DuckDuckGo body: {error}"),
+                }
+            }
+        }
+        Err(error)=>primary_error=format!("DuckDuckGo: {error}"),
+    }
+    // Free public RSS fallback. An RSS feed without <item> elements is not
+    // proof of an empty internet: return an explicit diagnostic to the model.
+    let mut url=reqwest::Url::parse("https://www.bing.com/search")
+        .map_err(|error|error.to_string())?;
+    url.query_pairs_mut().append_pair("q",query).append_pair("format","rss");
+    let response=client.get(url)
+        .header("Accept","application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.8")
+        .header("User-Agent","Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36")
+        .send().await.map_err(|error|
+            format!("web_search failed: {primary_error}; Bing RSS: {error}"))?;
+    if !response.status().is_success(){
+        return Err(format!("web_search failed: {primary_error}; Bing RSS HTTP {}",response.status()));
+    }
+    let bytes=response.bytes().await.map_err(|error|
+        format!("web_search failed: {primary_error}; Bing RSS body: {error}"))?;
+    if bytes.len()>1024*1024{
+        return Err(format!("web_search failed: {primary_error}; Bing RSS response exceeded 1 MiB"));
+    }
+    let results=bing_rss_results(&String::from_utf8_lossy(&bytes));
+    if results.is_empty(){
+        return Err(format!("web_search failed: {primary_error}; Bing RSS returned no parseable results"));
+    }
+    Ok(json!({"query":query,"engine":"bing-rss","fallbackFrom":primary_error,"results":results}))
 }
 
 fn decode_ddg(raw: &str) -> String {
@@ -1957,6 +2036,25 @@ fn strip_html(html: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_search_fallback_parses_bing_rss_without_accepting_non_http_urls(){
+        let xml=r#"<?xml version="1.0"?><rss version="2.0"><channel>
+            <item><title><![CDATA[2026 &amp; Rust developments]]></title>
+              <link>https://example.org/news?q=rust&amp;date=2026</link>
+              <description><![CDATA[Latest <b>reliable</b> release.]]></description></item>
+            <item><title>Dangerous</title><link>javascript:alert(1)</link></item>
+            <item><title>Duplicate</title><link>https://example.org/news?q=rust&amp;date=2026</link></item>
+        </channel></rss>"#;
+        let results=bing_rss_results(xml);
+        assert_eq!(results.len(),1,"deduplicate and reject unsafe URL schemes");
+        assert_eq!(results[0]["title"],"2026 & Rust developments");
+        assert_eq!(results[0]["url"],"https://example.org/news?q=rust&date=2026");
+        assert_eq!(results[0]["snippet"],"Latest reliable release.");
+        assert!(ddg_html_results("HTTP 202 Bot challenge").is_empty(),
+            "provider challenges cannot masquerade as real results");
+    }
+
 
     #[tokio::test]
     async fn prompt_source_reader_rejects_stale_revisions_and_peer_persona(){
