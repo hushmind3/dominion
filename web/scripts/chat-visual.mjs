@@ -51,6 +51,15 @@ async function mock(route){
   assert.equal(body.toolsEnabled,false)
   assert.equal(body.toolsExecutionEnabled,false)
   assert.equal(body.autoLearning,false)
+  if(body.input==='스트림 오류 뒤 부분 답변을 유지하세요.'){
+   messages.push({id:'owner-error-'+requests.length,role:'user',session_id:'chat-ui',content:body.input})
+   const events=[
+    {type:'text',text:'저장되지 않은 부분 응답입니다.'},
+    {type:'error',message:'공급자 연결이 중단되었습니다.'},
+    {type:'done',sessionId:'chat-ui'}
+   ]
+   return route.fulfill({status:200,contentType:'text/event-stream',body:events.map(x=>'data: '+JSON.stringify(x)+'\n\n').join('')})
+  }
   assert.equal(body.input,'후속 질문도 같은 채팅으로 보내주세요.')
   // Hold the network response to prove the owner bubble is painted
   // immediately, before the server has returned any conversation delta.
@@ -135,10 +144,19 @@ try{
   assert.equal(await page.locator('[data-role="user"]').count(),2,'Pending owner message must be replaced without duplication')
   assert.ok(await page.locator('[data-role="user"]').count()>=2)
   assert.ok(await page.locator('[data-role="assistant"] .chat-richtext h3').count()>=1)
+  // The stream can fail after the model has emitted text. Such text is
+  // visible as an interrupted, uncommitted draft rather than disappearing.
+  await page.locator('.conversation-composer-input').fill('스트림 오류 뒤 부분 답변을 유지하세요.')
+  await page.locator('.conversation-composer-input').press('Enter')
+  await page.getByText('저장되지 않은 부분 응답입니다.',{exact:true}).waitFor({timeout:15000})
+  await page.getByText('미완료 · 서버 저장 확인 필요',{exact:true}).waitFor({timeout:15000})
+  await page.getByText('공급자 연결이 중단되었습니다.',{exact:true}).waitFor({timeout:15000})
+  await page.waitForFunction(()=>document.querySelectorAll('[data-role="user"][data-pending="true"]').length===0,null,{timeout:15000})
+  assert.equal(await page.locator('[data-role="assistant"]').count(),3,'Partial model output must not be added to stored assistant messages')
   assert.deepEqual(pageErrors,[],'React failed at '+width)
   await page.close()
  }
- assert.equal(requests.length,3)
+ assert.equal(requests.length,6)
  console.log('Sub3 chat desktop/mobile + Markdown + follow-up fixtures: PASS')
 }finally{
  await browser?.close().catch(()=>{})

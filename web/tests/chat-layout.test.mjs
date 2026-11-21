@@ -52,3 +52,10 @@ test('owner messages appear immediately and are deduplicated against the stored 
  assert.match(chat,/pendingVisible\?pendingOwner\?\.text/)
  assert.match(chat,/setPendingOwner\(previous=>previous&&previous\.scope===current\?\{\.\.\.previous,scope:id\}:previous\)/)
 })
+
+test('partial model text stays visible after an incomplete unsaved response',()=>{
+ assert.match(chat,/streamInterrupted\?'미완료 · 서버 저장 확인 필요'/)
+ assert.match(chat,/if\(!saved&&!controller\.signal\.aborted\)throw Error/)
+ assert.match(chat,/if\(!saved&&!unsavedFailure\)\{setLive\(''\);setThought\(''\);\}/)
+ assert.match(chat,/if\(unsavedFailure\)setStreamInterrupted\(true\)/)
+})
