@@ -30,7 +30,13 @@ fn key_file(directory: &Path, version: u32) -> PathBuf {
 }
 
 fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let mut file = std::fs::File::create(path).map_err(|error| error.to_string())?;
+    let mut options=std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)] {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path).map_err(|error| error.to_string())?;
     file.write_all(bytes).map_err(|error| error.to_string())?;
     #[cfg(unix)]
     {

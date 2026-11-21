@@ -685,7 +685,7 @@ pub(super) async fn run_turn_body(
         if started_at.elapsed() > elapsed_limit {
             return Err("실행 시간 제한(10분)을 초과했습니다.".into());
         }
-        if metrics.lock().unwrap().tool_calls as usize >= max_tools {
+        if max_tools > 0 && metrics.lock().unwrap().tool_calls as usize >= max_tools {
             mark_budget_exhausted(state, execution_id);
             return Err(format!(
                 "도구 호출 제한({max_tools}회)을 초과했습니다."

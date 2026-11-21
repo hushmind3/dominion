@@ -4,7 +4,7 @@ use crate::state::AppState;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::{io::Write,path::PathBuf};
 pub const MAX_FILE: usize = 8 * 1024 * 1024;
 pub const MAX_TOTAL: usize = 24 * 1024 * 1024;
 pub const MAX_FILES: usize = 8;
@@ -17,6 +17,11 @@ fn directory(state: &AppState) -> Result<PathBuf, String> {
         .map_err(|_| "데이터 경로를 확인할 수 없습니다.")?;
     let path = root.join("attachments");
     std::fs::create_dir_all(&path).map_err(|_| "첨부 폴더를 만들 수 없습니다.")?;
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path,std::fs::Permissions::from_mode(0o700))
+            .map_err(|_|"첨부 폴더 접근 권한을 설정할 수 없습니다.")?;
+    }
     let actual = path
         .canonicalize()
         .map_err(|_| "첨부 경로를 확인할 수 없습니다.")?;
@@ -93,7 +98,17 @@ pub fn upload(state: &AppState, body: &Value) -> Result<Value, String> {
     });
     let id = uuid::Uuid::new_v4().to_string();
     let path = directory(state)?.join(format!("{id}.bin"));
-    std::fs::write(&path, &bytes).map_err(|_| "첨부 파일을 저장할 수 없습니다.")?;
+    let mut options=std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)] {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file=options.open(&path).map_err(|_|"첨부 파일을 저장할 수 없습니다.")?;
+    file.write_all(&bytes).map_err(|_|{
+        let _=std::fs::remove_file(&path);
+        "첨부 파일을 저장할 수 없습니다."
+    })?;
     // The original file is immutable. Bind future reads and restored backups
     // to the exact uploaded bytes, not just a matching byte length.
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
@@ -407,6 +422,23 @@ mod tests {
             b"modified").unwrap();
         assert!(read(&state,id).unwrap_err().contains("무결성"),
             "same-size changes must not pass integrity validation");
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn uploaded_attachment_files_are_private_before_bytes_are_written(){
+        use std::os::unix::fs::PermissionsExt;
+        let (state,dir)=state();
+        let saved=upload(&state,&json!({
+            "sessionId":"one","name":"private.txt",
+            "data":STANDARD.encode("private bytes")
+        })).unwrap();
+        let id=saved["id"].as_str().unwrap();
+        let directory=std::fs::metadata(dir.join("attachments")).unwrap();
+        let file=std::fs::metadata(dir.join("attachments").join(format!("{id}.bin"))).unwrap();
+        assert_eq!(directory.permissions().mode()&0o777,0o700);
+        assert_eq!(file.permissions().mode()&0o777,0o600);
         let _=std::fs::remove_dir_all(dir);
     }
 

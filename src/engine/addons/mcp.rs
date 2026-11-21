@@ -571,6 +571,9 @@ impl HttpSession {
         let mut session = Self {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(60))
+                // MCP servers may return request bodies containing tool
+                // arguments. Never replay those bodies across redirects.
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .map_err(|error| error.to_string())?,
             url,
@@ -636,7 +639,8 @@ impl HttpSession {
         let response = request.send().await.map_err(|error| error.to_string())?;
         if !response.status().is_success() {
             let status = response.status();
-            let text = response.text().await.unwrap_or_default();
+            let bytes=modern::read_limited(response,4*1024*1024).await?;
+            let text=String::from_utf8_lossy(&bytes);
             return Err(format!(
                 "MCP HTTP {status}: {}",
                 text.chars().take(400).collect::<String>()
@@ -655,7 +659,8 @@ impl HttpSession {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("")
             .to_string();
-        let text = response.text().await.map_err(|error| error.to_string())?;
+        let bytes=modern::read_limited(response,4*1024*1024).await?;
+        let text=String::from_utf8(bytes).map_err(|error|error.to_string())?;
         if text.trim().is_empty() {
             return Ok(json!({}));
         }

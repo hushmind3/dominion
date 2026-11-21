@@ -14,7 +14,27 @@ impl ModernError{
 }
 fn client()->&'static reqwest::Client{
     static CLIENT:OnceLock<reqwest::Client>=OnceLock::new();
-    CLIENT.get_or_init(reqwest::Client::new)
+    CLIENT.get_or_init(||reqwest::Client::builder()
+        // A server redirect must not replay tool arguments or parameter
+        // headers to a different endpoint after an effectful MCP call.
+        .redirect(reqwest::redirect::Policy::none())
+        .build().expect("valid MCP HTTP client configuration"))
+}
+pub(super) async fn read_limited(
+    mut response:reqwest::Response,limit:usize,
+)->Result<Vec<u8>,String>{
+    if response.content_length().is_some_and(|size|size>limit as u64){
+        return Err(format!("MCP response exceeds {} MiB",limit/1024/1024));
+    }
+    let mut bytes=Vec::with_capacity(response.content_length()
+        .unwrap_or(0).min(limit as u64) as usize);
+    while let Some(chunk)=response.chunk().await.map_err(|e|e.to_string())?{
+        if bytes.len().saturating_add(chunk.len())>limit{
+            return Err(format!("MCP response exceeds {} MiB",limit/1024/1024));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 fn encode_header(value:&str)->String{
     let safe=!value.is_empty()&&value.trim()==value
@@ -159,12 +179,8 @@ async fn request_one(record:&Value,token:Option<&str>,method:&str,
     let status=response.status();
     let content_type=response.headers().get("content-type")
         .and_then(|v|v.to_str().ok()).unwrap_or("").to_string();
-    let bytes=response.bytes().await.map_err(|e|ModernError::Failed(format!(
-        "MCP response lost, tool outcome unknown: {e}"
-    )))?;
-    if bytes.len()>4*1024*1024{
-        return Err(ModernError::Failed("MCP response exceeds 4 MiB".into()));
-    }
+    let bytes=read_limited(response,4*1024*1024).await.map_err(|e|
+        ModernError::Failed(format!("MCP response lost or exceeded its limit: {e}")))?;
     let text=std::str::from_utf8(&bytes).map_err(|e|ModernError::Failed(e.to_string()))?;
     let parsed=final_response(text,&content_type,&id);
     if !status.is_success(){
@@ -278,5 +294,57 @@ mod tests{
         assert_eq!(response["content"][0]["text"],"ok");
         assert_eq!(&*state.0.lock().unwrap(),&["tools/list","tools/list","tools/call"]);
         task.abort();
+    }
+
+    #[tokio::test]
+    async fn effectful_request_does_not_follow_redirect_or_buffer_oversized_body(){
+        use axum::{extract::State,http::{header,HeaderMap,StatusCode},routing::post,Router};
+        use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+        async fn target(State(count):State<Arc<AtomicUsize>>)->StatusCode{
+            count.fetch_add(1,Ordering::SeqCst);
+            StatusCode::OK
+        }
+        async fn redirect(State(target):State<String>)->(StatusCode,HeaderMap){
+            let mut headers=HeaderMap::new();
+            headers.insert(header::LOCATION,target.parse().unwrap());
+            (StatusCode::TEMPORARY_REDIRECT,headers)
+        }
+        async fn oversized()->(StatusCode,HeaderMap,String){
+            let mut headers=HeaderMap::new();
+            headers.insert(header::CONTENT_TYPE,"application/json".parse().unwrap());
+            (StatusCode::OK,headers," ".repeat(4*1024*1024+1))
+        }
+        let count=Arc::new(AtomicUsize::new(0));
+        let target_listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target_url=format!("http://{}/target",target_listener.local_addr().unwrap());
+        let target_app=Router::new().route("/target",post(target))
+            .with_state(count.clone());
+        let target_task=tokio::spawn(async move{
+            axum::serve(target_listener,target_app).await.unwrap();
+        });
+        let redirect_listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let redirect_app=Router::new().route("/mcp",post(redirect))
+            .with_state(target_url.clone());
+        let redirect_url=format!("http://{}/mcp",redirect_listener.local_addr().unwrap());
+        let redirect_task=tokio::spawn(async move{
+            axum::serve(redirect_listener,redirect_app).await.unwrap();
+        });
+        let record=json!({"url":redirect_url});
+        let error=list(&record,Some("secret-token")).await.unwrap_err().message();
+        assert!(error.contains("MCP HTTP 307"),"{error}");
+        assert_eq!(count.load(Ordering::SeqCst),0,
+            "redirect target must not receive tool arguments or credentials");
+
+        let oversized_listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let oversized_url=format!("http://{}/mcp",oversized_listener.local_addr().unwrap());
+        let oversized_app=Router::new().route("/mcp",post(oversized));
+        let oversized_task=tokio::spawn(async move{
+            axum::serve(oversized_listener,oversized_app).await.unwrap();
+        });
+        let error=list(&json!({"url":oversized_url}),None).await.unwrap_err().message();
+        assert!(error.contains("exceeds 4 MiB"),"{error}");
+        redirect_task.abort();
+        target_task.abort();
+        oversized_task.abort();
     }
 }

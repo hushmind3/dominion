@@ -8,6 +8,8 @@ use sha2::{Digest, Sha256};
 const DB_ROLLBACK:&str=".restore-rollback.sqlite";
 const KEY_ROLLBACK:&str=".restore-rollback.key";
 const MARKER:&str=".restore-pending";
+const COMMITTED:&str=".restore-committed";
+const COMMITTED_BODY:&[u8]=b"DOMINION_RESTORE_COMMITTED_V1\n";
 
 fn restore_lock()->&'static Mutex<()>{
     static LOCK:OnceLock<Mutex<()>>=OnceLock::new();
@@ -31,20 +33,68 @@ fn sync(path:&Path)->Result<(),String>{
     fs::File::open(path).and_then(|file|file.sync_all())
         .map_err(|e|format!("restore durability sync: {e}"))
 }
+fn remove_if_present(path:&Path)->Result<(),String>{
+    match fs::remove_file(path){
+        Ok(())=>Ok(()),
+        Err(error) if error.kind()==std::io::ErrorKind::NotFound=>Ok(()),
+        Err(error)=>Err(error.to_string()),
+    }
+}
+fn clean_replace_temp(config:&Config)->Result<(),String>{
+    let path=config.db_path().with_extension("restore.tmp");
+    match fs::symlink_metadata(&path){
+        Ok(metadata) if metadata.is_file()||metadata.file_type().is_symlink()=>
+            remove_if_present(&path),
+        Ok(_)=>Ok(()),
+        Err(error) if error.kind()==std::io::ErrorKind::NotFound=>Ok(()),
+        Err(error)=>Err(error.to_string()),
+    }
+}
 fn finish(dir:&Path)->Result<(),String>{
-    // Marker first, rollback snapshots second. A crash may leave orphans
-    // but can never trigger rollback with missing recovery material.
-    fs::remove_file(dir.join(MARKER)).map_err(|e|e.to_string())?;
+    // Keep a durable commit marker until both plaintext rollback files and
+    // the pending marker are gone. Startup can finish cleanup after a crash
+    // without attempting rollback from a partially deleted pair.
+    let committed=dir.join(COMMITTED);
+    match fs::OpenOptions::new().write(true).create_new(true).open(&committed){
+        Ok(mut file)=>{
+            file.write_all(COMMITTED_BODY).map_err(|e|e.to_string())?;
+            file.sync_all().map_err(|e|e.to_string())?;
+            sync(dir)?;
+        }
+        Err(error) if error.kind()==std::io::ErrorKind::AlreadyExists=>{
+            let body=fs::read(&committed).map_err(|e|e.to_string())?;
+            if body!=COMMITTED_BODY{return Err("restore commit marker is corrupt".into());}
+        }
+        Err(error)=>return Err(error.to_string()),
+    }
+    remove_if_present(&dir.join(DB_ROLLBACK))?;
+    remove_if_present(&dir.join(KEY_ROLLBACK))?;
+    remove_if_present(&dir.join(MARKER))?;
     sync(dir)?;
-    let _=fs::remove_file(dir.join(DB_ROLLBACK));
-    let _=fs::remove_file(dir.join(KEY_ROLLBACK));
-    Ok(())
+    remove_if_present(&committed)?;
+    sync(dir)
 }
 /// Called at SDK/server startup before a live SQLite or key handle exists.
 /// A partial restore is always rolled back, never accepted as success.
 pub fn recover_pending(config:&Config)->Result<(),String>{
     let dir=&config.data_dir;
-    if !dir.join(MARKER).exists(){return Ok(());}
+    let committed=dir.join(COMMITTED);
+    if committed.exists(){
+        let body=fs::read(&committed).map_err(|e|e.to_string())?;
+        if body!=COMMITTED_BODY{return Err("restore commit marker is corrupt".into());}
+        finish(dir)?;
+        return clean_replace_temp(config);
+    }
+    if !dir.join(MARKER).exists(){
+        // A crash can happen after the older pending marker was removed but
+        // before its plaintext backups were unlinked. These reserved names
+        // are private recovery artifacts and no transaction is active yet.
+        for name in [DB_ROLLBACK,KEY_ROLLBACK,".restore-recovery.sqlite",
+            ".restore-recovery.key"]{
+            remove_if_present(&dir.join(name))?;
+        }
+        return clean_replace_temp(config);
+    }
     let old_db=dir.join(DB_ROLLBACK);
     let old_key=dir.join(KEY_ROLLBACK);
     verify_rollback_database(&old_db)?;
@@ -66,7 +116,8 @@ pub fn recover_pending(config:&Config)->Result<(),String>{
     sync(&key_staging)?;
     fs::rename(&key_staging,config.key_path()).map_err(|e|e.to_string())?;
     sync(dir)?;
-    finish(dir)
+    finish(dir)?;
+    clean_replace_temp(config)
 }
 /// A DOMVAULT1 snapshot contains SQLite and the vault key, but not the
 /// original attachment directory. Refuse a restore that would resurrect dead
@@ -301,6 +352,40 @@ mod tests{
         assert!(restarted.get("session","after").is_none());
         assert_eq!(restarted.get("session","before").unwrap()["title"],"old");
         assert!(!config.data_dir.join(MARKER).exists());
+        let _=fs::remove_dir_all(config.data_dir);
+    }
+
+    #[test]
+    fn startup_finishes_committed_restore_without_reverting_and_cleans_plaintext_rollback(){
+        let (state,config)=fixture();
+        state.store.put("session",&json!({"id":"old","title":"before"}));
+        let rollback_db=config.data_dir.join(DB_ROLLBACK);
+        state.store.backup_to(&rollback_db).unwrap();
+        state.vault.write_key_file(&config.data_dir.join(KEY_ROLLBACK)).unwrap();
+        fs::write(config.data_dir.join(MARKER),b"DOMINION_RESTORE_PENDING_V1\n").unwrap();
+        let restored_path=config.data_dir.join("restored.sqlite");
+        let restored_store=Store::open(&restored_path).unwrap();
+        restored_store.put("session",&json!({"id":"new","title":"restored"}));
+        let restored_bytes_path=config.data_dir.join("restored-backup.sqlite");
+        restored_store.backup_to(&restored_bytes_path).unwrap();
+        let restored_bytes=fs::read(&restored_bytes_path).unwrap();
+        state.store.replace_database(&restored_bytes).unwrap();
+        drop(restored_store);
+        fs::remove_file(restored_path).unwrap();
+        fs::remove_file(restored_bytes_path).unwrap();
+        state.vault.restore_primary([73;32]).unwrap();
+        fs::write(config.data_dir.join(COMMITTED),COMMITTED_BODY).unwrap();
+        drop(state);
+
+        recover_pending(&config).unwrap();
+        let restarted=Store::open(&config.db_path()).unwrap();
+        let vault=Vault::open(&config.key_path());
+        assert_eq!(vault.primary_key(),[73;32]);
+        assert!(restarted.get("session","new").is_some());
+        assert!(restarted.get("session","old").is_none());
+        for name in [DB_ROLLBACK,KEY_ROLLBACK,MARKER,COMMITTED]{
+            assert!(!config.data_dir.join(name).exists(),"leftover {name}");
+        }
         let _=fs::remove_dir_all(config.data_dir);
     }
 }

@@ -7,6 +7,7 @@
 use crate::state::AppState;
 use rand::RngCore;
 use serde_json::{json, Value};
+use std::io::Write;
 use std::path::PathBuf;
 
 #[derive(Debug)]
@@ -43,7 +44,17 @@ pub fn verify_snapshot_secrets(
     temp_dir: &std::path::Path,
 ) -> Result<(), String> {
     let path = temp_dir.join(format!(".restore-verify-{}.sqlite", uuid::Uuid::new_v4()));
-    std::fs::write(&path, database).map_err(|error| error.to_string())?;
+    let mut options=std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)] {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file=options.open(&path).map_err(|error|error.to_string())?;
+    if let Err(error)=file.write_all(database).and_then(|()|file.sync_all()){
+        let _=std::fs::remove_file(&path);
+        return Err(error.to_string());
+    }
     let result = (|| -> Result<(), String> {
         let store = crate::db::Store::open(&path).map_err(|error| error.to_string())?;
         for (name, sealed) in store.all_secrets() {
@@ -97,13 +108,16 @@ pub fn rotate(state: &AppState, keep_old: bool) -> Result<RotationReport, String
 
     let mut new_key = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut new_key);
-    state.vault.install_primary(new_key);
     let temp = old_key_path.with_extension("key.new");
     state
         .vault
-        .write_key_file(&temp)
+        .write_key_value(&temp, &new_key)
         .map_err(|error| error.to_string())?;
     std::fs::rename(&temp, &old_key_path).map_err(|error| error.to_string())?;
+    // Do not change the in-memory write key until its durable replacement is
+    // installed. A failed staging write must leave subsequent secrets sealed
+    // with the key that a restart will still load.
+    state.vault.install_primary(new_key);
 
     for (name, plain) in &plaintexts {
         let sealed = state.vault.seal(plain);
@@ -294,5 +308,22 @@ mod tests {
             Some("sk-secret")
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn key_stage_failure_does_not_change_the_active_in_memory_key(){
+        let (state,dir)=state();
+        let old_key=state.vault.primary_key();
+        let staged=dir.join("secret.key.new");
+        std::fs::create_dir(&staged).unwrap();
+
+        let error=rotate(&state,false).unwrap_err();
+        assert!(!error.is_empty());
+        assert_eq!(state.vault.primary_key(),old_key,
+            "failed durable staging must keep the old key active");
+        assert_eq!(std::fs::read(dir.join("secret.key")).unwrap(),old_key);
+        assert_eq!(state.vault.open_secret(
+            &state.store.get_secret("provider:p1").unwrap()).as_deref(),Some("sk-secret"));
+        let _=std::fs::remove_dir_all(dir);
     }
 }

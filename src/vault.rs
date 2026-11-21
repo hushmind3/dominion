@@ -38,7 +38,13 @@ fn read_key(path: &Path) -> Option<[u8; KEY_LEN]> {
 }
 
 fn write_key(path: &Path, key: &[u8; KEY_LEN]) -> std::io::Result<()> {
-    let mut file = fs::File::create(path)?;
+    let mut options=fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)] {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
     file.write_all(key)?;
     #[cfg(unix)]
     {
@@ -196,6 +202,14 @@ impl Vault {
     pub fn write_key_file(&self, write_path: &Path) -> std::io::Result<()> {
         let key = self.primary_key();
         write_key(write_path, &key)
+    }
+
+    pub(crate) fn write_key_value(
+        &self,
+        write_path: &Path,
+        key: &[u8; KEY_LEN],
+    ) -> std::io::Result<()> {
+        write_key(write_path, key)
     }
 }
 

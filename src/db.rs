@@ -3,6 +3,11 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+struct RemoveFileOnDrop(PathBuf);
+impl Drop for RemoveFileOnDrop {
+    fn drop(&mut self){let _=std::fs::remove_file(&self.0);}
+}
+
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FinalizeOutcome {
@@ -1531,7 +1536,20 @@ impl Store {
     /// Cross-file vault-key rollback is handled by restore_transaction.
     pub fn replace_database(&self, bytes: &[u8]) -> Result<(), String> {
         let temp = self.path.with_extension("restore.tmp");
-        std::fs::write(&temp, bytes).map_err(|error| error.to_string())?;
+        let mut options=std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)] {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut staged=options.open(&temp).map_err(|error|error.to_string())?;
+        let _cleanup=RemoveFileOnDrop(temp.clone());
+        use std::io::Write;
+        if let Err(error)=staged.write_all(bytes).and_then(|()|staged.sync_all()){
+            let _=std::fs::remove_file(&temp);
+            return Err(error.to_string());
+        }
+        drop(staged);
         let checked = (|| -> Result<(), String> {
             let candidate = Connection::open_with_flags(
                 &temp, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
