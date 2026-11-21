@@ -2062,7 +2062,7 @@ mod web_source_metadata_tests {
             {"title":"Duplicate","url":"https://example.org/article?id=1"},
             {"title":"Unsafe scheme","url":"javascript:alert(1)"},
             {"title":"Credential-bearing URL","url":"https://secret@example.org/private"},
-            {"title":"No title","url":"https://example.org/empty"},
+            {"url":"https://example.org/empty"},
             {"title":"Second source","url":"https://example.net/report"}
         ]));
         let refs=public_web_sources(&state,"web-test","active");
