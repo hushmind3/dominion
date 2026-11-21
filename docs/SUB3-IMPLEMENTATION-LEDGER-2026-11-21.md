@@ -63,3 +63,29 @@ The repository in the available authoring environment is accessible through its 
 - Broaden the HTTP contract tests to crash in the interval *after* the provider processes the request and *before* the host saves the observation; assert one provider call, unknown outcome and no automatic effect replay after restart.
 - Recheck per-provider stop reasons, usage-only packets and true first-token timing under the same model and same prompt, then tune high-cost context paths from measured samples.
 - Run the real Chromium fixture and all existing tests before promoting this candidate.
+
+## Fast branch-only CI and the current gate
+
+`.github/workflows/sub3-fast.yml` is configured for push to `dominion-sub3`.
+It contains three independent jobs: source architecture + TypeScript SDK, Rust
+`cargo check --locked --all-targets` and kernel/Chat regression tests, and
+frontend TypeScript/Vite build. This workflow is distinct from manual full
+macOS/Windows release CI and has no production deployment or secrets.
+**Workflow configuration is committed; successful execution is not yet verified.**
+
+The Chat terminal finalizer now holds a `needs_review` status for a persisted
+in-flight paid model or tool action, and retains provider usage and model-call
+counts from the kernel journal in both the kernel and public execution ledger.
+New tests cover an owner cancellation after a paid call and a nominally
+successful response while a tool action remains unacknowledged. The live browser
+fixture no longer consumes a successful HTTP response body twice.
+Native mobile control sizes and focus outlines were widened in the existing
+panel, without adding new menus.
+
+Known validation edge: if the *durably stored execution status* was already
+marked `cancelled` by a concurrent owner action, SQLite's finalization CAS may
+reject a later proposed transition to `needs_review` rather than overriding
+the owner's terminal status. The model/tool fencing and original checkpoint
+remain authoritative for replay prevention. That race should be reproduced
+with a process-level cancellation test before changing the transaction
+contract; do not claim it is completely closed.
