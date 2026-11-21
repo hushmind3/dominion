@@ -89,6 +89,15 @@ Attachment records are scoped to a real session or room; Rust enforces
 per-file (8 MiB), per-turn (8 files / 24 MiB) limits and validates image bytes.
 `attachments.content(id)` reads bytes with the same authenticated SDK client.
 Chat POST requests are never automatically retried.
+To stop an active streamed Chat turn, supply a fresh UUID as `requestId` to
+`streamChat`, call `sessions.cancelTurn(sessionId, requestId)`, and poll
+`sessions.cancelStatus(sessionId)` until `stopped` is `true` before
+considering the Rust execution and its durable journal released. This is a
+**session-wide Stop**; the UUID also tombstones that exact delayed POST so it
+cannot execute after cancellation. The initial cancellation acknowledgement
+alone does not prove that model/tool execution has settled. Never automatically
+retry a POST whose completion is uncertain.
+
 When Rust emits an in-band `error` SSE event, `streamChat` first delivers the
 event to the callback and then rejects with `ChatTurnFailedError`, preserving
 the original `.event` for diagnostics. Rust may append `done` after the error;
