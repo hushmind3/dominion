@@ -886,8 +886,14 @@ fn settle_team_child(
             if frame.paused{"child paused before completion"}
             else{"child requested revision or observed failure"})?;
     }else{
-        crate::engine::task_team_work::settle(
-            ctx.state,&assignments[index],child,&frame.checkpoint)?;
+        if let Err(error)=crate::engine::task_team_work::settle(
+            ctx.state,&assignments[index],child,&frame.checkpoint){
+            // Missing/rejected evidence is not silently left as completed.
+            // Preserve the original error and fence an owner review.
+            let _=crate::engine::task_team_work::block(
+                ctx.state,&assignments[index],"completion lacked committed evidence");
+            return Err(error);
+        }
     }
     Ok(())
 }
@@ -1094,10 +1100,17 @@ pub(super) fn execute_nodes<'a>(
                     let team_assignments=if persist{
                         let revision=checkpoint["programRevision"].as_str()
                             .ok_or("Task Team checkpoint revision missing")?;
+                        // Historical ProgramIR may omit a parallel parent ID.
+                        // Use a deterministic shape/position scope instead of
+                        // merging two unnamed teams into one durable work ID.
+                        let team_scope=if node_id.is_empty(){
+                            format!("anonymous-team:{depth}:{index}:{}",
+                                crate::engine::memory::stable_id(&[&node.to_string()]))
+                        }else{node_id.to_string()};
                         children.iter().enumerate().map(|(index,child)|
                             crate::engine::task_team_work::assign(
                                 ctx.state,ctx.session_id,ctx.execution_id,revision,
-                                node_id,index,child
+                                &team_scope,index,child
                             )).collect::<Result<Vec<_>,String>>()?
                     }else{Vec::new()};
                     let child_ids = children
