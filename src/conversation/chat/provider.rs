@@ -1203,18 +1203,25 @@ async fn stream_completion_once_body(
             // Complete-message-only Chat compatibility, including a final
             // usage-only packet with empty choices. Never append a settled
             // body or tool call a second time after streaming its deltas.
-            if let Some(message)=piece["choices"][0].get("message") {
-                let (text,final_calls)=settled_chat_message(message)?;
-                if completion.content.is_empty() {
-                    if let Some(text)=text.filter(|text|!text.is_empty()) {
-                        completion.first_delta_ms.get_or_insert(started.elapsed().as_millis() as u64);
-                        completion.content.push_str(&text);
-                        stream_visible_text(tx,&text,&mut text_pending,&mut in_text_tool_call);
+            let live_delta=&piece["choices"][0]["delta"];
+            let has_live_delta=live_delta["content"].as_str()
+                .is_some_and(|text|!text.is_empty())
+                || live_delta["tool_calls"].as_array()
+                    .is_some_and(|tools|!tools.is_empty());
+            if !has_live_delta {
+                if let Some(message)=piece["choices"][0].get("message") {
+                    let (text,final_calls)=settled_chat_message(message)?;
+                    if completion.content.is_empty() {
+                        if let Some(text)=text.filter(|text|!text.is_empty()) {
+                            completion.first_delta_ms.get_or_insert(started.elapsed().as_millis() as u64);
+                            completion.content.push_str(&text);
+                            stream_visible_text(tx,&text,&mut text_pending,&mut in_text_tool_call);
+                        }
                     }
-                }
-                if calls.is_empty() && !final_calls.is_empty() {
-                    completion.first_delta_ms.get_or_insert(started.elapsed().as_millis() as u64);
-                    calls=final_calls;
+                    if calls.is_empty() && !final_calls.is_empty() {
+                        completion.first_delta_ms.get_or_insert(started.elapsed().as_millis() as u64);
+                        calls=final_calls;
+                    }
                 }
             }
             let Some(delta) = piece
