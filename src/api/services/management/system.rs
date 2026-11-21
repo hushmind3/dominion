@@ -124,21 +124,23 @@ fn gap_event(after: u64, first_available: u64) -> Value {
     })
 }
 
+/// EventSource reconnects keep their original URL, but supply the newest
+/// event ID in Last-Event-ID. The reconnect watermark must win over an
+/// initial `?after=` query or every disconnect replays old events again.
+fn event_cursor(params: &HashMap<String, String>, headers: &HeaderMap) -> u64 {
+    headers.get("last-event-id")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .or_else(|| params.get("after").and_then(|value| value.parse::<u64>().ok()))
+        .unwrap_or(0)
+}
+
 pub async fn events(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let after = params
-        .get("after")
-        .and_then(|value| value.parse::<u64>().ok())
-        .or_else(|| {
-            headers
-                .get("last-event-id")
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.parse::<u64>().ok())
-        })
-        .unwrap_or(0);
+    let after = event_cursor(&params, &headers);
     let bus = state.bus.clone();
     // Subscribe before replay so writes during page reads enter the receiver.
     let mut receiver = bus.subscribe();
@@ -193,6 +195,29 @@ pub async fn events(
 #[cfg(test)]
 mod event_replay_tests {
     use super::*;
+    #[test]
+    fn eventsource_reconnect_uses_latest_header_not_original_query() {
+        let mut params = HashMap::new();
+        params.insert("after".to_string(), "12".to_string());
+        let mut headers = HeaderMap::new();
+        headers.insert("last-event-id", "45".parse().unwrap());
+        assert_eq!(event_cursor(&params, &headers), 45);
+        headers.insert("last-event-id", "0".parse().unwrap());
+        assert_eq!(event_cursor(&params, &headers), 0);
+    }
+
+    #[test]
+    fn first_connection_or_invalid_header_uses_query_cursor() {
+        let mut params = HashMap::new();
+        params.insert("after".to_string(), "12".to_string());
+        let mut headers = HeaderMap::new();
+        assert_eq!(event_cursor(&params, &headers), 12);
+        headers.insert("last-event-id", "not-a-sequence".parse().unwrap());
+        assert_eq!(event_cursor(&params, &headers), 12);
+        params.clear();
+        assert_eq!(event_cursor(&params, &headers), 0);
+    }
+
     #[test]
     fn multi_page_reconnect_preserves_all_retained_records() {
         let store = crate::db::Store::open(std::path::Path::new(":memory:")).unwrap();
