@@ -39,6 +39,22 @@ fn key_file(directory: &Path, version: u32) -> PathBuf {
     directory.join(format!("key-{version}.key"))
 }
 
+fn read_key_file(path:&Path)->std::io::Result<[u8;KEY_LEN]>{
+    use std::io::Read;
+    let mut file=std::fs::File::open(path)?;
+    let metadata=file.metadata()?;
+    if !metadata.is_file() || metadata.len()!=KEY_LEN as u64{
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData,"invalid backup key size"));
+    }
+    let mut key=[0u8;KEY_LEN];
+    file.read_exact(&mut key)?;
+    let mut extra=[0u8;1];
+    if file.read(&mut extra)?!=0{
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData,"backup key grew while reading"));
+    }
+    Ok(key)
+}
+
 fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut options=std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
@@ -95,12 +111,8 @@ impl KeyRing {
                 else {
                     continue;
                 };
-                if let Ok(bytes) = std::fs::read(entry.path()) {
-                    if bytes.len() == KEY_LEN {
-                        let mut key = [0u8; KEY_LEN];
-                        key.copy_from_slice(&bytes);
-                        keys.insert(version, key);
-                    }
+                if let Ok(key)=read_key_file(&entry.path()){
+                    keys.insert(version,key);
                 }
             }
         }
