@@ -86,6 +86,9 @@ pub struct TurnRequest {
     pub input: String,
     pub attachment_ids: Vec<String>,
     pub agent_id: Option<String>,
+    /// Explicit plain conversation: no implicit session agent or tool authority.
+    /// Omitted for backward compatibility with historical agent/SDK callers.
+    pub direct_chat: bool,
     pub provider_id: Option<String>,
     pub model: Option<String>,
     pub tools_enabled: bool,
@@ -140,6 +143,11 @@ impl TurnRequest {
             input: text,
             attachment_ids,
             agent_id: string("agentId"),
+            direct_chat: match value.get("conversationMode").and_then(Value::as_str) {
+                Some("chat") => true,
+                Some("agent") | None => false,
+                Some(_) => return Err("채팅 실행 모드가 올바르지 않습니다.".into()),
+            },
             provider_id: string("providerId"),
             model: string("model"),
             tools_enabled: value

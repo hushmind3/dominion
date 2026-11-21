@@ -55,14 +55,17 @@ try{
     if(path==='/api/agents')response=[
       {id:'lead',name:'Lead',providerId:'fixture',model:'fixture',enabled:true},
       {id:'researcher',name:'Researcher',providerId:'fixture',model:'fixture',enabled:true},
-      {id:'builder',name:'Builder',providerId:'fixture',model:'fixture',enabled:true}
+      {id:'builder',name:'Builder',providerId:'fixture',model:'fixture',enabled:true},
+      {id:'separate',name:'Separate',providerId:'agent-route',model:'agent-model',enabled:true}
     ];
     if(path==='/api/providers')response=[
-      {id:'fixture',name:'Fixture',model:'fixture',enabled:true,kind:'openai'}
+      {id:'fixture',name:'Fixture',model:'fixture',enabled:true,kind:'openai'},
+      {id:'agent-route',name:'Agent provider',model:'agent-model',enabled:true,kind:'openai'}
     ];
     if(path==='/api/sessions')response=[
       {id:'chat-one',title:'Conversation One',agentId:'lead',providerId:'fixture',model:'fixture'},
-      {id:'chat-two',title:'Conversation Two',agentId:'lead',providerId:'fixture',model:'fixture'}
+      {id:'chat-two',title:'Conversation Two',agentId:'lead',providerId:'fixture',model:'fixture'},
+      {id:'chat-route',title:'Independent route',agentId:'separate',providerId:'fixture',model:'fixture'}
     ];
     if(path.endsWith('/messages'))response=path==='/api/sessions/chat-one/messages'?[
       {id:'owner-layout',session_id:'chat-one',role:'user',
@@ -241,8 +244,31 @@ try{
   await page.reload({waitUntil:'domcontentloaded'});
   await page.waitForFunction(selector=>
     document.querySelector(selector)?.value==='실패한 요청 복구',inputSelector,{timeout:10000});
+  // Switching an agent-backed session to ordinary chat must send the
+  // persisted provider/model, never the hidden agent's different route.
+  await page.evaluate(()=>{window.location.hash='#/chat?session=chat-route'});
+  assert.equal(await page.getByRole('button',{name:'일반 대화'}).getAttribute('aria-pressed'),'true');
+  await chatInput.fill('일반 대화의 독립적인 모델 경로');
+  const directRoutePromise=page.waitForRequest(request=>
+    new URL(request.url()).pathname==='/api/chat');
+  await chatInput.press('Enter');
+  const directRoute=(await directRoutePromise).postDataJSON();
+  assert.equal(directRoute.conversationMode,'chat');
+  assert.equal(directRoute.providerId,'fixture');
+  assert.equal(directRoute.model,'fixture');
+  assert.equal(directRoute.agentId,undefined);
+  await page.getByRole('button',{name:'에이전트 실행'}).click();
+  await chatInput.fill('에이전트 모델 경로');
+  const agentRoutePromise=page.waitForRequest(request=>
+    new URL(request.url()).pathname==='/api/chat');
+  await chatInput.press('Enter');
+  const agentRoute=(await agentRoutePromise).postDataJSON();
+  assert.equal(agentRoute.conversationMode,'agent');
+  assert.equal(agentRoute.agentId,'separate');
+  assert.equal(agentRoute.providerId,undefined);
+  assert.equal(agentRoute.model,undefined);
   assert.deepEqual(errors,[], 'Chat/Team React runtime errors');
-  console.log('PASS Chromium direct default / agent opt-in / mode isolation / failed send draft recovery');
+  console.log('PASS Chromium direct and agent route isolation, modes, failed send draft recovery');
 }finally{
   await browser?.close();
   server.kill('SIGTERM');

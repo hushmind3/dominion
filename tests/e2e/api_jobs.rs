@@ -911,8 +911,9 @@ fn direct_chat_rejects_external_effect_without_executing_tools() {
     let stream = app.chat(&json!({
         "sessionId":session["id"],
         "input":"no-tools-report.txt 파일을 만들어줘",
-        "toolsEnabled":false,
-        "toolsExecutionEnabled":false,
+        "conversationMode":"chat",
+        "toolsEnabled":true,
+        "toolsExecutionEnabled":true,
         "autoLearning":false
     }));
     assert!(stream.contains("error"), "{stream}");
@@ -923,6 +924,36 @@ fn direct_chat_rejects_external_effect_without_executing_tools() {
         .expect("direct chat execution");
     assert_eq!(execution["status"],"failed");
     assert_eq!(execution["taskOutcome"],"failed");
+}
+
+#[test]
+fn explicit_direct_chat_does_not_inherit_a_saved_session_agent() {
+    let _serial = serial();
+    let (port, _) = scripted_provider(|_| {
+        vec![json!({"choices":[{"delta":{"content":"안녕하세요."},"finish_reason":"stop"}]})]
+    });
+    let app = TestApp::new(port, "native");
+    let session = app.post("/api/sessions", &json!({
+        "title":"plain turn in old agent session",
+        "agentId":"missing-agent-must-not-be-used"
+    }));
+    let id=session["id"].as_str().unwrap();
+    let stream=app.chat(&json!({
+        "sessionId":id,
+        "conversationMode":"chat",
+        "input":"안녕하세요",
+        "toolsEnabled":true,
+        "toolsExecutionEnabled":true,
+        "autoLearning":false
+    }));
+    assert!(stream.contains("assistant_saved"), "{stream}");
+    assert!(!stream.contains("\"type\":\"error\""), "{stream}");
+    let messages=app.get(&format!("/api/sessions/{id}/messages"));
+    let assistant=messages.as_array().unwrap().iter()
+        .find(|row|row["role"]=="assistant").expect("assistant response");
+    assert!(assistant["agent_id"].is_null(), "{assistant}");
+    let saved=app.get(&format!("/api/sessions/{id}"));
+    assert_eq!(saved["agentId"],"missing-agent-must-not-be-used");
 }
 
 #[test]

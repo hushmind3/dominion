@@ -186,7 +186,15 @@ async fn run_turn_with_policy(
     }
     let generation = state.cancellation_generation(&session_id);
     let mut request = request.clone();
-    if request.agent_id.is_none() {
+    if request.direct_chat {
+        // The absence of agentId alone was ambiguous: older sessions could
+        // silently restore an agent persona and its route. A direct request
+        // always remains a plain no-tool turn, even with stale client flags.
+        request.agent_id = None;
+        request.tools_enabled = false;
+        request.tools_execution_enabled = false;
+        request.auto_learning = false;
+    } else if request.agent_id.is_none() {
         request.agent_id = session
             .get("agentId")
             .and_then(Value::as_str)
@@ -218,7 +226,8 @@ async fn run_turn_with_policy(
     session["providerId"] = json!(provider.id);
     session["model"] = json!(provider.model);
     // A room shares a transcript but each speaker keeps its own identity.
-    if session.get("roomId").is_none() {
+    if session.get("roomId").is_none() && !request.direct_chat {
+        // A temporary plain-chat turn must not erase the saved agent choice.
         session["agentId"] = json!(request.agent_id);
     }
     state

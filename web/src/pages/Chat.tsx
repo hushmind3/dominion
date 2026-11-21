@@ -111,10 +111,13 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   !current&&initialProvider?{providerId:initialProvider,model:initialModel??''}:undefined;
  const enabledProviders=providers.value.filter(provider=>provider.enabled!==false);
  const sessionProvider=enabledProviders.find(provider=>provider.id===selectedSession?.providerId);
- const providerId=manual?.providerId??(activeAgent?.providerId||sessionProvider?.id||enabledProviders[0]?.id||'');
+ const providerId=manual?.providerId??(executionMode==='agent'
+  ?activeAgent?.providerId||sessionProvider?.id||enabledProviders[0]?.id||''
+  :sessionProvider?.id||enabledProviders[0]?.id||'');
  const selectedProvider=enabledProviders.find(provider=>provider.id===providerId);
- const model=manual?.model||((activeAgent?.providerId===providerId?activeAgent.model:'')||
-  (selectedSession?.providerId===providerId&&selectedSession.agentId===agentId?selectedSession.model:'')||selectedProvider?.model||'');
+ const model=manual?.model||((executionMode==='agent'&&activeAgent?.providerId===providerId?activeAgent.model:'')||
+  (selectedSession?.providerId===providerId&&(executionMode==='chat'||selectedSession.agentId===agentId)?selectedSession.model:'')||
+  selectedProvider?.model||'');
  const catalogue=useProviderModels(providerId);
  const {value:models,error:modelError}=catalogue;
  const selectedModel=models.find(item=>item.id===model);
@@ -406,7 +409,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    setInput(previous=>previous.trim()===text?'':previous);
    if(inputRef.current)inputRef.current.style.height='';
    await streamChat({
-    sessionId:id,agentId:executionMode==='agent'?agentId:undefined,
+    sessionId:id,conversationMode:executionMode,
+    agentId:executionMode==='agent'?agentId:undefined,
     providerId:executionMode==='chat'?providerId:manual?.providerId,
     model:executionMode==='chat'?model:manual?.model,input:text,
     toolsEnabled:executionMode==='agent'&&toolsEnabled,
