@@ -25,7 +25,7 @@ export function WorkspaceSearch({onNavigate,onDismiss}:{
    setActive(i=>Math.min(i+1,Math.max(0,items.length-1)))
   }else if(event.key==='ArrowUp'){
    event.preventDefault();setActive(i=>Math.max(0,i-1))
-  }else if(event.key==='Enter'&&!event.isComposing&&items[active]){
+  }else if(event.key==='Enter'&&!event.nativeEvent.isComposing&&items[active]){
    event.preventDefault();select(items[active].id)
   }
  }
