@@ -232,8 +232,11 @@ function readRoomComposer(roomId:string):RoomComposerDraft{
   const validPending=pending&&typeof pending.id==='string'
    &&pending.id.length>0&&pending.id.length<=160
    &&pending.input===roomMessageText(saved.text,attachments)
-   &&Array.isArray(pending.attachmentIds)
-   &&JSON.stringify(pending.attachmentIds)===JSON.stringify(attachments.map(file=>file.id))
+   // A pending draft created before attachment support carried no IDs.
+   // Preserve that nonce only if this draft still has zero attachments.
+   &&(Array.isArray(pending.attachmentIds)
+    ?JSON.stringify(pending.attachmentIds)===JSON.stringify(attachments.map(file=>file.id))
+    :attachments.length===0)
    &&Array.isArray(pending.targets)
    &&JSON.stringify(pending.targets)===JSON.stringify(targets)
    &&(pending.reasoningLanguage==='ko'||pending.reasoningLanguage==='default')
