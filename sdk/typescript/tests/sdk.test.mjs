@@ -47,10 +47,10 @@ test('direct Chat and immutable attachments share typed Rust API and auth',async
   await client.streamChat({sessionId:'s',input:'summarize',conversationMode:'chat',
     webSearch:true,attachmentIds:[uploaded.id],toolsEnabled:false,toolsExecutionEnabled:false},()=>{});
   assert.equal(JSON.parse(calls[0].init.body).conversationMode,'chat');
-  assert.equal(calls[1].url,'http://127.0.0.1:4317/api/attachments');
+  assert.equal(calls[1].url,'http://127.0.0.1:4321/api/attachments');
   assert.equal(JSON.parse(calls[1].init.body).sessionId,'s');
-  assert.equal(calls[2].url,'http://127.0.0.1:4317/api/attachments/attachment-id/content');
-  assert.equal(calls[3].url,'http://127.0.0.1:4317/api/chat');
+  assert.equal(calls[2].url,'http://127.0.0.1:4321/api/attachments/attachment-id/content');
+  assert.equal(calls[3].url,'http://127.0.0.1:4321/api/chat');
   const payload=JSON.parse(calls[3].init.body);
   assert.equal(payload.agentId,undefined);
   assert.equal(payload.conversationMode,'chat');
@@ -75,7 +75,7 @@ test('private Chat deletion reaches Rust DELETE without retry and honors active-
   }});
   const result=await client.sessions.delete('private/one');
   assert.equal(result.ok,true);
-  assert.equal(calls[0].url,'http://127.0.0.1:4317/api/sessions/private%2Fone');
+  assert.equal(calls[0].url,'http://127.0.0.1:4321/api/sessions/private%2Fone');
   assert.equal(calls[0].init.method,'DELETE');
   assert.equal(calls[0].init.headers.get('X-Dominion-Token'),'private');
   await assert.rejects(client.sessions.delete('busy'),
@@ -144,8 +144,8 @@ test('SDK cancels exact delayed Chat request and waits for durable server releas
   assert.equal(ack.requestRecorded,true);
   assert.equal(state.stopped,true);
   assert.deepEqual(JSON.parse(calls[0].init.body),{requestId});
-  assert.equal(calls[0].url,'http://127.0.0.1:4317/api/sessions/session-1/cancel');
-  assert.equal(calls[1].url,'http://127.0.0.1:4317/api/sessions/session-1/cancel-status');
+  assert.equal(calls[0].url,'http://127.0.0.1:4321/api/sessions/session-1/cancel');
+  assert.equal(calls[1].url,'http://127.0.0.1:4321/api/sessions/session-1/cancel-status');
   assert.equal(calls[1].init.method,'GET');
   assert.ok(calls.every(call=>call.init.headers.get('X-Dominion-Token')==='private'));
 });
@@ -174,8 +174,8 @@ test('durable SSE reconnects with last sequence and ignores duplicate replay',as
     if(received.length===2) break;
   }
   assert.deepEqual(received,[10,11]);
-  assert.equal(urls[0],'http://127.0.0.1:4317/api/events?after=9');
-  assert.equal(urls[1],'http://127.0.0.1:4317/api/events?after=10');
+  assert.equal(urls[0],'http://127.0.0.1:4321/api/events?after=9');
+  assert.equal(urls[1],'http://127.0.0.1:4321/api/events?after=10');
 });
 test('waitForJob polls persisted Rust state and reaches a terminal state',async()=>{
   let calls=0;
@@ -222,7 +222,7 @@ test('owner replacement uses the existing job and explicit replace mode',async()
   const result=await client.jobs.replaceGoal('same','Make a presentation instead');
   assert.equal(result.mode,'replace');
   assert.equal(result.steeringRevision,2);
-  assert.equal(last.url,'http://127.0.0.1:4317/api/jobs/same/steer');
+  assert.equal(last.url,'http://127.0.0.1:4321/api/jobs/same/steer');
   assert.deepEqual(last.body,{instruction:'Make a presentation instead',mode:'replace'});
 });
 test('owner steering uses the same native job and revision contract',async()=>{
@@ -233,7 +233,7 @@ test('owner steering uses the same native job and revision contract',async()=>{
   }});
   const applied=await d.jobs.steer('abc','Check the actual tests');
   assert.equal(applied.steeringRevision,1);
-  assert.equal(call.url,'http://127.0.0.1:4317/api/jobs/abc/steer');
+  assert.equal(call.url,'http://127.0.0.1:4321/api/jobs/abc/steer');
   assert.equal(call.init.headers.get('X-Dominion-Token'),'token');
   assert.deepEqual(JSON.parse(call.init.body),{instruction:'Check the actual tests'});
 });
@@ -246,7 +246,7 @@ test('evaluation summary SDK accesses the same Rust persisted scorecard as GUI',
       pricingCoverage:{pricedCalls:0,unpricedCalls:2}});
   }});
   const result=await client.evaluation.summary();
-  assert.equal(calls[0].url,'http://127.0.0.1:4317/api/evaluation/summary');
+  assert.equal(calls[0].url,'http://127.0.0.1:4321/api/evaluation/summary');
   assert.equal(calls[0].method,'GET');
   assert.equal(result.verified.successRate,0.5);
 });
