@@ -34,12 +34,16 @@ const providerPresets:ProviderPreset[]=[
  {name:'Cloudflare Workers AI',baseUrl:'https://api.cloudflare.com/client/v4/accounts/ACCOUNT_ID/ai/v1',kind:'openai',local:false,free:true,category:'free'},
  {name:'OpenRouter',baseUrl:'https://openrouter.ai/api/v1',kind:'openai',local:false,free:true,category:'free'},
  {name:'Vercel AI Gateway',baseUrl:'https://ai-gateway.vercel.sh/v1',kind:'openai',local:false,free:true,category:'free'},
- {name:'Chutes',baseUrl:'https://llm.chutes.ai/v1',kind:'openai',local:false,free:true,category:'free'},
- {name:'Cerebras',baseUrl:'https://api.cerebras.ai/v1',kind:'openai',local:false,free:true,category:'free'},
+ {name:'Chutes',baseUrl:'https://llm.chutes.ai/v1',kind:'openai',local:false,category:'cloud'},
+ {name:'Cerebras',baseUrl:'https://api.cerebras.ai/v1',kind:'openai',local:false,category:'cloud'},
  {name:'SambaNova',baseUrl:'https://api.sambanova.ai/v1',kind:'openai',local:false,free:true,category:'free'},
- {name:'Hyperbolic',baseUrl:'https://api.hyperbolic.xyz/v1',kind:'openai',local:false,free:true,category:'free'},
- {name:'Nebius',baseUrl:'https://api.studio.nebius.ai/v1',kind:'openai',local:false,free:true,category:'free'},
- {name:'Novita',baseUrl:'https://api.novita.ai/v3/openai',kind:'openai',local:false,free:true,category:'free'},
+ {name:'Hyperbolic',baseUrl:'https://api.hyperbolic.ai/inference/v1',kind:'openai',local:false,category:'cloud'},
+ {name:'Nebius',baseUrl:'https://api.tokenfactory.nebius.com/v1',kind:'openai',local:false,category:'cloud'},
+ {name:'Novita',baseUrl:'https://api.novita.ai/v3/openai',kind:'openai',local:false,category:'cloud'},
+ // Updated against official provider billing/API docs in November 2026.
+ // Chutes ended its free plan; Cerebras/Nebius have limited trial credits;
+ // Hyperbolic Flux uses a new paid endpoint and requires new sk_live_ keys;
+ // Novita's credits are conditional, not a recurring no-cost quota.
  // Metered cloud APIs.
  {name:'Google Gemini',baseUrl:'https://generativelanguage.googleapis.com/v1beta/openai',kind:'openai',local:false,category:'cloud'},
  {name:'Anthropic',baseUrl:'https://api.anthropic.com/v1',kind:'anthropic',local:false,category:'cloud'},
