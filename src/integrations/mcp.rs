@@ -607,7 +607,7 @@ impl HttpSession {
                     error.starts_with("MCP HTTP 404 ")||
                     error.starts_with("MCP HTTP 405 ")||
                     (error.starts_with("MCP HTTP 400 ")&&
-                        !error.contains("\\\"jsonrpc\\\""))
+                        !error.contains("\"jsonrpc\""))
                 )=>{
                     // Ordinary handshake-era HTTP gateways often reject the
                     // unknown discovery method. A modern JSON-RPC error, 401,
@@ -710,12 +710,12 @@ impl HttpSession {
             return Ok(json!({}));
         }
         if content_type.contains("text/event-stream") {
-            let normalized=text.replace("\\r\\n","\\n");
+            let normalized=text.replace("\r\n","\n");
             let mut settled:Option<Value>=None;
-            for block in normalized.split("\\n\\n") {
+            for block in normalized.split("\n\n") {
                 let data=block.lines()
                     .filter_map(|line|line.strip_prefix("data:")
-                        .map(str::trim_start)).collect::<Vec<_>>().join("\\n");
+                        .map(str::trim_start)).collect::<Vec<_>>().join("\n");
                 if data.is_empty(){continue;}
                 let value:Value=serde_json::from_str(&data)
                     .map_err(|error|format!("Invalid MCP SSE JSON: {error}"))?;
