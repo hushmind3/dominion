@@ -173,3 +173,33 @@ test('typed runEvents includes persisted Chat Room and SDK states on one ordered
   assert.equal(received[0].sourceMessageId,null);
   assert.equal(received[1].sourceMessageId,'owner-1');
 });
+
+test('managed Lead and Worker DAG events are typed on existing SSE cursor',async()=>{
+  const events=[
+    {seq:1,eventSeq:1,type:'run_state',schemaVersion:1,
+      runKind:'managed_team',runId:'team-1',
+      sourceMessageId:null,agentId:'lead',state:'running',parentRunId:'chat-1'},
+    {seq:2,eventSeq:2,type:'run_state',schemaVersion:1,
+      runKind:'managed_team_task',runId:'worker-1',
+      sourceMessageId:null,agentId:'coder',state:'queued',
+      parentRunId:'team-1',nodeId:'implement',dependsOn:['inspect']},
+    {seq:3,eventSeq:3,type:'run_state',schemaVersion:1,
+      runKind:'managed_team_task',runId:'worker-1',
+      sourceMessageId:null,agentId:'coder',state:'completed',
+      parentRunId:'team-1',nodeId:'implement',verified:true,workerJobId:'job-1'}
+  ];
+  const client=new Dominion({fetch:async()=>sse(
+    events.map(event=>'id: '+event.seq+'\ndata: '+JSON.stringify(event)+'\n\n')
+  )});
+  const observed=[];
+  for await(const event of client.runEvents({reconnectDelayMs:1})){
+    observed.push(event);
+    if(observed.length===3)break;
+  }
+  assert.deepEqual(observed.map(x=>[x.runKind,x.state]),[
+    ['managed_team','running'],['managed_team_task','queued'],
+    ['managed_team_task','completed']
+  ]);
+  assert.equal(observed[2].workerJobId,'job-1');
+  assert.equal(observed[2].verified,true);
+});
