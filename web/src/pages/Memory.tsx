@@ -6,6 +6,7 @@ import {Action, FormField, Headline, Notice, Panel, Subheading, useRemote} from 
 import {LearningRecords} from './memory/LearningRecords'
 import {t,useLocale,type LocaleKey} from '../i18n'
 import {GrowthDashboard} from './memory/Growth'
+import {SystemPromptPanel} from './memory/SystemPromptPanel'
 
 type Memory={
  id:string;text:string;scope?:string;agentId?:string;sessionId?:string;partitionKey?:string;
@@ -19,7 +20,8 @@ const displayTime=(time?:string)=>time&&Number.isFinite(Date.parse(time))?new Da
 const statusOf=(memory:Memory)=>memory.retrievalEligible?'active':memory.status&&memory.status!=='active'?memory.status:'excluded'
 
 export function MemoryPage(){
- useLocale()
+ const locale=useLocale()
+ const [tab,setTab]=useState<'memories'|'systemPrompt'>('memories')
  const memories=useRemote<Memory[]>('/api/memories',[])
  const agents=useRemote<Agent[]>('/api/agents',[])
  const [query,setQuery]=useState(''),[text,setText]=useState(''),[scope,setScope]=useState('shared')
@@ -65,6 +67,17 @@ export function MemoryPage(){
   <Headline eyebrow={t('ui.eyebrow.memory')} title={t('memory.title')} description={t('memory.description')}/>
   <Notice message={error||memories.error||agents.error}/>
   {notice&&<div role="status" className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{notice}</div>}
+  <div role="tablist" aria-label={locale==='en'?'Memory settings':'메모리 설정'} className="mb-5 flex flex-wrap gap-2 border-b border-[#E7E0D5] pb-3">
+   <button type="button" role="tab" aria-selected={tab==='memories'} onClick={()=>setTab('memories')}
+    className={'rounded-lg px-4 py-2 text-sm font-semibold '+(tab==='memories'?'bg-[#A4583E] text-white':'bg-[#F7F1E6] text-[#675C51] hover:bg-[#EEE5D9]')}>
+    {locale==='en'?'Memories':'기억'}
+   </button>
+   <button type="button" role="tab" aria-selected={tab==='systemPrompt'} onClick={()=>setTab('systemPrompt')}
+    className={'rounded-lg px-4 py-2 text-sm font-semibold '+(tab==='systemPrompt'?'bg-[#A4583E] text-white':'bg-[#F7F1E6] text-[#675C51] hover:bg-[#EEE5D9]')}>
+    {locale==='en'?'System prompt':'시스템 프롬프트'}
+   </button>
+  </div>
+  {tab==='systemPrompt'?<SystemPromptPanel/>:<>
   <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
    <Panel className="min-w-0 p-5">
     <Subheading title={t('memory.new')} extra={<Action disabled={busy||!text.trim()} onClick={save}><Plus size={16}/> {t('memory.save')}</Action>}/>
@@ -97,5 +110,6 @@ export function MemoryPage(){
    <summary className="cursor-pointer font-semibold">{t('memory.growth')}</summary>
    <GrowthDashboard/>
   </details>
+  </>}
  </div>
 }
