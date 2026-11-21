@@ -83,7 +83,7 @@ test('Rust / event journal / TypeScript SDK agree on run lifecycle',()=>{
   const state=source('crates/dominion-turn-core/src/run_state.rs');
   const events=source('src/events.rs');
   const sdk=source('sdk/typescript/src/index.ts');
-  for(const kind of ['execution','job','room_work_assignment','task_team_work','managed_team','managed_team_task']){
+  for(const kind of ['execution','job','room_work_assignment','task_team_work','managed_team','managed_team_task','remote_task']){
     assert.ok(state.includes('"'+kind+'"'),`Rust missing ${kind}`);
     assert.ok(sdk.includes("'"+kind+"'"),`SDK missing ${kind}`);
   }
@@ -128,4 +128,29 @@ test('new autonomous collaboration tools route into native Rust jobs and durable
   assert.match(events,/kind=="managed_team_task"/);
   assert.match(sdk,/'managed_team_task'/);
   assert.ok(!exists('src/engine/core/mod.rs'));
+});
+
+test('P3 remote Rust control plane and outbound native Worker reuse existing Harness and SSE',()=>{
+  const cluster=source('src/remote.rs');
+  const worker=source('src/remote_worker.rs');
+  const boot=source('src/bootstrap.rs');
+  const team=source('src/engine/services/tools/tools_team.rs');
+  const sdk=source('sdk/typescript/src/index.ts');
+  assert.match(cluster,/start_control_plane/);
+  assert.match(cluster,/x-dominion-remote-token/);
+  assert.match(cluster,/patch_if_all_merge/);
+  assert.match(cluster,/needs_review/);
+  assert.match(cluster,/remote_job_claim_is_atomic_and_old_epoch_cannot_settle/);
+  assert.match(cluster,/real_http_remote_worker_registers_claims_renews_and_settles/);
+  assert.match(worker,/Dominion::from_config/);
+  assert.match(worker,/engine::jobs::enqueue_once/);
+  assert.match(worker,/engine::jobs::start_now/);
+  assert.match(worker,/parallelDelegationReadOnly/);
+  assert.match(worker,/cancel_job/);
+  assert.match(boot,/crate::remote::start_control_plane/);
+  assert.match(boot,/crate::remote::run_worker/);
+  assert.match(team,/crate::remote::submit/);
+  assert.match(team,/crate::remote::task_status/);
+  assert.match(team,/crate::remote::visible_workers/);
+  assert.match(sdk,/'remote_task'/);
 });
