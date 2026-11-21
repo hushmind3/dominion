@@ -3,8 +3,13 @@
 //! must watch both the worktree HEAD and the pointed branch ref.
 use std::{path::PathBuf,process::Command};
 
+fn manifest_dir()->PathBuf{
+    std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from)
+        .unwrap_or_else(||std::env::current_dir().unwrap_or_default())
+}
 fn git(args:&[&str])->Option<String>{
-    let output=Command::new("git").args(args).output().ok()?;
+    let output=Command::new("git").current_dir(manifest_dir())
+        .args(args).output().ok()?;
     if !output.status.success(){return None;}
     let value=String::from_utf8(output.stdout).ok()?.trim().to_owned();
     (!value.is_empty()).then_some(value)
@@ -16,7 +21,7 @@ fn watch_git_path(name:&str){
     let Some(value)=git(&["rev-parse","--git-path",name]) else{return};
     let path=PathBuf::from(value);
     let absolute=if path.is_absolute(){path}else{
-        std::env::current_dir().unwrap_or_default().join(path)
+        manifest_dir().join(path)
     };
     if absolute.exists(){
         println!("cargo:rerun-if-changed={}",absolute.display());
@@ -50,6 +55,7 @@ fn main(){
     // Without a Git checkout the commit is unknown, not today's unrelated
     // checkout SHA read by an older running binary.
     watch_git_path("HEAD");
+    watch_git_path("packed-refs");
     if let Some(reference)=git(&["symbolic-ref","-q","HEAD"]){
         watch_git_path(&reference);
     }
@@ -61,8 +67,11 @@ fn main(){
     if let Some(branch)=git(&["symbolic-ref","--short","-q","HEAD"]){
         if safe(&branch){println!("cargo:rustc-env=DOMINION_BUILD_BRANCH={branch}");}
     }
-    if let Some(status)=git(&["status","--porcelain","--untracked-files=no"]){
-        println!("cargo:rustc-env=DOMINION_BUILD_DIRTY={}",!status.is_empty());
+    if let Ok(output)=Command::new("git").current_dir(manifest_dir())
+        .args(["status","--porcelain","--untracked-files=no"]).output(){
+        if output.status.success() {
+            println!("cargo:rustc-env=DOMINION_BUILD_DIRTY={}",!output.stdout.is_empty());
+        }
     }
     println!("cargo:rustc-env=DOMINION_BUILD_IDENTITY_SOURCE=embedded-build");
 }
