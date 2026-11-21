@@ -86,8 +86,15 @@ try{
   assert.equal(await page.locator('[data-role="assistant"] img').count(),0,'Model HTML must stay literal text')
   const owner=await page.locator('[data-role="user"] .chat-message-inner').first().boundingBox()
   const assistant=await page.locator('[data-role="assistant"] .chat-message-inner').first().boundingBox()
-  assert.ok(owner&&assistant&&owner.x>assistant.x+40,'User message is not right-aligned at '+width)
-  assert.ok(owner.x+owner.width>width*.65,'User bubble is not on the right at '+width)
+  const transcript=await page.locator('.chat-transcript').boundingBox()
+  const alignment=await page.locator('[data-role="user"]').first().evaluate(el=>getComputedStyle(el).justifyContent)
+  assert.equal(alignment,'flex-end','Owner row must be right-aligned at '+width)
+  assert.ok(owner&&assistant&&transcript,'Chat message geometry missing at '+width)
+  // Long user prompts may start LEFT of the assistant text on narrow phones:
+  // the bubble's RIGHT edge, not its left edge, proves correct alignment.
+  const rightEdge=owner.x+owner.width
+  assert.ok(Math.abs(rightEdge-(transcript.x+transcript.width))<55,
+   'Owner bubble right edge is detached from the conversation column at '+width)
   const font=await page.locator('[data-role="assistant"] .chat-message-text').first().evaluate(el=>Number.parseFloat(getComputedStyle(el).fontSize))
   assert.ok(font>=15,'Assistant font is too small at '+width+': '+font)
   const overflow=await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth)
