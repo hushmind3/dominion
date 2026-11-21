@@ -53,6 +53,66 @@ pub(crate) fn system_prompt_preview(
     room_context::preview(state, room_id, agent_id, tools)
 }
 
+/// Read-only preview of the same private-chat prompt compiler used by
+/// ordinary turns. No fake inference, history writes, or remote model calls.
+/// Retrieved context is a separate message, not part of the system role.
+pub(crate) fn private_system_prompt_preview(
+    state: &crate::state::AppState,
+    session_id: Option<&str>,
+    agent_id: Option<&str>,
+    input: &str,
+    tools_enabled: bool,
+    korean_reasoning: bool,
+) -> Result<Value, String> {
+    if let Some(id) = session_id {
+        let session = state.store.get("session", id)
+            .ok_or("선택한 대화를 찾을 수 없습니다.")?;
+        if session["roomId"].is_string() {
+            return Err("그룹 대화의 시스템 프롬프트는 그룹 화면에서 확인하세요.".into());
+        }
+    }
+    let agent = match agent_id {
+        Some(id) => Some(state.store.get("agent", id)
+            .ok_or("선택한 에이전트를 찾을 수 없습니다.")?),
+        None => None,
+    };
+    let request = TurnRequest::from_value(&serde_json::json!({
+        "input":input,
+        "sessionId":session_id,
+        "agentId":agent_id,
+        "toolsEnabled":tools_enabled,
+        "toolsExecutionEnabled":tools_enabled,
+        "reasoningLanguage":if korean_reasoning{"ko"}else{"original"}
+    }))?;
+    let session = session_id.unwrap_or("prompt-preview:private");
+    let compiled = context::system_prompt_with_manifest_at(
+        state,&request,session,&request.input,None,None
+    );
+    let owner = state.store.get("assistant_settings","global")
+        .unwrap_or_else(||serde_json::json!({"id":"global","instructions":"","enabled":true}));
+    let prompt_tokens = room_context::estimate(&compiled.prompt);
+    let context_tokens = room_context::estimate(&compiled.dynamic_context);
+    Ok(serde_json::json!({
+        "systemPrompt":compiled.prompt,
+        "dynamicContext":compiled.dynamic_context,
+        "systemChars":compiled.prompt.chars().count(),
+        "systemTokensEstimated":prompt_tokens,
+        "contextChars":compiled.dynamic_context.chars().count(),
+        "contextTokensEstimated":context_tokens,
+        "agentId":agent_id,
+        "agentName":agent.as_ref().and_then(|a|a["name"].as_str()),
+        "agentInstructions":agent.as_ref().and_then(|a|a["systemPrompt"].as_str()).unwrap_or(""),
+        "ownerInstructions":owner["instructions"],
+        "ownerEnabled":owner["enabled"] != false,
+        "sessionId":session_id,
+        "sampleInput":request.input,
+        "toolsEnabled":tools_enabled,
+        "reasoningLanguage":if korean_reasoning{"ko"}else{"original"},
+        "scope":"private-chat",
+        "note":"현재 코드를 통한 프롬프트 조립 미리보기입니다. 실행 때 선택되는 도구 스키마, 시스템 override, 실제 이전 대화와 캐시 전송 상태는 포함하지 않습니다."
+    }))
+}
+
 /// Clean up old durable approvals at startup and in the maintenance loop.
 pub(crate) fn expire_stale_approvals(state: &crate::state::AppState) -> usize {
     approval::expire_stale_approvals(state)

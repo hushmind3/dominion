@@ -1,7 +1,39 @@
 use crate::state::AppState;
-use axum::{extract::{State},http::StatusCode,response::{IntoResponse,Response},Json};
+use axum::{extract::{Query,State},http::StatusCode,response::{IntoResponse,Response},Json};
+use std::collections::HashMap;
 use serde_json::{json,Value};
 use super::response::error;
+
+/// Owner-only UI preview; this does not call a model or persist a turn.
+pub async fn system_prompt_preview(
+    State(state): State<AppState>,
+    Query(query): Query<HashMap<String,String>>,
+) -> Response {
+    let raw=query.get("input").map(String::as_str).unwrap_or("일반적인 질문");
+    if raw.trim().is_empty() || raw.chars().count()>512 {
+        return error(StatusCode::BAD_REQUEST,"미리보기 질문은 1~512자여야 합니다.");
+    }
+    let bool_param=|key:&str, default:bool|->Result<bool,&'static str>{
+        match query.get(key).map(String::as_str) {
+            None=>Ok(default),Some("true")=>Ok(true),Some("false")=>Ok(false),
+            _=>Err("미리보기 옵션 값은 true/false여야 합니다.")
+        }
+    };
+    let tools=match bool_param("toolsEnabled",true){
+        Ok(value)=>value,Err(message)=>return error(StatusCode::BAD_REQUEST,message)
+    };
+    let ko=match bool_param("koreanReasoning",true){
+        Ok(value)=>value,Err(message)=>return error(StatusCode::BAD_REQUEST,message)
+    };
+    let agent=query.get("agentId").map(String::as_str).filter(|s|!s.is_empty());
+    let session=query.get("sessionId").map(String::as_str).filter(|s|!s.is_empty());
+    match crate::engine::chat::private_system_prompt_preview(
+        &state,session,agent,raw,tools,ko
+    ){
+        Ok(value)=>Json(value).into_response(),
+        Err(message)=>error(StatusCode::BAD_REQUEST,&message)
+    }
+}
 
 pub async fn assistant_settings(State(state): State<AppState>) -> Json<Value> {
     Json(
