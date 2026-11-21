@@ -58,7 +58,7 @@ export function BackupPanel() {
     const result = await post<{ok: boolean; bytes: number; path: string; attachmentsIncluded?:boolean; currentAttachmentCount?:number; remote?: {attempted?: boolean; uploaded?: boolean; verified?: boolean; error?: string}}>('/api/system/backup', {})
     await reload()
     if(result.attachmentsIncluded===false && (result.currentAttachmentCount??0)>0){
-      setAttachmentWarning(t('ops.backup.attachmentsCurrentCount',{count:result.currentAttachmentCount}))
+      setAttachmentWarning(t('ops.backup.attachmentsCurrentCount',{count:result.currentAttachmentCount??0}))
     }
     const remote = result.remote
     setMessage(
