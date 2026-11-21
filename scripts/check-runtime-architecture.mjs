@@ -33,9 +33,9 @@ assert.ok(!existsSync(path.join(root,'src/engine')),
 has('crates/dominion-agent-runtime/src/contracts.rs',
   ['pub trait AgentLoop','pub struct AgentPorts','dispatch_fence']);
 has('crates/dominion-agent-runtime/src/run_contract.rs',
-  ['pub enum RunSurface','pub enum RunPhase','pub struct RoomEvent']);
+  ['pub enum RunSurface','pub enum RunPhase','pub struct RoomEvent','pub struct RunEvent']);
 has('crates/dominion-agent-algorithms/src/agent_loop.rs',
-  ['impl AgentLoop for ReActLoop','runtime::dispatch_fence']);
+  ['impl AgentLoop for ReActLoop','runtime::dispatch_model_turn']);
 has('crates/dominion-agent-sdk/src/lib.rs',['pub use dominion_agent_algorithms']);
 has('src/host/execution/native_agent.rs',['AgentLoop','agent_loop.execute(']);
 has('src/conversation/chat/runtime/turn.rs',
