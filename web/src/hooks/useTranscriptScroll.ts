@@ -25,8 +25,9 @@ export function useTranscriptScroll(scope: string | undefined, revision: string,
  function onScroll() {
   const el = scrollRef.current
   if (!el) return
-  following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100
-  if (following.current) onMore?.(false)
+  const moreBelow = el.scrollHeight - el.scrollTop - el.clientHeight >= 100
+  following.current = !moreBelow
+  onMore?.(moreBelow)
  }
 
  function jumpDown() {
