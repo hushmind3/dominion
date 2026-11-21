@@ -1945,19 +1945,27 @@ async fn load_lmstudio(
         guard.logs.clear();
     }
 
-    let running = std::process::Command::new(&lms)
-        .args(["server", "status", "--json"])
-        .output()
+    let mut status_command = Command::new(&lms);
+    status_command.args(["server", "status", "--json"]);
+    let running = crate::integrations::local_tools::run_command(
+        &mut status_command,
+        Duration::from_secs(10),
+    )
+        .await
         .ok()
         .filter(|output| output.status.success())
         .and_then(|output| serde_json::from_slice::<Value>(&output.stdout).ok())
         .and_then(|value| value["running"].as_bool())
         .unwrap_or(false);
     if !running {
-        let output = std::process::Command::new(&lms)
-            .args(["server", "start", "--port", "1234"])
-            .output()
-            .map_err(|error| format!("LM Studio 서버 시작 실패: {error}"))?;
+        let mut start_command = Command::new(&lms);
+        start_command.args(["server", "start", "--port", "1234"]);
+        let output = crate::integrations::local_tools::run_command(
+            &mut start_command,
+            Duration::from_secs(60),
+        )
+        .await
+        .map_err(|error| format!("LM Studio 서버 시작 실패: {error}"))?;
         if !output.status.success() {
             return Err(format!(
                 "LM Studio 서버 시작 실패: {}",
@@ -1966,8 +1974,13 @@ async fn load_lmstudio(
         }
     }
 
-    let running_models = Command::new(&lms)
-        .args(["ps", "--json"]).output().await
+    let mut list_command = Command::new(&lms);
+    list_command.args(["ps", "--json"]);
+    let running_models = crate::integrations::local_tools::run_command(
+        &mut list_command,
+        Duration::from_secs(20),
+    )
+        .await
         .ok().filter(|output| output.status.success())
         .and_then(|output| serde_json::from_slice::<Vec<Value>>(&output.stdout).ok())
         .unwrap_or_default();
@@ -1980,11 +1993,24 @@ async fn load_lmstudio(
         None => {
             let identifier = format!("dominion-{}", uuid::Uuid::new_v4());
             runtime().lock().unwrap().model_key = identifier.clone();
-            let output = Command::new(&lms)
-                .args(["load", key, "--identifier", &identifier, "--gpu", "max",
-                       "--context-length", &context.clamp(512, 32768).to_string(), "--yes"])
-                .output().await
-                .map_err(|error| format!("LM Studio 모델 로드 실패: {error}"))?;
+            let mut load_command = Command::new(&lms);
+            load_command.args([
+                "load",
+                key,
+                "--identifier",
+                &identifier,
+                "--gpu",
+                "max",
+                "--context-length",
+                &context.clamp(512, 32768).to_string(),
+                "--yes",
+            ]);
+            let output = crate::integrations::local_tools::run_command(
+                &mut load_command,
+                Duration::from_secs(1800),
+            )
+            .await
+            .map_err(|error| format!("LM Studio 모델 로드 실패: {error}"))?;
             if !output.status.success() {
                 return Err(format!("LM Studio 모델 로드 실패: {}", String::from_utf8_lossy(&output.stderr).trim()));
             }
