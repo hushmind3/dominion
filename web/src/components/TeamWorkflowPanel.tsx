@@ -1,5 +1,5 @@
 import {useMemo,useState} from 'react'
-import {ArrowRight,Check,ChevronDown,ChevronRight,GitBranch,Layers3,RefreshCw,ShieldCheck} from 'lucide-react'
+import {Check,ChevronDown,ChevronRight,GitBranch,Layers3,RefreshCw,ShieldCheck} from 'lucide-react'
 import {get,post} from '../api'
 import {useLocale} from '../i18n'
 import {Panel,useRemote} from './UI'
@@ -138,10 +138,7 @@ export function TeamWorkflowPanel({jobs,filterSessionId}:{jobs?:Job[];filterSess
       <span className={'shrink-0 self-start rounded border px-2 py-1 text-[10px] '+stateClass(team.status)}>{team.status}</span>
      </button>
      {open&&<div className="mt-3 space-y-2">
-      {plan.map((step,index)=><div key={step.id}>
-       {index>0&&<div className="flex items-center justify-center py-0.5 text-[#9C9388]"><ArrowRight size={13} className="rotate-90"/></div>}
-       <WorkerStep step={step} job={jobMap.get(step.jobId)} ids={statuses} onCreated={refresh}/>
-      </div>)}
+      {plan.map(step=><WorkerStep key={step.id} step={step} job={jobMap.get(step.jobId)} ids={statuses} onCreated={refresh}/>)}
       <p className="mt-2 text-[10px] text-[#8A8176]">{en?'Edges show persisted prerequisites. A completed step is not proof that an unreviewed patch was integrated.':'선행 조건은 실제 저장된 의존성입니다. 단계 완료만으로 미검토 패치가 병합된 것은 아닙니다.'}</p>
       {team.error&&<p role="alert" className="text-[11px] text-rose-700">{team.error}</p>}
       <span className="block break-all font-mono text-[10px] text-[#A79C8E]">{team.id}</span>
