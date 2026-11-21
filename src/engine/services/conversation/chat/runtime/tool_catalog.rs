@@ -12,7 +12,9 @@ use super::*;
 fn no_tools_required(request:&TurnRequest,session:&Value,acceptance:&Option<(String,Value)>)->bool{
     if !request.attachment_ids.is_empty() || acceptance.is_some()
         || session["roomId"].is_string() || session["teamUiOwnerJobId"].is_string()
-        || request.parent_task_id.is_some() || request.task_id.is_some(){
+        || request.parent_task_id.is_some() || request.task_id.is_some()
+        || request.system_override.as_ref().is_some_and(|s|!s.trim().is_empty()){
+
         return false;
     }
     let text=request.input.trim().trim_matches(|ch:char|
@@ -229,6 +231,41 @@ mod lightweight_tests{
             assert!(no_tools_required(&request(text),&session,&None),"{text}");
         }
     }
+    #[tokio::test]
+    async fn new_chat_greeting_is_zero_schema_before_mcp_enumeration_and_action_keeps_tools(){
+        let dir=std::env::temp_dir().join(format!("dominion-lightweight-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg=crate::config::Config{port:0,data_dir:dir.join("data"),
+            web_dir:dir.join("web"),workspace:dir.join("workspace")};
+        let state=crate::state::AppState::new(cfg.clone(),
+            crate::db::Store::open(&cfg.db_path()).unwrap(),
+            crate::vault::Vault::open(&cfg.key_path()));
+        let session=state.store.put("session",&json!({"id":"new-chat"})).unwrap();
+        state.store.put("execution",&json!({"id":"exec-new","status":"running"}));
+        let policy=crate::engine::turn_policy::TurnPolicy::new(&state,None,"exec-new");
+        let hello=request("안녕");
+        let light=prepare(&state,&hello,&session,"new-chat","exec-new",&None,&policy).await.unwrap();
+        let prompt=super::super::context::system_prompt_with_manifest_at(
+            &state,&hello,"new-chat",&hello.input,None,Some("exec-new"));
+        let tokens=super::super::room_context::estimate(&prompt.prompt);
+        assert!(light.definitions.is_empty(),"an ordinary greeting has no model-visible tool schemas");
+        assert!(light.discovery.is_empty(),"no MCP enumeration on a greeting");
+        eprintln!("SUB2_GREETING_MEASUREMENT old_schema_count=13 old_schema_tokens_est=1607 \
+            current_schema_count={} current_schema_tokens_est=0 system_prompt_tokens_est={} \
+            (model-independent estimator; no paid provider request)",light.definitions.len(),tokens);
+        let work=request("Read README.md and run tests");
+        let real=prepare(&state,&work,&session,"new-chat","exec-new",&None,&policy).await.unwrap();
+        assert!(real.definitions.iter().any(|tool|tool_name(tool)=="workspace_read"),
+            "explicit file work must retain real tool schemas");
+        assert!(real.definitions.iter().any(|tool|tool_name(tool)=="shell_exec"),
+            "explicit test work must retain the approved Rust executable port");
+        let mut blocked=request("https://example.org 읽어");
+        blocked.tools_enabled=false;
+        let no_tool=prepare(&state,&blocked,&session,"new-chat","exec-new",&None,&policy).await.unwrap();
+        assert!(no_tool.definitions.is_empty(),"disabled native tools stay disabled even for URLs");
+        drop(state);let _=std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn owner_work_sources_and_attached_or_room_requests_keep_tools(){
         let session=json!({"id":"chat-1"});
