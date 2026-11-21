@@ -169,13 +169,13 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     <label className="flex min-w-44 flex-1 flex-col gap-1 text-[11px] text-[#746A5F]">
      {en?'AI model':'사용할 AI 모델'}
      <select value={providerId} onChange={e=>setProviderId(e.target.value)}
-      className="h-9 rounded-lg border border-[#E7E0D5] bg-white px-3 text-[12px]">
+      className="min-h-11 rounded-lg border border-[#E7E0D5] bg-white px-3 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2">
       <option value="">{en?'Automatic selection':'자동 선택'}</option>
       {providers.filter(p=>p.enabled).map(p=><option key={p.id} value={p.id}>{p.name}{p.model?` · ${p.model}`:''}</option>)}
      </select>
     </label>
     <button type="button" onClick={()=>void start()} disabled={busy||!instruction.trim()}
-     className="flex h-9 items-center gap-2 rounded-lg bg-[#AE5337] px-4 text-[12px] font-semibold text-white disabled:opacity-40">
+     className="flex min-h-11 items-center gap-2 rounded-lg bg-[#AE5337] px-4 text-[12px] font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40">
      <Play size={14}/>{busy?(en?'Please wait…':'처리 중…'):(en?'Start task':'작업 시작')}
     </button>
    </div>
@@ -184,13 +184,13 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     <div className="mt-3 grid gap-3 sm:grid-cols-2">
      <label className="grid gap-1" htmlFor="sdk-strategy">{en?'Execution strategy':'실행 전략'}
       <select id="sdk-strategy" value={algorithmId} onChange={e=>setAlgorithmId(e.target.value as 'standard-v1'|'focused-v1')}
-       className="h-9 w-full rounded-lg border border-[#E7E0D5] bg-white px-3 text-[12px]">
+       className="min-h-11 w-full rounded-lg border border-[#E7E0D5] bg-white px-3 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2">
        <option value="standard-v1">{en?'Standard · balanced':'기본 · 균형'}</option>
        <option value="focused-v1">{en?'Focused · compact context':'집중 · 압축 문맥'}</option>
       </select></label>
      <label className="grid gap-1" htmlFor="sdk-rounds">{en?'Maximum model rounds':'최대 모델 판단 회수'}
       <select id="sdk-rounds" value={maxRounds} onChange={e=>setMaxRounds(Number(e.target.value))}
-       className="h-9 w-full rounded-lg border border-[#E7E0D5] bg-white px-3 text-[12px]">
+       className="min-h-11 w-full rounded-lg border border-[#E7E0D5] bg-white px-3 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2">
        {[12,24,40,80].map(n=><option key={n} value={n}>{n}</option>)}
       </select></label>
     </div>
@@ -202,12 +202,12 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     </label>
     <input id="sdk-verify" value={verification} onChange={e=>setVerification(e.target.value)}
      maxLength={2048} placeholder="cargo test"
-     className="mt-1 h-9 w-full rounded-lg border border-[#E7E0D5] px-3 text-[12px]"/>
+     className="mt-1 min-h-11 w-full rounded-lg border border-[#E7E0D5] px-3 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2"/>
    </details>
    {runs.length>0&&<div className="flex min-w-0 flex-wrap items-end gap-2 rounded-lg bg-[#FAF7F1] p-2">
     <label htmlFor="sdk-history" className="grid min-w-0 flex-1 gap-1 text-[11px] text-[#746A5F]">
      {en?'Previous tasks':'이전 자동 작업'}
-     <select id="sdk-history" className="h-9 min-w-0 rounded-lg border border-[#E7E0D5] bg-white px-2 text-[12px]"
+     <select id="sdk-history" className="min-h-11 min-w-0 rounded-lg border border-[#E7E0D5] bg-white px-2 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2"
       value={run?.id||''} onChange={e=>{
        const item=runs.find(row=>row.id===e.target.value)
        if(item){setRun(item);setSteering('');setObservation('');setError('')}
@@ -215,7 +215,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
       {runs.map(item=><option key={item.id} value={item.id}>
        {item.status} · {item.instruction.slice(0,75)}</option>)}
      </select></label>
-    <button type="button" className="rounded-lg border border-[#E7E0D5] bg-white p-2"
+    <button type="button" className="flex size-11 items-center justify-center rounded-lg border border-[#E7E0D5] bg-white focus-visible:outline-2 focus-visible:outline-offset-2"
      aria-label={en?'Refresh task history':'작업 이력 새로고침'}
      onClick={()=>void reload()}><RefreshCw size={16}/></button>
    </div>}
@@ -300,11 +300,11 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
       className="mt-1 w-full rounded-lg border border-[#E7E0D5] p-2 text-[11px]" />
      <div className="mt-2 flex flex-wrap gap-2">
       <button type="button" disabled={busy||!observation.trim()} onClick={()=>void reconcile(true)}
-       className="rounded-lg border border-[#E7E0D5] px-3 py-2 text-[11px] disabled:opacity-40">
+       className="min-h-11 rounded-lg border border-[#E7E0D5] px-4 py-2 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40">
        {en?'Effect already applied':'변경이 적용됐음'}
       </button>
       <button type="button" disabled={busy||!observation.trim()} onClick={()=>void reconcile(false)}
-       className="rounded-lg border border-[#E7E0D5] px-3 py-2 text-[11px] disabled:opacity-40">
+       className="min-h-11 rounded-lg border border-[#E7E0D5] px-4 py-2 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40">
        {en?'Effect not applied':'변경이 적용되지 않았음'}
       </button>
      </div>
