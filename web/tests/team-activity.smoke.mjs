@@ -52,6 +52,11 @@ try{
     let response=[];
     if(path==='/api/activity/teams')response=data;
     if(path==='/api/status')response={jobs:0};
+    if(path==='/api/agents')response=[
+      {id:'lead',name:'Lead',providerId:'fixture',model:'fixture',enabled:true},
+      {id:'researcher',name:'Researcher',providerId:'fixture',model:'fixture',enabled:true},
+      {id:'builder',name:'Builder',providerId:'fixture',model:'fixture',enabled:true}
+    ];
     if(path==='/api/health')response={branch:'dominion-sub2',commit:'fixture'};
     if(path==='/api/events'){
       await route.fulfill({status:200,contentType:'text/event-stream',body:': smoke\n\n'});
@@ -74,6 +79,29 @@ try{
   assert.ok(await page.locator('small').filter({hasText:'Writer · 변경 승인 필요'}).first().isVisible());
   assert.equal(await page.getByRole('button',{name:'작업 재개'}).isDisabled(),true);
   assert.equal(await page.getByRole('button',{name:'팀 중단'}).isEnabled(),true);
+  // A draft survives navigation and reload without submitting a job.
+  await page.getByRole('button',{name:'팀 작업 시작',exact:true}).click();
+  const editor=page.getByPlaceholder('목표, 필요한 산출물, 성공 조건을 입력하세요.');
+  await editor.fill('동일한 기준으로 리포트를 작성하고 검증해 주세요');
+  await page.getByRole('checkbox').first().check();
+  await page.getByRole('button',{name:'팀 초안 이어쓰기',exact:true}).click();
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.getByRole('button',{name:'팀 초안 이어쓰기',exact:true}).waitFor({timeout:10000});
+  await page.getByRole('button',{name:'팀 초안 이어쓰기',exact:true}).click();
+  assert.equal(await editor.inputValue(),'동일한 기준으로 리포트를 작성하고 검증해 주세요');
+  assert.equal(await page.getByRole('checkbox').first().isChecked(),true);
+  // A previously valid Worker may have been deleted or disabled.
+  await page.evaluate(()=>sessionStorage.setItem('dominion.team.launch.draft.v1',
+    JSON.stringify({open:true,prompt:'review stale',leadId:'lead',
+      workerIds:['deleted-agent'],remoteId:''})));
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.getByText('현재 사용할 수 없는 Worker:',{exact:false}).waitFor({timeout:10000});
+  assert.equal(await page.getByRole('button',{name:'Lead 작업 시작'}).isDisabled(),true);
+  await page.getByRole('button',{name:'초안 지우기'}).click();
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.getByRole('button',{name:'팀 작업 시작',exact:true}).click();
+  assert.equal(await editor.inputValue(),'');
+  assert.equal(await page.getByRole('checkbox').first().isChecked(),false);
   const widths=await page.evaluate(()=>({screen:innerWidth,body:document.documentElement.scrollWidth}));
   assert.ok(widths.body<=widths.screen+2,
     'Team UI is horizontally clipped on a mobile viewport: '+JSON.stringify(widths));
