@@ -40,7 +40,10 @@ test('run timeline ignores earlier execution fetches and retains truncation warn
 })
 test('team DAG and external resumption are backed by persisted job identities',()=>{
  assert.match(jobs,/j\.input\?\.plan/)
- assert.match(jobs,/jobMap\.get\(step\.jobId\)/)
+ assert.match(jobs,/records\.get\(step\.jobId\)/)
+ assert.match(jobs,/team-steps/)
+ assert.match(jobs,/details\.value\.missing/)
+ assert.match(jobs,/Record not loaded|기록 미조회/)
  assert.match(jobs,/dependsOnJobIds/)
  assert.match(jobs,/\/'\+encodeURIComponent\(job\.id\)\+'\/resume-external'/)
  assert.match(jobs,/externalRunId/)

@@ -52,3 +52,16 @@ test('permission and extension policy events refresh only their owner controls',
  assert.ok(matchesRefreshTarget('/api/tools',extension.targets))
  assert.equal(matchesRefreshTarget('/api/policy',extension.targets),false)
 })
+
+test('worker changes refresh only their own Team detail snapshot',()=>{
+ const changed=classifyRefreshEvent({type:'record',kind:'job',record:{
+  id:'worker-1',kind:'prompt',input:{parentSessionId:'owner',teamJobId:'team:alpha'}
+ }})
+ assert.ok(matchesRefreshTarget('/api/jobs/team%3Aalpha/team-steps',changed.targets))
+ assert.equal(matchesRefreshTarget('/api/jobs/team%3Abeta/team-steps',changed.targets),false)
+ assert.ok(matchesRefreshTarget('/api/jobs?sessionId=owner',changed.targets))
+ const root=classifyRefreshEvent({type:'record',kind:'job',record:{
+  id:'team:alpha',kind:'team',input:{sessionId:'owner'}
+ }})
+ assert.ok(matchesRefreshTarget('/api/jobs/team%3Aalpha/team-steps',root.targets))
+})

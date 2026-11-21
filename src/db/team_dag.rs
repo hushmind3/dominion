@@ -22,10 +22,39 @@ impl Store {
         rows.extend(self.team_jobs(session_id,limit)?);
         rows.sort_by(|a,b|b["updatedAt"].as_str().cmp(&a["updatedAt"].as_str())
             .then_with(||a["id"].as_str().cmp(&b["id"].as_str())));
-        let mut seen=std::collections::HashSet::new();
-        rows.retain(|row|row["id"].as_str().is_some_and(|id|seen.insert(id.to_string())));
-        rows.truncate(limit);
-        Ok(rows)
+        // A busy session can have >128 workers. Preserve the newest Team
+        // roots in the bounded overview; opening a root reads its actual
+        // children by the frozen plan rather than guessing from this page.
+        let pinned=self.recent_team_roots(session_id,limit.min(8))?;
+        let mut seen=pinned.iter().filter_map(|row|row["id"].as_str()
+            .map(str::to_string)).collect::<std::collections::HashSet<_>>();
+        let mut extra=Vec::new();
+        for row in rows {
+            if row["id"].as_str().is_some_and(|id|seen.insert(id.to_string())) {
+                extra.push(row);
+            }
+        }
+        extra.truncate(limit.saturating_sub(pinned.len()));
+        let mut overview=pinned;
+        overview.extend(extra);
+        overview.sort_by(|a,b|b["updatedAt"].as_str().cmp(&a["updatedAt"].as_str())
+            .then_with(||a["id"].as_str().cmp(&b["id"].as_str())));
+        Ok(overview)
+    }
+    /// Keep newest native Team roots visible even when hundreds of worker
+    /// receipts are newer. Query only the owner's indexed Team rows.
+    fn recent_team_roots(&self,session_id:&str,limit:usize)->Result<Vec<Value>,String>{
+        if limit==0{return Ok(Vec::new());}
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='job' AND json_extract(data,'$.input.sessionId')=?1
+               AND json_extract(data,'$.kind')='team'
+             ORDER BY json_extract(data,'$.queuedAt') DESC,id DESC LIMIT ?2"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map(params![session_id,limit.min(8) as i64],
+            record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
     /// Only jobs delegated by this parent; never decode every unrelated job.
     pub fn team_jobs(&self,parent_session_id:&str,limit:usize)->Result<Vec<Value>,String>{
@@ -94,5 +123,32 @@ mod tests {
              ORDER BY updated_at DESC,id ASC LIMIT 128",
             [],|row|row.get(3)).unwrap();
         assert!(plan.contains("idx_job_input_session"),"{plan}");
+    }
+
+    #[test]
+    fn recent_team_root_survives_worker_history_truncation(){
+        let store=Store::open(Path::new(":memory:")).unwrap();
+        store.put("job",&json!({"id":"team-old","kind":"team","status":"needs_review",
+            "queuedAt":"2026-11-20T00:00:00Z",
+            "input":{"sessionId":"owner","plan":[]}})).unwrap();
+        for index in 0..160{
+            store.put("job",&json!({"id":format!("worker-{index:03}"),
+                "kind":"prompt","status":"completed",
+                "queuedAt":"2026-11-21T00:00:00Z",
+                "input":{"sessionId":format!("private-{index}"),
+                    "parentSessionId":"owner","teamJobId":"team-old"}})).unwrap();
+        }
+        let result=store.session_job_overview("owner",128).unwrap();
+        assert_eq!(result.len(),128);
+        assert!(result.iter().any(|j|j["id"]=="team-old"),
+            "the Team root must remain reachable after the last 128 workers");
+        assert!(!result.iter().any(|j|j["id"]=="foreign"));
+        let query:String=store.conn.lock().unwrap().query_row(
+            "EXPLAIN QUERY PLAN SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='job' AND json_extract(data,'$.input.sessionId')='owner'
+               AND json_extract(data,'$.kind')='team'
+             ORDER BY json_extract(data,'$.queuedAt') DESC,id DESC LIMIT 8",
+            [],|row|row.get(3)).unwrap();
+        assert!(query.contains("idx_team_owner_roots"),"{query}");
     }
 }

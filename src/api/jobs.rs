@@ -17,6 +17,41 @@ pub async fn list(State(state):State<AppState>,Query(query):Query<HashMap<String
     }
     Json(json!(state.store.all("job"))).into_response()
 }
+/// Read the exact frozen Team graph, not only the most recent job overview.
+/// No worker from another team/session may be presented as this Team's proof.
+pub async fn team_steps(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    let Some(team)=state.store.get("job",&id)else{
+        return error(StatusCode::NOT_FOUND,"Team 작업을 찾지 못했습니다.");
+    };
+    if team["kind"]!="team"{
+        return error(StatusCode::BAD_REQUEST,"Team 작업이 아닙니다.");
+    }
+    let Some(owner)=team["input"]["sessionId"].as_str().filter(|s|!s.is_empty())else{
+        return error(StatusCode::CONFLICT,"Team 소유 세션이 없습니다.");
+    };
+    let Some(plan)=team["input"]["plan"].as_array().filter(|steps|steps.len()<=8)else{
+        return error(StatusCode::CONFLICT,"Team 작업 계획이 손상되었습니다.");
+    };
+    let mut jobs=Vec::with_capacity(plan.len());
+    let mut missing=Vec::new();
+    let mut seen=std::collections::HashSet::new();
+    for step in plan{
+        let Some(child_id)=step["jobId"].as_str()else{
+            return error(StatusCode::CONFLICT,"Team Worker ID가 없습니다.");
+        };
+        if !seen.insert(child_id){
+            return error(StatusCode::CONFLICT,"Team Worker ID가 중복되었습니다.");
+        }
+        let candidate=state.store.get("job",child_id).filter(|child|
+            child["kind"]=="prompt"
+            && child["input"]["teamJobId"]==id
+            && child["input"]["parentSessionId"]==owner
+            && child["input"]["teamStepId"]==step["id"]);
+        if let Some(child)=candidate {jobs.push(child);}
+        else{missing.push(child_id.to_string());}
+    }
+    Json(json!({"teamId":id,"jobs":jobs,"missing":missing})).into_response()
+}
 pub async fn one(State(state):State<AppState>,Path(id):Path<String>)->Response{match state.store.get("job",&id){Some(j)=>Json(j).into_response(),None=>error(StatusCode::NOT_FOUND,"작업을 찾을 수 없습니다.")}}
 /// Client requests describe work, never mutable runtime status or evidence.
 pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Response{
@@ -167,6 +202,42 @@ mod external_resume_ui_tests {
 #[cfg(test)]
 mod scoped_listing_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn team_details_restores_older_steps_and_rejects_cross_team_records(){
+        let root=std::env::temp_dir().join(format!("dominion-team-details-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=crate::config::Config{port:0,data_dir:root.clone(),
+            web_dir:root.join("web"),workspace:root.clone()};
+        let state=AppState::new(config.clone(),crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        state.store.put("job",&json!({"id":"team","kind":"team","status":"needs_review",
+            "input":{"sessionId":"owner","plan":[
+                {"id":"read","jobId":"child"},
+                {"id":"write","jobId":"foreign-child"},
+                {"id":"inspect","jobId":"missing-child"}]}})).unwrap();
+        state.store.put("job",&json!({"id":"child","kind":"prompt","status":"completed",
+            "input":{"teamJobId":"team","parentSessionId":"owner","teamStepId":"read"},
+            "result":{"messageId":"old-answer"}})).unwrap();
+        state.store.put("job",&json!({"id":"foreign-child","kind":"prompt","status":"completed",
+            "input":{"teamJobId":"foreign","parentSessionId":"other","teamStepId":"write"},
+            "result":{"messageId":"secret"}})).unwrap();
+        let result=team_steps(State(state.clone()),Path("team".into())).await;
+        assert_eq!(result.status(),StatusCode::OK);
+        let bytes=axum::body::to_bytes(result.into_body(),1024*1024).await.unwrap();
+        let data:Value=serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(data["jobs"].as_array().unwrap().len(),1);
+        assert_eq!(data["jobs"][0]["id"],"child");
+        assert_eq!(data["jobs"][0]["result"]["messageId"],"old-answer");
+        assert_eq!(data["missing"],json!(["foreign-child","missing-child"]));
+        assert!(!data.to_string().contains("secret"));
+        let wrong=team_steps(State(state.clone()),Path("child".into())).await;
+        assert_eq!(wrong.status(),StatusCode::BAD_REQUEST);
+        let missing=team_steps(State(state.clone()),Path("not-here".into())).await;
+        assert_eq!(missing.status(),StatusCode::NOT_FOUND);
+        drop(state);
+        let _=std::fs::remove_dir_all(root);
+    }
     #[tokio::test]
     async fn scoped_listing_retains_team_roots_children_and_legacy_unfiltered_api(){
         let root=std::env::temp_dir().join(format!("dominion-jobs-scoped-{}",uuid::Uuid::new_v4()));

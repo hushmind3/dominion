@@ -233,6 +233,10 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_job_input_session
                  ON records(json_extract(data,'$.input.sessionId'), updated_at DESC)
                  WHERE kind='job';
+             CREATE INDEX IF NOT EXISTS idx_team_owner_roots
+                 ON records(json_extract(data,'$.input.sessionId'),
+                            json_extract(data,'$.queuedAt') DESC)
+                 WHERE kind='job' AND json_extract(data,'$.kind')='team';
              CREATE INDEX IF NOT EXISTS idx_records_kind_updated
                  ON records(kind, updated_at DESC);
              CREATE INDEX IF NOT EXISTS idx_operation_run

@@ -151,6 +151,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/remote/jobs/:id/finish",post(remote_workers::finish))
         .route("/api/jobs",get(jobs::list).post(jobs::create))
         .route("/api/jobs/:id",get(jobs::one))
+        .route("/api/jobs/:id/team-steps",get(jobs::team_steps))
         .route("/api/jobs/:id/cancel",post(jobs::cancel))
         .route("/api/jobs/:id/steer",post(jobs::steer))
         .route("/api/jobs/:id/resume-external",post(jobs::resume_external))

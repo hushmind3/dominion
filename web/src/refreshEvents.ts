@@ -31,7 +31,15 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
    case 'provider':add('/api/providers');break
    case 'policy':add('/api/policy');break
    case 'extension_policy':add('/api/extensions/runtime','/api/tools');break
-   case 'job':add('/api/jobs');if(id)add('/api/jobs/'+encoded(id));break
+   case 'job':
+    add('/api/jobs')
+    if(id)add('/api/jobs/'+encoded(id))
+    // Native Team views subscribe to their frozen DAG rather than the
+    // bounded session overview. Only the affected Team is invalidated.
+    const teamId=field(input,'teamJobId')||
+     (field(row,'kind')==='team'?id:undefined)
+    if(teamId)add('/api/jobs/'+encoded(teamId)+'/team-steps')
+    break
    case 'execution':add('/api/executions');break
    case 'execution_operation':add('/api/executions');break
    case 'approval':add('/api/approvals');break
