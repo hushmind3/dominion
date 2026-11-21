@@ -280,7 +280,7 @@ try{
  const team=page.locator('[aria-label="작업 팀"]')
  // Deliberately hold an old empty Team list while the user creates a new run.
  holdNextTeamRead=true
- await team.getByRole('button',{name:'새로고침'}).click()
+ await team.getByRole('button',{name:'새로고침',exact:true}).click()
  for(let n=0;n<80&&!releaseHeldTeamRead;n++)await sleep(50)
  assert.ok(releaseHeldTeamRead,'Expected a held Team history request')
  await team.getByRole('button',{name:'팀 만들기'}).click()

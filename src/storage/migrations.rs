@@ -18,10 +18,10 @@ pub fn run(state: &AppState) -> Result<(), String> {
 /// dead attempt terminal is what lets a later retry prove it is resuming an
 /// interrupted run instead of racing a live one.
 fn interrupted_executions(state: &AppState) -> Result<(), String> {
-    for mut execution in state.store.try_all("execution")? {
-        if execution["status"].as_str() != Some("running") {
-            continue;
-        }
+    // Startup recovery only needs unsettled rows. The product can contain
+    // years of completed executions and tool receipts; their JSON must not
+    // be deserialized on every restart.
+    for mut execution in state.store.active_executions_indexed()? {
         execution["status"] = json!("interrupted");
         execution["phase"] = json!("interrupted");
         execution["phaseUpdatedAt"] = json!(chrono::Utc::now().to_rfc3339());
@@ -33,10 +33,7 @@ fn interrupted_executions(state: &AppState) -> Result<(), String> {
             .put("execution", &execution)
             .ok_or("Cannot recover an interrupted execution")?;
     }
-    for mut operation in state.store.try_all("execution_operation")? {
-        if operation["status"].as_str() != Some("running") {
-            continue;
-        }
+    for mut operation in state.store.running_execution_operations()? {
         operation["status"] = json!("interrupted");
         operation["outcomeUnknown"] = json!(true);
         operation["phase"] = json!("interrupted");
@@ -232,7 +229,7 @@ fn collection_names(state: &AppState) -> Result<(), String> {
     Ok(())
 }
 fn interrupted_approvals(state: &AppState) -> Result<(), String> {
-    for mut approval in state.store.all("approval") {
+    for mut approval in state.store.unresolved_approvals()? {
         if approval["status"] != "pending" {
             continue;
         }
@@ -289,6 +286,42 @@ mod tests {
         );
         crate::test_support::cleanup_dir(dir);
     }
+    #[test]
+    fn startup_recovery_only_interrupts_live_records_and_preserves_history() {
+        let (state,dir)=state();
+        for index in 0..96 {
+            state.store.put("execution",&json!({
+                "id":format!("historical-execution-{index}"),
+                "status":"completed","phase":"completed","taskOutcome":"success",
+                "answer":"IMMUTABLE HISTORICAL OUTPUT"
+            })).unwrap();
+            state.store.put("execution_operation",&json!({
+                "id":format!("historical-op-{index}"),"status":"completed",
+                "outcomeUnknown":false,"result":{"finished":true}
+            })).unwrap();
+        }
+        state.store.put("execution",&json!({"id":"active-run","status":"running",
+            "phase":"running","taskId":"one-task"})).unwrap();
+        state.store.put("execution_operation",&json!({"id":"active-op",
+            "runId":"active-run","status":"running","outcomeUnknown":false})).unwrap();
+        state.store.put("approval",&json!({"id":"live-approval","status":"pending"})).unwrap();
+        state.store.put("approval",&json!({"id":"past-approval","status":"approved"})).unwrap();
+        assert_eq!(state.store.active_executions_indexed().unwrap().len(),1);
+        assert_eq!(state.store.running_execution_operations().unwrap().len(),1);
+        run(&state).unwrap();
+        assert_eq!(state.store.get("execution","active-run").unwrap()["status"],"interrupted");
+        assert_eq!(state.store.get("execution_operation","active-op").unwrap()["status"],"interrupted");
+        assert_eq!(state.store.get("execution_operation","active-op").unwrap()["outcomeUnknown"],true);
+        assert_eq!(state.store.get("approval","live-approval").unwrap()["status"],"interrupted");
+        assert_eq!(state.store.get("approval","past-approval").unwrap()["status"],"approved");
+        assert_eq!(state.store.get("execution","historical-execution-0").unwrap()["taskOutcome"],"success");
+        assert_eq!(state.store.get("execution_operation","historical-op-95").unwrap()["result"]["finished"],true);
+        run(&state).unwrap();
+        assert_eq!(state.store.get("execution_operation","active-op").unwrap()["outcomeUnknown"],true,
+            "repeated startup must never auto-clear an uncertain host effect");
+        crate::test_support::cleanup_dir(dir);
+    }
+
     #[test]
     fn provider_migration_retains_existing_vault_value_and_is_idempotent() {
         let (state, dir) = state();

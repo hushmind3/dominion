@@ -636,6 +636,26 @@ mod tests{
         crate::test_support::cleanup_dir(root);
     }
     #[tokio::test]
+    async fn missing_approval_decision_is_rejected_without_denying_pending_work(){
+        let (state,root)=temporary_state();
+        state.store.put("approval",&json!({"id":"explicit-decision",
+            "status":"pending","tool":"workspace_write"})).unwrap();
+        for invalid in [json!({"id":"explicit-decision"}),
+            json!({"id":"explicit-decision","allow":"false"}),
+            json!({"id":"explicit-decision","allow":null})] {
+            let response=approvals::resolve_approval(
+                State(state.clone()),Json(invalid)).await;
+            assert_eq!(response.status(),StatusCode::BAD_REQUEST);
+            assert_eq!(state.store.get("approval","explicit-decision").unwrap()["status"],
+                "pending","malformed input must not settle the owner decision");
+        }
+        let response=approvals::resolve_approval(
+            State(state.clone()),Json(json!({"id":"explicit-decision","allow":false}))).await;
+        assert_eq!(response.status(),StatusCode::OK);
+        assert_eq!(state.store.get("approval","explicit-decision").unwrap()["status"],"denied");
+        crate::test_support::cleanup_dir(root);
+    }
+    #[tokio::test]
     async fn main_ui_approval_is_bound_to_the_actual_pending_native_tool_call(){
         let (state,root)=temporary_state();
         state.store.put("job",&json!({"id":"sdk-job","kind":"prompt",
