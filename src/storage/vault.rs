@@ -43,13 +43,21 @@ fn read_key(path: &Path) -> Option<[u8; KEY_LEN]> {
 }
 
 fn write_key(path: &Path, key: &[u8; KEY_LEN]) -> std::io::Result<()> {
-    let mut file = fs::File::create(path)?;
-    file.write_all(key)?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
     }
+    file.write_all(key)?;
+    file.sync_all()?;
     Ok(())
 }
 
