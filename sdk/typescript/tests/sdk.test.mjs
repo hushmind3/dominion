@@ -123,6 +123,33 @@ test('native run controls share the real Rust autonomous UI job routes',async()=
   assert.deepEqual(JSON.parse(calls[7].init.body),{applied:false,details:'Workspace checked'});
   assert.ok(calls.every(call=>call.init.headers['X-Dominion-Token']==='owner-token'));
 });
+test('native event and tool receipt pages preserve run identity and bounded cursors',async()=>{
+  const calls=[];
+  const sdk=new Dominion({adminToken:'owner-token',fetch:async(url,init)=>{
+    calls.push({url:new URL(url),init});
+    return reply({events:[],receipts:[],total:0,from:0,to:0,nextBefore:null});
+  }});
+  await sdk.nativeRuns.events('native/1',80,20);
+  await sdk.nativeRuns.receipts('native/1',50,40);
+  await sdk.nativeRuns.events('native/1');
+  assert.deepEqual(calls.map(row=>row.url.pathname),[
+    '/api/sdk/runs/native%2F1/events',
+    '/api/sdk/runs/native%2F1/receipts',
+    '/api/sdk/runs/native%2F1/events'
+  ]);
+  assert.equal(calls[0].url.searchParams.get('before'),'80');
+  assert.equal(calls[0].url.searchParams.get('limit'),'20');
+  assert.equal(calls[1].url.searchParams.get('before'),'50');
+  assert.equal(calls[1].url.searchParams.get('limit'),'40');
+  assert.equal(calls[2].url.searchParams.has('before'),false);
+  assert.equal(calls[2].url.searchParams.get('limit'),'40');
+  assert.ok(calls.every(row=>row.init.method==='GET'&&
+    row.init.headers['X-Dominion-Token']==='owner-token'));
+  assert.throws(()=>sdk.nativeRuns.events('x',-1),/non-negative safe integer/);
+  assert.throws(()=>sdk.nativeRuns.receipts('x',0,41),/limit must be between 1 and 40/);
+  assert.equal(calls.length,3,'Invalid pages must never reach the server');
+});
+
 test('offline replay and paired cost comparison use exact Rust read-only endpoints',async()=>{
   const calls=[];
   const sdk=new Dominion({adminToken:'owner',fetch:async(url,init)=>{
