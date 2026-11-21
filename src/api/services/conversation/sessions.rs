@@ -28,6 +28,23 @@ pub async fn get_session(State(state): State<AppState>, Path(id): Path<String>) 
     }
 }
 
+fn private_transcript_has_pending_work(state: &AppState, id: &str) -> bool {
+    state.store.all("execution").iter().any(|run| {
+            run["sessionId"].as_str() == Some(id) && run["status"] == "running"
+        })
+        || state.store.all("job").iter().any(|job| {
+            matches!(job["status"].as_str(), Some("queued" | "running"))
+                && ["/sessionId", "/input/sessionId", "/input/parentSessionId",
+                    "/goalState/sessionId", "/roomState/sessionId",
+                    "/workflowState/sessionId"].iter().any(|path| {
+                    job.pointer(path).and_then(Value::as_str) == Some(id)
+                })
+        })
+        || state.store.all("managed_team").iter().any(|team| {
+            team["leadSessionId"] == id && team["status"] == "running"
+        })
+}
+
 pub async fn delete_session(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let Some(session) = state.store.get("session", &id) else {
         return error(StatusCode::NOT_FOUND, "세션을 찾을 수 없습니다.");
@@ -48,20 +65,7 @@ pub async fn delete_session(State(state): State<AppState>, Path(id): Path<String
     let Some(_lease) = engine::lease::LeaseGuard::acquire(&state, &id) else {
         return error(StatusCode::CONFLICT, "다른 엔진에서 사용 중인 대화입니다.");
     };
-    let running = state.store.all("execution").iter().any(|run| {
-            run["sessionId"].as_str() == Some(id.as_str()) && run["status"] == "running"
-        })
-        || state.store.all("job").iter().any(|job| {
-            matches!(job["status"].as_str(), Some("queued" | "running"))
-                && ["/sessionId", "/input/sessionId", "/input/parentSessionId",
-                    "/goalState/sessionId", "/roomState/sessionId",
-                    "/workflowState/sessionId"].iter().any(|path| {
-                    job.pointer(path).and_then(Value::as_str) == Some(id.as_str())
-                })
-        })
-        || state.store.all("managed_team").iter().any(|team| {
-            team["leadSessionId"] == id && team["status"] == "running"
-        });
+    let running = private_transcript_has_pending_work(&state, &id);
     if running {
         return error(StatusCode::CONFLICT, "실행 중인 대화입니다. 중지 완료 후 삭제하세요.");
     }
@@ -115,13 +119,33 @@ pub async fn rename_session(
     Json(saved).into_response()
 }
 
-pub async fn clear_session(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
+pub async fn clear_session(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let Some(session) = state.store.get("session", &id) else {
+        return error(StatusCode::NOT_FOUND, "대화 세션을 찾을 수 없습니다.");
+    };
+    if !session["roomId"].is_null() || !session["channelContext"].is_null()
+        || session["kind"] == "room_worker" {
+        return error(StatusCode::CONFLICT, "그룹 또는 외부 채널은 해당 대화 화면에서 초기화하세요.");
+    }
+    if !state.begin_session(&id) {
+        return error(StatusCode::CONFLICT, "실행 중인 대화는 완료 후 초기화하세요.");
+    }
+    let _guard = state.session_guard(&id);
+    let Some(_lease) = engine::lease::LeaseGuard::acquire(&state,&id) else {
+        return error(StatusCode::CONFLICT, "다른 엔진에서 실행 중인 대화입니다.");
+    };
+    if private_transcript_has_pending_work(&state,&id) {
+        return error(StatusCode::CONFLICT, "진행 중인 작업을 완료하거나 중지한 뒤 초기화하세요.");
+    }
+    // Clearing the visible transcript must not leave hidden attachment bytes
+    // that can no longer be reached through any message.
+    if let Err(message) = engine::attachments::purge_session(&state,&id) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR,&message);
+    }
     state.store.clear_messages(&id);
     state.store.audit("chat.session_cleared",json!({"sessionId":id}));
-    state
-        .bus
-        .emit(json!({ "type": "record", "kind": "session", "id": id }));
-    Json(json!({ "ok": true }))
+    state.bus.emit(json!({ "type": "record", "kind": "session", "id": id }));
+    Json(json!({ "ok": true })).into_response()
 }
 
 /// Forked transcripts get independent immutable attachment records and bytes.
