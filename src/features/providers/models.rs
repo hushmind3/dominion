@@ -2096,7 +2096,10 @@ async fn catalog_filtered(
     if !response.status().is_success() {
         return Err(format!("Hugging Face HTTP {}", response.status()));
     }
-    let items: Vec<Value> = response.json().await.map_err(|error| error.to_string())?;
+    let items: Vec<Value> = serde_json::from_value(
+        crate::integrations::network::read_bounded_json(
+            response,8*1024*1024,"Hugging Face model catalog").await?
+    ).map_err(|error|error.to_string())?;
     Ok(items
         .into_iter()
         .map(|item| {
@@ -2132,7 +2135,8 @@ pub async fn details(repo: &str) -> Result<Value, String> {
     if !response.status().is_success() {
         return Err(format!("Hugging Face HTTP {}", response.status()));
     }
-    let value: Value = response.json().await.map_err(|error| error.to_string())?;
+    let value: Value=crate::integrations::network::read_bounded_json(
+        response,16*1024*1024,"Hugging Face model details").await?;
     let siblings = value
         .get("siblings")
         .and_then(|value| value.as_array())
@@ -2155,10 +2159,10 @@ pub async fn details(repo: &str) -> Result<Value, String> {
         .timeout(Duration::from_secs(5))
         .send().await
     {
-        Ok(response) if response.status().is_success()
-            && response.content_length().unwrap_or(0) <= 1_048_576 => {
-            response.bytes().await.ok()
-                .map(|bytes| String::from_utf8_lossy(&bytes[..bytes.len().min(64_000)]).into_owned())
+        Ok(response) if response.status().is_success() => {
+            crate::integrations::network::read_bounded_body(
+                response,1_048_576,"Hugging Face README").await.ok()
+                .map(|bytes|String::from_utf8_lossy(&bytes[..bytes.len().min(64_000)]).into_owned())
                 .unwrap_or_default()
         }
         _ => String::new(),
@@ -2394,7 +2398,8 @@ async fn hf_blob_metadata(
     let Ok(response) = client.get(url).timeout(Duration::from_secs(20)).send().await else {
         return Default::default();
     };
-    let Ok(value) = response.json::<Value>().await else {
+    let Ok(value)=crate::integrations::network::read_bounded_json(
+        response,16*1024*1024,"Hugging Face model metadata").await else {
         return Default::default();
     };
     let mut map = std::collections::HashMap::new();

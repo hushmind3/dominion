@@ -133,7 +133,8 @@ pub async fn mcp_catalog(Query(query): Query<HashMap<String, String>>) -> Respon
         }
         Err(message) => return error(StatusCode::BAD_GATEWAY, &message.to_string()),
     };
-    let value: Value = match response.json().await {
+    let value: Value = match crate::integrations::network::read_bounded_json(
+        response,4*1024*1024,"MCP registry catalog").await {
         Ok(value) => value,
         Err(message) => return error(StatusCode::BAD_GATEWAY, &message.to_string()),
     };

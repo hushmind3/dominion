@@ -318,7 +318,8 @@ pub async fn callback(
     if !status.is_success() {
         return Err(format!("OAuth 토큰 교환 거부: HTTP {status}"));
     }
-    let text = response.text().await.unwrap_or_default();
+    let text=String::from_utf8_lossy(&crate::integrations::network::read_bounded_body(
+        response,256*1024,"OAuth token").await?).into_owned();
     let token_value: Value = serde_json::from_str(&text)
         .map_err(|_| format!("토큰 응답을 해석할 수 없습니다 (HTTP {status})"))?;
     let access_token = token_value
@@ -344,7 +345,8 @@ pub async fn callback(
         .send()
         .await
     {
-        if let Ok(value) = info.json::<Value>().await {
+        if let Ok(value)=crate::integrations::network::read_bounded_json(
+            info,256*1024,"OAuth account profile").await {
             account = value
                 .get("login")
                 .or_else(|| value.get("email"))
@@ -478,7 +480,9 @@ pub async fn fresh_access_token(state: &AppState, id: &str) -> Result<String, St
     if !response.status().is_success() {
         return Err("OAuth 갱신이 거부되었습니다. 계정을 다시 연결하세요.".into());
     }
-    let updated: Value = response.json().await.map_err(|_| "OAuth 갱신 응답 오류")?;
+    let updated=crate::integrations::network::read_bounded_json(
+        response,256*1024,"OAuth refresh response")
+        .await.map_err(|_|"OAuth 갱신 응답 오류")?;
     let access = updated["access_token"]
         .as_str()
         .filter(|v| !v.is_empty())
@@ -539,7 +543,9 @@ pub async fn adopt_cli_grant(state:&AppState,source:&str)->Result<Value,String>{
             }
             let scopes=response.headers().get("x-oauth-scopes")
                 .and_then(|v|v.to_str().ok()).unwrap_or("").to_string();
-            let info:Value=response.json().await.map_err(|_|"Invalid GitHub account response")?;
+            let info=crate::integrations::network::read_bounded_json(
+                response,256*1024,"GitHub account response").await
+                .map_err(|_|"Invalid GitHub account response")?;
             let name=info["login"].as_str().ok_or("GitHub account identity missing")?;
             // Do not assume an imported GitHub token has all repo permissions.
             state.save_secret("oauth:github:token",&json!({
@@ -572,7 +578,9 @@ pub async fn adopt_cli_grant(state:&AppState,source:&str)->Result<Value,String>{
             if !response.status().is_success(){
                 return Err(format!("Google Workspace CLI grant cannot refresh (HTTP {})",response.status()));
             }
-            let grant:Value=response.json().await.map_err(|_|"Google token response invalid")?;
+            let grant=crate::integrations::network::read_bounded_json(
+                response,256*1024,"Google token response").await
+                .map_err(|_|"Google token response invalid")?;
             let access=grant["access_token"].as_str().filter(|v|!v.is_empty())
                 .ok_or("Google refreshed access token missing")?.to_string();
             // Inspect the provider's actual scope report; never infer grants
@@ -585,7 +593,8 @@ pub async fn adopt_cli_grant(state:&AppState,source:&str)->Result<Value,String>{
             if !introspection.status().is_success(){
                 return Err("Google OAuth permission inspection failed".into());
             }
-            let details:Value=introspection.json().await
+            let details=crate::integrations::network::read_bounded_json(
+                introspection,256*1024,"Google OAuth permission response").await
                 .map_err(|_|"Google OAuth permission response invalid")?;
             let scopes=details["scope"].as_str().filter(|s|!s.is_empty())
                 .ok_or("Google did not report granted scopes")?.to_string();
@@ -596,7 +605,9 @@ pub async fn adopt_cli_grant(state:&AppState,source:&str)->Result<Value,String>{
             if !profile.status().is_success(){
                 return Err("Google account identity permission was not granted".into());
             }
-            let identity:Value=profile.json().await.map_err(|_|"Google identity response invalid")?;
+            let identity=crate::integrations::network::read_bounded_json(
+                profile,256*1024,"Google identity response").await
+                .map_err(|_|"Google identity response invalid")?;
             let email=identity["email"].as_str().filter(|s|!s.is_empty())
                 .ok_or("Google account email missing from granted identity scope")?.to_string();
             // Tokens and application credentials are only retained in the

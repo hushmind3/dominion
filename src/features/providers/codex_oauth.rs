@@ -65,14 +65,14 @@ pub async fn exchange_code(
         .map_err(|error| format!("Codex 토큰 교환 실패: {error}"))?;
     if !response.status().is_success() {
         let status = response.status();
-        let text = response.text().await.unwrap_or_default();
+        let text=String::from_utf8_lossy(&crate::integrations::network::read_bounded_body(
+            response,256*1024,"Codex OAuth error").await?).into_owned();
         return Err(format!(
             "Codex 토큰 교환 실패 (HTTP {status}): {}",
             text.chars().take(300).collect::<String>()
         ));
     }
-    response
-        .json::<Value>()
+    crate::integrations::network::read_bounded_json(response,256*1024,"Codex OAuth token")
         .await
         .map_err(|_| "Codex 토큰 응답 형식을 읽을 수 없습니다.".into())
 }
@@ -97,14 +97,14 @@ pub async fn exchange_device_code(
         .map_err(|error| format!("Codex 기기 코드 교환 실패: {error}"))?;
     if !response.status().is_success() {
         let status = response.status();
-        let text = response.text().await.unwrap_or_default();
+        let text=String::from_utf8_lossy(&crate::integrations::network::read_bounded_body(
+            response,256*1024,"Codex device OAuth error").await?).into_owned();
         return Err(format!(
             "Codex 기기 코드 교환 실패 (HTTP {status}): {}",
             text.chars().take(300).collect::<String>()
         ));
     }
-    response
-        .json::<Value>()
+    crate::integrations::network::read_bounded_json(response,256*1024,"Codex device OAuth token")
         .await
         .map_err(|_| "Codex 기기 코드 응답 형식을 읽을 수 없습니다.".into())
 }
@@ -126,14 +126,14 @@ pub async fn refresh(
         .map_err(|error| format!("Codex 토큰 갱신 실패: {error}"))?;
     if !response.status().is_success() {
         let status = response.status();
-        let text = response.text().await.unwrap_or_default();
+        let text=String::from_utf8_lossy(&crate::integrations::network::read_bounded_body(
+            response,256*1024,"Codex token refresh error").await?).into_owned();
         return Err(format!(
             "Codex 토큰 갱신 실패 (HTTP {status}): {}",
             text.chars().take(300).collect::<String>()
         ));
     }
-    response
-        .json::<Value>()
+    crate::integrations::network::read_bounded_json(response,256*1024,"Codex token refresh")
         .await
         .map_err(|_| "Codex 갱신 응답 형식을 읽을 수 없습니다.".into())
 }

@@ -23,6 +23,29 @@ pub(crate) fn same_origin_redirects(max_hops:usize)->reqwest::redirect::Policy{
     })
 }
 
+pub(crate) async fn read_bounded_body(
+    mut response:reqwest::Response,limit:usize,label:&str,
+)->Result<Vec<u8>,String>{
+    if response.content_length().is_some_and(|size|size>limit as u64){
+        return Err(format!("{label} response exceeds size bound"));
+    }
+    let mut bytes=Vec::new();
+    while let Some(chunk)=response.chunk().await.map_err(|error|error.to_string())?{
+        if bytes.len().saturating_add(chunk.len())>limit{
+            return Err(format!("{label} response exceeds size bound"));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+pub(crate) async fn read_bounded_json(
+    response:reqwest::Response,limit:usize,label:&str,
+)->Result<Value,String>{
+    let bytes=read_bounded_body(response,limit,label).await?;
+    serde_json::from_slice(&bytes).map_err(|error|format!("Invalid {label} JSON: {error}"))
+}
+
 /// Reject non-public destinations even when URL parsing normalizes unusual
 /// IPv4 literals. The same check runs again after every redirect and DNS
 /// resolution; no configured proxy can bypass the pinned address.

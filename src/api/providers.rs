@@ -252,6 +252,8 @@ fn import_opencode(state: &AppState) -> Result<Value, String> {
 // models.dev API is one large JSON document, not a per-provider endpoint.
 static MODELS_DEV_DOCUMENT:OnceLock<Mutex<Option<(Instant,Arc<Value>)>>>=OnceLock::new();
 static MODELS_DEV_FETCH:tokio::sync::Mutex<()>=tokio::sync::Mutex::const_new(());
+const MAX_MODELS_DEV_BYTES:usize=32*1024*1024;
+const MAX_OPENROUTER_CATALOG_BYTES:usize=16*1024*1024;
 fn models_dev_document_cache()->&'static Mutex<Option<(Instant,Arc<Value>)>>{
     MODELS_DEV_DOCUMENT.get_or_init(||Mutex::new(None))
 }
@@ -276,7 +278,8 @@ async fn load_models_dev_document()->Result<Arc<Value>,String>{
     if !response.status().is_success(){
         return Err(format!("공개 카탈로그 HTTP {}",response.status()));
     }
-    let document=Arc::new(response.json::<Value>().await.map_err(|error|error.to_string())?);
+    let document=Arc::new(crate::integrations::network::read_bounded_json(
+        response,MAX_MODELS_DEV_BYTES,"models.dev catalog").await?);
     if let Ok(mut cache)=models_dev_document_cache().lock(){
         *cache=Some((Instant::now(),Arc::clone(&document)));
     }
@@ -397,7 +400,8 @@ pub async fn public_openrouter_free_catalog(State(state):State<AppState>)->Json<
         let response=client.get("https://openrouter.ai/api/v1/models").send().await
             .map_err(|error|error.to_string())?;
         if !response.status().is_success(){return Err(format!("OpenRouter HTTP {}",response.status()));}
-        let body=response.json::<Value>().await.map_err(|error|error.to_string())?;
+        let body=crate::integrations::network::read_bounded_json(
+            response,MAX_OPENROUTER_CATALOG_BYTES,"OpenRouter catalog").await?;
         Ok::<Vec<Value>,String>(public_openrouter_free_models(&body))
     }.await;
     match result {
@@ -1701,7 +1705,8 @@ pub async fn test_provider(
         }
         Ok(response) => {
             let status = response.status();
-            let text = response.text().await.unwrap_or_default();
+            let text=String::from_utf8_lossy(&crate::integrations::network::read_bounded_body(
+                response,256*1024,"Provider connection error").await.unwrap_or_default()).into_owned();
             let detail = text.chars().take(300).collect::<String>();
             let overloaded = detail.contains("1305")
                 || detail.to_ascii_lowercase().contains("temporarily overloaded");
@@ -1948,7 +1953,8 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
     }
     match request.send().await {
         Ok(response) if response.status().is_success() => {
-            let Ok(value) = response.json::<Value>().await else {
+            let Ok(value)=crate::integrations::network::read_bounded_json(
+                response,8*1024*1024,"Provider model list").await else {
                 return error(StatusCode::BAD_GATEWAY, "서버가 모델 목록 JSON을 반환하지 않았습니다. 서버 주소를 확인하세요.");
             };
             let key_name = if kind == "ollama" {

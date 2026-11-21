@@ -48,7 +48,8 @@ pub async fn inspect(State(state): State<AppState>, Path(id): Path<String>) -> R
         .send();
     let (models, usage) = tokio::join!(models, usage);
     let models = match models {
-        Ok(r) if r.status().is_success() => r.json::<Value>().await.unwrap_or(json!({})),
+        Ok(r) if r.status().is_success() => crate::integrations::network::read_bounded_json(
+            r,1024*1024,"FreeLLMAPI model list").await.unwrap_or(json!({})),
         Ok(r) => {
             return error(
                 StatusCode::BAD_GATEWAY,
@@ -63,7 +64,8 @@ pub async fn inspect(State(state): State<AppState>, Path(id): Path<String>) -> R
         }
     };
     let usage = match usage {
-        Ok(r) if r.status().is_success() => r.json::<Value>().await.ok(),
+        Ok(r) if r.status().is_success() => crate::integrations::network::read_bounded_json(
+            r,1024*1024,"FreeLLMAPI usage").await.ok(),
         _ => None,
     };
     let entries = models["data"].as_array().cloned().unwrap_or_default();
