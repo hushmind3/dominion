@@ -71,6 +71,11 @@ export function ExecutionInsights({executionId,compact=false}:{executionId:strin
  const outputTotal=ctx?.providerOutputTokens
  const uncached=ctx?.providerNewPromptTokens
  const verified=record?.verified===true||record?.taskOutcome==='succeeded'
+ // Older finalizers classified ordinary, completed replies as execution_error.
+ // Do not turn that stale learning label into a red failure on the read-only UI.
+ const legacyNormalReply=record?.status==='completed' &&
+  (record?.taskOutcome==='answered_unverified'||record?.taskOutcome==='succeeded')
+ const visibleFailureClass=legacyNormalReply?null:record?.failureClass
  const entries=[
   [en?'System':'시스템',ctx?.systemTokens],
   [en?'Past conversation':'이전 대화',ctx?.historyTokens],
@@ -130,13 +135,13 @@ export function ExecutionInsights({executionId,compact=false}:{executionId:strin
       ?'KRW cost: unavailable without an attributable provider price. No price is fabricated.'
       :'원화 비용: 호출별 공급자 단가가 연결되지 않아 표시하지 않습니다. 임의 비용은 계산하지 않습니다.'}</p>
     </div>
-    {(record.taskOutcome||record.reason||record.failureClass)&&<div className="mt-3 rounded-lg border border-[#EFE9DF] bg-white p-3 text-[11px]">
+    {(record.taskOutcome||record.reason||visibleFailureClass)&&<div className="mt-3 rounded-lg border border-[#EFE9DF] bg-white p-3 text-[11px]">
      <strong>{en?'Execution verification':'실행 검증·결과'}</strong>
      <div className="mt-1 flex flex-wrap gap-2">
       <span className={'rounded border px-2 py-0.5 '+(verified?'border-emerald-200 bg-emerald-50 text-emerald-800':'border-amber-200 bg-amber-50 text-amber-800')}>{verified?(en?'Verified success':'성공 검증'):(record.taskOutcome||'unverified')}</span>
       {record.acceptancePassed===true&&<span>{en?'Acceptance checks passed':'수락 조건 통과'}</span>}
      </div>
-     {record.failureClass&&<p className="mt-1 text-rose-700">{record.failureClass}</p>}
+     {visibleFailureClass&&<p className="mt-1 text-rose-700">{visibleFailureClass}</p>}
      {record.reason&&<p className="mt-1 break-words text-rose-700">{record.reason}</p>}
     </div>}
     <p className="mt-2 text-[10px] leading-4 text-[#8A8176]">{en
