@@ -73,11 +73,25 @@ pub async fn screenshot(State(state): State<AppState>) -> Response {
 }
 
 fn latest_screenshot(state: &AppState) -> Option<std::path::PathBuf> {
-    let dir = state.config.workspace.join(".dominion").join("browser");
+    let workspace = state.config.workspace.canonicalize().ok()?;
+    let dir = workspace.join(".dominion").join("browser");
+    let dir = dir.canonicalize().ok()?;
+    if !dir.starts_with(&workspace) {
+        return None;
+    }
     let mut latest: Option<(String, std::path::PathBuf)> = None;
-    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+    for entry in std::fs::read_dir(&dir).ok()?.flatten() {
+        if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
+            continue;
+        }
         let path = entry.path();
         if path.extension().and_then(|value| value.to_str()) != Some("png") {
+            continue;
+        }
+        let Ok(path) = path.canonicalize() else {
+            continue;
+        };
+        if !path.starts_with(&dir) {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
