@@ -103,13 +103,13 @@ function WorkerStep({step,job,ids,onCreated,index=0,agentNames}:{step:Step;job?:
   {job?.input?.externalRuntime&&<ExternalContinuation job={job} onCreated={onCreated}/>}
   {job?.result&&<button type="button" aria-expanded={showResult} onClick={()=>setShowResult(v=>!v)}
    className="mt-2 inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-[12px] font-semibold text-[#A4583E] hover:bg-[#F7E8E1] focus-visible:outline-2 focus-visible:outline-offset-2">
-   <ShieldCheck size={16}/>{en?'View work and evidence':'작업 결과·근거 보기'} {showResult?'▴':'▾'}
+   <ShieldCheck size={16}/>{en?'Technical receipt':'작업 영수증(기술 정보)'} {showResult?'▴':'▾'}
   </button>}
   {job?.input?.sessionId&&<a href={'#/chat?session='+encodeURIComponent(job.input.sessionId)}
    className="ml-2 mt-2 inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-[#E7E0D5] px-3 py-1 text-[12px] font-medium text-[#5C544A] hover:bg-[#FAF7F1] focus-visible:outline-2 focus-visible:outline-offset-2">
    <MessageSquare size={16}/>{en?'Open agent conversation':'담당 AI 대화 보기'}
   </a>}
-  {showResult&&job?.result&&<pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-[#FAF7F1] p-3 text-[12px] leading-5">{JSON.stringify(job.result,null,2)}</pre>}
+  {showResult&&job?.result&&<pre aria-label={en?'Raw native job receipt':'원본 작업 영수증'} className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-[#FAF7F1] p-3 text-[12px] leading-5">{JSON.stringify(job.result,null,2)}</pre>}
   {job&&<details className="mt-2 text-[11px] text-[#81766A]"><summary className="cursor-pointer py-1 focus-visible:outline-2">{en?'Technical job ID':'기술 정보'}</summary><code className="break-all text-[11px]">{job.id}</code></details>}
   {done&&<span className="sr-only">{en?'Completed':'완료'}</span>}
  </div>
@@ -117,6 +117,7 @@ function WorkerStep({step,job,ids,onCreated,index=0,agentNames}:{step:Step;job?:
 function TeamCard({team,summary,onCreated,initiallyOpen=false,agentNames}:{team:Job;summary:Map<string,Job>;onCreated:()=>void;initiallyOpen?:boolean;agentNames?:Record<string,string>}){
  const en=useLocale()==='en'
  const [open,setOpen]=useState(initiallyOpen)
+ const [showAllReports,setShowAllReports]=useState(false)
  const details=useRemote<TeamSteps>(open?'/api/jobs/'+encodeURIComponent(team.id)+'/team-steps':null,
   {teamId:team.id,jobs:[],missing:[]})
  const plan=team.input?.plan||[]
@@ -126,6 +127,9 @@ function TeamCard({team,summary,onCreated,initiallyOpen=false,agentNames}:{team:
  const complete=plan.filter(step=>records.get(step.jobId)?.status==='completed').length
  const unknown=plan.filter(step=>!records.has(step.jobId)).length
  const review=classifyTeamReview(team)
+ const reports=Array.isArray(team.result?.nodes)?team.result.nodes.filter(
+  (node):node is Record<string,unknown>=>Boolean(node)&&typeof node==='object'&&!Array.isArray(node)
+ ).filter(node=>typeof node.answer==='string'&&node.answer.length>0):[]
  useEffect(()=>{
   if(!open||!['queued','running'].includes(team.status||''))return
   const timer=setInterval(()=>{if(!document.hidden)void details.reload()},5000)
@@ -140,6 +144,26 @@ function TeamCard({team,summary,onCreated,initiallyOpen=false,agentNames}:{team:
   </button>
   <progress className="mt-3 block h-2 w-full accent-[#A4583E]" value={complete} max={Math.max(1,plan.length)}
    aria-label={en?'Team steps completed':'완료된 협업 작업 단계'}/>
+  {reports.length>0&&<section className="mt-4 rounded-xl border border-[#DFD5C6] bg-white p-4" aria-label={en?'Verified worker answers':'실제 AI 작업 결과'}>
+   <div className="flex flex-wrap items-center justify-between gap-2">
+    <h4 className="text-[14px] font-bold text-[#3A342D]">{en?'What the agents found':'AI 작업 결과'}</h4>
+    <span className="text-[12px] text-[#7C7469]">{reports.length}{en?' reports':'개 결과'}</span>
+   </div>
+   <p className="mt-1 text-[12px] leading-5 text-[#81766A]">{en
+    ?'These are saved worker answers; the code changes may still require your approval.'
+    :'저장된 AI 답변입니다. 코드 수정 사항은 별도 승인·통합이 필요할 수 있습니다.'}</p>
+   <div className="mt-3 space-y-3">
+    {(showAllReports?reports:reports.slice(0,2)).map((report,index)=><article key={String(report.jobId||index)} className="rounded-lg border border-[#EEE8DE] bg-[#FCFAF6] p-3">
+     <strong className="block text-[12px] text-[#7A624B]">{agentNames?.[String(report.agentId||'')]||String(report.agentId|| (en?'Agent':'AI'))}
+      {report.stepId?' · '+String(report.stepId):''}</strong>
+     <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-6 text-[#514940]">{String(report.answer)}</p>
+    </article>)}
+   </div>
+   {reports.length>2&&<button type="button" onClick={()=>setShowAllReports(v=>!v)}
+    className="mt-3 inline-flex min-h-9 items-center rounded-lg px-3 text-[12px] font-semibold text-[#A4583E] hover:bg-[#F7E8E1] focus-visible:outline-2 focus-visible:outline-offset-2">
+    {showAllReports?(en?'Show fewer':'간략히 보기'):(en?'Show all '+reports.length+' reports':'전체 '+reports.length+'개 결과 보기')}
+   </button>}
+  </section>}
   {review.kind==='integrated'&&<p role="status" className="mt-2 flex items-center gap-1 text-[11px] text-emerald-700">
    <Check size={12}/>{en?'Team patches integrated':'팀 패치 통합 완료'}
   </p>}
