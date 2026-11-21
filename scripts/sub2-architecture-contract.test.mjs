@@ -98,6 +98,9 @@ test('Rust / event journal / TypeScript SDK agree on run lifecycle',()=>{
 
 test('architecture is documented at code-level locations, not old core path',()=>{
   const design=source('docs/SUB2-ARCHITECTURE-2026-11-21.md');
+  const engine=source('ENGINE.md');
+  assert.match(engine,/docs\/SUB2-ARCHITECTURE-2026-11-21\.md/);
+
   for(const location of [
     'crates/dominion-turn-core','crates/dominion-agent-loop',
     'src/engine/services/providers/gateway.rs','src/engine/services/conversation/room_state.rs',
