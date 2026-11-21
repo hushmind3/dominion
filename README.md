@@ -27,7 +27,7 @@ For frontend development, use `npm run dev --prefix web` alongside the Rust serv
 
 ## Frontend baseline and Dominion Cloud Gateway
 
-React application sources were copied from `main` at `f86a36e` (2026-11-19): model exploration, public keyless model browsing, Google/Kakao/Naver cloud login UI, connected accounts, chat and rooms remain unchanged. Sub3 additionally has `web/.env.cloud-sub3.example`, so the complete `web/` Git tree now differs from main even though the app implementation is unchanged. The sub3 native Rust kernel and context engine remain separate from main.
+The original React workspace was imported from main in November 2026. Sub3 has since independently improved all existing navigation destinations with accessible keyboard menu search, responsive model/connection tabs, mobile Chat history, guided first-run onboarding, an enhanced native Agent console, Task Team control and remote worker inspection. No new top-level navigation items were added and main was not modified. Full implementation and source-level scope: [Sub3 UX and browser audit](docs/SUB3-AGENT-UX-2026-11-21.md).
 
 The full `main/cloud/` Cloudflare Worker implementation, D1 identity/usage/payment schema, operator-owned AI gateway, and typed service contracts have been imported under `cloud/` and `services/dominion-cloud/`. The **staging** Worker is named `dominion-cloud-sub3` and uses a separate, intentionally unprovisioned D1 database. The existing React account card registers it as an ordinary OpenAI-compatible provider once the staging gateway and OAuth origins are configured.
 
@@ -167,7 +167,7 @@ cargo test --bin dominion-rust integrations::skills::discovery::tests
 cargo test --bin dominion-rust api::sdk::tests
 ```
 
-Frontend tests, typecheck and production UI build run on every sub3 product CI push. Full installer and Windows/macOS release packaging remain separate release-stage checks:
+Each sub3 product CI push runs frontend TypeScript checks, HTTP contracts, Rust product tests and a real Chromium responsive/UI interaction suite against the Vite dev server. The test exercises 1440/768/390/320px layouts, all nine destinations, modal focus, keyboard search, Agent and Team actions, and connection onboarding. Browser screenshots are saved as an Actions artifact. No production frontend release build is performed on push; release packaging remains manual.
 
 ```sh
 npm run typecheck --prefix web
