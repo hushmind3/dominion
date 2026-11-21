@@ -962,6 +962,83 @@ fn explicit_direct_chat_does_not_inherit_a_saved_session_agent() {
 }
 
 #[test]
+fn direct_chat_web_search_exposes_only_public_read_tools_and_no_agent() {
+    let _serial=serial();
+    let (port,requests)=scripted_provider(|_| {
+        vec![json!({"choices":[{"delta":{"content":"검색 가능한 자료를 요청했습니다."},"finish_reason":"stop"}]})]
+    });
+    let app=TestApp::new(port,"native");
+    let session=app.post("/api/sessions",&json!({
+        "title":"public web reference",
+        "agentId":"old-agent-should-not-be-used"
+    }));
+    let stream=app.chat(&json!({
+        "sessionId":session["id"],
+        "conversationMode":"chat",
+        "webSearch":true,
+        "input":"국내 반도체 공급망 관련 최신 공개 자료를 찾아 설명해줘",
+        "toolsEnabled":false,
+        "toolsExecutionEnabled":false,
+        "autoLearning":true
+    }));
+    assert!(stream.contains("assistant_saved"),"{stream}");
+    let requests=requests.lock().unwrap();
+    assert!(!requests.is_empty(),"mock provider must receive direct Chat input");
+    let wire=&requests[0];
+    let names=wire["tools"].as_array().expect("native tool schemas must be present")
+        .iter().filter_map(|tool|tool["function"]["name"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(names.len(),2,"direct web route must be web-only: {names:?}");
+    assert!(names.contains(&"web_search")&&names.contains(&"http_fetch"));
+    assert!(!names.contains(&"workspace_write")&&!names.contains(&"shell_exec"));
+    let system=wire["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("공개 웹 검색"),"{system}");
+    assert!(!system.contains("작업 공간 루트:"),"{system}");
+    let id=session["id"].as_str().unwrap();
+    let rows=app.get(&format!("/api/sessions/{id}/messages"));
+    let assistant=rows.as_array().unwrap().iter()
+        .find(|row|row["role"]=="assistant").expect("saved answer");
+    assert!(assistant["agent_id"].is_null(),"{assistant}");
+    assert!(app.get("/api/experience").as_array().unwrap().is_empty());
+}
+
+#[test]
+fn direct_chat_web_lookup_does_not_grant_workspace_write_even_if_model_forces_it() {
+    let _serial=serial();
+    let (port,requests)=scripted_provider(|request| {
+        let saw_result=request["messages"].as_array().is_some_and(|rows|
+            rows.iter().any(|row|row["role"]=="tool"));
+        if saw_result {
+            return vec![json!({"choices":[{"delta":{"content":"외부 실행은 허용되지 않았습니다."},"finish_reason":"stop"}]})];
+        }
+        vec![json!({"choices":[{"delta":{
+            "tool_calls":[{"index":0,"id":"forbidden-write","type":"function",
+                "function":{"name":"workspace_write",
+                    "arguments":"{\\\"path\\\":\\\"blocked-web-work.txt\\\",\\\"content\\\":\\\"owned\\\"}"}}]
+        },"finish_reason":"tool_calls"}]})]
+    });
+    let app=TestApp::new(port,"native");
+    app.post("/api/policy",&json!({"autoApproveAll":true}));
+    let session=app.post("/api/sessions",&json!({"title":"web cannot write"}));
+    let _stream=app.chat(&json!({
+        "sessionId":session["id"],
+        "conversationMode":"chat",
+        "webSearch":true,
+        "input":"현재 공개 정보에 관해 설명해줘",
+        "toolsEnabled":true,
+        "toolsExecutionEnabled":true,
+        "autoLearning":false
+    }));
+    assert!(!app._root.join("blocked-web-work.txt").exists(),
+        "web-only Chat cannot mutate the workspace");
+    let first=requests.lock().unwrap().first().cloned().expect("provider request");
+    let names=first["tools"].as_array().unwrap().iter()
+        .filter_map(|tool|tool["function"]["name"].as_str()).collect::<Vec<_>>();
+    assert_eq!(names.len(),2,"server must enforce web-only schemas despite client flags");
+    assert!(!names.contains(&"workspace_write"));
+}
+
+#[test]
 fn benchmark_identity_reports_the_isolated_roots() {
     let _serial = serial();
     let port = start_mock_provider();
