@@ -25,6 +25,8 @@ for(const p of [
   'src/conversation/chat/runtime/turn.rs',
   'src/features/collaboration/room_cursor.rs',
   'src/features/collaboration/task_team.rs',
+  'src/integrations/mcp/modern.rs',
+  'src/integrations/mcp/tests.rs',
   'src/integrations/agent_bridge.rs',
   'src/api/remote_workers.rs',
   'src/host/execution/remote_worker.rs',
@@ -84,6 +86,16 @@ has('src/storage/sqlite.rs',
   ['CREATE TABLE IF NOT EXISTS room_events','CREATE TRIGGER IF NOT EXISTS room_events_message_commit',
    'write_room_answer_with_cursor','"throughSeq"','pub fn patch_if_all']);
 has('src/features/collaboration/task_team.rs',['depends_on','WorkerRuntime','cancel_children']);
+has('src/integrations/mcp.rs',
+  ['mod modern;','server/discover','modern::decorate',
+   'modern::legacy_http_probe_rejection','modern::advertised_legacy_version',
+   'session.request_tool','verify_pinned_tool']);
+has('src/integrations/mcp/modern.rs',
+  ['2026-07-28','io.modelcontextprotocol/protocolVersion',
+   'io.modelcontextprotocol/clientCapabilities','Mcp-Method',
+   'Mcp-Name','Mcp-Param-','validate_tool_schema']);
+const mcpRoot=text('src/integrations/mcp.rs').split('\\n').length;
+assert.ok(mcpRoot<900,'MCP transport must keep protocol and tests in separate modules');
 has('src/integrations/agent_bridge.rs',['run_codex','run_claude','run_qwen']);
 has('src/api/remote_workers.rs',['gateway_router','worker_authorized',
   'worker_claim','worker_complete','owner_create']);
