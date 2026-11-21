@@ -339,3 +339,50 @@ impl Snapshot {
     }
 }
 
+
+#[cfg(test)]
+mod legacy_snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_native_run_without_model_fence_and_decision_tape_is_readable(){
+        let request=RunRequest{id:"old-run".into(),instruction:"inspect".into(),
+            owner_instructions:String::new(),strategy:Strategy::Balanced,
+            limits:Limits::default(),allowed_tools:Vec::new(),checks:Vec::new(),
+            require_evidence:true};
+        let mut value=serde_json::to_value(Snapshot::from_request(&request)).unwrap();
+        let object=value.as_object_mut().unwrap();
+        object.remove("modelInFlight");
+        object.remove("decisionTape");
+        object.remove("algorithmId");
+        let decoded:Snapshot=serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.id,"old-run");
+        assert!(decoded.decision_tape.is_empty());
+        assert!(!decoded.model_in_flight);
+        assert!(decoded.algorithm_id.is_none());
+        assert!(matches!(decoded.status,Status::Running));
+    }
+
+    #[test]
+    fn uncertain_legacy_tool_checkpoint_requires_manual_reconciliation(){
+        let request=RunRequest{id:"old-effect".into(),instruction:"write".into(),
+            owner_instructions:String::new(),strategy:Strategy::Balanced,
+            limits:Limits::default(),allowed_tools:Vec::new(),checks:Vec::new(),
+            require_evidence:true};
+        let mut snapshot=Snapshot::from_request(&request);
+        snapshot.status=Status::NeedsReview;
+        snapshot.in_flight.push(Action{id:"effect-a".into(),
+            tool:"workspace_write".into(),arguments:json!({"path":"test.txt"}),
+            depends_on:Vec::new()});
+        let mut value=serde_json::to_value(&snapshot).unwrap();
+        value.as_object_mut().unwrap().remove("decisionTape");
+        value.as_object_mut().unwrap().remove("modelInFlight");
+        let mut recovered:Snapshot=serde_json::from_value(value).unwrap();
+        assert_eq!(recovered.in_flight.len(),1);
+        assert!(recovered.receipts.is_empty());
+        recovered.model_in_flight=true;
+        assert!(recovered.reconcile_tool_observation(false,"no file").is_err(),
+            "unknown paid model and an uncertain effect cannot be reconciled as a tool-only event");
+        assert!(recovered.receipts.is_empty());
+    }
+}
