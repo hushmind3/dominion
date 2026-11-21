@@ -80,3 +80,14 @@ DOMINION `approval` records. Existing `GET /api/approvals` and
 Unsupported privilege-escalation RPC methods are denied. Disconnects and
 cancellations invalidate pending approval requests. Native tool receipts
 are never fabricated for work an external CLI executed in its own process.
+
+## Protocol smoke tests
+
+The focused Rust CI runs a real stdio JSON-RPC peer in Python for both
+Codex App Server and ACP handshake, progress and terminal completion.
+The ACP case additionally exercises the durable DOMINION owner approval
+API end-to-end. Only `agent_message_chunk` is accepted as a public ACP
+answer; private thinking updates remain excluded. This exercises the
+transport without claiming the paid vendor CLI or account was installed
+on GitHub's runner. Vendor-installed smoke testing still needs an
+authenticated host and is separately documented.

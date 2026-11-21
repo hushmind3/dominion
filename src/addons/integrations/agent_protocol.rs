@@ -148,7 +148,17 @@ pub(super) async fn run(
 )->Result<(String,String,Option<String>),String>{
     let (binary,argv)=kind.command(prompt);
     let mut cmd=Command::new(binary);
-    cmd.args(argv).current_dir(workspace)
+    cmd.args(argv);
+    run_with_command(context,kind,session,workspace,prompt,resume,generation,
+        parent,parent_execution,external_id,cmd).await
+}
+async fn run_with_command(
+    context:&JobContext,kind:ExternalAgent,session:&str,workspace:&Path,
+    prompt:&str,resume:Option<&str>,generation:u64,parent:&str,
+    parent_execution:Option<&str>,external_id:&str,
+    mut cmd:Command,
+)->Result<(String,String,Option<String>),String>{
+    cmd.current_dir(workspace)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -216,7 +226,8 @@ pub(super) async fn run(
                                     params["item"]["text"].as_str(),
                                 _=>None
                             }
-                        }else if method=="session/update"{
+                        }else if method=="session/update"
+                            &&params["update"]["sessionUpdate"]=="agent_message_chunk"{
                             params["update"]["content"]["text"].as_str()
                         }else{None};
                         if let Some(text)=text{
@@ -316,6 +327,101 @@ pub(super) async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Mock stdio peer, not a model mock: the actual bidirectional JSON-RPC
+    /// transport, live event ingestion, owner approval route and completion
+    /// handling are exercised without requiring an installed paid CLI.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn codex_and_acp_live_stdio_contracts_complete_with_real_owner_approval(){
+        use crate::{config::Config,db::Store,vault::Vault};
+        use axum::{extract::State,Json,http::StatusCode};
+        let root=std::env::temp_dir()
+            .join(format!("dominion-rpc-smoke-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let cfg=Config{port:0,data_dir:root.clone(),workspace:root.clone(),
+            web_dir:root.join("web")};
+        let state=AppState::new(cfg.clone(),
+            Store::open(&cfg.db_path()).unwrap(),Vault::open(&cfg.key_path()));
+        state.store.put("session",&json!({"id":"parent"})).unwrap();
+        state.store.put("session",&json!({"id":"child"})).unwrap();
+        let script=r#"
+import json,sys
+kind=sys.argv[1]
+def recv(): return json.loads(sys.stdin.readline())
+def send(payload):
+    sys.stdout.write(json.dumps(payload)+'\n')
+    sys.stdout.flush()
+assert recv()['method']=='initialize'
+send({'id':1,'result':{}})
+if kind=='codex':
+    assert recv()['method']=='initialized'
+    assert recv()['method']=='thread/start'
+    send({'id':2,'result':{'thread':{'id':'123e4567-e89b-12d3-a456-426614174000'}}})
+    assert recv()['method']=='turn/start'
+    send({'method':'item/agentMessage/delta','params':{'delta':'Codex result'}})
+    send({'method':'turn/completed','params':{'turn':{'status':'completed'}}})
+else:
+    assert recv()['method']=='session/new'
+    send({'jsonrpc':'2.0','id':2,'result':{'sessionId':'qwen-mock-1'}})
+    assert recv()['method']=='session/prompt'
+    send({'jsonrpc':'2.0','id':17,'method':'session/request_permission',
+        'params':{'options':[{'optionId':'allow','name':'Allow'}]}})
+    voted=recv()
+    assert voted['id']==17 and voted['result']['outcome']['optionId']=='allow'
+    # A thinking chunk MUST NOT enter the final public answer.
+    send({'jsonrpc':'2.0','method':'session/update',
+        'params':{'update':{'sessionUpdate':'agent_thought_chunk',
+            'content':{'type':'text','text':'private thought'}}}})
+    send({'jsonrpc':'2.0','method':'session/update',
+        'params':{'update':{'sessionUpdate':'agent_message_chunk',
+            'content':{'type':'text','text':'ACP final answer'}}}})
+    send({'jsonrpc':'2.0','id':3,'result':{'stopReason':'end_turn'}})
+"#;
+        for (kind,arg,expected) in [
+            (ExternalAgent::CodexServer,"codex","Codex result"),
+            (ExternalAgent::QwenAcp,"acp","ACP final answer")
+        ]{
+            let job_id=format!("rpc-{arg}");
+            state.store.put("job",&json!({"id":job_id,"kind":"prompt",
+                "status":"running"})).unwrap();
+            let ctx=JobContext::new(state.clone(),job_id);
+            let mut cmd=Command::new("python3");
+            cmd.args(["-u","-c",script,arg]);
+            let root_owned=root.clone();
+            let run_id=format!("external:rpc-{arg}");
+            let task=tokio::spawn(async move{
+                run_with_command(&ctx,kind,"child",&root_owned,"inspect",None,
+                    0,"parent",None,&run_id,cmd).await
+            });
+            if kind==ExternalAgent::QwenAcp{
+                let pending=tokio::time::timeout(Duration::from_secs(8),async{
+                    loop{
+                        if let Some(row)=state.store.all("approval").into_iter()
+                            .find(|a|a["source"]=="external_agent_rpc"
+                                &&a["status"]=="pending"){
+                            break row;
+                        }
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                }).await.expect("live approval request");
+                let response=crate::api::approvals::resolve_approval(
+                    State(state.clone()),Json(json!({
+                        "id":pending["id"],"allow":true}))).await;
+                assert_eq!(response.status(),StatusCode::OK);
+            }
+            let result=tokio::time::timeout(Duration::from_secs(10),task)
+                .await.expect("RPC mock timed out").unwrap().unwrap();
+            assert_eq!(result.0,expected);
+            assert_eq!(result.1.len(),64);
+            assert!(result.2.is_some());
+            assert!(state.bus.replay(0,500).iter().any(|e|
+                e["type"]=="external_agent_event"
+                &&e["method"].as_str().is_some()));
+        }
+        let _=std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn approval_reply_is_protocol_specific_and_never_grants_unknown_permissions(){
         let opts=json!([{"kind":"allow_once","optionId":"opt-1"},
