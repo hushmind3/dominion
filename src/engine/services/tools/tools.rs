@@ -87,7 +87,8 @@ pub fn definitions() -> Vec<Value> {
             "teamId":text("Existing teamId to resume a durable team; omit when starting tasks"),
             "tasks":json!({"type":"array","minItems":1,"maxItems":8,
                 "items":{"type":"object","properties":{
-                    "id":text("Stable ASCII task ID"),"agentId":text("Registered worker agent"),
+                    "id":text("Stable ASCII task ID"),"agentId":text("Registered local or remote worker agent"),
+                    "remoteWorkerId":text("Optional live Rust remote node ID from team_workers.remoteWorkers; omit to execute locally"),
                     "prompt":text("Self-contained task with expected result and checks"),
                     "dependsOn":json!({"type":"array","items":{"type":"string"}}),
                     "successCriteria":json!({"type":"array","maxItems":20,"description":"Optional frozen native acceptance checks; file_exists, file_equals or command_succeeded are verified by the Rust worker", "items":{"type":"object"}}),
