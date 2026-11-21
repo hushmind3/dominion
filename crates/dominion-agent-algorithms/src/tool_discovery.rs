@@ -61,7 +61,7 @@ fn ranked(catalog:&HashMap<String,ToolSpec>,query:&str)->Vec<String>{
 /// Deterministic stable shortlist. Internal discovery receives no permissions
 /// beyond the already-authorized catalog, and the original host owns dispatch.
 pub fn select(catalog:&HashMap<String,ToolSpec>,task:&str,owner:&str,
- directive:Option<&str>,plan:&[String],receipts:&[Receipt])->Vec<ToolSpec>{
+ directive:Option<&str>,_plan:&[String],receipts:&[Receipt])->Vec<ToolSpec>{
  if !needed(catalog){
   let mut all=catalog.values().cloned().collect::<Vec<_>>();
   all.sort_by(|a,b|a.name.cmp(&b.name));
@@ -86,22 +86,13 @@ pub fn select(catalog:&HashMap<String,ToolSpec>,task:&str,owner:&str,
    }
   }
  }
- // Reuse the *existing* model plan as a discovery hint, not as execution
- // authority. A later owner correction supersedes the old plan immediately.
- // This lets the model change strategies after observed tool results without
- // adding another planner, runtime, router or paid discovery call.
- if directive.is_none() {
-  let plan_query=plan.iter().rev().take(3)
-   .map(|step|step.chars().take(160).collect::<String>())
-   .collect::<Vec<_>>().join(" ");
-  if !plan_query.trim().is_empty() {
-   let plan_quota=displayed.len().saturating_add(3).min(VISIBLE);
-   for name in ranked(catalog,&plan_query) {
-    if displayed.len()>=plan_quota{break}
-    displayed.insert(name);
-   }
-  }
- }
+ // Model-authored plans are untrusted, mutable observations. Feeding their
+ // new keywords into provider declarations changes the tool-schema prefix
+ // after every planning turn, invalidating KV caching and allowing a hidden
+ // effect tool to surface without an explicit discovery receipt. Keep the
+ // native list anchored to the owner goal/directive; evolving plans use the
+ // fixed search+call bridge, which still verifies the owner-authorized schema.
+
  let query=format!("{task} {owner} {}",directive.unwrap_or(""));
  for name in ranked(catalog,&query) {
   if displayed.len()>=VISIBLE{break}
@@ -256,23 +247,36 @@ mod tests{
   assert!(!forbidden.iter().any(|s|s.name=="workspace_list"));
  }
  #[test]
- fn revised_plan_discovers_a_different_authorized_tool_without_a_second_loop(){
+ fn model_plan_does_not_rewrite_native_prefix_and_hidden_effect_uses_bridge(){
   let c=catalog();
   let before=select(&c,"Review a market report","",None,&[],&[]);
   assert!(!before.iter().any(|tool|tool.name=="mcp__archive_publish"));
   let revised=select(&c,"Review a market report","",None,
    &["publish artifact to archive".into()],&[]);
-  assert!(revised.iter().any(|tool|tool.name=="mcp__archive_publish"));
+  let names=|list:&[ToolSpec]|list.iter().map(|tool|tool.name.clone()).collect::<Vec<_>>();
+  assert_eq!(names(&revised),names(&before),
+      "untrusted model plans must not invalidate the native tool prefix");
   assert!(revised.len()<=VISIBLE);
-  assert!(revised.iter().all(|tool|c.contains_key(&tool.name)));
-  // An explicit new owner directive cannot be overridden by the stale plan.
+  // The new plan still has access to the SAME authorized hidden effect tool
+  // through the fixed search+call bridge and a real discovery receipt.
+  let lookup=Action{id:"lookup-plan".into(),tool:SEARCH.into(),
+      arguments:json!({"query":"archive publish"}),depends_on:vec![]};
+  let result=execute_local(&lookup,&c).unwrap().unwrap();
+  assert!(result["matches"].as_array().unwrap().iter()
+      .any(|entry|entry["name"]=="mcp__archive_publish"));
+  let receipt=Receipt{id:lookup.id.clone(),tool:lookup.tool.clone(),
+      arguments:lookup.arguments.clone(),success:true,result,step:1};
+  let bridge=Action{id:"publish-plan".into(),tool:CALL.into(),
+      arguments:json!({"name":"mcp__archive_publish","arguments":{}}),
+      depends_on:vec!["lookup-plan".into()]};
+  assert_eq!(resolve_bridge(&bridge,&c,&[receipt]).unwrap().unwrap().tool,
+      "mcp__archive_publish");
+  // An explicit NEW owner directive may select a different bounded prefix.
   let corrected=select(&c,"Review a market report","",
    Some("Inspect code instead of publishing"),
    &["publish artifact to archive".into()],&[]);
   assert!(!corrected.iter().any(|tool|tool.name=="mcp__archive_publish"));
   assert!(corrected.iter().any(|tool|tool.name=="workspace_read_range"));
-  // A direct follow-up must rediscover the relevant inspection tool even
-  // when the original objective was unrelated and the old plan was to publish.
   let inspected=select(&c,"Publish a report","",Some("Inspect code"),
       &["publish artifact to archive".into()],&[]);
   assert!(inspected.iter().any(|tool|tool.name=="workspace_read_range"));

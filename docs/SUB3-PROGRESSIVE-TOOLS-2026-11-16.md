@@ -7,6 +7,12 @@
 - Coverage: unit regressions in `crates/dominion-agent-sdk/src/tool_discovery.rs` and `src/engine/chat/runtime/capability.rs`. No 27B task accuracy, real token billing or runtime validation is asserted before those checks execute.
 - External context: [MCP 2026-07-28 tools specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2026-07-28/server/tools.mdx) (tool lists can change) and [SCOUT hybrid tool retrieval, Aug 2026](https://arxiv.org/abs/2608.23992). DOMINION implements deterministic lexical+schema fusion, **not** SCOUT's dense vector stage.
 
+## 2026-11-21 integration regression: stable native function-prefix
+
+- Enabling the previously omitted `progressive_tool_discovery` SDK test revealed two failures: a model-generated plan changed the native tool set after discovery, and a Korean GitHub read acquired an unrelated Google connector on a later model turn.
+- Corrected `tool_discovery::select` so model-authored plan text cannot rewrite the provider-visible tool declarations. Selection follows owner task/directive; hidden tools remain accessible through durable `dominion_tool_search` + `dominion_tool_call` authorization receipts. Actual owner directive changes may still select a different list. This strengthens the original fixed-prefix contract rather than deleting the failing assertions.
+- `.github/workflows/sub3-rust-sdk-check.yml` now explicitly executes `cargo test -p dominion-agent-sdk --test progressive_tool_discovery`. The integration suite and exact SHA CI status must be read from Actions.
+
 ## 2026-11-21 update: Korean owner-intent routing across Native and Chat
 
 - The shared `crates/dominion-agent-algorithms/src/ranking.rs` now normalizes Korean inflected service requests (GitHub, Gmail, Drive, Calendar, Cloudflare, Railway) into authorized connector metadata. Two-character abbreviations are exact-token matches only, preventing e.g. `PR` from spuriously selecting unrelated `prompt` tools.
