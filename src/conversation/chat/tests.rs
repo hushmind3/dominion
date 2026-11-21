@@ -928,3 +928,49 @@ async fn plain_chat_refuses_model_tool_calls_without_executing_any_tool() {
     server.abort();
     let _=std::fs::remove_dir_all(&state.config.data_dir);
 }
+
+#[tokio::test]
+async fn plain_chat_can_explain_tool_markup_as_text_without_executing_it(){
+    use axum::{routing::post,Router};
+    use axum::response::IntoResponse;
+    async fn model() -> axum::response::Response {
+        let code_example="XML 예시: \`<tool_call>\` 뒤에 명령 문자열이 옵니다. invoke name=\"tool\"";
+        let events=format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+            json!({"choices":[{"delta":{"content":code_example}}]}),
+            json!({"choices":[{"delta":{},"finish_reason":"stop"}],
+                "usage":{"prompt_tokens":22,"completion_tokens":12,"total_tokens":34}}));
+        ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],events).into_response()
+    }
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr=listener.local_addr().unwrap();
+    let server=tokio::spawn(async move{
+        axum::serve(listener,Router::new().route("/chat/completions",post(model))).await.unwrap()
+    });
+    let state=temp_state();
+    state.store.put("provider",&json!({
+        "id":"markup-test","baseUrl":format!("http://{addr}"),
+        "model":"markup-fixture","kind":"openai","enabled":true
+    }));
+    state.store.put("session",&json!({
+        "id":"markup-chat","providerId":"markup-test"
+    }));
+    let request=TurnRequest::from_value(&json!({
+        "sessionId":"markup-chat","providerId":"markup-test",
+        "model":"markup-fixture","input":"XML 도구 호출 문법을 설명해 주세요.",
+        "toolsEnabled":false,"toolsExecutionEnabled":false
+    })).unwrap();
+    let (tx,mut rx)=tokio::sync::mpsc::unbounded_channel();
+    let saved=tokio::time::timeout(Duration::from_secs(15),
+        run_turn_plain(&state,&request,&tx)).await.unwrap().unwrap().unwrap();
+    assert!(saved["content"].as_str().unwrap().contains("<tool_call>"),"{saved}");
+    assert!(saved["content"].as_str().unwrap().contains("invoke name="));
+    assert_eq!(state.store.all("execution_operation").len(),0);
+    let streamed=std::iter::from_fn(||rx.try_recv().ok())
+        .filter(|event|event["type"]=="text")
+        .filter_map(|event|event["text"].as_str().map(str::to_string))
+        .collect::<String>();
+    assert!(streamed.contains("<tool_call>"),"Stream lost quoted tool markup: {streamed}");
+    assert!(streamed.contains("invoke name="));
+    server.abort();
+    let _=std::fs::remove_dir_all(&state.config.data_dir);
+}

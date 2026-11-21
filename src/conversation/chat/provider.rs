@@ -970,7 +970,14 @@ async fn stream_completion_once_body(
         }
         let content=crate::engine::cli_model::generate(source,&provider.model,&projected).await?;
         if state.is_cancelled(session_id){return Err("실행이 중단되었습니다.".into());}
-        let (calls,visible)=super::protocol::parse_text_tool_calls(&content);
+        // A direct conversation with no advertised tools is ordinary text:
+        // it may quote tool-call syntax as an example and must not treat it
+        // as an instruction or hide those bytes from the owner.
+        let (calls,visible)=if tools.is_empty(){
+            (Vec::new(),content)
+        }else{
+            super::protocol::parse_text_tool_calls(&content)
+        };
         let mut completed=Completion::default();
         completed.content=visible;
         completed.tool_calls=calls.into_iter().map(|(name,arguments)|ToolCall{id:uuid::Uuid::new_v4().to_string(),name,arguments}).collect();
@@ -1215,7 +1222,11 @@ async fn stream_completion_once_body(
                         if let Some(text)=text.filter(|text|!text.is_empty()) {
                             completion.first_delta_ms.get_or_insert(started.elapsed().as_millis() as u64);
                             completion.content.push_str(&text);
-                            stream_visible_text(tx,&text,&mut text_pending,&mut in_text_tool_call);
+                            if tools.is_empty(){
+                                let _=tx.send(json!({"type":"text","text":text}));
+                            }else{
+                                stream_visible_text(tx,&text,&mut text_pending,&mut in_text_tool_call);
+                            }
                         }
                     }
                     if calls.is_empty() && !final_calls.is_empty() {
@@ -1249,7 +1260,11 @@ async fn stream_completion_once_body(
             if let Some(content) = delta.get("content").and_then(|value| value.as_str()) {
                 if !content.is_empty() {
                     completion.content.push_str(content);
-                    stream_visible_text(tx, content, &mut text_pending, &mut in_text_tool_call);
+                    if tools.is_empty(){
+                        let _=tx.send(json!({"type":"text","text":content}));
+                    }else{
+                        stream_visible_text(tx, content, &mut text_pending, &mut in_text_tool_call);
+                    }
                 }
             }
 
@@ -2056,7 +2071,11 @@ async fn stream_anthropic_once(
                                     completion.first_delta_ms = Some(started.elapsed().as_millis() as u64);
                                 }
                                 completion.content.push_str(text);
-                                stream_visible_text(tx, text, &mut text_pending, &mut in_text_tool_call);
+                                if tools.is_empty(){
+                                    let _=tx.send(json!({"type":"text","text":text}));
+                                }else{
+                                    stream_visible_text(tx, text, &mut text_pending, &mut in_text_tool_call);
+                                }
                             }
                         }
                         "thinking_delta" => {

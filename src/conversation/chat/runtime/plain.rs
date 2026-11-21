@@ -152,10 +152,7 @@ pub(super) async fn run_plain_body(
     metrics.lock().unwrap().tokens = charged;
     let rejection = if charged > MAX_TOKENS {
         Some("모델 응답이 토큰 제한을 초과했습니다.")
-    } else if !completion.tool_calls.is_empty()
-        || completion.content.contains("<tool_call>")
-        || completion.content.contains("invoke name=\"")
-    {
+    } else if !completion.tool_calls.is_empty() {
         Some("일반 채팅에서 모델이 허용되지 않은 도구 호출을 반환했습니다.")
     } else if completion.content.trim().is_empty() {
         Some("모델이 빈 답변을 반환했습니다.")
