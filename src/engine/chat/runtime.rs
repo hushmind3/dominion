@@ -1098,10 +1098,8 @@ async fn run_turn_body(
         acceptance_passed,
         budget,
         program_finished,
-        round_tools:vec![],wire_messages:vec![],model_started:std::time::Instant::now(),model_offset_ms:0,
-        completion:None,round_calls:vec![],parallel_reads:false,dispatched:std::collections::HashMap::new(),
-        ordering_used:false,ordering_ok:true,prepared_arguments:Value::Null,
-        prepared_key:String::new(),completed_operations:vec![],
+        model_round: product::ModelRound::default(),
+        tool_round: product::ToolRound::default(),
     };
     let context=dominion_algorithms::engine::Context{snapshot:kernel_state,budget:adapter.budget.clone(),round:0,journal:&kernel_journal};
     dominion_core::runtime_port::AgentLoop::run(
