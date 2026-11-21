@@ -118,6 +118,11 @@ export class DominionApiError extends Error {
 export class DominionStreamError extends Error {
   constructor(message:string){super(message);this.name='DominionStreamError';}
 }
+/** Matches the Rust Runtime RunPhase terminal aliases; never infer
+ * completion from a socket closing. */
+export const terminalHostStatus=(status:string):boolean=>
+  ['completed','succeeded','failed','denied','exhausted','cancelled',
+   'interrupted','needs_review','in_doubt'].includes(status);
 const id=(value:string)=>encodeURIComponent(value);
 const aborted=()=>new DOMException('Operation aborted','AbortError');
 function sleep(ms:number,signal?:AbortSignal):Promise<void>{
@@ -259,8 +264,8 @@ export class Dominion{
       const interval=Math.max(100,options.intervalMs??1000);
       const deadline=options.timeoutMs===undefined?Infinity:Date.now()+options.timeoutMs;
       const actionable=new Set([
-        'completed','failed','cancelled','exhausted','denied',
-        'awaiting_approval','in_doubt','interrupted','needs_review'
+        'completed','succeeded','failed','cancelled','exhausted','denied',
+        'awaiting_approval','waiting_approval','in_doubt','interrupted','needs_review'
       ]);
       while(true){
         if(options.signal?.aborted)throw aborted();
@@ -343,7 +348,7 @@ export class Dominion{
     while(true){
       if(options.signal?.aborted)throw aborted();
       const job=await this.request<Job>('GET','/api/jobs/'+id(jobId),undefined,options.signal);
-      if(['completed','failed','cancelled','interrupted','needs_review'].includes(job.status))return job;
+      if(terminalHostStatus(job.status))return job;
       if(Date.now()>=deadline)throw new DominionStreamError('Job wait timed out');
       await sleep(Math.min(interval,deadline-Date.now()),options.signal);
     }
