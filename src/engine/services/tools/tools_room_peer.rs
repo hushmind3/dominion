@@ -100,7 +100,7 @@ pub(super) fn inbox(ctx:&ToolContext<'_>)->Result<Value,String>{
 #[cfg(test)]
 mod tests{
     use super::*;
-    use crate::{config::Config,db::Store,vault::Vault};
+    use crate::{config::Config,db::Store,vault::Vault,state::AppState};
     fn state()->(AppState,std::path::PathBuf){
         let dir=std::env::temp_dir().join(format!("room-peer-{}",uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
