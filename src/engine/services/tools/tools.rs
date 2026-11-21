@@ -6,6 +6,8 @@ mod external_harness;
 mod team;
 #[path = "tools_room_peer.rs"]
 mod room_peer;
+#[path = "tools_remote_artifacts.rs"]
+mod remote_artifacts;
 
 use crate::db::Store;
 use serde_json::{json, Value};
@@ -89,6 +91,8 @@ pub fn definitions() -> Vec<Value> {
                 "items":{"type":"object","properties":{
                     "id":text("Stable ASCII task ID"),"agentId":text("Registered local or remote worker agent"),
                     "remoteWorkerId":text("Optional live Rust remote node ID from team_workers.remoteWorkers; omit to execute locally"),
+                    "artifactPaths":json!({"type":"array","maxItems":8,"items":{"type":"string"},
+                        "description":"Approved, bounded relative UTF-8 output files to transfer from a remote Writer; requires readOnly=false. Local merge is a separately approved action."}),
                     "prompt":text("Self-contained task with expected result and checks"),
                     "dependsOn":json!({"type":"array","items":{"type":"string"}}),
                     "successCriteria":json!({"type":"array","maxItems":20,"description":"Optional frozen native acceptance checks; file_exists, file_equals or command_succeeded are verified by the Rust worker", "items":{"type":"object"}}),
@@ -101,6 +105,9 @@ pub fn definitions() -> Vec<Value> {
         tool("team_status","Read the durable lead-owned Task Team DAG and every native worker job receipt without launching new work",object(json!({
             "teamId":text("Team id returned by team_execute")
         }),vec!["teamId"])),
+        tool("team_remote_apply","Apply a completed remote Writer file receipt in the Lead's local workspace only after user approval; checks frozen base SHA-256, source hash and native patch preflight",object(json!({
+            "teamId":text("Owning Lead team ID"),"remoteTaskId":text("Completed remote Writer task ID from team_status")
+        }),vec!["teamId","remoteTaskId"])),
         tool("delegate_task", "Delegate a self-contained task to another agent and optionally wait for its result", object(json!({
             "agentId": text("Target agent id"),
             "prompt": text("Task instructions"),
@@ -242,6 +249,7 @@ pub fn requires_approval(name: &str) -> bool {
             | "terminal_exec"
             | "external_harness_run"
             | "team_execute"
+            | "team_remote_apply"
             | "github_api"
             | "github_file_commit"
             | "github_issue_create"
@@ -272,7 +280,7 @@ pub fn ui_tool_allowed(policy:&Value,name:&str)->bool{
     if name.starts_with("mcp__") && policy["mcpEnabled"]!=true{return false;}
     if matches!(name,"web_search"|"http_fetch") && policy["webEnabled"]!=true{return false;}
     if matches!(name,"delegate_task"|"delegate_parallel"|"task_status"|"task_result"|
-        "team_execute"|"team_status"|"team_workers"|"external_harness_sessions"|"external_harness_run") && policy["subagentsEnabled"]!=true{return false;}
+        "team_execute"|"team_remote_apply"|"team_status"|"team_workers"|"external_harness_sessions"|"external_harness_run") && policy["subagentsEnabled"]!=true{return false;}
     true
 }
 
@@ -612,6 +620,7 @@ pub async fn execute(
         "room_peer_inbox" => room_peer::inbox(ctx),
         "team_execute" => team::execute(ctx,args,run_id).await,
         "team_status" => team::status(ctx,args),
+        "team_remote_apply" => remote_artifacts::apply(ctx,args).await,
         "team_workers" => Ok(team::workers(ctx)),
         "delegate_task" => delegate(ctx, args).await,
         "external_harness_run" => external_harness::run(ctx,args).await,
