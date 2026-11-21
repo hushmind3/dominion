@@ -157,3 +157,35 @@ jobs:
         run: |
           npm install --prefix sdk/typescript --no-package-lock --ignore-scripts --no-audit --no-fund
           npm test --prefix sdk/typescript
+
+
+  browser-ux:
+    # Headless Chromium opens and operates the real React workspace against
+    # Vite dev server. No release bundle, Tauri installer or backend secrets.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install frontend dependencies and headless Chromium
+        run: |
+          npm ci --prefix web --no-audit --no-fund
+          cd web
+          npx playwright install --with-deps chromium
+      - name: Exercise every workspace menu at desktop, tablet and phone widths
+        run: node web/scripts/workspace-visual.mjs
+      - name: Exercise channel onboarding, editing and Task Team screen interactions
+        run: node web/scripts/connection-visual.mjs
+      - name: Attach real browser screenshots and UX reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sub3-full-workspace-browser-ux
+          path: |
+            web/artifacts/workspace-visual/
+            web/artifacts/connection-visual/
+          if-no-files-found: warn
