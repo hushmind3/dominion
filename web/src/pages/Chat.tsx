@@ -512,9 +512,10 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
       const rows=await get<ChatMessage[]>('/api/sessions/'+encodeURIComponent(id)+'/messages');
       const oldId=messages.at(-1)?.id;
       const lastIndex=oldId?rows.findIndex(row=>row.id===oldId):-1;
-      persisted=rows.find((row,index)=>index>lastIndex&&row.role==='user'&&
-       (clientTurnId&&row.metadata?.clientTurnId===clientTurnId||
-        row.metadata?.clientTurnId==null&&row.content===text));
+      persisted=rows.find((row,index)=>row.role==='user'&&(
+       clientTurnId&&row.metadata?.clientTurnId===clientTurnId||
+       index>lastIndex&&row.metadata?.clientTurnId==null&&row.content===text
+      ));
      }catch{lookupFailed=true;}
      if(view.current===id){
       if(persisted){
