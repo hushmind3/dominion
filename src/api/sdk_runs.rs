@@ -83,9 +83,10 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
             "needs_review" if reconciliable_tool(job)=>"in_doubt",
             "needs_review" if snapshot["error"].as_str()
                 .is_some_and(|e|e.contains("budget")||e.contains("limit"))=>"exhausted",
-            "needs_review"=>"denied",
+            "needs_review"=>"needs_review",
             "failed"|"interrupted" if safe_native_resume(state,job)=>"interrupted",
-            "failed"|"interrupted"=>"denied",
+            "failed"=>"failed",
+            "interrupted"=>"needs_review",
             "queued"=>"queued","running"=>"running",
             "completed"=>"completed","cancelled"=>"cancelled",
             other=>other
@@ -615,7 +616,7 @@ mod tests{
         assert_eq!(project(&state,&working)["status"],"in_doubt",
             "single uncertain tool can be reconciled in the main UI");
         working["nativeState"]["modelInFlight"]=json!(true);
-        assert_eq!(project(&state,&working)["status"],"denied",
+        assert_eq!(project(&state,&working)["status"],"needs_review",
             "a paid model uncertainty must never display tool reconciliation controls");
         working["nativeState"]["modelInFlight"]=json!(false);
         working["nativeState"]["inFlight"]=json!([]);
@@ -627,14 +628,14 @@ mod tests{
         working["nativeState"]["error"]=Value::Null;
         assert_eq!(project(&state,&working)["status"],"interrupted");
         working["nativeInFlight"]=json!(true);
-        assert_eq!(project(&state,&working)["status"],"denied",
+        assert_eq!(project(&state,&working)["status"],"failed",
             "unsafe failed tasks must not display a non-working Resume button");
         working["nativeInFlight"]=json!(false);
         state.store.put("execution_operation",&json!({
             "id":"unresolved-host-effect","runId":"live","status":"interrupted",
             "tool":"shell_exec","outcomeUnknown":true
         })).unwrap();
-        assert_eq!(project(&state,&working)["status"],"denied",
+        assert_eq!(project(&state,&working)["status"],"failed",
             "unresolved operation journal must outrank a clean-looking SDK snapshot");
         let _=std::fs::remove_dir_all(root);
     }
@@ -787,7 +788,7 @@ mod tests{
         assert!(shown["checkpoint"]["usage"].is_null());
         let mut needs=job;
         needs["status"]=json!("needs_review");
-        assert_eq!(project(&state,&needs)["status"],"denied",
+        assert_eq!(project(&state,&needs)["status"],"needs_review",
             "no uncertain tool receipt means no actionable manual confirmation");
         let _=std::fs::remove_dir_all(root);
     }
