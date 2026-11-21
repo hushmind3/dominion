@@ -1176,21 +1176,53 @@ fn optional(value: &Value, key: &str) -> Option<String> {
 
 /// Mentions inside examples/code/quoted blocks are data, not routing commands.
 fn mention_text(input: &str) -> String {
-    let mut fenced = false;
-    let mut inline = false;
+    // A fence opens with N backticks or tildes and closes only with the same
+    // character and at least N markers. Nested shorter markers are data.
+    let mut fence: Option<(char, usize)> = None;
     let mut out = String::new();
     for line in input.lines() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            fenced = !fenced;
+        if let Some(marker) = trimmed.chars().next().filter(|c| matches!(c, '`' | '~')) {
+            let count = trimmed.bytes().take_while(|byte| *byte == marker as u8).count();
+            if count >= 3 {
+                match fence {
+                    None => {
+                        fence = Some((marker, count));
+                        out.push('\n');
+                        continue;
+                    }
+                    Some((opened, minimum))
+                        if opened == marker && count >= minimum && trimmed[count..].trim().is_empty() =>
+                    {
+                        fence = None;
+                        out.push('\n');
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if fence.is_some() || trimmed.starts_with('>') {
             out.push('\n');
             continue;
         }
-        if fenced || trimmed.starts_with('>') {
-            out.push('\n');
-            continue;
-        }
-        for ch in line.chars() {
+        let mut inline = false;
+        let mut url = false;
+        for (position, ch) in line.char_indices() {
+            let rest = &line[position..];
+            if !inline
+                && (rest.get(..7).is_some_and(|scheme| scheme.eq_ignore_ascii_case("http://"))
+                    || rest.get(..8).is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://")))
+            {
+                url = true;
+            }
+            // An @handle in a pasted HTTP(S) address is reference data, not
+            // a request to activate a same-named Room participant.
+            if url && !ch.is_whitespace() && !matches!(ch, ')' | ']' | '>' | '"') {
+                out.push(' ');
+                continue;
+            }
+            url = false;
             if ch == '`' {
                 inline = !inline;
                 out.push(' ');
@@ -1200,11 +1232,11 @@ fn mention_text(input: &str) -> String {
                 out.push(ch);
             }
         }
-        inline = false;
         out.push('\n');
     }
     out
 }
+
 fn mention_boundary(ch: Option<char>) -> bool {
     ch.is_none_or(|ch| !ch.is_alphanumeric() && !matches!(ch, '_' | '-' | '.'))
 }
@@ -1679,6 +1711,12 @@ mod tests {
         assert!(plan_speakers(&state, &config, "안녕", None)
             .unwrap()
             .is_empty());
+        assert!(plan_speakers(&state, &config,
+            "자료 링크는 https://example.test/team/@나루 이니까 읽어줘", None)
+            .unwrap().is_empty(), "HTTP links are references, never mentions");
+        assert_eq!(plan_speakers(&state, &config,
+            "````md\n@나루 지금 답해\n```\n@가람 지금 답해\n````\n@다온 답해",
+            None).unwrap(), vec!["c"], "nested shorter code fences remain data");
         assert_eq!(
             plan_speakers(&state, &config, "@b 그리고 @가람", None).unwrap(),
             vec!["b", "a"]
