@@ -93,6 +93,7 @@ pub(super) struct HttpSession {
     pub(super) token: Option<String>,
     pub(super) next_id: u64,
     pub(super) era: HttpEra,
+    pub(super) tool_schema: Option<Value>,
 }
 
 impl HttpSession {
@@ -124,6 +125,7 @@ impl HttpSession {
             token,
             next_id: 1,
             era: HttpEra::Modern,
+            tool_schema: None,
         };
         if session.discover_modern().await? { return Ok(session); }
         session.era = HttpEra::Legacy;
@@ -143,6 +145,7 @@ impl HttpSession {
     }
 
     pub(super) fn modern(&self) -> bool { self.era == HttpEra::Modern }
+    pub(super) fn set_tool_schema(&mut self,schema:Value){self.tool_schema=Some(schema);}
 
     async fn discover_modern(&mut self) -> Result<bool, String> {
         let id=self.next_id;
@@ -215,7 +218,16 @@ impl HttpSession {
                 let name=payload["params"]["name"].as_str()
                     .or_else(||payload["params"]["uri"].as_str())
                     .ok_or("MCP 요청 이름 또는 URI가 없습니다.")?;
-                request=request.header("Mcp-Name",header_value(name));
+                request=request.header("Mcp-Name",super::schema::encode_header(name));
+            }
+            if method=="tools/call" {
+                if let Some(schema)=self.tool_schema.as_ref() {
+                    for (header,value) in super::schema::projected_headers(
+                        schema,&payload["params"]["arguments"]
+                    )? {
+                        request=request.header(header.as_str(),value.as_str());
+                    }
+                }
             }
         }
         if !self.modern() {
