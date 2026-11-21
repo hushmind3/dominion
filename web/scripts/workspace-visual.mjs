@@ -205,6 +205,17 @@ try{
  await page.locator('.workspace-settings').waitFor({timeout:10000})
  await page.keyboard.press('Escape')
  await page.locator('.workspace-settings').waitFor({state:'detached',timeout:10000})
+ await page.keyboard.press('Control+k')
+ await page.locator('#dominion-menu-search').waitFor({timeout:10000})
+ assert.equal(await page.locator('#dominion-menu-results [role="option"]').count(),9,
+  'Palette must expose every existing destination without a new menu')
+ await screenshot(page,'320-menu-search.png')
+ await page.locator('#dominion-menu-search').fill('memory')
+ await page.keyboard.press('Enter')
+ await page.waitForFunction(()=>location.hash==='#/memory')
+ await page.locator('.workspace-settings').waitFor({timeout:10000})
+ await page.keyboard.press('Escape')
+ await page.locator('.workspace-settings').waitFor({state:'detached',timeout:10000})
  assert.deepEqual(errors,[],'No uncaught React errors across the workspace')
  await writeFile(path.join(out,'summary.json'),JSON.stringify({
   ok:true,visits,screenshots:pictures,requests:{
