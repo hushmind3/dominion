@@ -637,6 +637,7 @@ const en: Record<LocaleKey, string> = {
   'chat.stopping': 'Stopping the model…',
   'chat.stopped': 'The model run was stopped. You can continue this conversation.',
   'chat.stopPending': 'The server has not yet confirmed that the turn stopped. Try Stop again.',
+  'chat.usedMemories': 'Memories referenced: {count}',
   'chat.copy': 'Copy',
   'chat.noModel': 'Model server disconnected',
   'chat.manage': 'Manage connection',

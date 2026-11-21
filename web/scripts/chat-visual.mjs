@@ -19,7 +19,8 @@ server.stdout.on('data',d=>{logs+=d.toString()})
 server.stderr.on('data',d=>{logs+=d.toString()})
 const original=[
  {id:'owner-1',role:'user',session_id:'chat-ui',content:'표와 코드를 읽기 쉽게 보여주세요.'},
- {id:'model-1',role:'assistant',session_id:'chat-ui',content:
+ {id:'model-1',role:'assistant',session_id:'chat-ui',
+  metadata:{memoryRefs:[{id:'memory-1',text:'지하철을 선호합니다.'}]},content:
   '## 서식 있는 답변\n**굵은 글씨**와 `inline code`\n\n- 첫 항목\n- 두 번째 항목\n\n| 이름 | 값 |\n| --- | --- |\n| 테스트 | 1 |\n\n```ts\nconst answer = 42\n```\n\n[참고](https://example.com) <img src=x onerror=alert(1)>'}
 ]
 const session={id:'chat-ui',title:'기본 채팅 UI 점검',mode:'chat',agentId:null,providerId:'mock-chat',model:'mock-native'}
@@ -104,6 +105,8 @@ try{
   await page.route('**/api/**',mock)
   await page.goto(base+'/#/chat?session=chat-ui',{waitUntil:'domcontentloaded'})
   await page.locator('[data-role="assistant"] .chat-richtext h2').waitFor()
+  await page.getByText('참고한 기억 1개',{exact:true}).click()
+  await page.getByText('지하철을 선호합니다.',{exact:true}).waitFor()
   if(width===1440){
    const search=page.getByRole('textbox',{name:'대화 제목 검색'})
    assert.equal(await page.locator('.chat-history-entry').count(),2)

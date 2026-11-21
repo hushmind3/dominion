@@ -841,6 +841,13 @@ async fn plain_chat_is_one_model_call_without_agent_or_tools_and_preserves_follo
         assert!(saved["agent_id"].is_null());
         assert_eq!(saved["metadata"]["runtime"],"plain-chat");
         assert_eq!(saved["metadata"]["usage"]["totalTokens"],18);
+        if prompt=="첫 질문입니다." {
+            assert_eq!(saved["metadata"]["memoryRefs"][0]["id"],"shared-owner-memory");
+            assert!(saved["metadata"]["memoryRefs"][0]["text"]
+                .as_str().unwrap().contains("지하철을 선호합니다."));
+            assert!(!saved["metadata"]["memoryRefs"].as_array().unwrap().iter()
+                .any(|item| item["id"]=="other-agent-memory"));
+        }
     }
     let captured=captured.lock().unwrap();
     assert_eq!(captured.len(),2,"each plain chat turn makes exactly one model call");

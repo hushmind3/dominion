@@ -636,6 +636,7 @@ const ko = {
   'chat.stopping': '모델 실행 중단 중…',
   'chat.stopped': '모델 실행이 중단됐습니다. 이 대화에서 계속 입력할 수 있습니다.',
   'chat.stopPending': '서버가 아직 실행 종료를 확인하지 못했습니다. 다시 중단을 누르세요.',
+  'chat.usedMemories': '참고한 기억 {count}개',
   'chat.copy': '복사',
   'chat.noModel': '모델 서버 미연결',
   'chat.manage': '연결 관리',
