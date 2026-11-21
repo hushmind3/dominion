@@ -1256,6 +1256,14 @@ fn mentioned_agents(
         {
             aliases.push(name.to_lowercase());
         }
+        // Owner-configured aliases are first-class routing identities too.
+        // Do not infer names from private prompts or peer transcript text.
+        if let Some(names)=agent["aliases"].as_array(){
+            for name in names.iter().filter_map(Value::as_str)
+                .filter(|name|!name.trim().is_empty() && name.chars().count()<=80){
+                aliases.push(name.to_lowercase());
+            }
+        }
         aliases.sort();
         aliases.dedup();
         for alias in aliases {
@@ -1470,6 +1478,14 @@ mod tests {
             Vec::<String>::new(),
             "inline code examples are never a routing command"
         );
+        state.store.put("agent",&json!({"id":"s","name":"샤르티아",
+            "aliases":["샤르","대장"]}));
+        assert_eq!(mentioned_agents(&state,&roster,"@대장 결과 알려줘").unwrap(),
+            vec!["s".to_string()]);
+        assert_eq!(mentioned_agents(&state,&roster,"샤르야 진행해줘").unwrap(),
+            vec!["s".to_string()]);
+        assert!(mentioned_agents(&state,&roster,"대장은 지난번에 조사했어").unwrap().is_empty(),
+            "descriptive references to an alias must not route the agent");
         let _ = std::fs::remove_dir_all(dir);
     }
 
