@@ -23,6 +23,25 @@ type ActivityData={teams:Team[];remoteWorkers:Worker[];remoteConfigured?:boolean
 type ArtifactReview={teamId:string;remoteTaskId:string;status:string;reviewDigest:string;patch:string;files:{path:string;sha256:string}[]}
 type LeadJob={id:string;status:string;sessionId?:string;error?:string}
 const empty:ActivityData={teams:[],remoteWorkers:[],remoteConfigured:false,leadJobs:[]}
+type TeamDraft={open:boolean;prompt:string;leadId:string;workerIds:string[];remoteId:string}
+const teamDraftKey='dominion.team.launch.draft.v1'
+function restoreTeamDraft():TeamDraft{
+ const blank:TeamDraft={open:false,prompt:'',leadId:'',workerIds:[],remoteId:''}
+ try{
+  const raw=sessionStorage.getItem(teamDraftKey)
+  if(!raw||raw.length>12000)return blank
+  const draft:Partial<TeamDraft>=JSON.parse(raw)
+  if(!draft||typeof draft!=='object'||Array.isArray(draft))return blank
+  const names=(Array.isArray(draft.workerIds)?draft.workerIds:[])
+   .filter((id):id is string=>typeof id==='string'
+    &&id.length>0&&id.length<=80&&/^[a-zA-Z0-9_-]+$/.test(id))
+  return {open:draft.open===true,
+   prompt:typeof draft.prompt==='string'?draft.prompt.slice(0,4000):'',
+   leadId:typeof draft.leadId==='string'?draft.leadId.slice(0,100):'',
+   workerIds:[...new Set(names)].slice(0,8),
+   remoteId:typeof draft.remoteId==='string'?draft.remoteId.slice(0,100):''}
+ }catch{return blank}
+}
 const target=(teamId:string,taskId:string)=>'/api/activity/teams/'+encodeURIComponent(teamId)+'/artifacts/'+encodeURIComponent(taskId)
 function goToLead(sessionId?:string){
  if(sessionId)window.location.hash='#/chat?session='+encodeURIComponent(sessionId)
@@ -46,12 +65,13 @@ export function TeamActivity(){
  const en=useLocale()==='en'
  const activity=useRemote<ActivityData>('/api/activity/teams',empty)
  const agents=useRemote<Agent[]>('/api/agents',[])
- const [createOpen,setCreateOpen]=useState(false)
+ const [restoredDraft]=useState<TeamDraft>(restoreTeamDraft)
+ const [createOpen,setCreateOpen]=useState(restoredDraft.open)
  const [selected,setSelected]=useState('')
- const [prompt,setPrompt]=useState('')
- const [leadId,setLeadId]=useState('')
- const [workerIds,setWorkerIds]=useState<string[]>([])
- const [remoteId,setRemoteId]=useState('')
+ const [prompt,setPrompt]=useState(restoredDraft.prompt)
+ const [leadId,setLeadId]=useState(restoredDraft.leadId)
+ const [workerIds,setWorkerIds]=useState<string[]>(restoredDraft.workerIds)
+ const [remoteId,setRemoteId]=useState(restoredDraft.remoteId)
  const [platform,setPlatform]=useState<'powershell'|'posix'>('powershell')
  const [busy,setBusy]=useState('')
  const [error,setError]=useState('')
@@ -77,6 +97,8 @@ export function TeamActivity(){
   ...runnable.map(agent=>({id:agent.id,name:agent.name,remoteOnly:false})),
   ...remoteOnly.map(id=>({id,name:id,remoteOnly:true}))
  ]
+ const unavailableWorkers=workerIds.filter(id=>!workerChoices.some(choice=>choice.id===id))
+ const hasDraft=Boolean(prompt.trim()||leadId||workerIds.length||remoteId)
  const remoteRequired=workerIds.filter(id=>remoteOnly.includes(id))
  const compatible=workers.filter(node=>node.online
   && workerIds.some(id=>(node.agents||[]).includes(id))
@@ -85,6 +107,16 @@ export function TeamActivity(){
  const invalidRemote=remoteRequired.length>0&&!selectedRemote
  const inProgress=activity.value.teams.filter(team=>team.status==='running').length
  const reviewCount=activity.value.teams.filter(team=>team.status==='needs_review').length
+ // Preserve only the unsent composer state in the current browser tab.
+ // Restoring a draft never enqueues work; only an explicit click can do so.
+ useEffect(()=>{
+  try{
+   if(!createOpen&&!hasDraft)sessionStorage.removeItem(teamDraftKey)
+   else sessionStorage.setItem(teamDraftKey,JSON.stringify({
+    open:createOpen,prompt,leadId,workerIds,remoteId
+   } satisfies TeamDraft))
+  }catch{/* Browser storage may be unavailable. */}
+ },[createOpen,prompt,leadId,workerIds,remoteId,hasDraft])
  useEffect(()=>{
   const timer=setInterval(()=>{if(document.visibilityState==='visible')void activity.reload()},30000)
   return()=>clearInterval(timer)
@@ -96,8 +128,13 @@ export function TeamActivity(){
   setRemoteId('')
  }
  const reload=()=>{void activity.reload();refresh('/api/activity/teams','/api/jobs')}
+ const discardDraft=()=>{
+  setPrompt('');setLeadId('');setWorkerIds([]);setRemoteId('');setCreateOpen(false)
+  try{sessionStorage.removeItem(teamDraftKey)}catch{}
+ }
  const launch=async()=>{
-  if(!lead||!workerIds.length||!prompt.trim()||busy||invalidRemote)return
+  if(!lead||!workerIds.length||!prompt.trim()||busy||invalidRemote
+   ||unavailableWorkers.length>0)return
   setBusy('launch');setError('');setNotice('')
   try{
    const saved=await post<{status:string;jobId:string}>('/api/activity/teams/start',{
@@ -106,7 +143,7 @@ export function TeamActivity(){
    })
    setQueuedJobId(saved.jobId)
    setNotice(en?'Lead job queued. The team appears once the Lead commits its native DAG.':'Lead 작업이 대기열에 등록됐습니다. Lead가 실제 작업 DAG를 생성하면 팀 목록에 나타납니다.')
-   setPrompt('');setCreateOpen(false);reload()
+   discardDraft();reload()
   }catch(e){setError((e as Error).message)}finally{setBusy('')}
  }
  const cancelLead=async(job:LeadJob)=>{
@@ -187,7 +224,7 @@ export function TeamActivity(){
     {reviewCount>0&&<span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] text-amber-800">{en?'Review':'검토'} {reviewCount}</span>}
    </div>
    <div className="flex gap-2">
-    <Button size="sm" variant="secondary" onClick={()=>setCreateOpen(o=>!o)} aria-expanded={createOpen}><Play size={13}/>{en?'New team task':'팀 작업 시작'}</Button>
+    <Button size="sm" variant="secondary" onClick={()=>setCreateOpen(o=>!o)} aria-expanded={createOpen}><Play size={13}/>{hasDraft?(en?'Continue team draft':'팀 초안 이어쓰기'):(en?'New team task':'팀 작업 시작')}</Button>
     <Button size="sm" variant="ghost" onClick={reload} aria-label={en?'Refresh teams':'팀 새로고침'}><RefreshCw size={13}/></Button>
    </div>
   </div>
@@ -220,7 +257,14 @@ export function TeamActivity(){
     </div>
    </div>
    {invalidRemote&&<p role="alert" className="text-[11px] text-amber-800">{en?'Remote-only agents need an online device that advertises all selected remote IDs.':'원격 전용 에이전트를 선택하려면 해당 ID를 모두 제공하는 온라인 원격 장치를 지정해야 합니다.'}</p>}
-   <div className="flex justify-end"><Button variant="primary" disabled={Boolean(busy)||!prompt.trim()||!lead||workerIds.length<1||invalidRemote} onClick={()=>void launch()}><Play size={14}/>{busy==='launch'?(en?'Queuing…':'등록 중…'):(en?'Queue Lead task':'Lead 작업 시작')}</Button></div>
+   {unavailableWorkers.length>0&&<p role="alert" className="break-words text-[11px] text-amber-800">{en?'Unavailable selected Workers: ':'현재 사용할 수 없는 Worker: '}{unavailableWorkers.join(', ')}. {en?'Remove them to launch safely.':'초안을 수정하거나 삭제한 뒤 실행하세요.'}</p>}
+   <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className="flex flex-wrap items-center gap-2">
+     <span className="text-[10px] text-[#8A8176]">{en?'Unsent draft stored in this tab':'보내지 않은 초안은 현재 탭에 임시 저장됩니다'}</span>
+     {hasDraft&&<Button size="sm" variant="ghost" onClick={discardDraft} disabled={Boolean(busy)}>{en?'Discard draft':'초안 지우기'}</Button>}
+    </div>
+    <Button variant="primary" disabled={Boolean(busy)||!prompt.trim()||!lead||workerIds.length<1||invalidRemote||unavailableWorkers.length>0} onClick={()=>void launch()}><Play size={14}/>{busy==='launch'?(en?'Queuing…':'등록 중…'):(en?'Queue Lead task':'Lead 작업 시작')}</Button>
+   </div>
   </Panel>}
   {error&&<p role="alert" className="mb-3 break-words rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}
   {notice&&<p role="status" className="mb-3 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-xs text-[#5C544A]">{notice}</p>}
