@@ -4,7 +4,7 @@
 <p align="center"><strong>Your models. Your workspace. Native Rust execution.</strong></p>
 <p align="center"><a href="README.ko.md">한국어</a> · English · <a href="ENGINE.md">Architecture</a> · <a href="LICENSE">Apache-2.0</a></p>
 
-This document describes the **experimental `dominion-sub2` branch**, checked against source on **2026-11-20**. The complete React/Vite frontend has been synchronized with main's 2026-11-19 interface (`f86a36e`), while the Rust runtime and SDK retain sub2-specific execution, evidence, cache and recovery work. This is **not** a claim that the sub2 backend is identical to main or that a production desktop release has been verified.
+This document describes the **experimental `dominion-sub2` branch**, checked against source on **2026-11-21**. The complete React/Vite frontend has been synchronized with main's 2026-11-19 interface (`f86a36e`), while the Rust runtime and SDK retain sub2-specific execution, evidence, cache and recovery work. This is **not** a claim that the sub2 backend is identical to main or that a production desktop release has been verified.
 
 <p align="center">
   <img src="docs/01-multi-agent-room.webp" alt="Group conversation workspace" width="48%" />
@@ -62,10 +62,12 @@ Obsolete embedded generation, campaign and upload endpoints, their Rust implemen
 
 ## Minimal execution core (2026-11-20)
 
-The natural-language execution loop is isolated in `src/engine/core/`; provider routing, memory, rooms, automation, planning and concrete tools are in `src/engine/services/`, with MCP and external channels under `src/engine/addons/`. Rust module names and existing API/UI routes remain stable. See [core isolation design](docs/SUB2-MICROKERNEL-2026-11-20.md).
+The single provider-independent execution Harness is in `crates/dominion-turn-core/src/agent_loop.rs`, with replaceable loop strategies in `crates/dominion-agent-loop/`. Product adapters for chat, providers, memory, rooms, automation, planning and concrete tools remain under `src/engine/services/`; MCP and external channels remain in `src/engine/addons/`. Rust module names and existing API/UI routes remain stable. See [core isolation design](docs/SUB2-MICROKERNEL-2026-11-20.md).
 
 API architecture: 11 execution endpoints remain in the guarded core router; 123 domain endpoints use five service route modules, and 27 external-integration endpoints use the addon router. All retain their original URL paths and shared middleware.
 
-The minimum agent kernel is an independently compiled Rust workspace crate, `crates/dominion-turn-core/`, with only Tokio and serde_json dependencies. It owns the model/tool admission driver, generic execution host port and execution receipts. Providers, planning, memory, tools, automation, UI and MCP remain optional product services. `src/engine/core/mod.rs` is a compatibility reexport only.
+The minimum agent kernel is an independently compiled Rust workspace crate, `crates/dominion-turn-core/`, with only Tokio and serde_json dependencies. It owns the model/tool admission driver, generic execution host port and execution receipts. Providers, planning, memory, tools, automation, UI and MCP remain optional product services. `src/engine/mod.rs` now reexports `dominion-turn-core` as the execution core; the former `src/engine/core/` compatibility tree has been removed.
 
 2026-11-20: Planning, tool ordering/combination, write-before-read guidance and retry decisions now reside in the pure, replaceable `dominion-agent-kernel::decision_policy` module. `services/decision/turn_policy.rs` resolves the active policy revisions; the chat runtime consumes typed decisions without directly importing the algorithm registry. The `dominion-turn-core` execution crate remains provider- and algorithm-independent. No UI, API or main-branch changes.
+
+2026-11-21: ProgramIR Task Team scheduling is dependency-aware: read-only waves may overlap while writers and delegates remain exclusive. SQLite work claims are fenced by execution, session, program revision, team scope, node identity and assigned agent. Each completed team result is linked to committed tool evidence; an observed failed operation can never count as verified success even when its failure receipt itself is marked verified. Regression tests cover that distinction. This branch documentation does not assert production-load or live-provider validation.
