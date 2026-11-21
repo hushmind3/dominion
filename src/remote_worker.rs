@@ -15,7 +15,7 @@ struct Transport{
 impl Transport{
     async fn send(&self,path:&str,data:&Value)->Result<Value,String>{
         let response=self.client.post(format!("{}{}",self.url,path))
-            .header("x-dominion-remote-token",&self.token)
+            .header("x-dominion-remote-token",self.token.as_str())
             .timeout(Duration::from_secs(15))
             .json(data).send().await.map_err(|e|format!("remote {path}: {e}"))?;
         let status=response.status();
