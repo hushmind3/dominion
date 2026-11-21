@@ -10,6 +10,16 @@ const RUNTIME_PORT: u16 = 4319;
 const PROVIDER_ID: &str = "dominion-native";
 const MODEL_KIND: &str = "model_job";
 const EXTERNAL_KIND: &str = "external_model";
+const MAX_LLAMA_ARCHIVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+struct RemoveDirectoryOnDrop(PathBuf);
+
+impl Drop for RemoveDirectoryOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 pub static RUNTIME_CHANGE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static DOWNLOAD_COMMIT: Mutex<()> = Mutex::new(());
 // Register a model-file owner atomically; per-job download guards cannot
@@ -857,6 +867,7 @@ async fn install_from_release(state: &AppState) -> Result<(PathBuf, String), Str
         .data_dir
         .join(format!("llama-install-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp).map_err(|error| error.to_string())?;
+    let _temp_cleanup = RemoveDirectoryOnDrop(temp.clone());
     let archive = temp.join("llama.zip");
     let mut response = client
         .get(url)
@@ -867,7 +878,13 @@ async fn install_from_release(state: &AppState) -> Result<(PathBuf, String), Str
         .map_err(|error| format!("llama.cpp 다운로드 실패: {error}"))?
         .error_for_status()
         .map_err(|error| format!("llama.cpp 다운로드 HTTP 오류: {error}"))?;
-    let total = response.content_length().unwrap_or(0);
+    let total = response
+        .content_length()
+        .or_else(|| asset["size"].as_u64())
+        .unwrap_or(0);
+    if total > MAX_LLAMA_ARCHIVE_BYTES {
+        return Err("llama.cpp archive exceeds the 2 GiB download limit".into());
+    }
     set_install(install_progress(
         "downloading",
         "release",
@@ -876,28 +893,57 @@ async fn install_from_release(state: &AppState) -> Result<(PathBuf, String), Str
         total,
         &asset_name,
     ));
-    let mut bytes = Vec::new();
+    use tokio::io::AsyncWriteExt;
+    let mut output = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&archive)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut downloaded = 0u64;
     while let Some(chunk) = response
         .chunk()
         .await
         .map_err(|error| format!("llama.cpp 다운로드 본문 오류: {error}"))?
     {
-        bytes.extend_from_slice(&chunk);
+        downloaded = downloaded
+            .checked_add(chunk.len() as u64)
+            .ok_or("llama.cpp download size overflow")?;
+        if downloaded > MAX_LLAMA_ARCHIVE_BYTES {
+            return Err("llama.cpp archive exceeds the 2 GiB download limit".into());
+        }
+        output
+            .write_all(&chunk)
+            .await
+            .map_err(|error| format!("llama.cpp archive write failed: {error}"))?;
         set_install(install_progress(
             "downloading",
             "release",
             &asset_name,
-            bytes.len() as u64,
+            downloaded,
             total,
             &asset_name,
         ));
     }
-    std::fs::write(&archive, &bytes).map_err(|error| error.to_string())?;
+    output
+        .flush()
+        .await
+        .map_err(|error| error.to_string())?;
+    output
+        .sync_all()
+        .await
+        .map_err(|error| error.to_string())?;
+    drop(output);
+    if total > 0 && downloaded != total {
+        return Err(format!(
+            "llama.cpp archive ended at {downloaded} bytes; expected {total}"
+        ));
+    }
     set_install(install_progress(
         "extracting",
         "release",
         &asset_name,
-        bytes.len() as u64,
+        downloaded,
         total,
         &asset_name,
     ));
@@ -952,7 +998,6 @@ async fn install_from_release(state: &AppState) -> Result<(PathBuf, String), Str
             }
         }
     }
-    let _ = std::fs::remove_dir_all(&temp);
     let installed = bin_dir.join(if cfg!(windows) {
         "llama-server.exe"
     } else {
