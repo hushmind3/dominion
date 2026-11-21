@@ -205,12 +205,15 @@ fn codex_websocket_chain_reuses_identity_and_sends_only_the_new_suffix() {
     assert!(seen[0].get("previous_response_id").is_none());
     assert_eq!(seen[1]["previous_response_id"], "resp_ws_fixture_1");
     assert_eq!(seen[1]["client_metadata"]["session_id"], seen[0]["client_metadata"]["session_id"]);
-    for request in seen.iter() {
-        assert!(
-            request["instructions"].as_str().unwrap().contains("WEBSOCKET_IDENTITY_VERBATIM"),
-            "identity is re-sent on every websocket call"
-        );
-    }
+    // Codex Responses WebSocket holds the stable developer item in the
+    // prior-response chain. Sending it again on every turn wastes tokens;
+    // a changed revision must instead force an explicit rebase (unit-tested).
+    assert!(seen[0]["input"].as_array().unwrap().iter().any(|item|
+        item["role"]=="developer" && item.to_string().contains("WEBSOCKET_IDENTITY_VERBATIM")),
+        "first call must transmit the complete persona as developer input");
+    assert!(!seen[1]["input"].as_array().unwrap().iter().any(|item|
+        item["role"]=="developer" || item.to_string().contains("WEBSOCKET_IDENTITY_VERBATIM")),
+        "unchanged persona must be inherited, not resent on the chained turn");
     let first = seen[0]["input"].as_array().unwrap();
     let second = seen[1]["input"].as_array().unwrap();
     assert!(
