@@ -248,6 +248,47 @@ fn direct_chat_answers_without_agent_tools_or_action_execution() {
 
 
 
+
+#[test]
+fn client_turn_idempotency_prevents_duplicate_owner_effects_and_model_calls() {
+    let _serial=serial();
+    let (port,calls)=scripted_provider(|_|{
+        vec![json!({"choices":[{"delta":{"content":"응답을 기록했습니다."},"finish_reason":"stop"}]})]
+    });
+    let app=TestApp::new(port,"native");
+    let session=app.post("/api/sessions",&json!({"title":"idempotency"}));
+    let id=session["id"].as_str().unwrap();
+    let key="00000000-0000-4000-8000-000000000042";
+    let first=app.chat(&json!({
+        "sessionId":id,"input":"첫 요청","clientTurnId":key,
+        "directChat":true,"toolsEnabled":false
+    }));
+    assert!(first.contains("owner_saved"),"{first}");
+    assert!(first.contains("assistant_saved"),"{first}");
+
+    let duplicate=app.chat(&json!({
+        "sessionId":id,"input":"첫 요청","clientTurnId":key,
+        "directChat":true,"toolsEnabled":false
+    }));
+    assert!(duplicate.contains("동일한 요청이 이미 저장되었습니다"),"{duplicate}");
+    assert!(!duplicate.contains("assistant_saved"),"{duplicate}");
+    assert_eq!(calls.lock().unwrap().len(),1);
+    let messages=app.get(&format!("/api/sessions/{id}/messages"));
+    assert_eq!(messages.as_array().unwrap().len(),2);
+    assert_eq!(messages[0]["metadata"]["clientTurnId"],key);
+
+    // New keys are new logical submissions, even if the text repeats.
+    let third=app.chat(&json!({
+        "sessionId":id,"input":"첫 요청",
+        "clientTurnId":"00000000-0000-4000-8000-000000000043",
+        "directChat":true,"toolsEnabled":false
+    }));
+    assert!(third.contains("assistant_saved"),"{third}");
+    assert_eq!(calls.lock().unwrap().len(),2);
+    assert_eq!(app.get(&format!("/api/sessions/{id}/messages")).as_array().unwrap().len(),4);
+}
+
+
 #[test]
 fn direct_chat_search_request_remains_a_model_reply_without_web_tool_or_error() {
     let _serial=serial();
