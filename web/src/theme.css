@@ -35,6 +35,28 @@
 #root main p{line-height:1.65}
 .page-chat > div{height:100dvh;min-height:0}
 
+/* Readable chat transcript: owner on the right, responses on the left.
+   Scope typography to conversation content, not the settings or global nav. */
+.chat-turn{display:flex;align-items:flex-start;gap:12px;width:100%;min-width:0}
+.chat-turn-owner{justify-content:flex-end}
+.chat-turn-body{min-width:0}
+.chat-turn-assistant .chat-turn-body{flex:1}
+.chat-turn-owner .chat-turn-body{flex:0 1 auto;max-width:min(76%,640px)}
+.chat-turn-byline{display:flex;align-items:center;gap:8px;min-height:28px;margin-bottom:5px;color:#4A443C;font-size:12px;font-weight:700}
+.chat-turn-text{color:#34302B;font-size:16px;line-height:1.72;font-weight:400;white-space:pre-wrap;overflow-wrap:anywhere;text-align:left}
+.chat-turn-owner .chat-turn-text{width:fit-content;max-width:100%;margin-left:auto;padding:11px 17px;border:1px solid #E8DFD6;border-radius:18px 18px 6px 18px;background:#F1EDE7;color:#34302B;font-size:15px;line-height:1.65}
+.chat-turn-copy{margin-top:8px}
+.chat-turn-text pre{overflow-x:auto;max-width:100%;white-space:pre}
+.chat-transcript{row-gap:24px}
+@media(max-width:767px){
+ .chat-transcript{padding:18px 13px 24px!important;row-gap:20px}
+ .chat-turn{gap:9px}
+ .chat-turn-assistant>div:first-child{width:29px;height:29px;border-radius:10px}
+ .chat-turn-owner .chat-turn-body{max-width:86%}
+ .chat-turn-text{font-size:15.5px;line-height:1.7}
+ .chat-turn-owner .chat-turn-text{font-size:15px;padding:10px 14px}
+}
+
 /* Chat and groups retain their existing controls; the workspace menu opens over them. */
 [aria-label="대화 전환"] [aria-current]{background:#FFFDF9;color:#A94E30;box-shadow:0 1px 4px #3020100a}
 .chat-model-controls{flex:1}
