@@ -19,6 +19,7 @@ type SdkRun = {
   uncertainAction?: {id:string; tool:string; targetPath?:string|null} | null;
   events?: RunEvent[];
   eventsOmitted?:number;
+  eventsDropped?:number;
   verificationChecks?: {satisfied:boolean;explanation?:string}[];
   toolReceipts?: {id:string;tool:string;success:boolean;step:number}[];
   toolReceiptsOmitted?:number;
@@ -314,6 +315,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const canResume=status==='interrupted'
  const allEvents=run?.checkpoint?.events||[]
  const eventsOmitted=run?.checkpoint?.eventsOmitted??0
+ const eventsDropped=run?.checkpoint?.eventsDropped??0
  const totalEvents=allEvents.length+eventsOmitted
  const loadedOlder=olderHistory?.runId===run?.id&&
   olderHistory?.boundary===eventsOmitted?olderHistory:null
@@ -454,6 +456,11 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
          ?(en?'Load earlier steps':'더 이전 단계 불러오기')
          :(en?'Load older saved steps':'이전 저장 기록 불러오기')}
        </button>}
+      {loadedOlder?.nextBefore===null&&eventsDropped>0&&<p role="status"
+       className="mt-2 break-words text-[11px] text-[#82796D]">
+       {en?`${eventsDropped} earliest events have passed the bounded storage window; saved tool receipts remain separate.`:
+        `가장 오래된 ${eventsDropped}단계는 기록 보관 한도를 지나 재열람할 수 없습니다. 도구 영수증은 별도로 유지됩니다.`}
+      </p>}
       {historyPageError?.runId===run.id&&<p role="alert"
        className="mt-2 break-words text-[11px] text-rose-700">
        {historyPageError.message}
