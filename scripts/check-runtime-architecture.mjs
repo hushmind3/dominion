@@ -17,6 +17,7 @@ for(const p of [
   'crates/dominion-agent-algorithms/src/agent_loop.rs',
   'crates/dominion-agent-sdk/src/lib.rs',
   'src/conversation/chat/runtime/resume_safety_tests.rs',
+  'src/conversation/chat/runtime/input_contract.rs',
   'src/storage/sqlite/remote_tasks.rs',
   'src/features/cognition/algorithms/catalogue.rs',
   'web/e2e/sub3-native-live.mjs',
@@ -56,6 +57,11 @@ has('crates/dominion-agent-algorithms/src/agent_loop.rs',
 has('src/api/sdk_runs.rs',['"phase":phase','"needs_review"=>"needs_review"']);
 has('src/conversation/chat/runtime.rs',
   ['ensure_task_resume_safe','run_has_uncertain_operation','LeaseGuard::acquire']);
+has('src/conversation/chat/runtime.rs',['mod input_contract;']);
+has('src/conversation/chat/runtime/turn.rs',['input_contract::prepare_input_and_acceptance']);
+has('src/conversation/chat/runtime/input_contract.rs',
+  ['pub(super) fn prepare_input_and_acceptance',
+   'acceptanceSourceMessageId','retitle_if_placeholder']);
 has('src/conversation/chat/runtime/resume_safety_tests.rs',
   ['paid_model_unknown_is_not_relaunched','unknown_tool_operation_blocks_resume']);
 has('src/features/providers/native_stream.rs',
