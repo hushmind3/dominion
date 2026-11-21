@@ -2,6 +2,8 @@
 mod patch;
 #[path = "tools_external_harness.rs"]
 mod external_harness;
+#[path = "tools_team.rs"]
+mod team;
 
 use crate::db::Store;
 use serde_json::{json, Value};
@@ -73,6 +75,21 @@ pub fn definitions() -> Vec<Value> {
             "offset":json!({"type":"integer","minimum":0,"description":"Optional Unicode character offset for the next page"})
         }),vec!["messageId"])),
         tool("skill_propose", "Draft a reusable skill for user review", object(json!({"name": text("Skill name"), "instructions": text("Reusable instructions")}), vec!["name", "instructions"])),
+        tool("team_execute", "Lead-run managed task DAG: assign named agents, run independent research concurrently, serialize writers, retain real child job evidence and resume by teamId after interruptions. Task order and dependsOn are enforced by Rust. Requires lead approval.", object(json!({
+            "teamId":text("Existing teamId to resume a durable team; omit when starting tasks"),
+            "tasks":json!({"type":"array","minItems":1,"maxItems":8,
+                "items":{"type":"object","properties":{
+                    "id":text("Stable ASCII task ID"),"agentId":text("Registered worker agent"),
+                    "prompt":text("Self-contained task with expected result and checks"),
+                    "dependsOn":json!({"type":"array","items":{"type":"string"}}),
+                    "readOnly":json!({"type":"boolean","description":"Default true; false requests an exclusive writer stage with normal approval policy"})
+                },"required":["id","agentId","prompt"],"additionalProperties":false}}),
+            "wait":json!({"type":"boolean","description":"Wait for the next ready waves (default true)"}),
+            "timeoutSeconds":json!({"type":"integer","minimum":5,"maximum":300}),
+        }),vec![])),
+        tool("team_status","Read the durable lead-owned Task Team DAG and every native worker job receipt without launching new work",object(json!({
+            "teamId":text("Team id returned by team_execute")
+        }),vec!["teamId"])),
         tool("delegate_task", "Delegate a self-contained task to another agent and optionally wait for its result", object(json!({
             "agentId": text("Target agent id"),
             "prompt": text("Task instructions"),
@@ -210,6 +227,7 @@ pub fn requires_approval(name: &str) -> bool {
             | "shell_exec"
             | "terminal_exec"
             | "external_harness_run"
+            | "team_execute"
             | "github_api"
             | "github_file_commit"
             | "github_issue_create"
@@ -240,7 +258,7 @@ pub fn ui_tool_allowed(policy:&Value,name:&str)->bool{
     if name.starts_with("mcp__") && policy["mcpEnabled"]!=true{return false;}
     if matches!(name,"web_search"|"http_fetch") && policy["webEnabled"]!=true{return false;}
     if matches!(name,"delegate_task"|"delegate_parallel"|"task_status"|"task_result"|
-        "external_harness_run") && policy["subagentsEnabled"]!=true{return false;}
+        "team_execute"|"team_status"|"external_harness_run") && policy["subagentsEnabled"]!=true{return false;}
     true
 }
 
@@ -576,6 +594,8 @@ pub async fn execute(
             );
             Ok(json!({ "proposed": true, "skill": record }))
         }
+        "team_execute" => team::execute(ctx,args,run_id).await,
+        "team_status" => team::status(ctx,args),
         "delegate_task" => delegate(ctx, args).await,
         "external_harness_run" => external_harness::run(ctx,args).await,
         "delegate_parallel" => delegate_parallel(ctx,args).await,
@@ -688,6 +708,8 @@ async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String> 
         "providerId": agent["providerId"],
         "model": agent["model"],
         "parentSessionId": ctx.session_id,
+        "teamId": args["teamId"],
+        "teamNodeId": args["teamNodeId"],
         "delegated": true,
         "parallelReadOnly":read_only,
     });
@@ -709,6 +731,8 @@ async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String> 
             "toolsEnabled": ctx.tools_enabled && ctx.tools_execution_enabled,
             "toolsExecutionEnabled": ctx.tools_execution_enabled,
             "parentSessionId": ctx.session_id,
+            "teamId": args["teamId"],
+            "teamNodeId": args["teamNodeId"],
             "parentAgentId": ctx.agent_id,
             "delegation": true,
             "parallelDelegationReadOnly":read_only,
