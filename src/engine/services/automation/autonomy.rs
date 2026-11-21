@@ -111,7 +111,15 @@ fn terminal_checkpoint(
     evidence:&[Value],
     verified:bool,
 )->Result<(),String>{
-    ctx.checkpoint(json!({"autonomousState":{
+    // The previous attempt committed its actual kernel decision, token
+    // usage, active goal and plan. Terminalization is a status transition,
+    // not a replacement of that evidence. Replacing autonomousState with
+    // only terminal fields hid the durable kernelCycle snapshot (and even
+    // the evidence an owner needs to inspect after needs_review).
+    let mut terminal=ctx.state.store.get("job",&ctx.job_id)
+        .map(|job|job["autonomousState"].clone())
+        .filter(Value::is_object).unwrap_or_else(||json!({}));
+    let fields=json!({
         "status":status,
         "phase":if status=="completed"{"completed"}else{"needs_review"},
         "attempt":attempt,
@@ -126,7 +134,11 @@ fn terminal_checkpoint(
             || item["effectUnknown"]==true || item["result"]["effectUnknown"]==true),
         "verificationPassed":verified,
         "receipts":receipts
-    }}))
+    });
+    terminal.as_object_mut().unwrap().extend(fields.as_object().unwrap().clone());
+    // JobContext checks the claimed job attempt and run epoch atomically, so
+    // a stale worker cannot restore this snapshot after cancellation.
+    ctx.checkpoint(json!({"autonomousState":terminal}))
 }
 
 /// Called by the existing durable prompt worker. The job stays one operation;
@@ -433,6 +445,10 @@ mod tests{
         let job_id="terminal-review";
         state.store.put("job",&json!({"id":job_id,"kind":"prompt",
             "status":"running","attempts":1,"runEpoch":1,
+            "autonomousState":{"status":"running","phase":"verifying",
+                "kernelCycle":{"version":1,"attempted":1,"maxAttempts":3},
+                "activeGoal":"change output.py","plan":[{"step":"edit"}],
+                "tokenUsage":{"used":100}},
             "input":{"prompt":"change output.py"}})).unwrap();
         let context=JobContext::new(state.clone(),job_id.into());
         let criteria=json!([{"type":"file_changed","path":"output.py"}]);
@@ -454,6 +470,10 @@ mod tests{
         assert_eq!(job["autonomousState"]["replayUnsafeEffects"],true);
         assert_eq!(job["autonomousState"]["unknownToolOutcomes"],false);
         assert_eq!(job["autonomousState"]["verificationPassed"],false);
+        assert_eq!(job["autonomousState"]["kernelCycle"]["version"],1);
+        assert_eq!(job["autonomousState"]["kernelCycle"]["attempted"],1);
+        assert_eq!(job["autonomousState"]["activeGoal"],"change output.py");
+        assert_eq!(job["autonomousState"]["tokenUsage"]["used"],100);
         assert_eq!(job["input"]["prompt"],"change output.py");
 
         // The same helper records an independently verified terminal state
