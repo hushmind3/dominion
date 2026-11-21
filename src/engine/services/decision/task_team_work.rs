@@ -228,10 +228,26 @@ pub fn settle(
 }
 pub fn block(state:&AppState,assignment:&Value,reason:&str)->Result<Value,String>{
     let id=assignment["id"].as_str().ok_or("Task Team ID missing")?;
-    let saved=state.store.patch_if("task_team_work",id,"status",
-        &json!("running"),&json!({"status":"needs_review",
+    // A paused or failed child is still owned by its parent execution. Do
+    // not turn a cancelled parent's late worker notification into fresh
+    // review work. Check ownership and phase in the same SQLite transaction.
+    let guards=[
+        ("status",json!("running")),
+        ("agentId",assignment["agentId"].clone()),
+        ("startedAt",assignment["startedAt"].clone()),
+        ("executionId",assignment["executionId"].clone()),
+        ("sessionId",assignment["sessionId"].clone()),
+        ("programRevision",assignment["programRevision"].clone()),
+        ("teamNodeId",assignment["teamNodeId"].clone()),
+        ("index",assignment["index"].clone()),
+        ("nodeId",assignment["nodeId"].clone()),
+        ("nodeType",assignment["nodeType"].clone()),
+    ];
+    let refs=guards.iter().map(|(key,value)|(*key,value)).collect::<Vec<_>>();
+    let saved=state.store.patch_team_work_if_parent_running(id,&refs,
+        &json!({"status":"needs_review",
             "reason":reason.chars().take(160).collect::<String>()}))
-        .ok_or("Task Team failure transition is stale")?;
+        .ok_or("Task Team failure transition lost its parent or worker ownership")?;
     state.bus.record("task_team_work",&saved);
     Ok(saved)
 }
@@ -490,6 +506,7 @@ mod tests{
             &json!({"status":"cancelled","phase":"cancelled"})).unwrap();
         assert!(settle(&state,&selected,&node,
             &json!({"completedOperationIds":["task"]})).is_err());
+        assert!(block(&state,&selected,"late failure after cancellation").is_err());
         assert_eq!(state.store.get("task_team_work",
             queued["id"].as_str().unwrap()).unwrap()["status"],"running");
         drop(state);let _=std::fs::remove_dir_all(dir);
@@ -501,6 +518,9 @@ mod tests{
         let entry=assign(&state,"s","run-a","r1","team",1,&node).unwrap();
         let started=claim(&state,&entry).unwrap();
         assert!(claim(&state,&entry).is_err());
+        let mut forged=started.clone();
+        forged["teamNodeId"]=json!("other-team");
+        assert!(block(&state,&forged,"foreign result").is_err());
         let stopped=block(&state,&started,"tool result unknown").unwrap();
         assert_eq!(stopped["status"],"needs_review");
         assert!(settle(&state,&stopped,&node,
