@@ -347,6 +347,28 @@ mod tests{
         assert!(search_catalog(&all,&json!({"query":"x","limit":0})).is_err());
     }
     #[test]
+    fn hidden_tool_must_be_discovered_and_promoted_before_batch_admission(){
+        let catalog=sample();
+        let mut visible=project(catalog.clone(),"Read source and run tests");
+        let mut driver=dominion_turn_core::driver::Driver::new(4,8);
+        assert!(!dominion_turn_core::driver::Driver::advertised(
+            "mcp__archive_publish",&visible));
+        assert_eq!(driver.admit_batch([("call-publish","mcp__archive_publish")],
+            &visible,true),Err("tool was not advertised"));
+        let found=search_catalog(&catalog,&json!({
+            "query":"archive publish","limit":5
+        })).unwrap();
+        assert!(found["matches"].as_array().unwrap().iter().any(|hit|
+            hit["name"]=="mcp__archive_publish"));
+        assert_eq!(promote(&mut visible,&catalog,&found),1);
+        assert!(driver.admit_batch([("call-publish","mcp__archive_publish")],
+            &visible,true).is_ok(),
+            "only the actual promoted and enabled schema can be executed");
+        assert_eq!(driver.admit_batch([("call-hidden","mcp__unrelated_missing")],
+            &visible,true),Err("tool was not advertised"));
+    }
+
+    #[test]
     fn explicitly_minimal_modes_do_not_activate_progressive_discovery(){
         assert!(!should_enable(90,10,false,true));
         assert!(!should_enable(90,0,false,false));
