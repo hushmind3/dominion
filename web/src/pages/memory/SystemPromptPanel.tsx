@@ -1,4 +1,4 @@
-import {useEffect,useState} from 'react'
+import {useEffect,useRef,useState} from 'react'
 import {BookText,Check,Copy,FileText,RefreshCw,Save,ShieldCheck,RotateCcw} from 'lucide-react'
 import {get,post,type Agent,type ChatSession,koreanReasoningEnabled} from '../../api'
 import {Button,TextArea,TextInput,SelectInput} from '../../components/Primitives'
@@ -22,6 +22,7 @@ export function SystemPromptPanel(){
  const sessions=useRemote<ChatSession[]>('/api/sessions',[])
  const [agentId,setAgentId]=useState('')
  const [sessionId,setSessionId]=useState('')
+ const autoSelected=useRef(false)
  const [owner,setOwner]=useState<OwnerSettings|null>(null)
  const [ownerDraft,setOwnerDraft]=useState('')
  const [ownerEnabled,setOwnerEnabled]=useState(true)
@@ -54,11 +55,12 @@ export function SystemPromptPanel(){
   return()=>{alive=false}
  },[])
  useEffect(()=>{
-  if(!agentId&&agents.value.length){
+  if(!autoSelected.current&&agents.value.length){
+   autoSelected.current=true
    const initial=agents.value.find(a=>a.id==='default'||a.name==='기본값')||agents.value[0]
    setAgentId(initial.id)
   }
- },[agentId,agents.value])
+ },[agents.value])
  useEffect(()=>{setPersonaDraft(selectedAgent?.systemPrompt||'');setPersonaNotice('')},[agentId,selectedAgent?.systemPrompt])
  useEffect(()=>{setFullDirty(false);setFullNotice('');setFullDraft('')},[agentId,sessionId])
  useEffect(()=>{
