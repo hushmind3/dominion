@@ -388,6 +388,68 @@ mod tests{
         (AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
             Vault::open(&config.key_path())),dir)
     }
+    #[tokio::test]
+    async fn real_http_remote_worker_registers_claims_renews_and_settles(){
+        // Uses an isolated TCP listener and local SQLite, not mock HTTP
+        // functions, to verify the complete authenticated wire contract.
+        let token="remote-test-cluster-token-".to_owned()+"q".repeat(48).as_str();
+        let previous=std::env::var("DOMINION_REMOTE_CLUSTER_TOKEN").ok();
+        std::env::set_var("DOMINION_REMOTE_CLUSTER_TOKEN",&token);
+        let (state,dir)=state();
+        let listener=tokio::net::TcpListener::bind(("127.0.0.1",0)).await.unwrap();
+        let port=listener.local_addr().unwrap().port();
+        let server=tokio::spawn(axum::serve(listener,routes().with_state(state.clone()))
+            .into_future());
+        let client=reqwest::Client::new();
+        let root=format!("http://127.0.0.1:{port}");
+        let epoch=uuid::Uuid::new_v4().to_string();
+        let register=json!({"workerId":"peer1","workerEpoch":epoch,
+            "agents":["researcher"],"allowWrites":false});
+        let unauthorized=client.post(format!("{root}/v1/remote/register"))
+            .json(&register).send().await.unwrap();
+        assert_eq!(unauthorized.status(),StatusCode::UNAUTHORIZED);
+        let response=client.post(format!("{root}/v1/remote/register"))
+            .header("x-dominion-remote-token",&token)
+            .json(&register).send().await.unwrap();
+        assert!(response.status().is_success());
+        state.store.put("remote_task",&json!({
+            "id":"task-wire","teamId":"lead-team","workerId":"peer1",
+            "agentId":"researcher","prompt":"Read docs","readOnly":true,
+            "status":"queued","createdAtMs":1,
+        })).unwrap();
+        let poll=json!({"workerId":"peer1","workerEpoch":epoch});
+        let first=client.post(format!("{root}/v1/remote/claim"))
+            .header("x-dominion-remote-token",&token)
+            .json(&poll).send().await.unwrap().json::<Value>().await.unwrap();
+        let lease=first["task"]["leaseId"].as_str().unwrap().to_string();
+        assert_eq!(first["task"]["status"],"running");
+        let again=client.post(format!("{root}/v1/remote/claim"))
+            .header("x-dominion-remote-token",&token)
+            .json(&poll).send().await.unwrap().json::<Value>().await.unwrap();
+        assert_eq!(again["reattached"],true);
+        assert_eq!(again["task"]["leaseId"],lease);
+        cancel_team(&state,"lead-team");
+        let receipt=json!({"workerId":"peer1","workerEpoch":epoch,
+            "taskId":"task-wire","leaseId":lease});
+        let renew=client.post(format!("{root}/v1/remote/renew"))
+            .header("x-dominion-remote-token",&token)
+            .json(&receipt).send().await.unwrap().json::<Value>().await.unwrap();
+        assert_eq!(renew["cancelRequested"],true);
+        let mut completed=receipt;
+        completed["localJobId"]=json!("local-worker-1");
+        completed["jobStatus"]=json!("cancelled");
+        let result=client.post(format!("{root}/v1/remote/settle"))
+            .header("x-dominion-remote-token",&token)
+            .json(&completed).send().await.unwrap().json::<Value>().await.unwrap();
+        assert_eq!(result["status"],"needs_review");
+        server.abort();
+        if let Some(old)=previous{
+            std::env::set_var("DOMINION_REMOTE_CLUSTER_TOKEN",old);
+        }else{
+            std::env::remove_var("DOMINION_REMOTE_CLUSTER_TOKEN");
+        }
+        drop(state);let _=std::fs::remove_dir_all(dir);
+    }
     #[test]
     fn remote_job_claim_is_atomic_and_old_epoch_cannot_settle(){
         let (state,dir)=state();
