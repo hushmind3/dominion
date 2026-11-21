@@ -21,7 +21,8 @@ The source-wide automated gate, `scripts/sub2-source-audit.mjs`, recursively rea
 
 | Finding from actual source path | Impact | Fix / gate |
 |---|---|---|
-| `tools_team.rs`: UI-selected remote device was mandatory for **all** workers, contradicting the read-only remote research + local Writer workflow | Mixed remote/local DAG could not launch | `validate_ui_worker_route` makes remote readers stay remote and permits a local Writer; Rust negative tests reject foreign devices |
+| `tools_team.rs`: UI-selected remote device was mandatory for **all** workers, contradicting remote research + local Writer | Mixed remote/local DAG could not launch | `validate_ui_worker_route` accepts selected remote and local Workers, rejects other remote devices, and ensures at least one node uses selected remote; Rust negative tests |
+| `TeamActivity.tsx` / `team_controls.rs`: remote-only Agent IDs were absent from UI and rejected by Lead API unless separately installed locally | Native Worker agents registered only on another PC could not be selected | Advertised remote-only IDs now appear in the existing UI; backend admits only online remote-advertised IDs, with remote-device selection required |
 | `jobs.rs`: a Lead could return ordinary text without calling `team_execute` | False completed team task in Activity | `verify_team_ui_completion` demands a persisted `managed_team.uiOwnerJobId` matching the real checkpointed job/session; no native DAG yields `needs_review` |
 | `team_controls.rs`: a previously stopped Lead had a persisted cancellation tombstone, making direct resume fail | UI resume button could not progress valid, still-running Team DAG | Resume takes the Lead session slot, rejects active turns, then re-arms only the observed cancellation generation |
 | `tools_team.rs`: cancelled parent could still appear running in tool status | Contradictory native vs UI team state | `summary` returns `cancelled` with `evidenceVerified=false` |
@@ -46,4 +47,4 @@ The source-wide automated gate, `scripts/sub2-source-audit.mjs`, recursively rea
 4. `team_execute(wait=false)` advances only a currently ready wave. After a child finishes, the native Team may require another explicit resume/tick; fully unattended, durable, cross-wave scheduling after the Lead turn exits remains a separate engineering gap.
 5. Direct operator review is a purpose-built, explicit HTTP endpoint; the normal chat-tool approval channel is not implicitly bypassed or treated as authorization to auto-adopt remote files.
 
-**Bottom line:** Team UI wiring is source-complete and covered by focused automated contracts, but native production operation and unattended end-to-end success are **not** proven by source inspection or green development CI alone.
+**Bottom line:** The audited Team UI/API contracts have concrete Rust and frontend test gates and the described source defects were fixed. This does **not** prove a production deployment, the quality of an actual model-selected DAG, or unattended cross-wave completion.
