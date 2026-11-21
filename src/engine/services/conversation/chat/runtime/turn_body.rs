@@ -26,17 +26,17 @@ pub(super) async fn run_turn_body(
     // An owner request for a real effect is not a conversational completion.
     // Reject it before model generation when execution authority is absent;
     // neither a fluent answer nor a learned program may forge a file write.
-    if !request.tools_execution_enabled && acceptance.is_some() {
+    if (request.direct_chat || !request.tools_execution_enabled) && acceptance.is_some() {
         return Err("도구 실행이 비활성화되어 요청한 외부 작업을 수행하지 않았습니다.".into());
     }
     let mut acceptance_retries = 0usize;
     let mut last_repair_signature:Option<String> = None;
     let mut procedure_repairs = 0usize;
     let recovery_policy = decision_policy.active("recovery");
-    let program_policy = decision_policy.active("execution");
+    let program_policy = if request.direct_chat { None } else { decision_policy.active("execution") };
     // The file guard is opt-in: an operator or a verified policy must
     // activate mutation.preflight before it applies. No automatic promotion.
-    let selected_preflight = decision_policy.file_guard();
+    let selected_preflight = if request.direct_chat { None } else { decision_policy.file_guard() };
     if let Some(policy) = selected_preflight {
         let mut execution = state.store.get("execution", execution_id)
             .ok_or("실행 기록을 찾을 수 없습니다.")?;
@@ -80,6 +80,11 @@ pub(super) async fn run_turn_body(
         // user ceiling must not be silently replaced by the general 8-round
         // chat default; the token/elapsed ceilings still bound real spend.
         max_rounds=rounds.clamp(1,80) as usize;
+    }
+    // A direct web lookup has no reason to run an autonomous multi-tool job.
+    if request.direct_chat {
+        max_rounds=max_rounds.min(5);
+        max_tools=max_tools.min(6);
     }
     let elapsed_limit=MAX_ELAPSED;
     let super::tool_catalog::Catalog{
@@ -163,7 +168,8 @@ pub(super) async fn run_turn_body(
         }else{history_messages};
         (prompt_context, history_messages)
     };
-    if !is_room && request.tools_enabled && request.tools_execution_enabled
+    if !is_room && !request.direct_chat
+        && request.tools_enabled && request.tools_execution_enabled
         && super::super::context_window::requires_source_reader(&history_messages)
         && !tool_definitions.iter().any(|t|tool_name(t)=="history_evidence_read"){
         // An old owner task can be excerpted only when its exact-source
@@ -175,7 +181,7 @@ pub(super) async fn run_turn_body(
             tool_definitions=canonical_tool_definitions(tool_definitions);
         }
     }
-    if request.tools_enabled && request.tools_execution_enabled
+    if !request.direct_chat && request.tools_enabled && request.tools_execution_enabled
         && prompt_context.items.iter().any(|item|item["kind"]=="paged_identity_source")
         && !tool_definitions.iter().any(|tool|tool_name(tool)=="prompt_source_read"){
         // This is a capability, not additional prompt text or a summarizer.
@@ -606,7 +612,7 @@ pub(super) async fn run_turn_body(
     // `toolsEnabled` controls whether the model may call tools. It is not an
     // execution permission for the Rust harness; harness nodes use the same
     // approval, cancellation and budget policy as model tool calls.
-    let harness_messages = if request.tools_execution_enabled && !finished {
+    let harness_messages = if request.tools_execution_enabled && !request.direct_chat && !finished {
         run_harness_nodes(
         state,
         tx,

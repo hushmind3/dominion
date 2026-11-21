@@ -187,12 +187,12 @@ async fn run_turn_with_policy(
     let generation = state.cancellation_generation(&session_id);
     let mut request = request.clone();
     if request.direct_chat {
-        // The absence of agentId alone was ambiguous: older sessions could
-        // silently restore an agent persona and its route. A direct request
-        // always remains a plain no-tool turn, even with stale client flags.
+        // Direct conversation never inherits agent identity, workspace
+        // authority or learning. Optional web search admits only two public
+        // read-only tools inside the engine, regardless of client tool flags.
         request.agent_id = None;
-        request.tools_enabled = false;
-        request.tools_execution_enabled = false;
+        request.tools_enabled = request.web_search;
+        request.tools_execution_enabled = request.web_search;
         request.auto_learning = false;
     } else if request.agent_id.is_none() {
         request.agent_id = session

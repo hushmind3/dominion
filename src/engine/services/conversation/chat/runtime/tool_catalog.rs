@@ -54,6 +54,21 @@ pub(super) async fn prepare(
     acceptance:&Option<(String,Value)>,
     decision_policy:&crate::engine::turn_policy::TurnPolicy<'_>,
 )->Result<Catalog,String>{
+    // Direct Chat only exposes public read-only web capabilities, if asked.
+    // Return before native/MCP/skill/peer discovery or any file fast path.
+    if request.direct_chat {
+        let lightweight_only=!request.web_search&&no_tools_required(request,session,acceptance);
+        let definitions=if request.web_search&&request.tools_enabled
+            && request.tools_execution_enabled {
+            tools::definitions().into_iter().filter(|tool|
+                matches!(tool_name(tool),"web_search"|"http_fetch"))
+                .collect()
+        }else{Vec::new()};
+        return Ok(Catalog{
+            definitions,discovery:Vec::new(),progressive_enabled:false,
+            simple_creation_target:None,lightweight_only,is_room:false,
+        });
+    }
     let simple_creation_target=if request.tools_enabled && request.tools_execution_enabled
         && !session["roomId"].is_string() {
         simple_file_creation(state,&request.input,&acceptance)
@@ -263,6 +278,17 @@ mod lightweight_tests{
             "explicit file work must retain real tool schemas");
         assert!(real.definitions.iter().any(|tool|tool_name(tool)=="shell_exec"),
             "explicit test work must retain the approved Rust executable port");
+        let web_only=TurnRequest::from_value(&json!({
+            "input":"올해 국내 반도체 업계 동향을 웹에서 찾아줘",
+            "conversationMode":"chat","webSearch":true,
+            "toolsEnabled":true,"toolsExecutionEnabled":true
+        })).unwrap();
+        let web=prepare(&state,&web_only,&session,"new-chat","exec-new",&None,&policy).await.unwrap();
+        let names=web.definitions.iter().map(tool_name).collect::<Vec<_>>();
+        assert_eq!(names.len(),2,"only public web search and page fetch are available");
+        assert!(names.contains(&"web_search")&&names.contains(&"http_fetch"),"{names:?}");
+        assert!(web.discovery.is_empty(),"web-only direct Chat must not discover MCP or skills");
+        assert!(web.simple_creation_target.is_none(),"web-only Chat must never prepare file writes");
         let mut blocked=request("https://example.org 읽어");
         blocked.tools_enabled=false;
         let no_tool=prepare(&state,&blocked,&session,"new-chat","exec-new",&None,&policy).await.unwrap();

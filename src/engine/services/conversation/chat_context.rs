@@ -6,9 +6,13 @@ use serde_json::{json, Value};
 /// One identity prefix per bot, shared by private chat, rooms and channels.
 /// Conversation-specific instructions follow this prefix, never precede it.
 pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec<Value>){
-    let mut text=if request.agent_id.is_none() && !request.tools_enabled
-        && !request.tools_execution_enabled {
-        String::from("DOMINION 대화형 AI입니다. 사용자의 질문에 자연스럽게 답하십시오. 이번 대화에는 도구나 외부 실행 권한이 없습니다.")
+    let mut text=if request.direct_chat || (request.agent_id.is_none()
+        && !request.tools_enabled && !request.tools_execution_enabled) {
+        String::from(if request.web_search&&request.direct_chat {
+            "DOMINION 대화형 AI입니다. 사용자 요청 시 공개 웹 검색과 페이지 읽기만 할 수 있습니다. 파일·셸·MCP·메모리 쓰기·외부 작업 권한은 없습니다."
+        }else{
+            "DOMINION 대화형 AI입니다. 사용자의 질문에 자연스럽게 답하십시오. 이번 대화에는 도구나 외부 실행 권한이 없습니다."
+        })
     } else {
         String::from("DOMINION 지속 에이전트. 정체성과 개인 경험은 에이전트 ID에 속하며 대화 장소가 바뀌어도 유지한다. 실제 권한과 도구는 현재 실행 경계에 따른다.")
     };
@@ -156,6 +160,7 @@ pub(super) fn system_prompt_with_manifest_at(
     execution_id: Option<&str>,
 ) -> PromptContext {
     let indexed=request.tools_enabled && request.tools_execution_enabled
+        && !request.direct_chat
         && !state.store.get("session",session_id)
             .is_some_and(|session|session["roomId"].is_string());
     let (mut prompt, mut source_instructions, mut identity_items)=if indexed{
@@ -164,8 +169,8 @@ pub(super) fn system_prompt_with_manifest_at(
         let (prompt,items)=identity_prefix(state,request);
         (prompt,String::new(),items)
     };
-    if request.agent_id.is_none() && !request.tools_enabled
-        && !request.tools_execution_enabled {
+    if request.direct_chat || (request.agent_id.is_none() && !request.tools_enabled
+        && !request.tools_execution_enabled) {
         prompt.push_str("\n당신은 사용자의 일반 대화를 돕는 AI 어시스턴트입니다. 사용자의 언어로 대답하십시오.");
     } else {
         prompt.push_str(
@@ -173,7 +178,9 @@ pub(super) fn system_prompt_with_manifest_at(
              사용자가 다른 언어로 쓰지 않는 한 한국어로 답하십시오.",
         );
         }
-    if request.tools_enabled && request.tools_execution_enabled {
+    if request.direct_chat && request.web_search {
+        prompt.push_str(" 이번 턴에는 공개 웹 검색(web_search)과 해당 웹페이지 읽기(http_fetch)만 허용됩니다. 검색 결과의 출처 URL을 명시하십시오. 파일·셸·계정·MCP·자동 실행 권한은 없습니다.");
+    } else if request.tools_enabled && request.tools_execution_enabled {
         prompt.push_str(" 작업에 필요하면 사용 가능한 도구를 사용하십시오. 도구 결과를 정확히 보고하십시오.");
     } else {
         prompt.push_str(" 이번 턴에는 도구가 비활성화되어 있습니다. 외부 작업을 수행했다고 말하지 마십시오.");

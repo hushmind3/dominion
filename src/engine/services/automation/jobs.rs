@@ -836,7 +836,7 @@ pub(crate) async fn run_prompt(context:&JobContext,job:&Value)->Result<Value,Str
  }
  let resumed_instruction=resume_owner_instruction(job,&prompt)?
    .unwrap_or_else(||prompt.clone());
- let request=TurnRequest{direct_chat:false,
+ let request=TurnRequest{direct_chat:false,web_search:false,
    session_id:Some(session_id.clone()),request_id:None,
    input:resumed_instruction,
    agent_id:input["agentId"].as_str().map(str::to_owned),
@@ -898,7 +898,7 @@ async fn run_resume(context: &JobContext, job: &Value) -> Result<Value, String> 
         return Err("재개 작업의 세션을 찾을 수 없습니다.".into());
     }
     context.checkpoint(json!({"sessionId":session_id,"promptState":{"inFlight":true}}))?;
-    let request = TurnRequest {direct_chat:false,
+    let request = TurnRequest {direct_chat:false,web_search:false,
         session_id: Some(session_id.clone()),
         request_id: None,
         input: prompt,

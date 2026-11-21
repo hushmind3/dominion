@@ -89,6 +89,9 @@ pub struct TurnRequest {
     /// Explicit plain conversation: no implicit session agent or tool authority.
     /// Omitted for backward compatibility with historical agent/SDK callers.
     pub direct_chat: bool,
+    /// Explicit opt-in for read-only public web search in a direct Chat turn.
+    /// Never extends native/agent/MCP authority beyond web_search/http_fetch.
+    pub web_search: bool,
     pub provider_id: Option<String>,
     pub model: Option<String>,
     pub tools_enabled: bool,
@@ -148,6 +151,7 @@ impl TurnRequest {
                 Some("agent") | None => false,
                 Some(_) => return Err("채팅 실행 모드가 올바르지 않습니다.".into()),
             },
+            web_search: value.get("webSearch").and_then(Value::as_bool).unwrap_or(false),
             provider_id: string("providerId"),
             model: string("model"),
             tools_enabled: value
