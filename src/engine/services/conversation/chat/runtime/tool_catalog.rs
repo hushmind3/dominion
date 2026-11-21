@@ -57,7 +57,14 @@ pub(super) async fn prepare(
     // Direct Chat only exposes public read-only web capabilities, if asked.
     // Return before native/MCP/skill/peer discovery or any file fast path.
     if request.direct_chat {
-        let lightweight_only=!request.web_search&&no_tools_required(request,session,acceptance);
+        // A direct text conversation needs no autonomous procedures,
+        // workspace manifests, or unrelated retrieved memory. Attachments,
+        // explicit source overrides, and web searches retain full context.
+        let lightweight_only=!request.web_search
+            && request.attachment_ids.is_empty()
+            && request.system_override.as_ref().is_none_or(|text|text.trim().is_empty())
+            && acceptance.is_none()
+            && !session["roomId"].is_string();
         let definitions=if request.web_search&&request.tools_enabled
             && request.tools_execution_enabled {
             tools::definitions().into_iter().filter(|tool|
@@ -289,6 +296,18 @@ mod lightweight_tests{
         assert!(names.contains(&"web_search")&&names.contains(&"http_fetch"),"{names:?}");
         assert!(web.discovery.is_empty(),"web-only direct Chat must not discover MCP or skills");
         assert!(web.simple_creation_target.is_none(),"web-only Chat must never prepare file writes");
+        let ordinary=TurnRequest::from_value(&json!({
+            "input":"한국의 데이터베이스 인덱스 설계 방식 3가지를 비교해줘",
+            "conversationMode":"chat",
+            "toolsEnabled":false,"toolsExecutionEnabled":false
+        })).unwrap();
+        let plain=prepare(&state,&ordinary,&session,"new-chat","exec-new",&None,&policy).await.unwrap();
+        assert!(plain.lightweight_only,"ordinary non-web Chat must use the minimal prompt");
+        assert!(plain.definitions.is_empty(),"ordinary Chat must not expose tool schemas");
+        let mut with_override=ordinary.clone();
+        with_override.system_override=Some("Prioritized owner policy".into());
+        let expanded=prepare(&state,&with_override,&session,"new-chat","exec-new",&None,&policy).await.unwrap();
+        assert!(!expanded.lightweight_only,"explicit source override retains full context");
         let mut blocked=request("https://example.org 읽어");
         blocked.tools_enabled=false;
         let no_tool=prepare(&state,&blocked,&session,"new-chat","exec-new",&None,&policy).await.unwrap();
