@@ -171,26 +171,47 @@ async fn run_codex(ctx:&JobContext,child:&mut Child,started:Instant,
     }
     Err("Codex event budget exhausted".into())
 }
-async fn run_claude(ctx:&JobContext,child:&mut Child,started:Instant)->Result<Value,String>{
-    let stdout=child.stdout.take().ok_or("Claude stdout missing")?;
-    let read=tokio::spawn(async move{
+/// Read stdout and process exit concurrently. A child producing more than
+/// 1MB cannot block forever on a full pipe while the supervisor awaits exit.
+/// Result bytes are capped before any JSON parsing or subsequent model cost.
+async fn bounded_json_cli(ctx:&JobContext,child:&mut Child,
+    started:Instant,label:&str)->Result<Value,String>{
+    let stdout=child.stdout.take().ok_or_else(||format!("{label} stdout missing"))?;
+    let mut reader=tokio::spawn(async move{
         let mut bytes=Vec::new();
         stdout.take((MAX_LINE+1) as u64).read_to_end(&mut bytes).await
             .map_err(|e|e.to_string())?;
-        Ok::<_,String>(bytes)
+        Ok::<Vec<u8>,String>(bytes)
     });
-    let status=loop{
-        ensure(ctx,started)?;
-        match tokio::time::timeout(Duration::from_millis(300),child.wait()).await{
-            Ok(Ok(status))=>break status,
-            Ok(Err(error))=>return Err(error.to_string()),
-            Err(_)=>{}
+    let mut status=None;
+    let mut output=None;
+    loop {
+        if let Err(reason)=ensure(ctx,started){
+            reader.abort();
+            return Err(reason);
         }
-    };
-    let bytes=read.await.map_err(|e|e.to_string())??;
-    if bytes.len()>MAX_LINE{return Err("Claude output over size cap".into());}
-    if !status.success(){return Err(format!("Claude exited with {status}"));}
-    let output:Value=serde_json::from_slice(&bytes).map_err(|e|e.to_string())?;
+        tokio::select!{
+            result=&mut reader, if output.is_none()=>{
+                let bytes=result.map_err(|e|e.to_string())??;
+                if bytes.len()>MAX_LINE {
+                    return Err(format!("{label} stdout exceeded 1MB hard limit"));
+                }
+                output=Some(bytes);
+            },
+            result=child.wait(), if status.is_none()=>{
+                status=Some(result.map_err(|e|e.to_string())?);
+            },
+            _=tokio::time::sleep(Duration::from_millis(300))=>{},
+        }
+        if let (Some(status),Some(bytes))=(status.as_ref(),output.as_ref()){
+            if !status.success(){return Err(format!("{label} exited with {status}"));}
+            return serde_json::from_slice(bytes)
+                .map_err(|_|format!("{label} returned invalid JSON output"));
+        }
+    }
+}
+async fn run_claude(ctx:&JobContext,child:&mut Child,started:Instant)->Result<Value,String>{
+    let output=bounded_json_cli(ctx,child,started,"Claude").await?;
     if output["is_error"]==true{return Err("Claude reported a run error".into());}
     let text=output["result"].as_str().filter(|s|!s.trim().is_empty())
         .ok_or("Claude returned no final result")?;
@@ -222,27 +243,8 @@ fn qwen_result(value:&Value)->Result<Value,String>{
         "evidenceGrade":"external_unverified"}))
 }
 async fn run_qwen(ctx:&JobContext,child:&mut Child,started:Instant)->Result<Value,String>{
-    let stdout=child.stdout.take().ok_or("Qwen stdout missing")?;
-    let reader=tokio::spawn(async move{
-        let mut data=Vec::new();
-        stdout.take((MAX_LINE+1) as u64)
-            .read_to_end(&mut data).await.map_err(|e|e.to_string())?;
-        Ok::<Vec<u8>,String>(data)
-    });
-    let status=loop {
-        ensure(ctx,started)?;
-        match tokio::time::timeout(Duration::from_millis(300),child.wait()).await{
-            Ok(Ok(status))=>break status,
-            Ok(Err(error))=>return Err(error.to_string()),
-            Err(_)=>{}
-        }
-    };
-    let bytes=reader.await.map_err(|e|e.to_string())??;
-    if bytes.len()>MAX_LINE{return Err("Qwen output exceeds bound".into());}
-    if !status.success(){return Err(format!("Qwen process exited with {status}"));}
-    let json:Value=serde_json::from_slice(&bytes)
-        .map_err(|_|"Qwen output did not match JSON headless protocol")?;
-    qwen_result(&json)
+    let output=bounded_json_cli(ctx,child,started,"Qwen").await?;
+    qwen_result(&output)
 }
 fn qwen_arguments(prompt:&str,resume:Option<&str>,model:Option<&str>)->Vec<String>{
     // Qwen's plan mode is documented as analysis-only (no write or shell).
@@ -384,6 +386,32 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[tokio::test]
+    async fn bounded_external_stdout_does_not_deadlock_waiting_for_subprocess_exit(){
+        use crate::{config::Config,db::Store,state::AppState,vault::Vault};
+        let root=std::env::temp_dir().join(format!(
+            "dominion-cli-stdout-limit-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=Config{port:0,data_dir:root.clone(),
+            workspace:root.clone(),web_dir:root.join("web")};
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        state.store.put("job",&json!({"id":"cli-over-limit","kind":"external_agent",
+            "status":"running","attempts":1})).unwrap();
+        let ctx=JobContext::new(state.clone(),"cli-over-limit".into());
+        let mut child=Command::new("sh").arg("-c")
+            .arg("yes X | head -c 2000000")
+            .stdout(Stdio::piped()).stderr(Stdio::null())
+            .kill_on_drop(true).spawn().unwrap();
+        let failure=tokio::time::timeout(Duration::from_secs(8),
+            run_qwen(&ctx,&mut child,Instant::now()))
+            .await.expect("oversized output must be rejected without pipe deadlock")
+            .unwrap_err();
+        assert!(failure.contains("1MB hard limit"),"{failure}");
+        let _=child.kill().await;
+        crate::test_support::cleanup_dir(&root);
+    }
+
     #[test]
     fn qwen_cli_requires_read_only_plan_mode_and_project_scoped_resume(){
         let args=qwen_arguments("Review project",Some("123e4567-e89b-12d3-a456-426614174000"),
