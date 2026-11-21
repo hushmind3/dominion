@@ -595,7 +595,14 @@ pub(crate) async fn complete_with_run(
         _=>{
             // A durable model_in_flight checkpoint means a transport failure
             // is not permission for an internal HTTP POST retry.
-            let response=gateway::send_once(&route,&client,&body,Duration::from_secs(240)).await?;
+            // OpenCode Go's direct endpoint rejects a request without a stable
+            // conversation affinity header. Native tool rounds bypass
+            // continuity, so carry the header here as well.
+            let opencode_go=state.store.get("provider",provider_id)
+                .is_some_and(|provider|provider["integration"]=="opencode-go");
+            let response=gateway::send_once_with_affinity(
+                &route,&client,&body,Duration::from_secs(240),
+                if opencode_go {Some(session)} else {None}).await?;
             if !response.response.status().is_success(){
                 let status=response.response.status();
                 let error=response.response.text().await.unwrap_or_default();

@@ -508,6 +508,35 @@ pub async fn send_once(
     Ok(GatewayResponse{response,_permit:permit})
 }
 
+/// Same admission and authentication as `send_once`, plus the documented
+/// OpenCode Go conversation affinity header. The direct endpoint refuses a
+/// request without it, and native tool rounds do not pass through continuity.
+pub async fn send_once_with_affinity(
+    route:&Route,client:&reqwest::Client,body:&Value,timeout:Duration,
+    opencode_session:Option<&str>,
+)->Result<GatewayResponse,String> {
+    reserve_generation(&route.base_url,&route.model,route.requests_per_minute)?;
+    let permit=acquire(&route.base_url,route.local).await;
+    let mut request=benchmark_request(client.post(route.endpoint("/chat/completions")))
+        .header("Content-Type","application/json")
+        .header("Authorization",format!("Bearer {}",route.api_key));
+    if let Some(session)=opencode_session.filter(|session|!session.is_empty()) {
+        request=request.header("x-opencode-session",session);
+    }
+    let response=request
+        .json(body)
+        .timeout(timeout)
+        .send().await.map_err(|error|format!(
+            "{} native model delivery may be uncertain (not replayed): {error}",
+            route.name
+        ))?;
+    if response.status()==reqwest::StatusCode::TOO_MANY_REQUESTS {
+        mark_rate_limited(&route.base_url,&route.model);
+    }
+    verify_benchmark_route(&response)?;
+    Ok(GatewayResponse{response,_permit:permit})
+}
+
 /// Sends a helper completion through shared admission and authentication.
 pub async fn send(
     route: &Route,
