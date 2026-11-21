@@ -155,11 +155,11 @@ async fn apply_with_digest(
     }
     // Freeze one coordinator workspace ownership transition before the
     // first possible native file effect. A crashed process will not replay.
-    let claimed=ctx.store.patch_if("remote_task",task_id,
-        "artifactApplyStatus",&json!("pending"),&json!({
+    let claimed=ctx.store.claim_remote_artifact_if_team_running(task_id,team_id,
+        &json!({
             "artifactApplyStatus":"applying","artifactApplyClaimedAt":chrono::Utc::now().to_rfc3339(),
             "artifactApplyRunId":run_id,
-        })).ok_or("Remote artifact was claimed concurrently")?;
+        })).ok_or("Remote artifact claim rejected: team stopped or effect already claimed")?;
     crate::remote::publish_task(ctx.state,&claimed);
     let result=patch::apply(ctx.workspace,&changes).await;
     match result{
@@ -241,7 +241,7 @@ mod tests{
         let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),
             Vault::open(&config.key_path()));
         state.store.put("managed_team",&json!({
-            "id":"lead-team","leadSessionId":"lead-session"
+            "id":"lead-team","status":"running","leadSessionId":"lead-session"
         })).unwrap();
         let content="updated\n";
         state.store.put("remote_task",&json!({

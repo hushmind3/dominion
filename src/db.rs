@@ -863,6 +863,40 @@ impl Store {
         Some(child)
     }
 
+    /// A remote artifact claim and its owning Team's live status are checked
+    /// in one SQLite IMMEDIATE transaction. A cancelled Lead cannot race a
+    /// file merge that has not yet acquired effect ownership.
+    pub fn claim_remote_artifact_if_team_running(
+        &self,task_id:&str,team_id:&str,patch:&Value,
+    )->Option<Value>{
+        let changes=patch.as_object()?;
+        let mut conn=self.conn.lock().ok()?;
+        let tx=conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).ok()?;
+        let parent=tx.query_row(
+            "SELECT data,id,created_at,updated_at FROM records WHERE kind='managed_team' AND id=?1",
+            [team_id],record_from_row,
+        ).ok()?;
+        if parent["status"]!="running" || parent["cancelRequested"]==true{return None;}
+        let mut task=tx.query_row(
+            "SELECT data,id,created_at,updated_at FROM records WHERE kind='remote_task' AND id=?1",
+            [task_id],record_from_row,
+        ).ok()?;
+        if task["teamId"]!=team_id || task["status"]!="completed"
+            || task["artifactApplyStatus"]!="pending"{return None;}
+        for (key,value) in changes{
+            if matches!(key.as_str(),"id"|"teamId"|"workerId"|"artifactPaths"|"artifacts"){
+                return None;
+            }
+            task[key]=value.clone();
+        }
+        tx.execute(
+            "UPDATE records SET data=?2,updated_at=datetime('now') WHERE kind='remote_task' AND id=?1",
+            params![task_id,task.to_string()],
+        ).ok()?;
+        tx.commit().ok()?;
+        Some(task)
+    }
+
     /// Task Team child ownership is admitted only while its *parent run*
     /// remains live. The parent check and child CAS share one SQLite IMMEDIATE
     /// transaction, including when cancellation races a second engine process.
