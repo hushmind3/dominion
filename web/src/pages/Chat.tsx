@@ -135,6 +135,9 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   });
  };
  const stream=useRef<AbortController|null>(null);
+ // Keep the same logical turn key when a disconnected request is retried.
+ // The Rust session lease then refuses a duplicate owner write or tool effect.
+ const pendingTurn=useRef<{scope?:string;text:string;id:string}|null>(null);
  const streamBuffer=useRef({text:'',reasoning:'',frame:0});
  const clearStreamBuffer=()=>{
   const pending=streamBuffer.current;
@@ -293,6 +296,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     if(optimisticOwner?.sessionId===undefined)
      setInput(previous=>previous.trim()?previous:optimisticOwner.content);
     setOptimisticOwner(undefined);
+    pendingTurn.current=null;
     setBusy(false);setLive('');setThought('');setToolStatus('');setTurnSession(undefined);
     setCommandInfo(t('chat.stopped'));
    }else setError(t('chat.cmd.noSessionStop'));
@@ -403,6 +407,11 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   if(providerId&&!selectedProvider){setError(t('chat.err.agentApi'));return;}
   if(!providerId){setError(t('chat.err.connectApi'));return;}
   if(!model){setError(t('chat.err.pickModel'));return;}
+  const previousTurn=pendingTurn.current;
+  const clientTurnId=previousTurn?.scope===current&&previousTurn.text===text
+   ?previousTurn.id
+   :typeof crypto!=='undefined'?crypto.randomUUID?.():undefined;
+  if(clientTurnId)pendingTurn.current={scope:current,text,id:clientTurnId};
   const controller=new AbortController();
   clearStreamBuffer();
   stream.current=controller;
@@ -431,6 +440,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      providerId:agentMode?manual?.providerId:providerId,model:agentMode?manual?.model:model});
     if(controller.signal.aborted)return;
     id=session.id;
+    if(clientTurnId&&pendingTurn.current?.id===clientTurnId)pendingTurn.current.scope=id;
     activeTurnSession.current=id;
     if(view.current===current){
      adoptNewSession(id,text);
@@ -460,7 +470,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    }
    streamStarted=true;
    await streamChat({
-    sessionId:id,agentId:agentMode?agentId:undefined,directChat:!agentMode,
+    sessionId:id,clientTurnId,agentId:agentMode?agentId:undefined,directChat:!agentMode,
     providerId:agentMode?manual?.providerId:providerId,model:agentMode?manual?.model:model,input:text,
     toolsEnabled:agentMode&&toolsEnabled,toolsExecutionEnabled:agentMode&&toolsEnabled,autoLearning:agentMode&&autoLearn,attachmentIds,
     reasoningLanguage:reasoningKo?'ko':'original',reasoningEffort:effectiveReasoningEffort||undefined,thinking:selectedProvider?.kind==='codex'?(effectiveReasoningEffort==='none'?false:canDisableThinking?effectiveThinkingEnabled:undefined):effectiveThinkingEnabled,
@@ -468,11 +478,14 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     if(controller.signal.aborted||stoppingRef.current||stream.current!==controller)return;
     if(event.type==='owner_saved'){
      ownerSaved=true;
+     if(pendingTurn.current?.id===clientTurnId)pendingTurn.current=null;
      releaseSentImages();
      setOptimisticOwner(previous=>previous?.sessionId===id?{...previous,persistedId:String(event.messageId)}:previous);
      refresh('/api/sessions/'+encodeURIComponent(id!)+'/messages');
     }
-    if(event.type==='assistant_saved'){releaseSentImages();flushStreamBuffer();setSavedMessageId(event.messageId);refresh('/api/sessions',...(id?['/api/sessions/'+encodeURIComponent(id)+'/messages']:[]));}
+    if(event.type==='assistant_saved'){
+     if(pendingTurn.current?.id===clientTurnId)pendingTurn.current=null;
+     releaseSentImages();flushStreamBuffer();setSavedMessageId(event.messageId);refresh('/api/sessions',...(id?['/api/sessions/'+encodeURIComponent(id)+'/messages']:[]));}
     if(event.type==='text')queueStreamDelta('text',event.text);
     if(event.type==='reasoning')queueStreamDelta('reasoning',event.text);
     if(event.type==='approval'){setLiveApproval({id:event.id,tool:event.tool,args:event.args,sessionId:id!,status:'pending'});void approvals.reload();}
@@ -499,10 +512,13 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
       const rows=await get<ChatMessage[]>('/api/sessions/'+encodeURIComponent(id)+'/messages');
       const oldId=messages.at(-1)?.id;
       const lastIndex=oldId?rows.findIndex(row=>row.id===oldId):-1;
-      persisted=rows.find((row,index)=>index>lastIndex&&row.role==='user'&&row.content===text);
+      persisted=rows.find((row,index)=>index>lastIndex&&row.role==='user'&&
+       (clientTurnId&&row.metadata?.clientTurnId===clientTurnId||
+        row.metadata?.clientTurnId==null&&row.content===text));
      }catch{lookupFailed=true;}
      if(view.current===id){
       if(persisted){
+       if(pendingTurn.current?.id===clientTurnId)pendingTurn.current=null;
        releaseSentImages();
        setOptimisticOwner(previous=>previous?.sessionId===id?{...previous,persistedId:persisted!.id}:previous);
       }else{
