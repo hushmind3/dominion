@@ -29,6 +29,17 @@ pub(super) fn compat_messages(messages: &[Value]) -> Vec<Value> {
 }
 
 
+/// Preserve an incomplete native stream long enough to account for model usage,
+/// then reject it instead of silently discarding missing indexed tool calls.
+fn finalize_streamed_tool_calls(calls:Vec<ToolCall>)->(Vec<ToolCall>,bool){
+    let incomplete=calls.iter().any(|call|call.name.trim().is_empty());
+    let calls=calls.into_iter().map(|mut call|{
+        if call.id.is_empty(){call.id=uuid::Uuid::new_v4().to_string();}
+        call
+    }).collect();
+    (calls,incomplete)
+}
+
 pub(super) async fn stream_completion_once_body(
     state:&AppState,client:&reqwest::Client,provider:&ProviderRef,messages:&[Value],tools:&[Value],
     request:&TurnRequest,session_id:&str,tx:&UnboundedSender<Value>,convert_native_history:bool,
@@ -377,16 +388,10 @@ pub(super) async fn stream_completion_once_body(
         return Err("모델 스트림이 완료 신호 없이 종료되었습니다.".into());
     }
 
-    completion.tool_calls = calls
-        .into_iter()
-        .filter(|call| !call.name.is_empty())
-        .map(|mut call| {
-            if call.id.is_empty() {
-                call.id = uuid::Uuid::new_v4().to_string();
-            }
-            call
-        })
-        .collect();
+    // An indexed gap (e.g. only index 1 arrived) must not become a
+    // partial successful tool round. Still account for the paid model call.
+    let (settled_calls,incomplete_tool_calls)=finalize_streamed_tool_calls(calls);
+    completion.tool_calls=settled_calls;
 
     let (prompt_tokens, completion_tokens) = if completion.usage_exact {
         (completion.prompt_tokens, completion.completion_tokens)
@@ -408,6 +413,9 @@ pub(super) async fn stream_completion_once_body(
         None,
         !completion.usage_exact,
     );
+    if incomplete_tool_calls {
+        return Err("모델 도구 호출 스트림의 인덱스 또는 이름이 누락되었습니다.".into());
+    }
     Ok(completion)
 }
 

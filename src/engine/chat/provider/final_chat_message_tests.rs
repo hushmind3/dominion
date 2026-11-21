@@ -97,3 +97,29 @@ use super::*;
         assert_eq!(calls[0].name, "workspace_read");
         assert_eq!(calls[0].arguments, r#"{"path":"a.txt"}"#);
     }
+
+    #[test]
+    fn native_tool_index_gap_never_silently_drops_a_call(){
+        let (calls,incomplete)=compat::finalize_streamed_tool_calls(vec![
+            ToolCall{id:String::new(),name:String::new(),arguments:String::new()},
+            ToolCall{id:"call-2".into(),name:"workspace_write".into(),
+                arguments:r#"{"path":"proof.txt","content":"ok"}"#.into()},
+        ]);
+        assert!(incomplete,"index zero must not disappear");
+        assert_eq!(calls.len(),2,"retain each streamed call for usage evidence");
+        assert!(!calls[0].id.is_empty());
+        assert_eq!(calls[1].id,"call-2");
+    }
+
+    #[test]
+    fn complete_native_tool_calls_keep_ids_and_are_not_rejected(){
+        let (calls,incomplete)=compat::finalize_streamed_tool_calls(vec![
+            ToolCall{id:"call-1".into(),name:"workspace_read".into(),
+                arguments:r#"{"path":"a.txt"}"#.into()},
+            ToolCall{id:String::new(),name:"workspace_read".into(),
+                arguments:r#"{"path":"b.txt"}"#.into()},
+        ]);
+        assert!(!incomplete);
+        assert_eq!(calls[0].id,"call-1");
+        assert!(!calls[1].id.is_empty());
+    }
