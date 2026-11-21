@@ -146,6 +146,8 @@ const HISTORY_LIMIT: usize = 40;
 #[derive(Clone, Debug)]
 pub struct TurnRequest {
     pub session_id: Option<String>,
+    /// Optional client-generated idempotency key, scoped to one private session.
+    pub client_turn_id: Option<String>,
     pub input: String,
     pub attachment_ids: Vec<String>,
     pub agent_id: Option<String>,
@@ -206,8 +208,15 @@ impl TurnRequest {
                 .filter(|item| !item.is_empty())
                 .map(str::to_string)
         };
+        let client_turn_id = match string("clientTurnId") {
+            Some(id) => Some(uuid::Uuid::parse_str(&id)
+                .map_err(|_|"clientTurnId는 유효한 UUID여야 합니다.")?
+                .to_string()),
+            None => None,
+        };
         Ok(Self {
             session_id: string("sessionId"),
+            client_turn_id,
             input: text,
             attachment_ids,
             agent_id: if direct_chat { None } else { string("agentId") },
