@@ -90,6 +90,7 @@ pub fn definitions() -> Vec<Value> {
                     "id":text("Stable ASCII task ID"),"agentId":text("Registered worker agent"),
                     "prompt":text("Self-contained task with expected result and checks"),
                     "dependsOn":json!({"type":"array","items":{"type":"string"}}),
+                    "successCriteria":json!({"type":"array","maxItems":20,"description":"Optional frozen native acceptance checks; file_exists, file_equals or command_succeeded are verified by the Rust worker", "items":{"type":"object"}}),
                     "readOnly":json!({"type":"boolean","description":"Default true; false requests an exclusive writer stage with normal approval policy"})
                 },"required":["id","agentId","prompt"],"additionalProperties":false}}),
             "wait":json!({"type":"boolean","description":"Wait for the next ready waves (default true)"}),
@@ -754,6 +755,10 @@ async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Value, String> 
             "parallelDelegationReadOnly":read_only,
             "maxAutonomousAttempts":if read_only {2}else{3},
     });
+    if let Some(criteria)=args.get("successCriteria").filter(|v|!v.is_null()){
+        crate::engine::verification::validate_criteria(criteria)?;
+        child_input["successCriteria"]=criteria.clone();
+    }
     if let Some(workspace)=inherited_workspace{
         child_input["workspaceDir"]=json!(workspace);
     }
