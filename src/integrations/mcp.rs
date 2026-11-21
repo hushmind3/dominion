@@ -603,12 +603,8 @@ impl HttpSession {
                         }
                     }
                 },
-                Err(error) if mode=="auto" && (
-                    error.starts_with("MCP HTTP 404 ")||
-                    error.starts_with("MCP HTTP 405 ")||
-                    (error.starts_with("MCP HTTP 400 ")&&
-                        !error.contains("\"jsonrpc\""))
-                )=>{
+                Err(error) if mode=="auto" &&
+                    modern::legacy_http_probe_rejection(&error)=>{
                     // Ordinary handshake-era HTTP gateways often reject the
                     // unknown discovery method. A modern JSON-RPC error, 401,
                     // 403, 5xx or ambiguous network failure NEVER falls back.
