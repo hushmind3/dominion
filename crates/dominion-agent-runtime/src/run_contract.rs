@@ -40,6 +40,56 @@ impl RunPhase {
             Self::Interrupted|Self::NeedsReview)
     }
 }
+/// The only phase transition vocabulary shared by Chat, Rooms, native SDK
+/// jobs and Task Team projection. An orchestrator is NOT allowed to rewrite
+/// a terminal outcome by providing a different runtime-specific string.
+#[derive(Debug,Clone,Copy,PartialEq,Eq)]
+pub enum RunTransition {
+    Start, RequestApproval, ResolveApproval, Verify, Finalize, Succeed,
+    Fail, Cancel, Interrupt, RequireReview,
+}
+impl RunTransition {
+    pub fn from_host_event(event:&str)->Option<Self> {
+        Some(match event {
+            "start"=>Self::Start,
+            "approval_requested"=>Self::RequestApproval,
+            "approval_resolved"=>Self::ResolveApproval,
+            "verify"=>Self::Verify,
+            "finalize"=>Self::Finalize,
+            "succeed"=>Self::Succeed,
+            "fail"=>Self::Fail,
+            "cancel"=>Self::Cancel,
+            "interrupt"=>Self::Interrupt,
+            "review_requested"=>Self::RequireReview,
+            _=>return None,
+        })
+    }
+}
+impl RunPhase {
+    /// Pure, portable lifecycle reducer. The host persists the transition
+    /// and evidence atomically; this function never dispatches work.
+    pub fn advance(self,event:RunTransition)->Option<Self>{
+        use RunPhase::*;
+        use RunTransition::*;
+        let next=match (self,event) {
+            (Queued|Running,Start)=>Running,
+            (Running|WaitingApproval,RequestApproval)=>WaitingApproval,
+            (WaitingApproval|Running,ResolveApproval)=>Running,
+            (Running|Verifying,Verify)=>Verifying,
+            (Running|Verifying|WaitingApproval|Finalizing,Finalize)=>Finalizing,
+            (Finalizing|Running|Verifying|Succeeded,Succeed)=>Succeeded,
+            (phase,Fail) if !phase.terminal()=>Failed,
+            (Cancelled,Cancel)=>Cancelled,
+            (phase,Cancel) if !phase.terminal()=>Cancelled,
+            (Interrupted,Interrupt)=>Interrupted,
+            (phase,Interrupt) if !phase.terminal()=>Interrupted,
+            (NeedsReview,RequireReview)=>NeedsReview,
+            (phase,RequireReview) if !phase.terminal()=>NeedsReview,
+            _=>return None,
+        };
+        Some(next)
+    }
+}
 #[derive(Debug,Clone,PartialEq,Eq,Serialize,Deserialize)]
 #[serde(rename_all="camelCase")]
 pub struct RunRef {
@@ -69,6 +119,33 @@ mod tests {
             ("needs_review",RunPhase::NeedsReview),("running",RunPhase::Running)
         ] {assert_eq!(RunPhase::from_host_status(host),Some(phase))}
         assert_eq!(RunPhase::from_host_status("mysterious"),None);
+    }
+    #[test] fn all_execution_surfaces_share_one_terminal_barrier(){
+        for terminal in [RunPhase::Succeeded,RunPhase::Failed,
+            RunPhase::Cancelled,RunPhase::Interrupted,RunPhase::NeedsReview]{
+            for event in [RunTransition::Start,RunTransition::RequestApproval,
+                RunTransition::Verify,RunTransition::Finalize,RunTransition::Fail]{
+                assert_eq!(terminal.advance(event),None);
+            }
+        }
+        assert_eq!(RunPhase::Running.advance(RunTransition::RequireReview),
+            Some(RunPhase::NeedsReview));
+        assert_eq!(RunPhase::NeedsReview.advance(RunTransition::RequireReview),
+            Some(RunPhase::NeedsReview));
+        assert_eq!(RunPhase::Cancelled.advance(RunTransition::Cancel),
+            Some(RunPhase::Cancelled));
+    }
+    #[test] fn canonical_transition_chain_and_unknown_event_are_explicit(){
+        let mut phase=RunPhase::Queued;
+        for event in ["start","approval_requested","approval_resolved","verify",
+            "finalize","succeed"] {
+            phase=phase.advance(RunTransition::from_host_event(event).unwrap()).unwrap();
+        }
+        assert_eq!(phase,RunPhase::Succeeded);
+        assert!(RunTransition::from_host_event("run_unsafe_tool").is_none());
+        assert_eq!(RunPhase::Running.advance(RunTransition::Fail),Some(RunPhase::Failed));
+        assert_eq!(RunPhase::Queued.advance(RunTransition::Interrupt),
+            Some(RunPhase::Interrupted));
     }
     #[test] fn typed_ref_roundtrips_without_unscoped_parent(){
         let r=RunRef::new(RunSurface::Team,"job:123",Some("team:0".into())).unwrap();
