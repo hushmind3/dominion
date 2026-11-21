@@ -283,6 +283,9 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_running_external_agent
                  ON records(json_extract(data,'$.status'))
                  WHERE kind='external_agent_run';
+             CREATE INDEX IF NOT EXISTS idx_remote_job_queued
+                 ON records(created_at ASC,id ASC)
+                 WHERE kind='remote_job' AND json_extract(data,'$.status')='queued';
              CREATE INDEX IF NOT EXISTS idx_sdk_execution_session
                  ON records(json_extract(data,'$.sessionId'),json_extract(data,'$.startedAt') DESC)
                  WHERE kind='execution';
@@ -355,6 +358,19 @@ impl Store {
             Err(_) => return Vec::new(),
         };
         rows.filter_map(|row| row.ok()).collect()
+    }
+
+    /// Remote queue discovery is indexed by immutable creation order and
+    /// excludes historical reports; the per-job patch_if is the lease CAS.
+    pub fn queued_remote_jobs(&self)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='remote_job' AND json_extract(data,'$.status')='queued'
+             ORDER BY created_at ASC,id ASC"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([],record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 
     /// Only current work reaches dispatch; historical payloads stay in SQLite.
@@ -2295,6 +2311,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    #[te
+    #[test]
+    fn remote_queue_uses_indexed_fifo_and_skips_closed_remote_history(){
+        let root=std::env::temp_dir().join(format!("dominion-remote-index-{}",
+            uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store=Store::open(&root.join("state.sqlite")).unwrap();
+        store.put("remote_job",&json!({"id":"finished","status":"owner_accepted"})).unwrap();
+        store.put("remote_job",&json!({"id":"ready","status":"queued"})).unwrap();
+        let rows=store.queued_remote_jobs().unwrap();
+        assert_eq!(rows.len(),1);
+        assert_eq!(rows[0]["id"],"ready");
+        let conn=store.conn.lock().unwrap();
+        let plan:String=conn.query_row(
+            "EXPLAIN QUERY PLAN SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='remote_job' AND json_extract(data,'$.status')='queued'
+             ORDER BY created_at ASC,id ASC",[],|row|row.get(3)).unwrap();
+        assert!(plan.contains("idx_remote_job_queued"),"{plan}");
+        drop(conn);drop(store);
+        let _=std::fs::remove_dir_all(root);
+    }
     #[test]
     fn concurrent_workers_claim_a_job_only_once() {
         let (store, dir) = temp_store();
