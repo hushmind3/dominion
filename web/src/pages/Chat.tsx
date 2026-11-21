@@ -411,6 +411,16 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   let id=current;
   let streamStarted=false;
   let ownerSaved=false;
+  // Retain local image previews until the owner turn is durably recorded.
+  // Failed uploads and rejected requests must be retryable without reselecting files.
+  let releasedSentImages=false;
+  const releaseSentImages=()=>{
+   if(releasedSentImages||!pendingImages.length)return;
+   releasedSentImages=true;
+   const sentKeys=new Set(pendingImages.map(item=>item.key));
+   pendingImages.forEach(item=>URL.revokeObjectURL(item.preview));
+   setPendingImages(previous=>previous.filter(item=>!sentKeys.has(item.key)));
+  };
   try{
    if(!id){
     const session=await post<ChatSession>('/api/sessions',{title:t('chat.sessionTitle'),agentId:agentMode?agentId:undefined,
@@ -440,8 +450,6 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      const uploaded=await Promise.all(pendingImages.map(item=>uploadAttachment({sessionId:id!},item.file)));
      if(controller.signal.aborted)return;
      attachmentIds=uploaded.map(item=>item.id);
-     pendingImages.forEach(item=>URL.revokeObjectURL(item.preview));
-     setPendingImages([]);
     }finally{
      setUploading(false);
     }
@@ -456,10 +464,11 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     if(controller.signal.aborted||stoppingRef.current||stream.current!==controller)return;
     if(event.type==='owner_saved'){
      ownerSaved=true;
+     releaseSentImages();
      setOptimisticOwner(previous=>previous?.sessionId===id?{...previous,persistedId:String(event.messageId)}:previous);
      refresh('/api/sessions/'+encodeURIComponent(id!)+'/messages');
     }
-    if(event.type==='assistant_saved'){flushStreamBuffer();setSavedMessageId(event.messageId);refresh('/api/sessions',...(id?['/api/sessions/'+encodeURIComponent(id)+'/messages']:[]));}
+    if(event.type==='assistant_saved'){releaseSentImages();flushStreamBuffer();setSavedMessageId(event.messageId);refresh('/api/sessions',...(id?['/api/sessions/'+encodeURIComponent(id)+'/messages']:[]));}
     if(event.type==='text')queueStreamDelta('text',event.text);
     if(event.type==='reasoning')queueStreamDelta('reasoning',event.text);
     if(event.type==='approval'){setLiveApproval({id:event.id,tool:event.tool,args:event.args,sessionId:id!,status:'pending'});void approvals.reload();}
@@ -489,6 +498,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      }catch{lookupFailed=true;}
      if(view.current===id){
       if(persisted){
+       releaseSentImages();
        setOptimisticOwner(previous=>previous?.sessionId===id?{...previous,persistedId:persisted!.id}:previous);
       }else{
        setInput(previous=>previous.trim()?previous:text);
