@@ -1092,6 +1092,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn team_launch_from_nine_agent_room_creates_real_native_dag(){
+        use axum::{routing::post,Json,Router};
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr=listener.local_addr().unwrap();
+        let plan=json!({"steps":[{"id":"inspect","agentId":"a0","profile":"general",
+            "prompt":"Summarize the issue and show evidence.","dependsOn":[]}]}).to_string();
+        let fake=Router::new().route("/v1/chat/completions",post(move||{
+            let plan=plan.clone();
+            async move{Json(json!({"choices":[{"message":{"content":plan},
+                "finish_reason":"stop"}],
+                "usage":{"prompt_tokens":40,"completion_tokens":30,"total_tokens":70}}))}
+        }));
+        let server=tokio::spawn(async move{axum::serve(listener,fake).await.unwrap()});
+        let (state,dir)=test_state();
+        state.store.put("provider",&json!({"id":"local-test","name":"Local Test",
+            "baseUrl":format!("http://{addr}/v1"),"model":"fake-model","enabled":true})).unwrap();
+        state.store.put("agent",&json!({"id":"a0","name":"Lead Worker",
+            "providerId":"local-test","model":"fake-model","enabled":true})).unwrap();
+        save_room(&state,None,&json!({"id":"room-one","name":"Nine agents",
+            "agentIds":(0..9).map(|i|format!("a{i}")).collect::<Vec<_>>(),
+            "toolsEnabled":true})).unwrap();
+        let req=json!({"goal":"Inspect and report an issue","maxParallel":1,
+            "clientRequestId":uuid::Uuid::new_v4().to_string()});
+        let started=team_launch(State(state.clone()),Path("room-one".into()),Json(req)).await;
+        assert_eq!(started.status(),StatusCode::OK);
+        let bytes=axum::body::to_bytes(started.into_body(),1024*1024).await.unwrap();
+        let receipt:Value=serde_json::from_slice(&bytes).unwrap();
+        let id=receipt["id"].as_str().unwrap();
+        let settled=tokio::time::timeout(std::time::Duration::from_secs(8),async{
+            loop{
+                let row=state.store.get("room_team_launch",id).unwrap();
+                if row["status"]!="planning"{break row;}
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        }).await.expect("Team launch should settle");
+        assert_eq!(settled["status"],"queued","{}",settled);
+        let team_id=settled["jobId"].as_str().expect("a native Team job");
+        let team=state.store.get("job",team_id).unwrap();
+        assert_eq!(team["kind"],"team");
+        assert_eq!(team["input"]["sessionId"],"room:room-one");
+        assert_eq!(team["input"]["plan"].as_array().unwrap().len(),1);
+        assert_eq!(team["input"]["plan"][0]["agentId"],"a0");
+        assert!(state.store.get("budget_binding","room:room-one").is_some());
+        let calls=state.store.auxiliary_model_calls(id).unwrap();
+        assert_eq!(calls.len(),1);
+        assert_eq!(calls[0]["phase"],"team_planning");
+        assert_eq!(calls[0]["totalTokens"],70);
+        server.abort();
+        drop(state);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
     async fn team_launch_button_requires_room_tool_consent_and_is_idempotent(){
         let (state,dir)=test_state();
         save_room(&state,None,&config()).unwrap();
