@@ -92,6 +92,16 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   storeChatMode(draftScope,mode)
   redrawMode(revision=>revision+1)
  }
+ // Keep an unsent owner request recoverable when a provider/network turn
+ // fails, without replacing anything the owner typed during that attempt.
+ const restoreFailedDraft=(scope:string,text:string)=>{
+  const existing=Object.hasOwn(draftValues.current,scope)
+   ?draftValues.current[scope]:readChatDraft(scope)
+  if(existing.trim())return
+  draftValues.current[scope]=text
+  storeChatDraft(scope,text)
+  redrawDraft(revision=>revision+1)
+ }
  const [agentChoice,setAgentChoice]=useState<{scope?:string;id:string}>();
  const [override,setOverride]=useState<ModelOverride>();
  const defaultAgent=agents.value.find(agent=>agent.id==='default')||agents.value.find(agent=>agent.name==='기본값')||agents.value.find(agent=>agent.id==='general');
@@ -416,7 +426,10 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     if(event.type==='error')throw Error(event.message);
    },controller.signal);
   }catch(e){
-   if(!controller.signal.aborted&&view.current===id)setError(translateError((e as Error).message));
+   if(!controller.signal.aborted){
+    if(!saved)restoreFailedDraft(id||draftScope,text)
+    if(view.current===id)setError(translateError((e as Error).message))
+   }
   }finally{
    if(stream.current===controller){
     stream.current=null;activeTurnSession.current=undefined;
