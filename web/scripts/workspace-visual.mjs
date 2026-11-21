@@ -336,12 +336,17 @@ try{
   {kind:'tool_started',detail:{tool:'workspace_write'}},
   {kind:'tool_failed',detail:{tool:'workspace_write'}}
  ]
+ sdkRuns[0].checkpoint.eventsOmitted=80
  await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
  const history=page.getByRole('list',{name:'실행 단계 기록'})
+ await page.getByText('저장된 실행 단계 · 87').waitFor({timeout:8000})
  await page.getByRole('button',{name:'이전 단계 보기'}).waitFor({timeout:8000})
  assert.equal(await history.getByText('verification_pending').count(),0,
   'Initial run detail should remain compact for ordinary jobs')
  await page.getByRole('button',{name:'이전 단계 보기'}).click()
+ assert.equal(await page.getByText(/저장된 87단계 중 최근 7단계를 표시합니다/).count(),1,
+  'Bounded run API must disclose the actual history length')
+ assert.equal(await page.getByText(/이전 80단계는 요약에서 생략/).count(),1)
  assert.equal(await history.getByText('verification_pending').count(),1,
   'Previously recorded owner-visible steps must be reopenable')
  assert.equal(await page.getByRole('button',{name:'최근 단계만'}).getAttribute('aria-expanded'),'true')
