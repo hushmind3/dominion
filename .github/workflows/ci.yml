@@ -7,6 +7,8 @@ on:
     branches: [dominion-sub2]
     paths:
       - 'src/**/*.rs'
+      - 'tests/e2e.rs'
+      - 'tests/e2e/**/*.rs'
       - 'web/src/**/*.ts'
       - 'web/src/**/*.tsx'
       - 'web/package*.json'
@@ -21,6 +23,8 @@ on:
     branches: [main, dominion-sub2]
     paths:
       - 'src/**/*.rs'
+      - 'tests/e2e.rs'
+      - 'tests/e2e/**/*.rs'
       - 'crates/**/*.rs'
       - 'Cargo.toml'
       - 'Cargo.lock'
