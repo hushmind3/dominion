@@ -66,8 +66,20 @@ export interface NativePairedComparison {
  differences:{toolCalls:number;modelCalls:number;chargedTokens:number;
    configuredCostKRW:number|null;latencyMs:number|null};qualification:string;
 }
+/** Single durable execution projection, independent of model and UI surface. */
+export type RunSurface='chat'|'room'|'team'|'sdk'|'external_agent';
+export type RunPhase='queued'|'running'|'waiting_approval'|'verifying'|'finalizing'|
+  'succeeded'|'failed'|'cancelled'|'interrupted'|'needs_review';
+export interface RunRef {
+ version:1;surface:RunSurface;runId:string;parentRunId:string|null;
+}
+export interface RunView {
+ ref:RunRef;phase:RunPhase;status:string;terminal:boolean;reviewRequired:boolean;
+ attempt:number|null;sessionId:string|null;providerId:string|null;model:string|null;
+ startedAt:string|null;finishedAt:string|null;sourceJournal:'job'|'execution';
+}
 export interface Approval extends RecordItem {status:string;sessionId?:string;tool?:string;args?:unknown}
-export interface EngineEvent {seq:number;type:string;kind?:string;record?:RecordItem;removed?:string;approval?:Approval;[key:string]:unknown}
+export interface EngineEvent {seq:number;type:string;kind?:string;record?:RecordItem;removed?:string;approval?:Approval;runRef?:RunRef|null;runState?:RunView|null;[key:string]:unknown}
 export interface ChatEvent {type:string;[key:string]:unknown}
 export interface ChatRequest {sessionId:string;agentId:string;input:string;providerId?:string;model?:string;toolsEnabled?:boolean;toolsExecutionEnabled?:boolean;autoLearning?:boolean;reasoningEffort?:string;reasoningLanguage?:string;thinking?:boolean}
 export type CreateJob={kind:'prompt';input:{prompt:string;sessionId?:string;agentId?:string;providerId?:string;model?:string;toolsEnabled?:boolean;reasoningEffort?:string;thinking?:boolean;maxSteps?:number;maxAttempts?:number;maxModelCalls?:number;maxToolCalls?:number;tokenBudget?:number;parallelReads?:number;strategy?:"balanced"|"verify_first"|"low_cost";algorithmId?:AlgorithmId;ownerInstructions?:string;allowedTools?:string[];acceptanceChecks?:unknown[];requireEvidence?:boolean;allowFallback?:boolean;routingMode?:RoutingMode;minQuality?:number;maxQualityDrop?:number}}|{kind:'workflow';input:{workflowId:string;input?:string}};
@@ -183,6 +195,10 @@ export class Dominion{
     steer:(jobId:string,instruction:string)=>this.request<{ok:boolean;jobId:string;directive:string}>('POST','/api/jobs/'+id(jobId)+'/directive',{instruction})
   };
   /** Public controls for the same Rust native jobs as the React work panel. */
+  /** Canonical read-only lifecycle across Chat, Room, Team and native jobs. */
+  readonly runs={
+    get:(runId:string)=>this.request<RunView>('GET','/api/runs/'+id(runId))
+  };
   readonly nativeRuns={
     list:()=>this.request<NativeRun[]>('GET','/api/sdk/runs'),
     start:(input:NativeRunRequest)=>this.request<NativeRun>('POST','/api/sdk/runs',input),
