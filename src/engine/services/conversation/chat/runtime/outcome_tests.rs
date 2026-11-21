@@ -69,6 +69,62 @@ use super::*;
     }
 
     #[tokio::test]
+    async fn nested_team_revision_failure_blocks_dependent_writer_and_parent_completion(){
+        let (state,dir)=state();
+        state.store.put("policy",&json!({"id":"default","autoApproveAll":true}));
+        let execution_id="team-revision-probe";
+        state.store.put("execution",&json!({
+            "id":execution_id,"status":"running","sessionId":"s-team",
+            "taskId":execution_id,"request":"inspect and then write",
+        })).unwrap();
+        let session=json!({"id":"s-team"});
+        let request=TurnRequest{
+            session_id:Some("s-team".into()),request_id:None,
+            input:"inspect and then write".into(),attachment_ids:Vec::new(),
+            agent_id:None,provider_id:None,model:None,
+            tools_enabled:true,tools_execution_enabled:true,
+            thinking:None,reasoning_effort:None,reasoning_language:None,
+            auto_learning:false,system_override:None,
+            task_id:None,parent_task_id:None,task_revision:None,
+            verification_owner:None,
+        };
+        let program=json!({"revision":"team-revision",
+            "nodes":[{"id":"team","type":"parallel","nodes":[
+                {"id":"missing","type":"call_tool","tool":"workspace_read",
+                    "inputs":{"path":"nonexistent-team-source.txt"},
+                    "onFailure":"revise"},
+                {"id":"unsafe","type":"call_tool","tool":"workspace_write",
+                    "dependsOn":["missing"],
+                    "inputs":{"path":"must-not-exist.txt","content":"BAD"}}
+            ]}]
+        });
+        let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+        let metrics=std::sync::Mutex::new(Metrics::default());
+        let ctx=ProgramCtx{
+            state:&state,tx:&tx,session:&session,request:&request,
+            session_id:"s-team",execution_id,metrics:&metrics,
+            generation:state.cancellation_generation("s-team"),
+        };
+        let frame=execute_nodes(
+            &ctx,program["nodes"].as_array().unwrap().clone(),
+            json!({}),crate::engine::program::new_checkpoint(&program),
+            super::super::budget::BudgetLedger::new(
+                MAX_ROUNDS,MAX_TOOL_CALLS,MAX_ELAPSED),
+            0,0,true,true,
+        ).await.expect("missing read is a model-revisable observation");
+        assert_eq!(frame.failure.as_ref().unwrap()["nodeId"],"missing");
+        assert!(!frame.paused);
+        assert!(!frame.checkpoint["completedOperationIds"]
+            .as_array().unwrap().iter().any(|v|v=="team"||v=="unsafe"));
+        assert!(!dir.join("must-not-exist.txt").exists());
+        assert!(state.store.execution_operations(execution_id).unwrap()
+            .iter().all(|op|op["tool"]!="workspace_write"));
+        let saved=state.store.get("execution",execution_id).unwrap();
+        assert_eq!(saved["programCheckpoint"]["status"],"needs_revision");
+        drop(ctx);drop(state);let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
     async fn program_resumes_from_a_durable_checkpoint_without_repeating_completed_tools() {
         let (state, dir) = state();
         state.store.put("policy", &json!({"id":"default","autoApproveAll":true}));
