@@ -413,8 +413,7 @@ async fn receive_stream(
 )->Result<Value,String> {
     use crate::engine::native_stream::{Assembler,SseDecoder,Wire};
     let name=match protocol {Wire::Chat=>"chat",Wire::Anthropic=>"anthropic",Wire::Codex=>"codex"};
-    let mut progress=StreamProgress{state,session,job_id,protocol:name,
-        events:0,visible:String::new(),calls:Vec::new()};
+    let mut progress=StreamProgress::new(state,session,job_id,name);
     progress.record("receiving")?;
     let mut decoder=SseDecoder::default();
     let mut assembly=Assembler::new(protocol);
