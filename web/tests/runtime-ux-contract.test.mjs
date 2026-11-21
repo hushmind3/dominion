@@ -407,7 +407,7 @@ test('failed SSE never blindly resends an already persisted owner instruction',(
  assert.match(chat,/if\(persisted\)\{\s*releaseSentImages\(\);\s*setOptimisticOwner/)
  assert.match(chat,/persistedId:persisted!\.id/)
  assert.match(chat,/setInput\(previous=>previous\.trim\(\)\?previous:text\)/)
- assert.match(chat,/전송 상태를 확인하지 못했습니다/)
+ assert.match(chat,/실행 종료 여부를 확인하지 못했습니다/)
 })
 
 test('pending image previews survive rejected chat attempts and clear only after durable save',()=>{
@@ -439,4 +439,13 @@ test('chat error alerts can be dismissed even when failure comes from transcript
  assert.match(chat,/aria-label="오류 닫기"/)
  assert.match(chat,/setDismissedError\(\{session:current,message:visibleAlert\}\)/)
  assert.match(chat,/setBusy\(true\);setDismissedError\(undefined\);setError\(''\)/)
+})
+
+test('uncertain transport disconnect never presents an unverified retry as harmless',()=>{
+ const chat=source('src/pages/Chat.tsx')
+ assert.match(chat,/let serverTerminal=false/)
+ assert.match(chat,/if\(event\.type==='done'\)serverTerminal=true/)
+ assert.match(chat,/if\(event\.type==='error'\)\{serverTerminal=true;throw Error\(event\.message\);\}/)
+ assert.match(chat,/if\(lookupFailed\|\|!serverTerminal\)/)
+ assert.match(chat,/재전송 전 대화 기록과 실행 상태를 확인하세요/)
 })
