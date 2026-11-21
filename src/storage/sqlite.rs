@@ -286,6 +286,9 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_execution_active_status
                  ON records(json_extract(data,'$.status'),updated_at DESC,id DESC)
                  WHERE kind='execution';
+             CREATE INDEX IF NOT EXISTS idx_task_episode_page
+                 ON records(json_extract(data,'$.createdAt') DESC,id DESC)
+                 WHERE kind='task_episode';
              CREATE INDEX IF NOT EXISTS idx_native_job_route_completed
                  ON records(json_extract(data,'$.nativeRoute.binding'))
                  WHERE kind='job' AND json_extract(data,'$.status')='completed';
@@ -711,6 +714,23 @@ impl Store {
              WHERE kind='execution'
              ORDER BY COALESCE(json_extract(data,'$.startedAt'),created_at) DESC,
                       updated_at DESC,id DESC
+             LIMIT ?1 OFFSET ?2"
+        ).map_err(|error|error.to_string())?;
+        let limit=i64::try_from(limit).unwrap_or(i64::MAX);
+        let offset=i64::try_from(offset).unwrap_or(i64::MAX);
+        let rows=stmt.query_map(rusqlite::params![limit,offset],record_from_row)
+            .map_err(|error|error.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|error|error.to_string())
+    }
+
+    /// Page task episodes in SQLite instead of sorting and materializing the
+    /// entire task ledger for every history request.
+    pub fn task_episode_page(&self,limit:usize,offset:usize)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|error|error.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records INDEXED BY idx_task_episode_page
+             WHERE kind='task_episode'
+             ORDER BY json_extract(data,'$.createdAt') DESC,id DESC
              LIMIT ?1 OFFSET ?2"
         ).map_err(|error|error.to_string())?;
         let limit=i64::try_from(limit).unwrap_or(i64::MAX);
