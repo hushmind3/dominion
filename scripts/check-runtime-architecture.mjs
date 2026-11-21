@@ -67,8 +67,14 @@ has('src/integrations/agent_bridge.rs',['run_codex','run_claude','run_qwen']);
 has('src/api/remote_workers.rs',['gateway_router','worker_authorized',
   'worker_claim','worker_complete','owner_create']);
 has('src/host/execution/remote_worker.rs',['run_cli','run_team_read']);
-has('src/storage/sqlite.rs',['claim_remote_task','finish_remote_task',
-  'heartbeat_remote_task','cancel_remote_task']);
+has('src/storage/sqlite/remote_tasks.rs',
+  ['pub fn claim_remote_task','pub fn finish_remote_task',
+   'pub fn heartbeat_remote_task','pub fn cancel_remote_task',
+   'pub fn review_expired_remote_tasks']);
+has('src/storage/sqlite.rs',['mod remote_tasks;']);
+has('src/features/cognition/algorithms.rs',['mod catalogue;','catalogue::builtins()']);
+has('src/features/cognition/algorithms/catalogue.rs',
+  ['pub(super) fn builtins()','builtin(']);
 has('src/api/rooms.rs',['pub async fn events']);
 has('sdk/typescript/src/index.ts',['readonly runs=','readonly taskTeams=','events:(roomId:string,after=0']);
 has('sdk/rust/src/lib.rs',['pub async fn get_run','pub async fn create_task_team','pub async fn room_events']);
