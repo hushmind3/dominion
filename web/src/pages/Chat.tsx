@@ -9,7 +9,7 @@ import {createPortal} from 'react-dom'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormEvent,useEffect,useMemo,useRef,useState,type ClipboardEvent,type DragEvent,type KeyboardEvent} from 'react'
 import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Globe2,Paperclip,Plus,Power,RefreshCw,Search,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
-import {Agent,Approval,ChatMessage,ChatSession,Provider,get,post,resolveApproval,streamChat,koreanReasoningEnabled} from '../api'
+import {Agent,Approval,ChatMessage,ChatSession,Provider,get,post,del,resolveApproval,streamChat,koreanReasoningEnabled} from '../api'
 import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
 import {ModelPicker} from '../components/ModelPicker'
@@ -198,6 +198,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   addFiles(event.clipboardData.files)
  }
  const [sessionFilter,setSessionFilter]=useState('')
+ const [deletingSessionId,setDeletingSessionId]=useState('')
  const filteredSessions=sessions.value.filter(session=>!session.roomId
   && session.title.toLocaleLowerCase('ko').includes(sessionFilter.trim().toLocaleLowerCase('ko')))
  const [turnSession,setTurnSession]=useState<string>();
@@ -331,6 +332,30 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   onSession(s.id);setAgentChoice(undefined);setOverride(undefined);
   setError('');setCommandInfo('');setSlashOpen(false);
   if(window.innerWidth<768)setShowHistory(false);
+ };
+ const removePrivateSession=async(session:ChatSession)=>{
+  if(deletingSessionId)return;
+  if(stream.current&&activeTurnSession.current===session.id){
+   setError(t('chat.deleteSessionBusy'));return;
+  }
+  if(!window.confirm(t('chat.deleteSessionConfirm',{name:session.title})))return;
+  setDeletingSessionId(session.id);setError('');
+  try{
+   await del('/api/sessions/'+encodeURIComponent(session.id));
+   delete draftValues.current[session.id];
+   delete modeValues.current[session.id];
+   delete fileDrafts.current[session.id];
+   try{
+    for(const prefix of [chatDraftPrefix,chatModePrefix,chatWebPrefix])
+     sessionStorage.removeItem(prefix+session.id);
+   }catch{/* Browser storage may be unavailable. */}
+   if(current===session.id){
+    onSession(undefined);setTurnSession(undefined);setSavedMessageId(undefined);
+   }
+   await sessions.reload();
+   refresh('/api/sessions');
+  }catch(e){setError(translateError((e as Error).message))}
+  finally{setDeletingSessionId('')}
  };
  const resetLocal=()=>{
   onSession(undefined);setAgentChoice(undefined);setOverride(undefined);
@@ -591,7 +616,10 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-2"><div className="min-w-0"><span className="block text-[10px] font-extrabold uppercase tracking-widest text-[#C96442]">{t('ui.label.conversations')}</span><strong className="mt-1 block text-sm text-[#3A342D]">{t('chat.recent')}</strong></div><Button size="icon" variant="ghost" onClick={resetLocal} title={t('chat.newChat')}><Plus size={19}/></Button></div>
    <Button className="mx-3 mb-3 inline-flex items-center justify-center gap-2 rounded-xl border border-[#EED9CC] bg-[#F7E8E1] px-4 py-2.5 text-xs font-bold text-[#A94E30] hover:bg-[#F1DCCF]" onClick={resetLocal}><Plus size={17}/> {t('chat.newChat')}</Button>
    <div className="chat-session-search"><Search size={14}/><input type="search" aria-label="대화 목록 검색" placeholder="대화 검색" value={sessionFilter} onChange={e=>setSessionFilter(e.target.value)}/>{sessionFilter&&<button type="button" aria-label="검색 지우기" onClick={()=>setSessionFilter('')}><X size={13}/></button>}</div>
-   <div className="min-h-0 flex-1 overflow-y-auto px-2">{filteredSessions.map(s=><Button variant="bare" onClick={()=>pickSession(s)} key={s.id} title={s.title} className={'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-xs text-[#7C7469] hover:bg-[#F7E8E1] '+(current===s.id?'bg-[#F7E8E1] font-bold text-[#A94E30]':'')}><MessageCircle size={15} className="shrink-0"/><span className="truncate">{s.title}</span></Button>)}{!filteredSessions.length&&<div className="p-5 text-center text-xs leading-5 text-[#9C9388]">{sessionFilter.trim()?'일치하는 대화가 없습니다.':t('chat.first')}</div>}</div>
+   <div className="min-h-0 flex-1 overflow-y-auto px-2">{filteredSessions.map(s=><div key={s.id} className={'group flex min-w-0 items-center rounded-xl '+(current===s.id?'bg-[#F7E8E1]':'hover:bg-[#F7E8E1]')}>
+     <Button variant="bare" onClick={()=>pickSession(s)} title={s.title} className={'!min-w-0 flex-1 !justify-start gap-3 !rounded-xl !px-3 !py-2.5 text-left text-xs '+(current===s.id?'font-bold text-[#A94E30]':'text-[#7C7469]')}><MessageCircle size={15} className="shrink-0"/><span className="min-w-0 truncate">{s.title}</span></Button>
+     <Button type="button" size="icon" variant="ghost" disabled={Boolean(deletingSessionId)||Boolean(stream.current&&activeTurnSession.current===s.id)} title={t('chat.deleteSession')} aria-label={s.title+' '+t('chat.deleteSession')} className="!mr-1 !size-7 shrink-0 !rounded-lg text-[#8A8176] hover:!bg-rose-50 hover:!text-rose-700" onClick={()=>void removePrivateSession(s)}><Trash2 size={13}/></Button>
+    </div>)}{!filteredSessions.length&&<div className="p-5 text-center text-xs leading-5 text-[#9C9388]">{sessionFilter.trim()?'일치하는 대화가 없습니다.':t('chat.first')}</div>}</div>
    <div className="shrink-0 border-t border-[#E7E0D5] p-2"><Button variant="ghost" onClick={openSettings} className="w-full !justify-start gap-2 !text-xs" aria-label={t('nav.settings')}><Settings size={17}/>{t('nav.settings')}</Button></div>
   </aside>
   <div className="flex min-h-0 min-w-0 flex-col">
