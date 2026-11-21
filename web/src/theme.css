@@ -155,3 +155,47 @@
   transition-duration:.01ms!important;
  }
 }
+
+/* Direct Chat: user messages belong to the right; model responses stay left.
+   Keep these rules scoped to ChatPage so Room/Team layouts are unchanged. */
+.chat-transcript{font-family:var(--font-sans);text-align:left}
+.chat-transcript .chat-message{width:100%;min-width:0}
+.chat-transcript .chat-message--user{justify-content:flex-end}
+.chat-transcript .chat-message--user .chat-message-inner{
+ flex:0 1 auto;
+ width:fit-content;
+ max-width:min(76%,680px);
+ margin-left:auto;
+}
+.chat-transcript .chat-message--assistant .chat-message-inner{
+ flex:1 1 auto;
+ max-width:760px;
+}
+.chat-transcript .chat-message-label{
+ font-size:13px;
+ line-height:1.5;
+ letter-spacing:-.015em;
+}
+.chat-transcript .chat-message-text{
+ font-size:16px;
+ font-weight:400;
+ line-height:1.8;
+ letter-spacing:-.015em;
+ overflow-wrap:anywhere;
+ word-break:normal;
+}
+.chat-transcript .chat-message-text--user{
+ padding:12px 18px;
+ border-radius:20px 20px 6px 20px;
+ background:#F0EBE3;
+ color:#29251F;
+ line-height:1.65;
+}
+.chat-transcript .chat-message-text--assistant{
+ color:#302C28;
+}
+@media(max-width:767px){
+ .chat-transcript .chat-message--user .chat-message-inner{max-width:90%}
+ .chat-transcript .chat-message-text{font-size:15.5px;line-height:1.75}
+ .chat-transcript .chat-message-text--user{padding:11px 15px}
+}
