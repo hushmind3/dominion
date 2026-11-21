@@ -35,8 +35,16 @@ async fn notify(writer:&Wire,kind:ExternalAgent,method:&str,params:Value)
 fn response_for_permission(kind:ExternalAgent,method:&str,options:&Value,allow:bool)->Value{
     if kind==ExternalAgent::QwenAcp{
         let option=options.as_array().into_iter().flatten().find(|o|{
-            let name=o["kind"].as_str().unwrap_or("");
-            allow && name=="allow_once" && o["optionId"].is_string()
+            let kind=o["kind"].as_str().unwrap_or("");
+            let id=o["optionId"].as_str().unwrap_or("").to_ascii_lowercase();
+            let name=o["name"].as_str().unwrap_or("").to_ascii_lowercase();
+            // v1 ACP uses kind=allow_once, while Qwen can advertise a
+            // plain {optionId:"allow",name:"Allow"} instead. Do not
+            // accidentally select allow_always/session/persistent grants.
+            allow && (kind=="allow_once"
+                || matches!(id.as_str(),"allow"|"allow_once"|"proceed_once")
+                || matches!(name.as_str(),"allow"|"allow once"))
+                &&o["optionId"].is_string()
         });
         let outcome=option.map(|o|json!({"outcome":"selected","optionId":o["optionId"]}))
             .unwrap_or(json!({"outcome":"cancelled"}));
@@ -311,6 +319,15 @@ mod tests {
         let acp=response_for_permission(ExternalAgent::QwenAcp,
             "session/request_permission",&opts,true);
         assert_eq!(acp["outcome"]["optionId"],"opt-1");
+        let qwen=response_for_permission(ExternalAgent::QwenAcp,
+            "session/request_permission",
+            &json!([{"optionId":"allow","name":"Allow"},
+                    {"optionId":"allow_always","name":"Always Allow"}]),true);
+        assert_eq!(qwen["outcome"]["optionId"],"allow");
+        let persist=response_for_permission(ExternalAgent::QwenAcp,
+            "session/request_permission",
+            &json!([{"optionId":"allow_always","name":"Always Allow"}]),true);
+        assert_eq!(persist["outcome"]["outcome"],"cancelled");
         let deny=response_for_permission(ExternalAgent::QwenAcp,
             "session/request_permission",&opts,false);
         assert_eq!(deny["outcome"]["outcome"],"cancelled");
