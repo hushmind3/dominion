@@ -16,6 +16,10 @@ for(const p of [
   'crates/dominion-agent-runtime/src/run_contract.rs',
   'crates/dominion-agent-algorithms/src/agent_loop.rs',
   'crates/dominion-agent-sdk/src/lib.rs',
+  'src/conversation/chat/runtime/resume_safety_tests.rs',
+  'src/storage/sqlite/remote_tasks.rs',
+  'src/features/cognition/algorithms/catalogue.rs',
+  'web/e2e/sub3-native-live.mjs',
   'src/host/execution/native_agent.rs',
   'src/conversation/chat/runtime/turn.rs',
   'src/features/collaboration/room_cursor.rs',
@@ -50,6 +54,15 @@ has('src/conversation/chat/runtime/turn.rs',
 has('crates/dominion-agent-algorithms/src/agent_loop.rs',
   ['runtime::settle_rejected_model_turn','runtime::settle_model_turn']);
 has('src/api/sdk_runs.rs',['"phase":phase','"needs_review"=>"needs_review"']);
+has('src/conversation/chat/runtime.rs',
+  ['ensure_task_resume_safe','run_has_uncertain_operation','LeaseGuard::acquire']);
+has('src/conversation/chat/runtime/resume_safety_tests.rs',
+  ['paid_model_unknown_is_not_relaunched','unknown_tool_operation_blocks_resume']);
+has('src/features/providers/native_stream.rs',
+  ['native_chat_supports_final_message_only_without_duplication',
+   'native_chat_does_not_replay_message_when_delta_already_arrived']);
+has('web/e2e/sub3-native-live.mjs',
+  ['SUB3_VERIFIED','nativeState','chromium.launch','await page.reload']);
 has('crates/dominion-agent-algorithms/src/harness.rs',
   ['macro_rules! harness_steps','both_loop_styles_share_one_control_flow_source']);
 has('crates/dominion-agent-algorithms/src/agent_loop.rs',
