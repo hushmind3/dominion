@@ -194,6 +194,7 @@ jobs:
           node scripts/sub2-source-audit.mjs
           node --test scripts/sub2-addon-boundary.test.mjs
           node --test scripts/sub2-core-boundary.test.mjs
+          node --test scripts/sub2-architecture-contract.test.mjs
           node --test scripts/sub2-compare.test.mjs
           ./web/node_modules/.bin/tsc -p sdk/typescript/tsconfig.json
           node --test sdk/typescript/tests/sdk.test.mjs
