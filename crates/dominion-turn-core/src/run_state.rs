@@ -137,13 +137,18 @@ impl RunEvent{
     /// contract. Missing owner-message identity stays null, never an invented
     /// user message or job id. All clients can consume the same state names.
     pub fn from_record(kind:&str,record:&Value)->Option<Self>{
-        if !matches!(kind,"execution"|"job"|"room_work_assignment"|"task_team_work"){
+        if !matches!(kind,"execution"|"job"|"room_work_assignment"|
+            "task_team_work"|"managed_team"|"managed_team_task"){
             return None;
         }
         let run_id=record["id"].as_str().filter(|id|!id.is_empty())?;
         let status=record["status"].as_str()?;
         let state=if kind=="execution" && status=="running"
             && record["phase"]=="queued" {
+            RunState::Queued
+        }else if kind=="managed_team_task" && status=="launching"{
+            // Work has been claimed, but spawning its child job has not
+            // produced a durable job ID; this is NOT running evidence.
             RunState::Queued
         }else{
             RunState::parse(status)?
@@ -152,6 +157,7 @@ impl RunEvent{
             .or_else(||record["input"]["sourceMessageId"].as_str())
             .unwrap_or("").to_string();
         let actor_id=record["agentId"].as_str()
+            .or_else(||record["leadAgentId"].as_str())
             .or_else(||record["input"]["agentId"].as_str())
             .map(str::to_string);
         Some(Self{run_id:run_id.to_string(),source_id,event_seq:0,state,actor_id})
@@ -211,6 +217,22 @@ mod tests{
             RunState::Cancelled);
     }
 
+    #[test]
+    fn lead_and_worker_team_records_use_the_existing_run_state_stream(){
+        let lead=RunEvent::from_record("managed_team",&json!({
+            "id":"team-a","status":"running","leadAgentId":"lead"
+        })).unwrap().into_value();
+        assert_eq!(lead["state"],"running");
+        assert_eq!(lead["agentId"],"lead");
+        let claimed=RunEvent::from_record("managed_team_task",&json!({
+            "id":"node-a","status":"launching","agentId":"worker"
+        })).unwrap().into_value();
+        assert_eq!(claimed["state"],"queued");
+        let done=RunEvent::from_record("managed_team_task",&json!({
+            "id":"node-a","status":"completed","agentId":"worker"
+        })).unwrap().into_value();
+        assert_eq!(done["state"],"completed");
+    }
     #[test]
     fn task_team_worker_projects_into_the_same_typed_run_events(){
         let assigned=RunEvent::from_record("task_team_work",&json!({
