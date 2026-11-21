@@ -713,7 +713,7 @@ async fn get(client: &reqwest::Client, url: &str) -> Result<Value, String> {
         .await
         .map_err(|error| error.to_string())?;
     let status = response.status();
-    let text = response.text().await.map_err(|error| error.to_string())?;
+    let text = read_response_text_limited(response, 1024 * 1024).await?;
     if !status.is_success() {
         return Err(format!("{status}: {text}"));
     }
@@ -729,11 +729,28 @@ async fn post(client: &reqwest::Client, url: &str, body: Value) -> Result<Value,
         .await
         .map_err(|error| error.to_string())?;
     let status = response.status();
-    let text = response.text().await.map_err(|error| error.to_string())?;
+    let text = read_response_text_limited(response, 1024 * 1024).await?;
     if !status.is_success() {
         return Err(format!("{status}: {text}"));
     }
     Ok(serde_json::from_str(&text).unwrap_or(Value::Null))
+}
+
+async fn read_response_text_limited(
+    mut response: reqwest::Response,
+    limit: usize,
+) -> Result<String, String> {
+    if response.content_length().is_some_and(|length| length > limit as u64) {
+        return Err(format!("benchmark API response exceeded {limit} bytes"));
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
+        if bytes.len().saturating_add(chunk.len()) > limit {
+            return Err(format!("benchmark API response exceeded {limit} bytes"));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 async fn chat(

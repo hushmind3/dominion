@@ -45,6 +45,18 @@ pub(crate) fn valid_artifact_path(raw:&str)->bool{
 pub(crate) fn digest(data:&[u8])->String{
     format!("{:x}",Sha256::digest(data))
 }
+pub(crate) fn read_file_limited(path:&Path,limit:usize)->Result<Vec<u8>,String>{
+    use std::io::Read;
+    let file=std::fs::File::open(path).map_err(|error|error.to_string())?;
+    let metadata=file.metadata().map_err(|error|error.to_string())?;
+    if !metadata.is_file() || metadata.len()>limit as u64{
+        return Err(format!("File exceeds {limit} byte limit"));
+    }
+    let mut bytes=Vec::with_capacity(metadata.len().min(limit as u64) as usize);
+    file.take(limit as u64+1).read_to_end(&mut bytes).map_err(|error|error.to_string())?;
+    if bytes.len()>limit{return Err(format!("File exceeds {limit} byte limit"));}
+    Ok(bytes)
+}
 fn baseline(workspace:&Path,items:&[Value])->Result<Vec<Value>,String>{
     let root=workspace.canonicalize().map_err(|e|format!("workspace missing: {e}"))?;
     let mut output=Vec::new();
@@ -59,8 +71,8 @@ fn baseline(workspace:&Path,items:&[Value])->Result<Vec<Value>,String>{
             }
             let target=file.canonicalize().map_err(|e|e.to_string())?;
             if !target.starts_with(&root){return Err("Remote artifact escapes workspace".into());}
-            let bytes=std::fs::read(&target).map_err(|e|e.to_string())?;
-            if bytes.len()>1_500_000{return Err("Remote artifact baseline too large".into());}
+            let bytes=read_file_limited(&target,1_500_000)
+                .map_err(|_|"Remote artifact baseline too large")?;
             Value::String(digest(&bytes))
         }else{
             let mut parent=file.parent().ok_or("Artifact has no parent")?;

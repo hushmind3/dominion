@@ -54,8 +54,8 @@ fn build_patch(workspace:&Path,record:&Value)->Result<String,String>{
         }
         let target=validated_target(workspace,path)?;
         let old=if target.exists(){
-            let data=std::fs::read(&target).map_err(|e|e.to_string())?;
-            if data.len()>1_500_000{return Err("Workspace source exceeds patch engine limits".into());}
+            let data=crate::remote::read_file_limited(&target,1_500_000)
+                .map_err(|_|"Workspace source exceeds patch engine limits")?;
             Some(String::from_utf8(data).map_err(|_|"Coordinator source is not UTF-8")?)
         }else{None};
         let previous_sha=old.as_ref().map(|s|crate::remote::digest(s.as_bytes()));
@@ -167,7 +167,8 @@ async fn apply_with_digest(
             let valid=source["artifacts"].as_array().is_some_and(|items|items.iter().all(|entry|{
                 let Some(path)=entry["path"].as_str()else{return false;};
                 let Ok(target)=validated_target(ctx.workspace,path)else{return false;};
-                std::fs::read(&target).ok().is_some_and(|bytes|
+                crate::remote::read_file_limited(&target,crate::remote::MAX_ARTIFACT_BYTES)
+                    .ok().is_some_and(|bytes|
                     crate::remote::digest(&bytes)==entry["sha256"])
             }));
             if !valid {

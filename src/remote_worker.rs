@@ -173,13 +173,12 @@ fn collect_artifacts(state:&AppState,task:&Value)->Result<Vec<Value>,String>{
         }
         let canonical=target.canonicalize().map_err(|e|e.to_string())?;
         if !canonical.starts_with(&root){return Err("Remote output escapes its workspace".into());}
-        if meta.len() as usize>super::MAX_ARTIFACT_BYTES{
+        if meta.len()>super::MAX_ARTIFACT_BYTES as u64{
             return Err("Remote file exceeds 64 KiB transfer limit".into());
         }
-        let data=std::fs::read_to_string(&canonical).map_err(|e|e.to_string())?;
-        if data.len()>super::MAX_ARTIFACT_BYTES{
-            return Err("Remote UTF-8 output exceeds limit".into());
-        }
+        let bytes=super::read_file_limited(&canonical,super::MAX_ARTIFACT_BYTES)
+            .map_err(|_|"Remote UTF-8 output exceeds limit")?;
+        let data=String::from_utf8(bytes).map_err(|_|"Remote output must be UTF-8")?;
         output.push(json!({"path":name,"sha256":super::digest(data.as_bytes()),"content":data}));
     }
     Ok(output)
