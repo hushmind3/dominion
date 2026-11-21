@@ -122,6 +122,8 @@ pub mod maintenance;
 pub mod remote_backup;
 #[path = "operations/vault_rotation.rs"]
 pub mod vault_rotation;
+#[path = "operations/restore_transaction.rs"]
+pub mod restore_transaction;
 #[path = "operations/jobs.rs"]
 pub mod jobs;
 #[path = "operations/team_remote.rs"]
