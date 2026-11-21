@@ -35,7 +35,7 @@ pub async fn details(Query(query): Query<HashMap<String, String>>) -> Response {
 }
 
 pub async fn installed(State(state): State<AppState>) -> Json<Value> {
-    Json(json!(models::installed(&state)))
+    Json(json!(models::installed(&state).await))
 }
 
 pub async fn jobs(State(state): State<AppState>) -> Json<Value> {

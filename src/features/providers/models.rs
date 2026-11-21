@@ -326,11 +326,11 @@ fn format_bytes(bytes: u64) -> String {
 }
 
 /// Installed local models: GGUF files under the data dir (recursive).
-pub fn installed(state: &AppState) -> Vec<Value> {
+pub async fn installed(state: &AppState) -> Vec<Value> {
     let dir = models_dir(state);
     let mut found = Vec::new();
     walk(&dir, 0, &mut found);
-    let lms = lmstudio_models();
+    let lms = lmstudio_models().await;
     let indexed = lms
         .iter()
         .filter_map(|model| model["repo"].as_str().map(str::to_string))
@@ -469,14 +469,14 @@ fn walk_dirs(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
 }
 
 /// Models already managed by LM Studio (including its native MLX runtime).
-fn lmstudio_models() -> Vec<Value> {
+async fn lmstudio_models() -> Vec<Value> {
     let Some(lms) = lms_bin() else {
         return Vec::new();
     };
-    let Ok(output) = std::process::Command::new(lms)
-        .args(["ls", "--json"])
-        .output()
-    else {
+    let mut command = tokio::process::Command::new(lms);
+    command.args(["ls", "--json"]);
+    let Ok(output) = crate::integrations::local_tools::run_command(
+        &mut command, Duration::from_secs(15)).await else {
         return Vec::new();
     };
     if !output.status.success() {
@@ -1415,6 +1415,9 @@ pub fn import_local(state: &AppState, file_path: &str) -> Result<Value, String> 
         .file_name()
         .map(|value| value.to_string_lossy().to_string())
         .ok_or("파일 이름이 없습니다.")?;
+    let bytes = parts.iter().try_fold(0u64, |total, part| {
+        total.checked_add(part.metadata().ok()?.len())
+    }).ok_or("GGUF 파일 크기를 읽을 수 없습니다.")?;
     // Preserve every sibling when importing a sharded model. Copying only the
     // selected first shard made it disappear from the installed-model list.
     for part in parts {
@@ -1424,10 +1427,21 @@ pub fn import_local(state: &AppState, file_path: &str) -> Result<Value, String> 
             std::fs::copy(&part, &target).map_err(|error| error.to_string())?;
         }
     }
-    Ok(installed(state)
-        .into_iter()
-        .find(|item| item.get("id").and_then(|value| value.as_str()) == Some(name.as_str()))
-        .unwrap_or_else(|| json!({ "id": name })))
+    let target = dir.join(&name);
+    let installed_at = std::fs::metadata(&target).ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .map(|time| chrono::DateTime::<chrono::Utc>::from(time).to_rfc3339());
+    Ok(json!({
+        "id": name,
+        "repo": name.trim_end_matches(".gguf"),
+        "optionId": name,
+        "source": "local",
+        "format": "gguf",
+        "label": name,
+        "bytes": bytes,
+        "sizeLabel": format_bytes(bytes),
+        "installedAt": installed_at,
+    }))
 }
 
 fn external_model(id: &str, path: &Path) -> Option<Value> {
@@ -3034,14 +3048,14 @@ mod tests {
         set_install(Value::Null);
     }
 
-    #[test]
-    fn lists_only_gguf_files() {
+    #[tokio::test]
+    async fn lists_only_gguf_files() {
         let (state, dir) = temp_state();
         let models = models_dir(&state);
         std::fs::create_dir_all(&models).unwrap();
         std::fs::write(models.join("tiny.gguf"), b"x").unwrap();
         std::fs::write(models.join("notes.txt"), b"x").unwrap();
-        let items = installed(&state)
+        let items = installed(&state).await
             .into_iter()
             .filter(|item| !matches!(item["source"].as_str(), Some("lmstudio" | "mlx-download")))
             .collect::<Vec<_>>();
@@ -3129,30 +3143,30 @@ mod tests {
             vec!["simple-Q8_0.gguf".into(),"another.gguf".into()]).is_err());
     }
 
-    #[test]
-    fn removing_split_gguf_cleans_up_every_shard() {
+    #[tokio::test]
+    async fn removing_split_gguf_cleans_up_every_shard() {
         let (state, dir) = temp_state();
         let model_dir = models_dir(&state).join("split");
         std::fs::create_dir_all(&model_dir).unwrap();
         for part in 1..=3 {
             std::fs::write(model_dir.join(format!("model-{part:05}-of-00003.gguf")), b"x").unwrap();
         }
-        assert_eq!(installed(&state).iter().filter(|m| m["format"] == "gguf").count(), 1);
+        assert_eq!(installed(&state).await.iter().filter(|m| m["format"] == "gguf").count(), 1);
         remove_installed(&state, "split/model-00001-of-00003.gguf").unwrap();
         assert!(std::fs::read_dir(&model_dir).unwrap().next().is_none());
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    #[test]
-    fn split_gguf_appears_only_when_all_shards_exist() {
+    #[tokio::test]
+    async fn split_gguf_appears_only_when_all_shards_exist() {
         let (state, dir) = temp_state();
         let model_dir = models_dir(&state).join("split");
         std::fs::create_dir_all(&model_dir).unwrap();
         std::fs::write(model_dir.join("model-00001-of-00003.gguf"), b"a").unwrap();
-        assert!(!installed(&state).iter().any(|m| m["id"] == "split/model-00001-of-00003.gguf"));
+        assert!(!installed(&state).await.iter().any(|m| m["id"] == "split/model-00001-of-00003.gguf"));
         std::fs::write(model_dir.join("model-00002-of-00003.gguf"), b"bb").unwrap();
         std::fs::write(model_dir.join("model-00003-of-00003.gguf"), b"ccc").unwrap();
-        let models = installed(&state).into_iter().filter(|m| m["format"] == "gguf").collect::<Vec<_>>();
+        let models = installed(&state).await.into_iter().filter(|m| m["format"] == "gguf").collect::<Vec<_>>();
         assert_eq!(models.len(), 1, "{models:?}");
         assert_eq!(models[0]["id"], "split/model-00001-of-00003.gguf");
         assert_eq!(models[0]["bytes"], 6);
