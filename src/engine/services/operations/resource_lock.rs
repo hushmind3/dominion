@@ -11,10 +11,29 @@ fn registry()->&'static Mutex<HashMap<String,Weak<AsyncMutex<()>>>>{
     static REGISTRY:OnceLock<Mutex<HashMap<String,Weak<AsyncMutex<()>>>>>=OnceLock::new();
     REGISTRY.get_or_init(||Mutex::new(HashMap::new()))
 }
+/// Only literal, non-mutating process observations bypass the workspace
+/// writer barrier. This is deliberately narrower than a generic shell
+/// "read-only" heuristic: builds, git commands and arbitrary scripts can
+/// modify files even when their names sound observational.
+fn inert_shell_command(args:&Value)->bool{
+    let Some(command)=args["command"].as_str().map(str::trim) else{return false};
+    let mut words=command.split_ascii_whitespace();
+    match words.next(){
+        Some("sleep")=>{
+            let value=words.next().and_then(|text|text.parse::<f64>().ok());
+            words.next().is_none() && value.is_some_and(|seconds|
+                seconds.is_finite() && (0.0..=60.0).contains(&seconds))
+        },
+        Some("pwd"|"whoami"|"uptime"|"date"|"uname"|"id")=>
+            words.next().is_none(),
+        _=>false,
+    }
+}
 fn key(workspace:&Path,name:&str,args:&Value)->Option<String>{
     let canonical=workspace.canonicalize().unwrap_or_else(|_|workspace.to_path_buf());
     let prefix=canonical.to_string_lossy();
     match name{
+        "shell_exec"|"terminal_exec" if inert_shell_command(args)=>None,
         "workspace_write"|"workspace_replace"|"workspace_replace_range"|
         "workspace_apply_patch"|"team_remote_apply"|"shell_exec"|"terminal_exec"|"external_harness_run" =>
             Some(format!("workspace:{prefix}")),
@@ -108,6 +127,35 @@ mod tests{
         assert!(acquire(&a,"delegate_task",&Value::Null).await.is_none());
         std::fs::remove_dir_all(root).unwrap();
     }
+    #[tokio::test]
+    async fn inert_parallel_shells_skip_writer_lease_without_exposing_shell_mutations(){
+        let dir=std::env::temp_dir().join(format!("readonly-process-{}",
+            uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=crate::config::Config{port:0,data_dir:dir.clone(),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=crate::state::AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        let writer=acquire(&dir,"workspace_write",&Value::Null).await.unwrap();
+        for command in ["sleep 2.0","sleep 0.1","date","pwd","whoami","uname"]{
+            let args=json!({"command":command});
+            assert!(key(&dir,"shell_exec",&args).is_none(),"{command}");
+            assert!(acquire(&dir,"shell_exec",&args).await.is_none());
+            assert!(acquire_durable(&state,&dir,"shell_exec",&args,"reader")
+                .await.unwrap().is_none());
+        }
+        for command in ["sleep 1; touch bad","sleep 1 && touch bad",
+            "sleep $(touch bad)","sleep 9999","date > bad",
+            "cargo test","git status","bash -c 'sleep 1'"]{
+            assert_eq!(key(&dir,"shell_exec",&json!({"command":command})),
+                key(&dir,"workspace_write",&Value::Null),
+                "non-literal or workspace-affecting shell must remain locked: {command}");
+        }
+        drop(writer);drop(state);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
     #[tokio::test]
     async fn distinct_engine_connections_share_one_durable_workspace_writer_lease(){
         let dir=std::env::temp_dir().join(format!("lease-writer-{}",uuid::Uuid::new_v4()));
