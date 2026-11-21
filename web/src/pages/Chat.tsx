@@ -26,6 +26,16 @@ type ModelOverride={scope?:string;providerId:string;model:string}
 type InstalledModel={id:string;repo:string;label:string;format:string;bytes:number;source?:string}
 type Runtime={status:string;id?:string;name?:string;model?:string;error?:string}
 const chatDraftPrefix='dominion.chat.draft.v1:'
+type ChatExecutionMode='chat'|'agent'
+const chatModePrefix='dominion.chat.execution-mode.v1:'
+function readChatMode(scope:string):ChatExecutionMode{
+ try{return sessionStorage.getItem(chatModePrefix+scope)==='agent'?'agent':'chat'}
+ catch{return 'chat'}
+}
+function storeChatMode(scope:string,mode:ChatExecutionMode){
+ try{sessionStorage.setItem(chatModePrefix+scope,mode)}
+ catch{/* Session storage can be unavailable in private mode. */}
+}
 function readChatDraft(scope:string):string{
  try{
   const text=sessionStorage.getItem(chatDraftPrefix+scope)
@@ -71,6 +81,15 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   storeChatDraft(draftScope,value)
   redrawDraft(revision=>revision+1)
  };
+ const modeValues=useRef<Record<string,ChatExecutionMode>>({})
+ const [,redrawMode]=useState(0)
+ const executionMode=Object.hasOwn(modeValues.current,draftScope)?
+  modeValues.current[draftScope]:readChatMode(draftScope)
+ const setExecutionMode=(mode:ChatExecutionMode)=>{
+  modeValues.current[draftScope]=mode
+  storeChatMode(draftScope,mode)
+  redrawMode(revision=>revision+1)
+ }
  const [agentChoice,setAgentChoice]=useState<{scope?:string;id:string}>();
  const [override,setOverride]=useState<ModelOverride>();
  const defaultAgent=agents.value.find(agent=>agent.id==='default')||agents.value.find(agent=>agent.name==='기본값')||agents.value.find(agent=>agent.id==='general');
@@ -354,9 +373,16 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   let saved=false;
   try{
    if(!id){
-    const session=await post<ChatSession>('/api/sessions',{title:t('chat.sessionTitle'),agentId,providerId:manual?.providerId,model:manual?.model});
+    const session=await post<ChatSession>('/api/sessions',{
+     title:t('chat.sessionTitle'),
+     agentId:executionMode==='agent'?agentId:undefined,
+     providerId:executionMode==='chat'?providerId:manual?.providerId,
+     model:executionMode==='chat'?model:manual?.model
+    });
     if(controller.signal.aborted)return;
     id=session.id;
+    modeValues.current[id]=executionMode
+    storeChatMode(id,executionMode)
     activeTurnSession.current=id;
     if(view.current===current){
      onSession(id);setTurnSession(id);
@@ -368,8 +394,12 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    setInput(previous=>previous.trim()===text?'':previous);
    if(inputRef.current)inputRef.current.style.height='';
    await streamChat({
-    sessionId:id,agentId,providerId:manual?.providerId,model:manual?.model,input:text,
-    toolsEnabled,toolsExecutionEnabled:toolsEnabled,autoLearning:autoLearn,
+    sessionId:id,agentId:executionMode==='agent'?agentId:undefined,
+    providerId:executionMode==='chat'?providerId:manual?.providerId,
+    model:executionMode==='chat'?model:manual?.model,input:text,
+    toolsEnabled:executionMode==='agent'&&toolsEnabled,
+    toolsExecutionEnabled:executionMode==='agent'&&toolsEnabled,
+    autoLearning:executionMode==='agent'&&autoLearn,
     reasoningLanguage:reasoningKo?'ko':'original',reasoningEffort:reasoningEffort||undefined,thinking:selectedProvider?.kind==='codex'?(reasoningEffort==='none'?false:canDisableThinking?thinkingEnabled:undefined):thinkingEnabled,
    },event=>{
     if(controller.signal.aborted||stoppingRef.current||stream.current!==controller)return;
@@ -468,14 +498,19 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     <div className="relative">
     {slashOpen&&<SlashMenu items={slashItems} active={slashActive} onChoose={chooseSlash}/>}
     <form onSubmit={send} className="conversation-composer">
+     <div className="chat-execution-mode" role="group" aria-label="채팅 실행 방식">
+      <Button type="button" className="chat-execution-mode-option" aria-pressed={executionMode==='chat'} disabled={busy} onClick={()=>setExecutionMode('chat')}><MessageCircle size={14}/> 일반 대화</Button>
+      <Button type="button" className="chat-execution-mode-option" aria-pressed={executionMode==='agent'} disabled={busy} onClick={()=>setExecutionMode('agent')}><TerminalSquare size={14}/> 에이전트 실행</Button>
+      <span className="chat-execution-mode-hint">{executionMode==='chat'?'도구 사용 없이 모델과 대화':'파일·도구·MCP 작업 가능'}</span>
+     </div>
      <TextArea ref={inputRef} rows={1} placeholder={t("chat.inputPlaceholder")} value={input} onChange={e=>{const next=e.target.value;setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n'));setSlashActive(0);const el=e.currentTarget;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,180)+'px'}} onKeyDown={appendKey} aria-controls="dominion-slash-menu" aria-expanded={slashOpen} className="conversation-composer-input"/>
      <div className="chat-composer-controls conversation-composer-controls">
       <div className="chat-composer-options conversation-composer-options">
-       <ExecutionPermissions active={active} open={permissionOpen} onOpenChange={open=>{setPermissionOpen(open);if(open){setShowSettings(false);setModelMenu(false)}}} onError={setError} onChanged={label=>setCommandInfo(t('chat.perm.changed',{label}))}/>
+       {executionMode==='agent'&&<ExecutionPermissions active={active} open={permissionOpen} onOpenChange={open=>{setPermissionOpen(open);if(open){setShowSettings(false);setModelMenu(false)}}} onError={setError} onChanged={label=>setCommandInfo(t('chat.perm.changed',{label}))}/>}
 
-       <ReasoningSelect value={reasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} model={selectedModel} requireCatalog={selectedProvider?.kind==='codex'} defaultLabel={activeAgent?.reasoningEffort?`에이전트 설정 (${activeAgent.reasoningEffort})`:t('chat.reasoningAuto')} className="chat-reasoning !h-7 !w-auto !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-[#5C544A]"/>
-       <SelectInput aria-label={t('chat.agentAria')} value={agentId} onChange={e=>chooseAgent(e.target.value)} className="chat-agent !h-7 !w-auto !max-w-[140px] !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-[#5C544A]">{agents.value.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</SelectInput>
-       <ConversationSettings open={showSettings} onOpenChange={open=>{setShowSettings(open);if(open){setPermissionOpen(false);setModelMenu(false)}}} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={thinkingEnabled} setThinkingEnabled={setThinkingEnabled} canDisableThinking={canDisableThinking} reasoningEffort={reasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={toolsEnabled} setToolsEnabled={setToolsEnabled} autoLearn={autoLearn} setAutoLearn={setAutoLearn} learning={learning} learnDisabled={!current||Boolean(selectedSession?.roomId)||busy} onLearn={learnSession}/>
+       <ReasoningSelect value={reasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} model={selectedModel} requireCatalog={selectedProvider?.kind==='codex'} defaultLabel={executionMode==='agent'&&activeAgent?.reasoningEffort?`에이전트 설정 (${activeAgent.reasoningEffort})`:t('chat.reasoningAuto')} className="chat-reasoning !h-7 !w-auto !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-[#5C544A]"/>
+       {executionMode==='agent'&&<SelectInput aria-label={t('chat.agentAria')} value={agentId} onChange={e=>chooseAgent(e.target.value)} className="chat-agent !h-7 !w-auto !max-w-[140px] !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-[#5C544A]">{agents.value.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</SelectInput>}
+       <ConversationSettings open={showSettings} onOpenChange={open=>{setShowSettings(open);if(open){setPermissionOpen(false);setModelMenu(false)}}} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={thinkingEnabled} setThinkingEnabled={setThinkingEnabled} canDisableThinking={canDisableThinking} reasoningEffort={reasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={executionMode==='agent'&&toolsEnabled} setToolsEnabled={value=>{if(value)setExecutionMode('agent');setToolsEnabled(value)}} autoLearn={executionMode==='agent'&&autoLearn} setAutoLearn={value=>{if(value)setExecutionMode('agent');setAutoLearn(value)}} learning={learning} learnDisabled={!current||Boolean(selectedSession?.roomId)||busy} onLearn={learnSession}/>
       </div>
       <div className="ml-auto flex items-center gap-2">
        <span className="hidden text-[10px] text-[#9C9388] sm:inline">{t('chat.enterHint')}</span>
