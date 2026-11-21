@@ -519,6 +519,46 @@ mod deletion_tests {
     }
 
     #[tokio::test]
+    async fn recovery_reclaims_only_old_unleased_private_file_forks() {
+        let (state, root) = fixture();
+        state.store.put("session",&json!({"id":"source","title":"owner"}));
+        state.store.put("session",&json!({
+            "id":"unfinished","forkPending":true,
+            "forkSourceSessionId":"source"
+        }));
+        state.store.put("session",&json!({
+            "id":"legacy-pending","forkPending":true
+        }));
+        let copied=engine::attachments::upload(&state,&json!({
+            "sessionId":"unfinished","name":"temporary.txt",
+            "data":STANDARD.encode("abandoned fork file")
+        })).unwrap();
+        let copied_id=copied["id"].as_str().unwrap().to_owned();
+        state.store.write_message(&json!({
+            "session_id":"unfinished","role":"user","content":"partial copy",
+            "metadata":{"attachments":[copied]}
+        })).unwrap();
+        assert_eq!(recover_stale_pending_forks_at(&state,chrono::Utc::now()),0,
+            "a live new fork must not be collected");
+        let simulated_future=chrono::Utc::now()+chrono::Duration::minutes(16);
+        let live=engine::lease::LeaseGuard::acquire(&state,"source").unwrap();
+        assert_eq!(recover_stale_pending_forks_at(&state,simulated_future),0,
+            "the active owner source lease fences in-flight copies");
+        drop(live);
+        assert_eq!(recover_stale_pending_forks_at(&state,simulated_future),1);
+        assert!(state.store.get("session","unfinished").is_none());
+        assert!(state.store.get("attachment",&copied_id).is_none());
+        assert!(engine::attachments::read(&state,&copied_id).is_err());
+        assert!(state.store.messages("unfinished").is_empty());
+        assert!(state.store.get("session","source").is_some());
+        assert!(state.store.get("session","legacy-pending").is_some(),
+            "unknown historical provenance cannot be erased automatically");
+        assert_eq!(recover_stale_pending_forks_at(&state,simulated_future),0,
+            "cleanup is idempotent");
+        let _=std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn incomplete_fork_is_hidden_from_list_until_commit() {
         let (state,root)=fixture();
         state.store.put("session",&json!({"id":"pending-fork","forkPending":true}));
