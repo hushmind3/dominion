@@ -76,3 +76,18 @@ test('managed Team and remote Worker receipts refresh only the existing activity
  assert.ok(matchesRefreshTarget('/api/activity/teams',typed.targets))
  assert.equal(matchesRefreshTarget('/api/jobs',typed.targets),false)
 })
+
+test('expired event replay forces a single full resync, including active Rooms',()=>{
+ const normal=classifyRefreshEvent({type:'message',message:{session_id:'s1'}})
+ const gap=classifyRefreshEvent({type:'event_gap',seq:1999,resyncRequired:true})
+ assert.equal(gap.resync,true)
+ assert.equal(matchesRefreshTarget('/api/sessions/s2/messages',gap.targets),true)
+ assert.equal(matchesRefreshTarget('/api/providers',gap.targets),true)
+ assert.equal(matchesRoomRefresh(gap,'any-room','other-session'),true)
+ const merged=mergeRefreshScopes(mergeRefreshScopes(emptyRefreshScope(),normal),gap)
+ assert.deepEqual(merged.targets,['*'])
+ assert.equal(merged.resync,true)
+ assert.equal(matchesRoomRefresh(merged,'another-room'),true)
+ assert.deepEqual(classifyRefreshEvent({type:'event_gap',resyncRequired:false}).targets,[])
+ assert.deepEqual(classifyRefreshEvent({type:'future_event_type'}).targets,[])
+})
