@@ -2,6 +2,14 @@
 
 Scope: `dominion-sub3` only. No changes to `main`, production Worker, D1 or payment credentials.
 
+## 2026-11-21 Native UX, cancellation and verified artifact reopening
+
+The `dominion-sub3` Native panel now identifies the exact unresolved tool call and safe file target during operator reconciliation, while hiding raw arguments. A pending tool approval can be cancelled as a whole task; the owner-scoped pending approval is closed only after durable job cancellation and unrelated sessions remain untouched. Newly created/selected Native task history cannot be overwritten by a late response, and the selected ID is restored after refresh when still present in the indexed 30-job history.
+
+Completed Native tasks can reopen a **host-witnessed UTF-8 file** directly from the existing artifact-evidence section. `POST /api/sdk/runs/:id/artifact-preview` accepts only a file path recorded in the exact run's sealed final witness, verifies the pinned canonical workspace and actual SHA-256, and returns at most 128 KiB of UTF-8 content with `private, no-store`. Unknown paths, changed bytes, unsafe links, binary files and oversized previews do not return content. The viewer is read-only: it does not re-run a tool, create a new agent loop or modify user files. Existing UI layout, navigation and main branch remain untouched.
+
+Evidence: `src/api/sdk_runs.rs` handler tests exercise the real Rust API and temporary workspace for approve/cancel, manual recovery and artifact validation; `web/scripts/workspace-visual.mjs` drives desktop Chromium against mock API responses for the UI flow. GitHub Actions runs for the preceding implementation SHA `80e644ba0263fcab9e88c586c8481f850ebaf969` passed SDK (`44918251959`), product Rust/browser (`44918251960`), and fast architecture checks (`44918251967`). Final read-bounding/documentation SHA must be checked independently. Local 4322 app, live provider, and paid inference are **not** covered by these checks. Manual local replay: open `http://127.0.0.1:4322`, start a task that writes a UTF-8 text file, approve the exact write, wait for verified completion, expand `파일 검증 스냅샷`, click `검증된 파일 열기`, confirm content and SHA, then modify the file and verify the same preview is blocked as changed.
+
 ## Contracts changed
 
 | Path | Contract | Evidence |

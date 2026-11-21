@@ -270,9 +270,17 @@ pub async fn artifact_preview(
     if !meta.file_type().is_file() || meta.len()>MAX_PREVIEW {
         return error(StatusCode::CONFLICT,"현재 산출물의 파일 유형 또는 크기가 변경됐습니다.");
     }
-    let Ok(bytes)=std::fs::read(&target) else {
-        return error(StatusCode::CONFLICT,"산출물 파일을 읽을 수 없습니다.");
+    // Bound actual read bytes as well as the metadata preflight. Another
+    // process can grow a file after stat; it must not force an unbounded
+    // allocation in the local UI's read-only preview route.
+    use std::io::Read;
+    let Ok(file_handle)=std::fs::File::open(&target) else {
+        return error(StatusCode::CONFLICT,"산출물 파일을 열 수 없습니다.");
     };
+    let mut bytes=Vec::with_capacity(meta.len() as usize);
+    if file_handle.take(MAX_PREVIEW+1).read_to_end(&mut bytes).is_err() {
+        return error(StatusCode::CONFLICT,"산출물 파일을 읽을 수 없습니다.");
+    }
     if bytes.len() as u64>MAX_PREVIEW ||
         bytes.len() as u64!=file["bytes"].as_u64().unwrap_or(u64::MAX) ||
         format!("{:x}",sha2::Sha256::digest(&bytes))!=expected.to_ascii_lowercase() {
