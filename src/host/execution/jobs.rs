@@ -56,15 +56,22 @@ impl JobContext {
             "jobId": self.job_id,
             "event": payload,
         }));
-        let mut events = self.events.lock().unwrap();
-        if events.len()>=MAX_EVENTS {
-            events.remove(0);
-            self.events_dropped.fetch_add(1,Ordering::Relaxed);
-        }
-        events.push(json!({
-            "type": event.get("type").cloned().unwrap_or(json!("event")),
-            "at": chrono::Utc::now().to_rfc3339(),
-        }));
+        let (recent,dropped)={
+            let mut events=self.events.lock().unwrap();
+            if events.len()>=MAX_EVENTS {
+                events.remove(0);
+                self.events_dropped.fetch_add(1,Ordering::Relaxed);
+            }
+            events.push(json!({
+                "type": event.get("type").cloned().unwrap_or(json!("event")),
+                "at": chrono::Utc::now().to_rfc3339(),
+            }));
+            (events.clone(),self.events_dropped.load(Ordering::Relaxed))
+        };
+        // Progress must survive a host restart, not only a normal terminal
+        // commit. The existing attempt-fenced checkpoint blocks late writes
+        // after cancellation or a new worker claim.
+        self.patch(json!({"events":recent,"eventsDropped":dropped}));
     }
 
     /// Merge a patch into the persisted job record and notify listeners.
@@ -812,7 +819,7 @@ mod tests {
             "id":"bounded-history","kind":"prompt","status":"running",
             "attempts":2,"eventsDropped":3,"events":existing
         })).unwrap();
-        let context=JobContext::new(state,"bounded-history".into());
+        let context=JobContext::new(state.clone(),"bounded-history".into());
         assert_eq!(context.events.lock().unwrap().len(),MAX_EVENTS);
         assert_eq!(context.events.lock().unwrap()[0]["seq"],5);
         assert_eq!(context.events_dropped.load(Ordering::Relaxed),8);
@@ -823,6 +830,15 @@ mod tests {
             "An old attempt's first event must not hide the latest one");
         assert_eq!(retained.last().unwrap()["type"],"new_step");
         assert_eq!(context.events_dropped.load(Ordering::Relaxed),9);
+        let durable=state.store.get("job","bounded-history").unwrap();
+        assert_eq!(durable["eventsDropped"],9);
+        assert_eq!(durable["events"].as_array().unwrap().len(),MAX_EVENTS);
+        assert_eq!(durable["events"][0]["seq"],6);
+        let restarted=JobContext::new(state,"bounded-history".into());
+        assert_eq!(restarted.events_dropped.load(Ordering::Relaxed),9,
+            "Crash recovery must not reset the dropped-event cursor");
+        assert_eq!(restarted.events.lock().unwrap().last().unwrap()["type"],
+            "new_step","Persisted progress remains available after restart");
     }
 
     fn team_fixture(state:&AppState,lead_status:&str,child_status:&str) {
