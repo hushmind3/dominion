@@ -508,6 +508,23 @@ pub(super) fn hinted_body(state: &AppState, provider: &ProviderRef, original: &V
     body
 }
 
+pub(super) async fn bounded_body(
+    mut response:reqwest::Response,
+    limit:usize,
+)->Result<Vec<u8>,String>{
+    if response.content_length().is_some_and(|length|length>limit as u64){
+        return Err(format!("제공자 응답이 {limit} 바이트 한도를 초과했습니다."));
+    }
+    let mut bytes=Vec::new();
+    while let Some(chunk)=response.chunk().await.map_err(|error|error.to_string())?{
+        if bytes.len().saturating_add(chunk.len())>limit{
+            return Err(format!("제공자 응답이 {limit} 바이트 한도를 초과했습니다."));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
 /// A protocol hint is negotiated once from a specific rejection, never from
 /// a model name. Failure of an optional hint must not remove conversation state.
 pub(super) async fn send(
@@ -535,7 +552,7 @@ pub(super) async fn send(
         let status=response.status();
         if hinted && attempt==1 && matches!(status.as_u16(),400|422) {
             let headers=response.headers().clone();let version=response.version();
-            let bytes=response.bytes().await.map_err(|e|e.to_string())?;
+            let bytes=bounded_body(response,64*1024).await?;
             if rejects_hint(status,&String::from_utf8_lossy(&bytes),wire.field()) {
                 note_hint(state,provider,wire,false,status.as_u16());
                 body=original.clone();hinted=false;

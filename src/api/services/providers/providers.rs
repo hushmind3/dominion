@@ -7,6 +7,31 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use super::response::error;
 
+async fn bounded_response_bytes(
+    mut response:reqwest::Response,
+    limit:usize,
+)->Result<Vec<u8>,String>{
+    if response.content_length().is_some_and(|length|length>limit as u64){
+        return Err(format!("HTTP 응답이 {} 바이트 한도를 초과했습니다.",limit));
+    }
+    let mut bytes=Vec::new();
+    while let Some(chunk)=response.chunk().await.map_err(|error|error.to_string())?{
+        if bytes.len().saturating_add(chunk.len())>limit{
+            return Err(format!("HTTP 응답이 {} 바이트 한도를 초과했습니다.",limit));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+async fn bounded_response_json(
+    response:reqwest::Response,
+    limit:usize,
+)->Result<Value,String>{
+    let bytes=bounded_response_bytes(response,limit).await?;
+    serde_json::from_slice(&bytes).map_err(|error|error.to_string())
+}
+
 fn home_file(relative: &str) -> Option<std::path::PathBuf> {
     std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(relative))
 }
@@ -295,7 +320,7 @@ async fn load_models_dev_document()->Result<Arc<Value>,String>{
     if !response.status().is_success(){
         return Err(format!("공개 카탈로그 HTTP {}",response.status()));
     }
-    let document=Arc::new(response.json::<Value>().await.map_err(|error|error.to_string())?);
+    let document=Arc::new(bounded_response_json(response,8*1024*1024).await?);
     if let Ok(mut cache)=models_dev_document_cache().lock(){
         *cache=Some((Instant::now(),Arc::clone(&document)));
     }
@@ -416,7 +441,7 @@ pub async fn public_openrouter_free_catalog(State(state):State<AppState>)->Json<
         let response=client.get("https://openrouter.ai/api/v1/models").send().await
             .map_err(|error|error.to_string())?;
         if !response.status().is_success(){return Err(format!("OpenRouter HTTP {}",response.status()));}
-        let body=response.json::<Value>().await.map_err(|error|error.to_string())?;
+        let body=bounded_response_json(response,2*1024*1024).await?;
         Ok::<Vec<Value>,String>(public_openrouter_free_models(&body))
     }.await;
     match result {
@@ -511,6 +536,7 @@ pub async fn refresh_free_catalog(state: &AppState) -> Value {
     let _guard = state.session_guard(lock);
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
     {
         Ok(client) => client,
@@ -530,7 +556,9 @@ pub async fn refresh_free_catalog(state: &AppState) -> Value {
         let url = format!("http://127.0.0.1:{port}/api/providers/{id}/models");
         match client.get(&url).send().await {
             Ok(response) if response.status().is_success() => {
-                let models = response.json::<Vec<Value>>().await.unwrap_or_default();
+                let models = bounded_response_json(response,2*1024*1024).await
+                    .ok().and_then(|value|serde_json::from_value::<Vec<Value>>(value).ok())
+                    .unwrap_or_default();
                 let mut rows = Vec::new();
                 for model in models {
                     match model["freeStatus"].as_str() {
@@ -975,7 +1003,7 @@ async fn codex_device_poll(
         };
         let status = response.status();
         if status.is_success() {
-            let Ok(data) = response.json::<Value>().await else {
+            let Ok(data) = bounded_response_json(response,256*1024).await else {
                 if !is_current(&state) {
                     return;
                 }
@@ -1068,7 +1096,9 @@ pub async fn codex_device_start(State(state): State<AppState>) -> Response {
                 "ChatGPT 보안 설정에서 기기 코드 로그인이 꺼져 있습니다. ChatGPT 설정 → 보안 → 기기 코드 로그인을 켠 뒤 다시 시도하세요.",
             );
         }
-        let text = response.text().await.unwrap_or_default();
+        let text = String::from_utf8_lossy(
+            &bounded_response_bytes(response,64*1024).await.unwrap_or_default()
+        ).into_owned();
         return error(
             StatusCode::BAD_GATEWAY,
             &format!(
@@ -1077,7 +1107,7 @@ pub async fn codex_device_start(State(state): State<AppState>) -> Response {
             ),
         );
     }
-    let Ok(data) = response.json::<Value>().await else {
+    let Ok(data) = bounded_response_json(response,256*1024).await else {
         return error(
             StatusCode::BAD_GATEWAY,
             "Codex 기기 코드 응답 형식을 읽을 수 없습니다.",
@@ -1161,7 +1191,7 @@ async fn discover_cloudflare_account(api_key: &str) -> Option<String> {
     if !response.status().is_success() {
         return None;
     }
-    let value: Value = response.json().await.ok()?;
+    let value: Value = bounded_response_json(response,1024*1024).await.ok()?;
     value["result"].as_array()?.iter()
         .find_map(|account| account["id"].as_str().map(str::to_string))
 }
@@ -1687,7 +1717,9 @@ pub async fn test_provider(
         }
         Ok(response) => {
             let status = response.status();
-            let text = response.text().await.unwrap_or_default();
+            let text = String::from_utf8_lossy(
+                &bounded_response_bytes(response,64*1024).await.unwrap_or_default()
+            ).into_owned();
             let detail = text.chars().take(300).collect::<String>();
             let overloaded = detail.contains("1305")
                 || detail.to_ascii_lowercase().contains("temporarily overloaded");
@@ -1811,7 +1843,7 @@ async fn codex_models_live(
             failure = format!("Codex 모델 조회 HTTP {} (client_version={version})",response.status());
             continue;
         }
-        let data:Value = response.json().await
+        let data:Value = bounded_response_json(response,1024*1024).await
             .map_err(|_|"Codex 모델 응답 JSON 오류")?;
         match parse_codex_models(&data) {
             Ok(models) => return Ok(models),
@@ -1920,8 +1952,14 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
         )
     };
 
-    let client = reqwest::Client::new();
-    let mut request = client.get(&url).timeout(Duration::from_secs(12));
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .redirect(reqwest::redirect::Policy::none())
+        .build(){
+        Ok(client)=>client,
+        Err(build_error)=>return error(StatusCode::INTERNAL_SERVER_ERROR,&build_error.to_string()),
+    };
+    let mut request = client.get(&url);
     if kind == "anthropic" {
         request = request
             .header("x-api-key", key.as_str())
@@ -1931,7 +1969,7 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
     }
     match request.send().await {
         Ok(response) if response.status().is_success() => {
-            let Ok(value) = response.json::<Value>().await else {
+            let Ok(value) = bounded_response_json(response,1024*1024).await else {
                 return error(StatusCode::BAD_GATEWAY, "서버가 모델 목록 JSON을 반환하지 않았습니다. 서버 주소를 확인하세요.");
             };
             let key_name = if kind == "ollama" {
