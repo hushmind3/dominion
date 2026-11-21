@@ -23,6 +23,7 @@ pub mod experiments;
 pub mod chat;
 pub mod jobs;
 pub mod remote_workers;
+pub mod remote_registry;
 pub mod system;
 pub mod attachments;
 pub mod channels;
@@ -135,6 +136,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/remote/jobs/:id",get(remote_workers::one))
         .route("/api/remote/jobs/:id/review",post(remote_workers::review))
         .route("/api/remote/jobs/:id/cancel",post(remote_workers::cancel))
+        .route("/api/remote/workers",get(remote_registry::list).post(remote_registry::enroll))
+        .route("/api/remote/workers/:id/state",post(remote_registry::state))
+        .route("/api/remote/workers/:id/rotate",post(remote_registry::rotate))
         .route("/api/remote/claim",post(remote_workers::claim))
         .route("/api/remote/reconcile",post(remote_workers::reconcile))
         .route("/api/remote/jobs/:id/heartbeat",post(remote_workers::heartbeat))
@@ -407,8 +411,15 @@ async fn maintenance_guard(State(state): State<AppState>, request: Request, next
         .into_response()
 }
 
+/// Worker-only ingress has its own mandatory per-device or legacy secret.
+/// It must not require the separate owner admin credential.
+fn worker_ingress(path:&str)->bool{
+    path=="/api/remote/claim"||(path.starts_with("/api/remote/jobs/")
+        &&(path.ends_with("/heartbeat")||path.ends_with("/finish")))
+}
 /// Rejects cross-origin writes so a random website cannot drive the local
-/// computer-control API. An optional admin token protects writes further.
+/// computer-control API. Owner-controlled distributed endpoints require an
+/// explicit admin secret whenever exposed, regardless of the local default.
 async fn guard_writes(State(state): State<AppState>, request: Request, next: Next) -> Response {
     let method = request.method().clone();
     if !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) {
@@ -428,8 +439,16 @@ async fn guard_writes(State(state): State<AppState>, request: Request, next: Nex
                     .into_response();
             }
         }
-        if let Ok(token) = std::env::var("DOMINION_ADMIN_TOKEN") {
-            if !token.trim().is_empty() {
+        let is_worker=worker_ingress(request.uri().path());
+        let is_remote_owner=request.uri().path().starts_with("/api/remote/")&&!is_worker;
+        let configured=std::env::var("DOMINION_ADMIN_TOKEN").unwrap_or_default();
+        if is_remote_owner&&configured.trim().is_empty(){
+            return (StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error":"Remote coordinator requires DOMINION_ADMIN_TOKEN"}))
+            ).into_response();
+        }
+        if !is_worker&&!configured.trim().is_empty(){
+                let token=configured;
                 let provided = request
                     .headers()
                     .get("x-dominion-token")
@@ -442,8 +461,23 @@ async fn guard_writes(State(state): State<AppState>, request: Request, next: Nex
                     )
                         .into_response();
                 }
-            }
         }
     }
     next.run(request).await
+}
+
+#[cfg(test)]
+mod remote_worker_route_tests{
+    use super::*;
+    #[test]
+    fn remote_machine_write_paths_never_bypass_owner_admin_policy(){
+        assert!(worker_ingress("/api/remote/claim"));
+        assert!(worker_ingress("/api/remote/jobs/remote:123/heartbeat"));
+        assert!(worker_ingress("/api/remote/jobs/remote:123/finish"));
+        for path in ["/api/remote/workers","/api/remote/workers/a/rotate",
+            "/api/remote/workers/a/state","/api/remote/jobs","/api/remote/reconcile",
+            "/api/remote/jobs/a/review","/api/remote/jobs/a/cancel"]{
+            assert!(!worker_ingress(path),"{path}");
+        }
+    }
 }
