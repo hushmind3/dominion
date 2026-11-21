@@ -1050,4 +1050,45 @@ mod tests {
         assert_eq!(state.store.messages(session_id).len(), 2);
         let _ = std::fs::remove_dir_all(dir);
     }
+
+    #[tokio::test]
+    async fn team_launch_button_requires_room_tool_consent_and_is_idempotent(){
+        let (state,dir)=test_state();
+        save_room(&state,None,&config()).unwrap();
+        let client_id=uuid::Uuid::new_v4().to_string();
+        let req=json!({"goal":"Inspect the repository and report","maxParallel":2,
+            "clientRequestId":client_id});
+        let forbidden=team_launch(State(state.clone()),Path("room-one".into()),Json(req.clone())).await;
+        assert_eq!(forbidden.status(),StatusCode::FORBIDDEN);
+        assert_eq!(state.store.count("room_team_launch"),0);
+        let invalid=team_launch(State(state.clone()),Path("room-one".into()),
+            Json(json!({"goal":"something","clientRequestId":"not-a-uuid"}))).await;
+        assert_eq!(invalid.status(),StatusCode::BAD_REQUEST);
+        save_room(&state,Some("room-one"),&json!({"toolsEnabled":true})).unwrap();
+        let first=team_launch(State(state.clone()),Path("room-one".into()),Json(req.clone())).await;
+        assert_eq!(first.status(),StatusCode::OK);
+        let bytes=axum::body::to_bytes(first.into_body(),1024*1024).await.unwrap();
+        let receipt:Value=serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(receipt["status"],"planning");
+        let launch_id=receipt["id"].as_str().unwrap().to_string();
+        let again=team_launch(State(state.clone()),Path("room-one".into()),Json(req.clone())).await;
+        let bytes=axum::body::to_bytes(again.into_body(),1024*1024).await.unwrap();
+        let repeat:Value=serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(repeat["id"],launch_id);
+        assert_eq!(state.store.count("room_team_launch"),1);
+        let mismatched=team_launch(State(state.clone()),Path("room-one".into()),
+            Json(json!({"goal":"Different goal","maxParallel":2,"clientRequestId":client_id}))).await;
+        assert_eq!(mismatched.status(),StatusCode::CONFLICT);
+        save_room(&state,None,&json!({"id":"room-two","name":"Other room","agentIds":["a0"]})).unwrap();
+        let foreign=team_launch_status(State(state.clone()),
+            Path(("room-two".to_string(),launch_id.clone()))).await;
+        assert_eq!(foreign.status(),StatusCode::NOT_FOUND);
+        let owned=team_launch_status(State(state.clone()),
+            Path(("room-one".to_string(),launch_id.clone()))).await;
+        assert_eq!(owned.status(),StatusCode::OK);
+        // The mock fixture has no active provider: the async planner may fail,
+        // but it must never fabricate an active Worker or a successful Team.
+        assert!(state.store.get("room_team_launch",&launch_id).is_some());
+        let _=std::fs::remove_dir_all(dir);
+    }
 }

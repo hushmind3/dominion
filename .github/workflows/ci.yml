@@ -90,6 +90,7 @@ jobs:
         run: |
           cargo test --locked --bin dominion-rust engine::execution_budget::team_admission_tests
           cargo test --locked --bin dominion-rust addons::team_orchestrator::tests
+          cargo test --locked --bin dominion-rust api::rooms::tests::team_launch_button_requires_room_tool_consent_and_is_idempotent
       - name: Lead/Worker DAG dependency admission, isolation and persistence (dev profile)
         run: |
           cargo test --locked --bin dominion-rust addons::team_dag::tests
