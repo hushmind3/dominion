@@ -254,7 +254,7 @@ pub(super) fn observe_model<'a>(
                 )
             };
             turn.prompt_tokens_total += call_prompt;
-            turn.model_round.completion_tokens_total += call_completion;
+            turn.completion_tokens_total += call_completion;
             if completion.usage_exact {
                 if let Some(cached) = completion.cached_prompt_tokens {
                     turn.cached_prompt_tokens_total = turn
@@ -319,7 +319,7 @@ pub(super) fn observe_model<'a>(
                             Value::Null
                         };
                     execution["inputContext"]["providerOutputTokens"] =
-                        json!(turn.model_round.completion_tokens_total);
+                        json!(turn.completion_tokens_total);
                     execution["inputContext"]["providerUsageExact"] = json!(!turn.usage_estimated);
                     execution["lastModelFinishReason"] = json!(completion.finish_reason);
                     turn.state.store.put("execution", &execution);
