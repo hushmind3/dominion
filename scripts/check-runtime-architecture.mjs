@@ -117,6 +117,11 @@ if(!capabilityNegotiation.includes('endpointModelCapabilities')||
    !chatProvider.includes('selected_route.tool_mode=crate::engine::gateway::negotiate_tool_mode('))
   throw Error('Endpoint-model capability or context budget gate was removed')
 const adapter=readFileSync(path.join(root,'src/addons/integrations/chat_product.rs'),'utf8')
+// Product Host phases are now separate, but every review/approval guarantee
+// must still occur in one of the actively compiled phase modules.
+const adapterContract=adapter+['model_phase','tool_phase'].map(name=>
+  readFileSync(path.join(root,'src/addons/integrations/chat_product',name+'.rs'),'utf8')
+).join('\n')
 const chatPaths=[
  ['src/engine/chat/runtime.rs',1600],
  ['src/addons/integrations/chat_product.rs',2200],
@@ -335,10 +340,10 @@ if(!sdkApi.includes('engine::run_quiet(&state,&request).await')||
 // An evidence-scoped repair directive must be consumed before another paid
 // reviewer; unknown external effects cannot enter the automatic retry loop.
 if(!finalizationSource.includes('pub(super) fn acceptance_repair(')||
-   !adapter.includes('let repair = acceptance_repair(&progress, checks, can_retry);')||
-   !adapter.includes('repair == AcceptanceRepair::Reconcile')||
-   !adapter.includes('repair != AcceptanceRepair::Reviewer')||
-   !adapter.includes('if can_retry {'))
+   !adapterContract.includes('let repair = acceptance_repair(&progress, checks, can_retry);')||
+   !adapterContract.includes('repair == AcceptanceRepair::Reconcile')||
+   !adapterContract.includes('repair != AcceptanceRepair::Reviewer')||
+   !adapterContract.includes('if can_retry {'))
   throw Error('Verifier-grounded repair escalation or uncertain-effect stop was bypassed')
 // Delegated work must reuse the shared budget and journal. Historical
 // child results are bounded in SQLite, never fetched from the entire archive.
@@ -392,7 +397,7 @@ if(!addonIndex.includes('pub mod extensions;')||
   throw Error('Backend optional-extension host or its typed providers are missing')
 if(/mcp::definitions\(|mcp::call\(/.test(runtime+adapter+dispatchSource)||
    !runtime.includes('extensions::tools::external(')||
-   !adapter.includes('extensions::tools::catalog(')||
+   !adapterContract.includes('extensions::tools::catalog(')||
    !dispatchSource.includes('extensions::tools::invoke_mcp(')||
    !capabilitySource.includes('extensions::tools::catalog('))
   throw Error('Core chat/discovery regained a direct MCP server dependency')
