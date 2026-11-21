@@ -118,14 +118,17 @@ impl TestApp {
         extra: &[(&str, &str)],
     ) -> Self {
         let port = free_port();
+        let log = std::fs::OpenOptions::new().create(true).append(true)
+            .open(root.join("server.log")).expect("create E2E server log");
+        let error_log = log.try_clone().expect("clone E2E server log");
         let mut command = Command::new(env!("CARGO_BIN_EXE_dominion-rust"));
         command
             .env("DOMINION_PORT", port.to_string())
             .env("DOMINION_DATA", root.join("runtime"))
             .env("DOMINION_WEB", root.join("web"))
             .env("DOMINION_WORKSPACE", &root)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stdout(Stdio::from(log))
+            .stderr(Stdio::from(error_log));
         for (key, value) in extra {
             command.env(key, value);
         }
@@ -160,11 +163,18 @@ impl TestApp {
             .delete(format!("{}{path}", self.base))
             .send();
     }
+    fn server_diagnostics(&self)->String{
+        let raw=std::fs::read_to_string(self._root.join("server.log"))
+            .unwrap_or_else(|_|"no server log".into());
+        raw.chars().rev().take(6000).collect::<String>()
+            .chars().rev().collect()
+    }
     fn get(&self, path: &str) -> Value {
         self.client
             .get(format!("{}{path}", self.base))
-            .send()
-            .unwrap()
+            .send().unwrap_or_else(|error|panic!(
+                "E2E GET {path} disconnected: {error}; server stderr/stdout:\n{}",
+                self.server_diagnostics()))
             .error_for_status()
             .unwrap()
             .json()
@@ -174,10 +184,12 @@ impl TestApp {
         self.client
             .post(format!("{}/api/chat", self.base))
             .json(body)
-            .send()
-            .unwrap()
-            .text()
-            .unwrap()
+            .send().unwrap_or_else(|error|panic!(
+                "E2E chat connect failed: {error}; server log:\n{}",
+                self.server_diagnostics()))
+            .text().unwrap_or_else(|error|panic!(
+                "E2E chat body interrupted: {error}; server log:\n{}",
+                self.server_diagnostics()))
     }
 
     fn chat_async(&self, body: &Value) -> std::thread::JoinHandle<String> {
