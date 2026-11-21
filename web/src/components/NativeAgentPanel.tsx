@@ -48,6 +48,13 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [busy,setBusy]=useState(false)
  const [error,setError]=useState('')
  const [disconnected,setDisconnected]=useState(false)
+ const [openedArtifact,setOpenedArtifact]=useState<{
+  runId:string;path:string;content:string;sha256:string
+ }|null>(null)
+ const [openingArtifact,setOpeningArtifact]=useState(false)
+ const [artifactOpenError,setArtifactOpenError]=useState<{
+  runId:string;path:string;message:string
+ }|null>(null)
  // A pre-action poll must not revive a refused/approved tool after the
  // server has accepted the exact owner decision.
  const pollEpoch=useRef(0)
@@ -173,6 +180,18 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    updateRun(updated);setSteering('')
   }catch(e){setError((e as Error).message)}
   finally{mutationInProgress.current=false;setBusy(false)}
+ }
+ const openArtifact=async(path:string)=>{
+  if(!run||openingArtifact)return
+  const runId=run.id
+  setOpeningArtifact(true);setArtifactOpenError(null)
+  try{
+   const viewed=await post<{path:string;content:string;sha256:string}>(
+    `/api/sdk/runs/${encodeURIComponent(runId)}/artifact-preview`,{path})
+   setOpenedArtifact({runId,path:viewed.path,content:viewed.content,sha256:viewed.sha256})
+  }catch(e){
+   setArtifactOpenError({runId,path,message:(e as Error).message})
+  }finally{setOpeningArtifact(false)}
  }
  const reload=async()=>{
   setError('')
@@ -354,6 +373,21 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
        {artifact.sha256&&<code className="mt-1 block break-all text-[10px] text-[#766F67]">
         SHA-256: {artifact.sha256}
        </code>}
+       {status==='completed'&&artifact.state==='file'&&artifact.bytes!=null&&artifact.bytes<=131072&&
+        <button type="button" disabled={openingArtifact} onClick={()=>void openArtifact(artifact.path)}
+         className="mt-2 min-h-10 rounded-lg border border-[#E7E0D5] bg-white px-3 text-[11px] font-semibold text-[#51483F] focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40">
+         {openingArtifact?(en?'Opening…':'여는 중…'):(en?'View verified file':'검증된 파일 열기')}
+        </button>}
+       {openedArtifact?.runId===run.id&&openedArtifact.path===artifact.path&&
+        <div className="mt-2 min-w-0">
+         <p className="text-[10px] text-[#746A5F]">{en?'Contents match the saved SHA-256 at open time.':'열람 시점에 저장된 SHA-256과 일치하는 내용입니다.'}</p>
+         <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-white p-2 text-[11px]">{openedArtifact.content}</pre>
+         <button type="button" className="mt-1 min-h-10 rounded-lg px-3 text-[11px] underline" onClick={()=>setOpenedArtifact(null)}>
+          {en?'Close preview':'미리보기 닫기'}
+         </button>
+        </div>}
+       {artifactOpenError?.runId===run.id&&artifactOpenError.path===artifact.path&&
+        <p role="alert" className="mt-2 break-words text-[11px] text-rose-700">{artifactOpenError.message}</p>}
       </li>)}
      </ul>
     </details>}

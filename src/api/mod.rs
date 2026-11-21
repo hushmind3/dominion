@@ -106,6 +106,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/harness/runs/:id/reconcile",post(sdk::reconcile))
         .route("/api/sdk/runs",get(sdk_runs::list).post(sdk_runs::create))
         .route("/api/sdk/runs/:id",get(sdk_runs::one))
+        .route("/api/sdk/runs/:id/artifact-preview",post(sdk_runs::artifact_preview))
         .route("/api/sdk/runs/:id/replay",get(native_replay::replay))
         .route("/api/sdk/runs/:id/compare",post(native_replay::compare))
         .route("/api/sdk/runs/:id/adjudicate",post(native_replay::adjudicate))

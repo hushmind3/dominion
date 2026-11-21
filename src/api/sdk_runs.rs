@@ -42,7 +42,16 @@ fn prompt_job(state:&AppState,id:&str)->Option<Value>{
         j["kind"]=="prompt"
             && j["input"]["clientSurface"]=="native_agent_panel")
 }
-fn pending(state:&AppState,job:&Value)->Option<Value>{
+// Reuse the same sealed witness for the Native panel and its read-only
+// artifact viewer. A model claim or a standalone path never authorizes reads.
+fn settled_witness(job:&Value)->(&Value,&'static str){
+    let kernel=&job["nativeEvidenceKernelFinal"];
+    if kernel["scope"]=="acceptance_artifact_paths_only"
+        && kernel["entries"].as_object().is_some_and(|rows|!rows.is_empty()) {
+        (kernel,"kernel_checks")
+    }else{(&job["nativeEvidenceFinal"],"owner_checks")}
+}
+fn pending(state:&AppState,job:&Value>{
     if job["status"]!="running"{return None;}
     let session=job["sessionId"].as_str()?;
     let id=job["id"].as_str()?;
@@ -150,15 +159,7 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
     // Only the host-sealed owner acceptance witness is eligible here.
     // Do not use model-claimed files, re-read the live workspace, or expose
     // raw artifact bytes. A captured file state does NOT imply criteria pass.
-    let owner_witness=&job["nativeEvidenceFinal"];
-    let kernel_witness=&job["nativeEvidenceKernelFinal"];
-    // Normal Native panel tasks may supply only a tool-success criterion.
-    // The kernel adds independent file/hash checks during execution. Prefer
-    // its witnessed union when available; fall back to explicit owner paths.
-    let (final_witness,evidence_origin)=if
-        kernel_witness["scope"]=="acceptance_artifact_paths_only" &&
-        kernel_witness["entries"].as_object().is_some_and(|entries|!entries.is_empty())
-    {(kernel_witness,"kernel_checks")}else{(owner_witness,"owner_checks")};
+    let (final_witness,evidence_origin)=settled_witness(job);
     // A resumed job can retain the previous attempt's final witness while
     // queued/running. Never display that historical snapshot as this run's
     // settled outcome until the current run reaches a terminal state.
@@ -215,6 +216,78 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
         }
     })
 }
+/// Reopen only a settled, host-witnessed UTF-8 artifact. The sealed digest
+/// ties the content to the run's original workspace and final file bytes.
+/// No arbitrary workspace browse, stale-file view or tool output exposure.
+pub async fn artifact_preview(
+    State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>
+)->Response {
+    use sha2::Digest;
+    let Some(job)=prompt_job(&state,&id) else {
+        return error(StatusCode::NOT_FOUND,"SDK 작업을 찾지 못했습니다.");
+    };
+    if job["status"]!="completed" {
+        return error(StatusCode::CONFLICT,"완료된 작업의 파일만 열 수 있습니다.");
+    }
+    let Some(path)=body["path"].as_str()
+        .filter(|p|!p.is_empty()&&p.len()<=4096) else {
+        return error(StatusCode::BAD_REQUEST,"산출물 경로를 지정하세요.");
+    };
+    let (witness,_)=settled_witness(&job);
+    if witness["scope"]!="acceptance_artifact_paths_only"{
+        return error(StatusCode::NOT_FOUND,"저장된 산출물 증거가 없습니다.");
+    }
+    let Some(file)=witness["entries"].get(path) else {
+        return error(StatusCode::NOT_FOUND,"이 작업의 검증된 산출물이 아닙니다.");
+    };
+    if file["state"]!="file" {
+        return error(StatusCode::CONFLICT,"해당 산출물은 읽을 수 있는 파일이 아닙니다.");
+    }
+    let Some(expected)=file["sha256"].as_str().filter(|s|
+        s.len()==64 && s.bytes().all(|c|c.is_ascii_hexdigit())) else {
+        return error(StatusCode::CONFLICT,"파일 검증 기록이 불완전합니다.");
+    };
+    const MAX_PREVIEW:u64=128*1024;
+    if !file["bytes"].as_u64().is_some_and(|n|n<=MAX_PREVIEW){
+        return error(StatusCode::PAYLOAD_TOO_LARGE,"미리보기는 128KiB 이하 파일만 지원합니다.");
+    }
+    let Ok(workspace)=crate::features::collaboration::worktree::for_job(&state,&job)
+        else {return error(StatusCode::CONFLICT,"원래 작업공간을 찾지 못했습니다.");};
+    let Ok(root)=std::fs::canonicalize(&workspace)
+        else {return error(StatusCode::CONFLICT,"원래 작업공간이 존재하지 않습니다.");};
+    let root_digest=crate::host::execution::native_evidence::digest(
+        &json!(root.to_string_lossy().to_string()));
+    if witness["workspaceRootDigest"]!=root_digest {
+        return error(StatusCode::CONFLICT,"작업공간이 기록 당시와 달라졌습니다.");
+    }
+    let Ok(target)=crate::host::execution::native_evidence::resolve_canonical_workspace_path(
+        &root,path) else {
+        return error(StatusCode::BAD_REQUEST,"작업공간 밖 파일은 열 수 없습니다.");
+    };
+    let Ok(meta)=std::fs::symlink_metadata(&target) else {
+        return error(StatusCode::CONFLICT,"저장된 산출물 파일이 없습니다.");
+    };
+    if !meta.file_type().is_file() || meta.len()>MAX_PREVIEW {
+        return error(StatusCode::CONFLICT,"현재 산출물의 파일 유형 또는 크기가 변경됐습니다.");
+    }
+    let Ok(bytes)=std::fs::read(&target) else {
+        return error(StatusCode::CONFLICT,"산출물 파일을 읽을 수 없습니다.");
+    };
+    if bytes.len() as u64>MAX_PREVIEW ||
+        bytes.len() as u64!=file["bytes"].as_u64().unwrap_or(u64::MAX) ||
+        format!("{:x}",sha2::Sha256::digest(&bytes))!=expected.to_ascii_lowercase() {
+        return error(StatusCode::CONFLICT,"산출물이 저장된 검증 시점 이후 변경됐습니다.");
+    }
+    let Ok(content)=String::from_utf8(bytes) else {
+        return error(StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "텍스트 파일만 미리보기할 수 있습니다.");
+    };
+    ([(axum::http::header::CACHE_CONTROL,"private, no-store"),
+      (axum::http::header::X_CONTENT_TYPE_OPTIONS,"nosniff")],
+      Json(json!({"path":path,"content":content,"sha256":expected,
+        "bytes":meta.len(),"verifiedAgainst":"settled_host_witness"}))).into_response()
+}
+
 pub async fn list(State(state):State<AppState>)->Response{
     match state.store.recent_native_panel_jobs(30){
         Ok(rows)=>Json(json!(rows.iter().map(|job|project(&state,job))

@@ -116,6 +116,14 @@ async function mock(route){
    checkpoint:{rounds:0,toolCalls:0}}
   sdkRuns=[item,...sdkRuns];return send(route,item,202)
  }
+ if(n.startsWith('/api/sdk/runs/')&&n.endsWith('/artifact-preview')&&m==='POST'){
+  const runId=n.split('/')[4],path=body().path
+  assert.equal(runId,'sdk-ux-1')
+  assert.equal(path,'summary.md')
+  return send(route,{path,content:'SUB3_ARTIFACT_VIEW',
+   sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+   bytes:18,verifiedAgainst:'settled_host_witness'})
+ }
  if(n.startsWith('/api/sdk/runs/')&&n.endsWith('/cancel')&&m==='POST'){
   const id=n.slice('/api/sdk/runs/'.length,-'/cancel'.length)
   sdkRuns=sdkRuns.map(item=>item.id===id?{...item,status:'cancelled',
@@ -333,6 +341,20 @@ try{
  assert.equal(await page.getByRole('button',{name:'이 작업 1회 승인'}).count(),0,
   'cancelled run must not retain its approval action')
  await screenshot(page,'1440-native-cancel-at-approval.png')
+ // The artifact preview is opened from the saved run evidence (no new menu),
+ // and the backend endpoint accepts only that run's exact path.
+ sdkRuns[0]={...sdkRuns[0],status:'completed',answer:'Saved output ready',
+  checkpoint:{...sdkRuns[0].checkpoint,pendingCall:null,
+   artifactEvidence:{captureComplete:true,origin:'kernel_checks',omitted:0,
+    entries:[{path:'summary.md',state:'file',bytes:18,
+     sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}]}}}
+ await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
+ await page.getByText('Saved output ready').waitFor({timeout:8000})
+ const evidence=page.locator('summary').filter({hasText:'파일 검증 스냅샷'})
+ if(!(await evidence.locator('..').evaluate(el=>el.hasAttribute('open'))))await evidence.click()
+ await page.getByRole('button',{name:'검증된 파일 열기'}).click()
+ await page.getByText('SUB3_ARTIFACT_VIEW').waitFor({timeout:8000})
+ await screenshot(page,'1440-native-artifact-open.png')
  // Team composer and remote worker use backend contracts, no fake completion.
  await open(page,'activity')
  const team=page.locator('[aria-label="작업 팀"]')
