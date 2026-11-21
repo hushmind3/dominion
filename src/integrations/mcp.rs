@@ -427,6 +427,7 @@ struct StdioSession {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next_id: u64,
+    modern: bool,
 }
 
 impl StdioSession {
@@ -470,25 +471,47 @@ impl StdioSession {
         let stdout = child.stdout.take().ok_or("MCP stdout 을 열 수 없습니다.")?;
         drop(child.stderr.take());
 
-        let mut session = Self {
-            _child: child,
-            stdin,
-            stdout: BufReader::new(stdout),
-            next_id: 1,
+        let mode=record["protocolMode"].as_str().unwrap_or("auto");
+        if !matches!(mode,"auto"|"modern"|"legacy"){
+            return Err("MCP protocolMode must be auto, modern or legacy".into());
+        }
+        let mut session=Self{
+            _child:child,stdin,stdout:BufReader::new(stdout),next_id:1,
+            modern:mode!="legacy",
         };
-        session
-            .request(
-                "initialize",
-                json!({
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": { "name": "dominion-rust", "version": env!("CARGO_PKG_VERSION") }
-                }),
-            )
-            .await?;
-        session
-            .notify("notifications/initialized", json!({}))
-            .await?;
+        if session.modern {
+            let probe=tokio::time::timeout(Duration::from_secs(3),
+                session.request("server/discover",json!({}))).await;
+            match probe {
+                Ok(Ok(result)) if result["supportedVersions"].as_array()
+                    .is_some_and(|versions|versions.iter()
+                        .any(|v|v.as_str()==Some(modern::VERSION)))=>{},
+                Ok(Ok(_))=>return Err("MCP stdio discover does not support 2026-07-28".into()),
+                Ok(Err(error)) if mode=="auto" &&
+                    error.contains("-32601")=>session.modern=false,
+                Err(_) if mode=="auto"=>session.modern=false,
+                Ok(Err(error))=>return Err(error),
+                Err(_)=>return Err("Modern MCP stdio discovery timed out".into()),
+            }
+        }
+        if !session.modern {
+            let version=record["legacyProtocolVersion"].as_str()
+                .unwrap_or("2025-11-25");
+            if !matches!(version,
+                "2025-11-25"|"2025-06-18"|"2025-03-26"|"2024-11-05"){
+                return Err("Unsupported legacy MCP stdio version".into());
+            }
+            let result=session.request("initialize",json!({
+                "protocolVersion":version,"capabilities":{},
+                "clientInfo":{"name":"dominion-rust",
+                    "version":env!("CARGO_PKG_VERSION")}
+            })).await?;
+            if !matches!(result["protocolVersion"].as_str(),
+                Some("2025-11-25"|"2025-06-18"|"2025-03-26"|"2024-11-05")){
+                return Err("MCP stdio selected an unknown protocol version".into());
+            }
+            session.notify("notifications/initialized",json!({})).await?;
+        }
         Ok(session)
     }
 
@@ -508,12 +531,9 @@ impl StdioSession {
     async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id;
         self.next_id += 1;
-        let payload = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        });
+        let plain=json!({"jsonrpc":"2.0","id":id,
+            "method":method,"params":params});
+        let payload=if self.modern {modern::envelope(&plain)?} else {plain};
         self.send(&payload).await?;
 
         loop {
@@ -539,7 +559,17 @@ impl StdioSession {
             if let Some(error) = value.get("error") {
                 return Err(format!("MCP 오류: {error}"));
             }
-            return Ok(value.get("result").cloned().unwrap_or_else(|| json!({})));
+            let result=value.get("result").cloned()
+                .ok_or("MCP stdio response missing result")?;
+            if self.modern {
+                match result["resultType"].as_str(){
+                    Some("complete")=>{},
+                    Some("input_required")=>return Err(
+                        "MCP stdio input_required: user review needed; no automatic replay".into()),
+                    _=>return Err("Incomplete modern MCP stdio result".into()),
+                }
+            }
+            return Ok(result);
         }
     }
 }
