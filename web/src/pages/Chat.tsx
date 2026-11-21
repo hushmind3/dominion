@@ -413,6 +413,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   jumpDown();
   let id=current;
   let streamStarted=false;
+  let serverTerminal=false;
   let ownerSaved=false;
   // Retain local image previews until the owner turn is durably recorded.
   // Failed uploads and rejected requests must be retryable without reselecting files.
@@ -479,7 +480,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     if(event.type==='tool_end')setToolStatus(t('chat.tool.done',{name:event.name}));
     if(event.type==='tool_error')setToolStatus(t('chat.tool.error',{error:translateError(event.error)}));
     if(event.type==='goal_progress')setToolStatus(t('chat.tool.goal',{event:event.event,status:event.status}));
-    if(event.type==='error')throw Error(event.message);
+    if(event.type==='done')serverTerminal=true;
+    if(event.type==='error'){serverTerminal=true;throw Error(event.message);}
    },controller.signal);
   }catch(e){
    if(!controller.signal.aborted&&view.current===id){
@@ -506,7 +508,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
       }else{
        setInput(previous=>previous.trim()?previous:text);
        setOptimisticOwner(previous=>previous?.sessionId===id?undefined:previous);
-       if(lookupFailed)notice+=' · 전송 상태를 확인하지 못했습니다. 재전송 전 대화 기록을 확인하세요.';
+       if(lookupFailed||!serverTerminal)
+        notice+=' · 실행 종료 여부를 확인하지 못했습니다. 재전송 전 대화 기록과 실행 상태를 확인하세요.';
       }
      }
     }
