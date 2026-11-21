@@ -356,6 +356,15 @@ fn settle(state:&AppState,body:&Value,now:i64)->Result<Value,String>{
         .chars().take(2_000).collect::<String>();
     let verification=body["verification"].clone();
     let verified=status=="completed" && body["verified"]==true;
+    let telemetry=if body["usage"].is_object(){
+        let mut data=serde_json::Map::new();
+        for field in ["calls","promptTokens","completionTokens","totalTokens",
+            "cachedPromptTokens","cacheObservedCalls","estimatedCalls"]{
+            let count=body["usage"][field].as_u64().unwrap_or(0).min(50_000_000);
+            data.insert(field.to_string(),json!(count));
+        }
+        Value::Object(data)
+    }else{Value::Null};
     let refs=owned.iter().map(|(k,v)|(*k,v)).collect::<Vec<_>>();
     let saved=state.store.patch_if_all_merge("remote_task",&id,&refs,
         &json!({
@@ -366,6 +375,7 @@ fn settle(state:&AppState,body:&Value,now:i64)->Result<Value,String>{
             "verification":verification,
             "verified":verified,"evidenceOrigin":"remote_worker_reported",
             "operationCount":body["operationCount"].as_u64().unwrap_or(0).min(100),
+            "usage":telemetry,
             "completedAtMs":now,"outcomeUnknown":status!="completed",
         }),&[]).ok_or("Remote task lease changed during settlement")?;
     state.bus.record("remote_task",&saved);
