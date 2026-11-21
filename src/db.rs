@@ -244,6 +244,27 @@ impl Store {
         rows.filter_map(|row| row.ok()).collect()
     }
 
+    /// Short-circuit scope-aware existence checks without allocating every
+    /// saved memory/experience record on unrelated ordinary Chat turns. Each
+    /// candidate is interpreted through the same JSON record contract as all().
+    /// Callers must not invoke another Store method from the predicate while
+    /// this SQLite connection is held.
+    pub fn any_record_matching(
+        &self, kind: &str, mut predicate: impl FnMut(&Value) -> bool
+    ) -> Result<bool, String> {
+        let conn=self.conn.lock().map_err(|error|error.to_string())?;
+        let mut statement=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind=?1 ORDER BY updated_at DESC"
+        ).map_err(|error|error.to_string())?;
+        let mut rows=statement.query([kind]).map_err(|error|error.to_string())?;
+        while let Some(row)=rows.next().map_err(|error|error.to_string())? {
+            let value=record_from_row(row).map_err(|error|error.to_string())?;
+            if predicate(&value) { return Ok(true); }
+        }
+        Ok(false)
+    }
+
     /// Hot-path domain-scoped algorithm lookup. Historical statistics and
     /// unrelated kinds are not deserialized for every agent/tool decision.
     /// The partial expression index preserves existing JSON record schema.
