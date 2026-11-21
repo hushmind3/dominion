@@ -286,6 +286,9 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_remote_job_queued
                  ON records(created_at ASC,id ASC)
                  WHERE kind='remote_job' AND json_extract(data,'$.status')='queued';
+             CREATE INDEX IF NOT EXISTS idx_remote_job_leased
+                 ON records(id)
+                 WHERE kind='remote_job' AND json_extract(data,'$.status')='leased';
              CREATE INDEX IF NOT EXISTS idx_sdk_execution_session
                  ON records(json_extract(data,'$.sessionId'),json_extract(data,'$.startedAt') DESC)
                  WHERE kind='execution';
@@ -368,6 +371,18 @@ impl Store {
             "SELECT data,id,created_at,updated_at FROM records
              WHERE kind='remote_job' AND json_extract(data,'$.status')='queued'
              ORDER BY created_at ASC,id ASC"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([],record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// Scan only outstanding remote leases for reconciliation; a completed
+    /// remote history may be large even when no work is currently running.
+    pub fn leased_remote_jobs(&self)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='remote_job' AND json_extract(data,'$.status')='leased'"
         ).map_err(|e|e.to_string())?;
         let rows=stmt.query_map([],record_from_row).map_err(|e|e.to_string())?;
         rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
@@ -2319,6 +2334,7 @@ mod tests {
         let store=Store::open(&root.join("state.sqlite")).unwrap();
         store.put("remote_job",&json!({"id":"finished","status":"owner_accepted"})).unwrap();
         store.put("remote_job",&json!({"id":"ready","status":"queued"})).unwrap();
+        assert!(store.leased_remote_jobs().unwrap().is_empty());
         let rows=store.queued_remote_jobs().unwrap();
         assert_eq!(rows.len(),1);
         assert_eq!(rows[0]["id"],"ready");
