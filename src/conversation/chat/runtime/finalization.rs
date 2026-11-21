@@ -452,7 +452,22 @@ pub(crate) fn finalize_execution(
         || record["phase"] == "cancelled"
         || record["sessionId"].as_str()
             .is_some_and(|session| state.is_cancelled(session));
-    match result {
+    // Failed/cancelled are definitive outcomes. A pending paid generation or
+    // unacknowledged tool effect is NOT definitive, even after owner cancel.
+    // Keep the write-ahead barrier and expose the explicit manual-review phase.
+    let unresolved_model=record["kernelState"]["modelInFlight"]==true;
+    let unresolved_tool=record["kernelState"]["inFlight"].as_array()
+        .is_some_and(|actions|!actions.is_empty());
+    let unresolved=unresolved_model||unresolved_tool;
+    if unresolved {
+        record["status"]=json!("needs_review");
+        record["reason"]=json!(if unresolved_model {
+            "유료 모델 호출 결과를 확정할 수 없습니다. 자동 재호출을 중단하고 검토해야 합니다."
+        }else{
+            "도구 작업 결과를 확정할 수 없습니다. 자동 재실행을 중단하고 검토해야 합니다."
+        });
+        record["ownerCancellationRequested"]=json!(owner_cancelled);
+    } else {match result {
         _ if owner_cancelled => {
             record["status"] = json!("cancelled");
             if record["reason"].is_null() {
@@ -468,15 +483,22 @@ pub(crate) fn finalize_execution(
             record["status"] = json!("failed");
             record["reason"] = json!(message);
         }
-    }
+    }}
     let status = record["status"].as_str().unwrap_or("failed").to_string();
     if record["kernelState"].is_object() {
         record["kernelState"]["status"] = json!(match status.as_str() {
-            "completed" => "completed", "cancelled" => "cancelled", _ => "failed",
+            "completed" => "completed", "cancelled" => "cancelled",
+            "needs_review" => "needs_review", _ => "failed",
         });
-        record["kernelState"]["modelCalls"] = json!(counters.model_calls);
-        record["kernelState"]["chargedTokens"] = json!(counters.tokens);
-        if let Err(message) = result { record["kernelState"]["error"] = json!(message); }
+        // Never rewind a provider-reported amount already durably settled
+        // merely because the transport stopped before host metrics updated.
+        record["kernelState"]["modelCalls"] = json!(counters.model_calls.max(
+            record["kernelState"]["modelCalls"].as_u64().unwrap_or(0)));
+        record["kernelState"]["chargedTokens"] = json!(counters.tokens.max(
+            record["kernelState"]["chargedTokens"].as_u64().unwrap_or(0)));
+        if let Err(message) = result {
+            if !unresolved {record["kernelState"]["error"] = json!(message);}
+        }
     }
     record["phase"] = json!(final_phase(&status));
     record["phaseUpdatedAt"] = json!(chrono::Utc::now().to_rfc3339());
