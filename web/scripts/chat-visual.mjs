@@ -27,6 +27,7 @@ const provider={id:'mock-chat',name:'Mock Chat',kind:'openai',enabled:true,model
 const agent={id:'default',name:'기본값',providerId:'mock-chat',model:'mock-native'}
 let messages=structuredClone(original)
 const requests=[]
+let releaseReply=null
 const json=(route,body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)})
 async function mock(route){
  const req=route.request(),n=new URL(req.url()).pathname,m=req.method()
@@ -50,6 +51,9 @@ async function mock(route){
   assert.equal(body.toolsExecutionEnabled,false)
   assert.equal(body.autoLearning,false)
   assert.equal(body.input,'후속 질문도 같은 채팅으로 보내주세요.')
+  // Hold the network response to prove the owner bubble is painted
+  // immediately, before the server has returned any conversation delta.
+  await new Promise(resolve=>{releaseReply=resolve})
   messages.push({id:'owner-'+(requests.length+1),role:'user',session_id:'chat-ui',content:body.input})
   const reply='### 후속 답변\n**같은 대화**를 이어갑니다.'
   messages.push({id:'model-'+(requests.length+1),role:'assistant',session_id:'chat-ui',content:reply})
@@ -111,7 +115,17 @@ try{
   assert.equal(await page.locator('.chat-agent').count(),0)
   await page.locator('.conversation-composer-input').fill('후속 질문도 같은 채팅으로 보내주세요.')
   await page.locator('.conversation-composer-input').press('Enter')
+  const pending=page.locator('[data-role="user"][data-pending="true"]')
+  await pending.waitFor({timeout:5000})
+  assert.equal(await pending.locator('.chat-message-text').textContent(),'후속 질문도 같은 채팅으로 보내주세요.')
+  assert.equal(await page.getByText('후속 답변',{exact:true}).count(),0,'Provider response must remain gated')
+  await page.waitForFunction(()=>false,null,{timeout:100}).catch(()=>{})
+  assert.equal(await pending.count(),1,'Pending owner bubble should not vanish before transcript reload')
+  assert.ok(releaseReply,'Mock model endpoint has not received the request')
+  releaseReply();releaseReply=null
   await page.getByText('후속 답변',{exact:true}).waitFor({timeout:15000})
+  await page.waitForFunction(()=>document.querySelectorAll('[data-role="user"][data-pending="true"]').length===0,null,{timeout:15000})
+  assert.equal(await page.locator('[data-role="user"]').count(),2,'Pending owner message must be replaced without duplication')
   assert.ok(await page.locator('[data-role="user"]').count()>=2)
   assert.ok(await page.locator('[data-role="assistant"] .chat-richtext h3').count()>=1)
   assert.deepEqual(pageErrors,[],'React failed at '+width)

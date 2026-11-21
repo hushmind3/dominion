@@ -71,6 +71,9 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const setRoute=(providerId:string,model:string)=>setOverride({scope:current,providerId,model});
  useEffect(()=>{if(!current){setOverride(undefined);setAgentChoice(undefined);setModeChoice(undefined)}},[initialAgent,initialProvider,initialModel]);
  const [turnSession,setTurnSession]=useState<string>();
+ // Display the user's message as soon as Send is pressed. The server's
+ // authoritative owner row replaces it once the transcript is reloaded.
+ const [pendingOwner,setPendingOwner]=useState<{scope?:string;text:string;priorUserId?:string;failed?:boolean}>();
  const [savedMessageId,setSavedMessageId]=useState<string>();
  const [approvalBusy,setApprovalBusy]=useState(false);
  const [liveApproval,setLiveApproval]=useState<Approval|null>(null);
@@ -91,8 +94,11 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const view=useRef(current);
  view.current=current;
  const viewingTurn=turnSession===current&&(!savedMessageId||!messages.some(message=>message.id===savedMessageId));
+ const lastOwner=messages.filter(message=>message.role==='user').at(-1);
+ const pendingVisible=Boolean(pendingOwner&&pendingOwner.scope===current
+  && (!lastOwner||lastOwner.id===pendingOwner.priorUserId||lastOwner.content!==pendingOwner.text));
  const slashItems=slashOpen?slashCandidates(input,agents.value,models):[];
- const transcriptRevision=JSON.stringify([messages.at(-1)?.id,messages.length,viewingTurn?live.length:0,viewingTurn?thought.length:0,viewingTurn?toolStatus:'',approval?.id]);
+ const transcriptRevision=JSON.stringify([messages.at(-1)?.id,messages.length,pendingVisible?pendingOwner?.text:'',viewingTurn?live.length:0,viewingTurn?thought.length:0,viewingTurn?toolStatus:'',approval?.id]);
  const usageRevision=JSON.stringify([messages.at(-1)?.id,messages.length]);
  useEffect(()=>{if(!current){setServerUsage({});return}let alive=true;get<SessionUsage>('/api/sessions/'+encodeURIComponent(current)+'/usage').then(usage=>{if(alive)setServerUsage(usage)}).catch(()=>{});return()=>{alive=false}},[current,usageRevision])
  const sessionTokens=Number(serverUsage.totalTokens)||messageUsage
@@ -219,7 +225,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    if(controller){
     controller.abort();stream.current=null;
     setBusy(false);setLive('');setThought('');setToolStatus('');setTurnSession(undefined);
-    setCommandInfo(t('chat.stopped'));
+    setPendingOwner(undefined);setCommandInfo(t('chat.stopped'));
    }else setError(t('chat.cmd.noSessionStop'));
    return;
   }
@@ -329,6 +335,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   stream.current=controller;
   activeTurnSession.current=current;
   setTurnSession(current);setSavedMessageId(undefined);
+  setPendingOwner({scope:current,text,priorUserId:messages.filter(message=>message.role==='user').at(-1)?.id});
   setBusy(true);setError('');setCommandInfo('');setLive('');setThought('');setSlashOpen(false);setToolStatus('');
   jumpDown();
   let id=current;
@@ -341,6 +348,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     activeTurnSession.current=id;
     if(view.current===current){
      onSession(id);setTurnSession(id);
+     setPendingOwner(previous=>previous?.scope===current?{...previous,scope:id}:previous);
      setModeChoice({scope:id,mode});
      if(agentMode&&agentId)setAgentChoice({id:agentId,scope:id});
      if(manual)setOverride({...manual,scope:id});
@@ -366,7 +374,12 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     if(event.type==='error')throw Error(event.message);
    },controller.signal);
   }catch(e){
-   if(!controller.signal.aborted&&view.current===id)setError(translateError((e as Error).message));
+   if(!controller.signal.aborted&&view.current===id){
+    setError(translateError((e as Error).message));
+    // A failed stream can follow a persisted owner message; do not fabricate
+    // a successful send or automatically retry an uncertain paid request.
+    setPendingOwner(previous=>previous?.scope===id?{...previous,failed:true}:previous);
+   }
   }finally{
    if(stream.current===controller){
     stream.current=null;activeTurnSession.current=undefined;
@@ -441,7 +454,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     <div className="mb-6 flex items-center gap-3"><span className="grid size-11 place-items-center rounded-2xl bg-[#F7E8E1] text-[#C96442]"><Sparkles size={22}/></span><div><h1 className="text-[24px] font-bold tracking-[-.03em] text-[#24211D]">{t('chat.newChatHeading')}</h1><p className="mt-1 text-[13px] text-[#8A8176]">{t('chat.newChatDesc')}</p></div></div>
     <div className="rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-5"><div className="mb-2 text-[11px] font-semibold text-[#8A8176]">{t('chat.examples')}</div>{[t('chat.example1'),t('chat.example2'),t('chat.example3')].map(example=><Button type="button" key={example} onClick={()=>{setInput(example);inputRef.current?.focus({preventScroll:true})}} className="flex w-full items-center justify-between border-t border-[#EFE9DF] px-2 py-3 text-left text-[12px] text-[#5C544A] hover:bg-[#FFFDF9]">{example}<ArrowRight size={14} className="shrink-0 text-[#9C9388]"/></Button>)}</div>
     {!model&&<Button type="button" onClick={openModels} className="mt-4 inline-flex items-center gap-2 self-start text-[12px] font-semibold text-[#C96442]"><Compass size={15}/> {t('chat.connectFirst')} <ArrowRight size={14}/></Button>}
-   </div>:<div className="chat-transcript mx-auto flex min-h-full w-full max-w-[920px] flex-col gap-7 px-4 py-8 sm:px-7 md:px-9">{messages.filter(m=>m.role!=='tool').map(m=><Message key={m.id} message={m} agentName={agents.value.find(a=>a.id===m.agent_id)?.name} showReasoning={showReasoning} />)}{viewingTurn&&(live||thought||busy)&&<div className="chat-message chat-message--assistant flex min-w-0 items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#F3EEE5] text-[#4A443C] ai"><Sparkles size={17}/></div><div className="chat-message-inner relative min-w-0 flex-1"><div className="chat-message-label mb-2 flex items-center gap-2 font-bold text-[#4A443C]">DOMINION <span>{t('ui.label.live')}</span>{busy&&thought&&!showReasoning&&<span className="inline-flex items-center gap-1 rounded bg-[#F3EEE5] px-1.5 py-0.5 text-[10px] font-medium text-[#7C7469]"><BrainCircuit size={11}/> {t('chat.thinkingNow')}</span>}</div>{showReasoning&&thought&&<details className="mb-3 max-h-56 overflow-y-auto rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-[11px] leading-5 text-[#7C7469]" open={thinking}><summary className="cursor-pointer select-none" onClick={e=>{e.preventDefault();setThinking(x=>!x)}}><BrainCircuit size={14} className="inline"/> {t('chat.reasoningProcess',{count:thought.length.toLocaleString()} )} <ChevronRight size={13} className="inline"/></summary><div className="mt-2 whitespace-pre-wrap">{thought}</div></details>}{live&&<div className="chat-message-text chat-message-text--assistant min-w-0 break-words text-[#3A342D]"><ChatRichText content={live}/></div>}{busy&&!live&&<div className="flex items-center gap-2 text-xs text-[#9C9388]"><i/><i/><i/></div>}</div></div>}{viewingTurn&&toolStatus&&<div className="inline-flex items-center gap-2 rounded-lg bg-[#FAF7F1] px-3 py-1.5 text-xs text-[#7C7469]"><TerminalSquare size={15}/>{toolStatus}</div>}</div>}</div>
+   </div>:<div className="chat-transcript mx-auto flex min-h-full w-full max-w-[920px] flex-col gap-7 px-4 py-8 sm:px-7 md:px-9">{messages.filter(m=>m.role!=='tool').map(m=><Message key={m.id} message={m} agentName={agents.value.find(a=>a.id===m.agent_id)?.name} showReasoning={showReasoning} />)}{pendingVisible&&<div className="chat-message chat-message--user flex min-w-0 items-start justify-end gap-3" data-message data-role="user" data-pending="true"><div className="chat-message-inner relative min-w-0"><div className="chat-message-text chat-message-text--user min-w-0 whitespace-pre-wrap break-words">{pendingOwner?.text}</div>{pendingOwner?.failed&&<div role="status" className="mt-1 text-right text-xs text-amber-700">전송 상태를 확인하세요. 자동으로 재전송하지 않았습니다.</div>}</div></div>}{viewingTurn&&(live||thought||busy)&&<div className="chat-message chat-message--assistant flex min-w-0 items-start gap-3"><div className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#F3EEE5] text-[#4A443C] ai"><Sparkles size={17}/></div><div className="chat-message-inner relative min-w-0 flex-1"><div className="chat-message-label mb-2 flex items-center gap-2 font-bold text-[#4A443C]">DOMINION <span>{t('ui.label.live')}</span>{busy&&thought&&!showReasoning&&<span className="inline-flex items-center gap-1 rounded bg-[#F3EEE5] px-1.5 py-0.5 text-[10px] font-medium text-[#7C7469]"><BrainCircuit size={11}/> {t('chat.thinkingNow')}</span>}</div>{showReasoning&&thought&&<details className="mb-3 max-h-56 overflow-y-auto rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-[11px] leading-5 text-[#7C7469]" open={thinking}><summary className="cursor-pointer select-none" onClick={e=>{e.preventDefault();setThinking(x=>!x)}}><BrainCircuit size={14} className="inline"/> {t('chat.reasoningProcess',{count:thought.length.toLocaleString()} )} <ChevronRight size={13} className="inline"/></summary><div className="mt-2 whitespace-pre-wrap">{thought}</div></details>}{live&&<div className="chat-message-text chat-message-text--assistant min-w-0 break-words text-[#3A342D]"><ChatRichText content={live}/></div>}{busy&&!live&&<div className="flex items-center gap-2 text-xs text-[#9C9388]"><i/><i/><i/></div>}</div></div>}{viewingTurn&&toolStatus&&<div className="inline-flex items-center gap-2 rounded-lg bg-[#FAF7F1] px-3 py-1.5 text-xs text-[#7C7469]"><TerminalSquare size={15}/>{toolStatus}</div>}</div>}</div>
    <div className="conversation-composer-wrap sticky bottom-0 z-10"><div className="mx-auto w-full max-w-[860px]">{approval&&<div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"><div><ShieldAlert size={20}/><span><strong>{t('chat.approval')}</strong><small>{approval.tool} · {JSON.stringify(approval.args??{}).slice(0,150)}</small></span></div><div><Action variant="secondary" disabled={approvalBusy} onClick={()=>approve(false)}>{t('chat.deny')}</Action><Action disabled={approvalBusy} onClick={()=>approve(true)}><Check size={15}/> {t('chat.approve')}</Action></div></div>}
     {(error||transcript.error||job.error)&&<div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"><CircleHelp size={16}/>{error||transcript.error||translateError(job.error||'')}<Button onClick={()=>setError('')}><X size={14}/></Button></div>}
     {modelError&&!model&&<div className="mb-3 text-xs text-[#7C7469]">{t('chat.noModel')}: {modelError} <Button onClick={openModels}>{t('chat.manage')} <ArrowRight size={13}/></Button></div>}

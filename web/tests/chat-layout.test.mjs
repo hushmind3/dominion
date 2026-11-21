@@ -44,3 +44,11 @@ test('ordinary chat defaults to direct mode with no agent, tools or autonomous l
  assert.match(chat,/agentMode&&<SelectInput aria-label=\{t\('chat.agentAria'\)\}/)
  assert.match(chat,/toolsEnabled:agentMode&&toolsEnabled,toolsExecutionEnabled:agentMode&&toolsEnabled,autoLearning:agentMode&&autoLearn/)
 })
+
+test('owner messages appear immediately and are deduplicated against the stored transcript',()=>{
+ assert.match(chat,/setPendingOwner\(\{scope:current,text,priorUserId:/)
+ assert.match(chat,/data-pending="true"/)
+ assert.match(chat,/lastOwner\.id===pendingOwner\.priorUserId/)
+ assert.match(chat,/pendingVisible\?pendingOwner\?\.text/)
+ assert.match(chat,/setPendingOwner\(previous=>previous\?\.scope===current\?\{\.\.\.previous,scope:id\}:previous\)/)
+})
