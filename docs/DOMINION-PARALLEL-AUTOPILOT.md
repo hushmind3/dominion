@@ -10,6 +10,9 @@
 # 별도 서버/감시 데몬을 만들지 않고 기존 git clone을 참조합니다.
 python3 tools/dominion_autopilot.py --repo /Users/gim-yeonsu/dominion-rust --rounds 1
 
+# 원하는 목표를 한 번만 지정하면 4개 개발자 모두 같은 작업을 경쟁적으로 구현
+python3 tools/dominion_autopilot.py --repo /Users/gim-yeonsu/dominion-rust --goal "Chat에서 앞선 작업을 정확히 이어서 끝내기" --rounds 1
+
 # 직접 승인한 경우에만 개별 후보 브랜치로 fast-forward push
 python3 tools/dominion_autopilot.py --repo /Users/gim-yeonsu/dominion-rust --rounds 3 --publish
 
@@ -21,13 +24,14 @@ python3 tools/dominion_autopilot.py --repo /Users/gim-yeonsu/dominion-rust --rou
 
 ## 실제 동작
 
-1. `origin/main`, `origin/dominion-sub2`, `origin/dominion-sub3`, `origin/dominion-sub4`의 최신 HEAD를 가져옵니다. 기존 감시 체크아웃을 checkout/reset하지 않습니다.
-2. 저장소 **밖**의 `dominion-autopilot-state/worktrees/<round>/...`에 브랜치별 **분리된 detached worktree**를 만듭니다. 기본적으로 4개가 동시에 실행됩니다.
-3. 개발자는 `codex exec --sandbox workspace-write --ephemeral`로 자기 worktree에서 수정합니다. 실패·미커밋·민감 파일 수정이면 업로드를 차단하고 결과를 남깁니다. `--publish` 없이는 푸시하지 않습니다. 푸시 충돌 시 강제 푸시하지 않습니다.
-4. 심판은 별도 읽기 전용 worktree에서 `codex exec --sandbox read-only --ephemeral`로 증거를 검토합니다. CI 성공 자체에는 가점하지 않으며 측정하지 않은 실사용 성능은 추정하지 않습니다.
-5. 푸시하지 않은 로컬 커밋도 다음 회차의 시작점으로 이어갑니다. 내용 변경이 없는 회차도 이전 커밋을 버리지 않습니다. 원격 브랜치가 그 사이 서로 다른 방향으로 진행되면 자동으로 버리지 않고 해당 후보를 검토 대기로 둡니다.
-6. `latest_feedback.json`에 저장된 브랜치별 심판 의견을 다음 회차 프롬프트에 자동 전달합니다. 사용자에게 4번씩 피드백을 복사하라고 하지 않습니다.
-7. `runs/<round>/<branch>/result.json`, `agent.log`, `judge/report.json`, `latest_round.json`을 보관해 상태를 추적할 수 있습니다.
+1. 사용자 목표를 `--goal`로 한 번 지정하면 4개 개발자에게 공통 전달합니다. 생략 시 각자가 가장 큰 사용자 불편을 찾아 개선합니다.
+2. `origin/main`, `origin/dominion-sub2`, `origin/dominion-sub3`, `origin/dominion-sub4`의 최신 HEAD를 가져옵니다. 기존 감시 체크아웃을 checkout/reset하지 않습니다.
+3. 저장소 **밖**의 `dominion-autopilot-state/worktrees/<round>/...`에 브랜치별 **분리된 detached worktree**를 만듭니다. 기본적으로 4개가 동시에 실행됩니다.
+4. 개발자는 `codex exec --sandbox workspace-write --ephemeral`로 자기 worktree에서 수정합니다. 실패·미커밋·민감 파일 수정이면 업로드를 차단하고 결과를 남깁니다. `--publish` 없이는 푸시하지 않습니다. 푸시 충돌 시 강제 푸시하지 않습니다.
+5. 심판은 별도 읽기 전용 worktree에서 `codex exec --sandbox read-only --ephemeral`로 증거를 검토합니다. CI 성공 자체에는 가점하지 않으며 측정하지 않은 실사용 성능은 추정하지 않습니다.
+6. 푸시하지 않은 로컬 커밋도 다음 회차의 시작점으로 이어갑니다. 내용 변경이 없는 회차도 이전 커밋을 버리지 않습니다. 원격 브랜치가 그 사이 서로 다른 방향으로 진행되면 자동으로 버리지 않고 해당 후보를 검토 대기로 둡니다.
+7. `latest_feedback.json`에 저장된 브랜치별 심판 의견을 다음 회차 프롬프트에 자동 전달합니다. 사용자에게 4번씩 피드백을 복사하라고 하지 않습니다.
+8. `runs/<round>/<branch>/result.json`, `agent.log`, `judge/report.json`, `latest_round.json`을 보관해 상태를 추적할 수 있습니다.
 
 **실행 결과를 '채택'으로 오인하지 않습니다.** 로컬 개발 커밋과 GitHub의 실제 푸시, CI, 유료 실모델 E2E는 서로 다른 단계입니다. 심판은 제품 파일을 수정하지 않으며 후보 간 병합이나 main 채용도 수행하지 않습니다.
 
@@ -48,4 +52,4 @@ python3 tools/dominion_autopilot.py --repo /Users/gim-yeonsu/dominion-rust --rou
 python3 -m unittest discover -s tests -v
 ```
 
-로컬 가짜 Git 원격과 비대화형 모의 에이전트로 **4개 병렬 실행, 피드백 다음 회차 연결, 푸시 기본 차단, 4개 브랜치 fast-forward 푸시, 미커밋·민감 파일 자동 푸시 차단, 중복 컨트롤러 잠금, 중단 신호에 따른 작업 종료, 기존 로컬 커밋의 회차 간 보존, 감시 체크아웃 수작업 보호**을 검증합니다. 이 모의 검사는 실제 Codex API 작업 성공률이나 실모델 비용·지연 시험이 아닙니다.
+로컬 가짜 Git 원격과 비대화형 모의 에이전트로 **4개 병렬 실행, 피드백 다음 회차 연결, 푸시 기본 차단, 4개 브랜치 fast-forward 푸시, 미커밋·민감 파일 자동 푸시 차단, 중복 컨트롤러 잠금, 중단 신호에 따른 작업 종료, 기존 로컬 커밋의 회차 간 보존, 감시 체크아웃 수작업 보호, 공통 목표의 4개 브랜치·심판 전달**을 검증합니다. 이 모의 검사는 실제 Codex API 작업 성공률이나 실모델 비용·지연 시험이 아닙니다.
