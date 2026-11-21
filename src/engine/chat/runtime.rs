@@ -243,10 +243,14 @@ async fn run_turn_with_policy(
         .ok_or("세션 설정을 저장할 수 없습니다.")?;
 
     let execution_id = uuid::Uuid::new_v4().to_string();
-    let (applied_improvement_ids,strategy_candidates) =
+    let (applied_improvement_ids,strategy_candidates) = if request.direct_chat {
+        // Plain conversations keep transcript context, not agent strategy/procedure overlays.
+        (Vec::new(), Vec::new())
+    } else {
         crate::addons::runtime_hooks::prepare_turn(
             state,&session_id,request.agent_id.as_deref(),&execution_id,
-        );
+        )
+    };
     // Derived prompts (goal iterations, room speakers) attach to the root the
     // parent lifecycle created. Only an owner-facing chat turn creates a root.
     let task_id = request.task_id.clone().unwrap_or_else(|| execution_id.clone());
@@ -497,7 +501,9 @@ async fn run_turn_body(
     let acceptance_retries = 0usize;
     let procedure_repairs = 0usize;
     let recovery_policy = crate::engine::policy::active(state, "recovery");
-    let program_policy = crate::engine::policy::active(state, "execution");
+    let program_policy = if request.direct_chat { None } else {
+        crate::engine::policy::active(state, "execution")
+    };
     // The file guard is opt-in: an operator or a verified policy must
     // activate mutation.preflight before it applies. No automatic promotion.
     let selected_preflight = crate::engine::policy::portable_file_guard(state)
@@ -551,7 +557,7 @@ async fn run_turn_body(
         let used=state.store.sdk_used_model_calls(session_id,execution_id)?;
         let remaining=limit.clamp(1,80).saturating_sub(used);
         if remaining==0{return Err("SDK의 누적 모델 호출 한도에 도달했습니다.".into());}
-        max_rounds=remaining as usize;
+        max_rounds=if request.direct_chat { 1 } else { remaining as usize };
     }
     let mut max_tools=if request.direct_chat { 0 } else { decision_limits.max_tools };
     let elapsed_limit=MAX_ELAPSED;
@@ -1049,7 +1055,9 @@ async fn run_turn_body(
     let program_finished=program_policy.is_none();
     let mut adapter=product::MainTurn{
         metrics,
-        owner:crate::engine::job_control::Owner::from_session(state,&session),
+        owner:if request.direct_chat { None } else {
+            crate::engine::job_control::Owner::from_session(state,&session)
+        },
         owner_revision:session["ownerAppliedRevision"].as_u64().unwrap_or(0),
         state,
         request:request.clone(),
