@@ -421,6 +421,22 @@ fn worker_ingress(path:&str)->bool{
 /// computer-control API. Owner-controlled distributed endpoints require an
 /// explicit admin secret whenever exposed, regardless of the local default.
 async fn guard_writes(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    let is_worker=worker_ingress(request.uri().path());
+    let is_remote_owner=request.uri().path().starts_with("/api/remote/")&&!is_worker;
+    let configured=std::env::var("DOMINION_ADMIN_TOKEN").unwrap_or_default();
+    if is_remote_owner{
+        if configured.trim().is_empty(){
+            return (StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error":"Remote coordinator requires DOMINION_ADMIN_TOKEN"}))
+            ).into_response();
+        }
+        let presented=request.headers().get("x-dominion-token")
+            .and_then(|v|v.to_str().ok()).unwrap_or("");
+        if presented!=configured{
+            return (StatusCode::UNAUTHORIZED,
+                Json(json!({"error":"remote owner admin token required"}))).into_response();
+        }
+    }
     let method = request.method().clone();
     if !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) {
         let port = state.config.port;
@@ -438,14 +454,6 @@ async fn guard_writes(State(state): State<AppState>, request: Request, next: Nex
                 )
                     .into_response();
             }
-        }
-        let is_worker=worker_ingress(request.uri().path());
-        let is_remote_owner=request.uri().path().starts_with("/api/remote/")&&!is_worker;
-        let configured=std::env::var("DOMINION_ADMIN_TOKEN").unwrap_or_default();
-        if is_remote_owner&&configured.trim().is_empty(){
-            return (StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({"error":"Remote coordinator requires DOMINION_ADMIN_TOKEN"}))
-            ).into_response();
         }
         if !is_worker&&!configured.trim().is_empty(){
                 let token=configured;
