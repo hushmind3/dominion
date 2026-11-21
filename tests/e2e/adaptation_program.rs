@@ -807,12 +807,46 @@ fn a_mid_adaptation_restart_restores_hypotheses_and_does_not_repeat_completed_st
         assert!(Instant::now() < deadline, "adaptation record was not persisted");
         std::thread::sleep(Duration::from_millis(20));
     }
+    // Recovery refuses to resume while a tool operation is unresolved. Wait
+    // until the adaptation write is receipted, then kill during the model call
+    // (the program still has a pending step). Without this, a slower runner can
+    // be killed with the write still marked "running".
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let executions = app.get("/api/executions");
+        let ids = executions
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|execution| execution["id"].as_str())
+            .collect::<Vec<_>>();
+        let unresolved = ids.iter().any(|id| {
+            app.get(&format!("/api/executions/{id}/operations"))
+                .as_array()
+                .is_some_and(|operations| {
+                    operations.iter().any(|operation| {
+                        matches!(
+                            operation["status"].as_str(),
+                            Some("running" | "interrupted")
+                        )
+                    })
+                })
+        });
+        if !unresolved {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "an operation stayed unresolved before restart: {executions}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
     std::thread::sleep(Duration::from_millis(150));
     drop(app);
     let _ = handle.join();
 
     let app = TestApp::from_root(port, "native", root.clone(), &[("DOMINION_BENCHMARK", "1")]);
-    let deadline = Instant::now() + Duration::from_secs(25);
+    let deadline = Instant::now() + Duration::from_secs(45);
     let resumed = loop {
         let executions = app.get("/api/executions");
         if let Some(resumed) = executions.as_array().unwrap().iter().find(|execution| {

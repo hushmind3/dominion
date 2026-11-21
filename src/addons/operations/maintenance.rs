@@ -41,7 +41,11 @@ fn copy_sealed_snapshot(source: &Path, destination: &Path) -> Result<(), String>
     ));
     let _cleanup = TemporarySnapshot(staged.clone());
     std::fs::copy(source, &staged).map_err(|error| error.to_string())?;
-    std::fs::File::open(&staged)
+    // A read-only handle cannot flush on Windows: FlushFileBuffers needs write
+    // access. Unix accepts the read-only open, Windows fails the offsite copy.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&staged)
         .and_then(|file| file.sync_all())
         .map_err(|error| error.to_string())?;
     std::fs::rename(&staged, destination).map_err(|error| error.to_string())
