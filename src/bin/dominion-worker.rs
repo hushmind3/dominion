@@ -117,8 +117,10 @@ async fn execute(client:&Client,cfg:&Config,job:&Value)->Result<(),String>{
         let heartbeat=coordinator_request(client,cfg,
             &format!("/api/remote/jobs/{}/heartbeat",urlencode_id(job_id)))
             .json(&json!({"workerId":cfg.worker_id,"leaseId":job["leaseId"]}))
-            .send().await.map_err(|e|e.to_string())?;
-        if heartbeat.status()!=StatusCode::OK{
+            .send().await;
+        // A network failure is also loss of authority: do not keep executing
+        // while the coordinator can no longer confirm the lease.
+        if !heartbeat.as_ref().is_ok_and(|reply|reply.status()==StatusCode::OK){
             let _=local_request(client,cfg,reqwest::Method::POST,
                 &format!("/api/sdk/runs/{}/cancel",urlencode_id(&native_id)))
                 .json(&json!({})).send().await;
