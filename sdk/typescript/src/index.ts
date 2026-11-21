@@ -289,6 +289,8 @@ export class Dominion{
     compare:(baselineId:string,candidateId:string)=>this.request<NativePairedComparison>(
       'POST','/api/sdk/runs/'+id(baselineId)+'/compare',{candidateRunId:candidateId}),
     approve:(runId:string,callId:string)=>this.request<NativeRun>('POST','/api/sdk/runs/'+id(runId)+'/approve',{callId}),
+    /** Refuse one exact native tool call. Other approvals remain unaffected. */
+    deny:(runId:string,callId:string)=>this.request<NativeRun>('POST','/api/sdk/runs/'+id(runId)+'/deny',{callId}),
     cancel:(runId:string)=>this.request<NativeRun>('POST','/api/sdk/runs/'+id(runId)+'/cancel',{}),
     resume:(runId:string)=>this.request<NativeRun>('POST','/api/sdk/runs/'+id(runId)+'/resume',{}),
     reconcile:(runId:string,observation:NativeReconciliation)=>this.request<NativeRun>(
