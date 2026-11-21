@@ -2,6 +2,39 @@
 use super::*;
 
 #[test]
+fn owner_get_and_static_ui_reject_foreign_or_missing_hosts(){
+    let _serial=serial();
+    let provider=start_mock_provider();
+    let app=TestApp::new(provider,"native");
+    // Use the real Rust HTTP listener, not an in-process mock Router.
+    let normal=app.client.get(format!("{}/api/sessions",app.base))
+        .send().unwrap();
+    assert_eq!(normal.status(),reqwest::StatusCode::OK);
+    let valid_host=reqwest::Url::parse(&app.base).unwrap()
+        .port().unwrap();
+    let wrong=app.client.get(format!("{}/api/sessions",app.base))
+        .header("Host","attacker.example")
+        .send().unwrap();
+    assert_eq!(wrong.status(),reqwest::StatusCode::FORBIDDEN);
+    let wrong_ui=app.client.get(format!("{}/",app.base))
+        .header("Host","attacker.example")
+        .send().unwrap();
+    assert_eq!(wrong_ui.status(),reqwest::StatusCode::FORBIDDEN);
+    let forged_port=app.client.get(format!("{}/api/sessions",app.base))
+        .header("Host",format!("localhost:{}",valid_host+1))
+        .send().unwrap();
+    assert_eq!(forged_port.status(),reqwest::StatusCode::FORBIDDEN);
+    let missing=app.client.get(format!("{}/api/sessions",app.base))
+        .header("Host","")
+        .send().unwrap();
+    assert_eq!(missing.status(),reqwest::StatusCode::FORBIDDEN);
+    let local=app.client.get(format!("{}/api/sessions",app.base))
+        .header("Host",format!("localhost:{valid_host}"))
+        .send().unwrap();
+    assert_eq!(local.status(),reqwest::StatusCode::OK);
+}
+
+#[test]
 fn chat_sse_persistence_and_origin_guard() {
     let _serial = serial();
     let provider_port = start_mock_provider();
