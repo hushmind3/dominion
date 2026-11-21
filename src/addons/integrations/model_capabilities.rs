@@ -12,6 +12,10 @@ pub struct ModelCapabilities {
     pub reasoning:Option<bool>,
     pub streaming:Option<bool>,
     pub parallel_tools:Option<bool>,
+    /// Declared, endpoint-specific input capacity. Never inferred from model name.
+    pub context_window:Option<u64>,
+    pub max_output_tokens:Option<u64>,
+    pub prompt_cache:Option<bool>,
 }
 impl ModelCapabilities {
     /// Provider-wide defaults plus exact model-ID overrides. The caller may
@@ -19,15 +23,38 @@ impl ModelCapabilities {
     pub fn for_route(provider:&Value,model:&str)->Self{
         let generic=&provider["capabilities"];
         let specific=&provider["modelCapabilities"][model];
+        // Endpoint-specific declarations outrank model-wide defaults.
+        // Each provider record may choose an explicit endpointId; otherwise
+        // the normalized baseUrl uniquely identifies its network endpoint.
+        let endpoint=provider["endpointId"].as_str()
+            .filter(|id|!id.is_empty())
+            .or_else(||provider["baseUrl"].as_str())
+            .unwrap_or("");
+        let endpoint_specific=&provider["endpointModelCapabilities"][endpoint][model];
+        let endpoint_default=&provider["endpointCapabilities"][endpoint];
+        let layers=[endpoint_specific,endpoint_default,specific,generic];
         let read=|keys:&[&str]|->Option<bool>{
-            for from in [specific,generic] {
+            for from in layers {
                 for key in keys {
                     if let Some(value)=from[*key].as_bool(){return Some(value);}
                 }
             }
             None
         };
+        let read_number=|keys:&[&str]|->Option<u64>{
+            for from in layers {
+                for key in keys {
+                    if let Some(value)=from[*key].as_u64(){
+                        return (value>0).then_some(value);
+                    }
+                }
+            }
+            None
+        };
         Self{
+            context_window:read_number(&["contextWindow","contextTokens"]),
+            max_output_tokens:read_number(&["maxOutputTokens"]),
+            prompt_cache:read(&["promptCache","promptCaching"]),
             text:read(&["text"]),
             native_tools:read(&["nativeToolCalls","toolCall","toolCalling"]),
             text_tools:read(&["textToolCalls","compatToolCalls"]),
@@ -133,6 +160,40 @@ mod tests{
             "modelCapabilities":{"same-model":{"text":false}}});
         assert!(negotiate_tool_mode(&per_model,"same-model","native",true).is_err());
         assert!(negotiate_tool_mode(&per_model,"other-model","native",true).is_ok());
+    }
+    #[test]
+    fn endpoint_model_and_numeric_profiles_win_before_gateway_budget_admission(){
+        let common=json!({
+            "capabilities":{"text":true,"toolCall":true,
+                "contextTokens":32768,"maxOutputTokens":4096,"promptCache":true},
+            "modelCapabilities":{"shared":{"contextTokens":16384,"vision":true}},
+            "endpointCapabilities":{
+                "local-endpoint":{"contextTokens":4096,"toolCall":false,
+                    "textToolCalls":true,"promptCache":false},
+                "remote-endpoint":{"contextTokens":131072,"maxOutputTokens":8192}
+            },
+            "endpointModelCapabilities":{"remote-endpoint":{
+                "shared":{"vision":false,"maxOutputTokens":2048}}}
+        });
+        let mut local=common.clone();
+        local["endpointId"]=json!("local-endpoint");
+        let local_caps=ModelCapabilities::for_route(&local,"shared");
+        assert_eq!(local_caps.context_window,Some(4096));
+        assert_eq!(local_caps.max_output_tokens,Some(4096));
+        assert_eq!(local_caps.prompt_cache,Some(false));
+        assert_eq!(local_caps.tool_mode("native",true).unwrap(),"compat");
+        assert_eq!(local_caps.vision,Some(true));
+        let mut remote=common.clone();
+        remote["endpointId"]=json!("remote-endpoint");
+        let remote_caps=ModelCapabilities::for_route(&remote,"shared");
+        assert_eq!(remote_caps.context_window,Some(131072));
+        assert_eq!(remote_caps.max_output_tokens,Some(2048));
+        assert_eq!(remote_caps.prompt_cache,Some(true));
+        assert_eq!(remote_caps.vision,Some(false));
+        assert_eq!(remote_caps.native_tools,Some(true));
+        let other=ModelCapabilities::for_route(&remote,"other");
+        assert_eq!(other.max_output_tokens,Some(8192));
+        assert_eq!(other.vision,None);
     }
     #[test]
     fn disabled_compat_mode_cannot_be_used_to_hide_unsupported_tools(){

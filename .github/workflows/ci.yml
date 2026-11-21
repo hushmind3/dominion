@@ -50,6 +50,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Native infrastructure contracts (dev profile)
         run: cargo test --locked -p dominion-core --lib
+      - name: Model endpoint capability and cache negotiation
+        run: |
+          cargo test --locked --bin dominion-rust addons::gateway::model_capabilities::tests
+          cargo test --locked --bin dominion-rust engine::chat::continuity::tests::explicit_endpoint_cache_denial
       - name: Durable RoomEvent journal and cursor replay
         run: cargo test --locked --bin dominion-rust db::room_events::tests
       - name: Remote worker binary and lease broker contracts

@@ -114,3 +114,17 @@ it to the runtime (objects only, maximum 64). It retains the complete
 compatible payload for existing record consumers. `ProcedureDecision`
 likewise restricts optional procedures to 32 object candidates. None of
 these types grants approval, bypasses sandbox or declares task verification.
+
+## Model/endpoint capability negotiation (§6 architecture.md)
+
+A single Model Gateway now merges declared capability profiles in priority:
+**endpoint+model → endpoint → model → provider default**, using an explicit
+`endpointId` or the persisted `baseUrl` as endpoint identity.
+`ModelCapabilities` carries text, native/text tools, vision, reasoning,
+streaming, parallel tools, context-window capacity, output ceiling and
+prompt-cache support. An explicit `false` blocks unsupported tools, images,
+streaming or cache hints instead of relying on a model-name guess. The
+resolved output and context ceilings feed the existing native token-budget
+admission. These are owner/provider declarations or actual negotiated wire
+evidence, **not claims that a model name alone proves capability**.
+External CLI agents remain `AgentBridge` workers, not Model Gateway routes.

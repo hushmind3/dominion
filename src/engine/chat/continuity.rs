@@ -739,6 +739,9 @@ pub(super) fn hinted_body(state: &AppState, provider: &ProviderRef, original: &V
     let known=state.store.get("provider_wire_feature", &feature_id(provider,wire));
     let disabled=known.as_ref().is_some_and(|record|record["accepted"]==false
         && record["expiresAt"].as_i64().is_some_and(|until|until>chrono::Utc::now().timestamp()));
+    let declared_disabled=state.store.get("provider",&provider.id)
+        .is_some_and(|record|crate::engine::gateway::ModelCapabilities::
+            for_route(&record,&provider.model).prompt_cache==Some(false));
     let mut body=original.clone();
     // Workers AI chooses prefix caching automatically for supported models
     // and documents x-session-affinity, not OpenAI's prompt_cache_key.
@@ -748,7 +751,8 @@ pub(super) fn hinted_body(state: &AppState, provider: &ProviderRef, original: &V
     // prompt_cache_key JSON field. The latter can trigger a rejected request
     // or route-dependent prompt mutation instead of improving cache hits.
     let opencode=opencode_go_provider(state,provider) && matches!(wire,CacheWire::Key);
-    let hinted=!disabled && !cloudflare && !opencode && apply_hint(&mut body,plan,wire);
+    let hinted=!disabled && !declared_disabled && !cloudflare && !opencode
+        && apply_hint(&mut body,plan,wire);
     let explicit=hinted && matches!(wire,CacheWire::Key)
         && openai_explicit_prefix_supported(provider)
         && !explicit_prefix_disabled(state,provider)
@@ -757,7 +761,9 @@ pub(super) fn hinted_body(state: &AppState, provider: &ProviderRef, original: &V
     plan["cacheHint"]=json!(if cloudflare {"x-session-affinity"}
         else if opencode {"x-opencode-session"}else{wire.field()});
     plan["wireHintSent"]=json!(hinted);
-    plan["cacheHintAcceptance"]=if disabled && !cloudflare {json!(false)} else {Value::Null};
+    plan["cacheHintAcceptance"]=if declared_disabled||(disabled&&!cloudflare){
+        json!(false)
+    }else{Value::Null};
     body
 }
 
@@ -835,6 +841,22 @@ mod tests {
     }
     fn route() -> ProviderRef {
         ProviderRef { id:"p".into(),name:"test".into(),base_url:"https://example.test/codex".into(),api_key:"never-store-this".into(),model:"model-a".into(),tool_mode:"native".into(),reasoning_protocol:"openai".into(),local:false,context_tokens:None,max_output_tokens:None,requests_per_minute:None,kind:"codex".into(),account_id:Some("account-a".into()) }
+    }
+    #[test]
+    fn explicit_endpoint_cache_denial_suppresses_optional_wire_hints(){
+        let root=std::env::temp_dir().join(format!("dominion-cache-gate-{}",uuid::Uuid::new_v4()));
+        let state=state(&root);
+        let provider=route();
+        state.store.put("provider",&json!({"id":"p","baseUrl":provider.base_url,
+            "model":"model-a","capabilities":{"promptCache":true},
+            "endpointId":"special","endpointCapabilities":{"special":{"promptCache":false}}})).unwrap();
+        let original=json!({"input":[{"role":"user","content":"hello"}]});
+        let mut plan=json!({"cacheKey":"stable-key"});
+        let body=hinted_body(&state,&provider,&original,&mut plan,CacheWire::Key);
+        assert_eq!(body,original);
+        assert_eq!(plan["wireHintSent"],false);
+        assert_eq!(plan["cacheHintAcceptance"],false);
+        let _=std::fs::remove_dir_all(root);
     }
     #[test]
     fn continuity_survives_restart_and_separates_bots_routes_and_prefix_revisions() {

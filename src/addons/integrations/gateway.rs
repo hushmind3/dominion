@@ -187,6 +187,10 @@ pub fn route_from_provider(
                 .map(str::to_string)
         })
         .ok_or("이 API에서 사용할 모델을 선택하거나 모델 ID를 입력하세요.")?;
+    let route_caps=ModelCapabilities::for_route(provider,&model);
+    if route_caps.text==Some(false){
+        return Err("선택 모델·엔드포인트가 텍스트 생성을 지원하지 않습니다.".into());
+    }
     let kind = provider["kind"]
         .as_str()
         .unwrap_or("openai")
@@ -200,12 +204,10 @@ pub fn route_from_provider(
         })
         .unwrap_or_default();
     let local = is_local_provider(provider);
-    let context_tokens = provider["capabilities"]["contextTokens"]
-        .as_u64()
-        .or_else(|| provider["contextTokens"].as_u64());
-    let max_output_tokens = provider["capabilities"]["maxOutputTokens"]
-        .as_u64()
-        .or_else(|| provider["maxOutputTokens"].as_u64());
+    let context_tokens = route_caps.context_window
+        .or_else(||provider["contextTokens"].as_u64());
+    let max_output_tokens = route_caps.max_output_tokens
+        .or_else(||provider["maxOutputTokens"].as_u64());
     Ok(Route {
         name: provider["name"]
             .as_str()
@@ -214,7 +216,9 @@ pub fn route_from_provider(
         tool_mode: default_tool_mode(provider, &kind),
         reasoning_protocol: default_reasoning_protocol(provider, &kind, &model, &id),
         local,
-        disable_thinking: disable_thinking(provider, local),
+        disable_thinking: route_caps.reasoning
+            .map(|reasoning|!reasoning)
+            .unwrap_or_else(||disable_thinking(provider,local)),
         context_tokens,
         max_output_tokens,
         requests_per_minute: provider["requestsPerMinute"]
@@ -664,6 +668,25 @@ mod tests {
         assert!(resolve(&state, "no-text", None).is_err());
     }
 
+    #[test]
+    fn gateway_refuses_model_specific_text_denial_and_reserves_endpoint_limits(){
+        let state=state();
+        let record=json!({"id":"route","name":"Endpoint","baseUrl":"http://localhost:5555/v1",
+            "model":"shared","endpointId":"local","capabilities":{
+                "text":true,"contextTokens":32768,"maxOutputTokens":8192},
+            "modelCapabilities":{"shared":{"text":false}},
+            "endpointCapabilities":{"local":{"contextTokens":4096,
+                "maxOutputTokens":1024}}});
+        assert!(route_from_provider(&state,&record,None).is_err());
+        let mut usable=record.clone();
+        usable["modelCapabilities"]["shared"]["text"]=json!(true);
+        let route=route_from_provider(&state,&usable,None).unwrap();
+        assert_eq!(route.context_tokens,Some(4096));
+        assert_eq!(route.max_output_tokens,Some(1024));
+        let mut disabled=usable;
+        disabled["endpointModelCapabilities"]=json!({"local":{"shared":{"text":false}}});
+        assert!(route_from_provider(&state,&disabled,None).is_err());
+    }
     #[test]
     fn capability_order_is_deterministic_and_declared_wins() {
         let state = state();
