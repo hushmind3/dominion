@@ -136,7 +136,7 @@ pub(super) fn system_prompt_with_manifest_at(
     if custom_prompt.is_none() && !social {
         if request.direct_chat {
             prompt.push_str(
-                "\n사용자가 다른 언어로 쓰지 않는 한 한국어로 답하십시오.                  일반 대화에서는 도구와 외부 작업을 실행하지 않습니다.                  실제로 수행하지 않은 행동을 완료했다고 말하지 마십시오.",
+                "\n사용자가 다른 언어로 쓰지 않는 한 한국어로 답하십시오. 일반 대화에서는 도구와 외부 작업을 실행하지 않습니다. 실제로 수행하지 않은 행동을 완료했다고 말하지 마십시오.",
             );
         } else {
             prompt.push_str(
