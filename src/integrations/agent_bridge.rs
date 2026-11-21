@@ -352,6 +352,20 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
     let _=child.kill().await;
     match outcome{
         Ok(value)=>{
+            if runtime=="qwen" || runtime=="claude" {
+                // A resumed CLI may silently create a fresh session if its
+                // requested project-scoped session is missing or expired.
+                // Never credit that different session to the original Task.
+                if let Some(requested)=job["input"]["resumeId"].as_str(){
+                    if value["sessionId"].as_str()!=Some(requested){
+                        let reason=format!("{runtime} returned a different session; owner review required");
+                        let _=ctx.checkpoint(json!({"bridgeState":{
+                            "inFlight":false,"runtime":runtime,
+                            "phase":"needs_review","error":reason}}));
+                        return Err(reason);
+                    }
+                }
+            }
             ctx.checkpoint(json!({"bridgeState":{"inFlight":false,
                 "runtime":runtime,"phase":"completed",
                 "threadId":value["threadId"],"sessionId":value["sessionId"],
@@ -400,6 +414,31 @@ mod tests{
         assert!(qwen_result(&json!([
             {"type":"result","subtype":"error","is_error":true,"result":"no"}
         ])).is_err());
+    }
+    #[tokio::test]
+    async fn qwen_headless_reads_a_real_bounded_json_output_from_a_child_process(){
+        use crate::{config::Config,db::Store,state::AppState,vault::Vault};
+        let root=std::env::temp_dir().join(format!(
+            "dominion-qwen-jsonl-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=Config{port:0,data_dir:root.clone(),
+            workspace:root.clone(),web_dir:root.join("web")};
+        let state=AppState::new(config.clone(),
+            Store::open(&config.db_path()).unwrap(),Vault::open(&config.key_path()));
+        state.store.put("job",&json!({"id":"qwen-protocol-fixture",
+            "kind":"external_agent","status":"running","attempts":1})).unwrap();
+        let ctx=JobContext::new(state.clone(),"qwen-protocol-fixture".into());
+        let mut child=Command::new("sh").arg("-c").arg(
+            "printf '%s\\n' '[{\"type\":\"system\",\"session_id\":\"fixture\"},{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"session_id\":\"fixture\",\"result\":\"bounded Qwen completion\"}]'")
+            .stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true)
+            .spawn().unwrap();
+        let result=tokio::time::timeout(Duration::from_secs(8),
+            run_qwen(&ctx,&mut child,Instant::now())).await
+            .expect("bounded Qwen JSON must complete").unwrap();
+        assert_eq!(result["answer"],"bounded Qwen completion");
+        assert_eq!(result["sessionId"],"fixture");
+        assert_eq!(result["evidenceGrade"],"external_unverified");
+        crate::test_support::cleanup_dir(&root);
     }
     #[test] fn codex_notifications_do_not_promote_failed_turns(){
         let mut text=String::new();
