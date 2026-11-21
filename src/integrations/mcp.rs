@@ -605,6 +605,9 @@ impl HttpSession {
                         return Err("MCP modern discovery replied to another call".into());
                     }else{
                         let result=&value["result"];
+                        if result["resultType"]!="complete" {
+                            return Err("MCP server/discover returned incomplete discovery".into());
+                        }
                         if !result["supportedVersions"].as_array()
                             .is_some_and(|versions|versions.iter()
                                 .any(|v|v.as_str()==Some(modern::VERSION))) {
@@ -673,10 +676,16 @@ impl HttpSession {
         }
         let result=value.get("result").cloned()
             .ok_or("MCP reply missing result")?;
-        if self.modern && result["resultType"]=="input_required" {
-            // MRTR must return control to owner approval, NEVER repeat an
-            // effecting tools/call without explicit inputResponses.
-            return Err("MCP input_required: user input/approval needed; no automatic replay".into());
+        if self.modern {
+            // Every 2026-07-28 result is typed. InputRequired is not a
+            // completed effect, and unknown variants cannot be treated as success.
+            match result["resultType"].as_str() {
+                Some("complete")=>{},
+                Some("input_required")=>{
+                    return Err("MCP input_required: user input/approval needed; no automatic replay".into());
+                },
+                _=>return Err("MCP modern response omitted a complete resultType".into()),
+            }
         }
         Ok(result)
     }
