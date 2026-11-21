@@ -264,44 +264,35 @@ impl Kernel<'_> {
                 self.journal.save(&run)?;
                 return Ok(run);
             }
-            run.model_in_flight = true;
-            self.journal.save(&run)?;
-            // A cancellation or owner correction may arrive while the
-            // write-ahead intent is being saved. No provider call has begun.
-            let fence=runtime::dispatch_fence(self.journal,&request.id,
-                current_directive.as_deref())?;
-            let cancelled_after_fence=fence==runtime::DispatchFence::Cancelled;
-            let redirected_after_fence=fence==runtime::DispatchFence::OwnerChanged;
-            if cancelled_after_fence || redirected_after_fence {
-                run.model_in_flight=false;
-                if cancelled_after_fence {
-                    run.stop(Status::Cancelled, "Owner cancelled before model dispatch");
+            // The exact same write-ahead model operator controls native
+            // and Chat/Room streaming; decision policy remains pluggable.
+            let run_receipts=run.receipts.clone();
+            let turn = match runtime::dispatch_model_turn(
+                self.journal,&mut run,current_directive.as_deref(),
+                || self.model.complete_with_tools(
+                    &active_system,&prompt,&visible_tools,&run_receipts),
+            ).await? {
+                runtime::ModelAttempt::Completed(turn)=>turn,
+                runtime::ModelAttempt::Cancelled=>{
+                    run.stop(Status::Cancelled,"Owner cancelled before model dispatch");
                     self.journal.save(&run)?;
                     return Ok(run);
-                }
-                run.checks.push(CheckResult {
-                    criterion:Criterion {kind:CriterionKind::ToolSucceeded,
-                        path:None,contains:None,tool:Some("owner_directive".into())},
-                    satisfied:false,
-                    explanation:"Owner changed the instruction before model dispatch".into(),
-                });
-                self.journal.save(&run)?;
-                continue 'steps;
-            }
-            let turn = match self.model.complete_with_tools(
-                &active_system, &prompt, &visible_tools, &run.receipts,
-            ).await {
-                Ok(turn) => turn,
-                Err(error) => {
-                    if self.journal.cancelled(&request.id) {
-                        // Cancellation before the provider's terminal model
-                        // event is not permission to replay that paid call.
-                        // The cancelled job itself is terminal.
+                },
+                runtime::ModelAttempt::OwnerChanged=>{
+                    run.checks.push(CheckResult {
+                        criterion:Criterion{kind:CriterionKind::ToolSucceeded,
+                            path:None,contains:None,tool:Some("owner_directive".into())},
+                        satisfied:false,
+                        explanation:"Owner changed the instruction before model dispatch".into(),
+                    });
+                    self.journal.save(&run)?;
+                    continue 'steps;
+                },
+                runtime::ModelAttempt::Uncertain(error)=>{
+                    if self.journal.cancelled(&request.id){
                         run.model_in_flight=false;
                         run.stop(Status::Cancelled,"Owner cancelled native model generation");
-                    } else {
-                        // Unknown partial model output remains explicitly
-                        // in-flight, prohibiting automatic paid replay.
+                    }else{
                         run.stop(Status::NeedsReview,format!("Model unavailable: {error}"));
                     }
                     self.journal.save(&run)?;

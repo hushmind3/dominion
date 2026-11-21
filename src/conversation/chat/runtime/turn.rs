@@ -833,35 +833,20 @@ pub(super) async fn run_turn_body(
             counters.model_calls += 1;
             counters.iterations = round as u32 + 1;
         }
-        kernel_state.model_in_flight = true;
         kernel_state.model_calls = metrics.lock().unwrap().model_calls as usize;
-        dominion_agent_sdk::Journal::save(&kernel_journal, &kernel_state)?;
-        // Share the native agent loop's post-intent fence before paid streaming.
-        match dominion_agent_sdk::dispatch_fence(&kernel_journal,execution_id,None)? {
-            dominion_agent_sdk::DispatchFence::Proceed=>{},
-            dominion_agent_sdk::DispatchFence::Cancelled=>{
-                kernel_state.model_in_flight=false;
-                dominion_agent_sdk::Journal::save(&kernel_journal,&kernel_state)?;
-                return Err("실행이 중단되어 모델 호출을 시작하지 않았습니다.".into());
-            },
-            dominion_agent_sdk::DispatchFence::OwnerChanged=>{
-                kernel_state.model_in_flight=false;
-                dominion_agent_sdk::Journal::save(&kernel_journal,&kernel_state)?;
-                return Err("사용자 지시가 변경되어 모델 호출을 폐기했습니다.".into());
-            }
-        }
-        let completion_result = stream_completion(
-            state,
-            &client,
-            &provider,
-            &wire_messages,
-            &round_tools,
-            request,
-            session_id,
-            tx,
-            allow_provider_fallback,
-        )
-        .await;
+        let completion_result=match dominion_agent_sdk::dispatch_model_turn(
+            &kernel_journal,&mut kernel_state,None,
+            || stream_completion(
+                state,&client,&provider,&wire_messages,&round_tools,
+                request,session_id,tx,allow_provider_fallback),
+        ).await? {
+            dominion_agent_sdk::ModelAttempt::Completed(result)=>Ok(result),
+            dominion_agent_sdk::ModelAttempt::Cancelled=>
+                Err("실행이 중단되어 모델 호출을 시작하지 않았습니다.".into()),
+            dominion_agent_sdk::ModelAttempt::OwnerChanged=>
+                Err("사용자 지시가 변경되어 모델 호출을 폐기했습니다.".into()),
+            dominion_agent_sdk::ModelAttempt::Uncertain(error)=>Err(error),
+        };
         {
             let mut counters = metrics.lock().unwrap();
             counters.model_elapsed_ms += model_started.elapsed().as_millis() as u64;

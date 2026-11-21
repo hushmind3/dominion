@@ -33,6 +33,49 @@ impl HarnessDrive {
     }
     pub fn completed_steps(&self)->usize{self.step}
 }
+/// A single write-ahead model-dispatch operator for every native, Chat,
+/// Room and streamed provider route. The Host supplies only a model adapter.
+pub enum ModelAttempt<T> {
+    Completed(T),
+    Cancelled,
+    OwnerChanged,
+    /// No replay is permitted: the provider may have already consumed tokens.
+    Uncertain(String),
+}
+
+/// Persist an in-flight marker BEFORE allowing a paid model call. Recheck
+/// cancellation / owner correction after persistence, then invoke the model.
+/// On success the caller MUST durably settle usage and the complete model
+/// observation BEFORE clearing the in-flight marker. On error preserve it:
+/// replaying a partially observed paid generation would double-spend.
+pub async fn dispatch_model_turn<T,F,Fut>(
+    journal:&dyn crate::Journal,
+    snapshot:&mut crate::Snapshot,
+    expected_directive:Option<&str>,
+    invoke:F,
+)->Result<ModelAttempt<T>,String>
+where F:FnOnce()->Fut,Fut:std::future::Future<Output=Result<T,String>>
+{
+    snapshot.model_in_flight=true;
+    journal.save(snapshot)?;
+    match crate::dispatch_fence(journal,&snapshot.id,expected_directive)?{
+        crate::DispatchFence::Cancelled=>{
+            snapshot.model_in_flight=false;
+            journal.save(snapshot)?;
+            return Ok(ModelAttempt::Cancelled);
+        },
+        crate::DispatchFence::OwnerChanged=>{
+            snapshot.model_in_flight=false;
+            journal.save(snapshot)?;
+            return Ok(ModelAttempt::OwnerChanged);
+        },
+        crate::DispatchFence::Proceed=>{}
+    }
+    match invoke().await {
+        Ok(result)=>Ok(ModelAttempt::Completed(result)),
+        Err(error)=>Ok(ModelAttempt::Uncertain(error)),
+    }
+}
 #[cfg(test)]
 mod tests{
     use super::*;

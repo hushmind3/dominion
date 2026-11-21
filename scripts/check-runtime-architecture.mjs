@@ -39,7 +39,9 @@ has('crates/dominion-agent-algorithms/src/agent_loop.rs',
 has('crates/dominion-agent-sdk/src/lib.rs',['pub use dominion_agent_algorithms']);
 has('src/host/execution/native_agent.rs',['AgentLoop','agent_loop.execute(']);
 has('src/conversation/chat/runtime/turn.rs',
-  ['dominion_agent_sdk::dispatch_fence','dominion_agent_sdk::dispatch_batch']);
+  ['dominion_agent_sdk::dispatch_model_turn','dominion_agent_sdk::dispatch_batch']);
+has('crates/dominion-agent-runtime/src/drive.rs',
+  ['pub async fn dispatch_model_turn','pub enum ModelAttempt']);
 has('src/features/collaboration/room_cursor.rs',
   ['through_message_id','MAX_UNREAD_PER_TURN']);
 has('src/storage/sqlite.rs',
