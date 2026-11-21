@@ -208,7 +208,7 @@ fn reconcile(ctx:&ToolContext<'_>,team_id:&str,node:&Value)->Result<Value,String
     if let Some(remote_id)=row["remoteTaskId"].as_str(){
         let task=crate::remote::task_status(ctx.state,remote_id)?;
         let observed=task["status"].as_str().unwrap_or("");
-        if !matches!(observed,"completed"|"needs_review"){return Ok(row);}
+        if !matches!(observed,"completed"|"needs_review"|"cancelled"){return Ok(row);}
         let success=observed=="completed";
         let verified=success && task["verified"]==true;
         let update=json!({
@@ -435,6 +435,7 @@ pub(super) async fn execute(
         // multiple real job workers BEFORE awaiting their results.
         loop {
             if ctx.state.is_cancelled(ctx.session_id){
+                crate::remote::cancel_team(ctx.state,team_id);
                 return Err(format!("Lead cancelled; durable team {team_id} remains inspectable"));
             }
             let mut all_done=true;
