@@ -276,6 +276,18 @@ pub async fn list_backups(State(state): State<AppState>) -> Json<Value> {
     // Overlapping restore requests may not reuse the same rollback marker or
     // overwrite one another's saved DB/key pair.
     let _restore_guard=state.restore_guard.lock().await;
+    // Maintenance mode prevents new owner writes. Do not replace SQLite
+    // while pre-existing model runs, jobs or tool approvals still hold state.
+    let busy_sessions=state.active.lock().map(|owners|!owners.is_empty()).unwrap_or(true);
+    let busy_approvals=state.approvals.lock().map(|pending|!pending.is_empty()).unwrap_or(true);
+    let busy_jobs=state.store.active_jobs()
+        .map(|jobs|jobs.iter().any(|job|job["status"]=="running"))
+        .unwrap_or(true);
+    if busy_sessions || busy_approvals || busy_jobs {
+        return (axum::http::StatusCode::CONFLICT,
+            Json(json!({"error":"실행·승인 작업이 남아 있습니다. 작업이 끝난 뒤 복원하십시오."}))
+        ).into_response();
+    }
     let directory = state.config.data_dir.join("backups");
     let mut items = std::fs::read_dir(&directory)
         .map(|entries| {
