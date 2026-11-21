@@ -61,13 +61,6 @@ impl AgentLoop for ActiveLoop{
                    Self::PlanExecute(p)=>p.after_model(observation)}
     }
 }
-#[derive(Debug)]
-pub struct RunResult {
-    pub response:String,
-    pub model_rounds:usize,
-    pub tool_calls:usize,
-    pub workflow:&'static str,
-}
 /// Public SDK shim. Core Harness owns the independent provider/tool loop.
 pub use dominion_turn_core::agent_loop::PortRunResult as RunResult;
 pub async fn run<A:AgentLoop,M:ModelPort,T:ToolPort>(
