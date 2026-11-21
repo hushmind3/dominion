@@ -696,6 +696,36 @@ mod tests {
     }
 
     #[test]
+    fn one_hundred_fifty_turn_owner_correction_survives_sqlite_restart(){
+        let (state,dir)=state();
+        observe_owner_message(&state,"r","room:r",&owner(
+            "owner-first","배포 담당자는 코볼트다. 기억해.")).unwrap();
+        for index in 0..150{
+            let mut message=owner("unrelated", &format!(
+                "작업 항목 {index}의 처리 결과는 완료다. 기억해."));
+            message["id"]=json!(format!("unrelated-{index}"));
+            observe_owner_message(&state,"r","room:r",&message).unwrap();
+        }
+        observe_owner_message(&state,"r","room:r",&owner(
+            "owner-correction","정정: 배포 담당자는 세바스다.")).unwrap();
+        let before=context_block_for_query(&state,"r","배포 담당자가 누구야?")
+            .unwrap();
+        assert!(before.contains("세바스"),"{before}");
+        assert!(!before.contains("코볼트"),"{before}");
+        let config=state.config.clone();
+        drop(state);
+        let restarted=AppState::new(config.clone(),
+            Store::open(&config.db_path()).unwrap(),
+            Vault::open(&config.key_path()));
+        let after=context_block_for_query(&restarted,"r","배포 담당자는 누구야?")
+            .unwrap();
+        assert!(after.contains("세바스"),"{after}");
+        assert!(!after.contains("코볼트"),"{after}");
+        assert_eq!(after,before,"owner-corrected facts must not drift on restart");
+        drop(restarted);
+        let _=std::fs::remove_dir_all(dir);
+    }
+    #[test]
     fn corrections_keep_unrelated_domains_and_do_not_promote_questions() {
         let (state, dir) = state();
         observe_owner_message(&state, "r", "room:r", &owner("m1", "배포 담당자는 코볼트다. 기억해.")).unwrap();
