@@ -104,6 +104,17 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const modelPanel=useAnchoredPanel(modelMenu,()=>setModelMenu(false),380);
  useEffect(()=>()=>stream.current?.abort(),[]);
  useEffect(()=>{if(window.innerWidth<768)return;try{localStorage.setItem('dominion.chat.sidebar',showHistory?'1':'0')}catch{}},[showHistory]);
+ // Chat stays mounted behind the settings overlay. Resize from a desktop
+ // session to phone width without leaving the entire chat obscured by its
+ // previously open desktop history drawer.
+ useEffect(()=>{
+  const media=window.matchMedia('(max-width:767px)')
+  const sync=(narrow:boolean)=>{if(narrow)setShowHistory(false)}
+  sync(media.matches)
+  const changed=(event:MediaQueryListEvent)=>sync(event.matches)
+  media.addEventListener('change',changed)
+  return()=>media.removeEventListener('change',changed)
+ },[])
  useEffect(()=>{
   if(!active)return;
   const controller=new AbortController();
