@@ -128,7 +128,8 @@ jobs:
           cargo test --locked -p dominion-context-policy --lib
           cargo test --lib engine::tools::tests::room_source_reader_preserves_full_peer_history_and_private_scope
           cargo test --lib engine::chat::continuity::tests::indexed_peer_never_duplicates_a_full_reply_in_committed_prefix
-          cargo test --lib engine::chat::continuity::tests::semantically_stable_room_state_reuses_one_frame_and_changed_state_rotates
+          cargo test --lib engine::chat::continuity::tests::semantically_stable_room_state_reuses_one_frame_and_changed_state_appends
+          cargo test --lib engine::chat::continuity::tests::recurring_room_status_is_reemitted_only_when_it_becomes_latest_again
           cargo test --lib engine::room_state::tests::shared_room_state_is_roster_driven_and_not_a_partial_speaker_window
           cargo test --lib engine::room_workboard::tests
           cargo test --lib engine::chat::room_context::tests::workboard_compiles_into_bounded_room_context_without_future_owner_leakage
