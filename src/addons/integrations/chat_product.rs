@@ -77,6 +77,24 @@ pub(super) struct MainTurn<'a> {
     pub(super) completed_operations: Vec<Value>,
 }
 
+/// The provider can complete a charged model call without a visible answer.
+/// Classify that after usage has been durably recorded, never as success.
+fn terminal_model_error(completion: &crate::engine::chat::Completion) -> Option<&'static str> {
+    match completion.finish_reason.as_deref() {
+        Some("length") => return Some("모델이 출력 토큰 제한에 도달해 답변이 잘렸습니다."),
+        Some("content_filter") => return Some("모델 응답이 콘텐츠 필터로 중단되었습니다."),
+        _ => {}
+    }
+    if completion.content.trim().is_empty() && completion.tool_calls.is_empty() {
+        return Some(if completion.reasoning.trim().is_empty() {
+            "모델이 사용량/종료 정보만 반환하고 읽을 수 있는 답변을 반환하지 않았습니다."
+        } else {
+            "모델이 추론만 반환하고 최종 답변을 반환하지 않았습니다."
+        });
+    }
+    None
+}
+
 /// A last-turn receipt may be committed after the final tool batch even when
 /// no model round remains to describe it. Only the frozen owner-bound checks and
 /// durable completed operations can recover that outcome. A file existing by
@@ -529,6 +547,7 @@ impl Host for MainTurn<'_> {
                         "estimatedPromptTokens":(!completion.usage_exact).then_some(call_prompt),
                         "estimatedOutputTokens":(!completion.usage_exact).then_some(call_completion),
                         "usageExact":completion.usage_exact,
+                        "finishReason":completion.finish_reason,
                         "workingView":{
                             "rebaseReason":self.metadata["continuity"]["workingView"]["rebaseReason"],
                             "reusedFrames":self.metadata["continuity"]["workingView"]["reusedFrames"],
@@ -558,6 +577,7 @@ impl Host for MainTurn<'_> {
                     execution["inputContext"]["providerOutputTokens"] =
                         json!(self.completion_tokens_total);
                     execution["inputContext"]["providerUsageExact"] = json!(!self.usage_estimated);
+                    execution["lastModelFinishReason"] = json!(completion.finish_reason);
                     self.state.store.put("execution", &execution);
             }
             self.metrics.lock().unwrap().tokens = self.total_tokens;
@@ -568,6 +588,9 @@ impl Host for MainTurn<'_> {
                 ));
             }
 
+            if let Some(error) = terminal_model_error(&completion) {
+                return Err(error.to_string());
+            }
             if self.owner_changed()? {
                 self.state.store.audit(
                     "job.stale_model_reply",
@@ -2075,6 +2098,44 @@ impl MainTurn<'_> {
             self.state.store.put("execution", &execution);
         }
         Ok(Some(saved))
+    }
+}
+
+#[cfg(test)]
+mod terminal_model_error_tests {
+    use super::*;
+
+    #[test]
+    fn non_answer_with_usage_and_reasoning_only_is_not_success() {
+        let empty=crate::engine::chat::Completion::default();
+        assert!(terminal_model_error(&empty).unwrap().contains("읽을 수 있는 답변"));
+        let mut reasoning=crate::engine::chat::Completion::default();
+        reasoning.reasoning="private reasoning".into();
+        assert!(terminal_model_error(&reasoning).unwrap().contains("최종 답변"));
+        reasoning.content="Final answer".into();
+        assert_eq!(terminal_model_error(&reasoning),None);
+    }
+
+    #[test]
+    fn truncated_and_filtered_answers_are_failed_not_verified() {
+        let mut completion=crate::engine::chat::Completion::default();
+        completion.content="partial but visible".into();
+        completion.finish_reason=Some("length".into());
+        assert!(terminal_model_error(&completion).unwrap().contains("잘렸습니다"));
+        completion.finish_reason=Some("content_filter".into());
+        assert!(terminal_model_error(&completion).unwrap().contains("필터"));
+        completion.finish_reason=Some("stop".into());
+        assert_eq!(terminal_model_error(&completion),None);
+    }
+
+    #[test]
+    fn tool_call_without_text_is_still_an_executable_model_result() {
+        let mut completion=crate::engine::chat::Completion::default();
+        completion.tool_calls.push(crate::engine::chat::ToolCall{
+            id:"tool-1".into(), name:"workspace_read".into(), arguments:"{}".into()
+        });
+        completion.finish_reason=Some("tool_calls".into());
+        assert_eq!(terminal_model_error(&completion),None);
     }
 }
 
