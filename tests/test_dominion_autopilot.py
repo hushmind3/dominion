@@ -45,8 +45,9 @@ if os.environ.get('FAKE_NO_COMMIT') == branch:
  print('No actionable changes')
  sys.exit(0)
 path=pathlib.Path('AUTOPILOT.txt')
+if path.exists(): path=pathlib.Path('AUTOPILOT-2.txt')
 path.write_text(branch + '\\n')
-subprocess.run(['git','add','AUTOPILOT.txt'],check=True)
+subprocess.run(['git','add',str(path)],check=True)
 subprocess.run(['git','-c','user.name=Bot','-c','user.email=bot@example.invalid',
                 'commit','-m','test agent change'],check=True)
 print('Committed',branch)
@@ -99,6 +100,8 @@ print(json.dumps({'summary':'code review only','feedback':{
         latest=json.loads((self.state/'latest_round.json').read_text())
         prompt=Path(self.state/'runs'/latest['id']/'main'/'prompt.txt').read_text()
         self.assertIn('Fix main-specific next issue',prompt)
+        self.assertTrue((Path(next(r['worktree'] for r in latest['results'] if r['branch']=='main'))/'AUTOPILOT-2.txt').exists())
+        self.assertTrue(all(r['status']=='committed_local' for r in latest['results']))
 
     def test_dirty_worktree_is_not_auto_published(self):
         self.agent.write_text("import pathlib; pathlib.Path('dirty.txt').write_text('draft')\n")
