@@ -105,19 +105,22 @@ test('native run controls share the real Rust autonomous UI job routes',async()=
   await sdk.nativeRuns.start({instruction:'Fix tests',providerId:'p1',maxRounds:8,verifyCommand:'cargo test',algorithmId:'focused-v1'});
   await sdk.nativeRuns.get('native/1');
   await sdk.nativeRuns.approve('native/1','approval/3');
+  await sdk.nativeRuns.deny('native/1','approval/4');
   await sdk.nativeRuns.cancel('native/1');
   await sdk.nativeRuns.resume('native/1');
   await sdk.nativeRuns.reconcile('native/1',{applied:false,details:'Workspace checked'});
   assert.deepEqual(calls.map(call=>new URL(call.url).pathname),[
     '/api/sdk/runs','/api/sdk/runs','/api/sdk/runs/native%2F1',
-    '/api/sdk/runs/native%2F1/approve','/api/sdk/runs/native%2F1/cancel',
+    '/api/sdk/runs/native%2F1/approve','/api/sdk/runs/native%2F1/deny',
+    '/api/sdk/runs/native%2F1/cancel',
     '/api/sdk/runs/native%2F1/resume','/api/sdk/runs/native%2F1/reconcile'
   ]);
   assert.deepEqual(JSON.parse(calls[1].init.body),{
     instruction:'Fix tests',providerId:'p1',maxRounds:8,verifyCommand:'cargo test',algorithmId:'focused-v1'
   });
   assert.deepEqual(JSON.parse(calls[3].init.body),{callId:'approval/3'});
-  assert.deepEqual(JSON.parse(calls[6].init.body),{applied:false,details:'Workspace checked'});
+  assert.deepEqual(JSON.parse(calls[4].init.body),{callId:'approval/4'});
+  assert.deepEqual(JSON.parse(calls[7].init.body),{applied:false,details:'Workspace checked'});
   assert.ok(calls.every(call=>call.init.headers['X-Dominion-Token']==='owner-token'));
 });
 test('offline replay and paired cost comparison use exact Rust read-only endpoints',async()=>{
