@@ -105,7 +105,7 @@ Flow:
 
 1. The coordinator resolves and freezes the local base SHA-256 for every named path when it commits the remote task. The remote node can run only with explicit Writer opt-in and the existing per-tool policy.
 2. The worker includes only listed non-symlink files (up to 8 files, 64 KiB each), UTF-8 bytes and SHA-256 in its terminal receipt. Arbitrary paths, Git internals, environment files and path traversal are refused.
-3. The coordinator checks every artifact ID, path, size and actual SHA-256 against the fixed approved manifest; it stores bytes as an explicitly remote-reported observation.
+3. The coordinator checks every artifact ID, path, size and actual SHA-256 against the fixed approved manifest; it stores bytes as an explicitly remote-reported observation. **The SSE journal strips file contents** and publishes only receipt metadata, source hashes and states.
 4. team_status({teamId}) shows artifactApplyStatus=pending and exact paths. It does not silently sync files or mistake remote agent's native verification for local merge verification.
 5. After ordinary Dominion user approval, the owning Lead runs team_remote_apply({teamId,remoteTaskId}). The Rust tool holds the native workspace mutex and SQLite Writer lease, compares every coordinator file's current SHA-256 against the frozen base, stages a multi-file Codex-style patch through the existing tools_patch executor, verifies final SHA-256, records the originating run ID, and marks the receipt applied.
 6. If the coordinator's files changed, or the patch result is unknown, the tool returns a conflict or needs_review; no silent overwrite or automatic rerun is permitted. A second successful application returns the saved receipt, not a second write.
