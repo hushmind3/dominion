@@ -40,6 +40,10 @@ impl Driver {
         if cancelled {return Err("execution cancelled");}
         if self.rounds >= self.max_rounds {return Err("model round limit exceeded");}
         self.rounds += 1;
+        // Provider call IDs are scoped to one model response, not the whole
+        // execution. A new response may legitimately reuse the same ID;
+        // durable effect identity includes run, round and call index.
+        self.seen_call_ids.clear();
         Ok(())
     }
 
@@ -90,8 +94,10 @@ impl Driver {
     }
 
     /// Atomically reserve every tool call in one model response before any host
-    /// side effect. Duplicate provider IDs are rejected across the entire
-    /// turn; names must be visible in the current model round.
+    /// side effect. Duplicate IDs within the same response or repeated batch
+    /// admission are rejected; a later model round may reuse the provider ID.
+    /// Durable effects must be keyed by run+round+index, not provider call ID.
+    /// Names must be visible in the current model round.
     pub fn admit_batch<'a>(
         &mut self, calls: impl IntoIterator<Item = (&'a str, &'a str)>,
         visible: &[Value], enabled: bool,
@@ -160,6 +166,22 @@ mod tests {
         assert!(gate.admit_batch([("id-a","mcp__safe__read")],&visible,true).is_ok());
         assert_eq!(gate.select_step(4,true),Err("tool proposal limit exceeded"));
         assert!(!Driver::advertised("mcp__safe__read_more",&visible));
+    }
+
+    #[test]
+    fn reused_provider_id_in_a_later_round_keeps_distinct_effect_authority(){
+        let visible=vec![json!({"name":"workspace_list"})];
+        let mut gate=Driver::new(3,4);
+        gate.begin_model_round(false).unwrap();
+        assert!(gate.admit_batch([("reused","workspace_list")],&visible,true).is_ok());
+        assert_eq!(gate.admit_batch([("reused","workspace_list")],&visible,true),
+            Err("duplicate or missing tool call id"));
+        gate.begin_model_round(false).unwrap();
+        assert!(gate.admit_batch([("reused","workspace_list")],&visible,true).is_ok());
+        // The cumulative tool budget must not reset with the provider's ID scope.
+        assert_eq!(gate.select_step(9,true),Err("tool proposal limit exceeded"));
+        assert_eq!(Driver::validate_call_ids(["reused","reused"]),
+            Err("duplicate or missing tool call id"));
     }
 
     #[test]
