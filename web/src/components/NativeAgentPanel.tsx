@@ -2,12 +2,14 @@ import {useEffect, useState} from 'react'
 import {Check, Play, RefreshCw, ShieldAlert, Square, Sparkles} from 'lucide-react'
 import {get, post, type Provider} from '../api'
 import {useLocale} from '../i18n'
+import {ExecutionInsights} from './ExecutionInsights'
+import {RunEventTimeline} from './RunEventTimeline'
 
 type SdkState = {state: string; detail?: {call_id?: string; tool?: string}}
 type SdkRun = {
- id: string; status: string; instruction: string; answer?: string; error?: string;
+ id: string; status: string; instruction: string; answer?: string; error?: string; createdAt?:string; model?:string; sessionId?:string; runRef?:{executionId:string}; readOnly?:boolean;
  checkpoint?: {
-  state?: SdkState; rounds?: number; toolCalls?: number; answer?: string;
+  state?: SdkState; rounds?: number; toolCalls?: number; answer?: string; executionId?:string;
   usage?: {prompt_tokens:number; completion_tokens:number; cached_prompt_tokens:number};
   pendingCall?: {id:string; name:string; arguments:unknown} | null;
   events?: {kind:string; detail:unknown}[];
@@ -31,11 +33,24 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [verification,setVerification]=useState('')
  const [observation,setObservation]=useState('')
  const [run,setRun]=useState<SdkRun|null>(null)
+ const [history,setHistory]=useState<SdkRun[]>([])
+ const [historyOpen,setHistoryOpen]=useState(false)
+ const [steering,setSteering]=useState('')
+ const [notice,setNotice]=useState('')
  const [busy,setBusy]=useState(false)
  const [error,setError]=useState('')
+ const refreshHistory=async()=>{const list=await get<SdkRun[]>('/api/sdk/runs')
+  setHistory([...list].sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')).slice(0,30))
+  return list
+ }
  useEffect(()=>{
   let alive=true
-  get<SdkRun[]>('/api/sdk/runs').then(list=>{if(alive&&list.length)setRun(list[0])}).catch(()=>{})
+  get<SdkRun[]>('/api/sdk/runs').then(list=>{
+   if(!alive)return
+   const sorted=[...list].sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''))
+   setHistory(sorted.slice(0,30))
+   if(sorted.length)setRun(sorted[0])
+  }).catch(e=>{if(alive)setError((e as Error).message)})
   return()=>{alive=false}
  },[])
  useEffect(()=>{
@@ -56,7 +71,8 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     instruction:instruction.trim(),providerId:providerId||undefined,
     verifyCommand:verification.trim()||undefined
    })
-   setRun(created)
+   setRun(created);setHistoryOpen(false);setNotice('')
+   void refreshHistory().catch(()=>{})
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
@@ -68,7 +84,8 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    if(kind==='approve'&&!call?.id)throw Error(en?'Missing approval details':'승인할 도구 정보를 찾지 못했습니다.')
    await post(`/api/sdk/runs/${encodeURIComponent(run.id)}/${kind}`,
     kind==='approve'?{callId:call!.id}:{})
-   setRun({...run,status:kind==='cancel'?'cancelled':'running'})
+   const refreshed=await get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}`)
+   setRun(refreshed);void refreshHistory().catch(()=>{})
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
@@ -78,7 +95,17 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   try{
    const updated=await post<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}/reconcile`,
     {applied,details:observation.trim()})
-   setRun(updated);setObservation('')
+   setRun(updated);setObservation('');void refreshHistory().catch(()=>{})
+  }catch(e){setError((e as Error).message)}
+  finally{setBusy(false)}
+ }
+ const followUp=async()=>{
+  if(!run||busy||!steering.trim())return
+  setBusy(true);setError('');setNotice('')
+  try{
+   await post(`/api/sdk/runs/${encodeURIComponent(run.id)}/steer`,{instruction:steering.trim(),mode:'append'})
+   setSteering('');setNotice(en?'Instruction queued for the current run.':'현재 작업에 추가 지시를 전달했습니다.')
+   setRun(await get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}`))
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
@@ -93,6 +120,23 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    <div><h2 className="text-[13px] font-bold">{en?'Autonomous work':'자동 작업'}</h2>
     <p className="mt-0.5 text-[11px] text-[#8A8176]">{en?'Describe what you need. Dominion’s own Rust engine handles the steps.':'할 일을 말씀하시면 도미니언 Rust 엔진이 작업을 실행합니다.'}</p>
    </div>
+  </div>
+  <div className="border-b border-[#F0EAE1] px-4 py-2">
+   <button type="button" onClick={()=>setHistoryOpen(v=>!v)} aria-expanded={historyOpen}
+    className="flex w-full items-center justify-between text-[11px] text-[#6F675D]">
+    <span>{en?'Previous SDK runs':'기존 SDK 실행 기록'} ({history.length})</span>
+    {historyOpen?'▴':'▾'}
+   </button>
+   {historyOpen&&<div className="mt-2 max-h-44 space-y-1 overflow-y-auto">
+    <button type="button" className="mb-1 text-[10px] underline" onClick={()=>void refreshHistory().catch(e=>setError((e as Error).message))}>{en?'Refresh history':'목록 새로고침'}</button>
+    {history.map(item=><button type="button" key={item.id}
+      aria-pressed={run?.id===item.id} onClick={()=>{setError('');setNotice('');setSteering('');void get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(item.id)}`).then(setRun).catch(e=>setError((e as Error).message))}}
+      className={'flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-[11px] '+(run?.id===item.id?'bg-[#F7E8E1]':'bg-[#FAF7F1] hover:bg-[#F3EEE5]')}>
+      <span className="min-w-0 flex-1 truncate">{item.instruction||item.id}</span>
+      <span className="shrink-0 text-[#8A8176]">{item.status}</span>
+     </button>)}
+    {!history.length&&<p className="text-[11px] text-[#8A8176]">{en?'No previous runs':'이전 실행이 없습니다.'}</p>}
+   </div>}
   </div>
   <div className="grid gap-3 p-4">
    <label className="text-[12px] font-semibold" htmlFor="sdk-goal">{en?'What would you like done?':'무엇을 해드릴까요?'}</label>
@@ -153,6 +197,17 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     </div>}
     {run.answer||run.checkpoint?.answer?<div className="mt-3 whitespace-pre-wrap break-words border-t border-[#E7E0D5] pt-3 text-[12px]">{run.answer||run.checkpoint?.answer}</div>:null}
     {run.error&&<p className="mt-2 text-[11px] text-[#A54027]">{run.error}</p>}
+    {notice&&<p role="status" className="mt-2 text-[11px] text-emerald-700">{notice}</p>}
+    {(['queued','running'].includes(status))&&!run.readOnly&&<form onSubmit={event=>{event.preventDefault();void followUp()}} className="mt-3 flex flex-wrap gap-2">
+     <input type="text" maxLength={4000} value={steering} disabled={busy} onChange={e=>setSteering(e.target.value)}
+      aria-label={en?'Steer current task':'실행 중 추가 지시'} placeholder={en?'Add a follow-up instruction…':'진행 중인 작업에 추가 지시…'}
+      className="min-w-40 flex-1 rounded-lg border border-[#E7E0D5] bg-white px-3 py-2 text-[11px]"/>
+     <button type="submit" disabled={busy||!steering.trim()} className="rounded-lg border border-[#D9BAA6] px-3 py-2 text-[11px] text-[#A4583E] disabled:opacity-40">{en?'Submit':'전달'}</button>
+    </form>}
+    {(run.runRef?.executionId||run.checkpoint?.executionId)&&<>
+      <ExecutionInsights executionId={(run.runRef?.executionId||run.checkpoint?.executionId)!} compact/>
+      <RunEventTimeline executionId={(run.runRef?.executionId||run.checkpoint?.executionId)!}/>
+    </>}
     <div className="mt-3 flex gap-2">
      {running.has(status)&&<button type="button" disabled={busy} onClick={()=>void action('cancel')} className="flex items-center gap-1 rounded-lg border border-[#E7E0D5] px-3 py-2 text-[11px]">
       <Square size={13}/>{en?'Stop':'중단'}
