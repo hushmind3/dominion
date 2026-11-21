@@ -402,12 +402,80 @@ async fn wait_dispatch_event(
             _=finished.notified()=>return true,
             _=fallback.tick()=>return true,
             event=events.recv()=>match event{
-                Ok(value) if queued_job_event(&value)=>return true,
+                Ok(value) if queued_job_event(&value)||team_continuation_event(&value)=>return true,
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>return true,
                 Err(tokio::sync::broadcast::error::RecvError::Closed)=>return false,
                 _=>{}
             }
         }
+    }
+}
+
+/// A completed child receipt or a freshly created Team wakes the existing
+/// job dispatcher. Remote Workers also have the bounded timer fallback: no
+/// second scheduler, extra service, or model turn is required.
+fn team_continuation_event(event:&Value)->bool{
+    if event["type"]!="record"{return false;}
+    match event["kind"].as_str(){
+        Some("job"|"remote_task"|"managed_team_task")=>matches!(
+            event["record"]["status"].as_str(),
+            Some("completed"|"failed"|"cancelled"|"interrupted"|"needs_review")
+        ),
+        Some("managed_team")=>event["record"]["status"]=="running",
+        _=>false,
+    }
+}
+
+fn team_can_advance(team:&Value)->bool{
+    team["status"]=="running" && team["cancelRequested"]!=true
+        && team["id"].as_str().is_some_and(|id|!id.is_empty())
+        && team["leadSessionId"].as_str().is_some_and(|id|!id.is_empty())
+        && team["tasks"].is_array() && team["waves"].is_array()
+}
+
+/// Progress ONLY immutable, previously authorized Team DAGs. The original
+/// member CAS, cancellation tombstone, remote epoch and Writer lease remain
+/// authoritative; a second wake cannot create a second child or overwrite
+/// an uncertain receipt. The Lead's live turn keeps priority via its slot.
+fn advance_managed_teams(state:&AppState){
+    for team in state.store.all("managed_team").into_iter().filter(team_can_advance){
+        let team_id=team["id"].as_str().unwrap_or_default().to_string();
+        let owner=team["leadSessionId"].as_str().unwrap_or_default().to_string();
+        if state.is_cancelled(&owner){continue;}
+        let state=state.clone();
+        tokio::spawn(async move{
+            if !state.begin_session(&owner){return;}
+            let _guard=state.session_guard(&owner);
+            // Re-read after taking the session slot: cancellation, deleted
+            // sessions and Team completion can race the queued wake.
+            let Some(team)=state.store.get("managed_team",&team_id)else{return;};
+            if !team_can_advance(&team)
+                ||team["leadSessionId"].as_str()!=Some(owner.as_str())
+                ||state.is_cancelled(&owner){return;}
+            let Some(session)=state.store.get("session",&owner)else{return;};
+            let workspace=match session["workspaceDir"].as_str(){
+                Some(path)=>match crate::engine::workspace_scope::resolve(&state,path){
+                    Ok(path)=>path,
+                    Err(error)=>{
+                        state.store.audit("managed_team.continuation_workspace_error",
+                            json!({"teamId":team_id,"error":error}));
+                        return;
+                    }
+                },
+                None=>state.config.workspace.clone(),
+            };
+            let context=crate::engine::tools::ToolContext{
+                workspace:&workspace,store:&state.store,state:&state,
+                session_id:&owner,agent_id:team["leadAgentId"].as_str(),
+                tools_enabled:true,tools_execution_enabled:true,
+            };
+            let run_id=format!("managed-team-continuation-{team_id}");
+            if let Err(error)=crate::engine::tools::execute(&context,"team_execute",
+                &json!({"teamId":team_id,"wait":false}),&run_id).await{
+                state.store.audit("managed_team.continuation_error",
+                    json!({"teamId":team_id,"error":error}));
+            }
+        });
     }
 }
 
@@ -437,6 +505,10 @@ pub fn start(state:AppState){
                     wake.notify_one();
                 });
             }
+            // An already approved DAG may have become ready when a prior
+            // local or remote Worker finished. Re-enter its existing Rust
+            // tool gateway, never a new model loop or a second Team plan.
+            advance_managed_teams(&dispatch_state);
             if !wait_dispatch_event(&mut events,&finished,&mut fallback).await{
                 break;
             }
@@ -952,6 +1024,36 @@ mod tests {
             Err(SteeringError::Conflict(_))));
         assert_eq!(state.store.get("job",id).unwrap()["steering"].as_array().unwrap().len(),1);
     }
+    #[test]
+    fn durable_team_wakes_on_real_worker_settlement_not_arbitrary_messages(){
+        assert!(team_continuation_event(&json!({"type":"record","kind":"job",
+            "record":{"status":"completed"}})));
+        assert!(team_continuation_event(&json!({"type":"record","kind":"remote_task",
+            "record":{"status":"needs_review"}})));
+        assert!(team_continuation_event(&json!({"type":"record","kind":"managed_team",
+            "record":{"status":"running"}})));
+        assert!(!team_continuation_event(&json!({"type":"record","kind":"job",
+            "record":{"status":"running"}})));
+        assert!(!team_continuation_event(&json!({"type":"job_event","kind":"job",
+            "record":{"status":"completed"}})));
+    }
+
+    #[test]
+    fn cancelled_or_uncommitted_teams_are_never_auto_continued(){
+        let live=json!({"id":"t1","status":"running","leadSessionId":"s1",
+            "tasks":[{"id":"a"}],"waves":[[0]]});
+        assert!(team_can_advance(&live));
+        let mut cancelled=live.clone();
+        cancelled["cancelRequested"]=json!(true);
+        assert!(!team_can_advance(&cancelled));
+        let mut finished=live.clone();
+        finished["status"]=json!("completed");
+        assert!(!team_can_advance(&finished));
+        let mut uncommitted=live;
+        uncommitted["waves"]=Value::Null;
+        assert!(!team_can_advance(&uncommitted));
+    }
+
     #[test]
     fn dispatcher_wakes_only_for_queued_job_record(){
         assert!(queued_job_event(&json!({"type":"record","kind":"job",
