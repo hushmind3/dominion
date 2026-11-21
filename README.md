@@ -20,6 +20,10 @@ execution receipts and user-controlled workspace boundaries in the application.
   decisions, durable effect records, cancellation, restart and repair.
   Team patches require full frozen-worker preflight and stop across owner
   cancellation boundaries; incomplete external CLI runs require review.
+- **Restore and local API protection:** maintenance-only encrypted backup restore
+  journals the prior SQLite database and vault key, rejects active work, and
+  recovers the original pair on failure or interrupted startup. Owner GETs
+  validate the local Host; authenticated remote Worker routes retain separate access.
 - **Model choice:** bring OpenAI / Anthropic API credentials, or connect supported
   local inference endpoints such as Ollama, llama.cpp and LM Studio.
   Explicit per-endpoint tool/text capability denials are enforced on fallback.
