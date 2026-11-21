@@ -41,6 +41,7 @@ async function mock(route){
   })
   const original=memories.find(m=>m.id==='learned-evidence')
   original.status='superseded'
+  original.retrievalEligible=false // Match the server's derived /api/memories eligibility projection.
   original.supersededBy='corrected-learned-evidence'
   const replacement={
    id:'corrected-learned-evidence',text:body.text,
