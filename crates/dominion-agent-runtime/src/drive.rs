@@ -213,6 +213,26 @@ mod tests{
         }).is_err());
         assert_eq!(run.decision_tape.len(),1);
     }
+    #[test] fn failed_settlement_keeps_the_paid_generation_fenced() {
+        struct RejectRelease;
+        impl crate::Journal for RejectRelease {
+            fn save(&self, snapshot:&crate::Snapshot)->Result<(),String>{
+                if snapshot.model_in_flight {Ok(())}
+                else {Err("simulated lost journal write".into())}
+            }
+        }
+        let mut run=snapshot();
+        run.model_in_flight=true;
+        run.model_calls=1;
+        run.charged_tokens=52;
+        let outcome=settle_model_turn(&RejectRelease,&mut run,crate::Decision{
+            plan:Vec::new(),actions:Vec::new(),answer:Some("uncommitted".into())
+        });
+        assert!(outcome.is_err());
+        assert!(run.model_in_flight);
+        assert!(run.decision_tape.is_empty());
+        assert_eq!(run.charged_tokens,52);
+    }
     #[test]fn shared_cursor_is_deterministic_across_chat_and_native_resume(){
         let mut first=HarnessDrive::new(3).unwrap();
         assert_eq!(first.admit(false,0,3),DriveAdmission::Next(0));
