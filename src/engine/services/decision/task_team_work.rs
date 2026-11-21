@@ -15,7 +15,9 @@ fn matching(row:&Value,execution_id:&str,session_id:&str,revision:&str,
     && row["programRevision"]==revision && row["teamNodeId"]==parent_id
     && row["index"]==index && row["nodeId"]==node["id"]
     && row["nodeType"]==node["type"]
-    && row["agentId"]==node["agentId"] && row["dependsOn"]==node["dependsOn"]
+    && row["requestedAgentId"]==node["agentId"]
+    && row["fallbackAgentIds"]==node["fallbackAgentIds"]
+    && row["dependsOn"]==node["dependsOn"]
 }
 /// Idempotent assignment. No untrusted peer or model claim can impersonate
 /// another run; execution ownership must already be committed by the host.
@@ -36,7 +38,9 @@ pub fn assign(
         "programRevision":revision,"teamNodeId":parent_id,
         "sourceMessageId":run["sourceMessageId"],
         "index":index,"nodeId":node["id"],"nodeType":node["type"],
-        "agentId":node["agentId"],"dependsOn":node["dependsOn"],
+        "agentId":node["agentId"],"requestedAgentId":node["agentId"],
+        "fallbackAgentIds":node["fallbackAgentIds"],
+        "dependsOn":node["dependsOn"],
         "leadAgentId":run["agentId"],"onFailure":node["onFailure"],
         "status":"assigned","attempt":0,
     });
@@ -49,6 +53,50 @@ pub fn assign(
             revision,parent_id,index,node))
         .ok_or("Task Team assignment scope/revision changed on replay".into())
 }
+/// Unavailable workers are replaced ONLY while the original assignment has
+/// never started. Any claimed/delegated/unknown effect remains a review fence.
+pub fn reassign_unstarted(
+    state:&AppState,assignment:&Value,node:&Value,
+)->Result<Value,String>{
+    if node["type"]!="delegate"{return Ok(assignment.clone());}
+    let original=node["agentId"].as_str().ok_or("original delegate missing")?;
+    let id=assignment["id"].as_str().ok_or("Task Team assignment ID missing")?;
+    let available=|agent:&str|state.store.get("agent",agent)
+        .is_some_and(|row|row["disabled"]!=true && row["enabled"]!=false);
+    if available(original){return Ok(assignment.clone());}
+    if assignment["status"]!="assigned"{
+        return Err("delegate unavailable after execution started; review required".into());
+    }
+    let replacement=node["fallbackAgentIds"].as_array()
+        .and_then(|items|items.iter().filter_map(Value::as_str)
+            .find(|candidate|*candidate!=original && available(candidate)))
+        .ok_or("no registered backup delegate available")?;
+    if assignment["agentId"]==replacement && assignment["reassignedFrom"]==original{
+        return Ok(assignment.clone());
+    }
+    let run_id=assignment["executionId"].as_str().ok_or("parent run missing")?;
+    let run=state.store.get("execution",run_id)
+        .ok_or("Task Team parent run missing")?;
+    if run["status"]!="running" || run["sessionId"]!=assignment["sessionId"]{
+        return Err("Task Team parent owner is not live".into());
+    }
+    let guards=[("status",json!("assigned")),("agentId",assignment["agentId"].clone())];
+    let refs=guards.iter().map(|(key,value)|(*key,value)).collect::<Vec<_>>();
+    if let Some(saved)=state.store.patch_if_all_merge(
+        "task_team_work",id,&refs,
+        &json!({"agentId":replacement,"reassignedFrom":original,
+            "reassignmentReason":"original_agent_unavailable_before_dispatch",
+            "reassignedAt":chrono::Utc::now().to_rfc3339()}),&[]
+    ){
+        state.bus.record("task_team_work",&saved);
+        return Ok(saved);
+    }
+    state.store.get("task_team_work",id)
+        .filter(|row|row["status"]=="assigned"&&row["agentId"]==replacement
+            &&row["requestedAgentId"]==original)
+        .ok_or("Task Team claim/reassign collision; no extra work dispatched".into())
+}
+
 /// A crash during a running effect leaves a fence, not an automatic replay.
 /// The owner must inspect the tool receipt before issuing a new revision.
 pub fn claim(state:&AppState,assigned:&Value)->Result<Value,String>{
@@ -270,6 +318,25 @@ mod tests{
         assert_eq!(merged["evidenceVerified"],true);
         assert_eq!(finish_team(&state,&[worker_a,worker_b],&checkpoint).unwrap()["id"],merged["id"]);
         assert_eq!(state.store.all("task_team_result").len(),1);
+        drop(state);let _=std::fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn unavailable_worker_fails_over_before_dispatch_only(){
+        let (state,dir)=state();
+        state.store.put("agent",&json!({"id":"backup","name":"backup"})).unwrap();
+        let node=json!({"id":"delegate1","type":"delegate",
+            "agentId":"missing","fallbackAgentIds":["backup"]});
+        let first=assign(&state,"s","run-a","r1","team",3,&node).unwrap();
+        let updated=reassign_unstarted(&state,&first,&node).unwrap();
+        assert_eq!(updated["agentId"],"backup");
+        assert_eq!(updated["requestedAgentId"],"missing");
+        assert_eq!(reassign_unstarted(&state,&updated,&node).unwrap()["id"],first["id"]);
+        let started=claim(&state,&updated).unwrap();
+        assert!(reassign_unstarted(&state,&started,&node).is_err());
+        assert!(claim(&state,&first).is_err());
+        let unexpected=json!({"id":"delegate1","type":"delegate",
+            "agentId":"missing","fallbackAgentIds":["unauthorized"]});
+        assert!(assign(&state,"s","run-a","r1","team",3,&unexpected).is_err());
         drop(state);let _=std::fs::remove_dir_all(dir);
     }
     #[test]

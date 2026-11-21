@@ -291,3 +291,7 @@ ProgramIR의 기존 `parallel` 노드에 `dependsOn` 형제 ID를 정식 지원�
 ### P0: Worker 결과 병합·팀 검증
 
 각 Task Team 파동이 끝나고 실제 작업 결과가 `task_team_work`에 기록된 뒤, 모든 자식이 완료됐음을 SQLite에서 재조회해 단일 `task_team_result`를 생성합니다. 결과에는 멤버별 도구 영수증 ID, 미검증/실패 관측 상태, 실측 `evidenceVerified`, 실패 개수를 포함합니다. 모델의 완료 문장은 어떤 성공 근거로도 인정하지 않습니다. `onFailure:continue` 없이 실패한 도구가 들어 있으면 팀 완료를 막고 검토 대상으로 격리합니다. 합쳐진 보고서 ID는 ProgramIR 체크포인트의 `teamResultRefs`에 저장하고, 재시작 시 중복 보고서를 생성하지 않도록 결정적 ID를 사용합니다.
+
+## 2026-11-21 P0: 실행 전 Worker 자동 대체
+
+ProgramIR `delegate`에서 최대 4개의 `fallbackAgentIds`를 지정할 수 있습니다. 원래 에이전트가 로컬 Registry에서 없어졌거나 비활성화됐을 때, 배정이 아직 `assigned`인 경우에 한해 실제 등록된 후보를 결정적으로 선택합니다. SQLite `patch_if_all_merge`로 상태와 현재 에이전트를 동시에 검사하고 원본 ID·대체 ID·근거를 영속 기록합니다. 실행이 시작된 상태(`running`)나 `needs_review`/불명확한 효과는 자동 재배정하지 않으며 실제 `delegate_task` 허가/승인 계약은 그대로 유지합니다.

@@ -110,6 +110,23 @@ fn validate_node(node: &Value) -> Result<(), String> {
             {
                 return Err("delegate.agentId/prompt are required".into());
             }
+            if let Some(fallbacks)=node.get("fallbackAgentIds"){
+                let backups=fallbacks.as_array()
+                    .ok_or("delegate.fallbackAgentIds must be an array")?;
+                if backups.len()>4{return Err("delegate fallback limit is 4".into());}
+                let mut seen=std::collections::HashSet::new();
+                for candidate in backups{
+                    let candidate=candidate.as_str().filter(|s|!s.is_empty()
+                        && s.len()<=128
+                        && s.chars().all(|c|c.is_ascii_alphanumeric()
+                            || matches!(c,'-'|'_'|'.')))
+                        .ok_or("invalid delegate backup agent ID")?;
+                    if candidate==node["agentId"].as_str().unwrap_or("")
+                        || !seen.insert(candidate){
+                        return Err("backup agents must be distinct from original and peers".into());
+                    }
+                }
+            }
             Ok(())
         }
         other => Err(format!("unsupported program node type: {other}")),
