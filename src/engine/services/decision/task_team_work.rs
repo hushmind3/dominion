@@ -37,6 +37,7 @@ pub fn assign(
         "sourceMessageId":run["sourceMessageId"],
         "index":index,"nodeId":node["id"],"nodeType":node["type"],
         "agentId":node["agentId"],"dependsOn":node["dependsOn"],
+        "leadAgentId":run["agentId"],"onFailure":node["onFailure"],
         "status":"assigned","attempt":0,
     });
     if let Some(saved)=state.store.put_if_absent("task_team_work",&new){
@@ -126,6 +127,76 @@ pub fn block(state:&AppState,assignment:&Value,reason:&str)->Result<Value,String
     state.bus.record("task_team_work",&saved);
     Ok(saved)
 }
+/// Deterministic parent result, generated only from committed worker records.
+/// A failed tool may be treated as an observation only when the owning
+/// ProgramIR explicitly requests "onFailure":"continue"; never verified.
+pub fn finish_team(
+    state:&AppState,assignments:&[Value],checkpoint:&Value,
+)->Result<Value,String>{
+    let first=assignments.first().ok_or("empty Task Team")?;
+    let execution_id=first["executionId"].as_str().ok_or("team execution missing")?;
+    let revision=first["programRevision"].as_str().ok_or("team revision missing")?;
+    let scope=first["teamNodeId"].as_str().ok_or("team scope missing")?;
+    let session_id=first["sessionId"].as_str().ok_or("team session missing")?;
+    let mut evidence=Vec::new();
+    let mut verified=true;
+    let mut failures=0usize;
+    for member in assignments{
+        let id=member["id"].as_str().ok_or("team work ID missing")?;
+        let persisted=state.store.get("task_team_work",id)
+            .ok_or("team work disappeared")?;
+        if persisted["status"]!="completed"
+            || persisted["executionId"]!=execution_id
+            || persisted["programRevision"]!=revision
+            || persisted["sessionId"]!=session_id
+            || persisted["teamNodeId"]!=scope {
+            return Err("team contains unfinished or foreign work".into());
+        }
+        if let Some(node_id)=persisted["nodeId"].as_str(){
+            if !checkpoint["completedOperationIds"].as_array()
+                .is_some_and(|completed|completed.iter().any(|id|id==node_id)){
+                return Err("team member is not completed in its checkpoint".into());
+            }
+        }
+        let status=persisted["evidence"]["kind"].as_str()
+            .ok_or("team member has no committed evidence")?;
+        if status=="tool_failed_observed"{
+            if persisted["onFailure"]!="continue"{
+                return Err("failed team work has no explicit continue policy".into());
+            }
+            failures+=1;
+        }
+        let member_verified=persisted["evidence"]["toolVerified"]==true;
+        verified&=member_verified;
+        evidence.push(json!({
+            "workId":id,"nodeId":persisted["nodeId"],
+            "agentId":persisted["agentId"],
+            "status":status,"operationId":persisted["evidence"]["operationId"],
+            "verified":member_verified,
+        }));
+    }
+    let id=format!("team-result-{}",memory::stable_id(&[
+        execution_id,revision,scope]));
+    let result=json!({
+        "id":id,"kind":"program_task_team",
+        "executionId":execution_id,"sessionId":session_id,
+        "programRevision":revision,"teamNodeId":scope,
+        "status":"completed","members":evidence,"memberCount":assignments.len(),
+        "observedFailures":failures,
+        "evidenceVerified":verified,
+    });
+    if let Some(saved)=state.store.put_if_absent("task_team_result",&result){
+        state.bus.record("task_team_result",&saved);
+        return Ok(saved);
+    }
+    state.store.get("task_team_result",&id).filter(|old|
+        old["executionId"]==execution_id
+        && old["sessionId"]==session_id
+        && old["programRevision"]==revision
+        && old["teamNodeId"]==scope
+        && old["members"]==result["members"]
+    ).ok_or("team result changed on replay")
+}
 #[cfg(test)]
 mod tests{
     use super::*;
@@ -166,6 +237,39 @@ mod tests{
         assert_eq!(done["evidence"]["toolVerified"],true);
         assert!(settle(&state,&live,&node,&checkpoint).is_err());
         assert!(claim(&state,&first).is_err());
+        drop(state);let _=std::fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn team_result_requires_all_workers_and_is_not_a_narrative_success(){
+        let (state,dir)=state();
+        let a=json!({"id":"read","type":"call_tool","tool":"workspace_read"});
+        let b=json!({"id":"write","type":"call_tool","tool":"workspace_write"});
+        let worker_a=assign(&state,"s","run-a","r1","team",0,&a).unwrap();
+        let worker_b=assign(&state,"s","run-a","r1","team",1,&b).unwrap();
+        let claim_a=claim(&state,&worker_a).unwrap();
+        let _claim_b=claim(&state,&worker_b).unwrap();
+        let checkpoint=json!({"completedOperationIds":["read","write"]});
+        assert!(finish_team(&state,&[worker_a.clone(),worker_b.clone()],&checkpoint).is_err());
+        state.store.put("execution_operation",&json!({
+            "id":"read-op","runId":"run-a","sessionId":"s",
+            "tool":"workspace_read","callId":"program-read-call",
+            "status":"completed","toolReceipt":{"verified":true}
+        })).unwrap();
+        settle(&state,&claim_a,&a,&checkpoint).unwrap();
+        assert!(finish_team(&state,&[worker_a.clone(),worker_b.clone()],&checkpoint).is_err());
+        state.store.put("execution_operation",&json!({
+            "id":"write-op","runId":"run-a","sessionId":"s",
+            "tool":"workspace_write","callId":"program-write-call",
+            "status":"completed","toolReceipt":{"verified":true}
+        })).unwrap();
+        settle(&state,&worker_b,&b,&checkpoint).unwrap();
+        let merged=finish_team(&state,&[worker_a.clone(),worker_b.clone()],
+            &checkpoint).unwrap();
+        assert_eq!(merged["status"],"completed");
+        assert_eq!(merged["memberCount"],2);
+        assert_eq!(merged["evidenceVerified"],true);
+        assert_eq!(finish_team(&state,&[worker_a,worker_b],&checkpoint).unwrap()["id"],merged["id"]);
+        assert_eq!(state.store.all("task_team_result").len(),1);
         drop(state);let _=std::fs::remove_dir_all(dir);
     }
     #[test]
