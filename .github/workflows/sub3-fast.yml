@@ -41,6 +41,7 @@ jobs:
       - run: cargo check --locked --bin dominion-rust
       - run: cargo test --locked --workspace --no-run
       - run: cargo check --locked --all-targets
+      - run: cargo test --locked --test e2e health_reports_running_binary_identity_instead_of_moving_checkout_head -- --exact web_api::health_reports_running_binary_identity_instead_of_moving_checkout_head
       - run: cargo test --locked --bin dominion-rust real_modern_stdio_never_initializes_and_persists_one_live_process
       - run: cargo test --locked --bin dominion-rust modern_mcp_http_uses_discovery_stateless_headers_and_live_pinned_schema
       - run: cargo test --locked --bin dominion-rust modern_mcp_auth_failure_does_not_fall_back_to_initialize
