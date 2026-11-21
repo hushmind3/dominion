@@ -179,7 +179,10 @@ async fn handle_task(
         transport.send("/v1/remote/heartbeat",&json!({
             "workerId":worker_id,"workerEpoch":epoch,
         })).await?;
-        transport.send("/v1/remote/renew",&common).await?;
+        let renewed=transport.send("/v1/remote/renew",&common).await?;
+        if renewed["cancelRequested"]==true {
+            let _=engine::jobs::cancel_job(state,&job_id);
+        }
         tokio::time::sleep(Duration::from_millis(HEARTBEAT_MS)).await;
     }
 }
