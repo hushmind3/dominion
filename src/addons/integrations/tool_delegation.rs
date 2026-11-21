@@ -49,7 +49,7 @@ pub(super) async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Valu
         return Err("외부 Agent Bridge는 inspection 역할과 isolatedWorktree=true에서만 실행할 수 있습니다.".into());
     }
     if let Some(kind)=external {
-        if !matches!(kind,"codex"|"claude"|"qwen"){
+        if !matches!(kind,"codex"|"claude"|"qwen"|"codex-app-server"|"qwen-acp"){
             return Err("지원하지 않는 외부 Agent 실행기입니다.".into());
         }
     }

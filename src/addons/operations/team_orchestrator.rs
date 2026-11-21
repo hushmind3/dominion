@@ -72,7 +72,7 @@ fn validate(plan:&Value,roster:&[Value])->Result<Vec<Step>,String>{
         if depends.len()>4{return Err("단계당 의존성은 최대 4개입니다.".into());}
         let external=item["externalRuntime"].as_str().map(str::to_string);
         if external.as_deref().is_some_and(|id|
-            profile!="inspection"||!matches!(id,"codex"|"claude"|"qwen")){
+            profile!="inspection"||!matches!(id,"codex"|"claude"|"qwen"|"codex-app-server"|"qwen-acp")){
             return Err("외부 Agent는 격리된 inspection 역할에서만 실행합니다.".into());
         }
         steps.push(Step{id:id.into(),agent,profile:profile.into(),prompt:prompt.into(),depends,external});
