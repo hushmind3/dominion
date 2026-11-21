@@ -707,6 +707,9 @@ function Message({message,agentName,showReasoning}:{message:ChatMessage;agentNam
  const [open,setOpen]=useState(true)
  const human=message.role==='user'
  const attached=(Array.isArray(message.metadata?.attachments)?message.metadata.attachments:[]) as {id:string;name:string;size?:number;isImage?:boolean}[]
+ const sources=Array.isArray(message.metadata?.sources)
+  ?message.metadata.sources.filter(source=>typeof source.title==='string'
+   &&typeof source.url==='string'&&/^https?:\/\//i.test(source.url)).slice(0,8):[]
  return <div className={'chat-turn '+(human?'chat-turn-owner':'chat-turn-assistant')} data-message data-role={message.role}>
   {!human&&<div className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#A94E30]"><Sparkles size={17}/></div>}
   <div className="chat-turn-body">
@@ -714,6 +717,14 @@ function Message({message,agentName,showReasoning}:{message:ChatMessage;agentNam
    {showReasoning&&message.reasoning&&<details className="mb-3 max-h-56 overflow-y-auto rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-[11px] leading-5 text-[#7C7469]" open={open}><summary className="cursor-pointer select-none" onClick={e=>{e.preventDefault();setOpen(v=>!v)}}><BrainCircuit size={14} className="inline"/> {t('chat.reasoningProcess',{count:message.reasoning.length.toLocaleString()})} <ChevronRight size={13} className="inline"/></summary><div className="mt-2 whitespace-pre-wrap">{message.reasoning}</div></details>}
    {(message.content||!human)&&<div className="chat-turn-text">{human?message.content:<MarkdownMessage text={message.content||(!human&&message.tool_calls?.length?t('chat.toolRequest'):'')}/>}</div>}
    {human&&attached.length>0&&<div className="chat-saved-attachments">{attached.map(file=><AttachmentLink key={file.id} file={file}/>)}</div>}
+   {!human&&sources.length>0&&<details className="chat-web-sources" aria-label="검색 출처">
+    <summary>검색 출처 {sources.length}개</summary>
+    <div>{sources.map((source,i)=><a key={source.url} href={source.url} target="_blank" rel="noopener noreferrer">
+     <span className="chat-web-source-number">{i+1}</span>
+     <span className="chat-web-source-title">{source.title}</span>
+     {source.published&&<small>{source.published}</small>}
+    </a>)}</div>
+   </details>}
    {!human&&message.content&&<Button className="chat-turn-copy inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] text-[#7C7469] hover:bg-[#F3EEE5]" onClick={()=>void navigator.clipboard.writeText(message.content)} title={t('chat.copy')}><Copy size={14}/></Button>}
   </div>
  </div>

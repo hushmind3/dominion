@@ -186,3 +186,14 @@
 .chat-web-search-toggle{display:inline-flex!important;align-items:center;gap:5px!important;min-height:27px!important;padding:4px 9px!important;border:1px solid transparent!important;border-radius:8px!important;background:transparent!important;color:#71665A!important;font-size:11px!important;font-weight:620!important}
 .chat-web-search-toggle:hover{background:#F7F1E9!important}
 .chat-web-search-toggle[aria-pressed="true"]{border-color:#CCB296!important;background:#F6EADA!important;color:#8C5034!important}
+
+/* Provenance is derived from this turn's actual web tool receipts, not text. */
+.chat-web-sources{min-width:0;margin-top:13px;border-top:1px solid #EAE2D7;padding-top:8px;color:#7B7063}
+.chat-web-sources>summary{display:list-item;cursor:pointer;list-style:disclosure-closed;font-size:12px;font-weight:650;padding:3px 0 3px 3px}
+.chat-web-sources[open]>summary{list-style:disclosure-open}
+.chat-web-sources>div{display:flex;flex-direction:column;gap:6px;margin-top:7px}
+.chat-web-sources a{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 9px;padding:5px 2px;color:#77513E;text-decoration:none;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.chat-web-sources a:hover .chat-web-source-title{text-decoration:underline;text-underline-offset:3px}
+.chat-web-source-number{display:inline-grid;place-items:center;flex:none;height:19px;min-width:19px;border:1px solid #DED4C6;border-radius:5px;font-size:10px;font-weight:700;color:#776C60}
+.chat-web-source-title{min-width:0;flex:1}
+.chat-web-sources small{font-size:10px;color:#9D9489}

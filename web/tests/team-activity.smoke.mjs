@@ -84,7 +84,11 @@ try{
        agent_id:'lead',created_at:'2026-11-22 00:00:01'},
       {id:'assistant-markdown',session_id:'chat-one',role:'assistant',
        content:'## 결과 제목\n\n- 첫 번째 항목\n- 두 번째 항목\n\n```tsx\nconst count = 2\n```\n\n| 구분 | 결과 |\n| --- | --- |\n| A | B |\n\n[참조](https://example.com) <script>alert(1)</script>',
-       agent_id:'lead',created_at:'2026-11-22 00:00:02'}
+       agent_id:'lead',
+       metadata:{sources:[
+        {title:'2026 기술 자료',url:'https://example.com/report',published:'Sun, 22 Nov 2026 10:00:00 GMT'},
+        {title:'Dangerous',url:'javascript:alert(1)'}]},
+       created_at:'2026-11-22 00:00:02'}
     ]:[];
     if(path.endsWith('/usage'))response={totalTokens:0};
     if(path==='/api/model-library/runtime')response={status:'idle'};
@@ -218,6 +222,11 @@ try{
   assert.equal(await markdownTurn.locator('.md-message a[href="https://example.com"]').count(),1);
   assert.equal(await markdownTurn.locator('script').count(),0,
     'model text must never mount HTML scripts');
+  await markdownTurn.getByText('검색 출처 1개').click();
+  assert.equal(await markdownTurn.locator('.chat-web-sources a').count(),1);
+  assert.equal(await markdownTurn.locator('.chat-web-sources a').first().getAttribute('href'),
+    'https://example.com/report');
+  assert.equal(await markdownTurn.getByText('Sun, 22 Nov 2026 10:00:00 GMT').count(),1);
   // Saved files use the same credentialed request as Chat, even if the
   // server requires the DOMINION token rather than browser cookies.
   await page.evaluate(async()=>{(await import('/src/api.ts')).setAuthToken('attachment-test-token')})

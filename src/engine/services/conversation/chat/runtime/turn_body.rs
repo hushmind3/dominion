@@ -1979,6 +1979,9 @@ pub(super) async fn run_turn_body(
         }
     }
 
+    if request.direct_chat && request.web_search {
+        metadata["sources"]=json!(public_web_sources(state,session_id,execution_id));
+    }
     super::finalize::finish(state,request,session_id,execution_id,generation,
         super::finalize::FinalAnswer{
             metadata,content:final_content,reasoning:final_reasoning,
@@ -1995,4 +1998,77 @@ pub(super) async fn run_turn_body(
             provider_id:provider.id,model:provider.model,
             projection:continuation_projection,
         })
+}
+
+
+/// Source links come from exact native web-search receipts in this execution,
+/// never from model-generated citations or a different conversation/turn.
+/// A bounded recent query keeps finalization fast even for long transcripts.
+fn public_web_sources(state:&AppState,session_id:&str,execution_id:&str)->Vec<Value>{
+    let mut found=Vec::new();
+    let mut seen=std::collections::HashSet::<String>::new();
+    let rows=state.store.try_recent_messages(session_id,96).unwrap_or_default();
+    for message in rows {
+        if message["role"]!="tool"
+            || message["metadata"]["executionId"].as_str()!=Some(execution_id){continue}
+        let Some(body)=message["content"].as_str()else{continue};
+        let Ok(response)=serde_json::from_str::<Value>(body)else{continue};
+        let Some(results)=response["results"].as_array()else{continue};
+        for source in results {
+            let Some(title)=source["title"].as_str().filter(|title|!title.trim().is_empty())
+                else{continue};
+            let Some(link)=source["url"].as_str()else{continue};
+            let Ok(url)=reqwest::Url::parse(link)else{continue};
+            if !matches!(url.scheme(),"http"|"https")
+                || url.host_str().is_none()
+                || !url.username().is_empty() || url.password().is_some()
+                || link.len()>2048 {continue}
+            if !seen.insert(link.to_owned()){continue}
+            let published=source["published"].as_str().unwrap_or("")
+                .chars().take(60).collect::<String>();
+            found.push(json!({"title":title.trim().chars().take(160).collect::<String>(),
+                "url":link,"published":published}));
+            if found.len()>=8{return found}
+        }
+    }
+    found
+}
+
+#[cfg(test)]
+mod web_source_metadata_tests {
+    use super::*;
+    use crate::{config::Config,db::Store,vault::Vault};
+
+    #[test]
+    fn exact_execution_receipts_only_produce_safe_deduplicated_web_references(){
+        let dir=std::env::temp_dir().join(format!("dominion-web-sources-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=Config{port:0,data_dir:dir.clone(),web_dir:dir.join("web"),
+            workspace:dir.clone()};
+        let store=Store::open(&config.db_path()).unwrap();
+        let state=AppState::new(config,store,Vault::open(&dir.join("key")));
+        state.store.put("session",&json!({"id":"web-test"})).unwrap();
+        let record=|execution:&str,results:Value|{
+            state.store.write_message(&json!({
+                "session_id":"web-test","role":"tool",
+                "content":json!({"query":"example","results":results}).to_string(),
+                "metadata":{"authorKind":"tool","executionId":execution}
+            })).expect("tool receipt");
+        };
+        record("prior",json!([{"title":"Wrong execution","url":"https://wrong.example/past"}]));
+        record("active",json!([
+            {"title":"Research paper","url":"https://example.org/article?id=1",
+                "published":"Sun, 22 Nov 2026 10:00:00 GMT"},
+            {"title":"Duplicate","url":"https://example.org/article?id=1"},
+            {"title":"Unsafe scheme","url":"javascript:alert(1)"},
+            {"title":"Credential-bearing URL","url":"https://secret@example.org/private"},
+            {"title":"No title","url":"https://example.org/empty"},
+            {"title":"Second source","url":"https://example.net/report"}
+        ]));
+        let refs=public_web_sources(&state,"web-test","active");
+        assert_eq!(refs.len(),2,"only current execution, safe URLs, unique links");
+        assert_eq!(refs[0]["title"],"Research paper");
+        assert_eq!(refs[0]["published"],"Sun, 22 Nov 2026 10:00:00 GMT");
+        assert_eq!(refs[1]["url"],"https://example.net/report");
+    }
 }
