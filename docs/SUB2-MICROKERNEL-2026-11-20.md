@@ -271,3 +271,7 @@ ProgramIR의 기존 `parallel` 노드에 `dependsOn` 형제 ID를 정식 지원�
 제품 Chat과 standalone Rust AgentLoop가 각각의 `authorize_step`/도구 호출 목록 검사/`admit_batch` 조립을 반복하지 않도록 `dominion-turn-core::agent_loop::PreparedResponse` 계약을 도입했습니다. **두 실행 경로 모두 `Harness::prepare_response`에서 실제 모델 응답의 도구 ID·전략 판정을 수행**하고, 영속 assistant 제안 저장 이후(또는 standalone transcript 추가 전) 동일한 `Harness::admit_prepared`로 전체 도구 배치를 원자 승인합니다. 승인 티켓은 ID·도구 이름을 비공개 소유하며, model/provider가 광고하지 않은 도구와 중복 호출을 전부 거절합니다. 제품의 거절 피드백·SQLite 체인과 standalone host callbacks는 기존 인터페이스를 유지합니다.
 
 호스트별 스트리밍 UI, 도구 승인 대기, ProgramIR 스케줄링은 여전히 별도 어댑터 안에 있으며, 단일 모델 응답의 판단·승인 경계를 먼저 공통화한 것입니다.
+
+## 2026-11-21 P0: Task Team 영속 작업판 (도입)
+
+`task_team_work`가 프로그램 내 각 DAG 노드에 결정적 ID를 발급하고 실행 시각·상태를 SQLite로 남깁니다. 동일 실행·팀·프로그램 버전·노드 인덱스만 동일 작업을 가리키며, 재시작 뒤 `running` 또는 `needs_review`를 자동 재발행하지 않습니다. 직접 도구/위임 노드는 실제 `execution_operation`에 성공 또는 명시적 실패 기록이 없으면 완료로 전환할 수 없습니다. 결과 문구만으로 완료를 판정하지 않고, 실패 관측도 성공 증거로 승격하지 않습니다. 외부 서비스에 대한 작업 큐를 신설하지 않고 기존 ProgramIR과 도구 영수증을 결합합니다.

@@ -120,6 +120,8 @@ pub mod adaptation;
 pub mod procedure;
 #[path = "services/decision/program.rs"]
 pub mod program;
+#[path = "services/decision/task_team_work.rs"]
+pub mod task_team_work;
 #[path = "services/decision/reflect.rs"]
 pub mod reflect;
 #[path = "services/decision/evaluation.rs"]
