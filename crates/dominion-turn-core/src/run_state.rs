@@ -21,6 +21,13 @@ pub fn is_terminal(phase: &str) -> bool {
 /// Returns the next phase, or None for an illegal transition. Repeating the
 /// current phase is treated as idempotent.
 pub fn transition(current: &str, event: &str) -> Option<&'static str> {
+    // A corrupted or future-version phase is not an ordinary failure.
+    // Reject it instead of converting it to a terminal "failed" receipt,
+    // which would hide a bad replay/migration from the owning host.
+    if !matches!(current, QUEUED | RUNNING | WAITING_APPROVAL | VERIFYING
+        | FINALIZING | SUCCEEDED | FAILED | CANCELLED | INTERRUPTED) {
+        return None;
+    }
     let next = match event {
         "start" => match current {
             QUEUED | RUNNING => RUNNING,
@@ -161,6 +168,16 @@ impl RunEvent{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn invalid_phase_never_becomes_a_valid_terminal_receipt(){
+        for bad in ["", "awaiting", "completed", "needs_review", "ruNNing"] {
+            for event in ["fail", "cancel", "interrupt", "start", "succeed"] {
+                assert_eq!(transition(bad,event),None,"{bad} + {event}");
+            }
+        }
+        assert_eq!(transition(RUNNING,"fail"),Some(FAILED));
+        assert_eq!(transition(WAITING_APPROVAL,"cancel"),Some(CANCELLED));
+    }
     #[test]
     fn terminal_states_never_reopen_and_review_requires_explicit_recovery(){
         for terminal in [RunState::Completed,RunState::Failed,
