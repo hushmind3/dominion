@@ -553,6 +553,7 @@ struct HttpSession {
     token: Option<String>,
     next_id: u64,
     modern: bool,
+    legacy_version: Option<String>,
     // Only the very next tools/call consumes this live validated schema.
     tool_schema: Option<Value>,
 }
@@ -573,13 +574,21 @@ impl HttpSession {
         if !matches!(mode,"auto"|"modern"|"legacy"){
             return Err("MCP protocolMode must be auto, modern or legacy".into());
         }
+        // Prefer 2025-11-25 when the HTTP peer needs an initialize handshake.
+        // An explicit older version can still be pinned in its server record.
+        let mut legacy_request=record["legacyProtocolVersion"].as_str()
+            .unwrap_or("2025-11-25").to_string();
+        if !matches!(legacy_request.as_str(),
+            "2025-11-25"|"2025-06-18"|"2025-03-26"|"2024-11-05"){
+            return Err("Unsupported legacy MCP protocol version".into());
+        }
         let mut session=Self{
             client:reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(10))
                 .timeout(Duration::from_secs(60))
                 .build().map_err(|error|error.to_string())?,
             url,session:None,token:state.read_secret(&format!("mcp:{id}")),
-            next_id:1,modern:mode!="legacy",tool_schema:None,
+            next_id:1,modern:mode!="legacy",legacy_version:None,tool_schema:None,
         };
         if session.modern {
             let probe=json!({"jsonrpc":"2.0","id":session.next_id,
@@ -604,6 +613,12 @@ impl HttpSession {
                     }
                 },
                 Err(error) if mode=="auto" &&
+                    modern::advertised_legacy_version(&error).is_some()=>{
+                    legacy_request=modern::advertised_legacy_version(&error)
+                        .unwrap().into();
+                    session.modern=false;
+                },
+                Err(error) if mode=="auto" &&
                     modern::legacy_http_probe_rejection(&error)=>{
                     // Ordinary handshake-era HTTP gateways often reject the
                     // unknown discovery method. A modern JSON-RPC error, 401,
@@ -614,12 +629,19 @@ impl HttpSession {
             }
         }
         if !session.modern {
-            session.request("initialize",json!({
-                "protocolVersion":"2024-11-05",
+            let response=session.request("initialize",json!({
+                "protocolVersion":legacy_request,
                 "capabilities":{},
                 "clientInfo":{"name":"dominion-rust",
                     "version":env!("CARGO_PKG_VERSION")}
             })).await?;
+            let negotiated=response["protocolVersion"].as_str()
+                .ok_or("MCP initialize returned no protocolVersion")?;
+            if !matches!(negotiated,
+                "2025-11-25"|"2025-06-18"|"2025-03-26"|"2024-11-05"){
+                return Err("MCP initialize selected an unsupported version".into());
+            }
+            session.legacy_version=Some(negotiated.into());
             session.notify("notifications/initialized",json!({})).await?;
         }
         Ok(session)
@@ -680,6 +702,11 @@ impl HttpSession {
         if !self.modern {
             if let Some(session)=&self.session{
                 request=request.header("mcp-session-id",session);
+            }
+            if let Some(version)=self.legacy_version.as_deref() {
+                if version>="2025-06-18" {
+                    request=request.header("MCP-Protocol-Version",version);
+                }
             }
         }
         if let Some(token)=&self.token {
