@@ -183,7 +183,7 @@ pub(super) async fn run_turn_body(
     // deterministic single-file paths must not acquire hidden tools.
     let bridge_enabled=capability::should_expose(
         full_catalog_size,tool_definitions.len(),
-        (!pure_chat_greeting || discovery["ownerActivated"]==true)
+        (!lightweight_chat || discovery["ownerActivated"]==true)
             && (!is_room || acceptance.is_some() || room_tool_request(&request.input)),
         request.tools_enabled && request.tools_execution_enabled,
         simple_creation_target.is_some(),
