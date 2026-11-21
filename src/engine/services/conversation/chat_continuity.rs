@@ -600,13 +600,24 @@ mod tests {
         commit_projection(&state,&first_plan,&saved,projection.unwrap());
         let second=vec![system("owner-2"),shared("stable"),owner("owner-2")];
         let mut second_plan=prepare(&state,&provider,&request,"room:r","same identity",&json!({})).unwrap();
-        let (stable_wire,_)=project(&state,&provider,&second,&[],"room:r",&mut second_plan);
+        let (stable_wire,stable_projection)=project(&state,&provider,&second,&[],"room:r",&mut second_plan);
         assert!(second_plan["workingView"]["rebaseReason"].is_null());
         assert_eq!(stable_wire.iter().filter(|m|m["content"]=="confirmed room state stable").count(),1);
         assert!(json!(stable_wire).to_string().contains("I remember the previous turn"));
-        let changed=vec![system("owner-2"),shared("changed"),owner("owner-2")];
-        let (changed_wire,_)=project(&state,&provider,&changed,&[],"room:r",&mut second_plan);
-        assert!(second_plan["workingView"]["rebaseReason"].is_null(),
+        // Commit this request before the next status revision; prefix reuse is
+        // measured against an actual saved provider turn, not a hypothetical
+        // projection that was never written.
+        let second_reply=state.store.write_message(&json!({
+            "session_id":"room:r","agent_id":"agent",
+            "role":"assistant","content":"second response",
+            "metadata":{"replyToMessageId":"owner-2"}
+        })).unwrap();
+        commit(&state,&second_plan,&second_reply);
+        commit_projection(&state,&second_plan,&second_reply,stable_projection.unwrap());
+        let changed=vec![system("owner-3"),shared("changed"),owner("owner-3")];
+        let mut third_plan=prepare(&state,&provider,&request,"room:r","same identity",&json!({})).unwrap();
+        let (changed_wire,_)=project(&state,&provider,&changed,&[],"room:r",&mut third_plan);
+        assert!(third_plan["workingView"]["rebaseReason"].is_null(),
             "historical status updates must not reset committed provider prefixes");
         assert_eq!(&changed_wire[..stable_wire.len()],stable_wire.as_slice(),
             "a later status observation must append after the original wire prefix");
@@ -614,7 +625,7 @@ mod tests {
         assert_eq!(changed_wire.iter().filter(|m|m["content"]=="confirmed room state stable").count(),1);
         assert!(changed_wire.iter().position(|m|m["content"]=="confirmed room state changed")
             > changed_wire.iter().position(|m|m["content"]=="confirmed room state stable"));
-        assert_eq!(second_plan["workingView"]["appendedFrames"],1);
+        assert_eq!(third_plan["workingView"]["appendedFrames"],2);
         drop(state); std::fs::remove_dir_all(root).unwrap();
     }
 
