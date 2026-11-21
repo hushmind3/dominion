@@ -155,6 +155,42 @@ mod tests {
         assert_eq!(window.through_message_id.as_deref(),Some("owner"));
     }
     #[test]
+    fn long_room_replays_150_turns_once_per_agent_across_cursor_snapshots(){
+        use std::collections::HashSet;
+        let mut transcript=vec![msg("owner","user","room:one","begin")];
+        for i in 1..=150 {
+            transcript.push(msg(&format!("turn-{i}"),"assistant",
+                "room:one",&format!("committed answer {i}")));
+        }
+        let mut a=checkpoint("room:one","agent-a","owner","owner");
+        let mut consumed=HashSet::<String>::new();
+        // A restart reconstructs only this saved record; no in-process
+        // delivery cache or model context is needed to reconstruct the window.
+        for _ in 0..150 {
+            let batch=plan(&transcript,"room:one","agent-a","owner",Some(&a)).unwrap();
+            if batch.required_indices.is_empty(){break;}
+            assert!(batch.required_indices.len()<=MAX_UNREAD_PER_TURN);
+            for idx in &batch.required_indices {
+                let id=transcript[*idx]["id"].as_str().unwrap();
+                assert!(consumed.insert(id.to_string()),
+                    "a committed room message was delivered twice: {id}");
+            }
+            let through=batch.through_message_id.unwrap();
+            a=checkpoint("room:one","agent-a","owner",&through);
+        }
+        assert_eq!(consumed.len(),150);
+        assert_eq!(a["throughMessageId"],"turn-150");
+        assert!(plan(&transcript,"room:one","agent-a","owner",Some(&a))
+            .unwrap().required_indices.is_empty());
+        let b=checkpoint("room:one","agent-b","owner","turn-100");
+        let next=plan(&transcript,"room:one","agent-b","owner",Some(&b)).unwrap();
+        assert_eq!(next.required_indices,vec![101,102,103,104]);
+        assert_eq!(next.unread_remaining,46);
+        assert_ne!(binding_id("room:one","agent-a"),binding_id("room:one","agent-b"));
+        // Different rooms must never share a cursor, even with same agent IDs.
+        assert!(plan(&transcript,"room:other","agent-a","owner",Some(&a)).is_err());
+    }
+    #[test]
     fn joining_a_long_room_does_not_pin_unrelated_ancient_speech(){
         let mut messages=(0..100).map(|i|msg(&format!("ancient-{i}"),
             "assistant","room:one","unrelated old history")).collect::<Vec<_>>();
