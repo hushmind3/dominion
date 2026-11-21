@@ -733,7 +733,16 @@ pub(super) async fn send(
                 plan["providerSessionAffinitySent"]=json!(true);
             }
         }
-        let response=request.json(&body).send().await.map_err(|e|format!("{} 연결 실패: {e}",provider.name))?;
+        // Only a connection-establishment failure proves the request was not
+        // delivered. A mid-request timeout or disconnect may already have
+        // consumed paid tokens; never classify it as safe for failover.
+        let response=request.json(&body).send().await.map_err(|error|{
+            if error.is_connect() {
+                format!("{} 연결 설정 실패(요청 전): {error}",provider.name)
+            } else {
+                format!("{} 요청 결과 불명(자동 재시도 금지): {error}",provider.name)
+            }
+        })?;
         let status=response.status();
         if hinted && attempt==1 && matches!(status.as_u16(),400|422) {
             let headers=response.headers().clone();let version=response.version();
