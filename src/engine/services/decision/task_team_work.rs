@@ -195,7 +195,7 @@ pub fn finish_team(
         && old["programRevision"]==revision
         && old["teamNodeId"]==scope
         && old["members"]==result["members"]
-    ).ok_or("team result changed on replay")
+    ).ok_or_else(||"team result changed on replay".to_string())
 }
 #[cfg(test)]
 mod tests{
