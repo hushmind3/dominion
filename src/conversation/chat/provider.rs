@@ -2056,6 +2056,7 @@ async fn stream_anthropic_once(
     let mut buffer = SseBuffer::default();
     let mut stream = response.bytes_stream();
     let mut terminated = false;
+    let mut stop_reason:Option<String> = None;
     let mut text_pending = String::new();
     let mut in_text_tool_call = false;
     let mut input_tokens = 0u64;
@@ -2140,10 +2141,16 @@ async fn stream_anthropic_once(
                             }
                         }
                         "input_json_delta" => {
-                            let index = piece["index"].as_u64().unwrap_or(0) as usize;
-                            if let Some(entry) = blocks.get_mut(&index) {
-                                entry.2.push_str(delta["partial_json"].as_str().unwrap_or(""));
+                            let index = piece["index"].as_u64()
+                                .and_then(|n|usize::try_from(n).ok())
+                                .ok_or("Anthropic tool input delta has no valid block index")?;
+                            let entry=blocks.get_mut(&index)
+                                .ok_or("Anthropic tool input delta has no open tool block")?;
+                            let fragment=delta["partial_json"].as_str().unwrap_or("");
+                            if entry.2.len().saturating_add(fragment.len())>1024*1024 {
+                                return Err("Anthropic tool input exceeds 1 MiB".into());
                             }
+                            entry.2.push_str(fragment);
                         }
                         _ => {}
                     }
@@ -2165,6 +2172,10 @@ async fn stream_anthropic_once(
                 "message_delta" => {
                     if let Some(reason)=piece["delta"]["stop_reason"].as_str() {
                         crate::engine::native_stream::validate_anthropic_stop_reason(reason)?;
+                        if stop_reason.as_deref().is_some_and(|prior|prior!=reason) {
+                            return Err("Anthropic stop_reason changed during a model turn".into());
+                        }
+                        stop_reason=Some(reason.into());
                     }
                     output_reported|=piece["usage"]["output_tokens"].as_u64().is_some();
                     output_tokens = piece["usage"]["output_tokens"].as_u64().unwrap_or(output_tokens);
@@ -2172,6 +2183,15 @@ async fn stream_anthropic_once(
                 "message_stop" => {
                     if !blocks.is_empty() {
                         return Err("Anthropic message_stop arrived before tool_use block was closed".into());
+                    }
+                    let reason=stop_reason.as_deref()
+                        .ok_or("Anthropic message_stop has no settled stop_reason")?;
+                    if (reason=="tool_use")!=(!calls.is_empty()) {
+                        return Err("Anthropic stop_reason contradicts streamed tool calls".into());
+                    }
+                    let mut ids=std::collections::HashSet::new();
+                    if calls.iter().any(|call| !ids.insert(call.id.as_str())) {
+                        return Err("Anthropic returned duplicate tool call IDs".into());
                     }
                     terminated = true;
                     break 'stream;
@@ -3133,7 +3153,9 @@ mod tests {
                         json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool_1","name":"workspace_read","input":{}}}),
                         json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"x\"}"}}),
                         json!({"type":"content_block_stop","index":1}),
-                        json!({"type":"message_delta","usage":{"output_tokens":5}}),
+                        json!({"type":"message_delta",
+                            "delta":{"stop_reason":"tool_use"},
+                            "usage":{"output_tokens":5}}),
                         json!({"type":"message_stop"}),
                     ];
                     let payload = events
