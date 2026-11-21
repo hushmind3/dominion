@@ -1,4 +1,4 @@
-# DOMINION
+# DOMINION Rust
 
 <p align="center"><img src="src-tauri/icons/icon.png" alt="DOMINION" width="90" /></p>
 <p align="center"><strong>Your models. Your workspace. A native Rust agent runtime.</strong></p>

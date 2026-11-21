@@ -1,4 +1,4 @@
-# DOMINION
+# 도미니언 러스트
 
 <p align="center"><img src="src-tauri/icons/icon.png" alt="DOMINION" width="90" /></p>
 <p align="center"><strong>내 모델, 내 작업 공간, 독립 Rust 에이전트 실행기.</strong></p>
