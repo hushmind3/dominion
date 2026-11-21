@@ -296,7 +296,7 @@ test('zero-tool direct chat reaches a model turn and does not disappear on save 
   const runtime=source('../src/engine/chat/runtime.rs')
   const chat=source('src/pages/Chat.tsx')
   assert.match(model,/fn tool_budget_exhausted\(used: usize, limit: usize\)/)
-  assert.match(model,/limit > 0 && used >= limit/)
+  assert.match(model,/if limit == 0 \{ used > 0 \} else \{ used >= limit \}/)
   assert.match(model,/tool_budget_exhausted\(turn\.metrics\.lock\(\)\.unwrap\(\)\.tool_calls as usize, turn\.max_tools\)/)
   assert.match(model,/turn\.force_final \|\| turn\.max_tools == 0/)
   assert.match(model,/fn zero_tool_budget_allows_model_answer_but_never_a_tool_call/)
