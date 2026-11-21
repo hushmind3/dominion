@@ -46,6 +46,7 @@ try{
   browser=await chromium.launch({headless:true});
   const page=await browser.newPage({viewport:{width:390,height:844},locale:'ko-KR'});
   const errors=[];
+  let cancelRequestPayload, cancelStatusReads=0, slowChatRelease;
   page.on('pageerror',error=>errors.push(error.message));
   await page.route('**/api/**',async route=>{
     const path=new URL(route.request().url()).pathname;
@@ -89,7 +90,24 @@ try{
     if(path==='/api/attachments'){
       response={id:'attachment-fixture',name:'note.txt',size:15,supportedForModel:'text'};
     }
+    if(path==='/api/sessions/chat-two/cancel'){
+      cancelRequestPayload=route.request().postDataJSON();
+      response={cancelled:true,requestRecorded:true,running:true};
+    }
+    if(path==='/api/sessions/chat-two/cancel-status'){
+      cancelStatusReads++;
+      response={stopped:cancelStatusReads>=2,
+        active:cancelStatusReads<2,running:cancelStatusReads<2};
+    }
     if(path==='/api/chat'){
+      if(route.request().postDataJSON()?.input==='중단 응답 확인'){
+        // Keep the provider response pending while Stop must settle via the
+        // separate durable cancel-status endpoint.
+        await new Promise(resolve=>{slowChatRelease=resolve});
+        try{await route.fulfill({status:200,contentType:'text/event-stream',
+          body:'data: {"type":"done"}\\n\\n'});}catch{/* Request was aborted. */}
+        return;
+      }
       if(route.request().postDataJSON()?.input==='실패한 요청 복구'){
         await route.fulfill({status:503,contentType:'application/json',
          body:JSON.stringify({error:'provider temporarily unavailable'})});
@@ -344,6 +362,23 @@ try{
   await page.getByText('일치하는 대화가 없습니다.').waitFor({timeout:10000});
   await page.getByRole('button',{name:'검색 지우기'}).click();
   assert.equal(await page.locator('aside').getByRole('button',{name:'Conversation One'}).count(),1);
+  // Stop acknowledgement has no "stopped" field. Only the separate durable
+  // cancel-status endpoint can confirm release of the pending provider turn.
+  await page.evaluate(()=>{window.location.hash='#/chat?session=chat-two'});
+  await chatInput.fill('중단 응답 확인');
+  const pendingChat=page.waitForRequest(request=>
+    new URL(request.url()).pathname==='/api/chat'
+    && request.postDataJSON()?.input==='중단 응답 확인');
+  await chatInput.press('Enter');
+  const pendingBody=(await pendingChat).postDataJSON();
+  assert.match(pendingBody.requestId,/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  await page.getByRole('button',{name:'응답 중단'}).click();
+  await page.locator('form.conversation-composer button[title="보내기"]').waitFor({timeout:10000});
+  assert.equal(cancelRequestPayload.requestId,pendingBody.requestId,
+    'server Stop must tombstone the exact delayed Chat request');
+  assert.ok(cancelStatusReads>=2,'Stop must wait for durable session release');
+  assert.equal(await page.getByText('서버가 아직 실행 종료를 확인하지 못했습니다. 다시 중단을 누르세요.').count(),0);
+  slowChatRelease?.();
   assert.deepEqual(errors,[], 'Chat/Team React runtime errors');
   console.log('PASS Chromium route isolation, Markdown, attachments, mode persistence and history search');
 }finally{
