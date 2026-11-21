@@ -102,6 +102,7 @@ fn summary(ctx:&ToolContext<'_>,team:&Value)->Result<Value,String>{
     let mut complete=true;
     let mut blocked=false;
     let mut verified=true;
+    let mut pending_remote_artifact_task_ids=Vec::<String>::new();
     for node in nodes{
         let row=member(ctx,id,node)?;
         let status=row["status"].as_str().unwrap_or("unknown");
@@ -122,6 +123,11 @@ fn summary(ctx:&ToolContext<'_>,team:&Value)->Result<Value,String>{
             // Until explicit Lead approval, the team must pause for review.
             verified=false;
             blocked=true;
+            if remote.as_ref().is_some_and(|task|task["artifactApplyStatus"]=="pending"){
+                if let Some(task_id)=row["remoteTaskId"].as_str(){
+                    pending_remote_artifact_task_ids.push(task_id.to_string());
+                }
+            }
         }
         let excerpt=remote.as_ref().and_then(|v|v["answer"].as_str())
             .or_else(||observed.as_ref().and_then(|v|v["content"].as_str()))
@@ -146,12 +152,16 @@ fn summary(ctx:&ToolContext<'_>,team:&Value)->Result<Value,String>{
             "error":row["error"],
         }));
     }
+    let awaits_owner_merge=!pending_remote_artifact_task_ids.is_empty();
     Ok(json!({
         "teamId":id,"leadSessionId":team["leadSessionId"],
         "status":if blocked {"needs_review"}else if complete {"completed"}else{"running"},
         "evidenceVerified":complete && verified,
         "taskCount":nodes.len(),"tasks":results,
-        "hint":if blocked {"Review failed or uncertain workers; do not automatically replay effects"}
+        "pendingRemoteArtifactTaskIds":pending_remote_artifact_task_ids,
+        "hint":if awaits_owner_merge {
+                "Remote Writer files await Lead approval: use team_remote_apply({teamId, remoteTaskId}) for each pending task, then team_execute({teamId}) to resume"
+            }else if blocked {"Review failed or uncertain workers; do not automatically replay effects"}
             else if complete {"Use task_result(jobId) for full native operation evidence"}
             else {"Resume safely with team_execute({teamId}) or poll team_status({teamId})"},
     }))
