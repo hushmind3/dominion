@@ -316,11 +316,19 @@ pub async fn steer(State(state):State<AppState>,Path(id):Path<String>,
     one(State(state),Path(id)).await
 }
 pub async fn cancel(State(state):State<AppState>,Path(id):Path<String>)->Response{
-    if prompt_job(&state,&id).is_none(){
+    let Some(job)=prompt_job(&state,&id) else {
         return error(StatusCode::NOT_FOUND,"SDK 작업을 찾지 못했습니다.");
-    }
+    };
+    let session=job["sessionId"].as_str().map(str::to_string);
     let response=jobs::cancel(State(state.clone()),Path(id.clone())).await;
     if !response.status().is_success(){return response;}
+    // A stopped native-panel job owns a dedicated session. Settle its
+    // pending approval waiters AFTER the durable job cancellation, so the
+    // generic approval inbox cannot later offer an orphaned Allow button.
+    // An unsuccessful cancellation must not withdraw an active approval.
+    if let Some(session)=session {
+        crate::conversation::chat::close_session_approvals(&state,&session);
+    }
     one(State(state),Path(id)).await
 }
 // Approval and refusal both bind the exact live call ID to the current
@@ -711,6 +719,11 @@ mod tests{
             "tool":"workspace_write","args":{"path":"never-run.txt"}})).unwrap();
         let (sender,_receiver)=tokio::sync::oneshot::channel();
         state.approvals.lock().unwrap().insert("pending-tool-1".into(),sender);
+        state.store.put("approval",&json!({"id":"unrelated-tool-2",
+            "status":"pending","sessionId":"other-session","runId":"other-run",
+            "tool":"workspace_write","args":{"path":"other.txt"}})).unwrap();
+        let (other_sender,_other_receiver)=tokio::sync::oneshot::channel();
+        state.approvals.lock().unwrap().insert("unrelated-tool-2".into(),other_sender);
         let pre=project(&state,&state.store.get("job","cancel-pending").unwrap());
         assert_eq!(pre["status"],"awaiting_approval");
         let stopped=cancel(State(state.clone()),Path("cancel-pending".into())).await;
@@ -720,6 +733,12 @@ mod tests{
         assert_eq!(body["status"],"cancelled");
         assert!(body["checkpoint"]["pendingCall"].is_null());
         assert_eq!(state.store.get("job","cancel-pending").unwrap()["cancelRequested"],true);
+        assert_eq!(state.store.get("approval","pending-tool-1").unwrap()["status"],
+            "cancelled","cancelled native work must close its pending approval");
+        assert!(!state.approvals.lock().unwrap().contains_key("pending-tool-1"));
+        assert_eq!(state.store.get("approval","unrelated-tool-2").unwrap()["status"],
+            "pending","cancel must not settle unrelated session approvals");
+        assert!(state.approvals.lock().unwrap().contains_key("unrelated-tool-2"));
         assert_eq!(approve(State(state.clone()),Path("cancel-pending".into()),
             Json(json!({"callId":"pending-tool-1"}))).await.status(),
             StatusCode::CONFLICT,"cancelled run must never accept a late approval");
