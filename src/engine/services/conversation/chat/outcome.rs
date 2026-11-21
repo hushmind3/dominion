@@ -247,6 +247,12 @@ pub(super) fn record_success_experience(
 
 // Finalized execution storage and derived algorithm feedback are owned here,
 // while the native runtime retains model/tool execution and cancellation.
+fn explicit_cancel_error(reason:&str)->bool{
+    reason=="실행이 중단되었습니다."
+        || reason.starts_with("실행이 중단되었습니다. ")
+        || reason=="execution cancelled"
+}
+
 pub(super) fn finish_attempt(
     state: &AppState,
     execution_id: &str,
@@ -278,7 +284,13 @@ pub(super) fn finalize_execution(
     record["toolElapsedMs"] = json!(counters.tool_elapsed_ms);
     record["contextElapsedMs"] = json!(counters.context_elapsed_ms);
     record["finishedAt"] = json!(chrono::Utc::now().to_rfc3339());
-    let cancelled=result.as_ref().err().is_some_and(|message|message.contains("중단"));
+    // A retry/budget error may say "추가 모델 호출을 중단했습니다". That
+    // is a failed run, not an owner's cancellation. Classify only the
+    // explicit cancellation contract (or a committed session tombstone).
+    let cancelled=record["sessionId"].as_str()
+        .is_some_and(|session|state.is_cancelled(session))
+        || result.as_ref().err().is_some_and(|message|
+            explicit_cancel_error(message));
     let terminal=dominion_turn_core::run_state::terminal_result(result,cancelled);
     record["status"]=json!(terminal.as_str());
     if let Err(message)=result{
@@ -625,6 +637,15 @@ fn mark_run_signals(state: &AppState, record: &Value) {
 #[cfg(test)]
 mod program_review_outcome_tests {
     use super::*;
+    #[test]
+    fn stopping_extra_retries_is_failure_not_owner_cancellation(){
+        assert!(!explicit_cancel_error("실행 증거가 부족합니다. 동일한 검증 실패로 추가 모델 호출을 중단했습니다."));
+        assert!(!explicit_cancel_error("모델 반복을 중단했습니다."));
+        assert!(explicit_cancel_error("실행이 중단되었습니다."));
+        assert!(explicit_cancel_error("실행이 중단되었습니다. 도구 결과가 불확실합니다."));
+        assert!(explicit_cancel_error("execution cancelled"));
+    }
+
     #[test]
     fn unverified_repair_never_becomes_task_success_after_model_final(){
         let execution=json!({
