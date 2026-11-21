@@ -378,6 +378,9 @@ impl Assembler {
                 }
             }
             "message_stop"=>{
+                if !self.anthropic_started {
+                    return Err("Anthropic terminal without message_start".into());
+                }
                 if self.anthropic_stop.is_none(){
                     return Err("Anthropic message ended without stop reason".into());
                 }
@@ -832,6 +835,16 @@ mod tests {
         ] {stream.feed(Packet::Data(item)).unwrap();}
         let final_message=stream.finish().unwrap();
         assert_eq!(final_message["content"][0]["text"],"Hello 🧠");
+    }
+
+    #[test]
+    fn native_anthropic_missing_message_start_never_settles_model_turn(){
+        let mut assembler=Assembler::new(Wire::Anthropic);
+        assembler.feed(Packet::Data(json!({"type":"message_delta",
+            "delta":{"stop_reason":"end_turn"}}))).unwrap();
+        assert!(assembler.feed(Packet::Data(json!({
+            "type":"message_stop"
+        }))).unwrap_err().contains("without message_start"));
     }
 
     #[test]
