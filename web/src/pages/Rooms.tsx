@@ -443,7 +443,7 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
    await onSaved()
   }catch(e){setError((e as Error).message)}finally{setOptionsBusy(false)}
  }
- const remove=async()=>{if(!confirm(t('rooms.deleteConfirm',{name:current.name})))return;setError('');try{await del('/api/rooms/'+room.id);storeRoomComposer(room.id,{text:'',targets:[]});await onRemoved()}catch(e){setError((e as Error).message)}}
+ const remove=async()=>{if(!confirm(t('rooms.deleteConfirm',{name:current.name})))return;setError('');try{await del('/api/rooms/'+room.id);storeRoomComposer(room.id,{text:'',targets:[],attachments:[]});await onRemoved()}catch(e){setError((e as Error).message)}}
  const reset=async()=>{if(!confirm(t('rooms.resetConfirm',{name:current.name})))return;setError('');setStopping(true);try{const result=await post<{sessionId:string}>('/api/rooms/'+room.id+'/reset',{});dataVersion.current+=1;if(activeTurnId.current)terminalTurnIds.current.add(activeTurnId.current);setMessages([]);setLive(null);setFeed(previous=>({...previous,sessionId:result.sessionId,jobs:[],executions:[],operations:[],approvals:[],status:'idle',activeAgentId:undefined}));setInspector(false);await load();await onSaved()}catch(e){setError((e as Error).message)}finally{setStopping(false)}}
  const previewPrompt=(id:string)=>get<NonNullable<typeof prompt>>(`/api/rooms/${room.id}/system-prompt?agentId=${encodeURIComponent(id)}`)
  const closePrompt=()=>{
