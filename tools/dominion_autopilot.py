@@ -12,6 +12,8 @@ import datetime as dt
 import json
 import os
 import contextlib
+import signal
+import threading
 from pathlib import Path
 import shlex
 import shutil
@@ -21,6 +23,20 @@ import time
 
 BRANCHES = ("main", "dominion-sub2", "dominion-sub3", "dominion-sub4")
 ROLES = {"main": "메인", "dominion-sub2": "서브2", "dominion-sub3": "서브3", "dominion-sub4": "서브4"}
+STOP = threading.Event()
+WORKTREE_LOCK = threading.Lock()
+ROLE_FOCUS = {
+    "main": "Maintain the trusted release product and manually curated main UI. Audit chat continuity, completion, runtime budgets, and regressions; never automatically merge a competitor.",
+    "dominion-sub2": "Improve common Driver/Harness contract, Room participant cursors, Team DAG/remote workers, and evidence-preserving continuation without copying main wholesale.",
+    "dominion-sub3": "Improve independent Rust SDK, Native+Chat wire/stream parity, approval/recovery, and keyboard/mobile execution UX; keep current product menus.",
+    "dominion-sub4": "Improve single durable Run admission, lightweight chat, Room source ownership, Team worker/patch UX, and real-model context efficiency without invented benchmarks.",
+}
+WATCHED = {
+    "dominion-sub2": Path("/private/tmp/dominion-sub2-live"),
+    "dominion-sub3": Path("/private/tmp/dominion-sub3-live"),
+    "dominion-sub4": Path("/private/tmp/sub4-live"),
+}
+
 
 
 @contextlib.contextmanager
@@ -66,40 +82,59 @@ def git(repo: Path, *args: str, check: bool = True) -> str:
     return p.stdout.strip()
 
 
+def stop_process(p: subprocess.Popen) -> None:
+    if p.poll() is not None:
+        return
+    try:
+        if os.name != "nt":
+            os.killpg(p.pid, signal.SIGTERM)
+        else:
+            p.terminate()
+    except ProcessLookupError:
+        return
+    try:
+        p.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        try:
+            if os.name != "nt":
+                os.killpg(p.pid, signal.SIGKILL)
+            else:
+                p.kill()
+        except ProcessLookupError:
+            pass
+        p.wait()
+
+
 def invoke(command: list[str], cwd: Path, log: Path, timeout: int, env: dict[str, str],
            *, separate_stderr: bool = False) -> tuple[int, bool]:
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("w", encoding="utf-8") as stream:
+        errfile = None
         try:
+            if STOP.is_set():
+                stream.write("[orchestrator] cancelled before launch\n")
+                return 130, False
             errfile = log.with_suffix(".stderr.log").open("w", encoding="utf-8") if separate_stderr else None
             p = subprocess.Popen(command, cwd=cwd, env=env, stdout=stream,
                                  stderr=errfile if errfile else subprocess.STDOUT,
                                  start_new_session=(os.name != "nt"))
-            try:
-                code = p.wait(timeout=timeout)
-                if errfile: errfile.close()
-                return code, False
-            except subprocess.TimeoutExpired:
-                if os.name != "nt":
-                    import signal
-                    os.killpg(p.pid, signal.SIGTERM)
-                else:
-                    p.terminate()
+            deadline = time.monotonic() + timeout
+            while True:
+                remaining = deadline - time.monotonic()
+                if STOP.is_set() or remaining <= 0:
+                    stop_process(p)
+                    stream.write("[orchestrator] cancelled\n" if STOP.is_set() else "[orchestrator] agent timed out\n")
+                    return (130 if STOP.is_set() else 124), not STOP.is_set()
                 try:
-                    p.wait(timeout=5)
+                    return p.wait(timeout=min(0.5, remaining)), False
                 except subprocess.TimeoutExpired:
-                    if os.name != "nt":
-                        os.killpg(p.pid, signal.SIGKILL)
-                    else:
-                        p.kill()
-                    p.wait()
-                stream.write("\n[orchestrator] hard timeout: agent stopped\n")
-                if errfile: errfile.close()
-                return 124, True
+                    continue
         except OSError as e:
-            stream.write(f"\n[orchestrator] process start failed: {e}\n")
-            if "errfile" in locals() and errfile: errfile.close()
+            stream.write(f"[orchestrator] process start failed: {e}\n")
             return 127, False
+        finally:
+            if errfile:
+                errfile.close()
 
 
 def command_from_template(template: str | None, prompt: str, *, judge: bool = False) -> list[str]:
@@ -115,6 +150,7 @@ def command_from_template(template: str | None, prompt: str, *, judge: bool = Fa
 def prompt_for(branch: str, previous_feedback: str, base: str) -> str:
     return f"""You are the independent DOMINION {ROLES[branch]} developer, assigned ONLY branch {branch}.
 This is an autonomous development cycle in a detached, isolated git worktree at {base[:12]}.
+Branch-specific context: {ROLE_FOCUS[branch]}
 Your task is to independently identify the highest-value real user problem or missing capability,
 trace its actual caller through Core/Harness/Strategy/Host/UI, implement a usable improvement,
 remove newly obsolete paths, run targeted regressions, and commit only your own verified changes.
@@ -132,7 +168,7 @@ Previous independent judge feedback (may be empty or unverified):
 
 
 def prepare(repo: Path, state: Path, branch: str, round_id: str,
-            previous: dict | None = None) -> tuple[Path, str]:
+            previous: dict | None = None) -> tuple[Path, str, str]:
     # Never checkout, reset, or mutate the user's watched application tree.
     remote_ref = f"refs/remotes/origin/{branch}"
     remote_sha = git(repo, "rev-parse", "--verify", remote_ref)
@@ -140,9 +176,10 @@ def prepare(repo: Path, state: Path, branch: str, round_id: str,
     if previous:
         prior_status = previous.get("status")
         if prior_status in {"agent_failed", "needs_review_uncommitted",
-                            "needs_review_sensitive_paths", "push_conflict_or_error", "error"}:
+                            "needs_review_sensitive_paths", "needs_review_watched_checkout_dirty",
+                            "push_conflict_or_error", "error", "interrupted"}:
             raise RuntimeError("prior work needs review; keeping its detached worktree intact")
-        if prior_status == "committed_local":
+        if prior_status in {"committed_local", "committed_local_no_new_changes"}:
             prior_head = previous.get("head", "")
             ancestor = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor",
                                        remote_sha, prior_head], capture_output=True)
@@ -153,8 +190,10 @@ def prepare(repo: Path, state: Path, branch: str, round_id: str,
     if target.exists():
         raise RuntimeError(f"Worktree already exists; refusing to overwrite: {target}")
     target.parent.mkdir(parents=True, exist_ok=True)
-    git(repo, "worktree", "add", "--detach", str(target), sha)
-    return target, sha
+    # Git worktree registration uses shared metadata; serialize this small step.
+    with WORKTREE_LOCK:
+        git(repo, "worktree", "add", "--detach", str(target), sha)
+    return target, sha, remote_sha
 
 
 def run_branch(repo: Path, state: Path, branch: str, round_id: str, feedback: str,
@@ -165,8 +204,8 @@ def run_branch(repo: Path, state: Path, branch: str, round_id: str, feedback: st
     result: dict = {"branch": branch, "round": round_id, "status": "not_started"}
     started = time.monotonic()
     try:
-        target, base = prepare(repo, state, branch, round_id, previous)
-        result.update({"base": base, "worktree": str(target)})
+        target, base, remote_sha = prepare(repo, state, branch, round_id, previous)
+        result.update({"base": base, "remote_base": remote_sha, "worktree": str(target)})
         prompt = prompt_for(branch, feedback, base)
         (out / "prompt.txt").write_text(prompt, encoding="utf-8")
         command = command_from_template(template, prompt)
@@ -182,22 +221,29 @@ def run_branch(repo: Path, state: Path, branch: str, round_id: str, feedback: st
                        "diff_stat": git(target, "diff", "--stat", f"{base}..HEAD"),
                        "dirty": bool(porcelain), "dirty_paths": porcelain[:2000]})
         # A successful agent process does not imply task success or clean code.
-        if timed_out or code:
+        if STOP.is_set():
+            result["status"] = "interrupted"
+        elif timed_out or code:
             result["status"] = "agent_failed"
         elif porcelain:
             result["status"] = "needs_review_uncommitted"
         elif risky:
             result["status"] = "needs_review_sensitive_paths"
-        elif head == base:
+        elif head == remote_sha:
             result["status"] = "no_commit"
         else:
-            result["status"] = "committed_local"
+            result["status"] = "committed_local" if head != base else "committed_local_no_new_changes"
             if publish:
-                # Normal fast-forward-only push. A concurrently updated remote wins.
-                push = subprocess.run(["git", "-C", str(target), "push", "origin",
-                                       f"HEAD:refs/heads/{branch}"], text=True, capture_output=True)
-                result["push_detail"] = (push.stderr or push.stdout)[-2000:]
-                result["status"] = "published" if push.returncode == 0 else "push_conflict_or_error"
+                watched = repo if branch == "main" else WATCHED.get(branch)
+                if watched and watched.is_dir() and git(watched, "status", "--porcelain"):
+                    result["status"] = "needs_review_watched_checkout_dirty"
+                    result["publish_blocked"] = "watched user checkout contains uncommitted changes"
+                else:
+                    # Normal fast-forward-only push. A concurrently updated remote wins.
+                    push = subprocess.run(["git", "-C", str(target), "push", "origin",
+                                           f"HEAD:refs/heads/{branch}"], text=True, capture_output=True)
+                    result["push_detail"] = (push.stderr or push.stdout)[-2000:]
+                    result["status"] = "published" if push.returncode == 0 else "push_conflict_or_error"
         result["elapsed_seconds"] = round(time.monotonic() - started, 1)
     except Exception as e:
         result.update({"status": "error", "error": str(e), "elapsed_seconds": round(time.monotonic() - started, 1)})
@@ -283,10 +329,13 @@ def main(argv: list[str] | None = None) -> int:
         p.error("codex not found; install/sign in to Codex CLI or set --agent-command")
     if not args.skip_judge and not args.judge_command and shutil.which("codex") is None:
         p.error("codex not found for read-only judge; set --judge-command or --skip-judge")
+    STOP.clear()
     iteration = 0
+    old_handler = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, lambda _sig, _frame: STOP.set())
     try:
         with singleton_lock(state / "autopilot.lock"):
-            while args.rounds == 0 or iteration < args.rounds:
+            while (args.rounds == 0 or iteration < args.rounds) and not STOP.is_set():
                 iteration += 1
                 round_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
                 print(f"[DOMINION] round {iteration}: {round_id}", flush=True)
@@ -303,6 +352,8 @@ def main(argv: list[str] | None = None) -> int:
                                            args.agent_command, args.publish, prior_by_branch.get(b)) for b in BRANCHES]
                     results = [future.result() for future in futures]
                 print("[DOMINION] " + " | ".join(f"{r['branch']}:{r['status']}" for r in results), flush=True)
+                if STOP.is_set():
+                    break
                 if not args.skip_judge:
                     report = judge_round(repo, state, round_id, results, args.timeout, args.judge_command)
                     if report["status"] == "judge_feedback_recorded":
@@ -311,13 +362,15 @@ def main(argv: list[str] | None = None) -> int:
                 (state / "latest_round.json").write_text(json.dumps({"id": round_id, "results": results},
                                                                       ensure_ascii=False, indent=2), encoding="utf-8")
                 if (args.rounds == 0 or iteration < args.rounds) and args.cooldown:
-                    time.sleep(args.cooldown)
-    except KeyboardInterrupt:
-        print("[DOMINION] interrupted; existing worktrees/logs retained for review", file=sys.stderr)
-        return 130
+                    STOP.wait(args.cooldown)
     except Exception as e:
         print(f"[DOMINION] stopped: {e}", file=sys.stderr)
         return 1
+    finally:
+        signal.signal(signal.SIGINT, old_handler)
+    if STOP.is_set():
+        print("[DOMINION] stopped by user; detached worktrees/logs preserved", file=sys.stderr)
+        return 130
     return 0
 
 
