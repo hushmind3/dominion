@@ -25,6 +25,17 @@ impl Driver {
         Self { max_rounds, max_tools, rounds: 0, proposals: 0, seen_call_ids: HashSet::new() }
     }
 
+    /// Single run-loop scheduling gate for Chat and every SDK port. The
+    /// host may request a clean stop after verified work; otherwise the
+    /// driver is authoritative about cancellation and the next provider call.
+    /// The next index is zero-based for host event/accounting compatibility.
+    pub fn next_model_round(&self, finished:bool, cancelled:bool)
+        -> Result<Option<usize>, &'static str> {
+        if cancelled {return Err("execution cancelled");}
+        if finished || self.rounds>=self.max_rounds {return Ok(None);}
+        Ok(Some(self.rounds))
+    }
+
     pub fn begin_model_round(&mut self, cancelled: bool) -> Result<(), &'static str> {
         if cancelled {return Err("execution cancelled");}
         if self.rounds >= self.max_rounds {return Err("model round limit exceeded");}
@@ -111,6 +122,19 @@ impl Driver {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn shared_next_round_scheduler_prevents_both_host_loops_from_exceeding_limits(){
+        let mut driver=Driver::new(2,4);
+        assert_eq!(driver.next_model_round(false,false),Ok(Some(0)));
+        assert_eq!(driver.next_model_round(true,false),Ok(None));
+        assert_eq!(driver.next_model_round(true,true),Err("execution cancelled"));
+        driver.begin_model_round(false).unwrap();
+        assert_eq!(driver.next_model_round(false,false),Ok(Some(1)));
+        driver.begin_model_round(false).unwrap();
+        assert_eq!(driver.next_model_round(false,false),Ok(None));
+        assert_eq!(driver.next_model_round(false,true),Err("execution cancelled"));
+    }
 
     #[test]
     fn rounds_and_cancellation_are_monotonic() {
