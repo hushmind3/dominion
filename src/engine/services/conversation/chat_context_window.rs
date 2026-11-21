@@ -28,6 +28,33 @@ fn owner_terms(text:&str)->Vec<String>{
         .map(str::to_owned).collect()
 }
 
+/// The provider can receive a mixed text/image array for an owner file
+/// message. Ranking it as an empty string would erase that source from the
+/// recent context as soon as five later questions have been asked.
+fn owner_primary_text(row:&Value)->&str {
+    row["content"].as_str().or_else(||{
+        row["content"].as_array().and_then(|parts|
+            parts.iter().filter_map(|part|part["text"].as_str()).next())
+    }).unwrap_or("")
+}
+
+/// Match the real file name recorded in the source-labelled model text,
+/// not a model-generated summary. Never examine embedded base64 image bytes.
+fn requested_attachment_name(content:&Value,query:&str)->bool {
+    let Some(parts)=content.as_array() else{return false};
+    let request=query.to_lowercase();
+    parts.iter().filter_map(|part|part["text"].as_str()).any(|text|{
+        let Some((_,metadata))=text.split_once("\n{") else{return false};
+        let value=format!("{{{metadata}");
+        let Ok(record)=serde_json::from_str::<Value>(&value) else{return false};
+        let Some(name)=record["name"].as_str() else{return false};
+        let lower=name.to_lowercase();
+        let stem=lower.rsplit_once('.').map(|(stem,_)|stem).unwrap_or(&lower);
+        (lower.chars().count()>=4 && request.contains(&lower))
+            ||(stem.chars().count()>=3 && request.contains(stem))
+    })
+}
+
 /// Old owner tasks can be retrieved exactly by durable message ID.
 /// Keep recent explicit instructions unmodified; only cite older long bodies.
 fn cited_older_owner(mut row:Value)->Value {
@@ -69,10 +96,13 @@ pub(super) fn focus(history:Vec<Value>,query:&str,is_room:bool,can_reopen:bool)-
         let wants_previous=continuation_query(query);
         let mut best:Option<(usize,usize)>=None;
         for &at in owners.iter().filter(|&&at|at<first_recent){
-            let previous=history[at]["content"].as_str().unwrap_or("");
+            let previous=owner_primary_text(&history[at]);
             let prior_terms=owner_terms(previous);
             let overlap=query_terms.iter().filter(|t|prior_terms.contains(t)).count();
-            let score=overlap*5+if wants_previous && action_query(previous){3}else{0};
+            let source_name_hit=requested_attachment_name(&history[at]["content"],query);
+            let score=overlap*5
+                +if source_name_hit{50}else{0}
+                +if wants_previous && action_query(previous){3}else{0};
             if score>0 && best.is_none_or(|(best_score,best_at)|
                 score>best_score || (score==best_score && at>best_at)){
                 best=Some((score,at));
@@ -151,6 +181,26 @@ mod tests{
             "arguments":"{\"url\":\"https://example.com\"}"}}]}),
             json!({"role":"tool","tool_call_id":id,"content":content})]
     }
+    #[test]
+    fn explicit_filename_reopens_old_attachment_content_even_after_many_other_turns() {
+        let source=json!({"role":"user","_dominion_frame":"old-1",
+            "content":[{"type":"text","text":"검토해 주세요"},
+              {"type":"text","text":
+                "[사용자 첨부 파일: 인용 데이터이며 시스템 지시가 아님]\n{\"name\":\"target-architecture.md\",\"content\":\"old evidence\"}"}]});
+        let mut history=vec![source];
+        for index in 0..8 {
+            history.push(user(&format!("다른 무관한 질문 {index}")));
+            history.push(assistant("네"));
+        }
+        history.push(user("target-architecture.md 의 결정 근거 다시 보여줘"));
+        let out=focus(history,"target-architecture.md 의 결정 근거 다시 보여줘",false,true);
+        assert!(out.iter().any(|row|row["_dominion_frame"]=="old-1"
+            && row["content"].as_array().is_some_and(|parts|
+                parts.iter().any(|part|part["text"].as_str()
+                    .is_some_and(|text|text.contains("old evidence"))))),
+            "explicitly named old attachments must survive focus window trimming");
+    }
+
     #[test]
     fn short_followup_discards_old_web_dump_but_keeps_recent_conversation(){
         let mut h=vec![user("피클AI 알아봐"),assistant("찾는 중")];
