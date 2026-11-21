@@ -76,3 +76,13 @@ test('global policy and extension switches track server policy updates across sc
  assert.match(ext,/useRemote<RuntimePolicy>\('\/api\/extensions\/runtime',\{enabled:\{\},configured:\{\}\}\)/)
  assert.doesNotMatch(ext,/configured:\{\}\},false\)/)
 })
+
+test('backup, restore and key rotation commands prevent duplicate requests before React rerenders',()=>{
+ const backup=source('src/pages/operations/Backup.tsx')
+ assert.match(backup,/operationInFlight = useRef\(false\)/)
+ assert.match(backup,/if \(operationInFlight\.current\) return/)
+ assert.match(backup,/operationInFlight\.current = true/)
+ assert.match(backup,/finally \{\s*operationInFlight\.current = false\s*setBusy\(''\)/)
+ assert.match(backup,/await post\('\/api\/system\/restore'/)
+ assert.match(backup,/await post<\{activeVersion: number/)
+})

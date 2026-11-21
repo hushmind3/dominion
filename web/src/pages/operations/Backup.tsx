@@ -1,4 +1,4 @@
-import {useState} from 'react'
+import {useRef,useState} from 'react'
 import {Archive, Check, KeyRound, RefreshCw, RotateCcw, ShieldAlert, TriangleAlert} from 'lucide-react'
 import {post} from '../../api'
 import {Button, TextInput} from '../../components/Primitives'
@@ -27,6 +27,7 @@ export function BackupPanel() {
   const secretKey = useRemote<SecretStatus>('/api/system/secret-key', {})
   const maintenance = useRemote<MaintenanceState>('/api/system/maintenance', {maintenance: false})
   const [busy, setBusy] = useState('')
+  const operationInFlight = useRef(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [selected, setSelected] = useState('')
@@ -39,7 +40,10 @@ export function BackupPanel() {
   }
 
   const run = async (name: string, task: () => Promise<void>) => {
-    if (busy) return
+    // Ref takes the lock synchronously, before a second click can run with
+    // a stale React render. Never double-submit restore or key rotation.
+    if (operationInFlight.current) return
+    operationInFlight.current = true
     setBusy(name)
     setError('')
     setMessage('')
@@ -48,6 +52,7 @@ export function BackupPanel() {
     } catch (cause) {
       setError((cause as Error).message)
     } finally {
+      operationInFlight.current = false
       setBusy('')
     }
   }
