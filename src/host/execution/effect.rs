@@ -303,13 +303,16 @@ async fn read_back(workspace: &Path, tool: &str, arguments: &Value) -> Option<(S
         "file_write" | "file_read" => PathBuf::from(path),
         _ => return None,
     };
-    let metadata = tokio::fs::metadata(&path).await.ok()?;
-    let len = metadata.len();
-    if len > WRITE_VERIFY_LIMIT {
-        return None;
-    }
-    let bytes = tokio::fs::read(&path).await.ok()?;
-    Some((format!("sha256:{}", hash(&bytes)), len))
+    tokio::task::spawn_blocking(move || {
+        let file = std::fs::File::open(path).ok()?;
+        if !file.metadata().ok()?.is_file() {
+            return None;
+        }
+        let bytes = crate::storage::bounded_file::read_file(file, WRITE_VERIFY_LIMIT).ok()?;
+        Some((format!("sha256:{}", hash(&bytes)), bytes.len() as u64))
+    })
+    .await
+    .ok()?
 }
 
 fn expected_version(tool: &str, arguments: &Value, result: &Value) -> Option<String> {
