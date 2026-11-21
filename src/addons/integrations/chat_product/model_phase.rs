@@ -358,7 +358,7 @@ pub(super) fn observe_model<'a>(
                 && (turn.provider.tool_mode != "native" || has_dsml_call)
                 && !turn.force_final
             {
-                let known = turn
+                let known = turn.model_round
                     .round_tools
                     .iter()
                     .map(tool_name)
