@@ -4,7 +4,7 @@
 <p align="center"><strong>내 모델, 내 작업 공간, 독립 Rust 에이전트 실행기</strong></p>
 <p align="center"><strong>한국어</strong> · <a href="README.md">English</a> · <a href="ENGINE.md">엔진 구조</a> · <a href="LICENSE">Apache-2.0</a></p>
 
-**2026년 11월 20일 기준 `dominion-sub2` 실험 브랜치** 설명입니다. React/Vite 프론트는 최신 main 화면(`f86a36e`)과 동기화하고, 백엔드는 서브2 고유의 Rust 하네스·대화 연속성·실행/검증 구조를 유지했습니다. main과 **백엔드가 동일하다는 뜻은 아닙니다.**
+**2026년 11월 21일 기준 `dominion-sub2` 실험 브랜치** 설명입니다. React/Vite 프론트는 최신 main 화면(`f86a36e`)과 동기화하고, 백엔드는 서브2 고유의 Rust 하네스·대화 연속성·실행/검증 구조를 유지했습니다. main과 **백엔드가 동일하다는 뜻은 아닙니다.**
 
 <p align="center">
   <img src="docs/01-multi-agent-room.webp" alt="다중 에이전트 방" width="48%" />
@@ -72,12 +72,14 @@ UI 개발 서버: `npm --prefix web run dev`. 데스크톱 실행/설치, 실제
 
 ## 자연어 실행 코어 최소화 (2026-11-20)
 
-자연어→실행→결과의 흐름은 `src/engine/core/`에 두고, 모델 선택·메모리·멀티에이전트·자동화·판단·파일 도구 구현은 `src/engine/services/`로 분리했습니다. MCP·외부 채널은 `src/engine/addons/`에서 처리합니다. 기존 메뉴·Rust 모듈 이름·API 주소는 유지됩니다. [코어 분리 설계](docs/SUB2-MICROKERNEL-2026-11-20.md)를 참고하세요.
+자연어→실행→결과의 공통 실행 루프는 `crates/dominion-turn-core/src/agent_loop.rs`의 Rust Harness가 소유하고, `crates/dominion-agent-loop/`에는 교체 가능한 실행 전략을 둡니다. 모델 선택·메모리·멀티에이전트·자동화·판단·파일 도구 구현은 `src/engine/services/`로 분리했습니다. MCP·외부 채널은 `src/engine/addons/`에서 처리합니다. 기존 메뉴·Rust 모듈 이름·API 주소는 유지됩니다. [코어 분리 설계](docs/SUB2-MICROKERNEL-2026-11-20.md)를 참고하세요.
 
 HTTP API 역시 실행·승인·이벤트 11개 경로만 코어에 두고 제품 기능 123개는 서비스 라우터 5개로, 외부 연동 27개는 부가기능 라우터로 분리했습니다. 기존 주소와 공통 인증·보안 미들웨어는 유지합니다.
 
-최소 실행 코어를 독립 Rust 크레이트 `crates/dominion-turn-core/`로 분리했습니다. 코어는 모델·도구 실행 단계, 서비스 실행 포트, 실행 결과 영수증만 소유하며 모델 연결·메모리·계획·자동화·MCP·UI는 외부 서비스입니다. 기존 `src/engine/core/mod.rs`는 호환 재내보내기만 합니다.
+최소 실행 코어를 독립 Rust 크레이트 `crates/dominion-turn-core/`로 분리했습니다. 코어는 모델·도구 실행 단계, 서비스 실행 포트, 실행 결과 영수증만 소유하며 모델 연결·메모리·계획·자동화·MCP·UI는 외부 서비스입니다. 과거 `src/engine/core/` 중복 경로는 제거했으며, `src/engine/mod.rs`가 `dominion-turn-core`를 실행 코어로 재내보냅니다.
 
 2026-11-20: 실행 코어와 행동 알고리즘 분리를 강화했습니다. 순수 전략 코드는 `crates/dominion-agent-kernel/src/decision_policy.rs`, 활성 정책 버전 선택은 `src/engine/services/decision/turn_policy.rs`, 실행 제어는 `crates/dominion-turn-core/`가 담당합니다. 기존 메뉴와 API는 유지됩니다.
 
 루프 알고리즘은 기존 `agent.loop` 정책 슬롯을 통해 `react`와 `plan-execute`를 코드 변경 없이 선택할 수 있습니다. 알 수 없는 정책 이름은 기존 자동 선택으로 복귀하며 코어 권한에 영향을 주지 않습니다. UI·새 메뉴 추가 없음.
+
+2026-11-21: ProgramIR Task Team의 의존성 그래프에 따라 독립 읽기 파동은 병렬 실행하고 쓰기·위임은 독점 실행합니다. SQLite의 작업 선점은 실행 ID·세션·프로그램 리비전·팀 범위·노드·배정 에이전트를 한 번에 비교합니다. 실제 도구 영수증을 기반으로 팀 결과를 병합하며, 실패 도구의 `verified: true`는 **실패 관측 검증**이지 성공 검증이 아니므로 팀 완료의 `evidenceVerified`로 승격하지 않습니다. 해당 회귀 테스트를 추가했으며 실모델·실기기 성능 검증을 완료했다고 주장하지 않습니다.
