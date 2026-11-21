@@ -36,6 +36,8 @@ pub struct AppState {
     pub instance_id: String,
     /// Explicit maintenance flag. While true, non-GET writes are rejected.
     pub maintenance: Arc<std::sync::atomic::AtomicBool>,
+    /// Serializes backup restore transactions even if multiple HTTP requests race.
+    pub restore_guard: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl AppState {
@@ -61,6 +63,7 @@ impl AppState {
             policy_settlement: Arc::new(Mutex::new(())),
             instance_id,
             maintenance: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            restore_guard: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
