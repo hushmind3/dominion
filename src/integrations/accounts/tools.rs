@@ -113,7 +113,7 @@ async fn github_api(state: &AppState, args: &Value) -> Result<Value, String> {
     }
     let method =
         reqwest::Method::from_bytes(method.as_bytes()).map_err(|error| error.to_string())?;
-    let mut request = reqwest::Client::new()
+    let mut request = state.account_http_client(30)?
         .request(method, format!("https://api.github.com{path}"))
         .header("Authorization", format!("Bearer {token}"))
         .header("Accept", "application/vnd.github+json")

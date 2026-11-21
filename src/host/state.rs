@@ -21,6 +21,9 @@ pub struct AppState {
     /// Reusable provider HTTP transports keyed by per-request timeout in seconds.
     /// Shared by all speakers and jobs in this process to retain connection pooling.
     provider_http_clients: Arc<Mutex<HashMap<u64, reqwest::Client>>>,
+    /// Account APIs carry owner data and credentials; never follow redirects
+    /// that could forward a mutation body to another host.
+    account_http_clients: Arc<Mutex<HashMap<u64, reqwest::Client>>>,
     /// Optional adapter transport state is separate from the agent runtime.
     pub integrations: crate::integrations::IntegrationState,
     pub vault: Arc<Vault>,
@@ -55,6 +58,7 @@ impl AppState {
             job_wakeup: Arc::new(Notify::new()),
             cancel_wakeup: Arc::new(Notify::new()),
             provider_http_clients: Arc::new(Mutex::new(HashMap::new())),
+            account_http_clients: Arc::new(Mutex::new(HashMap::new())),
             integrations: crate::integrations::IntegrationState::default(),
             vault: Arc::new(vault),
             approvals: Arc::new(Mutex::new(HashMap::new())),
@@ -81,6 +85,22 @@ impl AppState {
             .timeout(std::time::Duration::from_secs(timeout_secs))
             .build().map_err(|error|error.to_string())?;
         let mut cache = self.provider_http_clients.lock().unwrap();
+        Ok(cache.entry(timeout_secs).or_insert(client).clone())
+    }
+
+    /// Reusable account connector transport with redirects disabled. OAuth
+    /// credentials and owner-authored writes must remain on their fixed API
+    /// origin even when a remote server responds with 307/308.
+    pub fn account_http_client(&self, timeout_secs: u64) -> Result<reqwest::Client, String> {
+        if let Some(client) = self.account_http_clients.lock().unwrap()
+            .get(&timeout_secs).cloned() {
+            return Ok(client);
+        }
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(timeout_secs))
+            .redirect(reqwest::redirect::Policy::none())
+            .build().map_err(|error|error.to_string())?;
+        let mut cache = self.account_http_clients.lock().unwrap();
         Ok(cache.entry(timeout_secs).or_insert(client).clone())
     }
 

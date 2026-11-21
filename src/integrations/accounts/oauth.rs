@@ -37,12 +37,8 @@ fn provider(id: &str) -> Option<&'static Provider> {
     PROVIDERS.iter().find(|provider| provider.id == id)
 }
 
-fn oauth_client() -> Result<reqwest::Client,String> {
-    reqwest::Client::builder()
-        // OAuth exchanges put authorization codes, refresh tokens and client
-        // secrets in the POST body. Do not forward them through a 307/308.
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
+fn oauth_client(state:&AppState) -> Result<reqwest::Client,String> {
+    state.account_http_client(30)
         .map_err(|error|format!("OAuth HTTP client initialization failed: {error}"))
 }
 
@@ -292,7 +288,7 @@ pub async fn callback(
         .remove_secret(&format!("oauth-state:{state_token}"));
 
     let (client_id, client_secret) = client_credentials(state, id)?;
-    let client = oauth_client()?;
+    let client = oauth_client(state)?;
     let mut form = vec![
         ("client_id", client_id),
         ("client_secret", client_secret),
@@ -467,7 +463,7 @@ pub async fn fresh_access_token(state: &AppState, id: &str) -> Result<String, St
         .ok_or("인증이 만료되었습니다. 계정을 다시 연결하세요.")?;
     let provider = provider(id).ok_or("지원하지 않는 OAuth 제공자입니다.")?;
     let (client_id, client_secret) = client_credentials(state, id)?;
-    let response = oauth_client()?
+    let response = oauth_client(state)?
         .post(provider.token)
         .form(&[
             ("client_id", client_id.as_str()),
@@ -530,7 +526,7 @@ fn parse_workspace_credentials(text:&str)->Result<(String,String,String),String>
 pub async fn adopt_cli_grant(state:&AppState,source:&str)->Result<Value,String>{
     match source {
         "github"=>{
-            let client=oauth_client()?;
+            let client=oauth_client(state)?;
             let token=cli_output("gh",&["auth","token","--hostname","github.com"]).await?
                 .trim().to_string();
             if token.len()<12||token.len()>8192{return Err("GitHub CLI token is invalid".into());}
@@ -562,7 +558,7 @@ pub async fn adopt_cli_grant(state:&AppState,source:&str)->Result<Value,String>{
             Ok(json!({"provider":"github","account":name,"connected":true}))
         }
         "google_workspace"=>{
-            let client=oauth_client()?;
+            let client=oauth_client(state)?;
             let exported=cli_output("gws",&["auth","export","--unmasked"]).await?;
             let (id,secret,refresh)=parse_workspace_credentials(&exported)?;
             // Validate the actual grant by refreshing it. Merely finding a

@@ -184,13 +184,13 @@ async fn commit_with(client:&reqwest::Client,token:&str,origin:&str,
 pub async fn read(state:&AppState,args:&Value)->Result<Value,String>{
     let token=crate::integrations::accounts::oauth::fresh_access_token(state,"github").await
         .map_err(|e|format!("Connect or reconnect GitHub first: {e}"))?;
-    let client=state.provider_http_client(30)?;
+    let client=state.account_http_client(30)?;
     read_with(&client,&token,API_ORIGIN,args).await
 }
 pub async fn commit(state:&AppState,args:&Value)->Result<Value,String>{
     let token=crate::integrations::accounts::oauth::fresh_access_token(state,"github").await
         .map_err(|e|format!("Connect or reconnect GitHub first: {e}"))?;
-    let client=state.provider_http_client(30)?;
+    let client=state.account_http_client(30)?;
     commit_with(&client,&token,API_ORIGIN,args).await
 }
 
