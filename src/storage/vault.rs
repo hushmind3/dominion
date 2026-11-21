@@ -5,7 +5,7 @@ use chacha20poly1305::{
 };
 use rand::RngCore;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -28,7 +28,12 @@ pub struct Vault {
 }
 
 fn read_key(path: &Path) -> Option<[u8; KEY_LEN]> {
-    let bytes = fs::read(path).ok()?;
+    let file = fs::File::open(path).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(KEY_LEN + 1);
+    file.take((KEY_LEN + 1) as u64).read_to_end(&mut bytes).ok()?;
     if bytes.len() != KEY_LEN {
         return None;
     }
