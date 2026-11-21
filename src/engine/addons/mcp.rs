@@ -1,3 +1,5 @@
+#[path = "mcp_modern.rs"]
+mod modern;
 use crate::state::AppState;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -37,6 +39,7 @@ fn cache() -> &'static Cache {
 
 pub fn invalidate() {
     cache().lock().unwrap().clear();
+    modern_http_modes().lock().unwrap().clear();
     // Config or credential changes must never keep a pooled session alive.
     let mut pool=http_sessions().lock().unwrap();
     for entry in pool.values(){entry.healthy.store(false,Ordering::SeqCst);}
@@ -142,6 +145,10 @@ async fn list_server(state: &AppState, server: &Value, server_slug:&str) -> Resu
         result?
     };
 
+    let modern_http=transport=="http" && configured_http_era(server)
+        .ok().flatten().or_else(||http_identity(state,server).ok()
+            .and_then(|(identity,_)|modern_http_modes().lock().unwrap()
+                .get(&identity).copied())).unwrap_or(false);
     let tools = result
         .get("tools")
         .and_then(|value| value.as_array())
@@ -151,6 +158,10 @@ async fn list_server(state: &AppState, server: &Value, server_slug:&str) -> Resu
     Ok(tools
         .into_iter()
         .filter_map(|tool| {
+            if modern_http && modern::header_specs(&tool["inputSchema"]).is_err(){
+                // Invalid mirrored-header annotations are not safe to expose.
+                return None;
+            }
             let name = tool
                 .get("name")
                 .and_then(|value| value.as_str())?
@@ -413,7 +424,75 @@ impl Drop for HttpLease{
         }
     }
 }
+type HttpEraCache=Mutex<HashMap<String,bool>>;
+fn modern_http_modes()->&'static HttpEraCache{
+    static MODES:OnceLock<HttpEraCache>=OnceLock::new();
+    MODES.get_or_init(||Mutex::new(HashMap::new()))
+}
+fn configured_http_era(record:&Value)->Result<Option<bool>,String>{
+    match record["protocolVersion"].as_str().unwrap_or("auto"){
+        "auto"|""=>Ok(None),
+        "2026-07-28"=>Ok(Some(true)),
+        "2024-11-05"|"legacy"=>Ok(Some(false)),
+        other=>Err(format!("지원하지 않는 MCP HTTP 프로토콜 버전: {other}")),
+    }
+}
+fn cached_modern_schema(state:&AppState,record:&Value,tool_name:&str)->Option<Value>{
+    let id=record["id"].as_str()?;
+    let namespace=server_namespace(record,&enabled_servers(state));
+    let key=format!("{id}:{namespace}");
+    cache().lock().unwrap().get(&key)?.1.iter()
+        .find(|tool|tool.tool==tool_name).map(|tool|tool.schema.clone())
+}
+/// MCP 2026 and handshake-era HTTP share one owner-approved tool gateway.
+/// Protocol discovery can fall back only during read-only tools/list. Never
+/// resubmit an ambiguous tools/call through another transport.
 async fn http_request(state:&AppState,record:&Value,method:&str,params:Value)
+    ->Result<Value,String>{
+    let (identity,token)=http_identity(state,record)?;
+    let selected=configured_http_era(record)?
+        .or_else(||modern_http_modes().lock().unwrap().get(&identity).copied())
+        .or_else(||(method=="tools/list").then_some(true));
+    match selected{
+        Some(true)=>{
+            let response=if method=="tools/list"{
+                modern::list(record,token.as_deref()).await
+            }else if method=="tools/call"{
+                let name=params["name"].as_str().ok_or("MCP tool name missing")?;
+                let schema=cached_modern_schema(state,record,name);
+                let schema=match schema{
+                    Some(schema)=>schema,
+                    None=>{
+                        // A direct tool invocation must not bypass schema
+                        // discovery, including x-mcp-header annotations.
+                        let listed=modern::list(record,token.as_deref()).await
+                            .map_err(modern::ModernError::message)?;
+                        let raw=listed["tools"].as_array().ok_or("MCP tool list is malformed")?;
+                        raw.iter().find(|row|row["name"]==name)
+                            .map(|row|row["inputSchema"].clone())
+                            .ok_or("MCP tool not in advertised server catalog")?
+                    }
+                };
+                modern::call(record,token.as_deref(),params.clone(),Some(&schema)).await
+            }else{return Err("Unsupported modern MCP method".into());};
+            match response{
+                Ok(value)=>{
+                    modern_http_modes().lock().unwrap().insert(identity,true);
+                    Ok(value)
+                }
+                Err(modern::ModernError::Legacy(_)) if method=="tools/list"
+                    && configured_http_era(record)?.is_none()=>{
+                    modern_http_modes().lock().unwrap().insert(identity,false);
+                    http_request_legacy(state,record,method,params).await
+                }
+                Err(error)=>Err(error.message())
+            }
+        }
+        Some(false)=>http_request_legacy(state,record,method,params).await,
+        None=>Err("MCP tools/list discovery must finish before an effectful call".into()),
+    }
+}
+async fn http_request_legacy(state:&AppState,record:&Value,method:&str,params:Value)
     ->Result<Value,String>{
     let (key,token)=http_identity(state,record)?;
     let (handle,healthy)={
