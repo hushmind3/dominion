@@ -816,6 +816,15 @@ async fn plain_chat_is_one_model_call_without_agent_or_tools_and_preserves_follo
         "id":"plain-chat-test","title":"새 대화","agentId":"default",
         "providerId":"plain-test","model":"plain-fixture","mode":"agent",
     }));
+    state.store.put("memory",&json!({
+        "id":"shared-owner-memory","scope":"shared","source":"user",
+        "status":"active","text":"첫 질문의 경우 사용자는 지하철을 선호합니다."
+    })).unwrap();
+    state.store.put("memory",&json!({
+        "id":"other-agent-memory","scope":"agent","agentId":"other-agent",
+        "source":"user","status":"active",
+        "text":"첫 질문이 포함되어도 PRIVATE_AGENT_MEMORY_NOT_ALLOWED"
+    })).unwrap();
     let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
     for prompt in ["첫 질문입니다.","그 답변에 이어서요."] {
         // Simulate a UI or old client still sending agent/tool flags.
@@ -840,6 +849,10 @@ async fn plain_chat_is_one_model_call_without_agent_or_tools_and_preserves_follo
         let system=body["messages"][0]["content"].as_str().unwrap_or("");
         assert!(system.contains("OWNER_INSTRUCTION_SENTINEL"),"{body}");
         assert!(!system.contains("NEVER_SHOW_AGENT_SENTINEL"),"{body}");
+        assert!(!system.contains("PRIVATE_AGENT_MEMORY_NOT_ALLOWED"),"{body}");
+        if index==0 {
+            assert!(system.contains("사용자는 지하철을 선호합니다."),"{body}");
+        }
         assert!(!system.contains("지속 에이전트"),"{body}");
         let messages=body["messages"].as_array().unwrap();
         assert_eq!(messages.iter().filter(|item|item["role"]=="assistant").count(),index);
