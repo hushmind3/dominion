@@ -7,6 +7,7 @@ use serde_json::{json,Value};
 use super::response::error;
 use std::collections::{HashMap,HashSet};
 use sha2::{Digest,Sha256};
+use dominion_core::run_event::{RunEventRef,RunLifecycle};
 
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase")]
@@ -182,6 +183,18 @@ fn public_view_indexed(state:&AppState,mut record:Value,index:&ViewIndex)->Value
             "acceptancePassed":record["acceptancePassed"],
             "failureClass":record["failureClass"]
         });
+        // Expose the same canonical execution reference as SQLite event replay.
+        // The SDK's display status remains separate from the native lifecycle.
+        if let Some(id)=run["id"].as_str(){
+            if let Some(mut reference)=RunEventRef::new(id){
+                reference.session_id=Some(session.to_owned());
+                reference.room_id=run["roomId"].as_str().map(str::to_string);
+                reference.task_id=run["taskId"].as_str().map(str::to_string);
+                reference.agent_id=run["agentId"].as_str().map(str::to_string);
+                reference.lifecycle=run["status"].as_str().and_then(RunLifecycle::parse);
+                record["runRef"]=json!(reference);
+            }
+        }
         record["runtime"]=json!("dominion-core");
         // Chat and SDK share the same native execution accounting. The
         // checkpoint's old usage fields describe the primary response only.
@@ -843,6 +856,9 @@ mod view_tests{
                 "id":"sdk-1","sessionId":"sdk-session","status":status
             }),&index);
             assert_eq!(viewed["status"],"in_doubt", "{status}");
+            assert_eq!(viewed["runRef"]["schemaVersion"],1);
+            assert_eq!(viewed["runRef"]["executionId"],"execution-1");
+            assert_eq!(viewed["runRef"]["lifecycle"],"interrupted");
         }
         let completed=public_view_indexed(&state,json!({
             "id":"sdk-1","sessionId":"sdk-session","status":"completed"

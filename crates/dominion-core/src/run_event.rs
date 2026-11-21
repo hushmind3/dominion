@@ -59,6 +59,35 @@ impl RunEventRef {
     }
 }
 
+
+/// One committed event in the durable, globally ordered SQLite event journal.
+/// `seq` is a global cursor; `run_ref.execution_id` is the stable run key.
+/// Historical record/message payload fields remain available for old clients.
+#[derive(Clone,Debug,Serialize,Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct RunEventEnvelope {
+    pub seq:u64,
+    #[serde(rename="type")]
+    pub event_type:String,
+    pub run_ref:RunEventRef,
+    #[serde(flatten)]
+    pub payload:std::collections::BTreeMap<String,serde_json::Value>,
+}
+
+/// Bounded, loss-aware execution timeline. A missing event is never invented.
+#[derive(Clone,Debug,Serialize,Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct RunEventPage {
+    pub schema_version:u16,
+    pub execution_id:String,
+    pub after:u64,
+    pub next_after:u64,
+    pub has_more:bool,
+    pub earliest_available_seq:Option<u64>,
+    pub history_truncated:bool,
+    pub events:Vec<RunEventEnvelope>,
+}
+
 #[cfg(test)]
 mod tests{
     use super::*;

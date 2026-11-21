@@ -6,6 +6,7 @@ use axum::{
     Json,
 };
 use serde::Deserialize;
+use dominion_core::run_event::{RunEventPage,RunEventRef};
 use serde_json::{json, Value};
 
 #[derive(Deserialize, Default)]
@@ -56,6 +57,38 @@ pub async fn one(State(state): State<AppState>, Path(id): Path<String>) -> Respo
         )
             .into_response(),
     }
+}
+
+
+#[derive(Deserialize,Default)]
+pub struct EventCursor {
+    pub after:Option<u64>,
+    pub limit:Option<usize>,
+}
+
+/// Reconnect-safe native run timeline. Never substitute a room ID, task ID or
+/// SDK facade ID for the independently recorded execution ID.
+pub async fn run_events(
+    State(state):State<AppState>,Path(id):Path<String>,Query(cursor):Query<EventCursor>,
+)->Response{
+    if state.store.get("execution",&id).is_none(){
+        return (StatusCode::NOT_FOUND,Json(json!({"error":"실행 기록을 찾을 수 없습니다."}))).into_response();
+    }
+    let after=cursor.after.unwrap_or(0);
+    let max=cursor.limit.unwrap_or(100).clamp(1,500);
+    let mut events=state.bus.replay_run(&id,after,max+1);
+    let has_more=events.len()>max;
+    events.truncate(max);
+    let next_after=events.last().map(|e|e.seq).unwrap_or(after);
+    let earliest_available_seq=state.bus.earliest_event_seq();
+    let page=RunEventPage{
+        schema_version:RunEventRef::SCHEMA_VERSION,
+        execution_id:id,after,next_after,has_more,
+        history_truncated:earliest_available_seq
+            .is_some_and(|first|after<first.saturating_sub(1)),
+        earliest_available_seq,events
+    };
+    Json(page).into_response()
 }
 
 pub async fn cancel(State(state): State<AppState>, Path(id): Path<String>) -> Response {
@@ -142,6 +175,41 @@ mod tests {
     use super::*;
     use crate::{config::Config, db::Store, vault::Vault};
 
+
+    #[tokio::test]
+    async fn execution_timeline_pages_do_not_leak_other_runs_or_replay_duplicates(){
+        let dir=std::env::temp_dir().join(format!("dominion-run-events-{}",uuid::Uuid::new_v4()));
+        let cfg=Config{port:0,data_dir:dir.clone(),web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(cfg.clone(),Store::open(&cfg.db_path()).unwrap(),
+            Vault::open(&cfg.key_path()));
+        state.store.put("execution",&json!({"id":"exec-a","status":"running"})).unwrap();
+        state.store.put("execution",&json!({"id":"exec-b","status":"running"})).unwrap();
+        state.bus.record("execution",&json!({"id":"exec-a","status":"running"}));
+        state.bus.record("execution",&json!({"id":"exec-b","status":"running"}));
+        state.bus.record("execution",&json!({"id":"exec-a","status":"completed"}));
+        let first=run_events(State(state.clone()),Path("exec-a".into()),
+            Query(EventCursor{after:Some(0),limit:Some(1)})).await;
+        assert_eq!(first.status(),StatusCode::OK);
+        let bytes=axum::body::to_bytes(first.into_body(),1024*1024).await.unwrap();
+        let first:Value=serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(first["schemaVersion"],1);
+        assert_eq!(first["events"].as_array().unwrap().len(),1);
+        assert_eq!(first["hasMore"],true);
+        assert_eq!(first["events"][0]["runRef"]["executionId"],"exec-a");
+        let cursor=first["nextAfter"].as_u64().unwrap();
+        let second=run_events(State(state.clone()),Path("exec-a".into()),
+            Query(EventCursor{after:Some(cursor),limit:Some(10)})).await;
+        let bytes=axum::body::to_bytes(second.into_body(),1024*1024).await.unwrap();
+        let second:Value=serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(second["events"].as_array().unwrap().len(),1);
+        assert_eq!(second["hasMore"],false);
+        assert_eq!(second["events"][0]["seq"],3);
+        assert_eq!(second["events"][0]["runRef"]["lifecycle"],"completed");
+        assert_eq!(run_events(State(state.clone()),Path("nonexistent".into()),
+            Query(EventCursor::default())).await.status(),StatusCode::NOT_FOUND);
+        drop(state);
+        let _=std::fs::remove_dir_all(dir);
+    }
     #[tokio::test]
     async fn execution_cancel_commits_status_and_phase_in_the_same_patch() {
         let dir = std::env::temp_dir().join(format!("dominion-execution-cancel-{}", uuid::Uuid::new_v4()));

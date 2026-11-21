@@ -1620,6 +1620,38 @@ impl Store {
         .collect()
     }
 
+
+    /// Indexed by the immutable native execution ID, not SDK/room/job IDs.
+    /// SQLite JSON extraction avoids treating unrelated global events as a run.
+    pub fn events_for_execution(&self, execution_id:&str, after:u64, limit:usize)->Vec<Value>{
+        let conn=self.conn.lock().unwrap();
+        let Ok(mut stmt)=conn.prepare(
+            "SELECT seq,data FROM event_log WHERE seq > ?1 AND json_extract(data, '$.runRef.executionId') = ?2 ORDER BY seq ASC LIMIT ?3"
+        )else{return Vec::new()};
+        let rows=stmt.query_map(
+            params![after.min(i64::MAX as u64) as i64,execution_id,limit.min(501) as i64],
+            |row|{
+                let seq:i64=row.get(0)?;
+                let data:String=row.get(1)?;
+                Ok((seq,data))
+            }
+        );
+        let Ok(rows)=rows else{return Vec::new()};
+        rows.filter_map(|row|{
+            let (seq,data)=row.ok()?;
+            let mut value:Value=serde_json::from_str(&data).ok()?;
+            value["seq"]=json!(seq as u64);
+            Some(value)
+        }).collect()
+    }
+
+    /// Earliest surviving global event for explicit retention-gap reporting.
+    pub fn earliest_event_seq(&self)->Option<u64>{
+        let conn=self.conn.lock().unwrap();
+        conn.query_row("SELECT MIN(seq) FROM event_log",[],|row|row.get::<_,Option<i64>>(0))
+            .unwrap_or(None).map(|seq|seq.max(0) as u64)
+    }
+
     pub fn last_event_seq(&self) -> u64 {
         let conn = self.conn.lock().unwrap();
         conn.query_row("SELECT COALESCE(MAX(seq), 0) FROM event_log", [], |row| {

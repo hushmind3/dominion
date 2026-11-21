@@ -49,3 +49,38 @@ test('waitForRun times out without cancelling remote work', async () => {
   await assert.rejects(client.waitForRun('run id',{intervalMs:50,timeoutMs:0}),
     error => error instanceof DominionSdkError && error.status === 408)
 })
+
+test('run timeline keeps native execution identity and cursor across SDK facade', async () => {
+  const paths = [];
+  const client = new DominionAgentClient({
+    fetch: async url => {
+      paths.push(String(url));
+      if (String(url).includes('/api/sdk/runs/')) {
+        return new Response(JSON.stringify({
+          id:'sdk id', status:'running',
+          runRef:{schemaVersion:1,executionId:'native/execution',sessionId:'s'},
+        }), {status:200});
+      }
+      return new Response(JSON.stringify({
+        schemaVersion:1,executionId:'native/execution',
+        after:5,nextAfter:8,hasMore:false,earliestAvailableSeq:1,
+        historyTruncated:false,
+        events:[{seq:8,type:'record',kind:'execution',
+          runRef:{schemaVersion:1,executionId:'native/execution',lifecycle:'completed'}}],
+      }), {status:200});
+    },
+  });
+  const page = await client.getRunEvents('sdk id', {after:5,limit:10});
+  assert.equal(page.nextAfter,8);
+  assert.equal(page.events[0].runRef.lifecycle,'completed');
+  assert.match(paths[0],/\/api\/sdk\/runs\/sdk%20id$/);
+  assert.match(paths[1],/\/api\/executions\/native%2Fexecution\/events\?after=5&limit=10$/);
+});
+
+test('unadmitted SDK run does not invent an execution timeline', async () => {
+  const client = new DominionAgentClient({
+    fetch: async () => new Response(JSON.stringify({id:'sdk',status:'queued'}),{status:200}),
+  });
+  await assert.rejects(client.getRunEvents('sdk'),error=>
+    error instanceof DominionSdkError && error.status===409);
+});

@@ -7,6 +7,41 @@ export type SdkRunStatus =
   | 'interrupted' | 'completed' | 'cancelled' | 'exhausted'
   | 'denied' | 'failed';
 
+
+/** Identical execution identity emitted by the SQLite event bus and SDK. */
+export interface RunEventRef {
+  schemaVersion: number;
+  executionId: string;
+  sessionId?: string;
+  taskId?: string;
+  roomId?: string;
+  agentId?: string;
+  sourceMessageId?: string;
+  /** Native execution lifecycle; this is not the SDK presentation status. */
+  lifecycle?: 'queued' | 'running' | 'awaiting_approval' | 'paused'
+    | 'needs_review' | 'interrupted' | 'completed' | 'failed' | 'cancelled';
+}
+export interface RunEventEnvelope {
+  seq: number;
+  type: string;
+  runRef: RunEventRef;
+  [field: string]: unknown;
+}
+export interface RunEventPage {
+  schemaVersion: number;
+  executionId: string;
+  after: number;
+  nextAfter: number;
+  hasMore: boolean;
+  earliestAvailableSeq: number | null;
+  historyTruncated: boolean;
+  events: RunEventEnvelope[];
+}
+export interface RunEventsOptions {
+  after?: number;
+  limit?: number;
+}
+
 export interface ToolCall {
   id: string;
   name: string;
@@ -44,6 +79,8 @@ export interface AgentRun {
   acceptancePassed?: boolean | null;
   failureClass?: string | null;
   evidenceExecutionId?: string;
+  /** Shared native execution identity, when an execution has been admitted. */
+  runRef?: RunEventRef;
   checkpoint?: RunCheckpoint | null;
 }
 export interface StartRun {
@@ -134,6 +171,32 @@ export class DominionAgentClient {
   getRun(id: string, signal?: AbortSignal): Promise<AgentRun> {
     return this.request('GET', `/api/sdk/runs/${encodeURIComponent(id)}`, undefined, signal);
   }
+
+  /** Replay a durable, execution-scoped timeline without guessing a job/room ID. */
+  getExecutionEvents(
+    executionId: string, options: RunEventsOptions = {}, signal?: AbortSignal,
+  ): Promise<RunEventPage> {
+    const params = new URLSearchParams();
+    if (options.after !== undefined) params.set('after', String(options.after));
+    if (options.limit !== undefined) params.set('limit', String(options.limit));
+    const query = params.toString();
+    return this.request('GET',
+      `/api/executions/${encodeURIComponent(executionId)}/events${query ? `?${query}` : ''}`,
+      undefined, signal);
+  }
+
+  /** Resolve an SDK facade run to its independently recorded native execution. */
+  async getRunEvents(
+    sdkRunId: string, options: RunEventsOptions = {}, signal?: AbortSignal,
+  ): Promise<RunEventPage> {
+    const run = await this.getRun(sdkRunId, signal);
+    const executionId = run.runRef?.executionId ?? run.evidenceExecutionId;
+    if (!executionId) {
+      throw new DominionSdkError('Native execution has not been admitted yet', 409);
+    }
+    return this.getExecutionEvents(executionId, options, signal);
+  }
+
   startRun(input: StartRun, signal?: AbortSignal): Promise<AgentRun> {
     return this.request('POST', '/api/sdk/runs', input, signal);
   }

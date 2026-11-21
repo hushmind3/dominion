@@ -292,6 +292,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/transfer", get(experience::transfer))
         .route("/api/improvements/:id/:action", post(improvements::decide))
         .route("/api/executions/:id", get(executions::one))
+        .route("/api/executions/:id/events", get(executions::run_events))
         .route("/api/executions/:id/budget/reconcile",post(executions::reconcile_budget))
         .route("/api/executions/:id/cancel", post(executions::cancel))
         .route("/api/webhooks/:id", post(compat::webhook));

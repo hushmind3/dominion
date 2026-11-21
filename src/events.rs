@@ -1,5 +1,5 @@
 use crate::db::Store;
-use dominion_core::run_event::{RunEventRef,RunLifecycle};
+use dominion_core::run_event::{RunEventEnvelope,RunEventRef,RunLifecycle};
 use serde_json::{json, Value};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -99,6 +99,20 @@ impl Bus {
     pub fn replay(&self, after: u64, limit: usize) -> Vec<Value> {
         self.store.events_after(after, limit)
     }
+
+    /// Durable, scoped replay for Chat/Room/Task/SDK consumers that know the
+    /// actual execution ID. Event order is the shared journal order.
+    pub fn replay_run(&self, execution_id:&str, after:u64, limit:usize)->Vec<RunEventEnvelope>{
+        self.store.events_for_execution(execution_id,after,limit).into_iter()
+            .filter_map(|event|serde_json::from_value::<RunEventEnvelope>(event).ok())
+            .filter(|event|event.run_ref.execution_id==execution_id)
+            .collect()
+    }
+
+    pub fn earliest_event_seq(&self)->Option<u64>{
+        self.store.earliest_event_seq()
+    }
+
 }
 
 #[cfg(test)]
@@ -155,6 +169,33 @@ mod tests {
         assert!(bus.replay(3,10)[0].get("runRef").is_none());
     }
 
+
+    #[test]
+    fn per_execution_cursor_is_durable_scoped_and_idempotent_after_restart(){
+        let store=store();
+        let bus=Bus::new(store.clone());
+        bus.record("execution",&json!({"id":"exec-one","sessionId":"chat-a","status":"running"}));
+        bus.record("execution",&json!({"id":"exec-two","sessionId":"chat-b","status":"running"}));
+        bus.message(&json!({"id":"answer-one","session_id":"chat-a",
+            "metadata":{"executionId":"exec-one","authorKind":"agent"}}));
+        let first=bus.replay_run("exec-one",0,1);
+        assert_eq!(first.len(),1);
+        assert_eq!(first[0].seq,1);
+        assert_eq!(first[0].run_ref.lifecycle,Some(RunLifecycle::Running));
+        assert_eq!(first[0].run_ref.execution_id,"exec-one");
+        let second=bus.replay_run("exec-one",first[0].seq,10);
+        assert_eq!(second.len(),1);
+        assert_eq!(second[0].seq,3);
+        assert_eq!(second[0].run_ref.session_id.as_deref(),Some("chat-a"));
+        assert!(bus.replay_run("exec-two",2,10).is_empty());
+        drop(bus);
+        let restored=Bus::new(store);
+        restored.record("execution",&json!({"id":"exec-one","status":"completed"}));
+        let continuation=restored.replay_run("exec-one",3,10);
+        assert_eq!(continuation.len(),1);
+        assert_eq!(continuation[0].seq,4);
+        assert_eq!(continuation[0].run_ref.lifecycle,Some(RunLifecycle::Completed));
+    }
     #[test]
     fn the_log_is_bounded_without_losing_recent_events() {
         let store = store();

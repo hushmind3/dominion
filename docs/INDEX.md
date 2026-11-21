@@ -1,6 +1,7 @@
 # DOMINION documentation
 
 - [Agent harness and execution contract](HARNESS.md)
+- [Versioned Run/Event replay and SDK contract](RUN-EVENT-CONTRACT-2026.md)
 - [Getting started](GETTING-STARTED.md)
 - [Core runtime architecture](../ENGINE.md)
 - [Rust core](../crates/dominion-core/README.md)
