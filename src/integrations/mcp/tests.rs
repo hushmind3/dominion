@@ -349,3 +349,37 @@ use super::*;
         worker.abort();
     }
 
+
+    #[tokio::test]
+    async fn real_modern_stdio_never_initializes_and_persists_one_live_process(){
+        if std::process::Command::new("node").arg("--version").output().is_err(){
+            eprintln!("node not available; modern stdio fixture skipped");
+            return;
+        }
+        let state=temp_state();
+        let script=std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("scripts/mcp-echo-modern-server.mjs");
+        assert!(script.is_file(),"missing 2026 modern stdio fixture");
+        let log=state.config.data_dir.join("mcp-modern-starts.log");
+        let server=json!({
+            "id":"modern-stdio","name":"Modern Stdio","transport":"stdio",
+            "command":"node","protocolMode":"modern",
+            "args":[script.to_string_lossy()],
+            "env":{"DOMINION_MCP_TEST_MODERN_LOG":log.to_string_lossy()}
+        });
+        state.store.put("mcp",&server).unwrap();
+        let tools=tools(&state).await;
+        assert_eq!(tools.len(),1);
+        let tool=&tools[0];
+        let answer=call_pinned(&state,&tool.qualified(),
+            &json!({"text":"first"}),&tool.schema,&tool.description).await.unwrap();
+        assert!(answer.to_string().contains("MCP_MODERN: first"));
+        let other=call(&state,&tool.qualified(),&json!({"text":"second"}))
+            .await.unwrap();
+        assert!(other.to_string().contains("MCP_MODERN: second"));
+        let events=std::fs::read_to_string(&log).unwrap();
+        assert_eq!(events.lines().collect::<Vec<_>>(),vec!["started"],
+            "the modern connection must not send initialize or restart each tool");
+        assert!(state.integrations.mcp_sessions.idle.lock().unwrap().len()<=1);
+    }
+
