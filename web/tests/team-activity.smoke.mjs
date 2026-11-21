@@ -392,12 +392,12 @@ try{
   await page.getByRole('button',{name:'대화 목록 펼치기'}).click();
   const historySearch=page.getByRole('searchbox',{name:'대화 목록 검색'});
   await historySearch.fill('independent');
-  assert.equal(await page.locator('aside').getByRole('button',{name:'Independent route'}).count(),1);
-  assert.equal(await page.locator('aside').getByRole('button',{name:'Conversation One'}).count(),0);
+  assert.equal(await page.locator('aside').getByRole('button',{name:'Independent route',exact:true}).count(),1);
+  assert.equal(await page.locator('aside').getByRole('button',{name:'Conversation One',exact:true}).count(),0);
   await historySearch.fill('없는 대화 이름');
   await page.getByText('일치하는 대화가 없습니다.').waitFor({timeout:10000});
   await page.getByRole('button',{name:'검색 지우기'}).click();
-  assert.equal(await page.locator('aside').getByRole('button',{name:'Conversation One'}).count(),1);
+  assert.equal(await page.locator('aside').getByRole('button',{name:'Conversation One',exact:true}).count(),1);
   // The backdrop sits beneath the mobile sidebar; tap outside its 232px panel.
   await page.mouse.click(380,420);
   await page.getByRole('button',{name:'대화 목록 펼치기'}).waitFor({timeout:10000});
