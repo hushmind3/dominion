@@ -333,3 +333,14 @@ test('streamed markdown starts tables and dividers even without a preceding blan
   assert.match(rich,/<table className=/)
   assert.match(rich,/<hr key=/)
 })
+
+test('following mode watches transcript content height and newly submitted bubbles',()=>{
+  const chat=source('src/pages/Chat.tsx')
+  const scroll=source('src/hooks/useTranscriptScroll.ts')
+  assert.match(chat,/messages\.length,showOptimisticOwner,busy&&viewingTurn/)
+  assert.match(scroll,/observer\.observe\(el\.firstElementChild\)/)
+  assert.match(scroll,/new MutationObserver\(\(\)=>/)
+  assert.match(scroll,/children\.observe\(el, \{childList:true\}\)/)
+  assert.match(scroll,/if \(following\.current\) el\.scrollTop = el\.scrollHeight/)
+  assert.match(scroll,/return \(\) => \{ observer\.disconnect\(\);children\.disconnect\(\) \}/)
+})
