@@ -12,8 +12,11 @@ mod remote_artifacts;
 use crate::db::Store;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::path::{Component, Path, PathBuf};
+use std::{io::Read, path::{Component, Path, PathBuf}};
 use std::time::Duration;
+
+const TOOL_TEXT_READ_LIMIT: u64 = 1_500_000;
+const CODE_SEARCH_READ_LIMIT: u64 = 2 * 1024 * 1024;
 
 /// Everything a tool needs in order to run. Tools are pure Rust: no Node,
 /// no sidecar process.
@@ -1084,6 +1087,11 @@ async fn list_dir(path: &Path) -> Result<Value, String> {
 }
 
 async fn read_text(path: &Path) -> Result<Value, String> {
+    let text = read_utf8_limited(path, TOOL_TEXT_READ_LIMIT).await?;
+    Ok(json!({ "path": path.to_string_lossy(), "content": text }))
+}
+
+async fn read_utf8_limited(path: &Path, limit: u64) -> Result<String, String> {
     use tokio::io::AsyncReadExt;
     let file = tokio::fs::File::open(path)
         .await
@@ -1095,20 +1103,36 @@ async fn read_text(path: &Path) -> Result<Value, String> {
     if !metadata.is_file() {
         return Err("Target is not a regular file".into());
     }
-    if metadata.len() > 1_500_000 {
-        return Err("File is larger than 1.5 MB".into());
+    if metadata.len() > limit {
+        return Err(format!("File is larger than {limit} bytes"));
     }
     let mut bytes = Vec::new();
-    file.take(1_500_001)
+    file.take(limit + 1)
         .read_to_end(&mut bytes)
         .await
         .map_err(|error| format!("{}: {error}", path.display()))?;
-    if bytes.len() > 1_500_000 {
-        return Err("File grew larger than 1.5 MB while reading".into());
+    if bytes.len() as u64 > limit {
+        return Err(format!("File grew larger than {limit} bytes while reading"));
     }
     let text = String::from_utf8(bytes)
         .map_err(|error| format!("{}: {error}", path.display()))?;
-    Ok(json!({ "path": path.to_string_lossy(), "content": text }))
+    Ok(text)
+}
+
+fn read_utf8_limited_sync(path: &Path, limit: u64) -> Result<String, String> {
+    let file = std::fs::File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let metadata = file.metadata().map_err(|error| format!("{}: {error}", path.display()))?;
+    if !metadata.is_file() || metadata.len() > limit {
+        return Err(format!("File exceeds the {limit}-byte read limit"));
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    if bytes.len() as u64 > limit {
+        return Err(format!("File grew beyond the {limit}-byte read limit"));
+    }
+    String::from_utf8(bytes).map_err(|error| format!("{}: {error}", path.display()))
 }
 
 fn preflight_policy(ctx: &ToolContext<'_>, path: &Path, run_id: &str) -> Option<Value> {
@@ -1183,7 +1207,7 @@ fn search_code_index(
             if file["indexId"].as_str()!=Some(index_id) {continue;}
             let Some(path)=file["path"].as_str() else {continue;};
             let Ok(full)=resolve_workspace(ctx.workspace,path) else {continue;};
-            let Ok(content)=std::fs::read_to_string(full) else {continue;};
+            let Ok(content)=read_utf8_limited_sync(&full,CODE_SEARCH_READ_LIMIT) else {continue;};
             for (index,line) in content.lines().enumerate().filter(|(_,line)|line.to_lowercase().contains(&needle)).take(limit) {
                 matches.push((100,json!({"path":path,"kind":"literal","line":index+1,
                     "name":line.trim().chars().take(180).collect::<String>()})));
@@ -1210,9 +1234,7 @@ async fn replace_text(
     if old_text.is_empty() {
         return Err("oldText는 비어 있을 수 없습니다.".into());
     }
-    let text = tokio::fs::read_to_string(path)
-        .await
-        .map_err(|error| format!("{}: {error}", path.display()))?;
+    let text = read_utf8_limited(path, TOOL_TEXT_READ_LIMIT).await?;
     let occurrences = text.matches(old_text).count();
     if occurrences != 1 {
         return Ok(json!({
@@ -1247,8 +1269,7 @@ async fn replace_range(
     if new_text.len() > 64_000 {
         return Err("Replacement is larger than the source edit limit".into());
     }
-    let source = tokio::fs::read_to_string(path)
-        .await.map_err(|error| format!("{}: {error}", path.display()))?;
+    let source = read_utf8_limited(path, TOOL_TEXT_READ_LIMIT).await?;
     let digest = format!("{:x}", Sha256::digest(source.as_bytes()));
     if digest != expected_sha256 {
         return Ok(json!({"error":"Source changed since the observed range",
