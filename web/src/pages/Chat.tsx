@@ -197,6 +197,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const fileInputRef=useRef<HTMLInputElement>(null);
  const inputRef=useRef<HTMLTextAreaElement>(null);
  const stream=useRef<AbortController|null>(null);
+ const activeTurnRequestId=useRef<string|undefined>(undefined);
  const activeTurnSession=useRef<string|undefined>(undefined);
  const stoppingRef=useRef(false);
  const [stopping,setStopping]=useState(false);
@@ -325,10 +326,11 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const stopChat=async()=>{
   if(stoppingRef.current)return;
   const id=activeTurnSession.current??current;
+  const requestId=activeTurnRequestId.current;
   const controller=stream.current;
   if(!id){
    if(controller){
-    controller.abort();stream.current=null;
+    controller.abort();stream.current=null;activeTurnRequestId.current=undefined;
     setBusy(false);setLive('');setThought('');setToolStatus('');setTurnSession(undefined);
     setCommandInfo(t('chat.stopped'));
    }else setError(t('chat.cmd.noSessionStop'));
@@ -336,16 +338,26 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   }
   stoppingRef.current=true;setStopping(true);setError('');
   try{
-   const outcome=await post<{cancelled:boolean;stopped:boolean}>('/api/sessions/'+encodeURIComponent(id)+'/cancel',{});
-   if(!outcome.stopped)throw Error(t('chat.stopPending'));
+   // The cancellation acknowledgement reports the request tombstone, not
+   // whether the model/tool and durable execution journal have settled.
+   const outcome=await post<{cancelled:boolean;requestRecorded?:boolean}>(
+    '/api/sessions/'+encodeURIComponent(id)+'/cancel',requestId?{requestId}:{});
+   const statusPath='/api/sessions/'+encodeURIComponent(id)+'/cancel-status';
+   let stopped=false;
+   for(let attempt=0;attempt<60;attempt++){
+    const status=await get<{stopped:boolean}>(statusPath);
+    if(status.stopped){stopped=true;break;}
+    await new Promise<void>(resolve=>setTimeout(resolve,200));
+   }
+   if(!stopped)throw Error(t('chat.stopPending'));
    controller?.abort();
    if(stream.current===controller){
-    stream.current=null;activeTurnSession.current=undefined;
+    stream.current=null;activeTurnSession.current=undefined;activeTurnRequestId.current=undefined;
     setBusy(false);setLive('');setThought('');setLiveApproval(null);
     setToolStatus('');setTurnSession(undefined);setSavedMessageId(undefined);
    }
    refresh('/api/sessions','/api/approvals','/api/sessions/'+encodeURIComponent(id)+'/messages','/api/sessions/'+encodeURIComponent(id)+'/usage');
-   setCommandInfo(outcome.cancelled||controller?t('chat.stopped'):t('chat.cmd.nothingRunning'));
+   setCommandInfo(outcome.cancelled||outcome.requestRecorded||controller?t('chat.stopped'):t('chat.cmd.nothingRunning'));
   }catch(e){
    setError(translateError((e as Error).message));
   }finally{
@@ -440,6 +452,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   if(!providerId){setError(t('chat.err.connectApi'));return;}
   if(!model){setError(t('chat.err.pickModel'));return;}
   const controller=new AbortController();
+  const requestId=crypto.randomUUID();
+  activeTurnRequestId.current=requestId;
   stream.current=controller;
   activeTurnSession.current=current;
   setTurnSession(current);setSavedMessageId(undefined);
@@ -491,7 +505,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    setInput(previous=>previous.trim()===text?'':previous);
    if(inputRef.current)inputRef.current.style.height='';
    await streamChat({
-    sessionId:id,conversationMode:executionMode,
+    sessionId:id,requestId,conversationMode:executionMode,
     agentId:executionMode==='agent'?agentId:undefined,
     providerId:executionMode==='chat'?providerId:manual?.providerId,
     model:executionMode==='chat'?model:manual?.model,input:text,attachmentIds,
@@ -522,7 +536,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    }
   }finally{
    if(stream.current===controller){
-    stream.current=null;activeTurnSession.current=undefined;
+    stream.current=null;activeTurnSession.current=undefined;activeTurnRequestId.current=undefined;
     refresh('/api/sessions',...(id?['/api/sessions/'+encodeURIComponent(id)+'/messages']:[]));
     setBusy(false);setLiveApproval(null);setToolStatus('');
     if(!saved){setLive('');setThought('');}
