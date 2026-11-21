@@ -142,6 +142,9 @@ pub fn router(state: AppState) -> Router {
         ))
         .layer(middleware::from_fn_with_state(state.clone(), guard_writes))
         .layer(cors)
+        // DNS-rebinding defense applies to owner GET/HEAD/WebSocket too.
+        // Remote worker traffic uses its own authenticated listener.
+        .layer(middleware::from_fn_with_state(state.clone(), guard_local_host))
         .layer(axum::extract::DefaultBodyLimit::max(12 * 1024 * 1024))
         .with_state(state)
 }
@@ -184,6 +187,30 @@ async fn maintenance_guard(State(state): State<AppState>, request: Request, next
         })),
     )
         .into_response()
+}
+
+/// A loopback listener alone does not prevent browser DNS rebinding: a
+/// hostile hostname can resolve to 127.0.0.1 while retaining its Host header.
+/// Reject mismatched authorities on every method before any owner API or
+/// static application data is returned. Remote workers have a separate port.
+fn trusted_loopback_host(raw:&str,port:u16)->bool{
+    let host=raw.trim();
+    // No wildcard, userinfo, forwarded-host override, or prefix matching.
+    host.eq_ignore_ascii_case(&format!("localhost:{port}"))
+        || host==format!("127.0.0.1:{port}")
+        || host==format!("[::1]:{port}")
+}
+
+async fn guard_local_host(State(state):State<AppState>,request:Request,next:Next)->Response{
+    let host=request.headers().get(header::HOST)
+        .and_then(|header|header.to_str().ok())
+        .or_else(||request.uri().authority().map(|authority|authority.as_str()));
+    if !host.is_some_and(|host|trusted_loopback_host(host,state.config.port)){
+        return (StatusCode::FORBIDDEN,Json(json!({
+            "error":"owner API requires local Host",
+        }))).into_response();
+    }
+    next.run(request).await
 }
 
 /// Rejects cross-origin writes so a random website cannot drive the local
