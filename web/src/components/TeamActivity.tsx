@@ -43,6 +43,7 @@ export function TeamActivity(){
  const [leadId,setLeadId]=useState('')
  const [workerIds,setWorkerIds]=useState<string[]>([])
  const [remoteId,setRemoteId]=useState('')
+ const [platform,setPlatform]=useState<'powershell'|'posix'>('powershell')
  const [busy,setBusy]=useState('')
  const [error,setError]=useState('')
  const [notice,setNotice]=useState('')
@@ -118,12 +119,26 @@ export function TeamActivity(){
    setReview(null);reload()
   }catch(e){setError((e as Error).message)}finally{setBusy('')}
  }
- const setup=[
-  'DOMINION_REMOTE_CLUSTER_TOKEN=<same private random token>',
-  'DOMINION_REMOTE_COORDINATOR_URL=https://your-private-controller.example',
-  'DOMINION_REMOTE_WORKER_ID=worker-b',
+ const coordinatorSetup=(platform==='powershell'?[
+  '$env:DOMINION_REMOTE_CLUSTER_TOKEN = "PASTE_A_32_PLUS_CHAR_RANDOM_SECRET"',
+  '$env:DOMINION_REMOTE_LISTEN = "127.0.0.1:4941"',
+  '.\\dominion-rust.exe'
+ ]:[
+  'export DOMINION_REMOTE_CLUSTER_TOKEN="$(openssl rand -hex 32)"',
+  'export DOMINION_REMOTE_LISTEN="127.0.0.1:4941"',
+  './dominion-rust'
+ ]).join('\n')
+ const workerSetup=(platform==='powershell'?[
+  '$env:DOMINION_REMOTE_CLUSTER_TOKEN = "SAME_SECRET_AS_COORDINATOR"',
+  '$env:DOMINION_REMOTE_COORDINATOR_URL = "https://your-private-controller.example"',
+  '$env:DOMINION_REMOTE_WORKER_ID = "worker-b"',
+  '.\\dominion-rust.exe remote-worker'
+ ]:[
+  'export DOMINION_REMOTE_CLUSTER_TOKEN="SAME_SECRET_AS_COORDINATOR"',
+  'export DOMINION_REMOTE_COORDINATOR_URL="https://your-private-controller.example"',
+  'export DOMINION_REMOTE_WORKER_ID="worker-b"',
   './dominion-rust remote-worker'
- ].join('\n')
+ ]).join('\n')
  return <section className="mt-10" aria-label={en?'Agent teams':'에이전트 작업 팀'}>
   <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
    <div className="flex min-w-0 items-center gap-2">
@@ -231,8 +246,16 @@ export function TeamActivity(){
     {!workers.length&&<p className="mt-2 text-[11px] text-[#8A8176]">{en?'No registered remote devices. Local workers remain available.':'등록된 원격 장치가 없습니다. 로컬 Worker는 정상적으로 사용할 수 있습니다.'}</p>}
     <details className="mt-3 text-[11px] text-[#7C7469]"><summary className="cursor-pointer font-semibold">{en?'Connect another PC (manual credential setup)':'다른 PC 연결 방법 · 인증 정보는 직접 설정'}</summary>
      <p className="mt-2 leading-5">{en?'Enable the opt-in remote-only listener on the coordinator and connect the other PC over private HTTPS or encrypted overlay. Never expose the desktop API or paste cluster secrets into chat.':'리더 PC에서 원격 전용 포트를 활성화한 뒤 다른 PC가 비공개 HTTPS 또는 암호화 사설망을 통해 접속하도록 설정합니다. 데스크톱 API를 외부에 공개하지 않습니다.'}</p>
-     <pre className="mt-2 overflow-x-auto rounded-lg bg-[#FAF7F1] p-3 text-[10px]">{setup}</pre>
-     <Button size="sm" variant="ghost" onClick={()=>void navigator.clipboard.writeText(setup)}><ClipboardCopy size={12}/>{en?'Copy example':'설정 예시 복사'}</Button>
+     <label className="mt-2 block max-w-[220px] text-[11px] font-semibold">{en?'Command shell':'명령 실행 환경'}
+      <SelectInput className="mt-1" value={platform} onChange={e=>setPlatform(e.target.value as 'powershell'|'posix')}>
+       <option value="powershell">Windows PowerShell</option><option value="posix">macOS / Linux</option>
+      </SelectInput>
+     </label>
+     <div className="mt-3 flex items-center justify-between gap-2"><strong>{en?'1. Coordinator PC':'1. 리더 PC'}</strong><Button size="sm" variant="ghost" onClick={()=>void navigator.clipboard.writeText(coordinatorSetup)}><ClipboardCopy size={12}/>{en?'Copy':'복사'}</Button></div>
+     <pre className="mt-1 overflow-x-auto rounded-lg bg-[#FAF7F1] p-3 text-[10px]">{coordinatorSetup}</pre>
+     <p className="mt-2 text-[10px] leading-5">{en?'Loopback is safe by default. Other machines require an authenticated private HTTPS proxy or VPN listener.':'기본 루프백 포트는 이 PC에서만 연결됩니다. 다른 PC는 인증된 HTTPS 프록시 또는 VPN의 비공개 인터페이스로 연결하세요.'}</p>
+     <div className="mt-3 flex items-center justify-between gap-2"><strong>{en?'2. Worker PC':'2. Worker PC'}</strong><Button size="sm" variant="ghost" onClick={()=>void navigator.clipboard.writeText(workerSetup)}><ClipboardCopy size={12}/>{en?'Copy':'복사'}</Button></div>
+     <pre className="mt-1 overflow-x-auto rounded-lg bg-[#FAF7F1] p-3 text-[10px]">{workerSetup}</pre>
     </details>
    </div>
   </Panel>
