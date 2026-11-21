@@ -1,10 +1,10 @@
 # SUB3 — full source and UX audit (2026-11-21)
 
-Branch: dominion-sub3 only. Source: GitHub recursive tree, exact Rust/UI modules, workflow definitions, 53 Chromium screenshots and cross-branch blob comparisons. **Tree inventory is broader than the deep-reviewed call paths; this is not a statement that all 438 blobs received line-by-line manual review.**
+Branch: dominion-sub3 only. Source: GitHub recursive tree, exact Rust/UI modules, workflow definitions, 54 Chromium screenshots and cross-branch blob comparisons. **Tree inventory is broader than the deep-reviewed call paths; this is not a statement that all 439 blobs received line-by-line manual review.**
 
 ## Inventory and comparison
 
-- 519 tree entries and 438 blobs (not truncated); Rust host, three dominion-agent-* crates, Rust/TypeScript SDK, React/Vite UI, Tauri, Cloudflare Worker, benchmarks, tests and workflows.
+- 520 tree entries and 439 blobs (not truncated); Rust host, three dominion-agent-* crates, Rust/TypeScript SDK, React/Vite UI, Tauri, Cloudflare Worker, benchmarks, tests and workflows.
 - Compared with main, 68 same-path files differ by blob SHA, including 22 React/frontend sources. Sub2/Sub4 have different architectural and UI trees; naming or README alone cannot establish parity.
 - Screenshots: 1440, 768, 390, 320px actual Chromium viewports. A contact sheet of 16 representative pages was visually inspected.
 
@@ -31,10 +31,10 @@ Branch: dominion-sub3 only. Source: GitHub recursive tree, exact Rust/UI modules
 ## Found and repaired in this audit
 
 ### Local owner API DNS-rebinding read surface
-Previously src/api/mod.rs guarded mutation Origin, but a supplied non-local HTTP Host on GET was not checked. Such an address can expose local owner data through a browser DNS-rebinding scenario despite same-origin/CORS policies. Added guard_local_host to reject non-loopback Host/authority on /api/*, with exact 127.0.0.1/localhost port binding. The separate remote worker router is unchanged. A real local HTTP request to /api/sessions with a foreign Host must now return 403 without private session details; test name: api::host_security_tests.
+Previously src/api/mod.rs guarded mutation Origin, but a supplied non-local HTTP Host on GET was not checked. Such an address can expose local owner data through a browser DNS-rebinding scenario despite same-origin/CORS policies. Added guard_local_host to reject non-loopback Host/authority on /api/*, with exact 127.0.0.1/localhost port binding. The separate remote worker router is unchanged. A real local HTTP request to /api/sessions with a foreign Host must now return 403 without private session details; test name: api::host_security_tests. The product workflow now also runs api::sdk_runs::tests (missed by previous green CI filters).
 
 ### Owner cannot refuse a single native tool
-NativeAgentPanel showed a button to allow one pending tool but none to refuse it. Existing generic approval gateway supported denial. Added run-scoped /api/sdk/runs/:id/deny, the same live session + callId binding as approve, a UI refusal button, a Rust regression that delivers false to the actual tool waiter and prevents subsequent approval, and a Chromium UI exercise of the refusal request.
+NativeAgentPanel showed a button to allow one pending tool but none to refuse it. Existing generic approval gateway supported denial. Added run-scoped /api/sdk/runs/:id/deny, the same live session + callId binding as approve, a UI refusal button, a Rust regression that delivers false to the actual tool waiter and prevents subsequent approval, and a Chromium UI exercise of the refusal request, and a public TypeScript SDK nativeRuns.deny method with exact call-ID transport tests.
 
 ## Unfinished and unmeasured
 
