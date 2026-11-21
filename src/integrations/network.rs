@@ -29,10 +29,17 @@ pub(crate) fn public_http_ip(ip: std::net::IpAddr) -> bool {
                 return public_http_ip(IpAddr::V4(mapped));
             }
             let segments=v6.segments();
-            !v6.is_loopback() && !v6.is_unspecified() && !v6.is_multicast()
+            // Permit only global-unicast space. This excludes NAT64 and
+            // IPv4-compatible encodings; explicitly reject 6to4, IETF
+            // protocol assignments and the current IPv6 documentation block.
+            let global_unicast=segments[0]&0xe000==0x2000;
+            let protocol_assignment=segments[0]==0x2001&&segments[1]<0x0200;
+            let six_to_four=segments[0]==0x2002;
+            let documentation=segments[0]==0x3fff&&segments[1]<0x1000;
+            global_unicast&&!protocol_assignment&&!six_to_four&&!documentation
+                &&!v6.is_loopback() && !v6.is_unspecified() && !v6.is_multicast()
                 && !v6.is_unique_local() && !v6.is_unicast_link_local()
                 && !(segments[0]==0x2001 && segments[1]==0x0db8)
-                && !(segments[0]==0x2001 && segments[1]==0)
         }
     }
 }
