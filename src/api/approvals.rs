@@ -3,19 +3,12 @@ use axum::{extract::{State},http::StatusCode,response::{IntoResponse,Response},J
 use serde_json::{json,Value};
 use super::response::error;
 
-pub async fn list_approvals(State(state): State<AppState>) -> Json<Value> {
-    let pending = state
-        .store
-        .all("approval")
-        .into_iter()
-        .filter(|record| {
-            matches!(
-                record.get("status").and_then(|value| value.as_str()),
-                Some("pending") | Some("interrupted")
-            )
-        })
-        .collect::<Vec<_>>();
-    Json(json!(pending))
+pub async fn list_approvals(State(state): State<AppState>) -> Response {
+    match state.store.unresolved_approvals() {
+        Ok(pending)=>Json(json!(pending)).into_response(),
+        Err(_)=>error(StatusCode::INTERNAL_SERVER_ERROR,
+            "승인 대기 목록을 조회하지 못했습니다."),
+    }
 }
 
 pub async fn resolve_approval(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
@@ -24,11 +17,12 @@ pub async fn resolve_approval(State(state): State<AppState>, Json(body): Json<Va
         .and_then(|value| value.as_str())
         .unwrap_or("")
         .to_string();
-    let allow = body
-        .get("allow")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false);
-    if id.is_empty() {
+    // Missing/malformed allow is not a user refusal. Avoid writing an
+    // irreversible denied receipt for a client serialization mistake.
+    let Some(allow) = body.get("allow").and_then(Value::as_bool) else {
+        return error(StatusCode::BAD_REQUEST, "승인 또는 거부 여부를 명확히 지정하세요.");
+    };
+    if id.is_empty() || id.len()>256 {
         return error(StatusCode::BAD_REQUEST, "승인 id 가 필요합니다.");
     }
     let Some(record) = state.store.get("approval", &id) else {

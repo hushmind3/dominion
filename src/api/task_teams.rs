@@ -8,13 +8,13 @@ use serde_json::{json,Value};
 fn error(status:StatusCode,message:impl Into<String>)->Response {
     (status,Json(json!({"error":message.into()}))).into_response()
 }
-pub async fn list(State(state):State<AppState>)->Json<Value>{
-    let mut jobs=state.store.all("job").into_iter()
-        .filter(|job|job["kind"]=="team").collect::<Vec<_>>();
-    jobs.sort_by(|a,b|b["queuedAt"].as_str().unwrap_or("")
-        .cmp(a["queuedAt"].as_str().unwrap_or("")));
-    Json(json!(jobs.iter().take(100).map(|job|task_team::project(&state,job))
-        .collect::<Vec<_>>()))
+pub async fn list(State(state):State<AppState>)->Response{
+    match state.store.recent_team_jobs(100) {
+        Ok(jobs)=>Json(json!(jobs.iter().map(|job|task_team::project(&state,job))
+            .collect::<Vec<_>>())).into_response(),
+        Err(_)=>error(StatusCode::INTERNAL_SERVER_ERROR,
+            "Task Team history unavailable"),
+    }
 }
 pub async fn one(State(state):State<AppState>,Path(id):Path<String>)->Response{
     match state.store.get("job",&id).filter(|job|job["kind"]=="team"){

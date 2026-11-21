@@ -224,6 +224,23 @@ impl Store {
                  ON records(kind,json_extract(data,'$.status'))
                  WHERE kind='execution_operation'
                    AND json_extract(data,'$.status')='running';
+             -- Owner dashboards must not deserialize all historical jobs
+             -- every time they show the latest few runs.
+             CREATE INDEX IF NOT EXISTS idx_native_panel_job_history
+               ON records(json_extract(data,'$.queuedAt') DESC,id DESC)
+               WHERE kind='job' AND json_extract(data,'$.kind')='prompt'
+                 AND json_extract(data,'$.input.clientSurface')='native_agent_panel'
+                 AND COALESCE(json_extract(data,'$.input.harnessCompat'),0)<>1;
+             CREATE INDEX IF NOT EXISTS idx_team_job_history
+               ON records(json_extract(data,'$.queuedAt') DESC,id DESC)
+               WHERE kind='job' AND json_extract(data,'$.kind')='team';
+             CREATE INDEX IF NOT EXISTS idx_remote_task_history
+               ON records(json_extract(data,'$.queuedAt') DESC,id DESC)
+               WHERE kind='remote_task';
+             CREATE INDEX IF NOT EXISTS idx_unresolved_approvals
+               ON records(json_extract(data,'$.status'),updated_at DESC)
+               WHERE kind='approval'
+                 AND json_extract(data,'$.status') IN ('pending','interrupted');
              CREATE INDEX IF NOT EXISTS idx_native_approval_pending_run
                  ON records(json_extract(data,'$.runId'),json_extract(data,'$.sessionId'))
                  WHERE kind='approval' AND json_extract(data,'$.status')='pending';
@@ -302,6 +319,61 @@ impl Store {
             Err(_) => return Vec::new(),
         };
         rows.filter_map(|row| row.ok()).collect()
+    }
+
+    /// SQL-side limit and stable ordering: a panel does not load old
+    /// unrelated prompt, learning, Room or compatibility jobs into RAM.
+    pub fn recent_native_panel_jobs(&self,limit:usize)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             INDEXED BY idx_native_panel_job_history
+             WHERE kind='job' AND json_extract(data,'$.kind')='prompt'
+               AND json_extract(data,'$.input.clientSurface')='native_agent_panel'
+               AND COALESCE(json_extract(data,'$.input.harnessCompat'),0)<>1
+             ORDER BY json_extract(data,'$.queuedAt') DESC,id DESC LIMIT ?1"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([i64::try_from(limit).unwrap_or(i64::MAX)],
+            record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    pub fn recent_team_jobs(&self,limit:usize)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             INDEXED BY idx_team_job_history
+             WHERE kind='job' AND json_extract(data,'$.kind')='team'
+             ORDER BY json_extract(data,'$.queuedAt') DESC,id DESC LIMIT ?1"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([i64::try_from(limit).unwrap_or(i64::MAX)],
+            record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    pub fn recent_remote_tasks(&self,limit:usize)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             INDEXED BY idx_remote_task_history WHERE kind='remote_task'
+             ORDER BY json_extract(data,'$.queuedAt') DESC,id DESC LIMIT ?1"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([i64::try_from(limit).unwrap_or(i64::MAX)],
+            record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    pub fn unresolved_approvals(&self)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             INDEXED BY idx_unresolved_approvals
+             WHERE kind='approval'
+               AND json_extract(data,'$.status') IN ('pending','interrupted')
+             ORDER BY updated_at DESC,id DESC"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([],record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 
     /// Indexed look-up of one executable kernel domain.

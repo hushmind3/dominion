@@ -211,9 +211,14 @@ pub async fn owner_workers(State(state):State<AppState>)->Response{
 }
 pub async fn owner_list(State(state):State<AppState>)->Response{
     if let Err(e)=control_ready(){return e;}
-    let mut items=state.store.all("remote_task");
-    items.sort_by(|a,b|a["queuedAt"].as_str().unwrap_or("")
-        .cmp(b["queuedAt"].as_str().unwrap_or("")));
+    // Keep the existing oldest-to-newest REST order (the React panel uses
+    // slice(-30).reverse()), but never load unbounded history every 5 seconds.
+    let mut items=match state.store.recent_remote_tasks(100){
+        Ok(items)=>items,
+        Err(_)=>return json_error(StatusCode::INTERNAL_SERVER_ERROR,
+            "Remote task history unavailable"),
+    };
+    items.reverse();
     Json(json!(items.into_iter().map(|item|json!({
         "id":item["id"],"status":item["status"],"phase":item["phase"],
         "workerId":item["workerId"],"queuedAt":item["queuedAt"],

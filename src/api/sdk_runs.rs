@@ -201,17 +201,13 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
         }
     })
 }
-pub async fn list(State(state):State<AppState>)->Json<Value>{
-    let mut rows=state.store.all("job").into_iter()
-        // Other menus may create prompt jobs; do not show unrelated chat,
-        // workflow, automation or private-source work in this UI panel.
-        .filter(|j|j["kind"]=="prompt"
-            && j["input"]["clientSurface"]=="native_agent_panel"
-            && j["input"]["harnessCompat"]!=true)
-        .collect::<Vec<_>>();
-    rows.sort_by(|a,b|b["queuedAt"].as_str().unwrap_or("")
-        .cmp(a["queuedAt"].as_str().unwrap_or("")));
-    Json(json!(rows.iter().take(30).map(|j|project(&state,j)).collect::<Vec<_>>()))
+pub async fn list(State(state):State<AppState>)->Response{
+    match state.store.recent_native_panel_jobs(30){
+        Ok(rows)=>Json(json!(rows.iter().map(|job|project(&state,job))
+            .collect::<Vec<_>>())).into_response(),
+        Err(_)=>error(StatusCode::INTERNAL_SERVER_ERROR,
+            "SDK 작업 이력을 조회하지 못했습니다."),
+    }
 }
 pub async fn one(State(state):State<AppState>,Path(id):Path<String>)->Response{
     match prompt_job(&state,&id){
@@ -582,13 +578,17 @@ mod tests{
             "kind":"prompt","status":"completed",
             "queuedAt":"2099-01-01T00:00:00Z",
             "input":{"prompt":"private background task"}})).unwrap();
-        let Json(before)=list(State(state.clone())).await;
+        let before=list(State(state.clone())).await;
+        let before:Value=serde_json::from_slice(
+            &to_bytes(before.into_body(),1024*1024).await.unwrap()).unwrap();
         assert_eq!(before.as_array().unwrap().len(),0);
         let created=create(State(state.clone()),Json(json!({
             "instruction":"Inspect a project"
         }))).await;
         assert_eq!(created.status(),StatusCode::ACCEPTED);
-        let Json(after)=list(State(state.clone())).await;
+        let after=list(State(state.clone())).await;
+        let after:Value=serde_json::from_slice(
+            &to_bytes(after.into_body(),1024*1024).await.unwrap()).unwrap();
         assert_eq!(after.as_array().unwrap().len(),1);
         assert_eq!(after[0]["instruction"],"Inspect a project");
         assert_eq!(state.store.get("job","from-chat-or-automation").unwrap()
@@ -600,6 +600,37 @@ mod tests{
             Path("from-chat-or-automation".into())).await.status(),
             StatusCode::NOT_FOUND);
         let _=std::fs::remove_dir_all(root);
+    }
+    #[tokio::test]
+    async fn native_panel_history_keeps_latest_30_without_loading_other_jobs(){
+        let (state,root)=temporary_state();
+        for i in 0..70 {
+            state.store.put("job",&json!({"id":format!("native-{i:03}"),
+                "kind":"prompt","status":"completed",
+                "queuedAt":format!("2026-11-21T12:{i:02}:00Z"),
+                "input":{"prompt":format!("step {i}"),
+                    "clientSurface":"native_agent_panel"}})).unwrap();
+            state.store.put("job",&json!({"id":format!("hidden-{i:03}"),
+                "kind":"prompt","status":"completed",
+                "queuedAt":"2099-01-01T00:00:00Z",
+                "input":{"prompt":"unrelated"}})).unwrap();
+        }
+        state.store.put("job",&json!({"id":"compat-hidden",
+            "kind":"prompt","status":"completed",
+            "queuedAt":"2100-01-01T00:00:00Z",
+            "input":{"clientSurface":"native_agent_panel","harnessCompat":true}})).unwrap();
+        let rows=state.store.recent_native_panel_jobs(30).unwrap();
+        assert_eq!(rows.len(),30);
+        assert_eq!(rows[0]["id"],"native-069");
+        assert_eq!(rows[29]["id"],"native-040");
+        assert!(rows.iter().all(|j|j["input"]["harnessCompat"]!=true));
+        let response=list(State(state.clone())).await;
+        assert_eq!(response.status(),StatusCode::OK);
+        let bytes=to_bytes(response.into_body(),4*1024*1024).await.unwrap();
+        let listed:Value=serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(listed.as_array().unwrap().len(),30);
+        assert_eq!(listed[0]["id"],"native-069");
+        crate::test_support::cleanup_dir(root);
     }
     #[tokio::test]
     async fn main_ui_approval_is_bound_to_the_actual_pending_native_tool_call(){
@@ -764,7 +795,9 @@ mod tests{
         let reopened:Value=serde_json::from_slice(&bytes).unwrap();
         assert_eq!(reopened["checkpoint"]["toolReceipts"],body["checkpoint"]["toolReceipts"]);
         assert_eq!(reopened["checkpoint"]["artifactEvidence"],artifacts.clone());
-        let Json(history)=list(State(state.clone())).await;
+        let history=list(State(state.clone())).await;
+        let history:Value=serde_json::from_slice(
+            &to_bytes(history.into_body(),1024*1024).await.unwrap()).unwrap();
         assert_eq!(history[0]["checkpoint"]["toolReceipts"],body["checkpoint"]["toolReceipts"]);
         assert_eq!(history[0]["checkpoint"]["artifactEvidence"],artifacts.clone());
         assert!(!bytes.windows(18).any(|part|part==b"PRIVATE-CREDENTIAL"));
