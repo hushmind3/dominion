@@ -463,6 +463,7 @@ pub async fn rotate_backup_keys(
             "previousVersion": report.previous_version,
             "reencrypted": report.reencrypted,
             "retainedVersions": report.retained_versions,
+            "remoteKeyRetention": report.remote_key_retention,
         }))
         .into_response(),
         Err(error) => (

@@ -172,8 +172,9 @@ async fn no_stale_ui(request: Request, next: Next) -> Response {
     response
 }
 
-/// While maintenance mode is on, only reads and the maintenance/restore
-/// controls remain available. Other system writes must not race with restore.
+/// While maintenance mode is on, only reads, key rotation, and the
+/// maintenance/restore controls remain available. Other writes cannot race
+/// with restore.
 async fn maintenance_guard(State(state): State<AppState>, request: Request, next: Next) -> Response {
     let path=request.uri().path();
     if request.method() == Method::GET
@@ -181,7 +182,14 @@ async fn maintenance_guard(State(state): State<AppState>, request: Request, next
         || path=="/api/system/restore" {
         return next.run(request).await;
     }
-    if state.begin_api_write(){
+    let key_rotation=path=="/api/system/backup-keys/rotate"
+        ||path=="/api/system/secret-key/rotate";
+    let admitted=if key_rotation&&state.maintenance_mode(){
+        state.begin_maintenance_write()
+    }else{
+        state.begin_api_write()
+    };
+    if admitted{
         let _lease=ApiWriteLease(state.clone());
         return next.run(request).await;
     }

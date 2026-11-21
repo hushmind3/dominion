@@ -294,6 +294,9 @@ mod tests{
         assert!(state.set_maintenance(true));
         assert!(!state.begin_restore(),"restore must not overlap an admitted HTTP write");
         state.end_api_write();
+        assert!(state.begin_maintenance_write());
+        assert!(!state.begin_restore(),"restore must not overlap maintenance key rotation");
+        state.end_api_write();
         assert!(state.begin_restore());
         assert!(!state.set_maintenance(false),"maintenance cannot be disabled during restore");
         state.restore_in_progress.store(false,std::sync::atomic::Ordering::SeqCst);

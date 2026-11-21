@@ -14,9 +14,19 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex,MutexGuard,OnceLock};
 
 const MAGIC: &[u8; 7] = b"DOMBAK2";
 const KEY_LEN: usize = 32;
+
+fn keyring_lock()->&'static Mutex<()>{
+    static LOCK:OnceLock<Mutex<()>>=OnceLock::new();
+    LOCK.get_or_init(||Mutex::new(()))
+}
+
+pub fn lock_keyring()->Result<MutexGuard<'static,()>,String>{
+    keyring_lock().lock().map_err(|error|error.to_string())
+}
 
 #[derive(Clone)]
 pub struct KeyRing {
@@ -37,13 +47,37 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
         options.mode(0o600);
     }
     let mut file = options.open(path).map_err(|error| error.to_string())?;
-    file.write_all(bytes).map_err(|error| error.to_string())?;
+    file.write_all(bytes).and_then(|()|file.sync_all())
+        .map_err(|error| error.to_string())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
     }
     Ok(())
+}
+
+struct RemoveFilesOnDrop(Vec<PathBuf>);
+impl Drop for RemoveFilesOnDrop{
+    fn drop(&mut self){for path in &self.0{let _=std::fs::remove_file(path);}}
+}
+
+fn write_active(directory:&Path,version:u32)->Result<(),String>{
+    let active=directory.join("active");
+    let temp=directory.join(format!(".active-{}.tmp",uuid::Uuid::new_v4()));
+    let _cleanup=RemoveFilesOnDrop(vec![temp.clone()]);
+    let mut options=std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]{
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file=options.open(&temp).map_err(|error|error.to_string())?;
+    file.write_all(version.to_string().as_bytes())
+        .and_then(|()|file.sync_all()).map_err(|error|error.to_string())?;
+    std::fs::rename(&temp,&active).map_err(|error|error.to_string())?;
+    std::fs::File::open(directory).and_then(|dir|dir.sync_all())
+        .map_err(|error|error.to_string())
 }
 
 impl KeyRing {
@@ -81,7 +115,7 @@ impl KeyRing {
             .and_then(|value| value.trim().parse::<u32>().ok())
             .filter(|version| keys.contains_key(version))
             .unwrap_or_else(|| *keys.keys().next_back().unwrap_or(&1));
-        let _ = std::fs::write(directory.join("active"), active.to_string());
+        let _ = write_active(&directory,active);
         Ok(Self {
             active,
             keys,
@@ -142,6 +176,7 @@ pub struct RotationReport {
     pub previous_version: u32,
     pub reencrypted: usize,
     pub retained_versions: Vec<u32>,
+    pub remote_key_retention: bool,
 }
 
 fn backup_files(directory: &Path) -> Vec<PathBuf> {
@@ -157,12 +192,30 @@ fn backup_files(directory: &Path) -> Vec<PathBuf> {
 
 /// Re-encrypts every backup under a newly generated key version.
 pub fn rotate(state: &AppState, keep_old: bool) -> Result<RotationReport, String> {
+    let _lock=lock_keyring()?;
+    let offsite=crate::engine::maintenance::offsite_directory();
+    let remote_key_retention=crate::engine::remote_backup::from_env().is_some();
+    rotate_with_settings(state,keep_old,remote_key_retention,offsite.as_deref())
+}
+
+fn rotate_with_settings(
+    state:&AppState,
+    keep_old:bool,
+    remote_key_retention:bool,
+    offsite:Option<&Path>,
+)->Result<RotationReport,String>{
     let mut ring = KeyRing::load_or_create(&state.config.data_dir)?;
     let previous_version = ring.active_version();
     let directory = state.config.data_dir.join("backups");
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let mut files=backup_files(&directory);
+    if let Some(offsite)=offsite{
+        files.extend(backup_files(offsite));
+    }
+    files.sort();
+    files.dedup();
     let mut payloads = Vec::new();
-    for path in backup_files(&directory) {
+    for path in files {
         let sealed = std::fs::read(&path).map_err(|error| error.to_string())?;
         let plain = if KeyRing::is_versioned(&sealed) {
             ring.decrypt(&sealed)
@@ -183,23 +236,44 @@ pub fn rotate(state: &AppState, keep_old: bool) -> Result<RotationReport, String
     ring.keys.insert(next, new_key);
     ring.active = next;
 
-    // Encrypt to temp files first; originals stay valid until every write
-    // succeeds.
+    // Stage all ciphertext before replacing any original. If a replacement
+    // fails midway, the keyring retains both versions and every backup stays
+    // decryptable by its envelope version.
     let mut staged = Vec::new();
+    let mut cleanup=RemoveFilesOnDrop(Vec::new());
     for (path, plain) in &payloads {
         let sealed = ring.encrypt_with(next, plain)?;
-        let temp = path.with_extension("enc.tmp");
-        std::fs::write(&temp, &sealed).map_err(|error| error.to_string())?;
+        let name=path.file_name().and_then(|name|name.to_str()).unwrap_or("backup.enc");
+        let temp=path.with_file_name(format!(".{name}.tmp-{}",uuid::Uuid::new_v4()));
+        let mut options=std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]{
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file=options.open(&temp).map_err(|error|error.to_string())?;
+        cleanup.0.push(temp.clone());
+        file.write_all(&sealed).and_then(|()|file.sync_all())
+            .map_err(|error|error.to_string())?;
         staged.push((temp, path.clone()));
     }
     write_private(&key_file(&ring.directory, next), &new_key)?;
-    std::fs::write(ring.directory.join("active"), next.to_string())
-        .map_err(|error| error.to_string())?;
+    std::fs::File::open(&ring.directory).and_then(|dir|dir.sync_all())
+        .map_err(|error|error.to_string())?;
     for (temp, path) in &staged {
         std::fs::rename(temp, path).map_err(|error| error.to_string())?;
     }
+    if !staged.is_empty(){
+        std::fs::File::open(&directory).and_then(|dir|dir.sync_all())
+            .map_err(|error|error.to_string())?;
+    }
+    // Make the new version active only after every backup has moved. If this
+    // final marker write fails, both keys remain and all envelopes still open.
+    write_active(&ring.directory,next)?;
 
-    if !keep_old {
+    // Remote objects cannot be re-encrypted from this process. Keep their
+    // historical decryption keys whenever remote upload is configured.
+    if !keep_old&&!remote_key_retention {
         for version in ring.versions() {
             if version != next {
                 let _ = std::fs::remove_file(key_file(&ring.directory, version));
@@ -211,6 +285,7 @@ pub fn rotate(state: &AppState, keep_old: bool) -> Result<RotationReport, String
         previous_version,
         reencrypted: payloads.len(),
         retained_versions: KeyRing::load_or_create(&state.config.data_dir)?.versions(),
+        remote_key_retention,
     };
     state.store.audit(
         "backup.keys_rotated",
@@ -220,6 +295,7 @@ pub fn rotate(state: &AppState, keep_old: bool) -> Result<RotationReport, String
             "reencrypted": report.reencrypted,
             "retained": report.retained_versions,
             "keepOld": keep_old,
+            "remoteKeyRetention": remote_key_retention,
         }),
     );
     Ok(report)
@@ -302,6 +378,50 @@ mod tests {
         let report = rotate(&state, true).unwrap();
         assert_eq!(report.retained_versions, vec![1, 2]);
         assert!(key_file(&dir.join("backup-keys"), 1).exists());
+    }
+
+    #[test]
+    fn failed_active_marker_commit_keeps_all_backup_versions_decryptable(){
+        let (state,dir)=state();
+        let backup=crate::engine::maintenance::create_snapshot(&state).unwrap();
+        let active=dir.join("backup-keys/active");
+        std::fs::remove_file(&active).unwrap();
+        std::fs::create_dir(&active).unwrap();
+
+        assert!(rotate(&state,false).err().is_some(),
+            "a directory at the active marker must reject the commit");
+        let ring=KeyRing::load_or_create(&dir).unwrap();
+        let resealed=std::fs::read(&backup).unwrap();
+        assert_eq!(u32::from_le_bytes(resealed[7..11].try_into().unwrap()),2);
+        assert!(ring.decrypt(&resealed).is_some(),
+            "the newly written key must remain available after commit failure");
+        assert!(key_file(&dir.join("backup-keys"),1).exists(),
+            "old keys cannot be removed before active marker commit");
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rotation_updates_local_offsite_copies_and_retains_remote_keys(){
+        let (app,dir)=state();
+        let backup=crate::engine::maintenance::create_snapshot(&app).unwrap();
+        let offsite=dir.join("offsite");
+        std::fs::create_dir(&offsite).unwrap();
+        let offsite_backup=offsite.join(backup.file_name().unwrap());
+        std::fs::copy(&backup,&offsite_backup).unwrap();
+        let report=rotate_with_settings(&app,false,false,Some(&offsite)).unwrap();
+        assert_eq!(report.reencrypted,2);
+        let ring=KeyRing::load_or_create(&dir).unwrap();
+        assert_eq!(ring.versions(),vec![2]);
+        assert!(ring.decrypt(&std::fs::read(&backup).unwrap()).is_some());
+        assert!(ring.decrypt(&std::fs::read(&offsite_backup).unwrap()).is_some());
+        let _=std::fs::remove_dir_all(dir);
+
+        let (app,dir)=state();
+        let _=crate::engine::maintenance::create_snapshot(&app).unwrap();
+        let report=rotate_with_settings(&app,false,true,None).unwrap();
+        assert!(report.remote_key_retention);
+        assert_eq!(report.retained_versions,vec![1,2]);
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]

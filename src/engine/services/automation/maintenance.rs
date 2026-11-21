@@ -48,7 +48,7 @@ pub fn prune_backups(directory: &Path, keep: usize) -> Vec<PathBuf> {
         .collect()
 }
 
-fn offsite_directory() -> Option<PathBuf> {
+pub fn offsite_directory() -> Option<PathBuf> {
     std::env::var("DOMINION_BACKUP_OFFSITE_DIR")
         .ok()
         .map(|value| value.trim().to_string())
@@ -89,6 +89,7 @@ fn prune_crashed_plaintext(directory:&Path)->usize {
 /// Creates an encrypted snapshot. Plaintext SQLite is always staged inside a
 /// private owner-only directory and removed on every success/error path.
 pub fn create_snapshot(state: &AppState) -> Result<PathBuf, String> {
+    let _keyring_lock=crate::engine::backup_keys::lock_keyring()?;
     let directory = state.config.data_dir.join("backups");
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S-%3f");
