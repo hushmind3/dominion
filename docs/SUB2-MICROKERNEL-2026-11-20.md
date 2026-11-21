@@ -275,3 +275,7 @@ ProgramIR의 기존 `parallel` 노드에 `dependsOn` 형제 ID를 정식 지원�
 ## 2026-11-21 P0: Task Team 영속 작업판 (도입)
 
 `task_team_work`가 프로그램 내 각 DAG 노드에 결정적 ID를 발급하고 실행 시각·상태를 SQLite로 남깁니다. 동일 실행·팀·프로그램 버전·노드 인덱스만 동일 작업을 가리키며, 재시작 뒤 `running` 또는 `needs_review`를 자동 재발행하지 않습니다. 직접 도구/위임 노드는 실제 `execution_operation`에 성공 또는 명시적 실패 기록이 없으면 완료로 전환할 수 없습니다. 결과 문구만으로 완료를 판정하지 않고, 실패 관측도 성공 증거로 승격하지 않습니다. 외부 서비스에 대한 작업 큐를 신설하지 않고 기존 ProgramIR과 도구 영수증을 결합합니다.
+
+### P0 Task Team 연결 완료: 실제 ProgramIR 실행기로 이어진 작업판
+
+영속 Task Team API를 ProgramIR의 `parallel` 실행 분기에 결합했습니다. 팀 그래프의 각 자식은 실행·세션·프로그램 버전·팀 부모·노드 번호가 고정된 `task_team_work` 레코드로 먼저 배정됩니다. 각 의존성 파동 시작 전에 SQLite CAS로 `assigned→running`을 선점하며, 자식 `execute_nodes`가 실제 도구 실행 결과와 체크포인트를 남긴 뒤에만 `running→completed`로 기록합니다. 도구/위임 노드는 DB의 `execution_operation`과 실제 도구 호출 ID·종료 상태를 대조합니다. 실패·일시중지는 `needs_review`로 처리하고 다음 의존 파동을 실행하지 않습니다. 기존 Chat/Tool Gateway 및 SDK의 동일 효과 추적을 재사용하고 새로운 메뉴를 추가하지 않았습니다. 독립된 프로그램 재시작 시 완료가 아닌 `running`을 자동 재실행하지 않는 진입 차단 회귀 테스트를 추가했습니다.
