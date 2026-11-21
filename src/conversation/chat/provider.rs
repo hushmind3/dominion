@@ -2963,7 +2963,7 @@ mod tests {
     fn codex_stream_terminal_state_and_tool_identity_are_closed_contracts(){
         let mut calls=Vec::new();
         let original=json!({"type":"function_call","call_id":"call-1",
-            "name":"workspace_read","arguments":"{\\\"path\\\":\\\"README.md\\\"}"});
+            "name":"workspace_read","arguments":json!({"path":"README.md"}).to_string()});
         append_codex_stream_calls(&mut calls,&[original.clone()]).unwrap();
         append_codex_stream_calls(&mut calls,&[original]).unwrap();
         assert_eq!(calls.len(),1,"Same settled tool must not execute twice");
