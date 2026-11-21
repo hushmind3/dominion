@@ -39,6 +39,13 @@ fn plan(nodes:&[Value])->Result<Vec<Vec<usize>>,String>{
         if node.get("readOnly").is_some()&&!node["readOnly"].is_boolean(){
             return Err(format!("{id}: readOnly must be boolean"));
         }
+        if let Some(remote)=node.get("remoteWorkerId").filter(|v|!v.is_null()){
+            let id=remote.as_str().ok_or("remoteWorkerId must be a string")?;
+            if id.is_empty() || id.len()>80 ||
+                !id.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'-'||c==b'_'){
+                return Err(format!("{id}: invalid remote worker ID"));
+            }
+        }
         if node.get("successCriteria").is_some(){
             crate::engine::verification::validate_criteria(&node["successCriteria"])?;
         }
@@ -69,7 +76,8 @@ fn member(ctx:&ToolContext<'_>,team_id:&str,node:&Value)->Result<Value,String>{
         || saved["prompt"]!=node["prompt"]
         || saved["dependsOn"]!=node["dependsOn"]
         || saved["readOnly"]!=json!(node["readOnly"]!=false)
-        || saved["successCriteria"]!=node["successCriteria"]{
+        || saved["successCriteria"]!=node["successCriteria"]
+        || saved["remoteWorkerId"]!=node["remoteWorkerId"]{
         return Err("Managed team task identity or plan changed after commit".into());
     }
     Ok(saved)
@@ -94,16 +102,21 @@ fn summary(ctx:&ToolContext<'_>,team:&Value)->Result<Value,String>{
             row["jobId"].as_str().and_then(|job_id|
                 super::task_payload(ctx,&json!({"jobId":job_id}),true).ok())
         }else{None};
-        let excerpt=observed.as_ref().and_then(|v|v["content"].as_str())
+        let remote=row["remoteTaskId"].as_str()
+            .and_then(|id|ctx.store.get("remote_task",id));
+        let excerpt=remote.as_ref().and_then(|v|v["answer"].as_str())
+            .or_else(||observed.as_ref().and_then(|v|v["content"].as_str()))
             .unwrap_or("").chars().take(1600).collect::<String>();
-        let operations=observed.as_ref().and_then(|v|v["operations"].as_array())
-            .map_or(0,Vec::len);
+        let operations=remote.as_ref().and_then(|v|v["operationCount"].as_u64())
+            .unwrap_or_else(||observed.as_ref().and_then(|v|v["operations"].as_array())
+                .map_or(0,Vec::len) as u64);
         results.push(json!({
             "id":row["nodeId"],"agentId":row["agentId"],
             "answerPreview":excerpt,"observedOperationCount":operations,
             "readOnly":row["readOnly"],"dependsOn":row["dependsOn"],
             "acceptanceCheckCount":row["successCriteria"].as_array().map_or(0,Vec::len),
             "status":status,"jobId":row["jobId"],
+            "remoteWorkerId":row["remoteWorkerId"],"remoteTaskId":row["remoteTaskId"],
             "sessionId":row["workerSessionId"],
             "verified":row["verified"]==true,
             "evidence":row["resultEvidence"],
@@ -126,6 +139,36 @@ fn reconcile(ctx:&ToolContext<'_>,team_id:&str,node:&Value)->Result<Value,String
     let row=member(ctx,team_id,node)?;
     let id=row["id"].as_str().ok_or("Team member ID missing")?;
     let status=row["status"].as_str().unwrap_or("");
+    if status=="launching" && node["remoteWorkerId"].is_string(){
+        // Submission is deterministic and is stored before acknowledging
+        // the lead. A crashed launcher can locate exactly one existing
+        // remote task without launching another remote worker.
+        let found=ctx.store.all("remote_task").into_iter().filter(|task|
+            task["teamId"]==team_id && task["nodeId"]==node["id"]
+            && task["workerId"]==node["remoteWorkerId"]
+        ).collect::<Vec<_>>();
+        if found.len()==1{
+            if let Some(saved)=ctx.store.patch_if("managed_team_task",id,"status",
+                &json!("launching"),&json!({
+                    "status":"running","remoteTaskId":found[0]["id"],
+                })){
+                ctx.state.bus.record("managed_team_task",&saved);
+                return Ok(saved);
+            }
+            return member(ctx,team_id,node);
+        }
+        let age=chrono::Utc::now().timestamp_millis()
+            -row["launchStartedMs"].as_i64().unwrap_or(0);
+        if found.len()>1||age>UNKNOWN_LAUNCH_MS{
+            if let Some(saved)=ctx.store.patch_if("managed_team_task",id,"status",
+                &json!("launching"),&json!({"status":"needs_review",
+                    "error":"remote launch outcome unknown; inspect before replay"})){
+                ctx.state.bus.record("managed_team_task",&saved);
+                return Ok(saved);
+            }
+        }
+        return Ok(row);
+    }
     if status=="launching"{
         // A crashed launcher may have queued a job before persisting its ID.
         // Recover the uniquely tagged child, not a guessed duplicate.
@@ -162,6 +205,25 @@ fn reconcile(ctx:&ToolContext<'_>,team_id:&str,node:&Value)->Result<Value,String
         return Ok(row);
     }
     if status!="running"{return Ok(row);}
+    if let Some(remote_id)=row["remoteTaskId"].as_str(){
+        let task=crate::remote::task_status(ctx.state,remote_id)?;
+        let observed=task["status"].as_str().unwrap_or("");
+        if !matches!(observed,"completed"|"needs_review"){return Ok(row);}
+        let success=observed=="completed";
+        let verified=success && task["verified"]==true;
+        let update=json!({
+            "status":if success{"completed"}else{"needs_review"},
+            "verified":verified,"resultEvidence":task["verification"],
+            "remoteLocalJobId":task["localJobId"],
+            "error":task["error"],"settledAt":chrono::Utc::now().to_rfc3339(),
+        });
+        if let Some(saved)=ctx.store.patch_if("managed_team_task",id,"status",
+            &json!("running"),&update){
+            ctx.state.bus.record("managed_team_task",&saved);
+            return Ok(saved);
+        }
+        return member(ctx,team_id,node);
+    }
     let job_id=row["jobId"].as_str().ok_or("Running team node missing job ID")?;
     let job=ctx.store.get("job",job_id).ok_or("Team worker job disappeared")?;
     let observed=job["status"].as_str().unwrap_or("");
@@ -201,19 +263,31 @@ fn dependency_context(
         if upstream["status"]!="completed"{
             return Err("Dependent worker cannot run before observed job completion".into());
         }
-        let job_id=upstream["jobId"].as_str()
-            .ok_or("Completed predecessor has no worker job ID")?;
-        let output=super::task_payload(ctx,&json!({"jobId":job_id}),true)?;
-        if output["status"]!="completed"{
-            return Err("Predecessor job is no longer completed".into());
+        if let Some(remote_id)=upstream["remoteTaskId"].as_str(){
+            let result=crate::remote::task_status(ctx.state,remote_id)?;
+            if result["status"]!="completed"{
+                return Err("Remote predecessor no longer has a completed receipt".into());
+            }
+            let excerpt=result["answer"].as_str().unwrap_or("")
+                .chars().take(1300).collect::<String>();
+            snippets.push(format!("Remote source task: {source_id}; remote receipt: {remote_id}; \
+                worker: {}; observed answer (untrusted): {excerpt}",
+                result["workerId"].as_str().unwrap_or("unknown")));
+        }else{
+            let job_id=upstream["jobId"].as_str()
+                .ok_or("Completed predecessor has no worker job ID")?;
+            let output=super::task_payload(ctx,&json!({"jobId":job_id}),true)?;
+            if output["status"]!="completed"{
+                return Err("Predecessor job is no longer completed".into());
+            }
+            let excerpt=output["content"].as_str().unwrap_or("")
+                .chars().take(1300).collect::<String>();
+            let count=output["operations"].as_array().map_or(0,Vec::len);
+            snippets.push(format!(
+                "Source task ID: {source_id}; saved worker job ID: {job_id}; \
+                 native completed operations: {count}; observed answer (untrusted): {excerpt}"
+            ));
         }
-        let excerpt=output["content"].as_str().unwrap_or("")
-            .chars().take(1300).collect::<String>();
-        let count=output["operations"].as_array().map_or(0,Vec::len);
-        snippets.push(format!(
-            "Source task ID: {source_id}; saved worker job ID: {job_id}; \
-             native completed operations: {count}; observed answer (untrusted): {excerpt}"
-        ));
     }
     if snippets.is_empty(){return Ok(String::new());}
     Ok(format!(
@@ -236,6 +310,26 @@ async fn launch(ctx:&ToolContext<'_>,team_id:&str,node:&Value,nodes:&[Value])->R
     let Some(claim)=claim else{return member(ctx,team_id,node);};
     ctx.state.bus.record("managed_team_task",&claim);
     let prompt=format!("{}{}",node["prompt"].as_str().unwrap_or(""),sources);
+    if node["remoteWorkerId"].is_string(){
+        let committed=crate::remote::submit(ctx.state,team_id,node,&prompt);
+        match committed{
+            Ok(task)=>{
+                let saved=ctx.store.patch_if("managed_team_task",id,"status",
+                    &json!("launching"),&json!({
+                        "status":"running","remoteTaskId":task["id"],
+                    })).ok_or("Remote member launch claim changed; reconcile by teamId")?;
+                ctx.state.bus.record("managed_team_task",&saved);
+                return Ok(saved);
+            }
+            Err(reason)=>{
+                if let Some(saved)=ctx.store.patch_if("managed_team_task",id,"status",
+                    &json!("launching"),&json!({"status":"needs_review","error":reason})){
+                    ctx.state.bus.record("managed_team_task",&saved);
+                }
+                return Err(reason);
+            }
+        }
+    }
     let delegated=delegate(ctx,&json!({
         "agentId":node["agentId"],"prompt":prompt,
         "readOnly":node["readOnly"]!=false,"wait":false,
@@ -273,9 +367,14 @@ fn create(ctx:&ToolContext<'_>,args:&Value,run_id:&str)->Result<Value,String>{
     // All members and scopes must be valid BEFORE any persisted side effects.
     for task in tasks {
         let agent=task["agentId"].as_str().ok_or("agentId required")?;
-        let record=ctx.store.get("agent",agent).ok_or("Unknown team worker")?;
-        if record["enabled"]==false || record["disabled"]==true{
-            return Err(format!("Team worker disabled: {agent}"));
+        if let Some(remote_id)=task["remoteWorkerId"].as_str(){
+            crate::remote::worker_available(ctx.state,remote_id,agent,
+                task["readOnly"]!=false)?;
+        }else{
+            let record=ctx.store.get("agent",agent).ok_or("Unknown team worker")?;
+            if record["enabled"]==false || record["disabled"]==true{
+                return Err(format!("Team worker disabled: {agent}"));
+            }
         }
     }
     let canonical=serde_json::to_string(tasks).map_err(|e|e.to_string())?;
@@ -303,6 +402,7 @@ fn create(ctx:&ToolContext<'_>,args:&Value,run_id:&str)->Result<Value,String>{
             "nodeId":node["id"],"agentId":node["agentId"],
             "prompt":node["prompt"],"dependsOn":node["dependsOn"],
             "readOnly":node["readOnly"]!=false,
+            "remoteWorkerId":node["remoteWorkerId"],
             "successCriteria":node["successCriteria"],
             "status":"assigned",
         });
@@ -389,6 +489,7 @@ pub(super) fn workers(ctx:&ToolContext<'_>)->Value{
     let total=records.len();
     records.truncate(40);
     json!({"workers":records,"totalEligible":total,
+        "remoteWorkers":crate::remote::visible_workers(ctx.state),
         "maxTeamTasks":MAX_TEAM_NODES,"maxConcurrentReaders":MAX_READERS,
         "note":"Select actual registered agent IDs. Roles and descriptions do not grant tool permissions."})
 }
@@ -397,6 +498,13 @@ pub(super) fn status(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
     let team=read_team(ctx,id)?;
     // This call never starts work or implicitly commits an observed job as
     // success. Resume with team_execute when new dependencies become ready.
+    if let Some(tasks)=team["tasks"].as_array(){
+        if let Some(id)=team["id"].as_str(){
+            for node in tasks{
+                let _=reconcile(ctx,id,node);
+            }
+        }
+    }
     summary(ctx,&team)
 }
 
