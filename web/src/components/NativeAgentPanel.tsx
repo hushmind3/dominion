@@ -73,14 +73,15 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
- const action=async(kind:'approve'|'cancel'|'resume')=>{
+ const action=async(kind:'approve'|'deny'|'cancel'|'resume')=>{
   if(!run||busy)return
   setBusy(true);setError('')
   try{
    const call=run.checkpoint?.pendingCall
-   if(kind==='approve'&&!call?.id)throw Error(en?'Missing approval details':'승인할 도구 정보를 찾지 못했습니다.')
+   if((kind==='approve'||kind==='deny')&&!call?.id)
+    throw Error(en?'Missing approval details':'승인 대상 도구 정보를 찾지 못했습니다.')
    const updated=await post<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}/${kind}`,
-    kind==='approve'?{callId:call!.id}:{})
+    kind==='approve'||kind==='deny'?{callId:call!.id}:{})
    // The host, not the button click, determines the actual next phase.
    setRun(updated)
    setRuns(rows=>rows.map(row=>row.id===updated.id?updated:row))
@@ -215,10 +216,16 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      </div>
      <div className="mt-2 text-[11px] font-semibold">{call.name}</div>
      <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-[#F5F2EE] p-3 text-[11px]">{JSON.stringify(call.arguments,null,2)}</pre>
-     <button type="button" disabled={busy} onClick={()=>void action('approve')}
-      className="mt-3 flex items-center gap-2 rounded-lg bg-[#A4583E] px-3 py-2 text-[11px] font-semibold text-white">
-      <Check size={14}/>{en?'Approve this action only':'이 작업 1회 승인'}
-     </button>
+     <div className="mt-3 flex flex-wrap gap-2">
+      <button type="button" disabled={busy} onClick={()=>void action('approve')}
+       className="flex items-center gap-2 rounded-lg bg-[#A4583E] px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-40">
+       <Check size={14}/>{en?'Approve this action only':'이 작업 1회 승인'}
+      </button>
+      <button type="button" disabled={busy} onClick={()=>void action('deny')}
+       className="flex items-center gap-2 rounded-lg border border-rose-200 bg-white px-3 py-2 text-[11px] font-semibold text-rose-700 disabled:opacity-40">
+       <Square size={13}/>{en?'Refuse this action':'이 도구 실행 거부'}
+      </button>
+     </div>
     </div>}
     {run.answer||run.checkpoint?.answer?<div className="mt-3 whitespace-pre-wrap break-words border-t border-[#E7E0D5] pt-3 text-[12px]">{run.answer||run.checkpoint?.answer}</div>:null}
     {run.checkpoint?.verificationChecks?.length?
