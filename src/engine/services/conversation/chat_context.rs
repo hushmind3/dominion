@@ -622,7 +622,7 @@ pub(super) fn render_history(
             let size = file["size"].as_u64()
                 .and_then(|size| usize::try_from(size).ok()).unwrap_or(usize::MAX);
             let encoded_estimate = if file["isImage"] == true {
-                size.saturating_add(2).saturating_div(3).saturating_mul(4)
+                (size.saturating_add(2) / 3).saturating_mul(4)
                     .saturating_add(100)
             } else if file["supportedForModel"] == "text" {
                 size.min(140_000).saturating_add(2_000)
@@ -872,6 +872,42 @@ mod tests {
         assert!(excerpt.contains("L151 C"), "original file position must survive retrieval");
         assert_eq!(history[0]["content"][0]["text"], "첨부한 문서를 읽어줘");
         assert_eq!(history[1]["content"], "중간 승계 임계값을 결정한 원문을 찾아줘");
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn explicit_old_filename_outranks_eight_newer_attachments_without_losing_source() {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let (state, dir) = state();
+        state.store.put("session",&json!({"id":"file-ranking","title":"file evidence"}));
+        let mut window = Vec::new();
+        for index in 0..10 {
+            let name = if index == 0 { "target-architecture.md".to_string() }
+                else { format!("unrelated-{index}.txt") };
+            let raw = if index == 0 { "old file: primary architecture decision" }
+                else { "unrelated log data" };
+            let file = crate::engine::attachments::upload(&state, &json!({
+                "sessionId":"file-ranking","name":name,
+                "data":STANDARD.encode(raw)
+            })).unwrap();
+            window.push(json!({
+                "id":format!("message-{index}"),"role":"user",
+                "content":format!("Uploaded {name}"),
+                "metadata":{"attachments":[file]}
+            }));
+        }
+        window.push(json!({"id":"followup","role":"user",
+            "content":"target-architecture.md 의 원문 설계를 보여줘"}));
+        let rendered=render_history(&state,"file-ranking",None,&window,vec![]);
+        let selected = rendered[0]["content"][1]["text"].as_str().unwrap();
+        assert!(selected.contains("primary architecture decision"),"{selected}");
+        // More recent but unrelated attachments cannot evict an explicitly
+        // requested historical source from the eight-file model budget.
+        let selected_count=rendered.iter().filter(|row|row["content"].as_array()
+            .is_some_and(|parts|parts.len()>1)).count();
+        assert!(selected_count <= crate::engine::attachments::MAX_FILES);
+        assert_eq!(rendered.last().unwrap()["content"],
+            "target-architecture.md 의 원문 설계를 보여줘");
         let _=std::fs::remove_dir_all(dir);
     }
 
