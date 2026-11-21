@@ -48,6 +48,23 @@ pub fn unread_for(
             if seq>through{break;}
             if seq>after.saturating_add(1){missed=true;}
             after=seq;
+            if event["type"]=="record" && event["kind"]=="room_peer_mail"{
+                let mail=&event["record"];
+                if mail["status"]=="queued" && mail["roomId"]==room_id
+                    && mail["sessionId"]==session_id
+                    && mail["recipientAgentId"]==agent_id {
+                    // The pre-model watermark is the upper bound. Peer text
+                    // is untrusted context, not permission to invoke tools.
+                    records.push(json!({
+                        "eventSeq":seq,"messageId":mail["id"],
+                        "role":"room_peer_mail","agentId":mail["senderAgentId"],
+                        "replyTo":mail["replyToMessageId"],
+                        "hopCount":mail["hopCount"],"content":mail["message"]
+                    }));
+                    if records.len()>24{records.remove(0);}
+                }
+                continue;
+            }
             let message=&event["message"];
             if event["type"]!="message" || message["session_id"]!=session_id
                 || !matches!(message["role"].as_str(),Some("user"|"assistant"))
@@ -71,6 +88,37 @@ pub fn unread_for(
     };
     Ok(ReaderSnapshot{through,unread})
 }
+/// A genuine committed reply may acknowledge only mail present before the
+/// model began. New mail arriving mid-inference stays queued for a later turn.
+fn acknowledge_peer_mail(
+    state:&AppState,room_id:&str,session_id:&str,agent_id:&str,
+    from:u64,through:u64,reply_message_id:&str,
+){
+    let mut cursor=from;
+    for _ in 0..64{
+        if cursor>=through{break;}
+        let batch=state.bus.replay(cursor,256);
+        if batch.is_empty(){break;}
+        for event in batch{
+            let seq=event["seq"].as_u64().unwrap_or(cursor);
+            if seq>through{break;}
+            if seq<=cursor{continue;}
+            cursor=seq;
+            if event["type"]!="record"||event["kind"]!="room_peer_mail"{continue;}
+            let mail=&event["record"];
+            if mail["status"]!="queued" ||mail["roomId"]!=room_id
+                || mail["sessionId"]!=session_id
+                || mail["recipientAgentId"]!=agent_id{continue;}
+            let Some(id)=mail["id"].as_str() else{continue;};
+            if let Some(saved)=state.store.patch_if("room_peer_mail",id,"status",
+                &json!("queued"),&json!({"status":"delivered",
+                    "deliveredViaMessageId":reply_message_id})){
+                state.bus.record("room_peer_mail",&saved);
+            }
+        }
+    }
+}
+
 /// Called only AFTER a reply to the owner is durably committed. Captured
 /// source/watermark pairs cannot be advanced by a peer's invented claim.
 pub fn acknowledge_read(
@@ -106,6 +154,7 @@ pub fn acknowledge_read(
                     "sourceMessageId":source_id,
                 })){
                 state.bus.record("room_agent_cursor",&saved);
+                acknowledge_peer_mail(state,room_id,session_id,agent_id,before,through,message_id);
                 return Ok(saved);
             }
         }else{
@@ -116,6 +165,7 @@ pub fn acknowledge_read(
             });
             if let Some(saved)=state.store.put_if_absent("room_agent_cursor",&created){
                 state.bus.record("room_agent_cursor",&saved);
+                acknowledge_peer_mail(state,room_id,session_id,agent_id,0,through,message_id);
                 return Ok(saved);
             }
         }
