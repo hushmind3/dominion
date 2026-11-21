@@ -661,12 +661,11 @@ pub async fn state(State(state): State<AppState>, Path(id): Path<String>) -> Res
         let session_id = session["id"]
             .as_str()
             .ok_or_else(|| failed("회의실 세션 ID가 없습니다."))?;
-        let mut jobs = state
+        let snapshot = state
             .store
-            .all("job")
-            .into_iter()
-            .filter(|job| job["kind"] == "room" && job["input"]["roomId"] == id)
-            .collect::<Vec<_>>();
+            .room_status_records(&id, session_id)
+            .map_err(failed)?;
+        let mut jobs = snapshot.room_jobs;
         jobs.sort_by(|a, b| {
             b["queuedAt"]
                 .as_str()
@@ -698,36 +697,13 @@ pub async fn state(State(state): State<AppState>, Path(id): Path<String>) -> Res
                 .filter(|status| matches!(*status, "failed" | "needs_review"))
                 .unwrap_or("idle")
         };
-        let executions = state
-            .store
-            .all("execution")
-            .into_iter()
-            .filter(|execution| execution["sessionId"] == session_id)
-            .take(30)
-            .collect::<Vec<_>>();
-        let learning = state
-            .store
-            .all("job")
-            .into_iter()
-            .filter(|job| job["kind"] == "learn" && job["input"]["sessionId"] == session_id)
-            .take(20)
-            .collect::<Vec<_>>();
-        let run_ids = executions
-            .iter()
-            .filter_map(|execution| execution["id"].as_str())
-            .collect::<HashSet<_>>();
-        let operations=state.store.all("execution_operation").into_iter()
-            .filter(|operation|operation["sessionId"]==session_id||operation["runId"].as_str().is_some_and(|run|run_ids.contains(run)))
-            .take(60).map(|operation|json!({"id":operation["id"],"runId":operation["runId"],"tool":operation["tool"],"status":operation["status"],
+        let executions = snapshot.executions;
+        let learning = snapshot.learning_jobs;
+        let operations = snapshot.operations.into_iter()
+            .map(|operation|json!({"id":operation["id"],"runId":operation["runId"],"tool":operation["tool"],"status":operation["status"],
                 "startedAt":operation["startedAt"],"finishedAt":operation["finishedAt"],
                 "arguments":bounded_json(&operation["arguments"],2000),"result":bounded_json(&operation["result"],6000)})).collect::<Vec<_>>();
-        let approvals = state
-            .store
-            .all("approval")
-            .into_iter()
-            .filter(|approval| approval["sessionId"] == session_id)
-            .take(20)
-            .collect::<Vec<_>>();
+        let approvals = snapshot.approvals;
         Ok(
             json!({"room":room(&state,&id)?,"sessionId":session_id,"status":status,"activeAgentId":active_agent,"queueDepth":queue_depth,
             "jobs":jobs.iter().take(30).collect::<Vec<_>>(),"executions":executions,"learningJobs":learning,"operations":operations,"approvals":approvals,"usage":state.store.session_usage(session_id)}),
@@ -771,6 +747,65 @@ mod tests {
     fn config() -> Value {
         json!({"id":"room-one","name":"우리 방","agentIds":(0..9).map(|i|format!("a{i}")).collect::<Vec<_>>(),"routingMode":"discussion"})
     }
+    #[tokio::test]
+    async fn room_status_is_scoped_to_current_room_and_preserves_legacy_operation_receipts() {
+        let (app, dir) = test_state();
+        save_room(&app, None, &config()).unwrap();
+        let room_session = rooms::ensure_room_session(&app, "room-one").unwrap();
+        let sid = room_session["id"].as_str().unwrap().to_string();
+        for index in 0..80 {
+            app.store.put("job", &json!({
+                "id":format!("other-job-{index}"),"kind":"room","status":"queued",
+                "input":{"roomId":"unrelated"},"queuedAt":"2026-11-21T10:00:00Z"
+            })).unwrap();
+            app.store.put("execution", &json!({
+                "id":format!("other-exec-{index}"),"sessionId":"unrelated",
+                "status":"completed"
+            })).unwrap();
+            app.store.put("execution_operation", &json!({
+                "id":format!("other-op-{index}"),"sessionId":"unrelated",
+                "runId":format!("other-exec-{index}"),"status":"succeeded"
+            })).unwrap();
+            app.store.put("approval", &json!({
+                "id":format!("other-approval-{index}"),"sessionId":"unrelated",
+                "status":"approved"
+            })).unwrap();
+        }
+        app.store.put("job", &json!({
+            "id":"room-running","kind":"room","status":"running",
+            "queuedAt":"2026-11-21T11:00:00Z",
+            "input":{"roomId":"room-one"},"roomState":{"activeAgentId":"a0"}
+        })).unwrap();
+        app.store.put("job", &json!({
+            "id":"room-learning","kind":"learn","status":"completed",
+            "input":{"sessionId":sid}
+        })).unwrap();
+        app.store.put("execution", &json!({
+            "id":"room-exec","sessionId":sid,"status":"completed"
+        })).unwrap();
+        app.store.put("execution_operation", &json!({
+            "id":"legacy-room-op","runId":"room-exec","status":"succeeded",
+            "tool":"workspace_read","arguments":{"path":"note.txt"}
+        })).unwrap();
+        app.store.put("approval", &json!({
+            "id":"room-approval","sessionId":sid,"status":"approved"
+        })).unwrap();
+        let response = state(State(app.clone()), Path("room-one".into())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 64*1024).await.unwrap();
+        let output: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(output["status"], "running");
+        assert_eq!(output["queueDepth"], 0);
+        assert_eq!(output["activeAgentId"], "a0");
+        assert_eq!(output["jobs"].as_array().unwrap().len(), 1);
+        assert_eq!(output["jobs"][0]["id"], "room-running");
+        assert_eq!(output["learningJobs"][0]["id"], "room-learning");
+        assert_eq!(output["executions"][0]["id"], "room-exec");
+        assert_eq!(output["operations"][0]["id"], "legacy-room-op");
+        assert_eq!(output["approvals"][0]["id"], "room-approval");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[tokio::test]
     async fn durable_room_events_and_agent_cursor_survive_an_api_page(){
         let (state,dir)=test_state();

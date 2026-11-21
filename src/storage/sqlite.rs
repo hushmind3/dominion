@@ -100,6 +100,28 @@ pub struct Store {
     path: PathBuf,
 }
 
+/// Room dashboard data selected on the SQLite side rather than scanning every
+/// historical job, execution, operation and approval on each refresh.
+pub struct RoomStatusRecords {
+    pub room_jobs: Vec<Value>,
+    pub executions: Vec<Value>,
+    pub learning_jobs: Vec<Value>,
+    pub operations: Vec<Value>,
+    pub approvals: Vec<Value>,
+}
+
+fn select_records(
+    conn: &Connection,
+    sql: &str,
+    args: &[&dyn rusqlite::ToSql],
+) -> Result<Vec<Value>, String> {
+    let mut statement = conn.prepare(sql).map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map(args, record_from_row)
+        .map_err(|error| error.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+}
+
 // Remote compute leases and receipts share the same Store and SQLite transaction boundary.
 mod remote_tasks;
 
@@ -265,7 +287,21 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_remote_active_lease
                  ON records(json_extract(data,'$.leaseExpiresAtMs'))
                  WHERE kind='remote_task'
-                   AND json_extract(data,'$.status')='running';",
+                   AND json_extract(data,'$.status')='running';
+             -- Room status polls must use the owner room/session, not load all
+             -- task, execution, approval and operation history into memory.
+             CREATE INDEX IF NOT EXISTS idx_room_status_jobs
+                 ON records(json_extract(data,'$.input.roomId'),updated_at DESC)
+                 WHERE kind='job' AND json_extract(data,'$.kind')='room';
+             CREATE INDEX IF NOT EXISTS idx_room_status_learning
+                 ON records(json_extract(data,'$.input.sessionId'),updated_at DESC)
+                 WHERE kind='job' AND json_extract(data,'$.kind')='learn';
+             CREATE INDEX IF NOT EXISTS idx_room_status_executions
+                 ON records(json_extract(data,'$.sessionId'),updated_at DESC)
+                 WHERE kind='execution';
+             CREATE INDEX IF NOT EXISTS idx_room_status_approvals
+                 ON records(json_extract(data,'$.sessionId'),updated_at DESC)
+                 WHERE kind='approval';",
         )?;
         // Older databases predate reasoning/tool columns.
         for (column, decl) in [
@@ -319,6 +355,52 @@ impl Store {
             Err(_) => return Vec::new(),
         };
         rows.filter_map(|row| row.ok()).collect()
+    }
+
+    /// Build the Room status snapshot with bounded, indexed ownership lookups.
+    /// Legacy effects lacking sessionId are included via the latest 30 run IDs.
+    /// Every query preserves the previous updated_at ordering and display limit.
+    pub fn room_status_records(
+        &self,
+        room_id: &str,
+        session_id: &str,
+    ) -> Result<RoomStatusRecords, String> {
+        let conn = self.conn.lock().map_err(|error| error.to_string())?;
+        let room_jobs = select_records(&conn,
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='job' AND json_extract(data,'$.kind')='room'
+               AND json_extract(data,'$.input.roomId')=?1
+             ORDER BY updated_at DESC",
+            &[&room_id])?;
+        let executions = select_records(&conn,
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='execution' AND json_extract(data,'$.sessionId')=?1
+             ORDER BY updated_at DESC LIMIT 30",
+            &[&session_id])?;
+        let learning_jobs = select_records(&conn,
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='job' AND json_extract(data,'$.kind')='learn'
+               AND json_extract(data,'$.input.sessionId')=?1
+             ORDER BY updated_at DESC LIMIT 20",
+            &[&session_id])?;
+        let operations = select_records(&conn,
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='execution_operation'
+               AND (json_extract(data,'$.sessionId')=?1
+                    OR json_extract(data,'$.runId') IN (
+                        SELECT id FROM records
+                        WHERE kind='execution' AND json_extract(data,'$.sessionId')=?1
+                        ORDER BY updated_at DESC LIMIT 30))
+             ORDER BY updated_at DESC LIMIT 60",
+            &[&session_id])?;
+        let approvals = select_records(&conn,
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='approval' AND json_extract(data,'$.sessionId')=?1
+             ORDER BY updated_at DESC LIMIT 20",
+            &[&session_id])?;
+        Ok(RoomStatusRecords {
+            room_jobs, executions, learning_jobs, operations, approvals
+        })
     }
 
     /// SQL-side limit and stable ordering: a panel does not load old
