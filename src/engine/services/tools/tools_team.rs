@@ -136,7 +136,11 @@ fn reconcile(ctx:&ToolContext<'_>,team_id:&str,node:&Value)->Result<Value,String
                     "status":"running","jobId":job["id"],
                     "workerSessionId":job["input"]["sessionId"],
                 }));
-            return Ok(updated.unwrap_or_else(||row.clone()));
+            if let Some(saved)=updated{
+                ctx.state.bus.record("managed_team_task",&saved);
+                return Ok(saved);
+            }
+            return member(ctx,team_id,node);
         }
         let launched=row["launchStartedMs"].as_i64().unwrap_or(0);
         if matches.len()>1 || chrono::Utc::now().timestamp_millis()-launched>UNKNOWN_LAUNCH_MS{
@@ -144,7 +148,11 @@ fn reconcile(ctx:&ToolContext<'_>,team_id:&str,node:&Value)->Result<Value,String
                 else{"worker launch outcome unknown; explicit review required"};
             let updated=ctx.store.patch_if("managed_team_task",id,"status",
                 &json!("launching"),&json!({"status":"needs_review","error":reason}));
-            return Ok(updated.unwrap_or(row));
+            if let Some(saved)=updated{
+                ctx.state.bus.record("managed_team_task",&saved);
+                return Ok(saved);
+            }
+            return member(ctx,team_id,node);
         }
         return Ok(row);
     }
@@ -165,8 +173,13 @@ fn reconcile(ctx:&ToolContext<'_>,team_id:&str,node:&Value)->Result<Value,String
         "error":job["error"],
         "settledAt":chrono::Utc::now().to_rfc3339(),
     });
-    Ok(ctx.store.patch_if("managed_team_task",id,"status",
-        &json!("running"),&update).unwrap_or(row))
+    if let Some(saved)=ctx.store.patch_if("managed_team_task",id,"status",
+        &json!("running"),&update){
+        ctx.state.bus.record("managed_team_task",&saved);
+        Ok(saved)
+    }else{
+        member(ctx,team_id,node)
+    }
 }
 async fn launch(ctx:&ToolContext<'_>,team_id:&str,node:&Value)->Result<Value,String>{
     let current=member(ctx,team_id,node)?;
@@ -226,8 +239,12 @@ fn create(ctx:&ToolContext<'_>,args:&Value,run_id:&str)->Result<Value,String>{
         "leadSessionId":ctx.session_id,"leadAgentId":ctx.agent_id,
         "originRunId":run_id,"tasks":tasks,"waves":waves,
         "status":"running"});
-    let team=ctx.store.put_if_absent("managed_team",&created)
-        .unwrap_or_else(||ctx.store.get("managed_team",&team_id).unwrap_or(Value::Null));
+    let team=if let Some(saved)=ctx.store.put_if_absent("managed_team",&created){
+        ctx.state.bus.record("managed_team",&saved);
+        saved
+    }else{
+        ctx.store.get("managed_team",&team_id).unwrap_or(Value::Null)
+    };
     if team["leadSessionId"]!=ctx.session_id||team["originRunId"]!=run_id
         ||team["tasks"]!=json!(tasks){
         return Err("Managed team identity collision on replay".into());
