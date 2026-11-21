@@ -89,6 +89,32 @@ mod tests {
     }
 
     #[test]
+    fn independent_processes_share_exactly_once_durable_event_cursor(){
+        let dir=std::env::temp_dir().join(format!(
+            "dominion-cross-process-sse-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db=dir.join("events.sqlite");
+        let first=Store::open(&db).unwrap();
+        let second=Store::open(&db).unwrap();
+        let writer=Bus::new(first);
+        let reader=Bus::new(second);
+        assert!(reader.replay(0,10).is_empty());
+        writer.emit(json!({"type":"external_event","payload":"different process"}));
+        let events=reader.replay(0,10);
+        assert_eq!(events.len(),1);
+        assert_eq!(events[0]["type"],"external_event");
+        let seq=events[0]["seq"].as_u64().unwrap();
+        assert!(reader.replay(seq,10).is_empty());
+        writer.emit(json!({"type":"second_external_event"}));
+        let next=reader.replay(seq,10);
+        assert_eq!(next.len(),1);
+        assert_eq!(next[0]["seq"],seq+1);
+        drop(reader);
+        drop(writer);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn the_log_is_bounded_without_losing_recent_events() {
         let store = store();
         let bus = Bus::new(store);
