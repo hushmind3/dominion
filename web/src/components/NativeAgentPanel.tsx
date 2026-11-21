@@ -15,6 +15,7 @@ type SdkRun = {
    pendingCalls:{id:string;name:string}[]} | null;
   uncertainAction?: {id:string; tool:string; targetPath?:string|null} | null;
   events?: {kind:string; detail:unknown}[];
+  eventsOmitted?:number;
   verificationChecks?: {satisfied:boolean;explanation?:string}[];
   toolReceipts?: {id:string;tool:string;success:boolean;step:number}[];
   toolReceiptsOmitted?:number;
@@ -251,6 +252,8 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const needsApproval=status==='awaiting_approval' && call
  const canResume=status==='interrupted'
  const allEvents=run?.checkpoint?.events||[]
+ const eventsOmitted=run?.checkpoint?.eventsOmitted??0
+ const totalEvents=allEvents.length+eventsOmitted
  const events=allEvents.slice(showEventHistory?-40:-4)
  const toolReceipts=run?.checkpoint?.toolReceipts||[]
  return <section className="mt-4 rounded-xl border border-[#E7E0D5] bg-white">
@@ -335,7 +338,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     {events.length>0&&<div className="mt-3 min-w-0 border-t border-[#E7E0D5] pt-2">
      <div className="flex flex-wrap items-center justify-between gap-2">
       <strong className="text-[11px] text-[#5C544D]">
-       {en?'Recorded run events':'저장된 실행 단계'} · {allEvents.length}
+       {en?'Recorded run events':'저장된 실행 단계'} · {totalEvents}
       </strong>
       {allEvents.length>4&&<button type="button"
        aria-expanded={showEventHistory}
@@ -346,9 +349,12 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
         :(en?'Show earlier events':'이전 단계 보기')}
       </button>}
      </div>
-     {showEventHistory&&allEvents.length>40&&<p className="mt-1 text-[10px] text-[#82796D]">
-      {en?`Showing the latest 40 of ${allEvents.length} recorded events`:
-       `저장된 ${allEvents.length}단계 중 최근 40단계를 표시합니다.`}
+     {showEventHistory&&totalEvents>events.length&&<p className="mt-1 text-[10px] text-[#82796D]">
+      {en?`Showing the latest ${events.length} of ${totalEvents} recorded events`:
+       `저장된 ${totalEvents}단계 중 최근 ${events.length}단계를 표시합니다.`}
+      {eventsOmitted>0&&(en
+       ?` · ${eventsOmitted} older events are omitted from this summary`
+       :` · 이전 ${eventsOmitted}단계는 요약에서 생략`)}
      </p>}
      <ol className="mt-2 max-h-56 space-y-1 overflow-y-auto"
       aria-label={en?'Run event history':'실행 단계 기록'}>
