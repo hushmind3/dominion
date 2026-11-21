@@ -934,7 +934,7 @@ async fn plain_chat_can_explain_tool_markup_as_text_without_executing_it(){
     use axum::{routing::post,Router};
     use axum::response::IntoResponse;
     async fn model() -> axum::response::Response {
-        let code_example="XML 예시: \`<tool_call>\` 뒤에 명령 문자열이 옵니다. invoke name=\"tool\"";
+        let code_example="XML 예시: `<tool_call>` 뒤에 명령 문자열이 옵니다. invoke name=\"tool\"";
         let events=format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
             json!({"choices":[{"delta":{"content":code_example}}]}),
             json!({"choices":[{"delta":{},"finish_reason":"stop"}],
