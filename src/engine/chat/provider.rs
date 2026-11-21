@@ -370,6 +370,21 @@ pub(super) fn cached_prompt_tokens(usage: &Value) -> Option<u64> {
         .or_else(|| usage["cache_read_input_tokens"].as_u64())
 }
 
+/// Check the final rendered HTTP request: compat mode has already inserted
+/// the text tool manual and the native mode has its real schema array.
+fn validate_wire_context(input:usize,context:Option<u64>,output:Option<u64>)
+    ->Result<(),String>{
+    if let Some(capacity)=context.filter(|value|*value>0){
+        let reserve=output.unwrap_or(4096).min((capacity/4).max(128));
+        if (input as u64).saturating_add(reserve)>capacity {
+            return Err(format!(
+                "[model_not_started] 최종 모델 입력({input} 추정 토큰)과 출력 예약({reserve})이 컨텍스트 한도({capacity})를 초과합니다."
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn escaped_content_chars(text: &str) -> usize {
     text.chars().map(|ch| match ch {
         '"' | '\\' | '\n' | '\r' | '\t' | '\u{0008}' | '\u{000c}' => 2,
@@ -944,6 +959,20 @@ async fn stream_completion_once_body(
         request.reasoning_effort.as_deref(),
     );
 
+    let wire_input=super::room_context::input_estimate(
+        body["messages"].as_array().map(Vec::as_slice).unwrap_or(&[]),
+        body["tools"].as_array().map(Vec::as_slice).unwrap_or(&[]),
+    );
+    state.store.audit("chat.provider_wire_input",json!({
+        "sessionId":session_id,"providerId":provider.id,"model":provider.model,
+        "toolMode":provider.tool_mode,"estimatedInputTokens":wire_input,
+        "contextTokens":provider.context_tokens,
+        "reservedOutputTokens":provider.max_output_tokens
+            .unwrap_or(4096).min((provider.context_tokens.unwrap_or(32768)/4).max(128)),
+        "toolSchemaCount":if compatible {0}else{tools.len()},
+        "estimateOnly":true
+    }));
+    validate_wire_context(wire_input,provider.context_tokens,provider.max_output_tokens)?;
     // The same admission slot is shared with helper (non-streaming) calls, so
     // one local model instance is never asked to run two generations at once.
     crate::engine::gateway::reserve_generation(
@@ -2003,5 +2032,17 @@ mod cache_accounting_tests {
         assert_eq!(cached_prompt_tokens(&json!({"prompt_tokens_details":{"cached_tokens":0}})),Some(0));
         assert_eq!(cached_prompt_tokens(&json!({"prompt_tokens_details":{"cached_tokens":1024},
             "cached_tokens":900})),Some(1024));
+    }
+}
+
+#[cfg(test)]
+mod wire_context_admission_tests {
+    use super::*;
+    #[test]
+    fn compat_manual_cannot_overflow_wire_before_http() {
+        assert!(validate_wire_context(1388,Some(1024),Some(256)).is_err());
+        assert!(validate_wire_context(1857,Some(1024),Some(256)).is_err());
+        assert!(validate_wire_context(92,Some(1024),Some(256)).is_ok());
+        assert!(validate_wire_context(2000,None,Some(256)).is_ok());
     }
 }

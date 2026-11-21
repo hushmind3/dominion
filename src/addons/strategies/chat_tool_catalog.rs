@@ -73,6 +73,48 @@ pub(super) fn tool_name(definition: &Value) -> &str {
         .unwrap_or("")
 }
 
+/// Private conversation does not need a schema catalog solely because the
+/// user enabled tools. Actual tool actions still use the same native gateway.
+pub(super) fn private_tool_request(input:&str)->bool {
+    let q=input.trim().to_lowercase();
+    if matches!(q.as_str(),"메인"|"main"|"계속"|"계속해"|"다음 단계"|"다음단계"){
+        return true;
+    }
+    [
+        "검색해","검색해서","검색좀","찾아줘","찾아봐","찾아보고",
+        "조사해","조사해서","조회해","웹에서","인터넷에서",
+        "깃허브에서","github.com","http://","https://",
+        "파일 읽","파일을 읽","파일 보여","파일을 보여","파일 수정","파일을 수정",
+        "파일 삭제","파일을 삭제","폴더를","폴더 만들",
+        "코드 수정","코드를 수정","코드 고쳐","코드를 고쳐",
+        "고쳐줘","수정해","수정하","삭제해","삭제하","만들어","만들어줘",
+        "생성해","작성해","추가해","적용해","실행해","실행해줘",
+        "테스트해","테스트 돌","빌드해","설치해","배포해",
+        "열어줘","열어봐","클릭해","접속해","위임해",
+        "이어서","이어가","이어 해","이어해","진행해","진행하",
+        "다운로드해","저장해","기억해둬","기억해 둬",
+        "read file","write file","edit file","run tests","search the web",
+        "look up","browse to","open url","deploy","install package"
+    ].iter().any(|mark|q.contains(mark))
+}
+#[cfg(test)]
+mod private_tool_request_tests {
+    use super::*;
+    #[test]
+    fn plain_questions_bypass_schemas_but_explicit_actions_retain_tools() {
+        for q in ["안녕","안녕하세요 반가워요",
+            "러스트의 장점을 한 문장으로 알려줘","이 문장 영어로 번역해줘",
+            "Rust 파일 시스템의 장점을 설명해줘"] {
+            assert!(!private_tool_request(q),"{q}");
+        }
+        for q in ["src/main.rs 파일 읽어줘","웹에서 최신 자료 검색해줘",
+            "러스트 테스트 돌려줘","메인","이어서 작업해",
+            "깃허브에서 코드 수정해"] {
+            assert!(private_tool_request(q),"{q}");
+        }
+    }
+}
+
 /// Casual room turns carry zero tool schemas. Action requests select the
 /// exact native schemas the harness judges relevant; no model call is used.
 pub(super) fn room_tool_request(input: &str) -> bool {

@@ -90,6 +90,11 @@ fn valid_resume_id(kind:ExternalAgent,session:&str)->bool{
     }
 }
 
+/// One runtime-specific validator for both delegation admission and bridge.
+pub(crate) fn valid_external_resume_id(runtime:&str,session:&str)->bool{
+    ExternalAgent::parse(runtime).is_ok_and(|kind|valid_resume_id(kind,session))
+}
+
 /// Only a successful terminal envelope may supply a resumable CLI session.
 /// These IDs are external CLI state, never proof of native tool execution.
 fn terminal_session_id(kind:ExternalAgent,raw:&str)->Option<String>{
@@ -395,6 +400,9 @@ mod tests{
     #[test]
     fn acp_opaque_session_ids_are_scoped_and_safely_serializable(){
         assert!(valid_resume_id(ExternalAgent::QwenAcp,"qwen-session_123"));
+        assert!(valid_external_resume_id("qwen-acp","qwen-mock-1"));
+        assert!(!valid_external_resume_id("qwen","qwen-mock-1"));
+        assert!(!valid_external_resume_id("qwen-acp","../escape"));
         assert!(!valid_resume_id(ExternalAgent::QwenAcp,"../escape"));
         assert!(!valid_resume_id(ExternalAgent::QwenAcp,"a\nrequest"));
         assert!(!valid_resume_id(ExternalAgent::CodexServer,"qwen-session_123"));

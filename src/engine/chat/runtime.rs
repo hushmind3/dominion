@@ -539,7 +539,11 @@ async fn run_turn_body(
     };
     let is_room = session["roomId"].is_string();
     let social_private = !is_room && super::context_engine::is_social_turn(&request.input);
-    if social_private {
+    let plain_private = !is_room && record_input && acceptance.is_none()
+        && simple_creation_target.is_none() && session["delegated"]!=true
+        && request.attachment_ids.is_empty()
+        && !tool_catalog::private_tool_request(&request.input);
+    if social_private || plain_private {
         // A greeting cannot benefit from hundreds of registered MCP schemas
         // or a tool discovery gateway, even when tool access is enabled.
         tool_definitions.clear();
@@ -548,7 +552,7 @@ async fn run_turn_body(
         && !tool_catalog::room_tool_request(&request.input);
     // Do not enumerate remote MCP servers or scan old tool receipts for
     // ordinary group conversation. A resumed action still uses the full path.
-    if request.tools_enabled && request.tools_execution_enabled && !casual_room && !social_private {
+    if request.tools_enabled && request.tools_execution_enabled && !casual_room && !social_private && !plain_private {
         tool_definitions.extend(extensions::tools::external(
             state,session_id,request.agent_id.as_deref()).await);
     }
@@ -569,7 +573,7 @@ async fn run_turn_body(
     // A skill index without a usable lookup would silently remove existing
     // instructions from tool-enabled agents. Advertise exactly one small
     // read-only schema when this agent can actually view an enabled skill.
-    if request.tools_enabled && request.tools_execution_enabled && !social_private
+    if request.tools_enabled && request.tools_execution_enabled && !social_private && !plain_private
         && (!is_room || !tool_definitions.is_empty()) {
         let has_skill=extensions::knowledge::has_visible_skills(
             state,session_id,request.agent_id.as_deref());

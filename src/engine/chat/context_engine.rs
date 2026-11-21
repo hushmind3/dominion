@@ -15,13 +15,18 @@ use serde_json::{json, Value};
 /// and tool discovery. A follow-up ("continue", "yes", etc.) is not social:
 /// it must retain enough work context to resume a real task.
 pub(super) fn is_social_turn(query: &str) -> bool {
-    let q=query.trim().trim_matches(|ch:char|
-        ch.is_ascii_punctuation() || matches!(ch,'！'|'？'|'。'|'~'|'～'|' ') )
-        .to_lowercase();
-    matches!(q.as_str(),
-        "안녕"|"안녕하세요"|"하이"|"반가워"|"고마워"|"고맙습니다"|
-        "감사합니다"|"감사해요"|"잘자"|"굿모닝"|"hello"|"hi"|
-        "thanks"|"thank you"|"good morning")
+    // Every word must be a greeting; an embedded action must keep its context.
+    let words = query.split_whitespace().collect::<Vec<_>>();
+    !words.is_empty() && words.len() <= 4 && words.iter().all(|word| {
+        let normalized=word.trim_matches(|ch:char|
+            ch.is_ascii_punctuation() || matches!(ch,'！'|'？'|'。'|'~'|'～'))
+            .to_lowercase();
+        matches!(normalized.as_str(),
+            "안녕"|"안녕하세요"|"하이"|"반가워"|"반가워요"|"반갑습니다"|
+            "고마워"|"고마워요"|"고맙습니다"|"감사합니다"|"감사해요"|
+            "잘자"|"굿모닝"|"hello"|"hi"|"thanks"|"thank"|"you"|
+            "good"|"morning"|"nice"|"to"|"meet")
+    })
 }
 
 /// Date is task evidence, not an instruction. Most "hello"/code/reflection
@@ -147,6 +152,17 @@ pub(super) fn append_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn composite_greeting_is_social_without_hiding_an_action() {
+        for greeting in ["안녕","안녕하세요 반가워요","안녕하세요! 반갑습니다.",
+            "hello","thank you","good morning"] {
+            assert!(is_social_turn(greeting), "{greeting}");
+        }
+        for work in ["안녕하세요 파일을 지워","안녕 검색해줘","계속",
+            "안녕하세요 Rust 테스트 돌려줘"] {
+            assert!(!is_social_turn(work), "{work}");
+        }
+    }
     #[test]
     fn context_compiler_reserves_output_and_scales_with_local_model_capacity() {
         use crate::{config::Config,db::Store,vault::Vault};

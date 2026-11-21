@@ -122,7 +122,7 @@ pub(super) async fn delegate(ctx: &ToolContext<'_>, args: &Value) -> Result<Valu
                 ||prior_run["runtime"].as_str()!=external
                 ||prior_run["resumedByJobId"].is_string()
                 ||prior_run["externalSessionId"].as_str()
-                    .is_none_or(|id|uuid::Uuid::parse_str(id).is_err()){
+                    .is_none_or(|id|!crate::addons::agent_bridge::valid_external_resume_id(external.unwrap_or(""),id)){
                 return Err("정상 완료된 같은 에이전트의 미사용 외부 CLI 세션만 재개할 수 있습니다.".into());
             }
             let old_session=previous["input"]["sessionId"].as_str()
