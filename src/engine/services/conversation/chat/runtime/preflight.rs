@@ -81,12 +81,11 @@ pub(super) fn prepare(
             .and_then(|message| message["content"].as_str().map(str::to_string)),
         None => Some(task_input(&session,&request.input).to_string()),
     };
-    // toolsEnabled controls model-visible tools; toolsExecutionEnabled is
-    // the stronger permission boundary for verified harness operations.
-    // Direct Chat sends both false. Legacy harness turns may disable model
-    // tools while retaining explicit execution authority.
-    let mut acceptance = if !request.tools_execution_enabled
-        || request.verification_owner.as_deref() == Some("parent") {
+    // Capture owner-required verification regardless of tool visibility.
+    // A disabled execution capability must never erase the requirement for
+    // a real external effect: the turn boundary rejects that action without
+    // claiming it succeeded. Model tools and Rust harness are distinct.
+    let mut acceptance = if request.verification_owner.as_deref() == Some("parent") {
         // A parent verifier owns review for delegated child operations;
         // investigating and declining a change must not trigger forced writes.
         // The child still
