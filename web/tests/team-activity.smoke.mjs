@@ -80,8 +80,13 @@ try{
       return;
     }
     if(path==='/api/chat'){
-      await route.fulfill({status:200,contentType:'text/event-stream',
-        body:'data: {"type":"done"}\n\n'});
+      if(route.request().postDataJSON()?.input==='실패한 요청 복구'){
+        await route.fulfill({status:503,contentType:'application/json',
+         body:JSON.stringify({error:'provider temporarily unavailable'})});
+      }else{
+        await route.fulfill({status:200,contentType:'text/event-stream',
+         body:'data: {"type":"done"}\n\n'});
+      }
       return;
     }
     await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(response)});
@@ -224,8 +229,20 @@ try{
   await page.evaluate(()=>{window.location.hash='#/chat?session=chat-two'});
   assert.equal(await page.getByRole('button',{name:'일반 대화'}).getAttribute('aria-pressed'),'true',
     'unrelated conversation must not inherit another session agent mode');
+  // A failed provider request must restore the user's unsent request in
+  // the exact session, not discard it or transplant it to another session.
+  await chatInput.fill('실패한 요청 복구');
+  const failureResponse=page.waitForResponse(response=>
+    new URL(response.url()).pathname==='/api/chat'&&response.status()===503);
+  await chatInput.press('Enter');
+  await failureResponse;
+  await page.waitForFunction(selector=>
+    document.querySelector(selector)?.value==='실패한 요청 복구',inputSelector,{timeout:10000});
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.waitForFunction(selector=>
+    document.querySelector(selector)?.value==='실패한 요청 복구',inputSelector,{timeout:10000});
   assert.deepEqual(errors,[], 'Chat/Team React runtime errors');
-  console.log('PASS Chromium direct default / explicit agent opt-in / session-isolated execution mode');
+  console.log('PASS Chromium direct default / agent opt-in / mode isolation / failed send draft recovery');
 }finally{
   await browser?.close();
   server.kill('SIGTERM');
