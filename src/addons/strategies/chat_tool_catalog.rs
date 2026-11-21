@@ -142,6 +142,25 @@ pub(super) fn private_tool_request(input:&str)->bool {
 mod private_tool_request_tests {
     use super::*;
     #[test]
+    fn short_room_continuation_keeps_native_gateway_without_casual_schema_bloat() {
+        assert!(room_tool_request("그럼 빨리해"));
+        assert!(room_tool_request("바로 해"));
+        assert!(!room_tool_request("안녕"));
+        assert!(!room_tool_request("그거 빨리해?"));
+        let definitions=vec![
+            json!({"type":"function","function":{"name":"workspace_read",
+                "description":"Read a file","parameters":{"type":"object"}}}),
+            json!({"type":"function","function":{"name":"workspace_write",
+                "description":"Write a file","parameters":{"type":"object"}}}),
+        ];
+        let selected=select_room_tools(definitions.clone(),"그럼 빨리해",
+            &std::collections::HashSet::new(),false);
+        assert!(!selected.is_empty());
+        assert!(selected.iter().any(|tool|tool_name(tool)=="workspace_read"));
+        assert!(select_room_tools(definitions,"안녕",
+            &std::collections::HashSet::new(),false).is_empty());
+    }
+    #[test]
     fn plain_questions_bypass_schemas_but_explicit_actions_retain_tools() {
         for q in ["안녕","안녕하세요 반가워요",
             "러스트의 장점을 한 문장으로 알려줘","이 문장 영어로 번역해줘",
@@ -167,6 +186,9 @@ mod private_tool_request_tests {
 /// Casual room turns carry zero tool schemas. Action requests select the
 /// exact native schemas the harness judges relevant; no model call is used.
 pub(super) fn room_tool_request(input: &str) -> bool {
+    // A room owner can continue an ongoing multi-agent task with a terse
+    // imperative too. The native room tool routing still enforces authority.
+    if action_followup(input) { return true; }
     let lower = input.to_lowercase();
     [
         "파일", "폴더", "읽고", "읽어", "읽어줘", "읽어봐", "읽기",
