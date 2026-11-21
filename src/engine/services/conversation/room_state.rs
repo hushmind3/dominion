@@ -613,17 +613,28 @@ mod tests {
         let source=state.store.write_message(&owner("owner-1","owner request"))
             .unwrap();
         state.bus.message(&source);
-        let missing_seq=state.bus.cursor();
-        // Simulate the SQL journal being behind the in-memory sequence.
-        // Missing journal entries cannot be treated as successful reads.
+        let owner_event_seq=state.bus.cursor();
+        let mail=json!({"id":"mail-1","roomId":"r","sessionId":"room:r",
+            "senderAgentId":"agent-b","recipientAgentId":"agent-a",
+            "status":"queued","message":"peer correction",
+            "replyToMessageId":"owner-1","hopCount":0});
+        state.store.put("room_peer_mail",&mail).unwrap();
+        state.bus.record("room_peer_mail",&mail);
+        let mail_seq=state.bus.replay(owner_event_seq,8).into_iter()
+            .find(|event|event["type"]=="record"
+                &&event["kind"]=="room_peer_mail")
+            .unwrap()["seq"].as_u64().unwrap();
+        // Reproduce a missing durable journal event while the peer mail
+        // remains queued in the authoritative SQLite record table.
         let db=rusqlite::Connection::open(state.config.db_path()).unwrap();
         db.execute("DELETE FROM event_log WHERE seq=?1",
-            rusqlite::params![missing_seq as i64]).unwrap();
+            rusqlite::params![mail_seq as i64]).unwrap();
         let snapshot=unread_for(&state,"r","room:r","agent-a").unwrap();
-        assert_eq!(snapshot.through,0);
+        assert_eq!(snapshot.through,owner_event_seq);
         let note=snapshot.unread.as_deref().unwrap();
         assert!(note.contains(r#""gap":true"#),"{note}");
-        assert!(note.contains(r#""safeAckThrough":0"#),"{note}");
+        assert!(note.contains(&format!(r#""safeAckThrough":{owner_event_seq}"#)),
+            "{note}");
         let reply=state.store.write_message(&json!({
             "id":"reply-1","session_id":"room:r","role":"assistant",
             "agent_id":"agent-a","content":"answer",
@@ -632,13 +643,13 @@ mod tests {
         state.bus.message(&reply);
         let confirmed=acknowledge_read(&state,"r","room:r","agent-a",
             "owner-1","reply-1",snapshot.through).unwrap();
-        assert_eq!(confirmed["readCursor"],0,
-            "unreplayed events may not be acknowledged through a later bus cursor");
-        // A later reliable event does not turn the preceding hole into a
-        // contiguous read prefix, even though its source ID is visible.
+        assert_eq!(confirmed["readCursor"],owner_event_seq,
+            "missing peer mail must not be acknowledged through a later bus cursor");
+        assert_eq!(state.store.get("room_peer_mail","mail-1").unwrap()["status"],
+            "queued","a missing event cannot manufacture a delivered receipt");
         let next=unread_for(&state,"r","room:r","agent-a").unwrap();
         assert!(next.unread.as_deref().unwrap().contains("reply-1"));
-        assert_eq!(next.through,0);
+        assert_eq!(next.through,owner_event_seq);
         drop(db);drop(state);
         let _=std::fs::remove_dir_all(dir);
     }
