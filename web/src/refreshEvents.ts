@@ -29,6 +29,8 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
    case 'room':add('/api/rooms');if(id){rooms.add(id);add('/api/rooms/'+encoded(id)+'/state')}break
    case 'agent':add('/api/agents');break
    case 'provider':add('/api/providers');break
+   case 'policy':add('/api/policy');break
+   case 'extension_policy':add('/api/extensions/runtime','/api/tools');break
    case 'job':add('/api/jobs');if(id)add('/api/jobs/'+encoded(id));break
    case 'execution':add('/api/executions');break
    case 'execution_operation':add('/api/executions');break

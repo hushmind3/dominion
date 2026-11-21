@@ -19,7 +19,7 @@ const features:{key:ExtensionKey;ko:string;en:string;koDesc:string;enDesc:string
 export function ExtensionRuntimeControls(){
  const locale=useLocale()
  const en=locale==='en'
- const remote=useRemote<RuntimePolicy>('/api/extensions/runtime',{enabled:{},configured:{}},false)
+ const remote=useRemote<RuntimePolicy>('/api/extensions/runtime',{enabled:{},configured:{}})
  const [saving,setSaving]=useState<ExtensionKey|'reset'|null>(null)
  const [error,setError]=useState('')
  const [saved,setSaved]=useState(false)

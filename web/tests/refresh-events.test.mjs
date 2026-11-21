@@ -41,3 +41,14 @@ test('merge collapses rapid SSE bursts while unknown events do not cause full re
  assert.deepEqual(classifyRefreshEvent({type:'audit'}).targets,['/api/audit/*','/api/audit'])
  assert.deepEqual(classifyRefreshEvent({type:'unrecognized'}).targets,[])
 })
+
+test('permission and extension policy events refresh only their owner controls',()=>{
+ const permission=classifyRefreshEvent({type:'record',kind:'policy',record:{id:'default'}})
+ assert.deepEqual(permission.targets,['/api/policy'])
+ assert.equal(matchesRefreshTarget('/api/policy',permission.targets),true)
+ assert.equal(matchesRefreshTarget('/api/extensions/runtime',permission.targets),false)
+ const extension=classifyRefreshEvent({type:'record',kind:'extension_policy',record:{id:'default'}})
+ assert.ok(matchesRefreshTarget('/api/extensions/runtime',extension.targets))
+ assert.ok(matchesRefreshTarget('/api/tools',extension.targets))
+ assert.equal(matchesRefreshTarget('/api/policy',extension.targets),false)
+})

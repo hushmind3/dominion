@@ -65,3 +65,14 @@ test('global permission toggles serialize writes and reflect only confirmed back
  assert.match(operations,/disabled=\{policySaving\|\|policy\.loading\|\|Boolean\(policy\.error\)/)
  assert.match(operations,/\(error\|\|policy\.error\)&&<Notice/)
 })
+
+test('global policy and extension switches track server policy updates across screens',()=>{
+ const control=source('src/components/ExecutionPermissions.tsx')
+ const ext=source('src/components/ExtensionRuntimeControls.tsx')
+ assert.match(control,/matchesRefreshTarget\('\/api\/policy',targets\)/)
+ assert.match(control,/addEventListener\('dominion-data-change',onPolicyChanged\)/)
+ assert.match(control,/request===latest/)
+ assert.match(control,/removeEventListener\('dominion-data-change',onPolicyChanged\)/)
+ assert.match(ext,/useRemote<RuntimePolicy>\('\/api\/extensions\/runtime',\{enabled:\{\},configured:\{\}\}\)/)
+ assert.doesNotMatch(ext,/configured:\{\}\},false\)/)
+})

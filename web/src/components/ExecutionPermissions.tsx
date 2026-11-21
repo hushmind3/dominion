@@ -4,6 +4,7 @@ import {Check,ChevronDown,ShieldAlert,ShieldCheck} from 'lucide-react'
 import {get,post} from '../api'
 import {Button} from './Primitives'
 import {useAnchoredPanel} from '../hooks/useAnchoredPanel'
+import {matchesRefreshTarget,type RefreshScope} from '../refreshEvents'
 import {t,useLocale,type LocaleKey} from '../i18n'
 
 type PermissionMode='request'|'workspace'|'full'
@@ -20,10 +21,21 @@ export function ExecutionPermissions({open,onOpenChange,onError,onChanged,active
  useEffect(()=>{
   if(!active)return
   const controller=new AbortController()
-  get<{autoApprove?:string[];autoApproveAll?:boolean}>('/api/policy',controller.signal).then(p=>{
-   if(!controller.signal.aborted)setPermissionMode(p.autoApproveAll?'full':(p.autoApprove||[]).includes('workspace_write')?'workspace':'request')
-  }).catch(()=>{})
-  return()=>controller.abort()
+  let latest=0
+  const load=()=>{
+   const request=++latest
+   get<{autoApprove?:string[];autoApproveAll?:boolean}>('/api/policy',controller.signal).then(p=>{
+    if(!controller.signal.aborted&&request===latest)
+     setPermissionMode(p.autoApproveAll?'full':(p.autoApprove||[]).includes('workspace_write')?'workspace':'request')
+   }).catch(()=>{})
+  }
+  const onPolicyChanged=(event:Event)=>{
+   const targets=(event as CustomEvent<RefreshScope>).detail?.targets||[]
+   if(matchesRefreshTarget('/api/policy',targets))load()
+  }
+  load()
+  window.addEventListener('dominion-data-change',onPolicyChanged)
+  return()=>{controller.abort();window.removeEventListener('dominion-data-change',onPolicyChanged)}
  },[active,open])
  const changePermission=async(mode:PermissionMode)=>{
   if(permissionBusy)return
