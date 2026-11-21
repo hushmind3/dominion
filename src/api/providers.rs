@@ -841,19 +841,17 @@ async fn codex_callback_task(state: AppState, listener: TcpListener) -> Result<S
     } else if returned_state != pending["state"].as_str().unwrap_or("") {
         Err("Codex 로그인 state가 일치하지 않습니다. 다시 시도하세요.".to_string())
     } else {
-        let client = reqwest::Client::new();
-        codex_oauth::exchange_code(
-            &client,
-            &code,
-            pending["verifier"].as_str().unwrap_or(""),
-        )
-        .await
-        .and_then(|tokens| {
-            let account = codex_oauth::account_id(&tokens)
-                .ok_or("Codex 계정 ID를 찾을 수 없습니다.")?;
-            save_codex_provider(&state, &tokens, false)?;
-            Ok(account)
-        })
+        match state.account_http_client(30) {
+            Ok(client)=>codex_oauth::exchange_code(
+                &client,&code,pending["verifier"].as_str().unwrap_or(""),
+            ).await.and_then(|tokens|{
+                let account=codex_oauth::account_id(&tokens)
+                    .ok_or("Codex 계정 ID를 찾을 수 없습니다.")?;
+                save_codex_provider(&state,&tokens,false)?;
+                Ok(account)
+            }),
+            Err(error)=>Err(error),
+        }
     };
     match &result {
         Ok(_) => {
@@ -1061,7 +1059,10 @@ async fn codex_device_poll(
 }
 
 pub async fn codex_device_start(State(state): State<AppState>) -> Response {
-    let client = reqwest::Client::new();
+    let client=match state.account_http_client(20){
+        Ok(client)=>client,
+        Err(message)=>return error(StatusCode::INTERNAL_SERVER_ERROR,&message),
+    };
     let response = client
         .post("https://auth.openai.com/api/accounts/deviceauth/usercode")
         .json(&json!({"client_id":codex_oauth::CLIENT_ID}))
@@ -1170,6 +1171,7 @@ async fn discover_cloudflare_account(api_key: &str) -> Option<String> {
     }
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(6))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .ok()?;
     let response = client
@@ -1573,7 +1575,10 @@ pub async fn test_provider(
     let base = crate::engine::gateway::resolved_base_url(&provider);
     let kind = provider["kind"].as_str().unwrap_or("openai");
     let key = if kind == "codex" {
-        let client = reqwest::Client::new();
+        let client=match state.account_http_client(30){
+            Ok(client)=>client,
+            Err(message)=>return Json(json!({"ok":false,"message":message})).into_response(),
+        };
         match codex_oauth::fresh_access(&state, &client, &id, key).await {
             Ok(token) => token,
             Err(message) => return Json(json!({"ok":false,"message":message})).into_response(),
@@ -1596,9 +1601,10 @@ pub async fn test_provider(
     } else {
         model.clone()
     };
-    let client = match reqwest::Client::builder().timeout(Duration::from_secs(20)).build() {
-        Ok(client) => client,
-        Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()),
+    let client=match if kind=="codex" { state.account_http_client(20) }
+        else { state.provider_http_client(20) } {
+        Ok(client)=>client,
+        Err(err)=>return error(StatusCode::INTERNAL_SERVER_ERROR,&err),
     };
     if kind == "codex" {
         // Verify account credentials and model visibility without spending a
@@ -1856,10 +1862,10 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
     if kind == "codex" {
         // The owner's actual Codex catalog replaces the historical four-name stub.
         // Subscription models are not metered as ordinary API-key purchases.
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(15))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let client=match state.account_http_client(15){
+            Ok(client)=>client,
+            Err(error)=>return Json(json!({"models":[],"error":error})).into_response(),
+        };
         let account = provider["accountId"].as_str().unwrap_or("");
         let cached = state.store.get("codex_model_catalog", &id)
             .filter(|row| row["accountId"].as_str() == Some(account));
@@ -1928,7 +1934,10 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
         )
     };
 
-    let client = reqwest::Client::new();
+    let client=match state.provider_http_client(12){
+        Ok(client)=>client,
+        Err(message)=>return error(StatusCode::INTERNAL_SERVER_ERROR,&message),
+    };
     let mut request = client.get(&url).timeout(Duration::from_secs(12));
     if kind == "anthropic" {
         request = request
