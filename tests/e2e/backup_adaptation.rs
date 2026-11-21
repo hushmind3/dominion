@@ -31,12 +31,23 @@ fn real_http_restore_failure_keeps_rotated_key_and_secret_after_restart(){
     let failure:Value=attempted.json().unwrap();
     assert_eq!(failure["restored"],false,"{failure}");
     assert_eq!(std::fs::read(data_dir.join("secret.key")).unwrap(),rotated_key);
-    let store=dominion_rust::db::Store::open(&data_dir.join("dominion.sqlite")).unwrap();
-    let vault=dominion_rust::vault::Vault::open(&data_dir.join("secret.key"));
-    let encrypted=store.all_secrets();
+    use base64::Engine as _;
+    use chacha20poly1305::aead::{Aead,KeyInit};
+    let conn=rusqlite::Connection::open(data_dir.join("dominion.sqlite")).unwrap();
+    let encrypted={
+        let mut query=conn.prepare("SELECT value FROM secrets").unwrap();
+        query.query_map([],|row|row.get::<_,String>(0)).unwrap()
+            .map(|result|result.unwrap()).collect::<Vec<_>>()
+    };
     assert!(!encrypted.is_empty(),"test must prove at least one encrypted secret");
-    assert!(encrypted.iter().all(|(_,ciphertext)|vault.open_secret(ciphertext).is_some()));
-    drop(store);
+    let cipher=chacha20poly1305::ChaCha20Poly1305::new_from_slice(&rotated_key).unwrap();
+    for sealed in encrypted {
+        let raw=base64::engine::general_purpose::STANDARD.decode(sealed).unwrap();
+        let (nonce,body)=raw.split_at(12);
+        assert!(cipher.decrypt(chacha20poly1305::Nonce::from_slice(nonce),body).is_ok(),
+            "retained database secret must decrypt with the retained key");
+    }
+    drop(conn);
     drop(app);
     // Force a real second process. Startup must repair any pending rollback
     // marker before accepting sessions or provider credential reads.
