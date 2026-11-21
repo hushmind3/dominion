@@ -51,7 +51,11 @@ pub(super) async fn supervise_tool_cancellation<F>(
     generation:u64,turn_limit:Duration,body:F
 )->Result<Option<Value>,String>
 where F:std::future::Future<Output=Result<Option<Value>,String>>{
-    let mut body=std::pin::pin!(body);
+    // The Chat turn body is a large async state machine. An inline pin!
+    // embeds that entire future on a Tokio worker's limited thread stack,
+    // and nested jobs/Room turns can overflow it. Pin the same future on
+    // the heap, retaining the exact cancellation and live-tool drain logic.
+    let mut body=Box::pin(body);
     let limit=tokio::time::sleep(turn_limit);
     let mut limit=std::pin::pin!(limit);
     tokio::select!{
