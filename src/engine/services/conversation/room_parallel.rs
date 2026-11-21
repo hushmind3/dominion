@@ -73,7 +73,7 @@ pub(super) async fn run(
             state,room_id,room_session,agent_id)?;
         read_watermarks.insert(agent_id.clone(),reader.through);
         sessions.push(private_id.clone());
-        work.push((agent_id.clone(),private_id,chat::TurnRequest{
+        work.push((agent_id.clone(),private_id,chat::TurnRequest{direct_chat:false,
             session_id:Some(session["id"].as_str().unwrap_or("").to_string()),
             request_id:None,input:owner_text.to_string(),
             attachment_ids:Vec::new(),agent_id:Some(agent_id.clone()),

@@ -78,7 +78,7 @@ use super::*;
             "request":"write then inspect"
         })).unwrap();
         let session=json!({"id":"s-team-ledger"});
-        let request=TurnRequest{
+        let request=TurnRequest{direct_chat:false,
             session_id:Some("s-team-ledger".into()),request_id:None,
             input:"write then inspect".into(),attachment_ids:Vec::new(),
             agent_id:None,provider_id:None,model:None,
@@ -154,7 +154,7 @@ use super::*;
             "taskId":execution_id,"request":"inspect and then write",
         })).unwrap();
         let session=json!({"id":"s-team"});
-        let request=TurnRequest{
+        let request=TurnRequest{direct_chat:false,
             session_id:Some("s-team".into()),request_id:None,
             input:"inspect and then write".into(),attachment_ids:Vec::new(),
             agent_id:None,provider_id:None,model:None,
@@ -226,7 +226,7 @@ use super::*;
             }),
         );
         let session = json!({"id":"s1","roomId":null});
-        let request = TurnRequest {
+        let request = TurnRequest {direct_chat:false,
             session_id: Some("s1".into()),
 
             request_id: None,
@@ -310,7 +310,7 @@ use super::*;
             }
         }));
         let session = json!({"id":"s1"});
-        let request = TurnRequest {
+        let request = TurnRequest {direct_chat:false,
             session_id: Some("s1".into()),
 
             request_id: None, input: "반복 작성".into(),
@@ -368,7 +368,7 @@ use super::*;
             }),
         );
         let session = json!({"id":"s1"});
-        let request = TurnRequest {
+        let request = TurnRequest {direct_chat:false,
             session_id: Some("s1".into()),
 
             request_id: None,
@@ -434,7 +434,7 @@ use super::*;
                 mandatory: Vec::new(),
             },
         );
-        let request = TurnRequest {
+        let request = TurnRequest {direct_chat:false,
             session_id: Some("session-1".into()),
 
             request_id: None,
