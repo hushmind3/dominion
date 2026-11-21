@@ -61,3 +61,31 @@ The initial SDK surface is explicit and versioned rather than pretending to cove
 ## Typed run lifecycle subscription (sub2, 2026-11-20)
 
 `client.runEvents({after:lastSeq})` filters the existing durable SSE feed to versioned `run_state` events originating in actual persisted `execution`, `job` or `room_work_assignment` records. Events include `runId`, `runKind`, `state`, `agentId`, nullable `sourceMessageId` and monotonic `eventSeq===seq`. The same `/api/events` endpoint and reconnect logic are reused. Unknown schema versions, bad state names and mismatched journal cursors are rejected instead of being presented as trustworthy lifecycle updates. This method does not create a new runtime or execute any tools.
+
+## Direct Chat and file attachments (sub2, 2026-11-22)
+
+The SDK supports plain conversation without creating an agent persona. Set
+`conversationMode:'chat'` explicitly in `sessions.create` and `streamChat`.
+The Rust engine then disables native tools, automatic learning and inherited
+session agent identities even if a stale client asks for them. Omit the mode
+on older agent/SDK work to preserve its existing execution contract.
+
+```ts
+const session = await dominion.sessions.create({
+  title:'Document review',conversationMode:'chat',providerId:'my-provider'
+});
+const file = await dominion.attachments.upload({
+  sessionId:session.id,name:'notes.txt',mimeType:'text/plain',
+  data:Buffer.from('Hello world','utf8').toString('base64'),
+});
+await dominion.streamChat({
+  sessionId:session.id,conversationMode:'chat',
+  input:'Summarize the attached document',attachmentIds:[file.id],
+  toolsEnabled:false,toolsExecutionEnabled:false
+},event=>console.log(event));
+```
+
+Attachment records are scoped to a real session or room; Rust enforces
+per-file (8 MiB), per-turn (8 files / 24 MiB) limits and validates image bytes.
+`attachments.content(id)` reads bytes with the same authenticated SDK client.
+Chat POST requests are never automatically retried.

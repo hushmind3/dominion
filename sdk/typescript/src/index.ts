@@ -14,7 +14,7 @@ export interface Job extends RecordItem {
 }
 export interface Execution extends RecordItem { status: string; sessionId?: string; startedAt?: string; finishedAt?: string }
 export interface Agent extends RecordItem { name: string; systemPrompt?: string; providerId?: string; model?: string }
-export interface Session extends RecordItem { title: string; agentId?: string; roomId?: string; providerId?: string; model?: string }
+export interface Session extends RecordItem { title: string; agentId?: string; roomId?: string; providerId?: string; model?: string; conversationMode?:'chat'|'agent' }
 export interface Room extends RecordItem { name: string; agentIds: string[]; sessionId?: string; rounds?: number; tokenBudget?: number }
 export interface Approval extends RecordItem { status: string; sessionId?: string; tool?: string; args?: unknown }
 export interface StreamEvent { type: string; [key: string]: unknown }
@@ -51,10 +51,19 @@ export function isRunStateEvent(event:DurableEvent):event is RunStateEvent {
 }
 export interface Health { ok: boolean; service: string; version: string; runtime: string; engine: string }
 export interface ChatInput {
-  sessionId: string; agentId: string; input: string;
-  providerId?: string; model?: string; toolsEnabled?: boolean;
-  toolsExecutionEnabled?: boolean; autoLearning?: boolean;
-  reasoningLanguage?: string; reasoningEffort?: string; thinking?: boolean;
+  sessionId: string; input: string; conversationMode?:'chat'|'agent';
+  agentId?: string; providerId?: string; model?: string; attachmentIds?: string[];
+  toolsEnabled?: boolean; toolsExecutionEnabled?: boolean; autoLearning?: boolean;
+  reasoningLanguage?: string; reasoningEffort?: string; thinking?: boolean; requestId?: string;
+}
+export interface AttachmentUpload {
+  sessionId?:string;roomId?:string;name:string;mimeType?:string;
+  /** Base64 encoded exact bytes. Upload at most 8 MiB per file. */
+  data:string;
+}
+export interface Attachment extends RecordItem {
+  name:string;sessionId:string;roomId?:string|null;mimeType:string;size:number;
+  isImage:boolean;supportedForModel:'image'|'text'|'download';url:string;
 }
 export interface RoomMessageInput {
   input: string; clientMessageId?: string; agentIds?: string[]; attachmentIds?: string[];
@@ -196,7 +205,7 @@ export class Dominion {
   };
   readonly sessions = {
     list: (options?:RequestOptions) => this.request<Session[]>('GET','/api/sessions',undefined,options),
-    create: (input:{title?:string;agentId?:string;providerId?:string;model?:string},options?:RequestOptions) => this.request<Session>('POST','/api/sessions',input,options),
+    create: (input:{title?:string;agentId?:string;providerId?:string;model?:string;conversationMode?:'chat'|'agent'},options?:RequestOptions) => this.request<Session>('POST','/api/sessions',input,options),
     get: (key:string,options?:RequestOptions) => this.request<Session>('GET','/api/sessions/'+id(key),undefined,options),
     messages: (key:string,options?:RequestOptions) => this.request<RecordItem[]>('GET','/api/sessions/'+id(key)+'/messages',undefined,options),
     usage: (key:string,options?:RequestOptions) => this.request<unknown>('GET','/api/sessions/'+id(key)+'/usage',undefined,options),
@@ -216,6 +225,18 @@ export class Dominion {
     /** clientMessageId is the Rust engine's durable deduplication key. */
     send: (key:string,input:RoomMessageInput,options?:RequestOptions) => this.request<{jobId:string;status:string;sessionId:string;job:Job}>('POST','/api/rooms/'+id(key)+'/messages',input,options),
     stop: (key:string,options?:RequestOptions) => this.request<unknown>('POST','/api/rooms/'+id(key)+'/stop',{},options),
+  };
+  readonly attachments = {
+    /** Upload to a specific private Chat session or room; Rust verifies bytes and scope. */
+    upload: (input:AttachmentUpload,options?:RequestOptions) =>
+      this.request<Attachment>('POST','/api/attachments',input,options),
+    /** Read the protected binary body using the same token as other SDK APIs. */
+    content: async (key:string,options:RequestOptions={}):Promise<ArrayBuffer> => {
+      const response=await this.raw('/api/attachments/'+id(key)+'/content',
+        {method:'GET',signal:options.signal});
+      if(!response.ok)await fail(response);
+      return response.arrayBuffer();
+    },
   };
   readonly approvals = {
     list: (options?:RequestOptions) => this.request<Approval[]>('GET','/api/approvals',undefined,options),

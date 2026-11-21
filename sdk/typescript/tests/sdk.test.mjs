@@ -25,6 +25,39 @@ test('the SDK speaks actual /api/* Rust endpoints and sends the admin token head
   assert.equal(calls[0].init.cache,'no-store');
   assert.deepEqual(JSON.parse(calls[2].init.body),{input:'Ship it',clientMessageId:'stable-1'});
 });
+test('direct Chat and immutable attachments share typed Rust API and auth',async()=>{
+  const calls=[];
+  const client=new Dominion({token:'private',fetch:async(url,init)=>{
+    calls.push({url,init});
+    if(url.endsWith('/content'))
+      return new Response(new Uint8Array([65,66]),{headers:{'content-type':'text/plain'}});
+    if(url.endsWith('/api/chat'))
+      return sse(['data: {"type":"done"}\n\n']);
+    return json({id:'attachment-id',name:'report.md',sessionId:'s',roomId:null,
+      mimeType:'text/plain; charset=utf-8',size:6,isImage:false,
+      supportedForModel:'text',url:'/api/attachments/attachment-id/content'});
+  }});
+  await client.sessions.create({title:'Normal chat',conversationMode:'chat',providerId:'provider'});
+  const uploaded=await client.attachments.upload({
+    sessionId:'s',name:'report.md',mimeType:'text/plain',data:Buffer.from('hello!').toString('base64')
+  });
+  assert.equal(uploaded.id,'attachment-id');
+  const bytes=await client.attachments.content('attachment-id');
+  assert.deepEqual([...new Uint8Array(bytes)],[65,66]);
+  await client.streamChat({sessionId:'s',input:'summarize',conversationMode:'chat',
+    attachmentIds:[uploaded.id],toolsEnabled:false,toolsExecutionEnabled:false},()=>{});
+  assert.equal(JSON.parse(calls[0].init.body).conversationMode,'chat');
+  assert.equal(calls[1].url,'http://127.0.0.1:4317/api/attachments');
+  assert.equal(JSON.parse(calls[1].init.body).sessionId,'s');
+  assert.equal(calls[2].url,'http://127.0.0.1:4317/api/attachments/attachment-id/content');
+  assert.equal(calls[3].url,'http://127.0.0.1:4317/api/chat');
+  const payload=JSON.parse(calls[3].init.body);
+  assert.equal(payload.agentId,undefined);
+  assert.equal(payload.conversationMode,'chat');
+  assert.deepEqual(payload.attachmentIds,['attachment-id']);
+  assert.equal(payload.toolsExecutionEnabled,false);
+  assert.ok(calls.every(call=>call.init.headers.get('X-Dominion-Token')==='private'));
+});
 test('external URL and traversal fail locally before credentials are sent', async () => {
   let calls=0;
   const d=new Dominion({token:'secret',fetch:async()=>{calls++;return json({});}});
