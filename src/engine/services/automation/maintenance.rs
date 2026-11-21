@@ -125,6 +125,10 @@ pub fn start(state: AppState) {
             if state.maintenance_mode() {
                 continue;
             }
+            // Reuse the existing maintenance heartbeat to reclaim stale
+            // unpublished Chat forks. No additional daemon or schedule.
+            crate::api::sessions::recover_stale_pending_forks_at(
+                &state, chrono::Utc::now());
             match backup_now(&state).await {
                 Ok(path) => state.store.audit(
                     "backup.created",
