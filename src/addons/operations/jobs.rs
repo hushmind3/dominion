@@ -575,7 +575,9 @@ async fn run_job(state: AppState, job: Value) {
         Err(error) if error.starts_with("deferred:") => {
             if let Err(checkpoint_error)=context.checkpoint(json!({
                 "status":"queued",
-                "availableAt":(chrono::Utc::now()+chrono::Duration::seconds(1)).to_rfc3339(),
+                "availableAt":(chrono::Utc::now()+chrono::Duration::seconds(
+                    if job["input"]["remoteWorker"]==true{5}else{1}
+                )).to_rfc3339(),
                 "attempts":job["attempts"].as_u64().unwrap_or(1).saturating_sub(1),
                 "error":error
             })) {

@@ -2,8 +2,7 @@
 //! The coordinator cannot claim native verified tool receipts for remote work.
 use crate::{addons::{jobs::JobContext,team_orchestrator},state::AppState};
 use serde_json::{json,Value};
-use std::time::{Duration,Instant};
-use tokio::time::sleep;
+use chrono::Utc;
 
 fn owns(state:&AppState,job:&Value)->Result<(),String>{
     let team_id=job["input"]["teamJobId"].as_str().ok_or("remote team missing")?;
@@ -71,9 +70,9 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
     if let Some(created)=ctx.state.store.put_if_absent("remote_job",&candidate){
         ctx.state.bus.record("remote_job",&created);
     }
-    let start=Instant::now();
-    loop{
-        let record=ctx.state.store.get("remote_job",&remote_id)
+    // One scheduler tick observes the durable ticket, then yields the local
+    // worker slot. No local worker waits an hour for a remote approval.
+    let record=ctx.state.store.get("remote_job",&remote_id)
             .ok_or("remote job has no durable record")?;
         if record["sourceJobId"]!=id||record["teamJobId"]!=team_id
             ||record["sessionId"]!=session||record["instruction"]!=text{
@@ -121,15 +120,18 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
             Some("queued"|"leased"|"needs_review")=>{},
             _=>return Err("invalid remote job state".into())
         }
-        if start.elapsed()>Duration::from_secs(3600){
+        let stale=record["createdAt"].as_str()
+            .and_then(|s|chrono::DateTime::parse_from_rfc3339(s).ok())
+            .is_none_or(|created|Utc::now().signed_duration_since(created)
+                >chrono::Duration::hours(1));
+        if stale{
             for status in ["queued","leased"]{
                 change(&ctx.state,&remote_id,status,"needs_review","deadline_unknown");
             }
             return Ok(json!({"status":"needs_review","remoteJobId":remote_id,
                 "reason":"remote work or owner review timed out"}));
         }
-        sleep(Duration::from_secs(2)).await;
-    }
+        Err("deferred: remote result awaiting terminal evidence and owner review".into())
 }
 #[cfg(test)]
 mod tests{
@@ -166,6 +168,27 @@ mod tests{
         assert_eq!(evidence(&state,&job,"remote:worker").unwrap()["nativeVerified"],false);
         let msg=state.store.message(outcome["messageId"].as_str().unwrap()).unwrap();
         assert_eq!(msg["metadata"]["nativeToolReceipts"],false);
+        let _=std::fs::remove_dir_all(&state.config.data_dir);
+    }
+
+    #[tokio::test]
+    async fn awaiting_remote_review_yields_scheduler_slot_without_duplicate_dispatch(){
+        let (state,job)=sample();
+        let ctx=JobContext::new(state.clone(),"worker".into());
+        let first=run(&ctx,&job).await.unwrap_err();
+        assert!(first.starts_with("deferred:"));
+        assert_eq!(state.store.all("remote_job").len(),1);
+        let second=run(&ctx,&job).await.unwrap_err();
+        assert!(second.starts_with("deferred:"));
+        assert_eq!(state.store.all("remote_job").len(),1);
+        let remote="remote:worker";
+        state.store.patch_if("remote_job",remote,"status",&json!("queued"),
+            &json!({"status":"owner_accepted","workerId":"other-machine",
+                "workerReport":{"outcome":"completed","answer":"Owner reviewed",
+                    "remoteNativeExecutionId":"real-remote-run"}})).unwrap();
+        let result=run(&ctx,&job).await.unwrap();
+        assert_eq!(result["remoteJobId"],remote);
+        assert_eq!(state.store.all("remote_job").len(),1);
         let _=std::fs::remove_dir_all(&state.config.data_dir);
     }
     #[test]
