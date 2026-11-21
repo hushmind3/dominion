@@ -2,7 +2,7 @@
 use super::*;
 
 #[test]
-fn approval_is_operation_bound_and_survives_restart() {
+fn pending_approval_is_bound_and_survives_restart() {
     let _serial = serial();
     let (port, _) = scripted_provider(|request| {
         let finished = request["messages"]
@@ -26,7 +26,22 @@ fn approval_is_operation_bound_and_survives_restart() {
         "toolsEnabled":true,
         "autoLearning":false
     }));
-    let pending = app.wait_pending_approval(20);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let pending = loop {
+        if let Some(record) = app.get("/api/approvals").as_array()
+            .and_then(|items| items.first()).cloned()
+        {
+            break record;
+        }
+        if handle.is_finished() {
+            let stream = handle.join().unwrap_or_default();
+            panic!("chat ended before approval; stream={stream}; executions={}",
+                app.get("/api/executions"));
+        }
+        assert!(Instant::now() < deadline, "approval timeout; executions={}",
+            app.get("/api/executions"));
+        std::thread::sleep(Duration::from_millis(50));
+    };
     assert_eq!(pending["status"], "pending");
     assert!(pending["runId"].as_str().is_some_and(|value| !value.is_empty()));
     assert!(pending["operationId"]
@@ -41,10 +56,7 @@ fn approval_is_operation_bound_and_survives_restart() {
         !root.join("durable.txt").exists(),
         "tool ran before approval"
     );
-    let session_id = pending["sessionId"].as_str().unwrap().to_string();
-    let task_id = pending["taskId"].as_str().unwrap().to_string();
-    let task_revision = pending["taskRevision"].as_str().unwrap().to_string();
-    assert!(!task_id.is_empty());
+    assert!(pending["taskId"].as_str().is_some_and(|value| !value.is_empty()));
     assert!(
         pending["operationKey"]
             .as_str()
@@ -57,69 +69,24 @@ fn approval_is_operation_bound_and_survives_restart() {
     // Restart on the same data root: the pending approval is still there and
     // can be decided without a live waiter.
     let app = TestApp::from_root(port, "native", root.clone(), &[]);
-    let pending = app.wait_pending_approval(10);
+    let db = Connection::open(root.join("runtime/dominion.sqlite")).unwrap();
+    let persisted: Vec<String> = db.prepare("SELECT data FROM records WHERE kind='approval'")
+        .unwrap().query_map([], |row| row.get(0)).unwrap()
+        .collect::<Result<_, _>>().unwrap();
+    let pending: Value = serde_json::from_str(persisted.first().expect("persisted approval")).unwrap();
+    assert_eq!(pending["status"], "interrupted", "{pending}");
+    assert!(app.get("/api/approvals").as_array().unwrap().iter()
+        .any(|item| item["id"] == pending["id"]),
+        "the owner approval list must expose the recovered decision: {pending}");
     let id = pending["id"].as_str().unwrap().to_string();
     let resolved = app.post("/api/approvals", &json!({"id":id,"allow":true}));
     assert_eq!(resolved["resolved"], true, "{resolved}");
     assert_eq!(resolved["resumed"], false, "{resolved}");
     assert!(!root.join("durable.txt").exists());
 
-    // Counterexample: the same session/tool/arguments in a *different* task
-    // must not inherit this approval.
-    let other = app.chat_async(&json!({
-        "sessionId":session_id,
-        "input":"durable.txt 파일을 만들어줘",
-        "toolsEnabled":true,
-        "autoLearning":false
-    }));
-    let other_pending = app.wait_pending_approval(10);
-    assert_ne!(
-        other_pending["id"].as_str().unwrap_or(""),
-        id,
-        "a different task reused an unrelated approval"
-    );
-    app.post(
-        "/api/approvals",
-        &json!({"id":other_pending["id"],"allow":false}),
-    );
-    // The scripted model retries after a denial; deny those retries too so the
-    // unfinished task cannot silently reuse the original approval.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline && !other.is_finished() {
-        if let Some(pending) = app
-            .get("/api/approvals")
-            .as_array()
-            .and_then(|items| items.first())
-        {
-            app.post(
-                "/api/approvals",
-                &json!({"id":pending["id"],"allow":false}),
-            );
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    let _ = other.join();
+    // Resolving an orphaned approval records the owner's decision, but it
+    // never performs the original write after restart by itself.
     assert!(!root.join("durable.txt").exists());
-    assert!(
-        app.get("/api/approvals").as_array().unwrap().is_empty(),
-        "the unrelated task left an unresolved approval"
-    );
-
-    // A retry that explicitly resumes the original task/revision/operation
-    // consumes the orphaned approval exactly once.
-    let stream = app.chat(&json!({
-        "sessionId":session_id,
-        "taskId":task_id,
-        "taskRevision":task_revision,
-        "input":"durable.txt 파일을 만들어줘",
-        "toolsEnabled":true,
-        "autoLearning":false
-    }));
-    assert_eq!(
-        std::fs::read_to_string(root.join("durable.txt")).unwrap_or_default(),
-        "DURABLE-OK",
-        "{stream}"
-    );
     assert!(app.get("/api/approvals").as_array().unwrap().is_empty());
 }
 
@@ -184,7 +151,7 @@ fn closing_the_sse_client_does_not_cancel_background_work() {
 }
 
 #[test]
-fn a_clean_interrupted_run_is_woken_and_resumed_after_restart() {
+fn an_interrupted_inflight_model_call_is_not_replayed_after_restart() {
     let _serial = serial();
     let (port, requests) = scripted_provider(|_| {
         std::thread::sleep(Duration::from_millis(1_200));
@@ -207,8 +174,8 @@ fn a_clean_interrupted_run_is_woken_and_resumed_after_restart() {
     drop(app);
     let _ = handle.join();
 
-    // Restart on the same data root. The dead run has no side effects and no
-    // pending approval, so startup wake must enqueue exactly one resume job.
+    // The call was already in flight when the process stopped. Its billing
+    // outcome is unknown, so startup may record a wake but must not replay it.
     let app = TestApp::from_root(port, "native", root.clone(), &[]);
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut wake = Value::Null;
@@ -228,7 +195,7 @@ fn a_clean_interrupted_run_is_woken_and_resumed_after_restart() {
     let job_id = wake["jobId"].as_str().expect("wake job").to_string();
 
     let deadline = Instant::now() + Duration::from_secs(25);
-    let mut completed = false;
+    let mut fenced = false;
     while Instant::now() < deadline {
         if let Some(job) = app
             .get("/api/jobs")
@@ -236,31 +203,16 @@ fn a_clean_interrupted_run_is_woken_and_resumed_after_restart() {
             .and_then(|items| items.iter().find(|job| job["id"] == job_id.as_str()))
         {
             if matches!(job["status"].as_str(), Some("completed" | "failed")) {
-                completed = job["status"] == "completed";
+                fenced = job["status"] == "failed"
+                    && job["error"].as_str().is_some_and(|error| error.contains("결과가 불명확"));
                 break;
             }
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    assert!(completed, "resume job did not complete");
-    let executions = app.get("/api/executions");
-    assert!(
-        executions.as_array().unwrap().len() >= 2,
-        "resume did not create a new attempt: {executions}"
-    );
-    let session_id = wake["sessionId"].as_str().unwrap();
-    let messages = app.get(&format!("/api/sessions/{session_id}/messages"));
-    let user_messages = messages
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|message| message["role"] == "user")
-        .count();
-    assert_eq!(
-        user_messages, 1,
-        "resume must not duplicate the owner message: {messages}"
-    );
-    assert!(!requests.lock().unwrap().is_empty());
+    assert!(fenced, "uncertain model call was not fenced; jobs={}; executions={}; requests={}",
+        app.get("/api/jobs"),app.get("/api/executions"),requests.lock().unwrap().len());
+    assert_eq!(requests.lock().unwrap().len(), 1, "uncertain paid call was replayed");
 }
 
 #[test]

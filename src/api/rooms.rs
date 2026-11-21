@@ -273,7 +273,11 @@ fn save_room(state: &AppState, id_override: Option<&str>, body: &Value) -> ApiRe
     let saved = if previous.is_null() {
         state.store.put("room", &config)
     } else {
-        state.store.patch_if("room", &id, "id", &json!(id), &config)
+        // `patch_if` deliberately rejects identity changes. Keep the
+        // immutable room ID as the compare guard, not as a patched field.
+        let mut patch=config;
+        let _=patch.as_object_mut().and_then(|fields|fields.remove("id"));
+        state.store.patch_if("room", &id, "id", &json!(id), &patch)
     }
     .ok_or_else(|| failed("회의실을 저장할 수 없습니다."))?;
     state.bus.record("room", &saved);

@@ -253,7 +253,7 @@ fn a_model_generated_intervention_runs_and_refutes_its_hypothesis() {
     });
     let app = TestApp::new(port, "native");
     app.post("/api/policy", &json!({"autoApproveAll":true}));
-    let _ = app.chat(&json!({"input":"adapt1.txt와 adapt2.txt 파일을 만들어줘","autoLearning":false}));
+    let _ = app.chat(&json!({"input":"adapt1.txt와 adapt2.txt 파일을 만들고 명령을 실행해","autoLearning":false}));
     assert_eq!(
         std::fs::read_to_string(app._root.join("adapt1.txt")).unwrap_or_default(),
         "OK"

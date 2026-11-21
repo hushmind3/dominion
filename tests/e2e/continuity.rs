@@ -194,7 +194,12 @@ fn scripted_codex_tool_provider() -> (u16, Arc<Mutex<Vec<Value>>>) {
                         count += 1;
                         observed.lock().unwrap().push(body.clone());
                         let id = format!("resp_ws_tool_{count}");
-                        let events = if body.get("previous_response_id").is_none() {
+                        let has_tool_output = body["input"]
+                            .as_array()
+                            .is_some_and(|items| items.iter().any(|item| {
+                                item["type"] == "function_call_output"
+                            }));
+                        let events = if !has_tool_output {
                             let call = json!({
                                 "type":"function_call",
                                 "id":"fc_ws_tool_1",
@@ -267,7 +272,8 @@ fn codex_websocket_executes_a_structured_tool_call_and_continues_the_chain() {
         "input":"ws_tool.txt 파일을 만들어줘",
         "toolsEnabled":true,"autoLearning":false
     }));
-    assert!(stream.contains("웹소켓 도구 실행 완료"), "{stream}");
+    assert!(stream.contains("웹소켓 도구 실행 완료"),
+        "{stream}; websocket requests: {:?}",requests.lock().unwrap());
     assert_eq!(
         std::fs::read_to_string(app._root.join("ws_tool.txt")).unwrap_or_default(),
         "WS_TOOL_OK"
@@ -284,7 +290,9 @@ fn codex_websocket_executes_a_structured_tool_call_and_continues_the_chain() {
         "workspace_write schema was not sent: {tools:?}"
     );
     assert!(seen[0].get("previous_response_id").is_none());
-    assert_eq!(seen[1]["previous_response_id"], "resp_ws_tool_1");
+    // The acceptance gate adds a stricter developer instruction after the
+    // write, so the model contract changes and the chain must be rebased.
+    assert!(seen[1].get("previous_response_id").is_none());
     let second = seen[1]["input"].as_array().unwrap();
     assert!(
         second.iter().any(|item| {
@@ -302,12 +310,10 @@ fn codex_websocket_executes_a_structured_tool_call_and_continues_the_chain() {
             .any(|item| item["role"] == "user" && item["content"].to_string().contains("Tool observation")),
         "tool output stayed structured instead of becoming user text: {second:?}"
     );
-    assert!(
-        !second
-            .iter()
-            .any(|item| item.to_string().contains("ws_tool.txt 파일을 만들어줘")),
-        "the chained user turn must not be re-sent: {second:?}"
-    );
+    assert!(second.iter().any(|item| {
+        item["role"] == "user"
+            && item["content"].to_string().contains("ws_tool.txt 파일을 만들어줘")
+    }), "a rebased request must carry the complete user turn: {second:?}");
     let messages = app.get(&format!(
         "/api/sessions/{}/messages",
         session["id"].as_str().unwrap()
@@ -447,14 +453,15 @@ fn codex_websocket_chain_reuses_identity_and_sends_only_the_new_suffix() {
     assert!(seen[0].get("previous_response_id").is_none());
     assert_eq!(seen[1]["previous_response_id"], "resp_ws_fixture_1");
     assert_eq!(seen[1]["client_metadata"]["session_id"], seen[0]["client_metadata"]["session_id"]);
-    for request in seen.iter() {
-        assert!(
-            request["instructions"].as_str().unwrap().contains("WEBSOCKET_IDENTITY_VERBATIM"),
-            "identity is re-sent on every websocket call"
-        );
-    }
+    assert!(seen.iter().all(|request|request.get("instructions").is_none()),
+        "WebSocket seeds persona as a developer input instead of repeatedly resending instructions");
     let first = seen[0]["input"].as_array().unwrap();
     let second = seen[1]["input"].as_array().unwrap();
+    assert!(first.iter().any(|item|
+        item.to_string().contains("WEBSOCKET_IDENTITY_VERBATIM")));
+    assert!(!second.iter().any(|item|
+        item.to_string().contains("WEBSOCKET_IDENTITY_VERBATIM")),
+        "previous_response_id must carry the already-seeded identity");
     assert!(
         !second.iter().any(|item| item.to_string().contains("첫 번째 질문")),
         "already-chained items stay on the server: first={first:?} second={second:?}"
@@ -501,7 +508,10 @@ fn codex_http_rejects_incomplete_and_unterminated_generations() {
         assert!(stream.contains("\"type\":\"error\""), "{stream}");
         assert!(!stream.contains("assistant_saved"), "{stream}");
         assert_eq!(requests.lock().unwrap().len(), 1, "partial output must not be replayed");
-        assert_eq!(app.get("/api/executions")[0]["status"], "failed");
+        let executions=app.get("/api/executions");
+        assert_eq!(executions[0]["status"], "needs_review");
+        assert_eq!(executions[0]["kernelState"]["modelInFlight"], true,
+            "an incomplete paid generation must retain its replay fence");
     }
 }
 

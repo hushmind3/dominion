@@ -465,7 +465,7 @@
         ));
         assert!(!needs_plan("report.txt 파일을 만들어줘", &checks));
         assert!(needs_plan("파일을 만들고 그리고 내용도 확인해", &checks));
-        assert!(needs_plan("report.txt 파일을 만들어줘", &None));
+        assert!(!needs_plan("report.txt 파일을 만들어줘", &None));
         assert!(needs_plan(&"가".repeat(300), &checks));
     }
 
@@ -582,6 +582,36 @@
         assert_eq!(actual["status"],"needs_review","{actual}");
         assert_eq!(actual["kernelState"]["inFlight"][0]["id"],"write-a");
         assert_ne!(actual["taskOutcome"],"succeeded","a model answer is not proof");
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn running_operation_journal_blocks_success_even_without_kernel_inflight(){
+        let (state,dir)=state();
+        let id="sub3-journal-tool-uncertain";
+        state.store.put("execution",&json!({
+            "id":id,"sessionId":"s-journal-effect","taskId":id,
+            "status":"running","phase":"running","request":"edit a document",
+            "acceptancePassed":false,"acceptanceText":null,
+            "strategyCandidates":[],"appliedImprovementIds":[],
+            "kernelState":{"status":"running","modelInFlight":false,
+                "inFlight":[],"modelCalls":1,"chargedTokens":25}
+        })).unwrap();
+        state.store.put("execution_operation",&json!({
+            "id":"op-journal-running","runId":id,"sessionId":"s-journal-effect",
+            "tool":"workspace_write","status":"running",
+            "arguments":{"path":"doc.txt","content":"X"}
+        })).unwrap();
+        let metrics=std::sync::Mutex::new(Metrics::default());
+        finalize_execution(&state,id,&Ok(None),&metrics);
+        let actual=state.store.get("execution",id).unwrap();
+        assert_eq!(actual["status"],"needs_review","{actual}");
+        assert_eq!(actual["kernelState"]["status"],"needs_review");
+        assert_ne!(actual["taskOutcome"],"succeeded","a running journal effect is not proof");
+        let operation=state.store.execution_operations_recent(id).unwrap().remove(0);
+        assert_eq!(operation["status"],"interrupted");
+        assert_eq!(operation["outcomeUnknown"],true);
+        assert_eq!(operation["effectState"],"effect_unknown");
         let _=std::fs::remove_dir_all(dir);
     }
 

@@ -56,6 +56,9 @@
             json!({"type":"function","function":{"name":"web_search","description":"Search the web"}}),
             json!({"type":"function","function":{"name":"memory_store","description":"Store a memory"}}),
             json!({"type":"function","function":{"name":"memory_search","description":"Search memory"}}),
+            json!({"type":"function","function":{"name":"delegate_task","description":"Delegate work to another agent"}}),
+            json!({"type":"function","function":{"name":"task_status","description":"Check a delegated task"}}),
+            json!({"type":"function","function":{"name":"task_result","description":"Read a delegated task result"}}),
             json!({"type":"function","function":{"name":"mcp_github_search","description":"Search GitHub issues and pull requests"}}),
         ];
         let empty = std::collections::HashSet::new();
@@ -83,8 +86,29 @@
         recent.insert("shell_exec".to_string());
         let continued = select_room_tools(definitions.clone(), "계속", &recent, false);
         assert!(continued.iter().any(|tool| tool_name(tool) == "shell_exec"));
+        let delegation = select_room_tools(
+            definitions.clone(), "자식 에이전트에게 계산을 위임해", &empty, false
+        );
+        assert!(delegation.iter().any(|tool| tool_name(tool) == "delegate_task"));
+        assert!(delegation.iter().any(|tool| tool_name(tool) == "task_result"));
+        let recovery = select_room_tools(
+            definitions.clone(), "같은 실패를 재시도해", &empty, false
+        );
+        assert!(recovery.iter().any(|tool| tool_name(tool) == "shell_exec"));
         let accepted = select_room_tools(definitions, "작업", &empty, true);
         assert!(!accepted.is_empty());
+    }
+
+    #[test]
+    fn explicit_shell_intent_survives_large_catalog_ranking() {
+        let definitions = crate::integrations::local_tools::definitions();
+        let selected = select_room_tools(
+            definitions,
+            "adapt1.txt와 adapt2.txt 파일을 만들고 명령을 실행해",
+            &std::collections::HashSet::new(),
+            false,
+        );
+        assert!(selected.iter().any(|tool| tool_name(tool) == "shell_exec"));
     }
 
     #[test]

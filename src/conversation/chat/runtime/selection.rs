@@ -127,10 +127,12 @@ pub(super) fn room_tool_request(input: &str) -> bool {
         "빌드", "테스트", "설치", "검색", "웹",
         "http", "url", "api", "코드", "버그", "도구", "계속", "이어", "마저",
         "결과", "가져와", "확인해", "진행해",
+        "위임", "에이전트", "delegate", "agent",
+        "재시도", "복구", "실패", "오류", "retry", "recover", "failed", "failure", "error",
         "스킬", "메모리", "브라우저", "깃허브", "github", "구글", "google", "지메일", "gmail",
         "메일", "드라이브", "drive", "캘린더", "calendar", "일정", "docs", "shell", "file", "read",
         "write", "run", "search", "fetch", "install", "build", "test", "tool",
-        "browser", "memory", "delegate", "task",
+        "browser", "memory", "task",
     ]
     .iter()
     .any(|term| lower.contains(term))
@@ -187,7 +189,10 @@ pub(super) fn select_room_tools(
             &["workspace_read", "workspace_read_range", "workspace_replace_range", "workspace_replace", "workspace_write", "file_write"],
         ),
         (
-            &["실행", "명령", "터미널", "빌드", "테스트", "설치", "shell", "run", "build", "test", "install"],
+            &[
+                "실행", "명령", "터미널", "빌드", "테스트", "설치", "shell", "run", "build", "test", "install",
+                "재시도", "복구", "실패", "오류", "retry", "recover", "failed", "failure", "error",
+            ],
             &["shell_exec", "terminal_exec"],
         ),
         (
@@ -228,7 +233,10 @@ pub(super) fn select_room_tools(
                 if terms.iter().any(|term| lower.contains(term))
                     && tools.contains(&name_lower.as_str())
                 {
-                    score += 12;
+                    // An explicit owner action must survive the bounded
+                    // shortlist even when generic description matches are
+                    // stronger (e.g. "write files and run a command").
+                    score += 100;
                 }
             }
             if recent.contains(&name_lower) {

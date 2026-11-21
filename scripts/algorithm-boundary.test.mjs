@@ -46,7 +46,8 @@ test('intelligence owns policy and tool scoring; SDK receives it by injection',(
  assert.match(loop,/algorithm\.validate_plan/);
  assert.match(loop,/StandardAlgorithm\.classify\(&request\.instruction\)/);
  assert.match(loop,/\.union\(algorithm\.classify\(&request\.instruction\)\)/);
- assert.match(tools,/use crate::ranking::\{tool_relevance,tool_relevance_with_schema\}/);
+ assert.match(tools,/use crate::ranking::tool_relevance_with_schema/);
+ assert.match(tools,/#\[cfg\(test\)\] use crate::ranking::\{schema_relevance,tool_relevance\}/);
  assert.doesNotMatch(loop,/fn words\(s:&str\)/);
  for(const name of ['context','tool_discovery','failure_guidance']){
   assert.equal(existsSync(new URL('../crates/dominion-agent-sdk/src/'+name+'.rs',import.meta.url)),false);

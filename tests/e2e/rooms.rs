@@ -162,14 +162,27 @@ fn nine_room_participants_keep_actual_request_prefix_across_sliding_windows_and_
         }
         let seen=requests.lock().unwrap();
         assert_eq!(seen.len(),(round+1)*9,"exactly one model call per participant");
-        if round>0 {
+        if round==1 {
+            for current in &seen[round*9..] {
+                let previous=seen[(round-1)*9..round*9].iter().find(|old|old["prompt_cache_key"]==current["prompt_cache_key"]).unwrap();
+                assert_eq!(current["instructions"],previous["instructions"]);
+                let prefix=previous["input"].as_array().unwrap();
+                let next=current["input"].as_array().unwrap();
+                let shared_state=|items:&[Value]|items.iter().find(|item|
+                    item.to_string().contains("[방 공통 상태: 저장된 원문 기준]"))
+                    .cloned().expect("shared room state frame");
+                assert_ne!(shared_state(prefix),shared_state(next),
+                    "a changed response status must replace stale cache context");
+            }
+        }
+        if round==2 {
             for current in &seen[round*9..] {
                 let previous=seen[(round-1)*9..round*9].iter().find(|old|old["prompt_cache_key"]==current["prompt_cache_key"]).unwrap();
                 assert_eq!(current["instructions"],previous["instructions"]);
                 let prefix=previous["input"].as_array().unwrap();
                 let next=current["input"].as_array().unwrap();
                 assert!(next.len()>prefix.len());
-                assert_eq!(&next[..prefix.len()],prefix.as_slice(),"same key alone cannot prove request prefix reuse");
+                assert_eq!(&next[..prefix.len()],prefix.as_slice(),"unchanged room state must retain the exact reusable request prefix");
                 assert!(!current.to_string().contains("_dominion_"));
             }
         }
@@ -346,8 +359,11 @@ fn cancelling_a_stalled_model_does_not_wait_for_network_data() {
     );
     assert!(stream.contains("중단"));
     assert!(!stream.contains("too late"));
-    assert_eq!(app.get("/api/executions")[0]["status"], "cancelled");
-    assert_eq!(app.get("/api/executions")[0]["taskOutcome"], "cancelled");
+    let executions=app.get("/api/executions");
+    assert_eq!(executions[0]["status"], "needs_review");
+    assert_eq!(executions[0]["taskOutcome"], "failed");
+    assert_eq!(executions[0]["ownerCancellationRequested"], true);
+    assert_eq!(executions[0]["kernelState"]["modelInFlight"], true);
 }
 
 #[test]

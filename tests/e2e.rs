@@ -206,7 +206,8 @@ impl TestApp {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        panic!("approval was not requested");
+        panic!("approval was not requested; approvals={}; executions={}",
+            self.get("/api/approvals"),self.get("/api/executions"));
     }
 }
 
