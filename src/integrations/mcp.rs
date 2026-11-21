@@ -973,4 +973,117 @@ mod tests {
         );
         assert!(!requires_approval(&state, "mcp__echo_lab__echo"));
     }
+    #[tokio::test]
+    async fn modern_mcp_http_uses_discovery_stateless_headers_and_live_pinned_schema(){
+        use axum::{extract::State, http::{HeaderMap,StatusCode},
+            routing::post, Json,Router};
+        use std::sync::Arc;
+        type Seen=Arc<Mutex<Vec<Value>>>;
+        async fn serve(State(seen):State<Seen>,headers:HeaderMap,
+            Json(request):Json<Value>)->(StatusCode,Json<Value>){
+            let method=request["method"].as_str().unwrap_or("");
+            let version=headers.get("mcp-protocol-version")
+                .and_then(|h|h.to_str().ok()).unwrap_or("");
+            let routed=headers.get("mcp-method")
+                .and_then(|h|h.to_str().ok()).unwrap_or("");
+            let name=headers.get("mcp-name").and_then(|h|h.to_str().ok())
+                .unwrap_or("");
+            let region=headers.get("mcp-param-region")
+                .and_then(|h|h.to_str().ok()).unwrap_or("");
+            seen.lock().unwrap().push(json!({"method":method,"version":version,
+                "routed":routed,"name":name,"region":region,
+                "session":headers.get("mcp-session-id").is_some(),
+                "meta":request["params"]["_meta"]}));
+            if version!=modern::VERSION||routed!=method||
+                request["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"]!=version||
+                (method=="tools/call"&&(name!="echo"||region!="kr-1")){
+                return (StatusCode::BAD_REQUEST,Json(json!({"jsonrpc":"2.0",
+                    "id":request["id"],"error":{"code":-32020,
+                        "message":"missing or incorrect MCP header"}})));
+            }
+            let result=match method {
+                "server/discover"=>json!({"resultType":"complete",
+                    "supportedVersions":[modern::VERSION],"capabilities":{"tools":{}}}),
+                "tools/list"=>json!({"resultType":"complete",
+                    "tools":[{"name":"echo","description":"HTTP Echo",
+                        "inputSchema":{"type":"object","properties":{
+                            "region":{"type":"string","x-mcp-header":"Region"},
+                            "text":{"type":"string"}}}}]}),
+                "tools/call"=>{
+                    if request["params"]["arguments"]["text"]=="needs-input"{
+                        json!({"resultType":"input_required","inputRequests":[]})
+                    }else{
+                        json!({"resultType":"complete","content":[{"type":"text",
+                            "text":request["params"]["arguments"]["text"]}]})
+                    }
+                },
+                _=>json!({"resultType":"complete"})
+            };
+            (StatusCode::OK,Json(json!({"jsonrpc":"2.0",
+                "id":request["id"],"result":result})))
+        }
+        let state=temp_state();
+        let seen:Seen=Arc::new(Mutex::new(Vec::new()));
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port=listener.local_addr().unwrap().port();
+        let router=Router::new().route("/mcp",post(serve)).with_state(seen.clone());
+        let worker=tokio::spawn(async move{axum::serve(listener,router).await.unwrap()});
+        let server=json!({"id":"modern-http","name":"Modern Lab",
+            "transport":"http","protocolMode":"modern",
+            "url":format!("http://127.0.0.1:{port}/mcp"),"enabled":true});
+        state.store.put("mcp",&server).unwrap();
+        let listed=tools(&state).await;
+        assert_eq!(listed.len(),1);
+        let tool=&listed[0];
+        let response=call_pinned(&state,&tool.qualified(),
+            &json!({"region":"kr-1","text":"한글 결과"}),
+            &tool.schema,&tool.description).await.unwrap();
+        assert!(response.to_string().contains("한글 결과"));
+        let before=seen.lock().unwrap().len();
+        let result=call_pinned(&state,&tool.qualified(),
+            &json!({"region":"kr-1","text":"needs-input"}),
+            &tool.schema,&tool.description).await;
+        assert!(result.unwrap_err().contains("input_required"));
+        let requests=seen.lock().unwrap();
+        assert_eq!(requests.len(),before+2,
+            "MRTR input_required must never automatically repeat a paid tool call");
+        assert_eq!(requests[0]["method"],"server/discover");
+        assert!(!requests.iter().any(|r|r["method"]=="initialize"));
+        assert!(requests.iter().all(|r|r["session"]==false));
+        assert!(requests.iter().all(|r|r["version"]==modern::VERSION));
+        assert_eq!(requests.last().unwrap()["region"],"kr-1");
+        worker.abort();
+    }
+
+    #[tokio::test]
+    async fn modern_mcp_auth_failure_does_not_fall_back_to_initialize(){
+        use axum::{extract::State,http::StatusCode,routing::post,Json,Router};
+        use std::sync::Arc;
+        type Seen=Arc<Mutex<Vec<String>>>;
+        async fn deny(State(seen):State<Seen>,Json(request):Json<Value>)
+            ->(StatusCode,Json<Value>){
+            seen.lock().unwrap().push(request["method"].as_str()
+                .unwrap_or("").to_string());
+            (StatusCode::UNAUTHORIZED,Json(json!({"jsonrpc":"2.0",
+                "id":request["id"],"error":{"code":-32000,
+                    "message":"authentication required"}})))
+        }
+        let state=temp_state();
+        let seen:Seen=Arc::new(Mutex::new(Vec::new()));
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port=listener.local_addr().unwrap().port();
+        let app=Router::new().route("/mcp",post(deny)).with_state(seen.clone());
+        let worker=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+        let server=json!({"id":"auth-modern","name":"Auth Modern",
+            "transport":"http","protocolMode":"auto",
+            "url":format!("http://127.0.0.1:{port}/mcp")});
+        let error=match HttpSession::open(&server,&state).await {
+            Ok(_)=>panic!("modern auth denial must fail closed"),
+            Err(error)=>error
+        };
+        assert!(error.contains("401"),"{error}");
+        assert_eq!(*seen.lock().unwrap(),vec!["server/discover"]);
+        worker.abort();
+    }
+
 }
