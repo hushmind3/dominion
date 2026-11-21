@@ -202,6 +202,41 @@ mod tests{
         (AppState::new(config.clone(),store,vault),config)
     }
     #[test]
+    fn restore_refuses_missing_or_corrupt_files_without_touching_live_database() {
+        use base64::{engine::general_purpose::STANDARD,Engine};
+        let (state,config)=fixture();
+        state.store.put("session",&json!({"id":"session-a","title":"uploaded proof"}));
+        let file=crate::engine::attachments::upload(&state,&json!({
+            "sessionId":"session-a","name":"evidence.txt",
+            "data":STANDARD.encode("original bytes")
+        })).unwrap();
+        let id=file["id"].as_str().unwrap();
+        let stored=config.data_dir.join("attachments").join(format!("{id}.bin"));
+        let backup=config.data_dir.join("snapshot.sqlite");
+        state.store.backup_to(&backup).unwrap();
+        let data=fs::read(&backup).unwrap();
+        state.store.put("session",&json!({"id":"live","title":"must survive"}));
+        fs::remove_file(&stored).unwrap();
+        let error=restore(&state,&data,None).unwrap_err();
+        assert!(error.contains("첨부"),"{error}");
+        assert!(state.store.get("session","live").is_some(),
+            "a rejected backup must not replace the running SQLite database");
+        assert!(!config.data_dir.join(MARKER).exists());
+        fs::write(&stored,b"modified bytes").unwrap();
+        let error=restore(&state,&data,None).unwrap_err();
+        assert!(error.contains("SHA-256"),"{error}");
+        assert!(state.store.get("session","live").is_some());
+        fs::write(&stored,b"original bytes").unwrap();
+        restore(&state,&data,None).unwrap();
+        assert!(state.store.get("session","live").is_none(),
+            "fully valid file-backed backup can restore its earlier DB state");
+        assert_eq!(crate::engine::attachments::read(&state,id).unwrap().1,
+            b"original bytes");
+        assert!(!config.data_dir.join(MARKER).exists());
+        let _=fs::remove_dir_all(config.data_dir);
+    }
+
+    #[test]
     fn blocked_db_stage_preserves_live_key_database_and_restart(){
         let (state,config)=fixture();
         let original_key=state.vault.primary_key();
