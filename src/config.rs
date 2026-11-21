@@ -66,7 +66,7 @@ fn env_or(name: &str, fallback: &str) -> String {
 pub fn bundle_home() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let resources = exe.parent()?.parent()?.join("Resources/home");
-    let text = std::fs::read_to_string(resources).ok()?;
+    let text = crate::storage::bounded_file::read_utf8(resources, 4096).ok()?;
     let path = PathBuf::from(text.trim());
     path.exists().then_some(path)
 }

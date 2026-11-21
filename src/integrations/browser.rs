@@ -71,7 +71,8 @@ fn chrome_available() -> bool {
 }
 
 fn devtools_port(profile: &Path) -> Option<u16> {
-    let text = std::fs::read_to_string(profile.join("DevToolsActivePort")).ok()?;
+    let text = crate::storage::bounded_file::read_utf8(
+        profile.join("DevToolsActivePort"), 4096).ok()?;
     text.lines().next()?.trim().parse().ok()
 }
 

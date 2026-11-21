@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{self, Read},
+    io::{self, Read, Seek, SeekFrom},
     path::Path,
 };
 
@@ -17,4 +17,14 @@ pub fn read_bytes(path: impl AsRef<Path>, max_bytes: u64) -> io::Result<Vec<u8>>
 pub fn read_utf8(path: impl AsRef<Path>, max_bytes: u64) -> io::Result<String> {
     String::from_utf8(read_bytes(path, max_bytes)?)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+/// Reads only the final `max_bytes` of a file, for bounded log inspection.
+pub fn read_tail(path: impl AsRef<Path>, max_bytes: u64) -> io::Result<Vec<u8>> {
+    let mut file = File::open(path)?;
+    let start = file.metadata()?.len().saturating_sub(max_bytes);
+    file.seek(SeekFrom::Start(start))?;
+    let mut bytes = Vec::new();
+    file.take(max_bytes).read_to_end(&mut bytes)?;
+    Ok(bytes)
 }

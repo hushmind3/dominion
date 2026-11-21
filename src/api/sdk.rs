@@ -53,7 +53,7 @@ fn legacy_checkpoint(state:&AppState,id:&str)->Value {
     let path=state.config.data_dir.join("sdk-runs").join(format!("{id}.json"));
     if !std::fs::metadata(&path).is_ok_and(|meta|
         meta.is_file() && meta.len()<=2_000_000) {return Value::Null}
-    let Ok(text)=std::fs::read_to_string(path) else {return Value::Null};
+    let Ok(text)=crate::storage::bounded_file::read_utf8(path,2_000_000) else {return Value::Null};
     let Ok(snapshot)=serde_json::from_str::<Value>(&text) else {return Value::Null};
     json!({
         "state":snapshot["status"],

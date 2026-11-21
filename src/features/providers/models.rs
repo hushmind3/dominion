@@ -1121,7 +1121,8 @@ pub fn runtimes(state: &AppState) -> Value {
             && (setup_engine == engine
                 || (engine == "llama-cpp" && setup["engine"].as_str().is_none()))
     };
-    let mlx_version = std::fs::read_to_string(mlx_runtime_dir(state).join(".ready"))
+    let mlx_version = crate::storage::bounded_file::read_utf8(
+        mlx_runtime_dir(state).join(".ready"), 4096)
         .unwrap_or_default();
     let bin = |name: &str| {
         std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
@@ -1275,7 +1276,8 @@ pub async fn install_runtime(state: AppState, engine: &str) -> Result<Value, Str
         return install_llama_server(state).await;
     }
     if let Some(python) = mlx_runtime_python(&state) {
-        let version = std::fs::read_to_string(mlx_runtime_dir(&state).join(".ready"))
+        let version = crate::storage::bounded_file::read_utf8(
+            mlx_runtime_dir(&state).join(".ready"), 4096)
             .unwrap_or_default();
         set_install(json!({
             "status": "installed", "engine": "mlx", "backend": "mlx-lm",
@@ -1642,8 +1644,9 @@ async fn load_mlx_from_dir(
                 .and_then(|child| child.try_wait().ok().flatten())
         };
         if let Some(status) = exited {
-            let tail = std::fs::read_to_string(&log_path)
-                .unwrap_or_default()
+            let log_tail = crate::storage::bounded_file::read_tail(&log_path, 64 * 1024)
+                .unwrap_or_default();
+            let tail = String::from_utf8_lossy(&log_tail)
                 .lines()
                 .rev()
                 .take(6)

@@ -526,7 +526,7 @@ fn read_workspace_file(workspace: &Path, path: &str) -> FileRead {
     if !canonical.starts_with(&canonical_workspace) {
         return FileRead::Unknown;
     }
-    match std::fs::read_to_string(canonical) {
+    match crate::storage::bounded_file::read_utf8(canonical, MAX_PROCEDURE_FILE_BYTES as u64) {
         Ok(text) => FileRead::Text(text),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             FileRead::Missing

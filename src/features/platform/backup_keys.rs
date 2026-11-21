@@ -81,7 +81,7 @@ impl KeyRing {
             write_private(&key_file(&directory, 1), &key)?;
             keys.insert(1, key);
         }
-        let active = std::fs::read_to_string(directory.join("active"))
+        let active = crate::storage::bounded_file::read_utf8(directory.join("active"), 4096)
             .ok()
             .and_then(|value| value.trim().parse::<u32>().ok())
             .filter(|version| keys.contains_key(version))
