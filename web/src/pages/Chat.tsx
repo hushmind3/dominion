@@ -3,11 +3,12 @@ import {ExecutionPermissions} from '../components/ExecutionPermissions'
 import {ConversationSwitch} from '../components/WorkspaceShell'
 import {TokenUsage} from '../components/TokenUsage'
 import {ChatRichText} from '../components/ChatRichText'
+import {base64File,mergeChatFiles,type ChatFileDraft} from '../utils/chatAttachments'
 import {createPortal} from 'react-dom'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormEvent,useEffect,useMemo,useRef,useState,type KeyboardEvent} from 'react'
-import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
-import {Agent,Approval,ChatMessage,ChatSession,Provider,get,post,resolveApproval,streamChat,koreanReasoningEnabled} from '../api'
+import {ArrowRight,ArrowUp,BrainCircuit,FileText,Paperclip,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
+import {Agent,Approval,ChatMessage,ChatSession,Provider,attachmentBlob,get,post,resolveApproval,streamChat,koreanReasoningEnabled} from '../api'
 import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
 import {ModelPicker} from '../components/ModelPicker'
@@ -48,6 +49,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const [serverUsage,setServerUsage]=useState<SessionUsage>({});
  const approvals=useRemote<Approval[]>('/api/approvals',[],active);
  const [input,setInput]=useChatDraft(current);
+ const [fileSelection,setFileSelection]=useState<{scope?:string;files:ChatFileDraft[]}>()
+ const draftFiles=fileSelection?.scope===current?fileSelection.files:[]
  const [historyQuery,setHistoryQuery]=useState('');
  const [modeChoice,setModeChoice]=useState<{scope?:string;mode:ChatMode}>()
  const mode:ChatMode=(modeChoice&&modeChoice.scope===current?modeChoice.mode:undefined)??
@@ -89,6 +92,15 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const [modelMenu,setModelMenu]=useState(false),[installed,setInstalled]=useState<InstalledModel[]>([]),[modelsLoading,setModelsLoading]=useState(false),[runtime,setRuntime]=useState<Runtime>({status:'idle'}),[modelBusy,setModelBusy]=useState(''),[unloading,setUnloading]=useState(false),[learning,setLearning]=useState(false),[menuError,setMenuError]=useState('');
  const [slashOpen,setSlashOpen]=useState(false),[slashActive,setSlashActive]=useState(0),[commandInfo,setCommandInfo]=useState('');
  const inputRef=useRef<HTMLTextAreaElement>(null);
+ const fileInputRef=useRef<HTMLInputElement>(null);
+ const chooseFiles=(picked:FileList|null)=>{
+  if(!picked?.length)return
+  try{
+   const files=mergeChatFiles(draftFiles,Array.from(picked))
+   setFileSelection({scope:current,files});setError('')
+  }catch(e){setError((e as Error).message)}
+  if(fileInputRef.current)fileInputRef.current.value=''
+ }
  useEffect(()=>{
   const el=inputRef.current
   if(!el)return
@@ -224,6 +236,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   if(window.innerWidth<768)setShowHistory(false);
  };
  const resetLocal=()=>{
+  setFileSelection(undefined)
   // Keep the old conversation's unsent draft. A second New action on an
   // already-new conversation intentionally clears that new draft.
   if(!current)setInput('');
@@ -340,8 +353,9 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   setSlashOpen(false);void executeCommand(item.command);
  };
  const send=async(e?:FormEvent)=>{
-  e?.preventDefault();const text=input.trim();if(!text)return;
+  e?.preventDefault();const text=input.trim()||(draftFiles.length?t('chat.fileOnlyPrompt'):'');if(!text)return;
   if(text.startsWith('/')){
+   if(draftFiles.length){setError(t('chat.fileSlashError'));return}
    if(busy&&text!=='/stop')return;
    await executeCommand(text);return;
   }
@@ -367,6 +381,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     activeTurnSession.current=id;
     if(view.current===current){
      onSession(id);setTurnSession(id);
+     setFileSelection(previous=>previous&&previous.scope===current?{...previous,scope:id}:previous);
      setPendingOwner(previous=>previous&&previous.scope===current?{...previous,scope:id}:previous);
      setModeChoice({scope:id,mode});
      if(agentMode&&agentId)setAgentChoice({id:agentId,scope:id});
@@ -374,15 +389,39 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     }
     void sessions.reload();
    }
+   const attachmentIds:string[]=[]
+   for(const draft of draftFiles){
+    if(controller.signal.aborted)return
+    let fileId=draft.uploadedSession===id?draft.uploadedId:undefined
+    if(!fileId){
+     const data=await base64File(draft.file)
+     if(controller.signal.aborted)return
+     const uploaded=await post<{id:string}>('/api/attachments',{
+      sessionId:id,name:draft.file.name,mimeType:draft.file.type||'application/octet-stream',
+      data
+     })
+     if(controller.signal.aborted)return
+     fileId=uploaded.id
+     if(!fileId)throw Error(t('chat.fileUploadFailed'))
+     const savedFileId=fileId
+     setFileSelection(previous=>previous&&previous.scope===id?{
+      ...previous,files:previous.files.map(entry=>entry.file===draft.file?
+       {...entry,uploadedId:savedFileId,uploadedSession:id}:entry)
+     }:previous)
+    }
+    attachmentIds.push(fileId)
+   }
+   if(controller.signal.aborted)return
    setInput(previous=>previous.trim()===text?'':previous);
    if(inputRef.current)inputRef.current.style.height='';
    await streamChat({
     sessionId:id,mode,agentId:agentMode?agentId:'',providerId:agentMode?manual?.providerId:providerId,model:agentMode?manual?.model:model,input:text,
+    attachmentIds,
     toolsEnabled:agentMode&&toolsEnabled,toolsExecutionEnabled:agentMode&&toolsEnabled,autoLearning:agentMode&&autoLearn,
     reasoningLanguage:reasoningKo?'ko':'original',reasoningEffort:reasoningEffort||undefined,thinking:selectedProvider?.kind==='codex'?(reasoningEffort==='none'?false:canDisableThinking?thinkingEnabled:undefined):thinkingEnabled,
    },event=>{
     if(controller.signal.aborted||stoppingRef.current||stream.current!==controller)return;
-    if(event.type==='assistant_saved'){saved=true;setSavedMessageId(event.messageId);refresh('/api/sessions',...(id?['/api/sessions/'+encodeURIComponent(id)+'/messages']:[]));}
+    if(event.type==='assistant_saved'){saved=true;setSavedMessageId(event.messageId);setFileSelection(previous=>previous?.scope===id?undefined:previous);refresh('/api/sessions',...(id?['/api/sessions/'+encodeURIComponent(id)+'/messages']:[]));}
     if(event.type==='text')setLive(old=>old+event.text);
     if(event.type==='reasoning')setThought(old=>old+event.text);
     if(event.type==='approval'){setLiveApproval({id:event.id,tool:event.tool,args:event.args,sessionId:id!,status:'pending'});void approvals.reload();}
@@ -488,8 +527,23 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     {slashOpen&&<SlashMenu items={slashItems} active={slashActive} onChoose={chooseSlash}/>}
     <form onSubmit={send} className="conversation-composer">
      <TextArea ref={inputRef} rows={1} placeholder={t("chat.inputPlaceholder")} value={input} onChange={e=>{const next=e.target.value;setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n'));setSlashActive(0);const el=e.currentTarget;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,180)+'px'}} onKeyDown={appendKey} aria-controls="dominion-slash-menu" aria-expanded={slashOpen} className="conversation-composer-input"/>
+     {draftFiles.length>0&&<div className="flex max-h-28 flex-wrap gap-1.5 overflow-auto px-3 pb-2">
+      {draftFiles.map((entry,index)=><div key={entry.file.name+'-'+entry.file.lastModified}
+       className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-[#E7E0D5] bg-[#FAF7F1] px-2 py-1 text-[11px] text-[#5C544A]">
+       <FileText size={13} className="shrink-0"/><span className="max-w-[190px] truncate">{entry.file.name}</span>
+       <button type="button" aria-label={t('chat.removeAttachment',{name:entry.file.name})}
+        disabled={busy} onClick={()=>setFileSelection(previous=>previous&&previous.scope===current?
+         {...previous,files:previous.files.filter((_,i)=>i!==index)}:previous)}
+        className="rounded p-0.5 hover:bg-[#EEE3D5]"><X size={12}/></button>
+      </div>)}
+     </div>}
      <div className="chat-composer-controls conversation-composer-controls">
       <div className="chat-composer-options conversation-composer-options">
+       <label className="inline-flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 text-[11px] font-semibold text-[#5C544A] hover:bg-[#F3EEE5]" title={t('chat.attachFiles')}>
+        <Paperclip size={16}/><span className="hidden sm:inline">{t('chat.attachFiles')}</span>
+        <input ref={fileInputRef} type="file" multiple className="sr-only" aria-label={t('chat.attachFiles')}
+         disabled={busy||stopping||Boolean(boundSession)} onChange={event=>chooseFiles(event.target.files)}/>
+       </label>
        <SelectInput aria-label="대화 실행 모드" title={mode==='chat'?'모델과 직접 대화':'도구를 사용하는 에이전트 실행'}
         value={mode} disabled={busy||stopping} onChange={e=>{
          const next=e.target.value as ChatMode;setModeChoice({scope:current,mode:next});
@@ -505,7 +559,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
       <div className="ml-auto flex items-center gap-2">
        <span className="hidden text-[10px] text-[#9C9388] sm:inline">{t('chat.enterHint')}</span>
        {busy?<Button className="conversation-composer-send !bg-rose-600 hover:!bg-rose-700" type="button" onClick={()=>void stopChat()} disabled={stopping} title={stopping?t('chat.stopping'):t('chat.stop')} aria-label={stopping?t('chat.stopping'):t('chat.stop')}>{stopping?<LoaderCircle size={18} className="animate-spin"/>:<Square size={18} fill="currentColor"/>}</Button>
-       :<Button className="conversation-composer-send" disabled={stopping||Boolean(boundSession)||(Boolean(current)&&sessions.loading)||!input.trim()} type="submit" title={t('chat.send')}><ArrowUp size={19}/></Button>}
+       :<Button className="conversation-composer-send" disabled={stopping||Boolean(boundSession)||(Boolean(current)&&sessions.loading)||(!input.trim()&&!draftFiles.length)} type="submit" title={t('chat.send')}><ArrowUp size={19}/></Button>}
       </div>
      </div>
     </form></div>
@@ -516,6 +570,10 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
 function Message({message,agentName,showReasoning}:{message:ChatMessage;agentName?:string;showReasoning?:boolean}){
  const [open,setOpen]=useState(true)
  const human=message.role==='user'
+ const files=(human&&Array.isArray(message.metadata?.attachments)?message.metadata.attachments:[])
+  .filter((item):item is {id:string;name:string;isImage?:boolean}=>!!item&&typeof item==='object'
+   &&typeof item.id==='string'&&typeof item.name==='string')
+  .slice(0,8)
  const usedMemories=(!human&&Array.isArray(message.metadata?.memoryRefs)?message.metadata.memoryRefs:[])
   .filter((item):item is {id:string;text:string}=>!!item&&typeof item==='object'
    &&typeof item.id==='string'&&typeof item.text==='string')
@@ -526,6 +584,16 @@ function Message({message,agentName,showReasoning}:{message:ChatMessage;agentNam
    {!human&&<div className="chat-message-label mb-2 flex items-center gap-2 font-bold text-[#4A443C]">{agentName||'DOMINION'}<TokenUsage usage={message.metadata?.usage} className="ml-auto rounded border border-[#E7DDCC] bg-[#F7F1E6] px-1.5 py-0.5 text-[9px] font-medium text-[#8A775F]"/></div>}
    {!human&&showReasoning&&message.reasoning&&<details className="mb-3 max-h-56 overflow-y-auto rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-[11px] leading-5 text-[#7C7469]" open={open}><summary className="cursor-pointer select-none" onClick={e=>{e.preventDefault();setOpen(v=>!v)}}><BrainCircuit size={14} className="inline"/> {t('chat.reasoningProcess',{count:message.reasoning.length.toLocaleString()} )} <ChevronRight size={13} className="inline"/></summary><div className="mt-2 whitespace-pre-wrap">{message.reasoning}</div></details>}
    <div className={'chat-message-text min-w-0 whitespace-pre-wrap break-words '+(human?'chat-message-text--user':'chat-message-text--assistant')}>{human?message.content:(message.content?<ChatRichText content={message.content}/>:message.tool_calls?.length?t('chat.toolRequest'):'')}</div>
+   {files.length>0&&<div className="mt-2 flex flex-wrap gap-1.5">{files.map(file=><button key={file.id}
+    type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-[#D6C8B7] bg-white px-2 py-1 text-[11px] text-[#4A443C] hover:border-[#A94E30]"
+    title={t('chat.downloadAttachment',{name:file.name})} onClick={async()=>{
+     try{
+      const blob=await attachmentBlob(file.id)
+      const url=URL.createObjectURL(blob),link=document.createElement('a')
+      link.href=url;link.download=file.name;link.click()
+      window.setTimeout(()=>URL.revokeObjectURL(url),1000)
+     }catch{window.alert(t('chat.fileDownloadFailed'))}
+    }}><FileText size={12}/><span className="max-w-[180px] truncate">{file.name}</span></button>)}</div>}
    {usedMemories.length>0&&<details className="chat-message-memories mt-2 rounded-lg border border-[#E7E0D5] bg-[#FAF7F1] px-3 py-2 text-[11px] leading-5 text-[#665D51]">
     <summary className="cursor-pointer select-none font-medium">{t('chat.usedMemories',{count:usedMemories.length})}</summary>
     <div className="mt-2 grid gap-2">{usedMemories.map(item=><div key={item.id} className="break-words border-t border-[#E7E0D5] pt-2 whitespace-pre-wrap">{item.text}</div>)}</div>

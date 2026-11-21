@@ -49,6 +49,12 @@ export const post = <T = any>(url: string, data: unknown) =>
  request<T>(url, {method: 'POST', body: JSON.stringify(data)})
 export const del = (url: string) => request(url, {method: 'DELETE'})
 
+export async function attachmentBlob(id:string):Promise<Blob>{
+ const response=await apiFetch('/api/attachments/'+encodeURIComponent(id)+'/content')
+ if(!response.ok)throw new ApiError(response.status,'첨부 원본을 불러올 수 없습니다.')
+ return response.blob()
+}
+
 export type ModelOption = {id: string; name?: string; free?: boolean|null; freeStatus?: 'free'|'paid'|'unknown'; freeSource?: string; reasoningEfforts?: string[]; defaultReasoningEffort?: string|null; catalogStale?: boolean}
 export type Approval = {id: string; tool: string; args: unknown; status: string; sessionId: string}
 export async function resolveApproval(id: string, allow: boolean) {
@@ -77,6 +83,7 @@ export type ChatRequest = {
  sessionId: string; mode?: 'chat'|'agent'; agentId: string; providerId?: string; model?: string; input: string;
  toolsEnabled: boolean; toolsExecutionEnabled: boolean; autoLearning: boolean;
  reasoningLanguage?: string; reasoningEffort?: string; thinking?: boolean;
+ attachmentIds?:string[];
 }
 
 export async function streamChat(data: ChatRequest, onEvent: (e: StreamEvent) => void, signal: AbortSignal) {
