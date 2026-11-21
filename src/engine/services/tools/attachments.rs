@@ -323,6 +323,70 @@ mod tests {
         (state, path)
     }
     #[test]
+    fn long_text_selects_late_query_evidence_with_source_line_not_just_head() {
+        let mut source = String::new();
+        for line in 0..300 {
+            if line == 149 {
+                source.push_str("결정적 검증 임계값은 87점이고 롤백 조건은 2회 연속 실패입니다.\n");
+            } else {
+                source.push_str(&format!("일반 배경 {line}: {}\n", "반복되는 설명. ".repeat(25)));
+            }
+        }
+        assert!(source.chars().count() > TEXT_EXCERPT_CHARS);
+        let (excerpt, truncated) = focused_text_excerpt(&source, "검증 임계값과 롤백 조건");
+        assert!(truncated);
+        assert!(excerpt.contains("87점"), "{excerpt}");
+        assert!(excerpt.contains("L150:"), "source line was lost");
+        assert!(excerpt.contains("[시작 부분]"));
+        assert!(excerpt.contains("[끝 부분]"));
+        assert!(excerpt.chars().count() < TEXT_EXCERPT_CHARS);
+        let (short, truncated) = focused_text_excerpt("세 줄만 있습니다", "어떤 질문");
+        assert!(!truncated);
+        assert_eq!(short, "세 줄만 있습니다");
+    }
+
+    #[test]
+    fn large_text_budget_counts_selected_wire_excerpt_not_entire_raw_file() {
+        let (state, dir) = state();
+        let mut source = String::new();
+        for index in 0..350 {
+            source.push_str(&format!("row {index}: {}\n", "ordinary notes ".repeat(25)));
+            if index == 190 {
+                source.push_str("실행 영수증: worker ID 55, owner 검증 통과\n");
+            }
+        }
+        let file = upload(&state, &json!({
+            "sessionId":"one", "name":"long-notes.txt",
+            "data": STANDARD.encode(source.as_bytes())
+        })).unwrap();
+        assert!(file["size"].as_u64().unwrap() > 80_000);
+        let mut wire_remaining = 80_000;
+        let payload = content(&state, "one", "worker ID 55 영수증", &json!({
+            "attachments":[file]
+        }), &mut wire_remaining);
+        let excerpt = payload[1]["text"].as_str().unwrap();
+        assert!(excerpt.contains("worker ID 55"), "{excerpt}");
+        assert!(wire_remaining > 40_000, "must charge transmitted excerpt bytes");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn image_budget_counts_base64_bytes_and_omits_oversized_payload() {
+        let (state, dir) = state();
+        let png = b"\x89PNG\r\n\x1a\nfixture";
+        let file = upload(&state, &json!({
+            "sessionId":"one", "name":"small.png", "mimeType":"image/png",
+            "data":STANDARD.encode(png)
+        })).unwrap();
+        let mut wire_remaining = png.len();
+        let payload = content(&state, "one", "이미지 설명", &json!({
+            "attachments":[file]
+        }), &mut wire_remaining);
+        assert!(payload[1]["text"].as_str().unwrap().contains("생략"));
+        assert_eq!(wire_remaining, png.len());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    #[test]
     fn upload_bound_image_becomes_actual_model_part_and_cannot_cross_sessions() {
         let (state, path) = state();
         let bytes = b"\x89PNG\r\n\x1a\nfixture";
