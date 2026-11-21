@@ -38,6 +38,20 @@ fn client() -> Result<reqwest::Client,String> {
         .redirect(reqwest::redirect::Policy::none())
         .build().map_err(|error|error.to_string())
 }
+const MAX_CHANNEL_RESPONSE_BYTES:usize=256*1024;
+async fn response_json(mut response:reqwest::Response)->Result<Value,String>{
+    if response.content_length().is_some_and(|length|length>MAX_CHANNEL_RESPONSE_BYTES as u64){
+        return Err("메신저 응답이 256 KiB를 초과했습니다.".into());
+    }
+    let mut bytes=Vec::new();
+    while let Some(chunk)=response.chunk().await.map_err(|error|error.to_string())?{
+        if bytes.len().saturating_add(chunk.len())>MAX_CHANNEL_RESPONSE_BYTES{
+            return Err("메신저 응답이 256 KiB를 초과했습니다.".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|error|error.to_string())
+}
 
 pub fn required_fields(kind: &str) -> &'static [&'static str] {
     match kind {
@@ -71,7 +85,7 @@ pub fn validate(state: &AppState, config: &Value) -> Result<(), String> {
 
 async fn response_id(response: reqwest::Response, kind: &str) -> Result<String, String> {
     let status = response.status();
-    let value: Value = response.json().await.unwrap_or_else(|_| json!({}));
+    let value: Value = response_json(response).await.unwrap_or_else(|_| json!({}));
     if !status.is_success() {
         return Err(format!("{kind} HTTP {status}: {value}"));
     }
@@ -308,7 +322,7 @@ pub async fn diagnose(state: &AppState, config: &Value) -> Result<Value, String>
                 .await
                 .map_err(|error| format!("Slack 연결 실패: {error}"))?;
             let status = response.status();
-            let body: Value = response.json().await.unwrap_or_else(|_| json!({}));
+            let body: Value = response_json(response).await.unwrap_or_else(|_| json!({}));
             if !status.is_success() || body["ok"] == false {
                 return Err(format!(
                     "Slack 인증 실패: {}",
@@ -335,7 +349,7 @@ pub async fn diagnose(state: &AppState, config: &Value) -> Result<Value, String>
                 .await
                 .map_err(|error| format!("Matrix 연결 실패: {error}"))?;
             let status = response.status();
-            let body: Value = response.json().await.unwrap_or_else(|_| json!({}));
+            let body: Value = response_json(response).await.unwrap_or_else(|_| json!({}));
             if !status.is_success() {
                 return Err(format!(
                     "Matrix 인증 실패 (HTTP {status}): {}",
@@ -366,7 +380,7 @@ pub async fn diagnose(state: &AppState, config: &Value) -> Result<Value, String>
                 .await
                 .map_err(|error| format!("WhatsApp 연결 실패: {error}"))?;
             let status = response.status();
-            let body: Value = response.json().await.unwrap_or_else(|_| json!({}));
+            let body: Value = response_json(response).await.unwrap_or_else(|_| json!({}));
             if !status.is_success() || body["error"].is_object() {
                 return Err(format!(
                     "WhatsApp 인증 실패: {}",
@@ -393,7 +407,7 @@ pub async fn diagnose(state: &AppState, config: &Value) -> Result<Value, String>
                 .await
                 .map_err(|error| format!("LINE 연결 실패: {error}"))?;
             let status = response.status();
-            let body: Value = response.json().await.unwrap_or_else(|_| json!({}));
+            let body: Value = response_json(response).await.unwrap_or_else(|_| json!({}));
             if !status.is_success() {
                 return Err(format!(
                     "LINE 인증 실패 (HTTP {status}): {}",
@@ -420,7 +434,7 @@ pub async fn diagnose(state: &AppState, config: &Value) -> Result<Value, String>
                 .await
                 .map_err(|error| format!("Zulip 연결 실패: {error}"))?;
             let status = response.status();
-            let body: Value = response.json().await.unwrap_or_else(|_| json!({}));
+            let body: Value = response_json(response).await.unwrap_or_else(|_| json!({}));
             if !status.is_success() {
                 return Err(format!(
                     "Zulip 인증 실패 (HTTP {status}): {}",
@@ -447,7 +461,7 @@ pub async fn diagnose(state: &AppState, config: &Value) -> Result<Value, String>
                 .await
                 .map_err(|error| format!("Mattermost 연결 실패: {error}"))?;
             let status = response.status();
-            let body: Value = response.json().await.unwrap_or_else(|_| json!({}));
+            let body: Value = response_json(response).await.unwrap_or_else(|_| json!({}));
             if !status.is_success() {
                 return Err(format!(
                     "Mattermost 인증 실패 (HTTP {status}): {}",
@@ -473,7 +487,7 @@ pub async fn diagnose(state: &AppState, config: &Value) -> Result<Value, String>
                 .await
                 .map_err(|error| format!("Signal 브리지 연결 실패: {error}"))?;
             let status = response.status();
-            let body: Value = response.json().await.unwrap_or_else(|_| json!({}));
+            let body: Value = response_json(response).await.unwrap_or_else(|_| json!({}));
             if !status.is_success() {
                 return Err(format!(
                     "Signal 브리지 인증 실패 (HTTP {status}): {}",

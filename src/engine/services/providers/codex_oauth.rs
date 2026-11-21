@@ -12,6 +12,27 @@ pub const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 pub const REDIRECT_URI: &str = "http://localhost:1455/auth/callback";
 const AUTHORIZE: &str = "https://auth.openai.com/oauth/authorize";
 const TOKEN: &str = "https://auth.openai.com/oauth/token";
+const MAX_OAUTH_RESPONSE_BYTES:usize=256*1024;
+
+pub fn no_redirect_client(timeout:Duration)->Result<reqwest::Client,String>{
+    reqwest::Client::builder().timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none())
+        .build().map_err(|error|error.to_string())
+}
+
+async fn bounded_json(mut response:reqwest::Response)->Result<Value,String>{
+    if response.content_length().is_some_and(|length|length>MAX_OAUTH_RESPONSE_BYTES as u64){
+        return Err("Codex OAuth 응답이 256 KiB를 초과했습니다.".into());
+    }
+    let mut bytes=Vec::new();
+    while let Some(chunk)=response.chunk().await.map_err(|error|error.to_string())?{
+        if bytes.len().saturating_add(chunk.len())>MAX_OAUTH_RESPONSE_BYTES{
+            return Err("Codex OAuth 응답이 256 KiB를 초과했습니다.".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|error|error.to_string())
+}
 
 fn random_token(bytes: usize) -> String {
     let mut buffer = vec![0u8; bytes];
@@ -65,15 +86,9 @@ pub async fn exchange_code(
         .map_err(|error| format!("Codex 토큰 교환 실패: {error}"))?;
     if !response.status().is_success() {
         let status = response.status();
-        let text = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "Codex 토큰 교환 실패 (HTTP {status}): {}",
-            text.chars().take(300).collect::<String>()
-        ));
+        return Err(format!("Codex 토큰 교환 실패 (HTTP {status})"));
     }
-    response
-        .json::<Value>()
-        .await
+    bounded_json(response).await
         .map_err(|_| "Codex 토큰 응답 형식을 읽을 수 없습니다.".into())
 }
 
@@ -97,15 +112,9 @@ pub async fn exchange_device_code(
         .map_err(|error| format!("Codex 기기 코드 교환 실패: {error}"))?;
     if !response.status().is_success() {
         let status = response.status();
-        let text = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "Codex 기기 코드 교환 실패 (HTTP {status}): {}",
-            text.chars().take(300).collect::<String>()
-        ));
+        return Err(format!("Codex 기기 코드 교환 실패 (HTTP {status})"));
     }
-    response
-        .json::<Value>()
-        .await
+    bounded_json(response).await
         .map_err(|_| "Codex 기기 코드 응답 형식을 읽을 수 없습니다.".into())
 }
 
@@ -126,15 +135,9 @@ pub async fn refresh(
         .map_err(|error| format!("Codex 토큰 갱신 실패: {error}"))?;
     if !response.status().is_success() {
         let status = response.status();
-        let text = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "Codex 토큰 갱신 실패 (HTTP {status}): {}",
-            text.chars().take(300).collect::<String>()
-        ));
+        return Err(format!("Codex 토큰 갱신 실패 (HTTP {status})"));
     }
-    response
-        .json::<Value>()
-        .await
+    bounded_json(response).await
         .map_err(|_| "Codex 갱신 응답 형식을 읽을 수 없습니다.".into())
 }
 

@@ -12,6 +12,21 @@ const API: &str = "https://discord.com/api/v10";
 pub const MAX_PARTICIPANTS: usize = crate::engine::rooms::MAX_PARTICIPANTS;
 const MAX_BACKLOG: usize = 2000;
 const MAX_BOT_REPLIES_PER_MINUTE: usize = 2;
+const MAX_DISCORD_RESPONSE_BYTES:usize=1024*1024;
+
+async fn bounded_json(mut response:reqwest::Response)->Result<Value,String>{
+    if response.content_length().is_some_and(|length|length>MAX_DISCORD_RESPONSE_BYTES as u64){
+        return Err("Discord 응답이 1 MiB를 초과했습니다.".into());
+    }
+    let mut bytes=Vec::new();
+    while let Some(chunk)=response.chunk().await.map_err(|error|error.to_string())?{
+        if bytes.len().saturating_add(chunk.len())>MAX_DISCORD_RESPONSE_BYTES{
+            return Err("Discord 응답이 1 MiB를 초과했습니다.".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|error|error.to_string())
+}
 
 pub fn text<'a>(value: &'a Value, key: &str) -> &'a str {
     value.get(key).and_then(Value::as_str).unwrap_or("")
@@ -210,7 +225,7 @@ impl DiscordClient {
                 .get("retry-after")
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.parse::<f64>().ok());
-            let value: Value = response.json().await.unwrap_or(Value::Null);
+            let value: Value = bounded_json(response).await.unwrap_or(Value::Null);
             if status.as_u16() == 429 {
                 let seconds = value
                     .get("retry_after")

@@ -820,13 +820,14 @@ async fn codex_callback_task(state: AppState, listener: TcpListener) -> Result<S
     } else if returned_state != pending["state"].as_str().unwrap_or("") {
         Err("Codex 로그인 state가 일치하지 않습니다. 다시 시도하세요.".to_string())
     } else {
-        let client = reqwest::Client::new();
-        codex_oauth::exchange_code(
-            &client,
-            &code,
-            pending["verifier"].as_str().unwrap_or(""),
-        )
-        .await
+        match codex_oauth::no_redirect_client(Duration::from_secs(30)){
+            Ok(client)=>codex_oauth::exchange_code(
+                &client,
+                &code,
+                pending["verifier"].as_str().unwrap_or(""),
+            ).await,
+            Err(error)=>Err(error.to_string()),
+        }
         .and_then(|tokens| {
             let account = codex_oauth::account_id(&tokens)
                 .ok_or("Codex 계정 ID를 찾을 수 없습니다.")?;
@@ -1040,7 +1041,10 @@ async fn codex_device_poll(
 }
 
 pub async fn codex_device_start(State(state): State<AppState>) -> Response {
-    let client = reqwest::Client::new();
+    let client = match codex_oauth::no_redirect_client(Duration::from_secs(20)){
+        Ok(client)=>client,
+        Err(build_error)=>return error(StatusCode::INTERNAL_SERVER_ERROR,&build_error.to_string()),
+    };
     let response = client
         .post("https://auth.openai.com/api/accounts/deviceauth/usercode")
         .json(&json!({"client_id":codex_oauth::CLIENT_ID}))
@@ -1147,10 +1151,7 @@ async fn discover_cloudflare_account(api_key: &str) -> Option<String> {
     if api_key.is_empty() {
         return None;
     }
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(6))
-        .build()
-        .ok()?;
+    let client = codex_oauth::no_redirect_client(Duration::from_secs(6)).ok()?;
     let response = client
         .get("https://api.cloudflare.com/client/v4/accounts")
         .header("Authorization", format!("Bearer {api_key}"))
@@ -1558,7 +1559,10 @@ pub async fn test_provider(
     let base = crate::engine::gateway::resolved_base_url(&provider);
     let kind = provider["kind"].as_str().unwrap_or("openai");
     let key = if kind == "codex" {
-        let client = reqwest::Client::new();
+        let client = match codex_oauth::no_redirect_client(Duration::from_secs(30)){
+            Ok(client)=>client,
+            Err(build_error)=>return Json(json!({"ok":false,"message":build_error})).into_response(),
+        };
         match codex_oauth::fresh_access(&state, &client, &id, key).await {
             Ok(token) => token,
             Err(message) => return Json(json!({"ok":false,"message":message})).into_response(),
@@ -1581,7 +1585,10 @@ pub async fn test_provider(
     } else {
         model.clone()
     };
-    let client = match reqwest::Client::builder().timeout(Duration::from_secs(20)).build() {
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .redirect(reqwest::redirect::Policy::none())
+        .build() {
         Ok(client) => client,
         Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()),
     };
@@ -1841,10 +1848,10 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
     if kind == "codex" {
         // The owner's actual Codex catalog replaces the historical four-name stub.
         // Subscription models are not metered as ordinary API-key purchases.
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(15))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let client = match codex_oauth::no_redirect_client(Duration::from_secs(15)){
+            Ok(client)=>client,
+            Err(build_error)=>return error(StatusCode::INTERNAL_SERVER_ERROR,&build_error),
+        };
         let account = provider["accountId"].as_str().unwrap_or("");
         let cached = state.store.get("codex_model_catalog", &id)
             .filter(|row| row["accountId"].as_str() == Some(account));
