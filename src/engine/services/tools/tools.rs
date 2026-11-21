@@ -1084,7 +1084,12 @@ async fn list_dir(path: &Path) -> Result<Value, String> {
 }
 
 async fn read_text(path: &Path) -> Result<Value, String> {
-    let metadata = tokio::fs::metadata(path)
+    use tokio::io::AsyncReadExt;
+    let file = tokio::fs::File::open(path)
+        .await
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    let metadata = file
+        .metadata()
         .await
         .map_err(|error| format!("{}: {error}", path.display()))?;
     if !metadata.is_file() {
@@ -1093,8 +1098,15 @@ async fn read_text(path: &Path) -> Result<Value, String> {
     if metadata.len() > 1_500_000 {
         return Err("File is larger than 1.5 MB".into());
     }
-    let text = tokio::fs::read_to_string(path)
+    let mut bytes = Vec::new();
+    file.take(1_500_001)
+        .read_to_end(&mut bytes)
         .await
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    if bytes.len() > 1_500_000 {
+        return Err("File grew larger than 1.5 MB while reading".into());
+    }
+    let text = String::from_utf8(bytes)
         .map_err(|error| format!("{}: {error}", path.display()))?;
     Ok(json!({ "path": path.to_string_lossy(), "content": text }))
 }

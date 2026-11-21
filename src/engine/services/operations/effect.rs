@@ -307,6 +307,7 @@ fn failure_layer(ok: bool, denied: bool, result: &Value, effectful: bool) -> Opt
 }
 
 async fn read_back(workspace: &Path, tool: &str, arguments: &Value) -> Option<(String, u64)> {
+    use tokio::io::AsyncReadExt;
     let path = arguments["path"].as_str()?;
     let path: PathBuf = match tool {
         "workspace_write" | "workspace_replace" | "workspace_replace_range" | "workspace_read" | "workspace_read_range" => {
@@ -315,12 +316,20 @@ async fn read_back(workspace: &Path, tool: &str, arguments: &Value) -> Option<(S
         "file_write" | "file_read" => PathBuf::from(path),
         _ => return None,
     };
-    let metadata = tokio::fs::metadata(&path).await.ok()?;
-    let len = metadata.len();
-    if len > WRITE_VERIFY_LIMIT {
+    let file = tokio::fs::File::open(&path).await.ok()?;
+    let metadata = file.metadata().await.ok()?;
+    if !metadata.is_file() || metadata.len() > WRITE_VERIFY_LIMIT {
         return None;
     }
-    let bytes = tokio::fs::read(&path).await.ok()?;
+    let mut bytes = Vec::new();
+    file.take(WRITE_VERIFY_LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .ok()?;
+    let len = bytes.len() as u64;
+    if len > WRITE_VERIFY_LIMIT || len != metadata.len() {
+        return None;
+    }
     Some((format!("sha256:{}", hash(&bytes)), len))
 }
 
