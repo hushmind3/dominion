@@ -499,3 +499,11 @@ test('idempotency also protects real agent write tools, not only model-only chat
  assert.match(sourceE2e,/assert_eq!\(requests\.lock\(\)\.unwrap\(\)\.len\(\),calls_before\)/)
  assert.match(sourceE2e,/assert!\(!duplicate\.contains\("assistant_saved"\)/)
 })
+
+test('STOP during image upload restores the unacknowledged prompt without duplicate execution',()=>{
+ const chat=source('src/pages/Chat.tsx')
+ assert.match(chat,/if\(optimisticOwner\?\.sessionId===id&&!optimisticOwner\.persistedId\)/)
+ assert.match(chat,/setInput\(previous=>previous\.trim\(\)\?previous:optimisticOwner\.content\)/)
+ assert.match(chat,/A retry reuses clientTurnId/)
+ assert.match(chat,/controller\?\.abort\(\)/)
+})
