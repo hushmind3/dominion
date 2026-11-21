@@ -1,0 +1,53 @@
+name: Sub3 fast architecture and integration checks
+
+on:
+  push:
+    branches: [dominion-sub3]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sub3-fast-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Source contracts and fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node scripts/check-runtime-architecture.mjs
+      - run: node --check web/e2e/sub3-native-live.mjs
+      - run: node --test sdk/typescript/tests/sdk.test.mjs
+
+  rust:
+    name: Rust all-target compile and SDK regressions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --locked --all-targets
+      - run: cargo test --locked -p dominion-agent-runtime --lib
+      - run: cargo test --locked -p dominion-agent-sdk --lib
+      - run: cargo test --locked --bin dominion-rust unknown_paid_generation_is_needs_review_even_after_owner_cancel
+      - run: cargo test --locked --bin dominion-rust sub3_standalone_explanation_uses_zero_tool_schemas_over_real_http_sse
+
+  web:
+    name: TypeScript and Vite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --prefix web
+      - run: npm run typecheck --prefix web
+      - run: npm run build --prefix web
