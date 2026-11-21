@@ -81,7 +81,8 @@ pub(super) fn prepare(
             .and_then(|message| message["content"].as_str().map(str::to_string)),
         None => Some(task_input(&session,&request.input).to_string()),
     };
-    let mut acceptance = if request.verification_owner.as_deref() == Some("parent") {
+    let mut acceptance = if !request.tools_enabled || !request.tools_execution_enabled
+        || request.verification_owner.as_deref() == Some("parent") {
         // A parent verifier owns review for delegated child operations;
         // investigating and declining a change must not trigger forced writes.
         // The child still
