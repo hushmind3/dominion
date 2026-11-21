@@ -83,8 +83,20 @@ fn summary(ctx:&ToolContext<'_>,team:&Value)->Result<Value,String>{
         if status!="completed"{complete=false;verified=false;}
         if matches!(status,"failed"|"needs_review"|"cancelled"|"interrupted"){blocked=true;}
         verified&=row["verified"]==true;
+        // The lead receives a bounded real assistant outcome per worker,
+        // not a fabricated completion statement or full private transcript.
+        // Full source receipts remain available via task_result(jobId).
+        let observed=if matches!(status,"completed"|"needs_review"){
+            row["jobId"].as_str().and_then(|job_id|
+                super::task_payload(ctx,&json!({"jobId":job_id}),true).ok())
+        }else{None};
+        let excerpt=observed.as_ref().and_then(|v|v["content"].as_str())
+            .unwrap_or("").chars().take(1600).collect::<String>();
+        let operations=observed.as_ref().and_then(|v|v["operations"].as_array())
+            .map_or(0,Vec::len);
         results.push(json!({
             "id":row["nodeId"],"agentId":row["agentId"],
+            "answerPreview":excerpt,"observedOperationCount":operations,
             "readOnly":row["readOnly"],"dependsOn":row["dependsOn"],
             "status":status,"jobId":row["jobId"],
             "sessionId":row["workerSessionId"],
