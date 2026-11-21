@@ -755,3 +755,25 @@ async fn cancel_api_interrupts_silent_http_generation_and_allows_same_session_re
     server.abort();
     crate::test_support::cleanup_dir(&state.config.data_dir);
 }
+
+#[tokio::test]
+async fn ordinary_chat_cannot_append_to_channel_bound_transcript() {
+    let state = temp_state();
+    for (id, binding) in [
+        ("bound-room", json!({"roomId":"r","kind":"room"})),
+        ("bound-channel", json!({"channelContext":{"kind":"discord","channelId":"ch"}})),
+        ("legacy-room", json!({"kind":"room"})),
+    ] {
+        let mut record = binding;
+        record["id"] = json!(id);
+        state.store.put("session", &record).unwrap();
+        let request = TurnRequest::from_value(&json!({
+            "sessionId": id, "input": "일반 대화로 외부 기록을 덮어쓰면 안 됩니다"
+        })).unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let result = run_turn(&state, &request, &tx).await;
+        assert!(result.is_err(), "owner Chat must reject {id}");
+        assert!(result.unwrap_err().contains("그룹·외부 채널"));
+        assert!(state.store.messages(id).is_empty());
+    }
+}

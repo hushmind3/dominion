@@ -115,8 +115,12 @@ async fn run_turn_with_policy(
     source_message_id: Option<&str>,
 ) -> Result<Option<Value>, String> {
     let session = ensure_session(state, request)?;
-    if record_input && session["roomId"].is_string() {
-        return Err("그룹 대화는 그룹 대화 화면 또는 /api/rooms/:id/messages에서 보내세요.".into());
+    if record_input
+        && (session["roomId"].is_string()
+            || !session["channelContext"].is_null()
+            || matches!(session["kind"].as_str(), Some("room" | "channel")))
+    {
+        return Err("그룹·외부 채널 대화는 해당 대화 화면에서 보내세요.".into());
     }
     if !record_input && source_message_id.is_some() && !session["roomId"].is_string() {
         return Err("공용 대화 기록이 연결된 그룹 세션이 필요합니다.".into());
