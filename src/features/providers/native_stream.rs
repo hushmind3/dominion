@@ -180,6 +180,39 @@ impl Assembler {
                 }
                 continue;
             }
+            // Some OpenAI-compatible servers send ONLY a settled message,
+            // not incremental delta content. Treat it as a fallback, never
+            // append a final copy to already-streamed text or tool fragments.
+            if let Some(message)=choice.get("message") {
+                if self.text.is_empty() {
+                    if let Some(text)=message["content"].as_str() {
+                        self.append_text(text,updates)?;
+                    }
+                }
+                if self.calls.is_empty() {
+                    for (index,call) in message["tool_calls"].as_array()
+                        .into_iter().flatten().enumerate() {
+                        if index>=MAX_NATIVE_CALLS {
+                            return Err("Native settled Chat tool limit exceeded".into());
+                        }
+                        let id=call["id"].as_str()
+                            .filter(|id|!id.is_empty()&&id.len()<=256)
+                            .ok_or("Native settled Chat call missing ID")?;
+                        let name=call["function"]["name"].as_str()
+                            .filter(|name|!name.is_empty()&&name.len()<=256)
+                            .ok_or("Native settled Chat call missing name")?;
+                        let args=call["function"]["arguments"].as_str()
+                            .ok_or("Native settled Chat call missing JSON arguments")?;
+                        if args.len()>MAX_ARGUMENT_BYTES ||
+                            !serde_json::from_str::<Value>(args)
+                                .is_ok_and(|value|value.is_object()){
+                            return Err("Native settled Chat arguments are invalid JSON object".into());
+                        }
+                        self.calls.insert(index,Call{id:id.into(),name:name.into(),
+                            args:args.into()});
+                    }
+                }
+            }
             if let Some(reason)=reason {
                 match reason {
                     "stop"|"tool_calls"=>{
@@ -453,6 +486,49 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn native_chat_supports_final_message_only_without_duplication(){
+        let mut text=Assembler::new(Wire::Chat);
+        text.feed(Packet::Data(json!({"choices":[{"index":0,
+            "finish_reason":"stop","message":{"role":"assistant",
+                "content":"완료 🧠"}}]}))).unwrap();
+        text.feed(Packet::Data(json!({"choices":[],"usage":{
+            "prompt_tokens":19,"completion_tokens":3}}))).unwrap();
+        text.feed(Packet::Done).unwrap();
+        let result=text.finish().unwrap();
+        assert_eq!(result["choices"][0]["message"]["content"],"완료 🧠");
+        assert_eq!(result["usage"]["prompt_tokens"],19);
+
+        let mut tool=Assembler::new(Wire::Chat);
+        let args=json!({"path":"safe.txt"}).to_string();
+        let changes=tool.feed(Packet::Data(json!({"choices":[{"index":0,
+            "finish_reason":"tool_calls","message":{"role":"assistant","content":"",
+                "tool_calls":[{"id":"call-final","type":"function",
+                    "function":{"name":"workspace_read","arguments":args}}]}}]}))).unwrap();
+        assert!(changes.iter().any(|item|matches!(item,
+            Update::ToolStarted{id,..} if id=="call-final")));
+        tool.feed(Packet::Done).unwrap();
+        let result=tool.finish().unwrap();
+        assert_eq!(result["choices"][0]["message"]["tool_calls"][0]["id"],"call-final");
+    }
+
+    #[test]
+    fn native_chat_does_not_replay_message_when_delta_already_arrived(){
+        let mut text=Assembler::new(Wire::Chat);
+        text.feed(Packet::Data(json!({"choices":[{"index":0,
+            "delta":{"content":"one"}}]}))).unwrap();
+        let changes=text.feed(Packet::Data(json!({"choices":[{"index":0,
+            "finish_reason":"stop","message":{"content":"one"}}]}))).unwrap();
+        assert!(changes.is_empty());
+        text.feed(Packet::Done).unwrap();
+        assert_eq!(text.finish().unwrap()["choices"][0]["message"]["content"],"one");
+
+        let mut invalid=Assembler::new(Wire::Chat);
+        assert!(invalid.feed(Packet::Data(json!({"choices":[{"index":0,
+            "finish_reason":"tool_calls","message":{"tool_calls":[{"id":"bad",
+                "function":{"name":"workspace_write","arguments":"not json"}}]}}]}))).is_err());
+    }
+
     #[test]
     fn native_chat_rejects_changed_finish_and_post_finish_mutation() {
         for later in [
