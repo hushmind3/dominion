@@ -489,7 +489,14 @@ pub async fn restore_backup(
     }
     let database_path = directory.join(format!(".restore-database-{restore_id}.tmp"));
     let _database_cleanup = RemoveFileOnDrop(database_path.clone());
-    let mut database = match std::fs::File::create(&database_path) {
+    let mut database_options = std::fs::OpenOptions::new();
+    database_options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        database_options.mode(0o600);
+    }
+    let mut database = match database_options.open(&database_path) {
         Ok(file) => file,
         Err(error) => {
             return (

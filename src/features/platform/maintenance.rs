@@ -12,6 +12,14 @@ impl Drop for RemoveFileOnDrop {
     }
 }
 
+struct RemoveDirectoryOnDrop(PathBuf);
+
+impl Drop for RemoveDirectoryOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 fn interval_seconds() -> u64 {
     std::env::var("DOMINION_BACKUP_INTERVAL_SECS")
         .ok()
@@ -72,7 +80,18 @@ pub fn create_snapshot(state: &AppState) -> Result<PathBuf, String> {
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     let id = uuid::Uuid::new_v4();
     let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
-    let temp = directory.join(format!(".backup-{id}.tmp"));
+    // SQLite creates the VACUUM INTO file itself, so put it in a directory
+    // that is private from the moment the directory is created.
+    let work_dir = directory.join(format!(".backup-work-{id}"));
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(&work_dir).map_err(|error| error.to_string())?;
+    let _work_cleanup = RemoveDirectoryOnDrop(work_dir.clone());
+    let temp = work_dir.join("snapshot.sqlite");
     let _cleanup = RemoveFileOnDrop(temp.clone());
     let database_len = state.store.backup_to(&temp)?;
     let ring = crate::engine::backup_keys::KeyRing::load_or_create(&state.config.data_dir)?;

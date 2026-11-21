@@ -22,14 +22,6 @@ const KEY_LEN: usize = 32;
 const STREAM_CHUNK_BYTES: usize = 1024 * 1024;
 const STREAM_HEADER_BYTES: usize = 7 + 4 + 7 + 8;
 
-struct RemoveFileOnDrop(PathBuf);
-
-impl Drop for RemoveFileOnDrop {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
-}
-
 struct RemoveFilesOnDrop(Vec<PathBuf>);
 
 impl Drop for RemoveFilesOnDrop {
@@ -244,11 +236,14 @@ impl KeyRing {
         if !metadata.is_file() {
             return Err("backup source is not a regular file".into());
         }
-        let mut writer = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(target)
-            .map_err(|error| error.to_string())?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut writer = options.open(target).map_err(|error| error.to_string())?;
         let plaintext_len = match self.decrypt_stream_reader(&mut reader, metadata.len(), &mut writer) {
             Ok(length) => length,
             Err(error) => {
@@ -304,11 +299,14 @@ impl KeyRing {
         new_header.extend_from_slice(&self.active.to_le_bytes());
         new_header.extend_from_slice(&new_nonce);
         new_header.extend_from_slice(&plaintext_len.to_le_bytes());
-        let mut writer = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(target)
-            .map_err(|error| error.to_string())?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut writer = options.open(target).map_err(|error| error.to_string())?;
         let result = (|| -> Result<u64, String> {
             writer.write_all(&new_header).map_err(|error| error.to_string())?;
             let mut decryptor = DecryptorBE32::from_aead(Self::cipher(old_key),
@@ -553,7 +551,19 @@ pub fn decrypt_backup_file_to(
     } else {
         state.vault.open_bytes(&sealed)
     }.ok_or("backup authentication failed")?;
-    std::fs::write(target, &plaintext).map_err(|error| error.to_string())?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut output = options.open(target).map_err(|error| error.to_string())?;
+    if let Err(error) = output.write_all(&plaintext).and_then(|_| output.sync_all()) {
+        drop(output);
+        let _ = std::fs::remove_file(target);
+        return Err(error.to_string());
+    }
     Ok(plaintext.len() as u64)
 }
 
