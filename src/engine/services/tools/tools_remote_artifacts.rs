@@ -113,7 +113,7 @@ pub(super) async fn apply(ctx:&ToolContext<'_>,args:&Value,run_id:&str)->Result<
             "artifactApplyStatus":"applying","artifactApplyClaimedAt":chrono::Utc::now().to_rfc3339(),
             "artifactApplyRunId":run_id,
         })).ok_or("Remote artifact was claimed concurrently")?;
-    ctx.state.bus.record("remote_task",&claimed);
+    crate::remote::publish_task(ctx.state,&claimed);
     let result=patch::apply(ctx.workspace,&changes).await;
     match result{
         Ok(receipt)=>{
@@ -127,7 +127,7 @@ pub(super) async fn apply(ctx:&ToolContext<'_>,args:&Value,run_id:&str)->Result<
                 let failed=ctx.store.patch_if("remote_task",task_id,"artifactApplyStatus",
                     &json!("applying"),&json!({"artifactApplyStatus":"needs_review",
                         "artifactApplyReceipt":receipt}));
-                if let Some(failed)=failed{ctx.state.bus.record("remote_task",&failed);}
+                if let Some(failed)=failed{crate::remote::publish_task(ctx.state,&failed);}
                 return Err("Remote patch effect differs from requested SHA-256; inspect workspace".into());
             }
             let saved=ctx.store.patch_if("remote_task",task_id,"artifactApplyStatus",
@@ -135,7 +135,7 @@ pub(super) async fn apply(ctx:&ToolContext<'_>,args:&Value,run_id:&str)->Result<
                     "artifactApplyStatus":"applied","artifactApplyReceipt":receipt,
                     "artifactAppliedAt":chrono::Utc::now().to_rfc3339(),
                 })).ok_or("Artifact patch applied but receipt CAS failed; inspect workspace")?;
-            ctx.state.bus.record("remote_task",&saved);
+            crate::remote::publish_task(ctx.state,&saved);
             if receipt["changed"]==true{
                 if let Ok(workspace)=ctx.workspace.canonicalize(){
                     let key=crate::engine::code_index::index_id(&workspace);
@@ -151,7 +151,7 @@ pub(super) async fn apply(ctx:&ToolContext<'_>,args:&Value,run_id:&str)->Result<
             let failed=ctx.store.patch_if("remote_task",task_id,"artifactApplyStatus",
                 &json!("applying"),&json!({"artifactApplyStatus":"needs_review",
                     "artifactApplyError":err.chars().take(500).collect::<String>()}));
-            if let Some(failed)=failed{ctx.state.bus.record("remote_task",&failed);}
+            if let Some(failed)=failed{crate::remote::publish_task(ctx.state,&failed);}
             Err(format!("Native patch merge outcome requires inspection: {err}"))
         }
     }
