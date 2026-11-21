@@ -31,7 +31,7 @@ impl SseDecoder {
             .ok_or("Native SSE transport exceeded 32 MiB")?;
         if self.done && !bytes.is_empty(){return Err("Data after terminal SSE [DONE]".into());}
         let mut packets=Vec::new();
-        for &byte in bytes {
+        for (index,&byte) in bytes.iter().enumerate() {
             if byte!=b'\n' {
                 self.line.push(byte);
                 if self.line.len()>MAX_LINE_BYTES {
@@ -47,6 +47,11 @@ impl SseDecoder {
                     let raw=std::str::from_utf8(&self.event)
                         .map_err(|_|"Invalid SSE JSON UTF-8")?;
                     let packet=if raw.trim()=="[DONE]" {
+                        // A terminal frame must end the HTTP stream; a paid
+                        // response cannot silently accept later tool bytes.
+                        if index+1<bytes.len(){
+                            return Err("Data after terminal SSE [DONE]".into());
+                        }
                         self.done=true;Packet::Done
                     }else {
                         Packet::Data(serde_json::from_str(raw)
@@ -639,4 +644,10 @@ mod tests {
         assert!(c.feed(Packet::Data(json!({"type":"response.incomplete",
             "response":{"incomplete_details":{"reason":"max_output_tokens"}}}))).is_err());
     }
+    #[test]
+    fn native_sse_rejects_trailing_events_after_done_in_same_network_chunk(){
+        let mut decoder=SseDecoder::default();
+        assert!(decoder.push(b"data: [DONE]\n\ndata: {\"choices\":[]}\n\n").is_err());
+    }
+
 }
