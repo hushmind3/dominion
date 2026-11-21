@@ -20,10 +20,10 @@ impl Schedule {
 fn writes(node:&Value)->bool{
     match node["type"].as_str().unwrap_or(""){
         "delegate"|"model_decision"|"loop"=>true,
-        "call_tool"=>!matches!(node["tool"].as_str(),
-            Some("file_read"|"workspace_read"|"workspace_list"|
-                "workspace_search"|"workspace_stat"|"code_search"|
-                "code_index_search")),
+        // Native Chat and SDK use the exact same allowlist. Do not
+        // accidentally classify a custom read-like tool as effect-free.
+        "call_tool"=>!node["tool"].as_str()
+            .is_some_and(dominion_agent_kernel::scheduling::safe_to_overlap),
         "observe"|"verify"=>false,
         "sequence"|"parallel"=>node["nodes"].as_array()
             .is_none_or(|xs|xs.iter().any(writes)),
@@ -63,6 +63,15 @@ pub fn schedule(nodes:&[Value])->Result<Schedule,String>{
         }
     }
     let has_writers=nodes.iter().any(writes);
+    // A writer is a barrier in the ORIGINAL model/program order. Without
+    // these edges a later read could jump ahead of a prior write and observe
+    // stale state, even if both happen to be topologically ready.
+    for (i,node) in nodes.iter().enumerate(){
+        if writes(node){
+            for previous in 0..i{deps[i].insert(previous);}
+            for next in i+1..nodes.len(){deps[next].insert(i);}
+        }
+    }
     let mut done=BTreeSet::new();
     let mut waves=Vec::new();
     while done.len()<nodes.len(){
@@ -90,6 +99,23 @@ mod tests{
         ];
         assert_eq!(schedule(&plan).unwrap().waves,vec![vec![0,1],vec![2],vec![3]]);
         assert!(schedule(&plan).unwrap().requires_serial());
+    }
+    #[test]
+    fn earlier_writer_barrier_prevents_a_later_ready_read_from_leapfrogging(){
+        let list=vec![
+            json!({"id":"read_a","type":"call_tool","tool":"workspace_read"}),
+            json!({"id":"write","type":"call_tool","tool":"workspace_write"}),
+            json!({"id":"read_b","type":"call_tool","tool":"workspace_read"}),
+            json!({"id":"read_c","type":"call_tool","tool":"file_read"}),
+        ];
+        assert_eq!(schedule(&list).unwrap().waves,
+            vec![vec![0],vec![1],vec![2,3]]);
+        let backwards=vec![
+            json!({"id":"write","type":"delegate","dependsOn":["later"]}),
+            json!({"id":"later","type":"call_tool","tool":"file_read"}),
+        ];
+        assert!(schedule(&backwards).unwrap_err().contains("cyclic"));
+        assert!(!dominion_agent_kernel::scheduling::safe_to_overlap("mcp__other__read"));
     }
     #[test]
     fn cycle_unknown_and_custom_mcp_mutations_fail_closed(){

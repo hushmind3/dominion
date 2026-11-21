@@ -1359,13 +1359,17 @@ pub(super) async fn run_turn_body(
             break;
         }
 
-        let mut seen_ids = std::collections::HashSet::new();
-        for call in completion.tool_calls.iter_mut() {
-            if call.id.trim().is_empty() || !seen_ids.insert(call.id.clone()) {
-                call.id = uuid::Uuid::new_v4().to_string();
-                seen_ids.insert(call.id.clone());
+        // The provider may omit an ID; give that call exactly one stable
+        // host-generated ID. Never rewrite a duplicate non-empty provider ID:
+        // that would transform an invalid response into fresh tool authority.
+        for call in completion.tool_calls.iter_mut(){
+            if call.id.trim().is_empty(){
+                call.id=uuid::Uuid::new_v4().to_string();
             }
         }
+        crate::engine::core::driver::Driver::validate_call_ids(
+            completion.tool_calls.iter().map(|call|call.id.as_str())
+        ).map_err(str::to_string)?;
         let tool_calls_json = completion
             .tool_calls
             .iter()

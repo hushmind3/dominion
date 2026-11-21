@@ -399,3 +399,21 @@ test('DAG ready read waves stay concurrent while writer and delegate steps remai
  assert.match(s,/dependency_waves/);
  assert.match(s,/budget\.parallel_shares\(wave\.len\(\)\)/);
 });
+
+test('model/provider duplicate call IDs cannot be silently rewritten by native Chat',()=>{
+ const product=source('src/engine/services/conversation/chat/runtime/turn_body.rs');
+ const driver=source('crates/dominion-turn-core/src/driver.rs');
+ assert.match(product,/Driver::validate_call_ids/);
+ assert.doesNotMatch(product,/!seen_ids\.insert\(call\.id\.clone\(\)\)/);
+ assert.match(driver,/pub fn validate_call_ids/);
+ assert.match(driver,/Self::validate_call_ids\(pending\.iter/);
+});
+test('DAG shares the native safe-read allowlist and persists writer fences before dispatch',()=>{
+ const team=source('crates/dominion-agent-loop/src/task_team.rs');
+ const program=source('src/engine/services/decision/runtime_program.rs');
+ assert.match(team,/dominion_agent_kernel::scheduling::safe_to_overlap/);
+ assert.match(team,/for previous in 0\.\.i/);
+ assert.match(program,/fn commit_program_checkpoint/);
+ assert.match(program,/commit_program_checkpoint\(state, execution_id, checkpoint\)\?/);
+ assert.match(program,/depth\+1,persist,true/);
+});

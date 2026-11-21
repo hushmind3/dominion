@@ -251,3 +251,9 @@ ProgramIR의 기존 `parallel` 노드에 `dependsOn` 형제 ID를 정식 지원�
 ## 2026-11-21: Room 105턴 커서 재시작 회귀
 
 같은 방에서 참여자 2명이 105개 주인 메시지를 순차 소비하는 모델 호출 없는 테스트를 추가했습니다. 각 발언 직전에 서로 다른 영속 저널 읽기 위치를 동결하고 응답 저장 뒤에만 전진시키며, 새 `AppState`/SQLite 연결로 재시작한 뒤에도 참여자별 readCursor가 보존되고 이전에 보지 않은 상대 참가자의 최신 응답을 놓치지 않는지 검증합니다. 실제 API를 105회 과금하는 벤치마크와 혼동하지 않습니다.
+
+## 2026-11-21 P0: Harness 도구 ID 안전성과 Task Team 영속 복구 경계
+
+- 동일 모델 응답 내 중복 도구 호출 ID는 공통 `Driver::validate_call_ids`가 모델-사용 전 거부합니다. Chat 제품에서 **중복된 nonempty ID를 무작위 새 ID로 바꾸던 구형 코드**를 제거했습니다. 누락 ID만 1회 부여하며, standalone Driver와 native Chat이 같은 ID 검사기를 사용합니다.
+- Task Team DAG는 독립 Rust Kernel과 **동일한 `safe_to_overlap` 도구 허용 목록**을 공유합니다. 쓰기·위임은 원본 모델의 호출 순서에 대한 강제 장벽이므로, 뒤쪽 읽기 작업이 그보다 먼저 실행되는 잘못된 위상 정렬을 차단합니다. 미래 읽기에 의존하는 과거 writer는 순환 의존으로 거부합니다.
+- ProgramIR 단독/위임 작업은 도구를 호출하기 **전에** `programCheckpoint.pendingOperationIds`를 SQLite CAS로 커밋하도록 연결했습니다. 실행 중 크래시와 restart에서 이전 효과의 결과를 모를 때 자동 재실행하지 않도록 기존 `restore_program_state`의 pending 거부 규칙을 실제 writer 경로와 연결했습니다. 읽기 병렬 파동 종료 후에도 누적 checkpoint를 보존합니다.

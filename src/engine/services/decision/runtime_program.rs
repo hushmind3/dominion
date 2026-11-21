@@ -623,6 +623,30 @@ pub(super) fn normalize_tool_arguments(mut arguments: Value, strategy: &str) -> 
     arguments
 }
 
+/// Commit a recovery fence BEFORE starting a tool. A write may have
+/// happened when the process dies, so losing this checkpoint would permit
+/// blind re-execution. CAS protects concurrent execution fields and prevents
+/// a stale run from reopening an already terminal execution.
+fn commit_program_checkpoint(
+    state:&AppState,execution_id:&str,checkpoint:&Value,
+)->Result<(),String>{
+    for _ in 0..16{
+        let execution=state.store.get("execution",execution_id)
+            .ok_or("program execution is missing")?;
+        if execution["status"]!="running"{
+            return Err("program execution is no longer running".into());
+        }
+        let previous=execution.get("programCheckpoint")
+            .cloned().unwrap_or(Value::Null);
+        if let Some(saved)=state.store.patch_if("execution",execution_id,
+            "programCheckpoint",&previous,&json!({"programCheckpoint":checkpoint})){
+            state.bus.record("execution",&saved);
+            return Ok(());
+        }
+    }
+    Err("program checkpoint admission lost a concurrent update".into())
+}
+
 pub(super) fn save_program_checkpoint(state: &AppState, execution_id: &str, checkpoint: &Value) {
     if let Some(mut execution) = state.store.get("execution", execution_id) {
         execution["programCheckpoint"] = checkpoint.clone();
@@ -672,7 +696,8 @@ pub(super) async fn execute_program_tool(
     checkpoint["pendingOperationIds"] = json!([node_id]);
     checkpoint["resolvedInputs"] = resolved.clone();
     if persist {
-        save_program_checkpoint(state, execution_id, checkpoint);
+        // This must be durable before any approved, delegated or local effect.
+        commit_program_checkpoint(state, execution_id, checkpoint)?;
     }
     let (result, ok, _content) = dispatch_tool_call(
         state,
@@ -729,7 +754,7 @@ pub(super) async fn execute_program_tool(
     resolved[key] = result.clone();
     checkpoint["resolvedInputs"] = resolved.clone();
     if persist {
-        save_program_checkpoint(state, execution_id, checkpoint);
+        commit_program_checkpoint(state, execution_id, checkpoint)?;
     }
     Ok(result)
 }
@@ -1118,7 +1143,7 @@ pub(super) fn execute_nodes<'a>(
                                     let frame=execute_nodes(
                                         ctx,vec![children[index].clone()],
                                         resolved,checkpoint,budget,op_seq,
-                                        depth+1,false,true,
+                                        depth+1,persist,true,
                                     ).await?;
                                     resolved=frame.resolved;
                                     checkpoint=frame.checkpoint;
@@ -1128,6 +1153,12 @@ pub(super) fn execute_nodes<'a>(
                                     paused|=frame.paused;
                                     if paused{break;}
                                 }
+                            }
+                            if persist {
+                                // Persist completion of each ready wave so a
+                                // later failed writer cannot replay prior work.
+                                commit_program_checkpoint(
+                                    ctx.state,ctx.execution_id,&checkpoint)?;
                             }
                             if paused{break;}
                         }

@@ -62,6 +62,22 @@ impl Driver {
         })
     }
 
+    /// Pure provider-response identity validation, shared by the standalone
+    /// loop and native Chat before persisting assistant/tool-call history.
+    /// Missing IDs may be assigned once by the host; duplicate provided IDs
+    /// are never silently rewritten into fresh tool authority.
+    pub fn validate_call_ids<'a>(
+        ids:impl IntoIterator<Item=&'a str>
+    )->Result<(),&'static str>{
+        let mut seen=HashSet::new();
+        for id in ids{
+            if id.trim().is_empty()||!seen.insert(id){
+                return Err("duplicate or missing tool call id");
+            }
+        }
+        Ok(())
+    }
+
     /// Atomically reserve every tool call in one model response before any host
     /// side effect. Duplicate provider IDs are rejected across the entire
     /// turn; names must be visible in the current model round.
@@ -74,9 +90,9 @@ impl Driver {
         if pending.len() > self.max_tools.saturating_mul(2).saturating_sub(self.proposals) {
             return Err("tool proposal limit exceeded");
         }
-        let mut ids = HashSet::new();
+        Self::validate_call_ids(pending.iter().map(|(id,_)|*id))?;
         for (id, name) in &pending {
-            if id.trim().is_empty() || !ids.insert(*id) || self.seen_call_ids.contains(*id) {
+            if self.seen_call_ids.contains(*id){
                 return Err("duplicate or missing tool call id");
             }
             if !Self::advertised(name, visible) {
@@ -153,6 +169,15 @@ mod tests {
         assert_eq!(result,Ok("ok"));
         assert_eq!(driver.request_model(false,async {Ok::<_,String>("no")}).await,
             Err("model round limit exceeded".to_string()));
+    }
+
+    #[test]
+    fn shared_response_identity_rejects_duplicate_provider_calls_before_persistence(){
+        assert!(Driver::validate_call_ids(["a","b"]).is_ok());
+        assert_eq!(Driver::validate_call_ids(["a","a"]),
+            Err("duplicate or missing tool call id"));
+        assert_eq!(Driver::validate_call_ids(["a","  "]),
+            Err("duplicate or missing tool call id"));
     }
 
     #[test]
