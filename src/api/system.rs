@@ -244,7 +244,7 @@ pub async fn commands(State(state): State<AppState>) -> Json<Value> {
         state.config.workspace.join("shared/commands.json"),
     ];
     for path in candidates {
-        if let Ok(text) = std::fs::read_to_string(&path) {
+        if let Ok(text) = crate::storage::bounded_file::read_utf8(&path, 1024 * 1024) {
             if let Ok(value) = serde_json::from_str::<Value>(&text) {
                 return Json(value);
             }

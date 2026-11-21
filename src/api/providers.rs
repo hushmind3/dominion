@@ -3,7 +3,6 @@ use axum::{extract::{Path,State},http::StatusCode,response::{IntoResponse,Respon
 use serde_json::{json,Value};
 use std::sync::{Arc,Mutex,OnceLock};
 use std::time::{Duration,Instant};
-use std::{fs::File,io::{self,Read},path::Path as FsPath};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use super::response::error;
@@ -19,14 +18,11 @@ fn codex_home_file(name: &str) -> Option<std::path::PathBuf> {
         .map(|home| home.join(name))
 }
 
-fn read_limited_utf8(path: impl AsRef<FsPath>, max_bytes: u64) -> io::Result<String> {
-    let mut bytes = Vec::new();
-    File::open(path)?.take(max_bytes + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > max_bytes {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "local file exceeds size limit"));
-    }
-    String::from_utf8(bytes)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+fn read_limited_utf8(
+    path: impl AsRef<std::path::Path>,
+    max_bytes: u64,
+) -> std::io::Result<String> {
+    crate::storage::bounded_file::read_utf8(path, max_bytes)
 }
 
 const MAX_LOCAL_AUTH_BYTES: u64 = 1024 * 1024;

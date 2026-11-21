@@ -3,3 +3,4 @@
 pub mod sqlite;
 pub mod migrations;
 pub mod vault;
+pub mod bounded_file;

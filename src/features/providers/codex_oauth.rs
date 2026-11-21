@@ -236,8 +236,8 @@ pub async fn fresh_access(
             .or_else(||std::env::var_os("HOME")
                 .map(|path|std::path::PathBuf::from(path).join(".codex")));
         if let Some(path) = home.map(|dir|dir.join("auth.json")) {
-            if let Ok(contents) = std::fs::read_to_string(path) {
-                if let Ok(cli) = serde_json::from_str::<Value>(&contents) {
+            if let Ok(contents) = crate::storage::bounded_file::read_bytes(path, 1024*1024) {
+                if let Ok(cli) = serde_json::from_slice::<Value>(&contents) {
                     let tokens = &cli["tokens"];
                     let expected = state.store.get("provider",provider_id)
                         .and_then(|provider|provider["accountId"].as_str().map(str::to_string));

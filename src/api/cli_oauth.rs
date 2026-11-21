@@ -102,7 +102,8 @@ pub(super) async fn credential_verified(source:&str)->bool{
         return text.contains("\"token_valid\": true")||text.contains("\"token_valid\":true");
     }
     if source=="gemini"{
-        return home().and_then(|h|std::fs::read(h.join(".gemini/oauth_creds.json")).ok())
+        return home().and_then(|h|crate::storage::bounded_file::read_bytes(
+            h.join(".gemini/oauth_creds.json"),1024*1024).ok())
             .and_then(|raw|serde_json::from_slice::<Value>(&raw).ok())
             .is_some_and(|v|v["access_token"].as_str().is_some()||v["refresh_token"].as_str().is_some());
     }

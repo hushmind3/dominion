@@ -69,7 +69,8 @@ pub(crate) fn artifact_witness(workspace:&std::path::Path,checks:&[Criterion])->
     entries.insert(name.to_string(),json!({"state":"unsupported_artifact"}));
    },
    Ok(_metadata)=>{
-    match std::fs::read(&target){
+    match crate::storage::bounded_file::read_bytes(
+     &target, (16*1024*1024).min(remaining_bytes as u64)){
      Ok(data) if data.len()<=16*1024*1024=>{
       remaining_bytes=remaining_bytes.saturating_sub(data.len());
       entries.insert(name.to_string(),json!({"state":"file",

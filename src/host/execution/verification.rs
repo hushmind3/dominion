@@ -371,7 +371,7 @@ pub(crate) fn fingerprint(path: &Path) -> Value {
     // signature and is never used to authorize access.
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     if meta.is_file() && meta.len() <= 8 * 1024 * 1024 {
-        if let Ok(bytes) = std::fs::read(path) {
+        if let Ok(bytes) = crate::storage::bounded_file::read_bytes(path, 8 * 1024 * 1024) {
             bytes.hash(&mut hasher);
             return json!({"bytes":meta.len(),"hash":hasher.finish().to_string()});
         }
@@ -558,12 +558,9 @@ pub(crate) fn acceptance_gaps(
                     && read_bounded_file(&resolved).is_some_and(|bytes| bytes == expected.as_bytes())
             }),
             "file_contains" => {
-                std::fs::metadata(&resolved)
-                    .map(|meta| meta.is_file() && meta.len() <= 8 * 1024 * 1024)
+                crate::storage::bounded_file::read_utf8(&resolved, 8 * 1024 * 1024)
+                    .map(|text| text.contains(check["contains"].as_str().unwrap_or("")))
                     .unwrap_or(false)
-                    && std::fs::read_to_string(&resolved)
-                        .map(|text| text.contains(check["contains"].as_str().unwrap_or("")))
-                        .unwrap_or(false)
             }
             "tool_succeeded" => evidence.iter().any(|item| {
                 successful_evidence(item) && tool_name(item) == check["tool"].as_str().unwrap_or("")

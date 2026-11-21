@@ -52,7 +52,7 @@ pub fn catalog() -> Vec<Value> {
     };
     for dir in dirs.flatten() {
         let path = dir.path().join("manifest.json");
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Ok(text) = crate::storage::bounded_file::read_utf8(&path, 256 * 1024) else {
             continue;
         };
         let Ok(mut value) = serde_json::from_str::<Value>(&text) else {
