@@ -101,8 +101,8 @@ pub(super) fn focus(history:Vec<Value>,query:&str,is_room:bool,can_reopen:bool)-
             let overlap=query_terms.iter().filter(|t|prior_terms.contains(t)).count();
             let source_name_hit=requested_attachment_name(&history[at]["content"],query);
             let score=overlap*5
-                +if source_name_hit{50}else{0}
-                +if wants_previous && action_query(previous){3}else{0};
+                + (if source_name_hit {50} else {0})
+                + (if wants_previous && action_query(previous) {3} else {0});
             if score>0 && best.is_none_or(|(best_score,best_at)|
                 score>best_score || (score==best_score && at>best_at)){
                 best=Some((score,at));
