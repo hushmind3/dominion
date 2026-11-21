@@ -398,8 +398,10 @@ mod tests{
         let (state,dir)=state();
         let listener=tokio::net::TcpListener::bind(("127.0.0.1",0)).await.unwrap();
         let port=listener.local_addr().unwrap().port();
-        let server=tokio::spawn(axum::serve(listener,routes().with_state(state.clone()))
-            .into_future());
+        let server_state=state.clone();
+        let server=tokio::spawn(async move{
+            let _=axum::serve(listener,routes().with_state(server_state)).await;
+        });
         let client=reqwest::Client::new();
         let root=format!("http://127.0.0.1:{port}");
         let epoch=uuid::Uuid::new_v4().to_string();
@@ -409,7 +411,7 @@ mod tests{
             .json(&register).send().await.unwrap();
         assert_eq!(unauthorized.status(),StatusCode::UNAUTHORIZED);
         let response=client.post(format!("{root}/v1/remote/register"))
-            .header("x-dominion-remote-token",&token)
+            .header("x-dominion-remote-token",token.as_str())
             .json(&register).send().await.unwrap();
         assert!(response.status().is_success());
         state.store.put("remote_task",&json!({
@@ -419,12 +421,12 @@ mod tests{
         })).unwrap();
         let poll=json!({"workerId":"peer1","workerEpoch":epoch});
         let first=client.post(format!("{root}/v1/remote/claim"))
-            .header("x-dominion-remote-token",&token)
+            .header("x-dominion-remote-token",token.as_str())
             .json(&poll).send().await.unwrap().json::<Value>().await.unwrap();
         let lease=first["task"]["leaseId"].as_str().unwrap().to_string();
         assert_eq!(first["task"]["status"],"running");
         let again=client.post(format!("{root}/v1/remote/claim"))
-            .header("x-dominion-remote-token",&token)
+            .header("x-dominion-remote-token",token.as_str())
             .json(&poll).send().await.unwrap().json::<Value>().await.unwrap();
         assert_eq!(again["reattached"],true);
         assert_eq!(again["task"]["leaseId"],lease);
@@ -432,14 +434,14 @@ mod tests{
         let receipt=json!({"workerId":"peer1","workerEpoch":epoch,
             "taskId":"task-wire","leaseId":lease});
         let renew=client.post(format!("{root}/v1/remote/renew"))
-            .header("x-dominion-remote-token",&token)
+            .header("x-dominion-remote-token",token.as_str())
             .json(&receipt).send().await.unwrap().json::<Value>().await.unwrap();
         assert_eq!(renew["cancelRequested"],true);
         let mut completed=receipt;
         completed["localJobId"]=json!("local-worker-1");
         completed["jobStatus"]=json!("cancelled");
         let result=client.post(format!("{root}/v1/remote/settle"))
-            .header("x-dominion-remote-token",&token)
+            .header("x-dominion-remote-token",token.as_str())
             .json(&completed).send().await.unwrap().json::<Value>().await.unwrap();
         assert_eq!(result["status"],"needs_review");
         server.abort();
