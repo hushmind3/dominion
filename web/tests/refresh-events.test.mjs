@@ -64,3 +64,15 @@ test('durable Task Team worker updates the existing execution surface',()=>{
    record:{id:'worker-1',executionId:'exec-1'}})
  assert.ok(matchesRefreshTarget('/api/executions',row.targets))
 })
+
+test('managed Team and remote Worker receipts refresh only the existing activity panel',()=>{
+ for(const kind of ['managed_team','managed_team_task','remote_task','remote_worker']){
+  const changed=classifyRefreshEvent({type:'record',kind,record:{id:'r-1'}})
+  assert.ok(matchesRefreshTarget('/api/activity/teams',changed.targets),kind)
+  assert.equal(matchesRefreshTarget('/api/providers',changed.targets),false)
+ }
+ const typed=classifyRefreshEvent({type:'run_state',runKind:'remote_task',
+  schemaVersion:1,eventSeq:49,runId:'rt-1'})
+ assert.ok(matchesRefreshTarget('/api/activity/teams',typed.targets))
+ assert.equal(matchesRefreshTarget('/api/jobs',typed.targets),false)
+})

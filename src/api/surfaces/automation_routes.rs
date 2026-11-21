@@ -10,6 +10,7 @@ pub(super) fn routes()->Router<AppState>{
         .route("/api/jobs/:id/steer",post(jobs::steer))
         .route("/api/tasks", get(tasks::list))
         .route("/api/tasks/:id", get(tasks::one))
+        .route("/api/activity/teams", get(executions::team_activity))
         .route("/api/executions", get(executions::list))
         .route("/api/executions/active", get(executions::active_executions))
         .route("/api/executions/:id", get(executions::one))

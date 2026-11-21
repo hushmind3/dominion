@@ -32,6 +32,8 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
    case 'job':add('/api/jobs');if(id)add('/api/jobs/'+encoded(id));break
    case 'execution':add('/api/executions');break
    case 'execution_operation':case 'task_team_work':add('/api/executions');break
+   case 'managed_team':case 'managed_team_task':case 'remote_task':case 'remote_worker':
+    add('/api/activity/teams');break
    case 'approval':add('/api/approvals');break
    case 'mcp':add('/api/mcp','/api/mcp/discover');break
    case 'skill':add('/api/skills');break
@@ -52,6 +54,8 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
    if(event.runId)add('/api/jobs/'+encoded(event.runId))
   }else if(event.runKind==='execution'||event.runKind==='task_team_work'){
    add('/api/executions')
+  }else if(['managed_team','managed_team_task','remote_task'].includes(event.runKind||'')){
+   add('/api/activity/teams')
   }else if(event.runKind==='room_work_assignment'){
    add('/api/rooms')
   }
