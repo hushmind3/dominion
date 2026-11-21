@@ -7,6 +7,13 @@
 - Coverage: unit regressions in `crates/dominion-agent-sdk/src/tool_discovery.rs` and `src/engine/chat/runtime/capability.rs`. No 27B task accuracy, real token billing or runtime validation is asserted before those checks execute.
 - External context: [MCP 2026-07-28 tools specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2026-07-28/server/tools.mdx) (tool lists can change) and [SCOUT hybrid tool retrieval, Aug 2026](https://arxiv.org/abs/2608.23992). DOMINION implements deterministic lexical+schema fusion, **not** SCOUT's dense vector stage.
 
+## 2026-11-21 update: Korean owner-intent routing across Native and Chat
+
+- The shared `crates/dominion-agent-algorithms/src/ranking.rs` now normalizes Korean inflected service requests (GitHub, Gmail, Drive, Calendar, Cloudflare, Railway) into authorized connector metadata. Two-character abbreviations are exact-token matches only, preventing e.g. `PR` from spuriously selecting unrelated `prompt` tools.
+- Native agent: `crates/dominion-agent-algorithms/src/tool_discovery.rs` selects a bounded initial provider schema subset without adding a second model call. `crates/dominion-agent-sdk/tests/progressive_tool_discovery.rs` checks that a scripted Korean GitHub issue task executes a real read-only host tool, persists its receipt, completes in exactly 2 model turns, and never fabricates an authorization.
+- Chat: `src/conversation/chat/runtime/selection.rs` uses the same ranking and now checks the Korean service-specific shortlist and disconnected-account exclusion.
+- **Evidence boundary:** this is synthetic-catalog + real SDK-kernel path regression, not a live model result, verified paid-token reduction, or a claim that all Korean intents are semantically retrieved. The current owner/route approvals and 13-tool bounded Native prefix remain authoritative. The browser and product CI must be checked for the exact final SHA.
+
 ## Cause and execution path
 
 The product's `src/engine/native_agent.rs` resolves the entire owner-approved built-in + MCP catalogue and passes it into `crates/dominion-agent-sdk/src/lib.rs`. Previously, each model round copied **every** tool name, description and JSON schema into the legacy JSON system prompt, and native providers received every schema in `complete_with_tools`. A 100-tool catalogue therefore incurred work even when only code inspection or shell validation was needed.

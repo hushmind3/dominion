@@ -412,6 +412,34 @@ mod room_catalog_cache_tests {
     }
 
     #[test]
+    fn korean_chat_github_intent_selects_connector_but_never_grants_it() {
+        let mut tools=(0..40).map(|index| json!({
+            "type":"function","function":{"name":format!("mcp__unrelated_{index}"),
+                "description":"Unrelated provider operation",
+                "parameters":{"type":"object"}}
+        })).collect::<Vec<_>>();
+        tools.push(json!({"type":"function","function":{
+            "name":"github_work_read","description":"Read GitHub pull requests and issues",
+            "parameters":{"type":"object","properties":{"operation":{"type":"string"}}}
+        }}));
+        tools.push(json!({"type":"function","function":{
+            "name":"google_workspace_read","description":"Read Gmail and Calendar",
+            "parameters":{"type":"object"}
+        }}));
+        let default=json!({"source":"builtin","implementation":"all"});
+        let query="깃허브에서 열린 풀리퀘스트 번호들을 확인해 주세요";
+        let selected=select_chat_tools(tools.clone(),query,&default);
+        assert!(selected.iter().any(|tool|tool_name(tool)=="github_work_read"));
+        assert!(!selected.iter().any(|tool|tool_name(tool)=="google_workspace_read"));
+        assert!(selected.len()<=8);
+        // Removing the connected account from the trusted input catalog makes
+        // it unreachable; relevance is not a new account grant.
+        tools.retain(|tool|tool_name(tool)!="github_work_read");
+        let disconnected=select_chat_tools(tools,query,&default);
+        assert!(!disconnected.iter().any(|tool|tool_name(tool)=="github_work_read"));
+    }
+
+    #[test]
     fn exact_greetings_skip_tools_without_hiding_followup_capabilities() {
         for input in ["안녕","안녕하세요 반가워요","안녕하세요!","hello","감사합니다"] {
             assert!(pure_greeting(input),"{input}");
