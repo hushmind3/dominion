@@ -192,6 +192,24 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
         }else{None};
         json!({"id":action["id"],"tool":tool,"targetPath":target})
     }else{Value::Null};
+    // The native provider already journals bounded provisional text and
+    // detected call identities while streaming. Surface only its current
+    // receiving phase; an interrupted or settled generation must never look
+    // like a confirmed result. Tool arguments are not part of this view.
+    let stream=&job["nativeStream"];
+    let stream_progress=if job["status"]=="running" && stream["stage"]=="receiving" {
+        let visible=stream["visibleTail"].as_str().unwrap_or("")
+            .chars().rev().take(1600).collect::<Vec<_>>()
+            .into_iter().rev().collect::<String>();
+        let calls=stream["pendingCalls"].as_array()
+            .map(|items|items.iter().take(12).filter_map(|call|{
+                let id=call["id"].as_str().filter(|s|!s.is_empty())?;
+                let name=call["name"].as_str().filter(|s|!s.is_empty())?;
+                Some(json!({"id":id,"name":name}))
+            }).collect::<Vec<_>>()).unwrap_or_default();
+        if visible.is_empty() && calls.is_empty() {Value::Null}
+        else {json!({"stage":"receiving","visibleTail":visible,"pendingCalls":calls})}
+    }else{Value::Null};
     json!({
         "id":job["id"],"status":status,"phase":phase,
         "instruction":job["input"]["prompt"],
@@ -212,7 +230,8 @@ pub(crate) fn project(state:&AppState,job:&Value)->Value{
             "verificationChecks":snapshot["checks"],
             "toolReceipts":tool_receipts,"toolReceiptsOmitted":omitted_receipts,
             "artifactEvidence":artifact_evidence,
-            "pendingCall":approval,"uncertainAction":uncertain_action,"events":events
+            "pendingCall":approval,"uncertainAction":uncertain_action,
+            "nativeStream":stream_progress,"events":events
         }
     })
 }
@@ -893,6 +912,33 @@ mod tests{
             Json(json!({"callId":"deny-call"}))).await.status(),StatusCode::CONFLICT);
         crate::test_support::cleanup_dir(root);
     }
+    #[test]
+    fn native_run_projects_only_current_bounded_model_preview_without_tool_arguments(){
+        let (state,root)=temporary_state();
+        let tail="🧠".repeat(1700);
+        let mut job=json!({"id":"preview","kind":"prompt","status":"running",
+            "input":{"prompt":"Inspect"},
+            "nativeState":{"status":"running"},
+            "nativeStream":{"stage":"receiving","visibleTail":tail,
+                "pendingCalls":[{"id":"call-1","name":"workspace_read",
+                    "arguments":{"secret":"DO_NOT_EXPOSE"}}]}
+        });
+        let visible=project(&state,&job);
+        let preview=&visible["checkpoint"]["nativeStream"];
+        assert_eq!(preview["stage"],"receiving");
+        assert_eq!(preview["visibleTail"].as_str().unwrap().chars().count(),1600);
+        assert_eq!(preview["pendingCalls"][0]["id"],"call-1");
+        assert_eq!(preview["pendingCalls"][0]["name"],"workspace_read");
+        assert!(preview["pendingCalls"][0].get("arguments").is_none());
+        assert!(!preview.to_string().contains("DO_NOT_EXPOSE"));
+        job["nativeStream"]["stage"]=json!("interrupted");
+        assert!(project(&state,&job)["checkpoint"]["nativeStream"].is_null());
+        job["nativeStream"]["stage"]=json!("receiving");
+        job["status"]=json!("completed");
+        assert!(project(&state,&job)["checkpoint"]["nativeStream"].is_null());
+        let _=std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn main_ui_projects_only_real_progress_and_recoverable_states(){
         let (state,root)=temporary_state();
