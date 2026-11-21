@@ -61,7 +61,7 @@ cross-host verification. Workers use independent local workspaces.
 
 ## Lead/Worker Team DAG remote research dispatch
 
-`team_start` accepts `allowRemoteWorkers:true` and explicit step
+The `team_execute` tool accepts `allowRemoteWorkers:true` and explicit step
 `{"id":"research","profile":"general","remoteWorker":true,"prompt":"..."}`.
 The remote adapter uses the existing CAS-admitted prompt job, writes a durable
 replay fence, then enqueues one deterministic remote SDK ticket. A remote
