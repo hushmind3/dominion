@@ -155,8 +155,16 @@ fn file_digest(path:&Path)->Result<Option<String>,String>{
             if !meta.file_type().is_file(){
                 return Err("candidate dependency is a symlink or non-file".into());
             }
-            let bytes=std::fs::read(path).map_err(|e|e.to_string())?;
-            Ok(Some(format!("{:x}",Sha256::digest(bytes))))
+            use std::io::Read;
+            let mut file=std::fs::File::open(path).map_err(|e|e.to_string())?;
+            let mut hasher=Sha256::new();
+            let mut buffer=[0u8;64*1024];
+            loop{
+                let count=file.read(&mut buffer).map_err(|e|e.to_string())?;
+                if count==0{break;}
+                hasher.update(&buffer[..count]);
+            }
+            Ok(Some(format!("{:x}",hasher.finalize())))
         }
         Err(error) if error.kind()==std::io::ErrorKind::NotFound=>Ok(None),
         Err(error)=>Err(error.to_string()),
@@ -180,6 +188,15 @@ fn clone_dependencies(source:&Path,target:&Path,paths:&BTreeSet<PathBuf>)
             if folder.is_symlink(){return Err("candidate parent is a symlink".into());}
             parent=folder.parent();
         }
+        let remaining=MAX_TOTAL_BYTES.saturating_sub(total);
+        if let Ok(meta)=std::fs::symlink_metadata(&from){
+            if !meta.file_type().is_file(){
+                return Err("candidate dependency is a symlink or non-file".into());
+            }
+            if meta.len()>remaining as u64{
+                return Err("candidate file snapshot exceeds 8 MiB".into());
+            }
+        }
         let digest=file_digest(&from)?;
         baseline[raw.as_str()]=match &digest{Some(s)=>json!(s),None=>Value::Null};
         let into=target.join(relative);
@@ -187,11 +204,9 @@ fn clone_dependencies(source:&Path,target:&Path,paths:&BTreeSet<PathBuf>)
             std::fs::create_dir_all(parent).map_err(|e|e.to_string())?;
         }
         if digest.is_some(){
-            let bytes=std::fs::read(&from).map_err(|e|e.to_string())?;
+            let bytes=crate::remote::read_file_limited(&from,remaining)
+                .map_err(|_|"candidate file snapshot exceeds 8 MiB")?;
             total=total.saturating_add(bytes.len());
-            if total>MAX_TOTAL_BYTES{
-                return Err("candidate file snapshot exceeds 8 MiB".into());
-            }
             std::fs::write(into,bytes).map_err(|e|e.to_string())?;
         }
     }

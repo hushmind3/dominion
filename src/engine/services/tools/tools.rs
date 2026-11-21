@@ -1333,8 +1333,8 @@ async fn checked_write(
             return write_text(path, content).await;
         };
         let canonical = canonical.map_err(|error| error.to_string())?;
-        let bytes = match tokio::fs::read(&canonical).await {
-            Ok(bytes) => bytes,
+        let observed = match hash_file(&canonical).await {
+            Ok(observed) => observed,
             Err(error) => {
                 return Ok(json!({
                     "error": format!("파일을 다시 읽지 못했습니다: {error}"),
@@ -1343,7 +1343,6 @@ async fn checked_write(
                 }))
             }
         };
-        let observed = format!("{:x}", Sha256::digest(&bytes));
         if observed != expected {
             return Ok(json!({
                 "error": "파일이 읽은 뒤 변경되었습니다. 다시 읽고 판단하세요.",
@@ -1491,8 +1490,7 @@ async fn write_text(path: &Path, content: &str) -> Result<Value, String> {
     }
     // A successful file operation may be a no-op. Preserve that distinction
     // so the independent verifier never accepts rewriting identical bytes.
-    let prior=tokio::fs::read(path).await.ok()
-        .map(|bytes|format!("{:x}",Sha256::digest(bytes)));
+    let prior=hash_file(path).await.ok();
     tokio::fs::write(path, content)
         .await
         .map_err(|error| format!("{}: {error}", path.display()))?;
@@ -1504,6 +1502,19 @@ async fn write_text(path: &Path, content: &str) -> Result<Value, String> {
         "postSha256":digest,
         "changed":prior.as_deref()!=Some(digest.as_str())
     }))
+}
+
+async fn hash_file(path:&Path)->std::io::Result<String>{
+    use tokio::io::AsyncReadExt;
+    let mut file=tokio::fs::File::open(path).await?;
+    let mut hasher=Sha256::new();
+    let mut buffer=[0u8;64*1024];
+    loop{
+        let count=file.read(&mut buffer).await?;
+        if count==0{break;}
+        hasher.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}",hasher.finalize()))
 }
 
 /// A tool command gets a private Unix process group. Killing only the shell
