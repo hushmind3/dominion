@@ -52,6 +52,14 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  // server has accepted the exact owner decision.
  const pollEpoch=useRef(0)
  const mutationInProgress=useRef(false)
+ // Ignore late history loads after an owner selection or successful create.
+ // Only persist the chosen job ID; server receipts remain authoritative.
+ const historyEpoch=useRef(0)
+ const selectRun=(selected:SdkRun)=>{
+  historyEpoch.current+=1
+  setRun(selected)
+  try{window.localStorage.setItem('dominion.native.selectedRun',selected.id)}catch{}
+ }
  // A late response from a different selected task must never replace the active run.
  const updateRun=(next:SdkRun)=>{
   setRun(current=>current?.id===next.id?next:current)
@@ -60,8 +68,15 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  }
  useEffect(()=>{
   let alive=true
+  const epoch=historyEpoch.current
   get<SdkRun[]>('/api/sdk/runs').then(list=>{
-   if(alive){setRuns(list);if(list.length)setRun(list[0])}
+   if(!alive||epoch!==historyEpoch.current)return
+   setRuns(list)
+   let preferred=''
+   try{preferred=window.localStorage.getItem('dominion.native.selectedRun')||''}catch{}
+   if(list.length)setRun(current=>
+    list.find(item=>item.id===current?.id)||
+    list.find(item=>item.id===preferred)||list[0])
   }).catch(()=>{})
   return()=>{alive=false}
  },[])
@@ -104,7 +119,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     instruction:instruction.trim(),providerId:providerId||undefined,
     verifyCommand:verification.trim()||undefined,algorithmId,maxRounds
    })
-   setRun(created)
+   selectRun(created)
    setRuns(rows=>[created,...rows.filter(row=>row.id!==created.id)].slice(0,30))
    setSteering('')
   }catch(e){setError((e as Error).message)}
@@ -161,15 +176,20 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  }
  const reload=async()=>{
   setError('')
+  const epoch=historyEpoch.current
+  const selectedId=run?.id
   try{
    const list=await get<SdkRun[]>('/api/sdk/runs')
+   if(epoch!==historyEpoch.current)return
    setRuns(list)
    setDisconnected(false)
-   if(run?.id){
-    const selected=list.find(row=>row.id===run.id)
-    if(selected)setRun(selected)
+   if(selectedId){
+    const selected=list.find(row=>row.id===selectedId)
+    if(selected)setRun(current=>current?.id===selectedId?selected:current)
    }
-  }catch(e){setError((e as Error).message)}
+  }catch(e){
+   if(epoch===historyEpoch.current)setError((e as Error).message)
+  }
  }
  const status=run?.status||''
  const call=run?.checkpoint?.pendingCall
@@ -235,7 +255,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      <select id="sdk-history" className="min-h-11 min-w-0 rounded-lg border border-[#E7E0D5] bg-white px-2 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2"
       value={run?.id||''} onChange={e=>{
        const item=runs.find(row=>row.id===e.target.value)
-       if(item){setRun(item);setSteering('');setObservation('');setError('')}
+       if(item){selectRun(item);setSteering('');setObservation('');setError('')}
       }}>
       {runs.map(item=><option key={item.id} value={item.id}>
        {item.status} · {item.instruction.slice(0,75)}</option>)}

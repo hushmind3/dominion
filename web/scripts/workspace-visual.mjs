@@ -28,6 +28,8 @@ let sdkRuns=[],teams=[],remoteTasks=[]
 // that old payload afterwards must not resurrect approval in React state.
 let holdNextSdkRead=false
 let releaseHeldSdkRead=null
+let holdNextSdkList=false
+let releaseHeldSdkList=null
 let holdNextTeamRead=false,releaseHeldTeamRead=null
 let holdNextRemoteRead=false,releaseHeldRemoteRead=null
 const send=(route,payload,status=200)=>route.fulfill({
@@ -97,7 +99,16 @@ async function mock(route){
   remoteTasks=remoteTasks.map(t=>t.id===id?{...t,status:'cancelled'}:t)
   return send(route,{id,status:'cancelled'})
  }
- if(n==='/api/sdk/runs'&&m==='GET')return send(route,sdkRuns)
+ if(n==='/api/sdk/runs'&&m==='GET'){
+  const snapshot=[...sdkRuns]
+  if(holdNextSdkList){
+   holdNextSdkList=false
+   await new Promise(resolve=>{releaseHeldSdkList=resolve})
+   return route.fulfill({status:200,contentType:'application/json',
+    headers:{'x-dominion-old-sdk-list':'1'},body:JSON.stringify(snapshot)})
+  }
+  return send(route,sdkRuns)
+ }
  if(n==='/api/sdk/runs'&&m==='POST'){
   const data=body();requests.sdk.push(data)
   const item={id:'sdk-ux-'+requests.sdk.length,status:'queued',
@@ -213,7 +224,11 @@ try{
  assert.ok(await page.evaluate(()=>Boolean(document.activeElement?.closest('.workspace-settings'))),
   'Keyboard focus must stay inside settings dialog')
  // Native agent strategy and budget are part of the actual POST.
+ // A stale initial empty list must never displace a newly created task.
+ holdNextSdkList=true
  await open(page,'home')
+ for(let n=0;n<40&&!releaseHeldSdkList;n++)await sleep(50)
+ assert.ok(releaseHeldSdkList,'Expected an in-flight Native history request')
  await page.locator('#sdk-goal').fill('Inspect the project boundary')
  await page.locator('summary').filter({hasText:'고급 설정: 전략'}).click()
  await page.locator('#sdk-strategy').selectOption('focused-v1')
@@ -222,6 +237,15 @@ try{
  assert.equal(requests.sdk.length,1)
  assert.equal(requests.sdk[0].algorithmId,'focused-v1')
  assert.equal(requests.sdk[0].maxRounds,12)
+ await page.locator('#sdk-history').waitFor({timeout:8000})
+ assert.equal(await page.locator('#sdk-history').inputValue(),'sdk-ux-1')
+ const oldSdkList=page.waitForResponse(response=>
+  response.headers()['x-dominion-old-sdk-list']==='1',{timeout:8000})
+ releaseHeldSdkList()
+ releaseHeldSdkList=null
+ await oldSdkList
+ assert.equal(await page.locator('#sdk-history').inputValue(),'sdk-ux-1',
+  'stale initial history must not deselect the newly created job')
  await screenshot(page,'1440-agent-run.png')
  sdkRuns[0]={...sdkRuns[0],status:'awaiting_approval',checkpoint:{
   ...sdkRuns[0].checkpoint,pendingCall:{id:'tool-pending-1',
