@@ -124,3 +124,25 @@
 @media(prefers-reduced-motion:reduce){
  .room-team-advanced summary::after{transition:none}
 }
+
+
+/* Readable settings for rooms with many agents. Scoped to the existing
+   roster/settings view: no global theme, menu or navigation replacement. */
+.room-inspector{width:332px;flex:0 0 332px}
+#root .room-inspector-title h2{font-size:17px!important}
+.room-settings-form label>span:first-child{font-size:13px}
+.room-settings-form input:not([type=checkbox]),.room-settings-form textarea,.room-settings-form select{
+ min-height:38px;padding:10px 12px;font-size:13px!important;line-height:1.45
+}
+.room-settings-form .room-note,.room-note{font-size:12px;line-height:1.65}
+.room-roster-heading{font-size:13px}
+.room-roster-heading>span{font-size:12px}
+.room-roster-option{min-height:44px;gap:9px!important;padding:8px 10px}
+.room-roster-option input{width:16px;height:16px}
+.room-roster-option strong{font-size:12px}
+.room-roster-option small{font-size:11px;max-width:185px}
+.room-dialog-body .room-roster-option small{max-width:170px}
+@media(max-width:839px){
+ .room-inspector{width:min(332px,94%);flex-basis:auto}
+ .room-dialog-body .room-roster-options{grid-template-columns:repeat(2,minmax(0,1fr))}
+}

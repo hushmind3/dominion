@@ -12,7 +12,7 @@ import {RunEventTimeline} from '../components/RunEventTimeline'
 import {useOwnerProfile} from '../components/OwnerProfile'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
 import {useCallback,useEffect,useMemo,useRef,useState,type ChangeEvent,type FormEvent} from 'react'
-import {Activity,ArrowDown,ArrowRight,ArrowUp,AtSign,BookOpenText,Bot,Check,ChevronDown,ChevronLeft,ChevronRight,Clock3,Copy,FileText,Hash,LoaderCircle,MessageCircle,MoreHorizontal,Menu,PanelLeft,Paperclip,Settings,Network,Plus,RefreshCw,RotateCcw,Settings2,ShieldCheck,Square,TerminalSquare,Trash2,UserRound,UsersRound,X} from 'lucide-react'
+import {Activity,ArrowDown,ArrowRight,ArrowUp,AtSign,BookOpenText,Bot,Check,ChevronDown,ChevronLeft,ChevronRight,Clock3,Copy,FileText,Hash,LoaderCircle,MessageCircle,MoreHorizontal,Menu,PanelLeft,Paperclip,Settings,Plus,RefreshCw,RotateCcw,Settings2,ShieldCheck,Square,TerminalSquare,Trash2,UserRound,UsersRound,X} from 'lucide-react'
 import {get,post,del,resolveApproval,uploadAttachment,type Agent,type Attachment,type ChatMessage,type ModelOption,type Provider} from '../api'
 import {Button,TextArea,TextInput,SelectInput} from '../components/Primitives'
 import {DialogBackdrop,DialogPanel} from '../components/Dialog'
@@ -417,7 +417,7 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
         </div>,document.body)}
        </div>
        <ConversationSettings open={showSettings} onOpenChange={open=>{setShowSettings(open);if(open){setPermissionOpen(false);setRecipientsOpen(false)}}} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={thinkingEnabled} setThinkingEnabled={setThinkingEnabled} reasoningEffort={reasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={current.toolsEnabled===true} setToolsEnabled={value=>void changeRoomOption('toolsEnabled',value)} autoLearn={current.autoLearning===true} setAutoLearn={value=>void changeRoomOption('autoLearning',value)} optionsBusy={optionsBusy} learning={knowledgeBusy} learnDisabled={!sessionId||running} onLearn={learnKnowledge} notice={knowledgeNotice}/>
-       <Button variant="ghost" className="group-settings-trigger !h-7 !min-h-0 !gap-1.5 !rounded-md !border-0 !px-2 !py-0 !text-[11px] !font-medium text-[#7C7469]" title={t('rooms.groupSettings')} aria-label={t('rooms.groupSettings')} aria-expanded={inspector} onClick={()=>{setInspector(value=>!value);setRecipientsOpen(false);setPermissionOpen(false);setShowSettings(false)}}><Network size={14}/><span className="hidden sm:inline">{t('rooms.groupSettings')}</span></Button>
+       <Button variant="ghost" className="group-settings-trigger !min-h-9 !gap-2 !rounded-lg !border-0 !px-2.5 !text-[12px] !font-semibold text-[#6C6257]" title={t('rooms.groupSettings')} aria-label={t('rooms.groupSettings')} aria-expanded={inspector} onClick={()=>{setInspector(value=>!value);setRecipientsOpen(false);setPermissionOpen(false);setShowSettings(false)}}><Settings2 size={16}/><span className="hidden sm:inline">{t('rooms.groupSettings')}</span></Button>
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-2">
        <span className="hidden text-[10px] text-[#9C9388] sm:inline">{t('chat.enterHint')}</span>

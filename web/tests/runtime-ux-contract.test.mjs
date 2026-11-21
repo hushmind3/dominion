@@ -206,3 +206,14 @@ test('team outcomes prioritize saved agent answers over raw receipts',()=>{
  assert.match(native,/"nodes":nodes/)
  assert.match(native,/"answer":output/)
 })
+
+test('room configuration keeps recognizable icons and usable roster hit targets',()=>{
+ const style=source('src/pages/Rooms.css')
+ assert.match(rooms,/group-settings-trigger !min-h-9/)
+ assert.match(rooms,/<Settings2 size=\{16\}\/><span className="hidden sm:inline">/)
+ assert.doesNotMatch(rooms,/<Network size=\{14\}\/><span className="hidden sm:inline">/)
+ assert.match(style,/\.room-inspector\{width:332px/)
+ assert.match(style,/\.room-roster-option input\{width:16px;height:16px\}/)
+ assert.match(style,/\.room-roster-option strong\{font-size:12px\}/)
+ assert.match(style,/\.room-settings-form input:not\(\[type=checkbox\]\)/)
+})
