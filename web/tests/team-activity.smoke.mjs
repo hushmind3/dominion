@@ -16,6 +16,7 @@ const server=spawn(process.execPath,[resolve(root,'node_modules/vite/bin/vite.js
 });
 let browser;
 const data={
+  leadJobs:[{id:'lead-job-fixture',status:'queued',createdAt:'2026-11-21T00:00:00Z',sessionId:'lead-session'}],
   teams:[{id:'managed-team-fixture',status:'running',leadAgentId:'lead',
     leadSessionId:'lead-session',verified:false,resumeAvailable:false,
     pendingRemoteArtifactTaskIds:[],tasks:[
@@ -60,6 +61,10 @@ try{
   });
   await page.goto(address+'/#/activity',{waitUntil:'domcontentloaded'});
   await page.getByRole('heading',{name:'멀티에이전트 팀 작업'}).waitFor({timeout:10000});
+  assert.ok(await page.getByText('저장된 Lead 작업',{exact:false}).first().isVisible(),
+    'durable queued Lead job should appear on Activity');
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.getByText('저장된 Lead 작업',{exact:false}).first().waitFor({timeout:10000});
   await page.locator('button[aria-expanded="false"]').filter({hasText:'m-fixture'}).click();
   for(const label of ['Worker 오프라인','선행 작업 대기','파일 변경 승인됨',
     '로컬 적용·해시 검증 완료']){

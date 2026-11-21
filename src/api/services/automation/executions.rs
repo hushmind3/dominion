@@ -120,6 +120,16 @@ fn team_activity_view(team:&Value, members:&[Value], remote_tasks:&[Value],
     })
 }
 
+/// Persisted, compact Lead-job status for resuming an operator's view after
+/// reload, before a native Team DAG exists. Never export raw owner instructions.
+fn lead_job_view(job:&Value)->Value{
+    let error=job["error"].as_str().or_else(||
+        job["result"]["reason"].as_str())
+        .map(|s|s.chars().take(240).collect::<String>());
+    json!({"id":job["id"],"status":job["status"],
+        "sessionId":job["sessionId"],"createdAt":job["createdAt"],
+        "error":error})
+}
 /// Read-only visibility for the existing execution-records screen.
 /// Run IDs are public to the local user, not authorization to apply effects.
 pub async fn team_activity(State(state):State<AppState>)->Json<Value>{
@@ -144,7 +154,16 @@ pub async fn team_activity(State(state):State<AppState>)->Json<Value>{
     }).collect::<Vec<Value>>();
     workers.sort_by(|a,b|a["id"].as_str().cmp(&b["id"].as_str()));
     workers.truncate(64);
+    let mut lead_jobs=state.store.all("job").into_iter()
+        .filter(|job|job["kind"]=="prompt"
+            && job["input"]["uiSource"]=="team_activity")
+        .collect::<Vec<_>>();
+    lead_jobs.sort_by(|a,b|b["createdAt"].as_str().unwrap_or("")
+        .cmp(a["createdAt"].as_str().unwrap_or(""))
+        .then_with(||b["id"].as_str().cmp(&a["id"].as_str())));
+    lead_jobs.truncate(8);
     Json(json!({
+        "leadJobs":lead_jobs.iter().map(lead_job_view).collect::<Vec<_>>(),
         "teams":teams.iter().take(30).map(|team|
             team_activity_view(team,&members,&remote_tasks,&workers,&approvals)).collect::<Vec<_>>(),
         "remoteWorkers":workers,
@@ -264,6 +283,22 @@ pub async fn execution_operations(
 #[cfg(test)]
 mod team_activity_tests{
     use super::*;
+    #[test]
+    fn lead_projection_exposes_status_but_no_private_prompt_or_receipts(){
+        let job=json!({"id":"lead-job","kind":"prompt","status":"needs_review",
+            "sessionId":"lead-session","createdAt":"2026-11-21T00:00:00Z",
+            "input":{"uiSource":"team_activity","prompt":"PRIVATE_OWNER_PROMPT"},
+            "autonomousState":{"receipts":[{"content":"PRIVATE_RECEIPT"}]},
+            "result":{"status":"needs_review","reason":"Inspect uncertain effects"}});
+        let visible=lead_job_view(&job);
+        assert_eq!(visible["id"],"lead-job");
+        assert_eq!(visible["status"],"needs_review");
+        assert_eq!(visible["error"],"Inspect uncertain effects");
+        assert!(!visible.to_string().contains("PRIVATE_OWNER_PROMPT"));
+        assert!(!visible.to_string().contains("PRIVATE_RECEIPT"));
+        assert!(visible.get("input").is_none());
+        assert!(visible.get("autonomousState").is_none());
+    }
     #[test]
     fn team_ui_uses_real_worker_heartbeats_dependencies_and_pending_approvals(){
         let team=json!({"id":"team","status":"running","tasks":[

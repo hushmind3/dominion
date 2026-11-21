@@ -19,10 +19,10 @@ type Team={
  verified:boolean;createdAt?:string;updatedAt?:string;resumeAvailable?:boolean;
  pendingRemoteArtifactTaskIds:string[];tasks:TeamTask[]
 }
-type ActivityData={teams:Team[];remoteWorkers:Worker[];remoteConfigured?:boolean}
+type ActivityData={teams:Team[];remoteWorkers:Worker[];remoteConfigured?:boolean;leadJobs?:LeadJob[]}
 type ArtifactReview={teamId:string;remoteTaskId:string;status:string;reviewDigest:string;patch:string;files:{path:string;sha256:string}[]}
 type LeadJob={id:string;status:string;sessionId?:string;error?:string}
-const empty:ActivityData={teams:[],remoteWorkers:[],remoteConfigured:false}
+const empty:ActivityData={teams:[],remoteWorkers:[],remoteConfigured:false,leadJobs:[]}
 const target=(teamId:string,taskId:string)=>'/api/activity/teams/'+encodeURIComponent(teamId)+'/artifacts/'+encodeURIComponent(taskId)
 function goToLead(sessionId?:string){
  if(sessionId)window.location.hash='#/chat?session='+encodeURIComponent(sessionId)
@@ -59,6 +59,12 @@ export function TeamActivity(){
  const [review,setReview]=useState<ArtifactReview|null>(null)
  const [queuedJobId,setQueuedJobId]=useState('')
  const queued=useRemote<LeadJob>(queuedJobId?'/api/jobs/'+encodeURIComponent(queuedJobId):null,{id:'',status:''})
+ // Persisted, server-owned jobs remain visible after reload, even before a
+ // real Team DAG is created. Just-launched jobs retain a faster status view.
+ const persistedLeads=activity.value.leadJobs||[]
+ const leadJobs=queuedJobId&&!persistedLeads.some(job=>job.id===queuedJobId)
+  ? [queued.value.id===queuedJobId?queued.value:{id:queuedJobId,status:'queued'},...persistedLeads]
+  : persistedLeads.map(job=>job.id===queuedJobId&&queued.value.id===job.id?queued.value:job)
  const runnable=agents.value.filter(agent=>agent.id&&agent.providerId&&agent.model&&agent.enabled!==false&&agent.disabled!==true)
  const lead=runnable.find(agent=>agent.id===leadId)||runnable[0]
  const workers=activity.value.remoteWorkers
@@ -101,6 +107,17 @@ export function TeamActivity(){
    setQueuedJobId(saved.jobId)
    setNotice(en?'Lead job queued. The team appears once the Lead commits its native DAG.':'Lead 작업이 대기열에 등록됐습니다. Lead가 실제 작업 DAG를 생성하면 팀 목록에 나타납니다.')
    setPrompt('');setCreateOpen(false);reload()
+  }catch(e){setError((e as Error).message)}finally{setBusy('')}
+ }
+ const cancelLead=async(job:LeadJob)=>{
+  if(busy||!active(job.status))return
+  if(!window.confirm(en?'Stop this queued Lead job? In-flight effects may need review.':'대기 중이거나 실행 중인 Lead 작업을 중단하시겠습니까? 진행 중인 효과는 검토가 필요할 수 있습니다.'))return
+  setBusy('cancelLead'+job.id);setError('');setNotice('')
+  try{
+   await post('/api/jobs/'+encodeURIComponent(job.id)+'/cancel',{})
+   setNotice(en?'Lead cancellation recorded. Uncertain effects still require review.':'Lead 중단 요청을 저장했습니다. 결과가 불확실한 실행은 검토가 필요합니다.')
+   if(queuedJobId===job.id)void queued.reload()
+   reload()
   }catch(e){setError((e as Error).message)}finally{setBusy('')}
  }
  const control=async(team:Team,operation:'stop'|'resume')=>{
@@ -207,11 +224,12 @@ export function TeamActivity(){
   </Panel>}
   {error&&<p role="alert" className="mb-3 break-words rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}
   {notice&&<p role="status" className="mb-3 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-xs text-[#5C544A]">{notice}</p>}
-  {queuedJobId&&<div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-[#FAF7F1] p-3 text-[11px]">
-   <Activity size={14}/><span className="min-w-0 flex-1">{en?'Latest Lead job':'최근 Lead 작업'} · {queuedJobId.slice(-12)}</span><StatusPill status={queued.value.status||'queued'}/>
-   {queued.value.sessionId&&<Button size="sm" variant="ghost" onClick={()=>goToLead(queued.value.sessionId)}>{en?'Open Lead':'Lead 대화'} <ChevronRight size={13}/></Button>}
-   {active(queued.value.status)&&<Button size="sm" variant="danger" disabled={Boolean(busy)} onClick={async()=>{setBusy('cancelJob');try{await post('/api/jobs/'+encodeURIComponent(queuedJobId)+'/cancel',{});void queued.reload();reload()}catch(e){setError((e as Error).message)}finally{setBusy('')}}}><Square size={13}/>{en?'Stop':'중단'}</Button>}
-  </div>}
+  {leadJobs.slice(0,5).map(job=><div key={job.id} className="mb-2 flex min-w-0 flex-wrap items-center gap-2 rounded-lg bg-[#FAF7F1] p-3 text-[11px]">
+   <Activity size={14} className="shrink-0"/><span className="min-w-0 flex-1 break-all">{en?'Saved Lead job':'저장된 Lead 작업'} · {job.id.slice(-12)}</span><StatusPill status={job.status||'queued'}/>
+   {job.sessionId&&<Button size="sm" variant="ghost" onClick={()=>goToLead(job.sessionId)}>{en?'Open Lead':'Lead 대화'} <ChevronRight size={13}/></Button>}
+   {active(job.status)&&<Button size="sm" variant="danger" disabled={Boolean(busy)} onClick={()=>void cancelLead(job)}><Square size={13}/>{en?'Stop':'중단'}</Button>}
+   {job.error&&<span role="alert" className="w-full break-words text-rose-700">{job.error}</span>}
+  </div>)}
   <Panel className="overflow-hidden p-4 sm:p-5">
    {!activity.value.teams.length&&<p className="py-5 text-center text-xs text-[#8A8176]">{activity.loading?(en?'Loading teams…':'팀 작업 불러오는 중…'):(en?'No saved managed teams yet.':'아직 저장된 팀 작업이 없습니다.')}</p>}
    <div className="space-y-2">

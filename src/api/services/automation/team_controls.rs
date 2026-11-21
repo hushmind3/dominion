@@ -296,6 +296,13 @@ mod tests{
             .unwrap().to_string();
         assert_eq!(state.store.get("job",&job_id).unwrap()
             ["input"]["teamUiWorkerIds"],json!(["worker"]));
+        let persisted=client.get(&endpoint).send().await.unwrap()
+            .json::<Value>().await.unwrap();
+        let visible=persisted["leadJobs"].as_array().unwrap()
+            .iter().find(|job|job["id"]==job_id)
+            .expect("queued native Lead remains visible after activity reload");
+        assert!(visible["status"].is_string());
+        assert!(visible.get("input").is_none());
         assert_eq!(client.post(format!("{endpoint}/missing/stop"))
             .send().await.unwrap().status(),reqwest::StatusCode::NOT_FOUND);
         assert_eq!(client.get(format!("{endpoint}/missing/artifacts/t-1"))
