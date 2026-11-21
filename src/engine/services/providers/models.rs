@@ -10,6 +10,12 @@ const RUNTIME_PORT: u16 = 4319;
 const PROVIDER_ID: &str = "dominion-native";
 const MODEL_KIND: &str = "model_job";
 const EXTERNAL_KIND: &str = "external_model";
+const MAX_LLAMA_RELEASE_ARCHIVE_BYTES:u64=1024*1024*1024;
+
+struct InstallTempDir(PathBuf);
+impl Drop for InstallTempDir{
+    fn drop(&mut self){let _=std::fs::remove_dir_all(&self.0);}
+}
 pub static RUNTIME_CHANGE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static DOWNLOAD_COMMIT: Mutex<()> = Mutex::new(());
 // Register a model-file owner atomically; per-job download guards cannot
@@ -871,6 +877,10 @@ async fn install_from_release(state: &AppState) -> Result<(PathBuf, String), Str
         .as_str()
         .unwrap_or("llama.cpp")
         .to_string();
+    let expected_size=asset["size"].as_u64().unwrap_or(0);
+    if expected_size>MAX_LLAMA_RELEASE_ARCHIVE_BYTES{
+        return Err("llama.cpp 압축 파일이 1 GiB 한도를 초과했습니다.".into());
+    }
     let url = asset["browser_download_url"]
         .as_str()
         .ok_or("llama.cpp 다운로드 주소가 없습니다.")?;
@@ -879,6 +889,7 @@ async fn install_from_release(state: &AppState) -> Result<(PathBuf, String), Str
         .data_dir
         .join(format!("llama-install-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp).map_err(|error| error.to_string())?;
+    let _cleanup=InstallTempDir(temp.clone());
     let archive = temp.join("llama.zip");
     let mut response = client
         .get(url)
@@ -889,7 +900,10 @@ async fn install_from_release(state: &AppState) -> Result<(PathBuf, String), Str
         .map_err(|error| format!("llama.cpp 다운로드 실패: {error}"))?
         .error_for_status()
         .map_err(|error| format!("llama.cpp 다운로드 HTTP 오류: {error}"))?;
-    let total = response.content_length().unwrap_or(0);
+    let total = response.content_length().unwrap_or(expected_size);
+    if total>MAX_LLAMA_RELEASE_ARCHIVE_BYTES{
+        return Err("llama.cpp 압축 파일이 1 GiB 한도를 초과했습니다.".into());
+    }
     set_install(install_progress(
         "downloading",
         "release",
@@ -898,28 +912,46 @@ async fn install_from_release(state: &AppState) -> Result<(PathBuf, String), Str
         total,
         &asset_name,
     ));
-    let mut bytes = Vec::new();
+    let mut options=tokio::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut archive_file=options.open(&archive).await.map_err(|error|error.to_string())?;
+    let mut downloaded=0u64;
     while let Some(chunk) = response
         .chunk()
         .await
         .map_err(|error| format!("llama.cpp 다운로드 본문 오류: {error}"))?
     {
-        bytes.extend_from_slice(&chunk);
+        downloaded=downloaded.saturating_add(chunk.len() as u64);
+        if downloaded>MAX_LLAMA_RELEASE_ARCHIVE_BYTES{
+            return Err("llama.cpp 압축 파일이 1 GiB 한도를 초과했습니다.".into());
+        }
+        tokio::io::AsyncWriteExt::write_all(&mut archive_file,&chunk)
+            .await.map_err(|error|format!("llama.cpp 압축 파일 저장 실패: {error}"))?;
         set_install(install_progress(
             "downloading",
             "release",
             &asset_name,
-            bytes.len() as u64,
+            downloaded,
             total,
             &asset_name,
         ));
     }
-    std::fs::write(&archive, &bytes).map_err(|error| error.to_string())?;
+    if expected_size>0 && downloaded!=expected_size{
+        return Err("llama.cpp 다운로드 크기가 GitHub 릴리스와 다릅니다.".into());
+    }
+    tokio::io::AsyncWriteExt::flush(&mut archive_file).await
+        .map_err(|error|format!("llama.cpp 압축 파일 닫기 실패: {error}"))?;
+    drop(archive_file);
     set_install(install_progress(
         "extracting",
         "release",
         &asset_name,
-        bytes.len() as u64,
+        downloaded,
         total,
         &asset_name,
     ));
@@ -974,7 +1006,6 @@ async fn install_from_release(state: &AppState) -> Result<(PathBuf, String), Str
             }
         }
     }
-    let _ = std::fs::remove_dir_all(&temp);
     let installed = bin_dir.join(if cfg!(windows) {
         "llama-server.exe"
     } else {
