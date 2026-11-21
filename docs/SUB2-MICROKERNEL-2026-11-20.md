@@ -283,3 +283,7 @@ ProgramIR의 기존 `parallel` 노드에 `dependsOn` 형제 ID를 정식 지원�
 ### P0: Task Team 상태 이벤트의 SDK·React 공통 계약
 
 각 `task_team_work` 기록의 `assigned/running/completed/needs_review` 전이는 `dominion-turn-core::run_state::RunEvent`로 변환되어 동일 전역 `eventSeq` SQLite 저널·SSE를 통과합니다. `parentRunId`에 실제 실행 ID를 포함하고 `nodeId`/`teamNodeId`/`dependsOn` 및 관측 상태를 원본 영속 레코드에서만 채웁니다. TypeScript SDK `runEvents()`가 새로운 `task_team_work` 유형을 받으며 React는 새로운 메뉴 없이 기존 실행 화면만 갱신합니다.
+
+### P0: 익명 팀 구버전 ProgramIR 호환 및 증거 누락 시 격리
+
+과거 ProgramIR에서 `parallel.id`가 없더라도 서로 다른 팀이 동일한 `task_team_work` ID를 공유하지 않도록 구조 해시와 깊이·위치로 결정적 범위를 만들었습니다. 작업 완료 영수증이 DB에 없으면 `running→needs_review`를 기록하고 의존 작업 실행을 차단합니다. 주인 메시지 ID가 실행 레코드에 존재하면 Worker 상태 이벤트까지 그대로 전달하며 없는 경우는 임의로 추정하지 않습니다.
