@@ -71,9 +71,15 @@ pub(super) async fn prepare(
         let has_visible_memory=if can_shortcut{
             let scope=crate::engine::memory::MemoryScope::for_session(
                 &state.store,session_id,None);
-            ["memory","experience"].iter().any(|kind|
-                state.store.all(kind).iter().any(|record|
-                    crate::engine::memory::visible(record,&scope)))
+            let mut visible=false;
+            for kind in ["memory","experience"] {
+                if state.store.any_record_matching(kind,|record|
+                    crate::engine::memory::visible(record,&scope))? {
+                    visible=true;
+                    break;
+                }
+            }
+            visible
         }else{false};
         let lightweight_only=can_shortcut&&!has_visible_memory;
         let definitions=if request.web_search&&request.tools_enabled
