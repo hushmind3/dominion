@@ -7,7 +7,7 @@ import {RunEventTimeline} from './RunEventTimeline'
 
 type SdkState = {state: string; detail?: {call_id?: string; tool?: string}}
 type SdkRun = {
- id: string; status: string; instruction: string; answer?: string; error?: string; createdAt?:string; model?:string; sessionId?:string; runRef?:{executionId:string}; readOnly?:boolean;
+ id: string; status: string; instruction: string; answer?: string; error?: string; createdAt?:string; model?:string; sessionId?:string; runRef?:{executionId:string}; readOnly?:boolean; failureClass?:string|null;
  checkpoint?: {
   state?: SdkState; rounds?: number; toolCalls?: number; answer?: string; executionId?:string;
   usage?: {prompt_tokens?:number|null; completion_tokens?:number|null; cached_prompt_tokens?:number|null; estimated?:boolean};
@@ -24,6 +24,7 @@ const stateNames:Record<string,[string,string]>={
  cancelled:['중단됨','Stopped'], exhausted:['실행 한도 도달','Limit reached'],
  awaiting_approval:['실행 승인 필요','Needs approval'],
  in_doubt:['수동 확인 필요','Needs manual review'],
+ needs_review:['검증 결과 재확인 필요','Needs evidence review'],
  interrupted:['재개 필요','Resume required'], denied:['실행 거부됨','Denied']
 }
 export function NativeAgentPanel({providers}:{providers:Provider[]}){
@@ -129,7 +130,8 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const status=run?.status||''
  const call=run?.checkpoint?.pendingCall
  const needsApproval=status==='awaiting_approval' && call
- const canResume=['interrupted','failed'].includes(status)
+ const canRecheck=status==='needs_review'&&run?.failureClass==='completion_evidence_unavailable'
+ const canResume=['interrupted','failed'].includes(status)||canRecheck
  const events=(run?.checkpoint?.events||[]).slice(-4)
  return <section className="mt-4 rounded-xl border border-[#E7E0D5] bg-white">
   <div className="flex items-center gap-2 border-b border-[#F0EAE1] px-4 py-3">
@@ -234,7 +236,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
       <Square size={13}/>{en?'Stop':'중단'}
      </button>}
      {canResume&&<button type="button" disabled={busy} onClick={()=>void action('resume')} className="flex items-center gap-1 rounded-lg border border-[#E7E0D5] px-3 py-2 text-[11px]">
-      <RefreshCw size={13}/>{en?'Resume':'재개'}
+      <RefreshCw size={13}/>{canRecheck?(en?'Recheck completion evidence':'완료 증거 재확인'):(en?'Resume':'재개')}
      </button>}
     </div>
     {status==='in_doubt'&&<div className="mt-3 rounded-lg border border-[#E5C4AB] bg-white p-3">
