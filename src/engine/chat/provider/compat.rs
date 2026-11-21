@@ -384,10 +384,8 @@ pub(super) async fn stream_completion_once_body(
     {
         let _ = tx.send(json!({ "type": "text", "text": text_pending }));
     }
-    if !terminated {
-        return Err("모델 스트림이 완료 신호 없이 종료되었습니다.".into());
-    }
-
+    // On an EOF without a terminal marker, settle any reported paid usage
+    // before rejecting the incomplete completion.
     // An indexed gap (e.g. only index 1 arrived) must not become a
     // partial successful tool round. Still account for the paid model call.
     let (settled_calls,incomplete_tool_calls)=finalize_streamed_tool_calls(calls);
@@ -413,6 +411,14 @@ pub(super) async fn stream_completion_once_body(
         None,
         !completion.usage_exact,
     );
+    if !terminated {
+        state.store.audit("chat.provider_stream_interrupted",json!({
+            "sessionId":session_id,"providerId":provider.id,"model":provider.model,
+            "usageExact":completion.usage_exact,
+            "reportedUsage":if completion.usage_exact {json!(completion.usage)} else {Value::Null}
+        }));
+        return Err("모델 스트림이 완료 신호 없이 종료되었습니다.".into());
+    }
     if incomplete_tool_calls {
         return Err("모델 도구 호출 스트림의 인덱스 또는 이름이 누락되었습니다.".into());
     }

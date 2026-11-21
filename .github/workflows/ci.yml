@@ -100,6 +100,7 @@ jobs:
           cargo test --locked --bin dominion-rust engine::chat::runtime::tool_catalog::private_tool_request_tests
           cargo test --locked --bin dominion-rust addons::gateway::model_capabilities::tests
           cargo test --locked --bin dominion-rust engine::chat::provider::final_chat_message_tests
+          cargo test --locked --bin dominion-rust unterminated_stream_preserves_reported_paid_usage_without_success
           cargo test --locked --test e2e failover_skips_incompatible_local_model_and_selects_declared_text_tools
       - name: Verified multi-agent work board, isolation and indexed reads (dev profile)
         run: |

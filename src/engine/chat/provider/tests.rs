@@ -678,4 +678,51 @@ mod contract_tests {
         server.abort();
         let _ = std::fs::remove_dir_all(root);
     }
+
+    #[tokio::test]
+    async fn unterminated_stream_preserves_reported_paid_usage_without_success() {
+        use axum::{routing::post,response::IntoResponse,Router};
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address=listener.local_addr().unwrap();
+        let app=Router::new().route("/chat/completions",post(||async {
+            // Provider closed after reporting tokens, without finish_reason or [DONE].
+            let body=format!("data: {}\n\n",json!({
+                "choices":[{"delta":{"content":"partial reply"}}],
+                "usage":{"prompt_tokens":40,"completion_tokens":7,"total_tokens":47}
+            }));
+            ([(axum::http::header::CONTENT_TYPE,"text/event-stream")],body).into_response()
+        }));
+        let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap()});
+        let root=std::env::temp_dir().join(format!("dominion-usage-eof-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config=crate::config::Config{port:0,data_dir:root.clone(),
+            web_dir:root.join("web"),workspace:root.clone()};
+        let state=AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        state.store.put("session",&json!({"id":"usage-eof"})).unwrap();
+        state.store.put("provider",&json!({"id":"usage-eof-provider","name":"usage-eof",
+            "baseUrl":format!("http://{address}"),"model":"stream-eof",
+            "toolMode":"native","enabled":true})).unwrap();
+        let request=TurnRequest::from_value(&json!({"input":"status",
+            "sessionId":"usage-eof","providerId":"usage-eof-provider",
+            "toolsEnabled":false,"autoLearning":false})).unwrap();
+        let provider=select_provider(&state,&request,
+            &state.store.get("session","usage-eof").unwrap()).unwrap();
+        let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();
+        let failure=stream_completion_once(&state,&reqwest::Client::new(),
+            &provider,&[json!({"role":"user","content":"status"})],&[],
+            &request,"usage-eof",&tx,false).await.err().expect("must fail");
+        assert!(failure.contains("완료 신호"),"{failure}");
+        let usage=state.store.session_usage("usage-eof");
+        assert_eq!(usage["calls"],1,"the charged attempt must survive the failure");
+        assert_eq!(usage["totalTokens"],47);
+        assert_eq!(usage["estimatedCalls"],0);
+        assert!(state.store.recent_audit(40).iter().any(|row|
+            row["event"]=="chat.provider_stream_interrupted"
+            && row["detail"]["reportedUsage"]==47));
+        server.abort();
+        drop(state);
+        let _=std::fs::remove_dir_all(root);
+    }
 }
