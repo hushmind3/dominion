@@ -32,11 +32,11 @@ fn secret(state: &AppState, config: &Value) -> String {
         .unwrap_or_default()
 }
 
-fn client() -> reqwest::Client {
+fn client() -> Result<reqwest::Client,String> {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
+        .redirect(crate::integrations::network::same_origin_redirects(5))
+        .build().map_err(|error|error.to_string())
 }
 
 pub fn required_fields(kind: &str) -> &'static [&'static str] {
@@ -110,7 +110,7 @@ pub async fn send(state: &AppState, config: &Value, content: &str) -> Result<Str
         "slack" => {
             let base = text(config, "apiBase");
             let base = if base.is_empty() { "https://slack.com/api".to_string() } else { base.trim_end_matches('/').to_string() };
-            let response = client()
+            let response = client()?
                 .post(format!("{base}/chat.postMessage"))
                 .bearer_auth(&token)
                 .json(&json!({
@@ -130,7 +130,7 @@ pub async fn send(state: &AppState, config: &Value, content: &str) -> Result<Str
                 urlencoding(&room),
                 uuid::Uuid::new_v4()
             );
-            let response = client()
+            let response = client()?
                 .put(url)
                 .bearer_auth(&token)
                 .json(&json!({
@@ -150,7 +150,7 @@ pub async fn send(state: &AppState, config: &Value, content: &str) -> Result<Str
                 urlencoding(&text(config, "graphVersion")),
                 urlencoding(&text(config, "phoneNumberId"))
             );
-            let response = client()
+            let response = client()?
                 .post(url)
                 .bearer_auth(&token)
                 .json(&json!({
@@ -167,7 +167,7 @@ pub async fn send(state: &AppState, config: &Value, content: &str) -> Result<Str
         "line" => {
             let base = text(config, "apiBase");
             let base = if base.is_empty() { "https://api.line.me".to_string() } else { base.trim_end_matches('/').to_string() };
-            let response = client()
+            let response = client()?
                 .post(format!("{base}/v2/bot/message/push"))
                 .bearer_auth(&token)
                 .json(&json!({
@@ -182,7 +182,7 @@ pub async fn send(state: &AppState, config: &Value, content: &str) -> Result<Str
         "zulip" => {
             let site = text(config, "site").trim_end_matches('/').to_string();
             let topic = text(config, "topic");
-            let response = client()
+            let response = client()?
                 .post(format!("{site}/api/v1/messages"))
                 .basic_auth(text(config, "email"), Some(token))
                 .json(&json!({
@@ -198,7 +198,7 @@ pub async fn send(state: &AppState, config: &Value, content: &str) -> Result<Str
         }
         "mattermost" => {
             let base = text(config, "baseUrl").trim_end_matches('/').to_string();
-            let response = client()
+            let response = client()?
                 .post(format!("{base}/api/v4/posts"))
                 .bearer_auth(&token)
                 .json(&json!({
@@ -212,7 +212,7 @@ pub async fn send(state: &AppState, config: &Value, content: &str) -> Result<Str
         }
         "signal" => {
             let base = text(config, "bridgeUrl").trim_end_matches('/').to_string();
-            let mut request = client()
+            let mut request = client()?
                 .post(format!("{base}/v2/send"))
                 .json(&json!({
                     "number": text(config, "phoneNumber"),
@@ -293,7 +293,7 @@ fn configured_base(config: &Value, key: &str, fallback: &str) -> String {
 pub async fn diagnose(state: &AppState, config: &Value) -> Result<Value, String> {
     let kind = text(config, "kind");
     let token = secret(state, config);
-    let client = client();
+    let client = client()?;
     match kind {
         "slack" => {
             if token.is_empty() {

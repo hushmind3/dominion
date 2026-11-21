@@ -31,7 +31,11 @@ async fn try_complete(
     // and return empty content. Start with a practical budget and retry once
     // with a larger one before reporting an empty response.
     let mut max_tokens = 8192u64;
-    let client = reqwest::Client::new();
+    let client=if route.kind=="codex"{
+        state.account_http_client(240)?
+    }else{
+        state.provider_http_client(240)?
+    };
     let mut last = String::new();
     for attempt in 0..2 {
         let mut body = json!({

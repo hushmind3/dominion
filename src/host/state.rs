@@ -86,18 +86,7 @@ impl AppState {
             // Provider requests carry user API keys, including provider
             // specific headers. Preserve same-origin redirects while
             // refusing to forward credentials to a different origin.
-            .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                let next=attempt.url();
-                let same_origin=attempt.previous().first().is_some_and(|previous|
-                    previous.scheme()==next.scheme()
-                        && previous.host_str()==next.host_str()
-                        && previous.port_or_known_default()==next.port_or_known_default());
-                if same_origin && attempt.previous().len()<5 {
-                    attempt.follow()
-                } else {
-                    attempt.stop()
-                }
-            }))
+            .redirect(crate::integrations::network::same_origin_redirects(5))
             .build().map_err(|error|error.to_string())?;
         let mut cache = self.provider_http_clients.lock().unwrap();
         Ok(cache.entry(timeout_secs).or_insert(client).clone())

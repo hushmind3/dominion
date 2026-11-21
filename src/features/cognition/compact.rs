@@ -135,7 +135,11 @@ pub async fn run(
         ]
     });
 
-    let client = reqwest::Client::new();
+    let client=if route.kind=="codex"{
+        state.account_http_client(180)?
+    }else{
+        state.provider_http_client(180)?
+    };
     let response = crate::engine::gateway::send(
         &route,
         &client,

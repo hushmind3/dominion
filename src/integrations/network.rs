@@ -6,6 +6,23 @@ use std::time::Duration;
 pub(crate) const HTTP_FETCH_LIMIT: usize = 1024 * 1024;
 const HTTP_REDIRECT_LIMIT: usize = 5;
 
+/// Follow only bounded redirects that stay on the original scheme, host and
+/// port. Credentialed provider and channel requests can reuse this policy.
+pub(crate) fn same_origin_redirects(max_hops:usize)->reqwest::redirect::Policy{
+    reqwest::redirect::Policy::custom(move |attempt|{
+        let next=attempt.url();
+        let same_origin=attempt.previous().first().is_some_and(|previous|
+            previous.scheme()==next.scheme()
+                &&previous.host_str()==next.host_str()
+                &&previous.port_or_known_default()==next.port_or_known_default());
+        if same_origin&&attempt.previous().len()<max_hops{
+            attempt.follow()
+        }else{
+            attempt.stop()
+        }
+    })
+}
+
 /// Reject non-public destinations even when URL parsing normalizes unusual
 /// IPv4 literals. The same check runs again after every redirect and DNS
 /// resolution; no configured proxy can bypass the pinned address.

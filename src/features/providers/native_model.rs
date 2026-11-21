@@ -571,7 +571,11 @@ pub(crate) async fn complete_with_run(
     job_id:Option<&str>,
 )->Result<ModelTurn,String> {
     let route=gateway::resolve(state,provider_id,Some(model_id))?;
-    let client=reqwest::Client::new();
+    let client=if route.kind=="codex"{
+        state.account_http_client(240)?
+    }else{
+        state.provider_http_client(240)?
+    };
     let wire=if route.kind=="codex" {"codex"}
         else if route.reasoning_protocol=="anthropic" {"anthropic"}
         else if route.kind=="cli" || route.tool_mode=="compat" {"legacy"}
