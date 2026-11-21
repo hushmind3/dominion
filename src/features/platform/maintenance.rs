@@ -3,6 +3,14 @@ use crate::state::AppState;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+struct RemoveFileOnDrop(PathBuf);
+
+impl Drop for RemoveFileOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 fn interval_seconds() -> u64 {
     std::env::var("DOMINION_BACKUP_INTERVAL_SECS")
         .ok()
@@ -63,6 +71,7 @@ pub fn create_snapshot(state: &AppState) -> Result<PathBuf, String> {
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
     let temp = directory.join(format!(".backup-{}.tmp", uuid::Uuid::new_v4()));
+    let _cleanup = RemoveFileOnDrop(temp.clone());
     state.store.backup_to(&temp)?;
     let bytes = std::fs::read(&temp).map_err(|error| error.to_string())?;
     let ring = crate::engine::backup_keys::KeyRing::load_or_create(&state.config.data_dir)?;
@@ -74,7 +83,6 @@ pub fn create_snapshot(state: &AppState) -> Result<PathBuf, String> {
     let sealed = ring.encrypt(&container)?;
     let path = directory.join(format!("dominion-{stamp}.sqlite.enc"));
     std::fs::write(&path, &sealed).map_err(|error| error.to_string())?;
-    let _ = std::fs::remove_file(&temp);
     if let Some(offsite) = offsite_directory() {
         std::fs::create_dir_all(&offsite).map_err(|error| error.to_string())?;
         std::fs::copy(&path, offsite.join(path.file_name().unwrap_or_default()))
