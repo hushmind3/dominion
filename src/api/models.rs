@@ -66,7 +66,7 @@ pub async fn load(State(state): State<AppState>, Json(body): Json<Value>) -> Res
     match models::load(&state, id, context).await {
         Ok(result) => Json(result).into_response(),
         Err(error) => {
-            models::mark_load_failure(&state, &error);
+            models::mark_load_failure(&state, &error).await;
             (StatusCode::BAD_GATEWAY, Json(json!({ "error": error }))).into_response()
         }
     }
@@ -74,7 +74,7 @@ pub async fn load(State(state): State<AppState>, Json(body): Json<Value>) -> Res
 
 pub async fn unload(State(state): State<AppState>) -> Json<Value> {
     let _change = models::RUNTIME_CHANGE.lock().await;
-    Json(models::unload(&state))
+    Json(models::unload(&state).await)
 }
 
 pub async fn runtimes(State(state): State<AppState>) -> Json<Value> {

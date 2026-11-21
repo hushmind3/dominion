@@ -738,12 +738,14 @@ fn brew_bin() -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
-fn verify_llama_server(path: &Path) -> Result<String, String> {
+async fn verify_llama_server(path: &Path) -> Result<String, String> {
     for argument in ["--version", "--help"] {
-        let output = std::process::Command::new(path)
-            .arg(argument)
-            .output()
-            .map_err(|error| format!("llama-server 실행 확인 실패: {error}"))?;
+        let mut command = tokio::process::Command::new(path);
+        command.arg(argument);
+        let Ok(output) = crate::integrations::local_tools::run_command(
+            &mut command, Duration::from_secs(10)).await else {
+            continue;
+        };
         if output.status.success() {
             let version = format!(
                 "{}{}",
@@ -954,25 +956,21 @@ async fn install_from_release(state: &AppState) -> Result<(PathBuf, String), Str
     let extracted = temp.join("extracted");
     std::fs::create_dir_all(&extracted).map_err(|error| error.to_string())?;
     let output = if cfg!(target_os = "macos") {
-        std::process::Command::new("ditto")
-            .args(["-x", "-k"])
-            .arg(&archive)
-            .arg(&extracted)
-            .output()
+        let mut command = tokio::process::Command::new("ditto");
+        command.args(["-x", "-k"]).arg(&archive).arg(&extracted);
+        crate::integrations::local_tools::run_command(
+            &mut command, Duration::from_secs(900)).await
     } else {
-        std::process::Command::new("unzip")
-            .arg("-q")
-            .arg(&archive)
-            .arg("-d")
-            .arg(&extracted)
-            .output()
+        let mut command = tokio::process::Command::new("unzip");
+        command.arg("-q").arg(&archive).arg("-d").arg(&extracted);
+        crate::integrations::local_tools::run_command(
+            &mut command, Duration::from_secs(900)).await
     }
     .map_err(|error| format!("llama.cpp 압축 해제 실행 실패: {error}"))?;
     if !output.status.success() {
-        return Err(format!(
-            "llama.cpp 압축 해제 실패: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
+        let detail = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("llama.cpp 압축 해제 실패: {}",
+            detail.trim().chars().take(1_000).collect::<String>()));
     }
     let mut found = Vec::new();
     walk(&extracted, 0, &mut found);
@@ -1052,7 +1050,7 @@ async fn run_llama_install(state: &AppState) -> Result<Value, String> {
                     "",
                 ));
                 if let Some(path) = llama_server_bin_for(state) {
-                    let version = verify_llama_server(&path)?;
+                    let version = verify_llama_server(&path).await?;
                     return Ok(json!({
                         "status": "installed",
                         "method": "homebrew",
@@ -1078,7 +1076,7 @@ async fn run_llama_install(state: &AppState) -> Result<Value, String> {
         0,
         &path.to_string_lossy(),
     ));
-    let version = verify_llama_server(&path)?;
+    let version = verify_llama_server(&path).await?;
     Ok(json!({
         "status": "installed",
         "method": "release",
@@ -1095,7 +1093,7 @@ async fn run_llama_install(state: &AppState) -> Result<Value, String> {
 
 pub async fn install_llama_server(state: AppState) -> Result<Value, String> {
     if let Some(path) = llama_server_bin_for(&state) {
-        let version = verify_llama_server(&path)?;
+        let version = verify_llama_server(&path).await?;
         set_install(json!({
             "status": "installed",
             "backend": "existing",
@@ -1668,7 +1666,7 @@ async fn load_mlx_from_dir(
     if !mlx_dir_complete(dir) {
         return Err("MLX 모델 파일이 완전하지 않습니다. config.json, safetensors, tokenizer 파일을 확인하세요.".into());
     }
-    unload(state);
+    unload(state).await;
     {
         let mut guard = runtime().lock().unwrap();
         guard.status = "loading".into();
@@ -1809,7 +1807,7 @@ pub async fn load(state: &AppState, id: &str, context: u64) -> Result<Value, Str
     let llama_server = llama_server_bin_for(state)
         .ok_or("llama-server를 찾을 수 없습니다. llama.cpp를 설치하거나 PATH를 확인하세요.")?;
 
-    unload(state);
+    unload(state).await;
     {
         let mut guard = runtime().lock().unwrap();
         guard.status = "loading".into();
@@ -1946,7 +1944,7 @@ async fn load_lmstudio(
     context: u64,
 ) -> Result<Value, String> {
     let lms = lms_bin().ok_or("LM Studio CLI(lms)를 찾을 수 없습니다. LM Studio를 설치하세요.")?;
-    unload(state);
+    unload(state).await;
     {
         let mut guard = runtime().lock().unwrap();
         guard.status = "loading".into();
@@ -2087,44 +2085,51 @@ fn push_log(line: String) {
     }
 }
 
-pub fn mark_load_failure(state: &AppState, message: &str) {
+pub async fn mark_load_failure(state: &AppState, message: &str) {
     if runtime().lock().unwrap().status == "loading" {
-        unload(state);
+        unload(state).await;
         let mut guard = runtime().lock().unwrap();
         guard.status = "error".into();
         guard.error = message.into();
     }
 }
 
-pub fn unload(state: &AppState) -> Value {
+pub async fn unload(state: &AppState) -> Value {
     state.store.remove("provider", PROVIDER_ID);
     state
         .bus
         .emit(json!({ "type": "record", "kind": "provider", "removed": PROVIDER_ID }));
-    let mut guard = runtime().lock().unwrap();
-    if guard.backend == "lmstudio" && !guard.model_key.is_empty() {
-        if let Some(lms) = lms_bin() {
-            let _ = std::process::Command::new(lms)
-                .args(["unload", &guard.model_key])
-                .output();
-        }
-    }
-    if let Some(child) = guard.child.as_mut() {
+    let (unload_lmstudio,model_key,mut child) = {
+        let mut guard = runtime().lock().unwrap();
+        let unload_lmstudio = guard.backend == "lmstudio" && !guard.model_key.is_empty();
+        let model_key = std::mem::take(&mut guard.model_key);
+        let child = guard.child.take();
+        guard.status = "idle".into();
+        guard.id.clear();
+        guard.name.clear();
+        guard.engine.clear();
+        guard.backend.clear();
+        (unload_lmstudio,model_key,child)
+    };
+    if let Some(child) = child.as_mut() {
         #[cfg(unix)]
         if let Some(pid) = child.id() {
             let _ = std::process::Command::new("kill")
                 .args(["-TERM", &format!("-{pid}")])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
                 .status();
         }
         let _ = child.start_kill();
     }
-    guard.child = None;
-    guard.status = "idle".into();
-    guard.id.clear();
-    guard.name.clear();
-    guard.engine.clear();
-    guard.backend.clear();
-    guard.model_key.clear();
+    if unload_lmstudio {
+        if let Some(lms) = lms_bin() {
+            let mut command = tokio::process::Command::new(lms);
+            command.args(["unload", &model_key]);
+            let _ = crate::integrations::local_tools::run_command(
+                &mut command,Duration::from_secs(15)).await;
+        }
+    }
     json!({ "status": "idle" })
 }
 
