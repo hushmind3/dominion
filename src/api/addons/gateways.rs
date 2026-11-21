@@ -11,6 +11,19 @@ use std::time::Duration;
 fn error(code: StatusCode, message: &str) -> Response {
     (code, Json(json!({"error":message}))).into_response()
 }
+async fn bounded_json(mut response:reqwest::Response,limit:usize)->Result<Value,String>{
+    if response.content_length().is_some_and(|length|length>limit as u64){
+        return Err(format!("허브 응답이 {limit} 바이트 한도를 초과했습니다."));
+    }
+    let mut bytes=Vec::new();
+    while let Some(chunk)=response.chunk().await.map_err(|error|error.to_string())?{
+        if bytes.len().saturating_add(chunk.len())>limit{
+            return Err(format!("허브 응답이 {limit} 바이트 한도를 초과했습니다."));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|error|error.to_string())
+}
 pub async fn freellmapi() -> Json<Value> {
     Json(
         json!({"id":"freellmapi","name":"FreeLLMAPI","kind":"openai-compatible-gateway","engine":"external-optional","repository":"https://github.com/tashfeenahmed/freellmapi","docs":"https://github.com/tashfeenahmed/freellmapi/blob/main/docs/en/api/01-rest-api.md","baseUrl":"http://127.0.0.1:3001/v1","models":["auto:fast","auto:balanced","auto:reliable","auto:smart","auto"],"authentication":"unified-bearer-key","signupAutomation":false,"bundled":false,"note":"각 제공자의 키를 FreeLLMAPI에 등록하고, 통합 키 하나를 DOMINION에 연결합니다. Google 로그인은 API 키 발급이나 무료 한도를 대신하지 않습니다."}),
@@ -31,10 +44,13 @@ pub async fn inspect(State(state): State<AppState>, Path(id): Path<String>) -> R
     let key = state
         .read_secret(&format!("provider:{id}"))
         .unwrap_or_default();
-    let client = reqwest::Client::builder()
+    let client = match reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .unwrap();
+    {
+        Ok(client)=>client,
+        Err(build_error)=>return error(StatusCode::INTERNAL_SERVER_ERROR,&build_error.to_string()),
+    };
     let models = client
         .get(format!("{base}/models"))
         .query(&[("available", "true")])
@@ -48,7 +64,7 @@ pub async fn inspect(State(state): State<AppState>, Path(id): Path<String>) -> R
         .send();
     let (models, usage) = tokio::join!(models, usage);
     let models = match models {
-        Ok(r) if r.status().is_success() => r.json::<Value>().await.unwrap_or(json!({})),
+        Ok(r) if r.status().is_success() => bounded_json(r,2*1024*1024).await.unwrap_or(json!({})),
         Ok(r) => {
             return error(
                 StatusCode::BAD_GATEWAY,
@@ -63,7 +79,7 @@ pub async fn inspect(State(state): State<AppState>, Path(id): Path<String>) -> R
         }
     };
     let usage = match usage {
-        Ok(r) if r.status().is_success() => r.json::<Value>().await.ok(),
+        Ok(r) if r.status().is_success() => bounded_json(r,256*1024).await.ok(),
         _ => None,
     };
     let entries = models["data"].as_array().cloned().unwrap_or_default();

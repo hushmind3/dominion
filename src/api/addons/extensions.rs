@@ -6,6 +6,21 @@ use std::collections::HashMap;
 use std::time::Duration;
 use super::response::error;
 
+async fn bounded_registry_json(mut response:reqwest::Response)->Result<Value,String>{
+    const LIMIT:usize=4*1024*1024;
+    if response.content_length().is_some_and(|length|length>LIMIT as u64){
+        return Err("MCP registry response exceeded 4 MiB".into());
+    }
+    let mut bytes=Vec::new();
+    while let Some(chunk)=response.chunk().await.map_err(|error|error.to_string())?{
+        if bytes.len().saturating_add(chunk.len())>LIMIT{
+            return Err("MCP registry response exceeded 4 MiB".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|error|error.to_string())
+}
+
 pub async fn list_tools(State(state): State<AppState>) -> Json<Value> {
     let mut items = engine::tools::definitions()
         .into_iter()
@@ -118,7 +133,14 @@ pub async fn mcp_catalog(Query(query): Query<HashMap<String, String>>) -> Respon
         .append_pair("version", "latest")
         .append_pair("limit", "60");
 
-    let response = reqwest::Client::new()
+    let client = match reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
+        Ok(client)=>client,
+        Err(build_error)=>return error(StatusCode::INTERNAL_SERVER_ERROR,&build_error.to_string()),
+    };
+    let response = client
         .get(endpoint)
         .timeout(Duration::from_secs(15))
         .send()
@@ -133,7 +155,7 @@ pub async fn mcp_catalog(Query(query): Query<HashMap<String, String>>) -> Respon
         }
         Err(message) => return error(StatusCode::BAD_GATEWAY, &message.to_string()),
     };
-    let value: Value = match response.json().await {
+    let value: Value = match bounded_registry_json(response).await {
         Ok(value) => value,
         Err(message) => return error(StatusCode::BAD_GATEWAY, &message.to_string()),
     };
