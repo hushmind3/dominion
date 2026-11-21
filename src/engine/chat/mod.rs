@@ -149,6 +149,8 @@ pub struct TurnRequest {
     pub input: String,
     pub attachment_ids: Vec<String>,
     pub agent_id: Option<String>,
+    /// Explicit model-only conversation: no agent binding, tool execution or learning.
+    pub direct_chat: bool,
     pub provider_id: Option<String>,
     pub model: Option<String>,
     pub tools_enabled: bool,
@@ -196,6 +198,7 @@ impl TurnRequest {
         if text.is_empty() && attachment_ids.is_empty() {
             return Err("메시지가 비어 있습니다.".into());
         }
+        let direct_chat = value.get("directChat").and_then(Value::as_bool).unwrap_or(false);
         let string = |key: &str| {
             value
                 .get(key)
@@ -207,14 +210,15 @@ impl TurnRequest {
             session_id: string("sessionId"),
             input: text,
             attachment_ids,
-            agent_id: string("agentId"),
+            agent_id: if direct_chat { None } else { string("agentId") },
+            direct_chat,
             provider_id: string("providerId"),
             model: string("model"),
-            tools_enabled: value
+            tools_enabled: !direct_chat && value
                 .get("toolsEnabled")
                 .and_then(|item| item.as_bool())
                 .unwrap_or(true),
-            tools_execution_enabled: value
+            tools_execution_enabled: !direct_chat && value
                 .get("toolsExecutionEnabled")
                 .and_then(|item| item.as_bool())
                 .unwrap_or(true),
@@ -232,7 +236,7 @@ impl TurnRequest {
                 None => None,
             },
             reasoning_language: string("reasoningLanguage"),
-            auto_learning: value
+            auto_learning: !direct_chat && value
                 .get("autoLearning")
                 .and_then(|item| item.as_bool())
                 .unwrap_or(false),
@@ -395,5 +399,34 @@ mod private_prompt_preview_tests {
             &state,Some("group-room"),Some("worker"),"설명",true,false
         ).unwrap_err();
         assert!(error.contains("그룹"));
+    }
+}
+
+#[cfg(test)]
+mod direct_chat_request_tests {
+    use super::TurnRequest;
+    use serde_json::json;
+
+    #[test]
+    fn direct_chat_never_inherits_agent_tools_or_auto_learning() {
+        let request = TurnRequest::from_value(&json!({
+            "input":"안녕하세요","agentId":"existing-agent","directChat":true,
+            "toolsEnabled":true,"toolsExecutionEnabled":true,"autoLearning":true,
+        })).unwrap();
+        assert!(request.direct_chat);
+        assert_eq!(request.agent_id, None);
+        assert!(!request.tools_enabled);
+        assert!(!request.tools_execution_enabled);
+        assert!(!request.auto_learning);
+    }
+
+    #[test]
+    fn existing_agent_requests_remain_unchanged() {
+        let request = TurnRequest::from_value(&json!({
+            "input":"작업해","agentId":"existing-agent","toolsEnabled":true,
+        })).unwrap();
+        assert!(!request.direct_chat);
+        assert_eq!(request.agent_id.as_deref(), Some("existing-agent"));
+        assert!(request.tools_enabled);
     }
 }
