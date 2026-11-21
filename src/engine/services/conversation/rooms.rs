@@ -554,7 +554,10 @@ async fn run_locked(
         }));
         checkpoint(context,session_id,generation,source_id,&mode,&roster,
             &initial,&pending,&outputs,budget,true,None)?;
-        let route_pool=model_pool(state,&room);
+        let explicit_pool=room["models"].as_array().is_some_and(|models|!models.is_empty());
+        let route_pool=if explicit_pool||room["autoModels"].as_bool().unwrap_or(true){
+            model_pool(state,&room)
+        }else{Vec::new()};
         return parallel::run(
             context,&room,input,room_id,session_id,source_id,owner_text,
             &task_id,generation,&mode,&roster,&initial,budget,

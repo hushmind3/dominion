@@ -672,7 +672,7 @@ fn room_runs_on_an_explicitly_selected_local_runtime() {
             "name":"local speaker",
             "systemPrompt":"LOCAL_SPEAKER_IDENTITY",
             "providerId":local["id"],
-            "model":"local-room-model"
+            "model":"agent-default-not-selected"
         }),
     );
     let room = app.post(

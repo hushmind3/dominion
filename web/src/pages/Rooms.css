@@ -44,6 +44,20 @@
 .room-knowledge-item small{font-size:9px;color:#A3937C;overflow-wrap:anywhere}
 
 .room-model-picker{grid-column:1 / -1;display:flex;flex-direction:column;gap:8px}
+.room-model-plan{grid-column:1 / -1;display:flex;flex-direction:column;gap:6px;padding:12px;border:1px solid #E6D8C5;border-radius:10px;background:#FFFDF8}
+.room-model-plan>strong{font-size:11px;color:#6C5842}
+.room-model-plan>small{font-size:10px;color:#998773;line-height:1.5}
+.room-model-plan-row{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;font-size:10px}
+.room-model-plan-row span{min-width:0;max-width:40%;overflow-wrap:anywhere;color:#655847}
+.room-model-plan-row b{min-width:0;flex:1;overflow-wrap:anywhere;text-align:right;color:#95704E;font-weight:600}
+.room-route-bar{display:flex;align-items:center;gap:9px;padding:8px 22px;background:#FFFBF5;border-bottom:1px solid #EEE5D8;min-width:0;color:#78634E}
+.room-route-bar>strong{font-size:11px;white-space:nowrap}
+.room-route-bar-items{display:flex;gap:6px;min-width:0;flex:1;overflow-x:auto;scrollbar-width:thin}
+.room-route-bar-items>span{flex-shrink:0;max-width:260px;border:1px solid #E7DDCE;background:#FFFDF9;border-radius:6px;padding:4px 7px;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.room-route-bar-items>span b{font-weight:600}
+.room-route-bar>button{flex-shrink:0}
+.room-message-model{border:1px solid #E7DDCE;padding:1px 5px;border-radius:5px;background:#FCF8F0;color:#80674B;font-size:9px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:640px){.room-route-bar{gap:5px;padding:7px 10px}.room-route-bar>strong{font-size:10px}.room-route-bar-items>span{max-width:160px}.room-route-bar>button{font-size:10px!important;padding:4px 6px!important}.room-message-model{max-width:120px}}
 .room-model-picker-controls{display:flex;align-items:center;gap:6px}
 .room-model-picker-controls select{flex:1;min-width:0}
 .room-model-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;max-height:210px;overflow:auto;padding:2px}

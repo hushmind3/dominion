@@ -39,6 +39,27 @@ const modes:Record<RoutingMode,{label:LocaleKey;description:LocaleKey}>={discuss
 const palette=['#668373','#9A745F','#6D7FA4','#967AA0','#B18C47','#6C9297','#AB7180','#7A8456','#8B7B69']
 const active=(status?:string)=>status==='queued'||status==='running'
 const stamp=(value?:string)=>{if(!value)return '';const normalized=value.includes('T')?value:value.replace(' ','T')+'Z';const date=new Date(normalized);return Number.isNaN(date.getTime())?'':date.toLocaleTimeString(getLocale()==='en'?'en-US':'ko-KR',{hour:'2-digit',minute:'2-digit'})}
+/** Mirrors the host's stable roster-index model_pool routing. The display
+ * projects configured routing; actual model evidence is shown per reply. */
+function roomModelRoutes(config:{agentIds:string[];models?:RoomModel[];autoModels?:boolean},agents:Agent[]){
+ const participants=config.agentIds.map(id=>agents.find(a=>a.id===id))
+ const explicit=config.models||[]
+ const seen=new Set<string>()
+ const inherited=participants.flatMap(agent=>{
+  if(!agent?.providerId||!agent.model)return []
+  const key=agent.providerId+'|'+agent.model
+  if(seen.has(key))return []
+  seen.add(key)
+  return [{providerId:agent.providerId,model:agent.model}]
+ })
+ const pool=explicit.length?explicit:config.autoModels!==false?inherited:[]
+ return config.agentIds.map((id,index)=>{
+  const agent=participants[index]
+  const selected=pool.length?pool[index%pool.length]:agent
+  return {id,name:agent?.name||id,providerId:selected?.providerId||'',
+   model:selected?.model||''}
+ })
+}
 const draftOf=(room?:RoomConfig):RoomDraft=>({id:room?.id,name:room?.name||'',topic:room?.topic||room?.description||'',ownerName:room?.ownerName||t('rooms.me'),agentIds:room?.agentIds||[],routingMode:room?.routingMode||'discussion',rounds:room?.rounds||3,maxTurns:room?.maxTurns??0,tokenBudget:room?.tokenBudget??0,contextBudgetTokens:room?.contextBudgetTokens??2000,toolsEnabled:room?.toolsEnabled===true,autoLearning:room?.autoLearning===true,autoModels:room?.autoModels!==false,models:room?.models||[],reasoningEffort:room?.reasoningEffort||''})
 const agentColor=(agent?:Agent,index=0)=>/^#[0-9a-f]{3,8}$/i.test(agent?.color||'')?agent!.color!:palette[index%palette.length]
 
@@ -102,6 +123,13 @@ function RoomSettings({value,onChange,agents,providers,disabled=false}:{value:Ro
   <FormField label={t('rooms.reasoning')} hint={t('rooms.reasoningHint')}><ReasoningSelect value={value.reasoningEffort} onChange={reasoningEffort=>onChange({...value,reasoningEffort})} defaultLabel={t('rooms.reasoningDefault')} disabled={disabled}/></FormField>
   <label className="room-setting-check"><input type="checkbox" checked={value.autoLearning} onChange={e=>onChange({...value,autoLearning:e.target.checked})} disabled={disabled}/><span><strong>{t('rooms.autoLearn')}</strong><small>{t('rooms.autoLearnDesc')}</small></span></label>
   <RoomModelPicker value={value.models} onChange={models=>onChange({...value,models})} providers={providers} disabled={disabled}/>
+  <div className="room-model-plan" aria-label={t('rooms.routeTitle')}>
+   <strong>{t('rooms.routeTitle')}</strong>
+   <small>{t('rooms.routePreview')}</small>
+   {roomModelRoutes(value,agents).map(row=><div key={row.id} className="room-model-plan-row">
+    <span>{row.name}</span><b>{row.providerId&&row.model?`${providers.find(p=>p.id===row.providerId)?.name||row.providerId} / ${row.model}`:t('rooms.routeMissing')}</b>
+   </div>)}
+  </div>
   <label className="room-setting-check"><input type="checkbox" checked={value.autoModels} onChange={e=>onChange({...value,autoModels:e.target.checked})} disabled={disabled}/><span><strong>{t('rooms.autoModels')}</strong><small>{t('rooms.autoModelsDesc')}</small></span></label>
   <label className="room-setting-check"><input type="checkbox" checked={value.toolsEnabled} onChange={e=>onChange({...value,toolsEnabled:e.target.checked})} disabled={disabled}/><span><strong>{t('rooms.tools')}</strong><small>{t('rooms.toolsDesc')}</small></span></label>
  </div>
@@ -111,14 +139,18 @@ function RoomSettings({value,onChange,agents,providers,disabled=false}:{value:Ro
 function RoomModelPicker({value,onChange,providers,disabled=false}:{value:RoomModel[];onChange:(models:RoomModel[])=>void;providers:Provider[];disabled?:boolean}){
  useLocale()
  const available=providers.filter(provider=>provider.enabled!==false)
- const [providerId,setProviderId]=useState(()=>available[0]?.id||'')
+ const [providerChoice,setProviderChoice]=useState('')
+ // Provider data loads asynchronously. An empty state from the first render
+ // must resolve to the first enabled provider instead of freezing the picker.
+ const providerId=available.some(provider=>provider.id===providerChoice)
+  ?providerChoice:available[0]?.id||''
  const [catalog,setCatalog]=useState<Record<string,ModelOption[]>>({})
  const [loading,setLoading]=useState(false),[error,setError]=useState('')
  useEffect(()=>{
   if(!providerId||catalog[providerId])return
   let alive=true
   setLoading(true);setError('')
-  get<ModelOption[]>('/api/providers/'+providerId+'/models')
+  get<ModelOption[]>('/api/providers/'+encodeURIComponent(providerId)+'/models')
    .then(models=>{if(alive)setCatalog(previous=>({...previous,[providerId]:models}))})
    .catch(reason=>{if(alive)setError((reason as Error).message)})
    .finally(()=>{if(alive)setLoading(false)})
@@ -134,7 +166,7 @@ function RoomModelPicker({value,onChange,providers,disabled=false}:{value:RoomMo
   <div className="room-roster-heading"><strong>{t('rooms.models')}</strong><span>{t('rooms.modelsSelected',{count:value.length})}</span></div>
   <small className="room-note">{t('rooms.modelsDesc')}</small>
   <div className="room-model-picker-controls">
-   <SelectInput value={providerId} onChange={e=>setProviderId(e.target.value)} disabled={disabled||!available.length}>{available.map(provider=><option key={provider.id} value={provider.id}>{provider.name}</option>)}</SelectInput>
+   <SelectInput aria-label={t('rooms.modelProvider')} value={providerId} onChange={e=>setProviderChoice(e.target.value)} disabled={disabled||!available.length}>{available.map(provider=><option key={provider.id} value={provider.id}>{provider.name}</option>)}</SelectInput>
    <Button size="sm" variant="ghost" onClick={()=>onChange([...value,...models.filter(item=>!has(providerId,item.id)).map(item=>({providerId,model:item.id}))])} disabled={disabled||!models.length}>{t('rooms.modelsAll')}</Button>
    <Button size="sm" variant="ghost" onClick={()=>onChange(value.filter(item=>item.providerId!==providerId))} disabled={disabled||!picked}>{t('rooms.modelsNone')}</Button>
   </div>
@@ -178,6 +210,7 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
  const pendingApprovals=feed.approvals.filter(approval=>approval.status==='pending')
  const mode=current.routingMode||'discussion'
  const sessionId=feed.sessionId||current.sessionId
+ const activeRoutes=roomModelRoutes(current,agents)
  const sessionRef=useRef(sessionId);sessionRef.current=sessionId
  const visible=messages.filter(message=>(message.role==='user'&&!message.agent_id&&(!('metadata' in message)||(message as any).metadata?.authorKind!=='agent_context'))||(message.role==='assistant'&&Boolean(message.content.trim())))
  const learningActive=feed.learningJobs.filter(job=>active(job.status)).length
@@ -336,6 +369,16 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
    <header className="room-header"><Button variant="bare" className="room-list-toggle" aria-label={showList?t('rooms.listCollapse'):t('rooms.listExpand')} onClick={openList}><Menu size={18}/></Button><ConversationSwitch mode="rooms" onChange={switchMode}/><div className="room-header-icon" title={current.name}><Hash size={22}/></div><div className="room-header-copy"><h1>{current.name}</h1><p>{current.topic||t('rooms.topicFallback')}</p></div><div className="room-presence"><div className="room-avatar-stack"><Avatar owner size="small"/>{roster.map((agent,index)=><Avatar key={agent.id} agent={agent} size="small" index={index}/>)}</div><span><strong>{current.ownerName||t('rooms.me')}</strong>{t('rooms.withAgents',{count:roster.length})}</span><span className="room-presence-dot">·</span><span>{t(modes[mode].label)}</span><span className={'room-status '+(running?'is-running':'')}>{running&&<i/>}{labels[status]?t(labels[status]):status}</span></div><span className="room-header-usage" aria-label={t('usage.sessionTotal',{count:usageTotal.toLocaleString()})}>{t('usage.sessionTotal',{count:usageTotal.toLocaleString()})}</span><Button size="sm" variant="ghost" className="room-roster-toggle" title={t('rooms.sharedKnowledge')} aria-label={t('rooms.sharedKnowledge')} onClick={()=>void openKnowledge()} aria-haspopup="dialog"><BookOpenText size={16}/><span>{t('rooms.sharedKnowledge')}</span><b>{knowledge.length||0}</b></Button><Button size="sm" variant="ghost" className="room-roster-toggle" title={t('rooms.systemPromptHint')} aria-label={t('rooms.systemPrompt')} onClick={()=>void openPrompt()}><FileText size={16}/><span>{t('rooms.systemPrompt')}</span></Button><Button size="sm" variant="ghost" className="room-roster-toggle" title={t('rooms.resetHint')} aria-label={t('rooms.reset')} onClick={()=>void reset()} disabled={stopping}><RotateCcw size={16}/><span>{t('rooms.reset')}</span></Button><Button size="icon" variant="ghost" className="conversation-settings" title={t('nav.settings')} aria-label={t('nav.settings')} onClick={openSettings}><Settings size={18}/></Button></header>
 
 
+   <div className="room-route-bar" aria-label={t('rooms.routeTitle')}>
+    <strong>{t('rooms.routeTitle')}</strong>
+    <div className="room-route-bar-items">
+     {activeRoutes.slice(0,8).map(row=><span key={row.id} title={row.name+' · '+row.providerId+' / '+row.model}>
+      <b>{row.name}</b> · {row.model||t('rooms.routeMissing')}
+     </span>)}
+     {activeRoutes.length>8&&<small>+{activeRoutes.length-8}</small>}
+    </div>
+    <Button variant="ghost" size="sm" onClick={()=>setInspector(true)} aria-label={t('rooms.routeEdit')}><Settings2 size={13}/>{t('rooms.routeEdit')}</Button>
+   </div>
    <div className="room-scroll" ref={scrollRef} onScroll={onScroll} role="log" aria-label={t('rooms.logAria')} aria-busy={loading}>
     {loading?<div className="room-feed-loading"><LoaderCircle size={20} className="animate-spin"/> {t('rooms.loading')}</div>:!visible.length?<div className="room-first-message"><div className="room-empty-avatars"><Avatar owner/>{roster.slice(0,3).map((agent,index)=><Avatar key={agent.id} agent={agent} index={index}/>)}</div><h2>{t('rooms.firstTitle')}</h2><p>{t('rooms.firstDesc')}<br/>{t('rooms.firstDesc2')}</p><div><span><AtSign size={14}/> {t('rooms.mentionOne')}</span><span><BookOpenText size={14}/> {t('rooms.roomContinues')}</span></div></div>:<><div className="room-transcript-start"><span>{t('rooms.records')}</span></div>{visible.map(message=>{const owner=message.role==='user';const shared=message.metadata?.kind==='learning_report'&&(message.metadata?.learningScope==='room'||message.metadata?.source==='knowledge');const agent=shared?undefined:agents.find(item=>item.id===message.agent_id);return <TranscriptMessage key={message.id} message={message} showReasoning={showReasoning} agent={agent} name={shared?t('rooms.sharedKnowledge'):owner?(current.ownerName||t('rooms.me')):(agent?.name||message.agent_id||t('rooms.agentFallback'))} owner={owner} index={Math.max(0,current.agentIds.indexOf(message.agent_id||''))}/>})}</>}
     {live&&<div className="room-message room-message-agent room-message-live"><Avatar agent={agents.find(agent=>agent.id===live.agentId)}/><div className="room-message-main"><div className="room-message-byline"><strong>{agents.find(agent=>agent.id===live.agentId)?.name||live.agentId}</strong><span className="room-live-label">{!live.done&&<i/>}{live.error?t('rooms.live.stopped'):live.done?t('rooms.live.saving'):t('rooms.live.responding')}</span></div>{showReasoning&&live.reasoning&&<details className="room-reasoning"><summary>{t('rooms.live.showReasoning')}</summary><pre>{live.reasoning}</pre></details>}{live.text?<MessageBody text={live.text}/>:!live.error&&<span className="room-typing"><i/><i/><i/></span>}{live.tool&&<div className="room-tool-live"><TerminalSquare size={13}/>{t('rooms.live.toolRunning',{tool:live.tool})}</div>}{live.error&&<p className="room-message-error">{translateError(live.error)}</p>}</div></div>}
@@ -382,7 +425,7 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
 function TranscriptMessage({message,agent,name,owner,index,showReasoning=true}:{showReasoning?:boolean;message:ChatMessage;agent?:Agent;name:string;owner:boolean;index:number}){
  useLocale()
  const [copied,setCopied]=useState(false)
- return <article className={'room-message '+(owner?'room-message-owner':'room-message-agent')+(message.metadata?.kind==='learning_report'?' room-message-review':'')}><Avatar agent={agent} owner={owner} index={index}/><div className="room-message-main"><div className="room-message-byline"><strong>{name}</strong>{message.metadata?.kind==='learning_report'?<span className="room-agent-tag">{t(message.metadata?.learningScope==='room'||message.metadata?.source==='knowledge'?'rooms.sharedLearning':'rooms.selfReview')}</span>:owner?<span className="room-author-tag">{t('rooms.authorMe')}</span>:<span className="room-agent-tag">{t('rooms.authorAgent')}</span>}<time>{stamp(message.created_at)}</time><TokenUsage usage={message.metadata?.usage} className="room-message-usage"/><Button variant="bare" className="room-copy" aria-label={t('rooms.copyAria')} title={t('rooms.copyAria')} onClick={()=>{void navigator.clipboard.writeText(message.content).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),1600)})}}>{copied?<Check size={12}/>:<Copy size={12}/>}</Button></div>{showReasoning&&message.reasoning&&<details className="room-reasoning"><summary>{t('rooms.live.showReasoning')}</summary><pre>{message.reasoning}</pre></details>}<MessageBody text={message.content}/>{message.tool_calls?.length?<span className="room-message-tools"><TerminalSquare size={12}/>{t('rooms.toolCallsSummary',{count:message.tool_calls.length})}</span>:null}</div></article>
+ return <article className={'room-message '+(owner?'room-message-owner':'room-message-agent')+(message.metadata?.kind==='learning_report'?' room-message-review':'')}><Avatar agent={agent} owner={owner} index={index}/><div className="room-message-main"><div className="room-message-byline"><strong>{name}</strong>{message.metadata?.kind==='learning_report'?<span className="room-agent-tag">{t(message.metadata?.learningScope==='room'||message.metadata?.source==='knowledge'?'rooms.sharedLearning':'rooms.selfReview')}</span>:owner?<span className="room-author-tag">{t('rooms.authorMe')}</span>:<span className="room-agent-tag">{t('rooms.authorAgent')}</span>}<time>{stamp(message.created_at)}</time>{!owner&&message.metadata?.usage?.model&&<span className="room-message-model" title={t('rooms.routeActual')}>{message.metadata.usage.model}</span>}<TokenUsage usage={message.metadata?.usage} className="room-message-usage"/><Button variant="bare" className="room-copy" aria-label={t('rooms.copyAria')} title={t('rooms.copyAria')} onClick={()=>{void navigator.clipboard.writeText(message.content).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),1600)})}}>{copied?<Check size={12}/>:<Copy size={12}/>}</Button></div>{showReasoning&&message.reasoning&&<details className="room-reasoning"><summary>{t('rooms.live.showReasoning')}</summary><pre>{message.reasoning}</pre></details>}<MessageBody text={message.content}/>{message.tool_calls?.length?<span className="room-message-tools"><TerminalSquare size={12}/>{t('rooms.toolCallsSummary',{count:message.tool_calls.length})}</span>:null}</div></article>
 }
 function MessageBody({text}:{text:string}){
  const blocks=text.split(/```(?:[^\n]*)\n([\s\S]*?)```/g)
