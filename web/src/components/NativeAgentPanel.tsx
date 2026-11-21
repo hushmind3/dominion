@@ -316,7 +316,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const eventsOmitted=run?.checkpoint?.eventsOmitted??0
  const totalEvents=allEvents.length+eventsOmitted
  const loadedOlder=olderHistory?.runId===run?.id&&
-  olderHistory.boundary===eventsOmitted?olderHistory:null
+  olderHistory?.boundary===eventsOmitted?olderHistory:null
  const events=allEvents.slice(showEventHistory?-40:-4)
  const toolReceipts=run?.checkpoint?.toolReceipts||[]
  return <section className="mt-4 rounded-xl border border-[#E7E0D5] bg-white">
