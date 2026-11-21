@@ -95,6 +95,7 @@ pub fn definitions() -> Vec<Value> {
             "wait":json!({"type":"boolean","description":"Wait for the next ready waves (default true)"}),
             "timeoutSeconds":json!({"type":"integer","minimum":5,"maximum":300}),
         }),vec![])),
+        tool("team_workers","Discover eligible registered Worker agents (IDs, roles and models) so the Lead can propose an executable Team DAG without guessing agent IDs",object(json!({}),vec![])),
         tool("team_status","Read the durable lead-owned Task Team DAG and every native worker job receipt without launching new work",object(json!({
             "teamId":text("Team id returned by team_execute")
         }),vec!["teamId"])),
@@ -269,7 +270,7 @@ pub fn ui_tool_allowed(policy:&Value,name:&str)->bool{
     if name.starts_with("mcp__") && policy["mcpEnabled"]!=true{return false;}
     if matches!(name,"web_search"|"http_fetch") && policy["webEnabled"]!=true{return false;}
     if matches!(name,"delegate_task"|"delegate_parallel"|"task_status"|"task_result"|
-        "team_execute"|"team_status"|"external_harness_sessions"|"external_harness_run") && policy["subagentsEnabled"]!=true{return false;}
+        "team_execute"|"team_status"|"team_workers"|"external_harness_sessions"|"external_harness_run") && policy["subagentsEnabled"]!=true{return false;}
     true
 }
 
@@ -609,6 +610,7 @@ pub async fn execute(
         "room_peer_inbox" => room_peer::inbox(ctx),
         "team_execute" => team::execute(ctx,args,run_id).await,
         "team_status" => team::status(ctx,args),
+        "team_workers" => Ok(team::workers(ctx)),
         "delegate_task" => delegate(ctx, args).await,
         "external_harness_run" => external_harness::run(ctx,args).await,
         "external_harness_sessions" => Ok(external_harness::sessions(ctx)),
