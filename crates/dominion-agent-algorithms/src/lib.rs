@@ -1,7 +1,10 @@
-//! Swappable agent intelligence/policies. No DB, network, authority or runtime loop.
-//! The host can select policies; the Rust runtime remains authoritative for
-//! tool permissions, effect admission, budgets, receipts and verification.
+//! Swappable agent intelligence and the sole shared agent-turn Harness.
+//! The Host selects policies; Runtime owns non-overridable permissions,
+//! model admission, effect receipts, budgets and verification. The Algorithm
+//! crate owns one portable agent-turn iteration and default ReAct policy.
 pub use dominion_agent_runtime::{Action,Receipt,Strategy,ToolSpec};
+pub use dominion_agent_runtime as runtime;
+pub mod harness;
 pub mod ranking;
 pub mod context;
 pub mod failure_guidance;

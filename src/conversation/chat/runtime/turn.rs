@@ -717,7 +717,7 @@ pub(super) async fn run_turn_body(
     // Shared native/streaming Harness admission clock. BudgetLedger still
     // settles actual tool/model usage; the cursor controls turn iteration.
     let mut drive=dominion_agent_sdk::HarnessDrive::new(max_rounds)?;
-    dominion_agent_sdk::runtime::harness_steps!(
+    dominion_agent_sdk::harness_steps!(
         'steps: drive,
         running = !finished,
         cancelled = state.is_cancelled(session_id)

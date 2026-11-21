@@ -41,11 +41,13 @@ has('src/host/execution/native_agent.rs',['AgentLoop','agent_loop.execute(']);
 has('src/conversation/chat/runtime/turn.rs',
   ['dominion_agent_sdk::dispatch_model_turn','dominion_agent_sdk::dispatch_batch']);
 has('crates/dominion-agent-runtime/src/drive.rs',
-  ['pub async fn dispatch_model_turn','pub enum ModelAttempt','macro_rules! harness_steps']);
+  ['pub async fn dispatch_model_turn','pub enum ModelAttempt']);
+has('crates/dominion-agent-algorithms/src/harness.rs',
+  ['macro_rules! harness_steps','both_loop_styles_share_one_control_flow_source']);
 has('crates/dominion-agent-algorithms/src/agent_loop.rs',
-  ['runtime::harness_steps!','runtime::dispatch_model_turn']);
+  ['crate::harness_steps!','runtime::dispatch_model_turn']);
 has('src/conversation/chat/runtime/turn.rs',
-  ['dominion_agent_sdk::runtime::harness_steps!',
+  ['dominion_agent_sdk::harness_steps!',
    'dominion_agent_sdk::dispatch_model_turn']);
 has('src/features/collaboration/room_cursor.rs',
   ['through_message_id','MAX_UNREAD_PER_TURN']);

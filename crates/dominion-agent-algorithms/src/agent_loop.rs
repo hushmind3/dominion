@@ -174,7 +174,7 @@ impl Kernel<'_> {
         self.journal.save(&run)?;
         let mut drive=runtime::HarnessDrive::resume(
             request.limits.max_steps,run.step)?;
-        runtime::harness_steps!(
+        crate::harness_steps!(
             'steps: drive,
             running = true,
             cancelled = self.journal.cancelled(&request.id),
