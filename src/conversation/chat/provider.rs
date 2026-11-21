@@ -2818,7 +2818,7 @@ mod tests {
             observed.lock().unwrap().push(body);
             let payload = format!(
                 "data: {}\n\ndata: [DONE]\n\n",
-                json!({"choices":[{"delta":{"content":"로컬 대체 완료"}}]})
+                json!({"choices":[{"delta":{"content":"로컬 대체 완료"},"finish_reason":"stop"}]})
             );
             ([(axum::http::header::CONTENT_TYPE, "text/event-stream")], payload)
                 .into_response()
@@ -2904,7 +2904,7 @@ mod tests {
         let app = Router::new().route("/chat/completions", post(|| async {
             let events = format!(
                 "data: {}\n\ndata: [DONE]\n\n",
-                json!({"choices":[{"delta":{"content":"대체 모델 정상 응답"}}]})
+                json!({"choices":[{"delta":{"content":"대체 모델 정상 응답"},"finish_reason":"stop"}]})
             );
             ([(axum::http::header::CONTENT_TYPE, "text/event-stream")], events).into_response()
         }));
