@@ -152,7 +152,8 @@ try{
   await page.getByText('미완료 · 서버 저장 확인 필요',{exact:true}).waitFor({timeout:15000})
   await page.getByText('공급자 연결이 중단되었습니다.',{exact:true}).waitFor({timeout:15000})
   await page.waitForFunction(()=>document.querySelectorAll('[data-role="user"][data-pending="true"]').length===0,null,{timeout:15000})
-  assert.equal(await page.locator('[data-role="assistant"]').count(),3,'Partial model output must not be added to stored assistant messages')
+  assert.equal(await page.locator('[data-role="assistant"]').count(),2,'Partial output must not masquerade as a persisted assistant message')
+  assert.equal(await page.locator('.chat-message--assistant').count(),3,'Interrupted partial output must stay visibly separate')
   assert.deepEqual(pageErrors,[],'React failed at '+width)
   await page.close()
  }
