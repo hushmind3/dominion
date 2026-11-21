@@ -131,10 +131,24 @@ Previous independent judge feedback (may be empty or unverified):
 {previous_feedback[:12000] or '(first round; independently select the most valuable improvement)'}"""
 
 
-def prepare(repo: Path, state: Path, branch: str, round_id: str) -> tuple[Path, str]:
+def prepare(repo: Path, state: Path, branch: str, round_id: str,
+            previous: dict | None = None) -> tuple[Path, str]:
     # Never checkout, reset, or mutate the user's watched application tree.
     remote_ref = f"refs/remotes/origin/{branch}"
-    sha = git(repo, "rev-parse", "--verify", remote_ref)
+    remote_sha = git(repo, "rev-parse", "--verify", remote_ref)
+    sha = remote_sha
+    if previous:
+        prior_status = previous.get("status")
+        if prior_status in {"agent_failed", "needs_review_uncommitted",
+                            "needs_review_sensitive_paths", "push_conflict_or_error", "error"}:
+            raise RuntimeError("prior work needs review; keeping its detached worktree intact")
+        if prior_status == "committed_local":
+            prior_head = previous.get("head", "")
+            ancestor = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor",
+                                       remote_sha, prior_head], capture_output=True)
+            if ancestor.returncode:
+                raise RuntimeError("remote diverged from unpushed local commits; refusing to discard them")
+            sha = prior_head
     target = state / "worktrees" / round_id / branch
     if target.exists():
         raise RuntimeError(f"Worktree already exists; refusing to overwrite: {target}")
@@ -144,13 +158,14 @@ def prepare(repo: Path, state: Path, branch: str, round_id: str) -> tuple[Path, 
 
 
 def run_branch(repo: Path, state: Path, branch: str, round_id: str, feedback: str,
-               timeout: int, template: str | None, publish: bool) -> dict:
+               timeout: int, template: str | None, publish: bool,
+               previous: dict | None = None) -> dict:
     out = state / "runs" / round_id / branch
     out.mkdir(parents=True, exist_ok=True)
     result: dict = {"branch": branch, "round": round_id, "status": "not_started"}
     started = time.monotonic()
     try:
-        target, base = prepare(repo, state, branch, round_id)
+        target, base = prepare(repo, state, branch, round_id, previous)
         result.update({"base": base, "worktree": str(target)})
         prompt = prompt_for(branch, feedback, base)
         (out / "prompt.txt").write_text(prompt, encoding="utf-8")
@@ -277,18 +292,21 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[DOMINION] round {iteration}: {round_id}", flush=True)
                 # Only fetch changes; never update a checked-out branch.
                 git(repo, "fetch", "--no-tags", "origin", *(f"+refs/heads/{b}:refs/remotes/origin/{b}" for b in BRANCHES))
-                previous = state / "latest_feedback.json"
-                feedback = json.loads(previous.read_text(encoding="utf-8")) if previous.is_file() else {}
+                feedback_path = state / "latest_feedback.json"
+                feedback = json.loads(feedback_path.read_text(encoding="utf-8")) if feedback_path.is_file() else {}
+                prior_path = state / "latest_round.json"
+                prior_runs = json.loads(prior_path.read_text(encoding="utf-8")).get("results", []) if prior_path.is_file() else []
+                prior_by_branch = {r["branch"]: r for r in prior_runs if "branch" in r}
                 with concurrent.futures.ThreadPoolExecutor(max_workers=args.parallel) as pool:
                     futures = [pool.submit(run_branch, repo, state, b, round_id,
                                            str(feedback.get(b, "")), args.timeout,
-                                           args.agent_command, args.publish) for b in BRANCHES]
+                                           args.agent_command, args.publish, prior_by_branch.get(b)) for b in BRANCHES]
                     results = [future.result() for future in futures]
                 print("[DOMINION] " + " | ".join(f"{r['branch']}:{r['status']}" for r in results), flush=True)
                 if not args.skip_judge:
                     report = judge_round(repo, state, round_id, results, args.timeout, args.judge_command)
                     if report["status"] == "judge_feedback_recorded":
-                        previous.write_text(json.dumps(report["feedback"], ensure_ascii=False, indent=2), encoding="utf-8")
+                        feedback_path.write_text(json.dumps(report["feedback"], ensure_ascii=False, indent=2), encoding="utf-8")
                     print(f"[DOMINION] judge: {report['status']}", flush=True)
                 (state / "latest_round.json").write_text(json.dumps({"id": round_id, "results": results},
                                                                       ensure_ascii=False, indent=2), encoding="utf-8")
