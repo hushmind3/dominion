@@ -71,6 +71,26 @@ pub fn cancel_unstarted(run:&mut Run)->Result<Vec<ToolCall>,String>{
     Ok(skipped)
 }
 
+/// A model-visible rejection that never reached an executor. The assistant
+/// tool-call pair still needs exactly one result, and the durable queue shrinks
+/// in order so later calls keep their positions. No effect, approval or
+/// "in flight" intent is recorded because nothing was dispatched.
+pub fn reject(run:&mut Run,call:&ToolCall,error:&str)->Result<(),String>{
+    if !queued_exact(run,call){return Err("rejected tool call does not match exactly one queued request".into());}
+    if run.in_flight.is_some()||!run.read_batch_in_flight.is_empty(){
+        return Err("another tool outcome is unresolved".into());
+    }
+    let index=run.queued_calls.iter().position(|c|same_call(c,call))
+        .ok_or("tool call was removed from durable queue")?;
+    run.queued_calls.remove(index);
+    run.messages.push(json!({"role":"tool","tool_call_id":call.id,
+        "content":format!("TOOL ERROR: {error}")}));
+    run.event("tool_rejected",
+        format!("Rejected {} ({}) before dispatch",call.name,call.id),
+        Some(json!({"call_id":call.id,"name":call.name,"error":error})));
+    Ok(())
+}
+
 /// Validate before adding the assistant response to durable model history.
 /// Tool-call IDs are correlation keys, not mere display values.
 pub fn validate_new_calls(run:&Run,calls:&[ToolCall])->Result<(),String>{

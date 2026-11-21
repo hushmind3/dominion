@@ -315,13 +315,11 @@ pub(super) fn progressive_tools(definitions: Vec<Value>, query: &str, pending_ac
     let full = definitions.into_iter().filter(|definition|
         !matches!(tool_name(definition),"dominion_tool_search"|"dominion_tool_call")
     ).collect::<Vec<_>>();
-    // A conversational turn needs the tiny discovery gateway, not a bundle
-    // of unrelated full parameter schemas. Discovery stays available if the
-    // model discovers that the user's request actually needs a tool.
-    if !pending_action && !room_tool_request(query) {
-        return selected;
-    }
-    let picked = if full.len() <= 18 {
+    // Native core tools stay directly callable: the gateway is a token saver
+    // for a long MCP tail, not a gate that hides file/shell/web tools from an
+    // ordinary turn. Weak or local models call tools by their real names, and
+    // a rejection there costs the whole turn.
+    let picked = if full.len() <= 18 || pending_action {
         full.clone()
     } else {
         let mut short=Vec::new();

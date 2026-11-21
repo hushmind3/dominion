@@ -115,15 +115,23 @@ pub async fn dispatch_batch<D:Dispatcher>(snapshot:&mut Snapshot,actions:&[Actio
     let calls=actions.iter().map(|a|ToolCall{id:a.id.clone(),name:a.tool.clone(),arguments:a.arguments.clone()}).collect::<Vec<_>>();
     journal::validate_new_calls(&snapshot.native,&calls)?;
     let definitions=if snapshot.native.advertised_tools.is_empty(){dispatcher.definitions()}else{snapshot.native.advertised_tools.clone()};
-    for (action,call) in actions.iter().zip(&calls){
-        if !definitions.is_empty(){tool_schema::admit(call,&definitions).map_err(|e|format!("{}: {}",e.code.as_str(),e.reason))?;}
+    // Admission is a tool-level outcome, not a turn-level abort: a model that
+    // names a tool outside the advertised catalog gets the error back and can
+    // retry with discovery. Dispatch is still never called for that call.
+    let admission=actions.iter().zip(&calls).map(|(_,call)|{
+        if definitions.is_empty(){return Ok(());}
+        tool_schema::admit(call,&definitions).map_err(|e|format!("{}: {}",e.code.as_str(),e.reason))
+    }).collect::<Vec<Result<(),String>>>();
+    for (action,rejected) in actions.iter().zip(&admission){
+        if rejected.is_err(){continue;}
         if action.depends_on.iter().any(|id|!snapshot.receipts.iter().any(|r|&r.id==id&&r.success)){
             return Err(format!("도구 {}의 선행 작업이 성공하지 않았습니다.",action.id));
         }
     }
     snapshot.native.queued_calls=calls.clone();
     snapshot.native.messages.push(json!({"role":"assistant","content":"","tool_calls":calls.iter().map(|c|json!({"id":c.id,"type":"function","function":{"name":c.name,"arguments":c.arguments.to_string()}})).collect::<Vec<_>>()}));
-    let parallel=calls.len()>1&&calls.iter().all(|c|journal::parallel_safe(&c.name));
+    let parallel=calls.len()>1&&admission.iter().all(Result::is_ok)
+        &&calls.iter().all(|c|journal::parallel_safe(&c.name));
     if parallel{
         // A model turn can legally request 16 calls, while a durable read
         // barrier admits at most eight. Partition into independently journaled
@@ -181,7 +189,7 @@ pub async fn dispatch_batch<D:Dispatcher>(snapshot:&mut Snapshot,actions:&[Actio
         return Ok(outputs);
     }
     let mut outputs=Vec::new();
-    for (action,call) in actions.iter().zip(&calls){
+    for ((action,call),rejected) in actions.iter().zip(&calls).zip(&admission){
         if store.cancelled(&snapshot.native.id.to_string()){
             let skipped=journal::cancel_unstarted(&mut snapshot.native)?;
             for call in skipped {
@@ -190,6 +198,15 @@ pub async fn dispatch_batch<D:Dispatcher>(snapshot:&mut Snapshot,actions:&[Actio
             }
             store.save(snapshot)?;
             return Err("실행이 중단되었습니다.".into());
+        }
+        if let Err(error)=rejected{
+            journal::reject(&mut snapshot.native,call,error)?;
+            snapshot.receipts.push(Receipt{id:action.id.clone(),tool:action.tool.clone(),
+                arguments:action.arguments.clone(),success:false,
+                result:json!({"error":error}),step:snapshot.step});
+            store.save(snapshot)?;
+            outputs.push(Err(error.clone()));
+            continue;
         }
         journal::begin(&mut snapshot.native,call)?;store.save(snapshot)?;
         // A host error cannot establish whether an external effect happened.
@@ -317,6 +334,26 @@ mod tests{
         assert_eq!(snapshot.receipts.iter().filter(|receipt|receipt.success).count(),8);
         assert_eq!(snapshot.native.messages.iter().filter(|m|m["role"]=="tool").count(),9);
         assert_eq!(journal.saved.lock().unwrap().as_ref().unwrap().receipts.len(),9);
+    }
+
+    #[tokio::test]
+    async fn a_tool_outside_the_advertised_catalog_is_rejected_without_dispatch(){
+        let mut s=run();
+        s.native.advertised_tools=vec![json!({"type":"function","function":{
+            "name":"dominion_tool_search","description":"d",
+            "parameters":{"type":"object","properties":{},"additionalProperties":false}}})];
+        let d=Tool(AtomicUsize::new(0));
+        let j=Memory{saved:Mutex::new(None),fail:false};
+        let a=Action{id:"c".into(),tool:"workspace_read".into(),
+            arguments:json!({"path":"a"}),depends_on:vec![]};
+        let results=dispatch_batch(&mut s,&[a],&d,&j).await.unwrap();
+        assert_eq!(results.len(),1);
+        assert!(results[0].is_err(),"the model must receive the rejection, not a dead turn");
+        assert_eq!(d.0.load(Ordering::SeqCst),0,"a rejected tool never reaches the executor");
+        assert!(s.native.queued_calls.is_empty());
+        assert_eq!(s.receipts.len(),1);
+        assert!(!s.receipts[0].success);
+        assert!(s.native.messages.iter().any(|m|m["role"]=="tool"&&m["tool_call_id"]=="c"));
     }
 
     #[tokio::test]

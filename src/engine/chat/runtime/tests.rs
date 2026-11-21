@@ -834,7 +834,7 @@ mod harness_tool_selection_tests {
     }
 
     #[test]
-    fn casual_private_chat_sends_only_lazy_discovery_not_expensive_schemas() {
+    fn casual_private_chat_keeps_native_tools_and_lazy_discovery_for_mcp() {
         let mut all = vec![
             json!({"type":"function","function":{"name":"workspace_read","description":"Read files"}}),
             json!({"type":"function","function":{"name":"workspace_write","description":"Write files"}}),
@@ -847,8 +847,13 @@ mod harness_tool_selection_tests {
             }}));
         }
         let casual = tool_catalog::progressive_tools(all.clone(), "안녕", false);
-        assert_eq!(casual.iter().map(tool_name).collect::<Vec<_>>(),
-            vec!["dominion_tool_search", "dominion_tool_call"]);
+        let names = casual.iter().map(tool_name).collect::<Vec<_>>();
+        assert_eq!(&names[..2], ["dominion_tool_search", "dominion_tool_call"],
+            "the discovery gateway leads the catalog");
+        assert!(names.contains(&"workspace_read") && names.contains(&"workspace_write"),
+            "native core tools stay directly callable on an ordinary turn: {names:?}");
+        assert!(names.iter().all(|name| !name.starts_with("mcp__")),
+            "the MCP tail still requires discovery: {names:?}");
         let bytes = |defs: &[Value]| defs.iter().map(|d|d.to_string().len()).sum::<usize>();
         assert!(bytes(&casual) * 10 < bytes(&all),
             "casual conversation should avoid full MCP parameter schemas");

@@ -52,8 +52,18 @@ pub(super) fn compile_private(
     provider_max_output_tokens: Option<u64>,
     tools: &[Value],
 ) -> Result<CompiledPrivate, String> {
-    let system=context::system_prompt_with_manifest_at(
+    let mut system=context::system_prompt_with_manifest_at(
         state,request,session_id,query,improvements,execution_id);
+    // The discovery gateway replaces the direct tool list. Say so only when the
+    // model can actually see it; a social or tool-less turn must not bill the
+    // instruction.
+    if tools.iter().any(|tool|
+        tool.pointer("/function/name").and_then(Value::as_str)
+            == Some(crate::engine::capability::SEARCH)) {
+        system.prompt.push_str(
+            "\n필요한 기능이 도구 목록에 직접 없으면 dominion_tool_search로 찾아 스키마를 확인하고 dominion_tool_call로 실행하십시오. 목록에 없는 도구 이름을 추측해 직접 호출하지 마십시오.",
+        );
+    }
     let capacity=provider_context_tokens.unwrap_or(32_768) as usize;
     let reserve=(provider_max_output_tokens.unwrap_or(4096) as usize)
         .min(capacity / 4).max(128);

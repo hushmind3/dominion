@@ -1337,9 +1337,21 @@ impl Host for MainTurn<'_> {
                     for ((index, _, _), result) in prepared.into_iter().zip(results) {
                         self.dispatched.insert(index, result);
                     }
-                    self.dispatched
+                    let observed = self
+                        .dispatched
                         .remove(&call_index)
-                        .ok_or("도구 배치 결과가 없습니다.")??
+                        .ok_or("도구 배치 결과가 없습니다.")?;
+                    // A per-call rejection (unknown tool name, invalid
+                    // arguments) is a tool result the model can recover from,
+                    // not a turn failure. The durable receipt already recorded
+                    // the rejection, so no effect is lost by continuing.
+                    observed.unwrap_or_else(|error| {
+                        (
+                            json!({"error": error.clone()}),
+                            false,
+                            format!("TOOL ERROR: {error}"),
+                        )
+                    })
                 };
 
             Ok((result, ok, tool_content))
