@@ -74,7 +74,7 @@ export async function openOAuth(id: string) {
 }
 
 export type ChatRequest = {
- sessionId: string; conversationMode?: 'chat'|'agent'; agentId?: string; providerId?: string; model?: string; input: string; attachmentIds?: string[];
+ sessionId: string; requestId?: string; conversationMode?: 'chat'|'agent'; agentId?: string; providerId?: string; model?: string; input: string; attachmentIds?: string[];
  toolsEnabled: boolean; toolsExecutionEnabled: boolean; autoLearning: boolean;
  reasoningLanguage?: string; reasoningEffort?: string; thinking?: boolean;
 }
