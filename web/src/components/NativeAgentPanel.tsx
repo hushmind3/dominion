@@ -1,6 +1,6 @@
 import {useEffect, useRef, useState} from 'react'
 import {Check, Play, RefreshCw, ShieldAlert, Square, Sparkles} from 'lucide-react'
-import {get, post, type Provider} from '../api'
+import {get, post, resolveApproval, type Provider} from '../api'
 import {useLocale} from '../i18n'
 import {ExecutionInsights} from './ExecutionInsights'
 import {RunEventTimeline} from './RunEventTimeline'
@@ -16,7 +16,7 @@ type SdkRun = {
  } | null
 }
 const fmtTokens=(value?:number|null)=>typeof value==='number'&&Number.isFinite(value)?value.toLocaleString():'—'
-const running = new Set(['queued', 'running'])
+const running = new Set(['queued', 'running', 'awaiting_approval'])
 const stopPolling = new Set(['completed','failed','cancelled','exhausted','denied','awaiting_approval','interrupted','in_doubt'])
 const stateNames:Record<string,[string,string]>={
  queued:['대기 중','Queued'], running:['작업 진행 중','Working'],
@@ -89,14 +89,18 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
- const action=async(kind:'approve'|'cancel'|'resume')=>{
+ const action=async(kind:'approve'|'deny'|'cancel'|'resume')=>{
   if(!run||busy)return
   setBusy(true);setError('')
   try{
    const call=run.checkpoint?.pendingCall
-   if(kind==='approve'&&!call?.id)throw Error(en?'Missing approval details':'승인할 도구 정보를 찾지 못했습니다.')
-   await post(`/api/sdk/runs/${encodeURIComponent(run.id)}/${kind}`,
-    kind==='approve'?{callId:call!.id}:{})
+   if((kind==='approve'||kind==='deny')&&!call?.id)throw Error(en?'Missing approval details':'승인할 도구 정보를 찾지 못했습니다.')
+   if(kind==='deny'){
+    await resolveApproval(call!.id,false)
+   }else{
+    await post(`/api/sdk/runs/${encodeURIComponent(run.id)}/${kind}`,
+     kind==='approve'?{callId:call!.id}:{})
+   }
    const refreshed=await get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}`)
    setRun(refreshed);void refreshHistory().catch(()=>{})
   }catch(e){setError((e as Error).message)}
@@ -206,6 +210,10 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      <button type="button" disabled={busy} onClick={()=>void action('approve')}
       className="mt-3 flex items-center gap-2 rounded-lg bg-[#A4583E] px-3 py-2 text-[11px] font-semibold text-white">
       <Check size={14}/>{en?'Approve this action only':'이 작업 1회 승인'}
+     </button>
+     <button type="button" disabled={busy} onClick={()=>void action('deny')}
+      className="ml-2 mt-3 rounded-lg border border-rose-200 px-3 py-2 text-[11px] font-semibold text-rose-700 disabled:opacity-50">
+      {en?'Reject this action':'이 작업 거절'}
      </button>
     </div>}
     {run.answer||run.checkpoint?.answer?<div className="mt-3 whitespace-pre-wrap break-words border-t border-[#E7E0D5] pt-3 text-[12px]">{run.answer||run.checkpoint?.answer}</div>:null}
