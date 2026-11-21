@@ -683,11 +683,11 @@ mod tests {
         for packet in [
             json!({"choices":[{"index":0,"delta":{"tool_calls":[{
                 "index":0,"id":"call-1",
-                "function":{"name":"workspace_read","arguments":"{\\\"path\\\":\\\""}
+                "function":{"name":"workspace_read","arguments":"{\"path\":\""}
             }]}}]}),
             json!({"choices":[{"index":0,"delta":{"tool_calls":[{
                 "index":0,"id":"call-1",
-                "function":{"name":"workspace_read","arguments":"src/lib.rs\\\"}"}
+                "function":{"name":"workspace_read","arguments":"src/lib.rs\"}"}
             }]}}]}),
             json!({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}),
         ] {
