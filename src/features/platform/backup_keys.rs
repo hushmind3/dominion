@@ -131,6 +131,20 @@ impl KeyRing {
         data.starts_with(MAGIC)
     }
 
+    pub fn is_versioned_file(path: &Path) -> std::io::Result<bool> {
+        let mut file = std::fs::File::open(path)?;
+        let mut prefix = [0u8; MAGIC.len()];
+        let mut read = 0;
+        while read < prefix.len() {
+            let count = file.read(&mut prefix[read..])?;
+            if count == 0 {
+                break;
+            }
+            read += count;
+        }
+        Ok(read == MAGIC.len() && &prefix == MAGIC)
+    }
+
     pub fn decrypt(&self, data: &[u8]) -> Option<Vec<u8>> {
         if data.len() < MAGIC.len() + 4 + 12 + 16 || !Self::is_versioned(data) {
             return None;

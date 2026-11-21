@@ -27,8 +27,8 @@ fn legacy_backups(state: &AppState) -> Vec<PathBuf> {
         .map(|entry| entry.path())
         .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("enc"))
         .filter(|path| {
-            std::fs::read(path)
-                .map(|bytes| !crate::engine::backup_keys::KeyRing::is_versioned(&bytes))
+            crate::engine::backup_keys::KeyRing::is_versioned_file(path)
+                .map(|versioned| !versioned)
                 .unwrap_or(false)
         })
         .collect()
