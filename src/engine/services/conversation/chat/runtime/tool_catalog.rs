@@ -60,11 +60,22 @@ pub(super) async fn prepare(
         // A direct text conversation needs no autonomous procedures,
         // workspace manifests, or unrelated retrieved memory. Attachments,
         // explicit source overrides, and web searches retain full context.
-        let lightweight_only=!request.web_search
+        let can_shortcut=!request.web_search
             && request.attachment_ids.is_empty()
             && request.system_override.as_ref().is_none_or(|text|text.trim().is_empty())
             && acceptance.is_none()
             && !session["roomId"].is_string();
+        // ChatGPT-like direct conversation still uses scoped persistent memory
+        // when available. Only source-free sessions can skip the retrieval
+        // pipeline and its extra context/tokens.
+        let has_visible_memory=if can_shortcut{
+            let scope=crate::engine::memory::MemoryScope::for_session(
+                &state.store,session_id,None);
+            ["memory","experience"].iter().any(|kind|
+                state.store.all(kind).iter().any(|record|
+                    crate::engine::memory::visible(record,&scope)))
+        }else{false};
+        let lightweight_only=can_shortcut&&!has_visible_memory;
         let definitions=if request.web_search&&request.tools_enabled
             && request.tools_execution_enabled {
             tools::definitions().into_iter().filter(|tool|
@@ -304,6 +315,15 @@ mod lightweight_tests{
         let plain=prepare(&state,&ordinary,&session,"new-chat","exec-new",&None,&policy).await.unwrap();
         assert!(plain.lightweight_only,"ordinary non-web Chat must use the minimal prompt");
         assert!(plain.definitions.is_empty(),"ordinary Chat must not expose tool schemas");
+        state.store.put("memory",&json!({
+            "id":"plain-chat-global-memory","scope":"global",
+            "content":"Owner's persistent knowledge for later direct Chat"
+        })).unwrap();
+        let remembered=prepare(&state,&ordinary,&session,"new-chat","exec-new",
+            &None,&policy).await.unwrap();
+        assert!(!remembered.lightweight_only,
+            "direct Chat must retain eligible long-term memory retrieval");
+        state.store.remove("memory","plain-chat-global-memory");
         let mut with_override=ordinary.clone();
         with_override.system_override=Some("Prioritized owner policy".into());
         let expanded=prepare(&state,&with_override,&session,"new-chat","exec-new",&None,&policy).await.unwrap();
