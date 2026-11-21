@@ -205,6 +205,8 @@ pub(super) async fn run_turn_body(
     }
     let full_catalog_size=tool_definitions.len();
     let is_room = session["roomId"].is_string();
+    let pure_chat_greeting = !is_room && request.attachment_ids.is_empty()
+        && acceptance.is_none() && pure_greeting(&request.input);
     if is_room && request.tools_enabled && request.tools_execution_enabled {
         let recent = recent_room_tools(state, session_id);
         tool_definitions =
@@ -227,6 +229,12 @@ pub(super) async fn run_turn_body(
                 "legacy full-catalog default replaced by progressive host discovery");
         }
         tool_definitions = select_chat_tools(tool_definitions, &request.input, &discovery);
+        // A greeting must not drag a read/search catalog or the two bridge
+        // schemas into the first model call. Explicit owner catalog policy
+        // still overrides the default lightweight behavior.
+        if pure_chat_greeting && discovery["ownerActivated"]!=true {
+            tool_definitions.clear();
+        }
     }
     if simple_creation_target.is_some() {
         // A concrete file creation has no use for web, memory, delegation or
@@ -255,7 +263,8 @@ pub(super) async fn run_turn_body(
     // deterministic single-file paths must not acquire hidden tools.
     let bridge_enabled=capability::should_expose(
         full_catalog_size,tool_definitions.len(),
-        !is_room || acceptance.is_some() || room_tool_request(&request.input),
+        (!pure_chat_greeting || discovery["ownerActivated"]==true)
+            && (!is_room || acceptance.is_some() || room_tool_request(&request.input)),
         request.tools_enabled && request.tools_execution_enabled,
         simple_creation_target.is_some(),
     );
