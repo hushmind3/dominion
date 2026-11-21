@@ -767,6 +767,46 @@ mod tests {
     fn config() -> Value {
         json!({"id":"room-one","name":"우리 방","agentIds":(0..9).map(|i|format!("a{i}")).collect::<Vec<_>>(),"routingMode":"discussion"})
     }
+    #[tokio::test]
+    async fn durable_room_events_and_agent_cursor_survive_an_api_page(){
+        let (state,dir)=test_state();
+        let _saved=save_room(&state,None,&config()).unwrap();
+        let session=rooms::ensure_room_session(&state,"room-one").unwrap();
+        let session_id=session["id"].as_str().unwrap().to_string();
+        let owner=state.store.write_message(&json!({
+            "id":"owner-room-event","session_id":session_id,
+            "role":"user","content":"Test", "metadata":{"authorKind":"owner"}
+        })).unwrap();
+        let source_id=owner["id"].as_str().unwrap();
+        let agent=state.store.write_room_answer_with_cursor(
+            &json!({"id":"agent-room-event","session_id":session_id,
+                "role":"assistant","agent_id":"a0","content":"Observed",
+                "metadata":{"authorKind":"agent","replyToMessageId":source_id}}),
+            &crate::features::collaboration::room_cursor::checkpoint(
+                &session_id,"a0",source_id,source_id)
+        ).unwrap();
+        assert_eq!(agent["id"],"agent-room-event");
+        let response=events(State(state.clone()),Path("room-one".into()),
+            Query(HashMap::from([("after".to_string(),"0".to_string()),
+                ("limit".to_string(),"1".to_string())]))).await;
+        assert_eq!(response.status(),StatusCode::OK);
+        let bytes=axum::body::to_bytes(response.into_body(),64*1024).await.unwrap();
+        let page:Value=serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(page["events"][0]["eventId"],"owner-room-event");
+        assert_eq!(page["events"][0]["seq"],1);
+        assert_eq!(page["hasMore"],true);
+        assert_eq!(page["nextCursor"],1);
+        let cursor=page["bindings"].as_array().unwrap().iter()
+            .find(|v|v["agentId"]=="a0").unwrap();
+        assert_eq!(cursor["readCursor"],1);
+        let page_two=events(State(state.clone()),Path("room-one".into()),
+            Query(HashMap::from([("after".to_string(),"1".to_string())]))).await;
+        let bytes=axum::body::to_bytes(page_two.into_body(),64*1024).await.unwrap();
+        let page:Value=serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(page["events"][0]["eventId"],"agent-room-event");
+        assert_eq!(page["events"][0]["seq"],2);
+        crate::test_support::cleanup_dir(dir);
+    }
     #[test]
     fn nine_agent_roster_has_stable_private_session_and_safe_defaults() {
         let (state, dir) = test_state();

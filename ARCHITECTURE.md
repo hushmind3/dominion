@@ -137,6 +137,31 @@ Each selected writer can use `worktree.rs` to pin its source repository/base com
 
 Preserve existing navigation and API surfaces. Operations/Task Teams are presented inside the existing UI, with no additional top-level tab. The app should show source task, worker ownership, phase, owner approvals, verification outcome and recovery action from durable state.
 
+## Implementation map against the attached original (2026-11-20)
+
+| Original requirement | Sub3 implementation | Status |
+| --- | --- | --- |
+| Core/Harness/Strategies ownership | Runtime contracts + Algorithm ReActLoop + pinned host profiles; the SDK remains a facade | Structural split implemented |
+| One Run/Event identity across surfaces | `RunRef`, `RunPhase`, `RunTransition`, `/api/runs/:id`, durable SSE | Implemented |
+| One admission and receipt semantics | Shared `dispatch_fence` and `dispatch_batch`, SQLite evidence journal, CAS status/phase | Implemented in both paths |
+| One *physical upper model-turn loop* | Chat/Room still own legacy streaming loop, native job owns ReActLoop | **Not yet migrated** |
+| Room Chat / independent agent cursors | Per-room SQLite `room_events.seq`, atomic agent `throughSeq`, 150-turn coverage | Implemented |
+| Separate Task Team graph | Native/CLI workers, dependency DAG, read parallelism, writer lease, worktree owner promotion | Implemented |
+| Local/API Model Gateway | Per-model context/tool capability and pinned provider identity | Implemented |
+| External Codex/Claude/Qwen AgentBridge | Independent scoped read-only external sessions, host observations not native receipts | Implemented |
+| Long-term correction / strategy evidence | Source-grounded memory and bounded strategy-evaluation modules | Existing implementation |
+| React/Tauri/SQLite durable source | Existing UI and REST/SSE contracts, local-first Host and Tauri sidecar | Existing implementation |
+| Distributed remote Gateway/Worker | Original architecture makes this conditional on multi-device demand | Out of scope |
+
+The original document says not to rename/recreate crates merely for labels. The
+current names `dominion-agent-runtime`, `dominion-agent-algorithms` and
+`dominion-agent-sdk` preserve that two-layer Core/Harness separation with
+a compatibility facade and host-controlled strategy profiles.
+
+**Operational acceptance** requires the latest exact-commit CI results; no
+real model quality, token saving, signed desktop package or full physical
+Chat/native upper-loop convergence is claimed from these source edits.
+
 ## 8. Mandatory regression acceptance
 
 | Boundary | Deterministic evidence required |
