@@ -90,3 +90,38 @@ flowchart TD
 **실환경에서 별도 검증할 항목:** 강제 종료 후 실제 외부 변경의 중복 방지, 100턴 이상 실모델 Room 품질·원가, Codex/Claude/Qwen 실연결·승인 전달, Windows/macOS Tauri 설치, 실제 사용자 계정·결제, 다중 프로세스 환경에서 외부 파일/셸의 모든 잠재적 변경 자원. 이 목록은 소스 미구현을 뜻하는 것이 아니라 **통합/운영 완성의 검증 경계**입니다.
 
 원칙: 새 메뉴·새 HTTP 서버·새 병렬 모델 루프를 만들지 말고, 먼저 기존 실행 계약을 재사용하십시오.
+
+## 8. 실제 구현 연결 — Lead Team, Bot Room, Endpoint Model, SDK (2026-11-21)
+
+이 절은 설계 제안이 아니라 현재 `dominion-sub2` 브랜치에서 새로 연결된 실제 실행 코드의 범위를 기록합니다.
+
+### 자율 Lead/Worker DAG
+
+- `src/engine/services/tools/tools_team.rs`는 `team_workers`, `team_execute`, `team_status`의 실제 서비스입니다.
+- Lead는 등록된 Agent ID를 먼저 검색하고, 최대 8개의 노드·`dependsOn`·`readOnly`·`successCriteria`를 포함하는 작업 DAG를 모델 도구 호출로 제출합니다.
+- 읽기 Worker는 4개까지 같은 파동에 배치하며 쓰기·외부 위임은 독점 파동을 사용합니다. 실제 Worker는 별도 모델 루프가 아니라 기존 native `delegate`와 `jobs::enqueue`를 호출합니다.
+- 팀·멤버 상태는 각각 `managed_team`, `managed_team_task`에 저장됩니다. 결정적 작업 ID, 자식 Job ID, 실제 완료 상태를 재조회하며 끊긴 실행은 기존 팀 ID로 재개합니다.
+- 선행 Worker의 완료된 실제 Job 내용만 후속 Worker 프롬프트에 출처 ID와 함께 삽입합니다. 기록이 애매하면 새로운 Worker를 임의 생성하지 않고 `needs_review`로 보존합니다.
+- 명시한 `successCriteria`는 기존 `verification::validate_criteria`를 통해 검증한 다음 하위 Job `input.successCriteria`로 전달하여 native verifier가 평가합니다.
+
+### 영속 Bot Room 및 4홉 전달
+
+- `src/engine/services/tools/tools_room_peer.rs`는 `room_peer_send`, `room_peer_inbox`를 구현합니다.
+- 실제 등록된 방 참여자만 서로 메시지를 보낼 수 있습니다. SQLite `room_peer_mail`은 발신자·수신자·실행·원문·답장 참조·홉 수·큐/전달 상태를 보존합니다.
+- 다음 수신자의 실제 Room 모델 호출에 `room_state::unread_for`가 자기에게 지정된 메일만 삽입합니다. 응답이 영속 저장된 뒤 `acknowledge_read`가 **모델 호출 전에 관측한** 메일만 전달 완료로 표시합니다.
+- 4번째 홉을 거부하며 메일 발송만으로 다른 봇을 자동 호출하지 않습니다.
+
+### 엔드포인트별 기능 및 외부 실행기
+
+- `gateway::negotiate_capabilities_for_endpoint`는 `endpointCapabilities[endpoint][model]` → 모델 기본값 → 제공자 기본값으로 기능을 선택합니다. 도구·추론·비전·병렬 도구·스트리밍·캐시·컨텍스트·출력 한도를 근거와 함께 기록합니다.
+- `chat/runtime/turn_body.rs`는 실제 응답한 로컬/API 엔드포인트를 기록합니다.
+- `tools_external_harness.rs`는 외부 Codex/Claude/Qwen 실행기 세션을 owner·agent·workspace 범위로만 조회하는 `external_harness_sessions`를 구현합니다. 외부 인증·실행기 내부 승인은 실제 설치된 제공자가 책임집니다.
+
+### 동일한 이벤트·SDK
+
+- `dominion-turn-core::run_state::RunEvent`, `src/events.rs`, `sdk/typescript/src/index.ts`가 `managed_team` 및 `managed_team_task`를 기존 `run_state`/SSE `seq`에 통합합니다.
+- 내부 `workerJobId`, `parentRunId`, `verified`, `dependsOn`, `nodeId`는 저장된 실행 원문에서 투영하며 가짜 완료 메시지로 만들어 내지 않습니다.
+
+### 범위
+
+이번 구현은 새 제품 메뉴 또는 별도 서버를 만들지 않았습니다. 실제 모델을 이용한 장시간 비용·품질 측정, 외부 CLI 계정·승인 브리지의 실환경 연결, OS별 Tauri 패키지 검증은 릴리스 전에 별도로 필요합니다. 설계 P3의 분산 Gateway·원격 Worker는 원문에서 **실제 다중 기기 요구 시 도입**하도록 명시한 조건부 단계입니다.
