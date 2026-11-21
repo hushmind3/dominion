@@ -284,6 +284,13 @@ impl Store {
                ON records(json_extract(data,'$.status'),updated_at DESC)
                WHERE kind='approval'
                  AND json_extract(data,'$.status') IN ('pending','interrupted');
+             CREATE INDEX IF NOT EXISTS idx_approval_reuse_lineage
+               ON records(json_extract(data,'$.sessionId'),json_extract(data,'$.taskId'),
+                   json_extract(data,'$.taskRevision'),json_extract(data,'$.operationKey'),
+                   json_extract(data,'$.tool'),json_extract(data,'$.argsDigest'),updated_at DESC,id DESC)
+               WHERE kind='approval' AND json_extract(data,'$.status')='approved'
+                 AND json_type(data,'$.orphaned')='true'
+                 AND json_type(data,'$.consumed') IS NOT 'true';
              CREATE INDEX IF NOT EXISTS idx_native_approval_pending_run
                  ON records(json_extract(data,'$.runId'),json_extract(data,'$.sessionId'))
                  WHERE kind='approval' AND json_extract(data,'$.status')='pending';
@@ -609,6 +616,52 @@ impl Store {
              ORDER BY updated_at DESC,id DESC"
         ).map_err(|e|e.to_string())?;
         let rows=stmt.query_map([],record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
+    /// Find only approval decisions whose lineage exactly matches the retry,
+    /// joined to the interrupted original execution. The caller still runs
+    /// its pure reuse-window check over these candidates.
+    pub fn reusable_approval_context(
+        &self,session_id:&str,task_id:&str,task_revision:&str,
+        operation_key:&str,tool:&str,args_digest:&str,
+    )->Result<Vec<(Value,Value)>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT a.data,a.id,a.created_at,a.updated_at,
+                    e.data,e.id,e.created_at,e.updated_at
+             FROM records AS a INDEXED BY idx_approval_reuse_lineage
+             JOIN records AS e ON e.kind='execution'
+               AND e.id=json_extract(a.data,'$.runId')
+             WHERE a.kind='approval'
+               AND json_extract(a.data,'$.sessionId')=?1
+               AND json_extract(a.data,'$.taskId')=?2
+               AND json_extract(a.data,'$.taskRevision')=?3
+               AND json_extract(a.data,'$.operationKey')=?4
+               AND json_extract(a.data,'$.tool')=?5
+               AND json_extract(a.data,'$.argsDigest')=?6
+               AND json_extract(a.data,'$.status')='approved'
+               AND json_type(a.data,'$.orphaned')='true'
+               AND json_type(a.data,'$.consumed') IS NOT 'true'
+               AND json_extract(e.data,'$.taskId')=?2
+               AND json_extract(e.data,'$.status')='interrupted'
+             ORDER BY a.updated_at DESC,a.id DESC"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map(rusqlite::params![session_id,task_id,task_revision,
+            operation_key,tool,args_digest],|row|{
+            let approval=record_from_row(row)?;
+            let data:String=row.get(4)?;
+            let id:String=row.get(5)?;
+            let created_at:String=row.get(6)?;
+            let updated_at:String=row.get(7)?;
+            let mut execution:Value=serde_json::from_str(&data).unwrap_or_else(|_|json!({}));
+            if let Value::Object(ref mut fields)=execution {
+                fields.insert("id".into(),json!(id));
+                fields.insert("createdAt".into(),json!(created_at));
+                fields.insert("updatedAt".into(),json!(updated_at));
+            }
+            Ok((approval,execution))
+        }).map_err(|e|e.to_string())?;
         rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 

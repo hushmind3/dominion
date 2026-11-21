@@ -246,8 +246,11 @@ pub(super) async fn request_approval(
         tool,
         args_digest: &digest,
     };
-    let existing = state.store.all("approval");
-    let executions = state.store.all("execution");
+    let candidates=state.store.reusable_approval_context(
+        lineage.session_id,lineage.task_id,lineage.task_revision,
+        lineage.operation_key,lineage.tool,lineage.args_digest,
+    ).unwrap_or_default();
+    let (existing,executions):(Vec<_>,Vec<_>)=candidates.into_iter().unzip();
     if let Some(decision) = reusable_decision(
         &existing,
         &executions,
