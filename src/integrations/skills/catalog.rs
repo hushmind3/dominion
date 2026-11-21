@@ -3,6 +3,24 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 const MAX_SKILL_METADATA_BYTES: usize = 64 * 1024;
+const MAX_CATALOG_ENTRIES: usize = 20_000;
+const MAX_CATALOG_SKILLS: usize = 512;
+const MAX_SKILL_TREE_ENTRIES: usize = 4_096;
+const MAX_SKILL_TREE_DEPTH: usize = 12;
+const MAX_SKILL_TREE_BYTES: u64 = 64 * 1024 * 1024;
+
+#[derive(Default)]
+struct CatalogBudget {
+    entries: usize,
+    skills: usize,
+    exhausted: bool,
+}
+
+#[derive(Default)]
+struct CopyBudget {
+    entries: usize,
+    bytes: u64,
+}
 
 fn read_skill_prefix(path: &Path) -> Option<String> {
     use std::io::Read;
@@ -58,14 +76,19 @@ fn id_for(path: &Path) -> String {
     format!("{hash:016x}")
 }
 
-fn walk(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
-    if depth > 5 {
+fn walk(dir: &Path, depth: usize, budget: &mut CatalogBudget, found: &mut Vec<PathBuf>) {
+    if depth > 5 || budget.exhausted {
         return;
     }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
+        if budget.entries >= MAX_CATALOG_ENTRIES || budget.skills >= MAX_CATALOG_SKILLS {
+            budget.exhausted = true;
+            return;
+        }
+        budget.entries += 1;
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         if name == "node_modules" || name == ".git" {
@@ -75,9 +98,10 @@ fn walk(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
             continue;
         };
         if file_type.is_dir() {
-            walk(&path, depth + 1, found);
+            walk(&path, depth + 1, budget, found);
         } else if name == "SKILL.md" {
             found.push(path);
+            budget.skills += 1;
         }
     }
 }
@@ -127,12 +151,13 @@ fn item(path: &Path, source: &str) -> Option<Value> {
 pub fn catalog(state: &AppState) -> Value {
     let mut items = Vec::new();
     let mut seen = std::collections::HashSet::new();
+    let mut budget = CatalogBudget::default();
     for (source, root) in roots(state) {
-        if !root.exists() {
+        if !root.exists() || budget.exhausted {
             continue;
         }
         let mut found = Vec::new();
-        walk(&root, 0, &mut found);
+        walk(&root, 0, &mut budget, &mut found);
         for path in found {
             if let Some(item) = item(&path, &source) {
                 if let Some(id) = item.get("id").and_then(|value| value.as_str()) {
@@ -146,6 +171,7 @@ pub fn catalog(state: &AppState) -> Value {
     json!({
         "items": items,
         "total": items.len(),
+        "truncated": budget.exhausted,
         "updatedAt": chrono::Utc::now().to_rfc3339(),
         "roots": roots(state).into_iter().map(|(source, path)| json!({
             "source": source,
@@ -154,7 +180,13 @@ pub fn catalog(state: &AppState) -> Value {
     })
 }
 
-fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+fn copy_dir(from: &Path, to: &Path, depth: usize, budget: &mut CopyBudget) -> std::io::Result<()> {
+    if depth > MAX_SKILL_TREE_DEPTH {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "skill asset directory nesting exceeds the limit",
+        ));
+    }
     let original=std::fs::canonicalize(from)?;
     if let Ok(destination)=std::fs::canonicalize(to) {
         if destination==original {return Ok(());}
@@ -170,12 +202,39 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(to)?;
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
+        budget.entries = budget.entries.saturating_add(1);
+        if budget.entries > MAX_SKILL_TREE_ENTRIES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "skill asset tree exceeds the entry limit",
+            ));
+        }
         let target = to.join(entry.file_name());
         let file_type = entry.file_type()?;
         if file_type.is_dir() {
-            copy_dir(&entry.path(), &target)?;
+            copy_dir(&entry.path(), &target, depth + 1, budget)?;
         } else if file_type.is_file() {
-            std::fs::copy(entry.path(), target)?;
+            use std::io::Read;
+            let remaining = MAX_SKILL_TREE_BYTES.saturating_sub(budget.bytes);
+            let mut source = std::fs::File::open(entry.path())?;
+            if source.metadata()?.len() > remaining {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "skill asset tree exceeds the 64 MiB limit",
+                ));
+            }
+            let mut destination = std::fs::File::create(target)?;
+            let copied = std::io::copy(
+                &mut source.by_ref().take(remaining.saturating_add(1)),
+                &mut destination,
+            )?;
+            if copied > remaining {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "skill asset tree exceeds the 64 MiB limit",
+                ));
+            }
+            budget.bytes = budget.bytes.saturating_add(copied);
         } else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -208,7 +267,8 @@ fn install(state: &AppState, source_dir: &Path) -> Result<Value, String> {
         })
         .collect();
     let target = state.config.data_dir.join("skills").join(&slug);
-    copy_dir(source_dir, &target).map_err(|error| format!("스킬 복사 실패: {error}"))?;
+    copy_dir(source_dir, &target, 0, &mut CopyBudget::default())
+        .map_err(|error| format!("스킬 복사 실패: {error}"))?;
 
     let record = state.store.put(
         "skill",
@@ -272,7 +332,8 @@ pub async fn import_repo(state: &AppState, repo: &str) -> Result<Value, String> 
     }
 
     let mut found = Vec::new();
-    walk(&temp, 0, &mut found);
+    let mut budget = CatalogBudget::default();
+    walk(&temp, 0, &mut budget, &mut found);
     let mut added = 0;
     let mut names = Vec::new();
     for file in found {
@@ -319,9 +380,9 @@ mod tests {
         let dir=std::env::temp_dir().join(format!("dominion-skill-self-{}",uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("SKILL.md"),"original skill").unwrap();
-        copy_dir(&dir,&dir).expect("same-directory install is a no-op");
+        copy_dir(&dir,&dir,0,&mut CopyBudget::default()).expect("same-directory install is a no-op");
         assert_eq!(std::fs::read_to_string(dir.join("SKILL.md")).unwrap(),"original skill");
-        assert!(copy_dir(&dir,&dir.join("nested")).is_err(),
+        assert!(copy_dir(&dir,&dir.join("nested"),0,&mut CopyBudget::default()).is_err(),
             "recursive destination must not create unbounded directories");
         let _=std::fs::remove_dir_all(dir);
     }
