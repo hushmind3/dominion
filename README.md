@@ -1,4 +1,4 @@
-# DOMINION — Rust agent workspace (dominion-sub2)
+# DOMINION
 
 <p align="center"><img src="src-tauri/icons/icon.png" alt="DOMINION" width="90" /></p>
 <p align="center"><strong>Your models. Your workspace. Native Rust execution.</strong></p>
