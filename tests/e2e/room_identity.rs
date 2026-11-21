@@ -645,6 +645,71 @@ fn cancelling_a_stalled_model_does_not_wait_for_network_data() {
 
 
 #[test]
+fn usage_only_stream_is_failed_but_provider_tokens_stay_accounted() {
+    let _serial=serial();
+    let (port,requests)=scripted_provider(|_|vec![json!({
+        "choices":[],
+        "usage":{"prompt_tokens":30,"completion_tokens":8,"total_tokens":38}
+    })]);
+    let app=TestApp::new(port,"native");
+    let session=app.post("/api/sessions",&json!({"title":"usage-only terminal"}));
+    let id=session["id"].as_str().unwrap();
+    let stream=app.chat(&json!({"sessionId":id,"input":"안녕",
+        "toolsEnabled":false,"autoLearning":false}));
+    assert!(stream.contains("읽을 수 있는 답변"),"{stream}");
+    let execution=&app.get("/api/executions")[0];
+    assert_eq!(execution["status"],"failed","{execution}");
+    let call=&execution["inputContext"]["modelCallUsage"][0];
+    assert_eq!(call["promptTokens"],30);
+    assert_eq!(call["outputTokens"],8);
+    assert_eq!(call["usageExact"],true);
+    let usage=app.get(&format!("/api/sessions/{id}/usage"));
+    assert!(usage["totalTokens"].as_u64().unwrap_or(0)>=38,
+        "failed charged calls must remain in session usage: {usage}");
+    assert_eq!(requests.lock().unwrap().len(),1,
+        "a charge without an answer must never be automatically replayed");
+}
+
+#[test]
+fn final_message_only_stream_becomes_one_visible_answer() {
+    let _serial=serial();
+    let (port,requests)=scripted_provider(|_|vec![json!({
+        "choices":[{"message":{"role":"assistant","content":"최종 본문 복원"},
+            "finish_reason":"stop"}],
+        "usage":{"prompt_tokens":40,"completion_tokens":5,"total_tokens":45}
+    })]);
+    let app=TestApp::new(port,"native");
+    let stream=app.chat(&json!({"input":"안녕","toolsEnabled":false,"autoLearning":false}));
+    assert!(stream.contains("최종 본문 복원"),"{stream}");
+    let execution=&app.get("/api/executions")[0];
+    assert_eq!(execution["status"],"completed","{execution}");
+    assert_eq!(execution["inputContext"]["modelCallUsage"][0]["finishReason"],"stop");
+    assert_eq!(requests.lock().unwrap().len(),1);
+}
+
+#[test]
+fn length_limited_stream_records_usage_and_never_claims_success() {
+    let _serial=serial();
+    let (port,requests)=scripted_provider(|_|vec![json!({
+        "choices":[{"delta":{"content":"잘린 답변"},"finish_reason":"length"}],
+        "usage":{"prompt_tokens":22,"completion_tokens":9,"total_tokens":31}
+    })]);
+    let app=TestApp::new(port,"native");
+    let session=app.post("/api/sessions",&json!({"title":"truncation"}));
+    let id=session["id"].as_str().unwrap();
+    let stream=app.chat(&json!({"sessionId":id,"input":"설명해",
+        "toolsEnabled":false,"autoLearning":false}));
+    assert!(stream.contains("출력 토큰 제한"),"{stream}");
+    let execution=&app.get("/api/executions")[0];
+    assert_eq!(execution["status"],"failed","{execution}");
+    assert_eq!(execution["inputContext"]["modelCallUsage"][0]["finishReason"],"length");
+    assert_eq!(execution["inputContext"]["modelCallUsage"][0]["outputTokens"],9);
+    let usage=app.get(&format!("/api/sessions/{id}/usage"));
+    assert!(usage["totalTokens"].as_u64().unwrap_or(0)>=31,"{usage}");
+    assert_eq!(requests.lock().unwrap().len(),1);
+}
+
+#[test]
 fn disabled_tools_cannot_be_enabled_by_the_model() {
     let _serial = serial();
     let (port, _) = scripted_provider(|_| {
