@@ -28,6 +28,7 @@ const agent={id:'default',name:'기본값',providerId:'mock-chat',model:'mock-na
 let messages=structuredClone(original)
 const requests=[]
 let releaseReply=null
+let markReplyReceived=null
 const json=(route,body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)})
 async function mock(route){
  const req=route.request(),n=new URL(req.url()).pathname,m=req.method()
@@ -53,6 +54,8 @@ async function mock(route){
   assert.equal(body.input,'후속 질문도 같은 채팅으로 보내주세요.')
   // Hold the network response to prove the owner bubble is painted
   // immediately, before the server has returned any conversation delta.
+  markReplyReceived?.()
+  markReplyReceived=null
   await new Promise(resolve=>{releaseReply=resolve})
   messages.push({id:'owner-'+(requests.length+1),role:'user',session_id:'chat-ui',content:body.input})
   const reply='### 후속 답변\n**같은 대화**를 이어갑니다.'
@@ -82,6 +85,7 @@ try{
  browser=await chromium.launch({headless:true,args:['--no-sandbox']})
  for(const width of [1440,390,320]){
   messages=structuredClone(original)
+  const replyReceived=new Promise(resolve=>{markReplyReceived=resolve})
   const page=await browser.newPage({viewport:{width,height:width===1440?900:760},locale:'ko-KR'})
   const pageErrors=[]
   page.on('pageerror',e=>pageErrors.push(e.message))
@@ -119,7 +123,10 @@ try{
   await pending.waitFor({timeout:5000})
   assert.equal(await pending.locator('.chat-message-text').textContent(),'후속 질문도 같은 채팅으로 보내주세요.')
   assert.equal(await page.getByText('후속 답변',{exact:true}).count(),0,'Provider response must remain gated')
-  await page.waitForFunction(()=>false,null,{timeout:100}).catch(()=>{})
+  await Promise.race([
+   replyReceived,
+   new Promise((_,reject)=>setTimeout(()=>reject(Error('Model request did not reach the mock endpoint')),5000))
+  ])
   assert.equal(await pending.count(),1,'Pending owner bubble should not vanish before transcript reload')
   assert.ok(releaseReply,'Mock model endpoint has not received the request')
   releaseReply();releaseReply=null

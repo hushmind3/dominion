@@ -50,5 +50,5 @@ test('owner messages appear immediately and are deduplicated against the stored 
  assert.match(chat,/data-pending="true"/)
  assert.match(chat,/lastOwner\.id===pendingOwner\.priorUserId/)
  assert.match(chat,/pendingVisible\?pendingOwner\?\.text/)
- assert.match(chat,/setPendingOwner\(previous=>previous\?\.scope===current\?\{\.\.\.previous,scope:id\}:previous\)/)
+ assert.match(chat,/setPendingOwner\(previous=>previous&&previous\.scope===current\?\{\.\.\.previous,scope:id\}:previous\)/)
 })
