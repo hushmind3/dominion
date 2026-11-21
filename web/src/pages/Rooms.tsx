@@ -188,7 +188,7 @@ function RoomModelPicker({value,onChange,providers,agents,disabled=false}:{value
  </div>
 }
 
-type RoomAttachment={id:string;name:string;size:number}
+type RoomAttachment={id:string;name:string;size:number;sessionId?:string}
 type RoomSendAttempt={input:string;targets:string[];attachmentIds:string[];id:string;reasoningLanguage:'ko'|'default';reasoningEffort?:string;thinking:boolean}
 type RoomComposerDraft={text:string;targets:string[];attachments:RoomAttachment[];attempt?:RoomSendAttempt}
 const maxRoomAttachmentBytes=8*1024*1024,maxRoomAttachments=8,maxRoomTotalBytes=24*1024*1024
@@ -227,6 +227,7 @@ function readRoomComposer(roomId:string):RoomComposerDraft{
      &&typeof row.name==='string'&&row.name.length>0&&row.name.length<=240
      &&typeof row.size==='number'&&Number.isSafeInteger(row.size)
      &&row.size>=0&&row.size<=maxRoomAttachmentBytes
+     &&(row.sessionId===undefined||(typeof row.sessionId==='string'&&row.sessionId.length<=160))
    }).slice(0,maxRoomAttachments):[]
   if(attachments.reduce((sum,file)=>sum+file.size,0)>maxRoomTotalBytes)return empty
   const pending=saved.attempt
@@ -300,12 +301,12 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
     if(pending.length>=maxRoomAttachments||
      pending.reduce((sum,item)=>sum+item.size,0)+file.size>maxRoomTotalBytes)
      throw Error('첨부는 최대 8개, 합계 24MiB까지 가능합니다.')
-    const saved=await post<{id:string;name:string;size:number}>('/api/attachments',{
+    const saved=await post<{id:string;name:string;size:number;sessionId:string}>('/api/attachments',{
      roomId:room.id,name:file.name,mimeType:file.type||'application/octet-stream',
      data:await encodeRoomFile(file)
     })
     if(!mounted.current)return
-    pending=[...pending,{id:saved.id,name:saved.name,size:saved.size}]
+    pending=[...pending,{id:saved.id,name:saved.name,size:saved.size,sessionId:saved.sessionId}]
     setComposer(previous=>({...previous,attachments:pending,attempt:undefined}))
     sendAttempt.current=null
    }
@@ -341,6 +342,18 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
  const [showActivity,setShowActivity]=useState(false),[live,setLive]=useState<LiveDraft|null>(null),[moreBelow,setMoreBelow]=useState(false)
  const inputRef=useRef<HTMLTextAreaElement>(null),approvalRef=useRef<HTMLDivElement>(null),requestInFlight=useRef(false),reloadRequested=useRef(false),dataVersion=useRef(0),mounted=useRef(true),sendAttempt=useRef<RoomSendAttempt|null>(composer.attempt??null)
  const activeTurnId=useRef<string|null>(null),retiredTurnIds=useRef(new Set<string>()),terminalTurnIds=useRef(new Set<string>())
+ // Room resets (including resets from another tab) create a new transcript.
+ // Already-uploaded bytes belong to the old session and MUST NOT be carried
+ // into the new session's next owner message or stale retry.
+ useEffect(()=>{
+  if(!feed.sessionId)return
+  setComposer(previous=>{
+   const attached=previous.attachments.filter(file=>!file.sessionId||file.sessionId===feed.sessionId)
+   if(attached.length===previous.attachments.length)return previous
+   sendAttempt.current=null
+   return {...previous,attachments:attached,attempt:undefined}
+  })
+ },[feed.sessionId])
  const viewActive=useRef(visibleView);viewActive.current=visibleView
  const current=feed.room||room
  const roster=useMemo(()=>current.agentIds.map(id=>agents.find(agent=>agent.id===id)).filter((a):a is Agent=>Boolean(a)),[current.agentIds,agents])
@@ -459,7 +472,7 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
   }catch(e){setError((e as Error).message)}finally{setOptionsBusy(false)}
  }
  const remove=async()=>{if(!confirm(t('rooms.deleteConfirm',{name:current.name})))return;setError('');try{await del('/api/rooms/'+room.id);storeRoomComposer(room.id,{text:'',targets:[],attachments:[]});await onRemoved()}catch(e){setError((e as Error).message)}}
- const reset=async()=>{if(!confirm(t('rooms.resetConfirm',{name:current.name})))return;setError('');setStopping(true);try{const result=await post<{sessionId:string}>('/api/rooms/'+room.id+'/reset',{});dataVersion.current+=1;if(activeTurnId.current)terminalTurnIds.current.add(activeTurnId.current);setMessages([]);setLive(null);setFeed(previous=>({...previous,sessionId:result.sessionId,jobs:[],executions:[],operations:[],approvals:[],status:'idle',activeAgentId:undefined}));setInspector(false);await load();await onSaved()}catch(e){setError((e as Error).message)}finally{setStopping(false)}}
+ const reset=async()=>{if(!confirm(t('rooms.resetConfirm',{name:current.name})))return;setError('');setStopping(true);try{const result=await post<{sessionId:string}>('/api/rooms/'+room.id+'/reset',{});dataVersion.current+=1;if(activeTurnId.current)terminalTurnIds.current.add(activeTurnId.current);setMessages([]);setLive(null);sendAttempt.current=null;setComposer(previous=>({...previous,attachments:[],attempt:undefined}));setFeed(previous=>({...previous,sessionId:result.sessionId,jobs:[],executions:[],operations:[],approvals:[],status:'idle',activeAgentId:undefined}));setInspector(false);await load();await onSaved()}catch(e){setError((e as Error).message)}finally{setStopping(false)}}
  const previewPrompt=(id:string)=>get<NonNullable<typeof prompt>>(`/api/rooms/${room.id}/system-prompt?agentId=${encodeURIComponent(id)}`)
  const closePrompt=()=>{
   if(promptSaving)return
