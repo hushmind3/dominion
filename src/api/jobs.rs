@@ -69,6 +69,9 @@ pub async fn resume_external(
     if previous["input"]["toolsEnabled"]!=true
         || previous["input"]["toolsExecutionEnabled"]==false
         || parent["readOnly"]==true
+        || parent["toolsEnabled"]==false
+        || parent["toolsExecutionEnabled"]==false
+        || state.is_cancelled(parent_id)
         || state.store.get("agent",agent_id).is_none(){
         return error(StatusCode::CONFLICT,"현재 소유권·도구 권한에서 이어갈 수 없습니다.");
     }
@@ -103,4 +106,45 @@ pub(crate) fn steering_response(result:Result<Value,engine::job_control::Steerin
         let code=match &e{SteeringError::BadInput(_)=>StatusCode::BAD_REQUEST,SteeringError::NotFound=>StatusCode::NOT_FOUND,SteeringError::Conflict(_)=>StatusCode::CONFLICT};
         error(code,&e.to_string())
     }}
+}
+
+#[cfg(test)]
+mod external_resume_ui_tests {
+    use super::*;
+    use crate::{config::Config,db::Store,vault::Vault};
+    fn fixture()->AppState {
+        let root=std::env::temp_dir().join(format!("dominion-resume-ui-{}",uuid::Uuid::new_v4()));
+        let config=Config{port:0,data_dir:root.clone(),web_dir:root.join("web"),workspace:root};
+        AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),Vault::open(&config.key_path()))
+    }
+    #[tokio::test]
+    async fn endpoint_rejects_missing_evidence_before_creating_child_job() {
+        let state=fixture();
+        state.store.put("job",&json!({"id":"prior","status":"completed",
+            "input":{"parentSessionId":"parent","agentId":"reviewer",
+                "delegationProfile":"inspection","externalRuntime":"qwen-acp",
+                "toolsEnabled":true},"result":{}})).unwrap();
+        let response=resume_external(State(state.clone()),Path("prior".into()),
+            Json(json!({"prompt":"continue inspection"}))).await;
+        assert_eq!(response.status(),StatusCode::CONFLICT);
+        assert_eq!(state.store.all("job").len(),1);
+        let invalid=resume_external(State(state.clone()),Path("prior".into()),
+            Json(json!({"prompt":"   "}))).await;
+        assert_eq!(invalid.status(),StatusCode::BAD_REQUEST);
+    }
+    #[tokio::test]
+    async fn endpoint_rejects_readonly_parent_without_reusing_cli_session() {
+        let state=fixture();
+        state.store.put("agent",&json!({"id":"reviewer"})).unwrap();
+        state.store.put("session",&json!({"id":"parent","readOnly":true})).unwrap();
+        state.store.put("job",&json!({"id":"prior","status":"completed",
+            "input":{"parentSessionId":"parent","agentId":"reviewer",
+                "delegationProfile":"inspection","externalRuntime":"qwen-acp",
+                "toolsEnabled":true,"toolsExecutionEnabled":true},
+            "result":{"externalRunId":"external-1"}})).unwrap();
+        let response=resume_external(State(state.clone()),Path("prior".into()),
+            Json(json!({"prompt":"inspect another file"}))).await;
+        assert_eq!(response.status(),StatusCode::CONFLICT);
+        assert_eq!(state.store.all("job").len(),1);
+    }
 }
