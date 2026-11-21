@@ -368,6 +368,7 @@ async fn wait_cancelled(state: &AppState, session_id: &str, generation: u64) {
  
 // Small, cohesive Rust modules preserve the existing runtime contracts while
 // separating streaming, program execution, approvals, and finalization.
+mod input_contract;
 mod turn;
 mod harness;
 mod adaptation;
