@@ -138,7 +138,7 @@ impl RunEvent{
     /// user message or job id. All clients can consume the same state names.
     pub fn from_record(kind:&str,record:&Value)->Option<Self>{
         if !matches!(kind,"execution"|"job"|"room_work_assignment"|
-            "task_team_work"|"managed_team"|"managed_team_task"){
+            "task_team_work"|"managed_team"|"managed_team_task"|"remote_task"){
             return None;
         }
         let run_id=record["id"].as_str().filter(|id|!id.is_empty())?;
@@ -217,6 +217,19 @@ mod tests{
             RunState::Cancelled);
     }
 
+    #[test]
+    fn remote_worker_task_follows_identical_versioned_run_event_contract(){
+        let active=RunEvent::from_record("remote_task",&json!({
+            "id":"remote-job","status":"running","agentId":"researcher",
+            "workerId":"node-b","teamId":"team-a"
+        })).unwrap().into_value();
+        assert_eq!(active["state"],"running");
+        assert_eq!(active["agentId"],"researcher");
+        let done=RunEvent::from_record("remote_task",&json!({
+            "id":"remote-job","status":"needs_review","agentId":"researcher"
+        })).unwrap().into_value();
+        assert_eq!(done["state"],"needs_review");
+    }
     #[test]
     fn lead_and_worker_team_records_use_the_existing_run_state_stream(){
         let lead=RunEvent::from_record("managed_team",&json!({
