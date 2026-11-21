@@ -47,6 +47,7 @@ try{
   const page=await browser.newPage({viewport:{width:390,height:844},locale:'ko-KR'});
   const errors=[];
   let cancelRequestPayload, cancelStatusReads=0, slowChatRelease;
+  const deletedChatIds=new Set();
   page.on('pageerror',error=>errors.push(error.message));
   await page.route('**/api/**',async route=>{
     const path=new URL(route.request().url()).pathname;
@@ -68,7 +69,11 @@ try{
       {id:'chat-two',title:'Conversation Two',agentId:'lead',providerId:'fixture',model:'fixture'},
       {id:'chat-route',title:'Independent route',agentId:'separate',providerId:'fixture',model:'fixture'},
       {id:'chat-persist',title:'Agent mode persisted server-side',agentId:'separate',providerId:'fixture',model:'fixture',conversationMode:'agent'}
-    ];
+    ].filter(session=>!deletedChatIds.has(session.id));
+    if(path.startsWith('/api/sessions/')&&route.request().method()==='DELETE'){
+      deletedChatIds.add(decodeURIComponent(path.split('/').at(-1)));
+      response={ok:true};
+    }
     if(path.endsWith('/messages'))response=path==='/api/sessions/chat-one/messages'?[
       {id:'owner-layout',session_id:'chat-one',role:'user',
        content:'내 질문은 오른쪽 말풍선에 표시되어야 합니다.',
@@ -413,6 +418,16 @@ try{
   assert.ok(cancelStatusReads>=2,'Stop must wait for durable session release');
   assert.equal(await page.getByText('서버가 아직 실행 종료를 확인하지 못했습니다. 다시 중단을 누르세요.').count(),0);
   slowChatRelease?.();
+  await page.getByRole('button',{name:'대화 목록 펼치기'}).click();
+  page.once('dialog',dialog=>dialog.accept());
+  const deleting=page.waitForRequest(request=>
+    new URL(request.url()).pathname==='/api/sessions/chat-one'
+    &&request.method()==='DELETE');
+  await page.getByRole('button',{name:'Conversation One 대화 삭제'}).click();
+  await deleting;
+  await page.locator('aside').getByRole('button',{name:'Conversation One',exact:true})
+    .waitFor({state:'detached',timeout:10000});
+  assert.ok(deletedChatIds.has('chat-one'),'private Chat delete reaches Rust endpoint');
   assert.deepEqual(errors,[], 'Chat/Team React runtime errors');
   console.log('PASS Chromium route isolation, Markdown, attachments, mode persistence and history search');
 }finally{
