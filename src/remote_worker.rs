@@ -1,11 +1,36 @@
 //! Outbound-only remote Worker runtime: no model loop, no public listener.
  //! A local Dominion Job executes the same Harness and tool policy as desktop.
 use crate::{config::Config,engine,state::AppState,sdk::Dominion};
+use futures_util::StreamExt;
 use serde_json::{json,Value};
 use std::time::Duration;
 
 const POLL_MS:u64=4_000;
 const HEARTBEAT_MS:u64=12_000;
+const MAX_REMOTE_RESPONSE_BYTES:usize=2*1024*1024;
+
+async fn response_json(response:reqwest::Response)->Result<Value,String>{
+    if response.content_length().is_some_and(|length|
+        length>MAX_REMOTE_RESPONSE_BYTES as u64){
+        return Err(format!("remote response exceeds {MAX_REMOTE_RESPONSE_BYTES} bytes"));
+    }
+    let mut stream=response.bytes_stream();
+    let mut body=Vec::new();
+    while let Some(chunk)=stream.next().await{
+        let chunk=chunk.map_err(|error|format!("remote response body: {error}"))?;
+        if body.len().saturating_add(chunk.len())>MAX_REMOTE_RESPONSE_BYTES{
+            return Err(format!("remote response exceeds {MAX_REMOTE_RESPONSE_BYTES} bytes"));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&body).map_err(|error|format!("invalid JSON: {error}"))
+}
+
+fn transport_client()->Result<reqwest::Client,String>{
+    reqwest::Client::builder().redirect(reqwest::redirect::Policy::none())
+        .pool_idle_timeout(Duration::from_secs(30))
+        .build().map_err(|error|error.to_string())
+}
 
 struct Transport{
     url:String,
@@ -19,8 +44,8 @@ impl Transport{
             .timeout(Duration::from_secs(15))
             .json(data).send().await.map_err(|e|format!("remote {path}: {e}"))?;
         let status=response.status();
-        let payload=response.json::<Value>().await
-            .map_err(|e|format!("remote {path}: invalid JSON: {e}"))?;
+        let payload=response_json(response).await
+            .map_err(|e|format!("remote {path}: {e}"))?;
         if !status.is_success(){
             return Err(format!("remote {path} status {status}: {}",
                 payload["error"].as_str().unwrap_or("remote rejected request")));
@@ -53,8 +78,7 @@ fn configuration()->Result<(Transport,String,bool),String>{
         .ok().as_deref()==Some("1");
     let transport=Transport{
         url:url.trim_end_matches('/').to_string(),token,
-        client:reqwest::Client::builder().pool_idle_timeout(Duration::from_secs(30))
-            .build().map_err(|e|e.to_string())?,
+        client:transport_client()?,
     };
     Ok((transport,worker_id,allow_writes))
 }
@@ -281,11 +305,54 @@ pub async fn run()->Result<(),String>{
 #[cfg(test)]
 mod tests{
     use super::*;
+    use axum::{extract::State,http::{header,HeaderMap,StatusCode},routing::post,Json,Router};
+    use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
+
+    #[derive(Clone)]
+    struct TestState{target:String,count:Arc<AtomicUsize>}
+
     #[test]
     fn secure_transport_requires_explicit_configuration(){
         assert!(terminal("completed"));
         assert!(terminal("needs_review"));
         assert!(!terminal("running"));
         assert!(!terminal("queued"));
+    }
+
+    #[tokio::test]
+    async fn authenticated_transport_does_not_follow_redirect_or_read_unbounded_json(){
+        async fn redirect(State(state):State<TestState>)->(StatusCode,HeaderMap,Json<Value>){
+            let mut headers=HeaderMap::new();
+            headers.insert(header::LOCATION,state.target.parse().unwrap());
+            (StatusCode::TEMPORARY_REDIRECT,headers,Json(json!({"redirect":true})))
+        }
+        async fn target(State(state):State<TestState>)->StatusCode{
+            state.count.fetch_add(1,Ordering::SeqCst);
+            StatusCode::OK
+        }
+        async fn oversized()->(StatusCode,String){
+            (StatusCode::OK,"x".repeat(MAX_REMOTE_RESPONSE_BYTES+1))
+        }
+
+        let count=Arc::new(AtomicUsize::new(0));
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address=listener.local_addr().unwrap();
+        let target_url=format!("http://{address}/target");
+        let app=Router::new().route("/redirect",post(redirect))
+            .route("/target",post(target)).route("/oversized",post(oversized))
+            .with_state(TestState{target:target_url,count:count.clone()});
+        let task=tokio::spawn(async move{axum::serve(listener,app).await.unwrap();});
+        let transport=Transport{
+            url:format!("http://{address}"),token:"sensitive-cluster-token".into(),
+            client:transport_client().unwrap(),
+        };
+        let redirect_error=transport.send("/redirect",&json!({"payload":"private"}))
+            .await.unwrap_err();
+        assert!(redirect_error.contains("307"),"{redirect_error}");
+        assert_eq!(count.load(Ordering::SeqCst),0,
+            "redirect targets must not receive the cluster token or worker payload");
+        let size_error=transport.send("/oversized",&json!({})).await.unwrap_err();
+        assert!(size_error.contains("exceeds 2097152 bytes"),"{size_error}");
+        task.abort();
     }
 }

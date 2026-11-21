@@ -88,6 +88,7 @@ pub async fn upload(path: &Path, config: &RemoteConfig) -> RemoteReport {
     let url = format!("{}/{}", config.base_url.trim_end_matches('/'), name);
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(config.timeout_secs))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
     {
         Ok(client) => client,

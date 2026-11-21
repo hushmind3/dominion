@@ -31,7 +31,7 @@ async fn try_complete(
     // and return empty content. Start with a practical budget and retry once
     // with a larger one before reporting an empty response.
     let mut max_tokens = 8192u64;
-    let client = reqwest::Client::new();
+    let client=gateway::provider_http_client();
     let mut last = String::new();
     for attempt in 0..2 {
         let mut body = json!({
@@ -49,7 +49,7 @@ async fn try_complete(
             body["chat_template_kwargs"] = json!({"enable_thinking": false});
         }
         let response = gateway::send_with_session(
-            &route, &client, &body, Duration::from_secs(240), session_id,
+            &route, client, &body, Duration::from_secs(240), session_id,
         ).await?;
         let response = response.response;
         if !response.status().is_success() {

@@ -59,6 +59,7 @@ fn client()->Result<reqwest::Client,String>{
         std::sync::OnceLock::new();
     CLIENT.get_or_init(||
         reqwest::Client::builder().timeout(Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
             .build().map_err(|e|e.to_string())
     ).clone()
 }

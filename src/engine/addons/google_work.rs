@@ -9,6 +9,7 @@ use std::{sync::OnceLock,time::Duration};
 fn client()->Result<Client,String>{
     static INSTANCE:OnceLock<Result<Client,String>>=OnceLock::new();
     INSTANCE.get_or_init(||Client::builder().timeout(Duration::from_secs(25))
+        .redirect(reqwest::redirect::Policy::none())
         .build().map_err(|e|e.to_string())).clone()
 }
 fn required<'a>(args:&'a Value,key:&str,max:usize)->Result<&'a str,String>{

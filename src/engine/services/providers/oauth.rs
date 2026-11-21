@@ -307,7 +307,9 @@ pub async fn callback(
         .remove_secret(&format!("oauth-state:{state_token}"));
 
     let (client_id, client_secret) = client_credentials(state, id)?;
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build().map_err(|error|error.to_string())?;
     let mut form = vec![
         ("client_id", client_id),
         ("client_secret", client_secret),
@@ -417,6 +419,7 @@ pub async fn link_github_cli_account(state:&AppState, access:&str)->Result<(),St
     }
     let client=reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
+        .redirect(reqwest::redirect::Policy::none())
         .build().map_err(|error|error.to_string())?;
     let response=client
         .get("https://api.github.com/user")
@@ -493,7 +496,10 @@ pub async fn fresh_access_token(state: &AppState, id: &str) -> Result<String, St
         .ok_or("인증이 만료되었습니다. 계정을 다시 연결하세요.")?;
     let provider = provider(id).ok_or("지원하지 않는 OAuth 제공자입니다.")?;
     let (client_id, client_secret) = client_credentials(state, id)?;
-    let response = reqwest::Client::new()
+    let client=reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build().map_err(|error|error.to_string())?;
+    let response = client
         .post(provider.token)
         .form(&[
             ("client_id", client_id.as_str()),

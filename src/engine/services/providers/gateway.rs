@@ -13,6 +13,15 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
+/// Provider endpoints receive account credentials and private prompts. Never
+/// forward either across an unsolicited HTTP redirect.
+pub fn provider_http_client()->&'static reqwest::Client{
+    static CLIENT:OnceLock<reqwest::Client>=OnceLock::new();
+    CLIENT.get_or_init(||reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build().expect("provider HTTP client configuration is valid"))
+}
+
 /// A resolved provider + model pair. `base_url` never has a trailing slash.
 #[derive(Clone, Debug)]
 pub struct Route {
