@@ -399,7 +399,11 @@ mod memory_edit_tests{
         let edit=edit_owner_memory(&state,"memory-evidence",&json!({
             "expectedText":"원본에서 추출한 기억","text":"부활 시도"
         }));
-        assert_eq!(edit.status(),StatusCode::CONFLICT);
+        // A hard-deleted memory has no editable record. This is NOT_FOUND,
+        // unlike a stale revision of an existing owner memory (CONFLICT).
+        // Both cases must remain non-mutating.
+        assert_eq!(edit.status(),StatusCode::NOT_FOUND);
+        assert!(state.store.get("memory","memory-evidence").is_none());
     }
 
     #[tokio::test]
