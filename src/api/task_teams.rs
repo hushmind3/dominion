@@ -27,10 +27,23 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
         Ok(team)=>team,Err(e)=>return error(StatusCode::BAD_REQUEST,e),
     };
     for task in &team.tasks {
-        if task.runtime!=task_team::WorkerRuntime::Native
-            && std::env::var("DOMINION_EXTERNAL_AGENTS").ok().as_deref()!=Some("1"){
-            return error(StatusCode::BAD_REQUEST,
-                "External Team workers require explicit DOMINION_EXTERNAL_AGENTS=1 opt-in");
+        // CLI bridges and the text-only remote inference gateway are
+        // independent opt-ins. A remote worker needs no external Codex/Claude
+        // binary and must not accidentally inherit its broader permissions.
+        match task.runtime {
+            task_team::WorkerRuntime::Native=>{},
+            task_team::WorkerRuntime::Remote=>{
+                if std::env::var("DOMINION_REMOTE_WORKERS").ok().as_deref()!=Some("1"){
+                    return error(StatusCode::BAD_REQUEST,
+                        "Remote Team workers require DOMINION_REMOTE_WORKERS=1");
+                }
+            },
+            _=>{
+                if std::env::var("DOMINION_EXTERNAL_AGENTS").ok().as_deref()!=Some("1"){
+                    return error(StatusCode::BAD_REQUEST,
+                        "External CLI Team workers require DOMINION_EXTERNAL_AGENTS=1");
+                }
+            }
         }
         if let Some(id)=task.agent_id.as_deref() {
             if state.store.get("agent",id).is_none(){
