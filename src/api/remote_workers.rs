@@ -21,7 +21,7 @@ fn valid_worker_id(id:&str)->bool{
 fn worker_auth(state:&AppState,headers:&HeaderMap,worker:&str)->Result<(),Response>{
     remote_registry::authenticate(state,headers,worker)
 }
-fn lease_alive(row:&Value,worker:&str,lease:&str)->bool{
+pub(super) fn lease_alive(row:&Value,worker:&str,lease:&str)->bool{
     row["status"]=="leased"&&row["workerId"]==worker&&row["leaseId"]==lease
         &&row["leaseExpiresAt"].as_str()
             .and_then(|s|chrono::DateTime::parse_from_rfc3339(s).ok())
