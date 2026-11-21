@@ -4,6 +4,37 @@
 //! OAuth, MCP catalog filtering, lazy skills or group peer visibility.
 use super::*;
 
+/// Strict one-call no-tool path for a new ordinary greeting or an inline
+/// translation. Run this before enumerating installed MCP schemas/accounts:
+/// tool discovery itself must not tax a request that cannot use any tools.
+/// References, prior work, attachments and explicit file/web operations must
+/// keep normal context and tool authority.
+fn no_tools_required(request:&TurnRequest,session:&Value,acceptance:&Option<(String,Value)>)->bool{
+    if !request.attachment_ids.is_empty() || acceptance.is_some()
+        || session["roomId"].is_string() || session["teamUiOwnerJobId"].is_string()
+        || request.parent_task_id.is_some() || request.task_id.is_some(){
+        return false;
+    }
+    let text=request.input.trim().trim_matches(|ch:char|
+        ch.is_whitespace() || matches!(ch,'.'|'!'|'?'|'。'|'！'|'？'|'~'))
+        .trim().to_lowercase();
+    if matches!(text.as_str(),
+        "안녕"|"안녕하세요"|"안녕 반가워"|"안녕하세요 반가워요"|
+        "반가워"|"반갑습니다"|"좋은 아침"|"좋은 아침입니다"|
+        "고마워"|"감사합니다"|"고맙습니다"|
+        "hello"|"hi"|"hey"|"good morning"|"thanks"|"thank you"){
+        return true;
+    }
+    let inline_translation=text.chars().count()<=350
+        && ["번역해","번역해줘","번역해 주세요","번역해주","translate "].iter()
+            .any(|term|text.contains(term))
+        && !["파일","문서","폴더","웹","검색","사이트","링크","url",
+            "http","github","깃허브","이전","방금","앞에서","그거",
+            "이거","저거","계속","이어","첨부","pdf","텍스트 파일"]
+            .iter().any(|term|text.contains(term));
+    inline_translation
+}
+
 pub(super) struct Catalog{
     pub definitions:Vec<Value>,
     pub discovery:Vec<Value>,
@@ -21,12 +52,14 @@ pub(super) async fn prepare(
     let simple_creation_target=if !session["roomId"].is_string() {
         simple_file_creation(state,&request.input,&acceptance)
     }else{None};
-    let mut tool_definitions = if request.tools_enabled && request.tools_execution_enabled {
+    let lightweight_only=no_tools_required(request,session,acceptance);
+    let mut tool_definitions = if request.tools_enabled && request.tools_execution_enabled
+        && !lightweight_only {
         tools::definitions()
     } else {
         Vec::new()
     };
-    if request.tools_enabled && request.tools_execution_enabled
+    if request.tools_enabled && request.tools_execution_enabled && !lightweight_only
         && (session["sdkUiPolicy"].is_null() || session["sdkUiPolicy"]["mcpEnabled"]==true){
         tool_definitions.extend(crate::engine::addons::tool_definitions(state).await);
     }
@@ -38,7 +71,7 @@ pub(super) async fn prepare(
     // visible skill exists for this participant. Its schema otherwise adds
     // tokens to every unrelated call, even if no skill could be read.
     let skill_loader=if request.tools_enabled && request.tools_execution_enabled
-        && (session["sdkUiPolicy"].is_null()
+        && !lightweight_only && (session["sdkUiPolicy"].is_null()
             || session["sdkUiPolicy"]["skillsEnabled"]!=false){
         let scope=crate::engine::memory::MemoryScope::for_session(
             &state.store,session_id,request.agent_id.as_deref());
@@ -178,3 +211,38 @@ pub(super) async fn prepare(
         progressive_enabled,simple_creation_target,is_room,
     })
 }
+
+#[cfg(test)]
+mod lightweight_tests{
+    use super::*;
+    use serde_json::json;
+    fn request(input:&str)->TurnRequest{
+        TurnRequest::from_value(&json!({"input":input,"toolsEnabled":true,
+            "toolsExecutionEnabled":true})).unwrap()
+    }
+    #[test]
+    fn ordinary_greetings_and_inline_translation_have_no_model_tool_schemas(){
+        let session=json!({"id":"chat-1"});
+        for text in ["안녕","안녕하세요 반가워요","안녕하세요!","hello",
+            "Translate this to Korean: Nice to meet you",
+            "The sky is blue를 한국어로 번역해줘"]{
+            assert!(no_tools_required(&request(text),&session,&None),"{text}");
+        }
+    }
+    #[test]
+    fn owner_work_sources_and_attached_or_room_requests_keep_tools(){
+        let session=json!({"id":"chat-1"});
+        for text in ["이어서 해","방금 파일 번역해","README.md 읽고 번역해줘",
+            "안녕, 웹에서 검색해","그거 번역해","이거 번역해","안녕 지난 작업 계속해"]{
+            assert!(!no_tools_required(&request(text),&session,&None),"{text}");
+        }
+        let attachment=TurnRequest::from_value(&json!({
+            "input":"안녕","attachmentIds":["file-1"]
+        })).unwrap();
+        assert!(!no_tools_required(&attachment,&session,&None));
+        assert!(!no_tools_required(&request("안녕"),&json!({"roomId":"r"}),&None));
+        assert!(!no_tools_required(&request("안녕"),&session,
+            &Some(("work".into(),json!([])))));
+    }
+}
+
