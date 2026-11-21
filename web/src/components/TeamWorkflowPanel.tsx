@@ -155,7 +155,7 @@ function TeamCard({team,summary,onCreated}:{team:Job;summary:Map<string,Job>;onC
  * no second DAG state and no mutation of the engine's dependency graph. */
 export function TeamWorkflowPanel({jobs,filterSessionId}:{jobs?:Job[];filterSessionId?:string}){
  const en=useLocale()==='en'
- const [expanded,setExpanded]=useState(false)
+ const [expanded,setExpanded]=useState(Boolean(filterSessionId))
  // Room panels own the job subscription when no parent supplies one.
  // Native job record events refresh worker status without a manual reload.
  const endpoint=jobs===undefined?(filterSessionId
