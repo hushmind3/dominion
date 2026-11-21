@@ -211,14 +211,13 @@ pub fn validate_ids(
 // forever limited to the first 32k characters of the attachment.
 const TEXT_EXCERPT_CHARS: usize = 32_000;
 fn focused_text_excerpt(source: &str, question: &str) -> (String, bool) {
-    if source.chars().count() <= TEXT_EXCERPT_CHARS {
+    let total_chars = source.chars().count();
+    if total_chars <= TEXT_EXCERPT_CHARS {
         return (source.to_owned(), false);
     }
     let head: String = source.chars().take(10_000).collect();
     let tail: String = source.chars().rev().take(4_000).collect::<Vec<_>>()
         .into_iter().rev().collect();
-    let head_lines = head.lines().count();
-    let tail_start = source.lines().count().saturating_sub(tail.lines().count());
     let keywords: Vec<String> = question.to_lowercase()
         .split(|ch: char| !ch.is_alphanumeric())
         .filter(|word| word.chars().count() >= 2 && !matches!(
@@ -228,39 +227,59 @@ fn focused_text_excerpt(source: &str, question: &str) -> (String, bool) {
                 | "this" | "that" | "with" | "from" | "show" | "what"
         ))
         .take(12).map(str::to_owned).collect();
-    // Keep only the strongest matches, without allocating a line index for
-    // the whole 8 MiB file. Equal-score ties prefer later source lines.
+    // Score bounded UTF-8 character windows, not entire lines. A minified
+    // 8 MiB JSON file may consist of one line, and a key in its middle still
+    // needs to be discoverable without including the whole file in context.
     let mut chosen: Vec<(usize, usize, String)> = Vec::new();
-    for (index, line) in source.lines().enumerate() {
-        if keywords.is_empty() || index < head_lines || index >= tail_start {
-            continue;
-        }
-        let lower = line.to_lowercase();
-        let score = keywords.iter().filter(|word| lower.contains(word.as_str())).count();
-        if score == 0 {
-            continue;
-        }
-        let match_byte = keywords.iter()
-            .filter_map(|word| lower.find(word.as_str())).min().unwrap_or(0);
-        let start = lower[..match_byte].chars().count().saturating_sub(120);
-        let snippet: String = line.chars().skip(start).take(900).collect();
-        let excerpt = format!("L{}: {}{}\n", index + 1, if start > 0 { "…" } else { "" }, snippet);
-        if chosen.len() < 16 {
-            chosen.push((index, score, excerpt));
-        } else if let Some((worst, _)) = chosen.iter().enumerate()
-            .min_by_key(|(_, (line, score, _))| (*score, *line))
-        {
-            if (score, index) > (chosen[worst].1, chosen[worst].0) {
-                chosen[worst] = (index, score, excerpt);
+    let mut absolute_start = 0usize;
+    for (line_index, line) in source.lines().enumerate() {
+        let mut start_byte = 0usize;
+        let mut line_column = 0usize;
+        while start_byte < line.len() {
+            let end_byte = line[start_byte..].char_indices().nth(1_400)
+                .map(|(offset, _)| start_byte + offset).unwrap_or(line.len());
+            let chunk = &line[start_byte..end_byte];
+            let absolute = absolute_start + line_column;
+            let chunk_chars = chunk.chars().count();
+            if !keywords.is_empty() && absolute >= 10_000
+                && absolute < total_chars.saturating_sub(4_000)
+            {
+                let lower = chunk.to_lowercase();
+                let score = keywords.iter()
+                    .filter(|word| lower.contains(word.as_str())).count();
+                if score > 0 {
+                    let match_byte = keywords.iter()
+                        .filter_map(|word| lower.find(word.as_str())).min().unwrap_or(0);
+                    let focus = lower[..match_byte].chars().count().saturating_sub(120);
+                    let snippet: String = chunk.chars().skip(focus).take(900).collect();
+                    let excerpt = format!(
+                        "L{} C{}: {}{}\n",
+                        line_index + 1, line_column + focus + 1,
+                        if focus > 0 { "…" } else { "" }, snippet
+                    );
+                    let position = absolute + focus;
+                    if chosen.len() < 16 {
+                        chosen.push((position, score, excerpt));
+                    } else if let Some((worst, _)) = chosen.iter().enumerate()
+                        .min_by_key(|(_, (position, score, _))| (*score, *position))
+                    {
+                        if (score, position) > (chosen[worst].1, chosen[worst].0) {
+                            chosen[worst] = (position, score, excerpt);
+                        }
+                    }
+                }
             }
+            start_byte = end_byte;
+            line_column += chunk_chars;
         }
+        absolute_start += line_column + 1;
     }
-    chosen.sort_unstable_by_key(|(line, _, _)| *line);
+    chosen.sort_unstable_by_key(|(position, _, _)| *position);
     let relevant: String = chosen.into_iter().map(|(_, _, text)| text).collect();
     let middle = if relevant.is_empty() {
         String::new()
     } else {
-        format!("\n[질문 관련 원문 행 · 원본 줄 번호]\n{relevant}")
+        format!("\n[질문 관련 원문 위치 · 원본 행/열]\n{relevant}")
     };
     (format!(
         "[시작 부분]\n{head}{middle}\n[끝 부분]\n{tail}\n[파일 원문이 길어 일부만 제공되었습니다. 발췌되지 않은 내용은 추측하지 마세요.]"
@@ -366,10 +385,21 @@ mod tests {
         let (excerpt, truncated) = focused_text_excerpt(&source, "검증 임계값과 롤백 조건");
         assert!(truncated);
         assert!(excerpt.contains("87점"), "{excerpt}");
-        assert!(excerpt.contains("L150:"), "source line was lost");
+        assert!(excerpt.contains("L150 C"), "source position was lost");
         assert!(excerpt.contains("[시작 부분]"));
         assert!(excerpt.contains("[끝 부분]"));
         assert!(excerpt.chars().count() < TEXT_EXCERPT_CHARS);
+        // A compressed JSON source has no newline: a deep field cannot be
+        // recovered by line-only ranking.
+        let minified = format!("{}{}{}", "x".repeat(30_000),
+            "\"targetThreshold\": 0.87, \"rollBackOnFail\": true",
+            "z".repeat(30_000));
+        let (json_excerpt, json_truncated) = focused_text_excerpt(
+            &minified, "targetThreshold rollBackOnFail"
+        );
+        assert!(json_truncated);
+        assert!(json_excerpt.contains("targetThreshold"));
+        assert!(json_excerpt.contains("L1 C"), "deep single-line offset was lost");
         let (short, truncated) = focused_text_excerpt("세 줄만 있습니다", "어떤 질문");
         assert!(!truncated);
         assert_eq!(short, "세 줄만 있습니다");
