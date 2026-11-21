@@ -1,5 +1,5 @@
 import {useEffect,useState} from 'react'
-import {BookText,Check,Copy,FileText,RefreshCw,Save,ShieldCheck} from 'lucide-react'
+import {BookText,Check,Copy,FileText,RefreshCw,Save,ShieldCheck,RotateCcw} from 'lucide-react'
 import {get,post,type Agent,type ChatSession,koreanReasoningEnabled} from '../../api'
 import {Button,TextArea,TextInput,SelectInput} from '../../components/Primitives'
 import {FormField,Notice,Panel,Subheading,useRemote} from '../../components/UI'
@@ -10,6 +10,7 @@ type PromptPreview={
  systemPrompt:string;dynamicContext:string;systemChars:number;systemTokensEstimated:number;
  contextChars:number;contextTokensEstimated:number;agentId?:string|null;agentName?:string|null;
  ownerEnabled:boolean;sampleInput:string;sessionId?:string|null;
+ ownOverrideActive:boolean;ownOverrideText?:string|null;effectiveOverrideScope?:'agent'|'global'|null;
 }
 const tr=(ko:string,en:string,isEnglish:boolean)=>isEnglish?en:ko
 
@@ -34,6 +35,9 @@ export function SystemPromptPanel(){
  const [loadError,setLoadError]=useState('')
  const [ownerNotice,setOwnerNotice]=useState('')
  const [personaNotice,setPersonaNotice]=useState('')
+ const [fullDraft,setFullDraft]=useState('')
+ const [fullDirty,setFullDirty]=useState(false)
+ const [fullNotice,setFullNotice]=useState('')
  const [busy,setBusy]=useState(false)
  const [loading,setLoading]=useState(true)
  const [previewLoading,setPreviewLoading]=useState(false)
@@ -56,6 +60,10 @@ export function SystemPromptPanel(){
   }
  },[agentId,agents.value])
  useEffect(()=>{setPersonaDraft(selectedAgent?.systemPrompt||'');setPersonaNotice('')},[agentId,selectedAgent?.systemPrompt])
+ useEffect(()=>{setFullDirty(false);setFullNotice('');setFullDraft('')},[agentId,sessionId])
+ useEffect(()=>{
+  if(preview&&!fullDirty)setFullDraft(preview.ownOverrideText??preview.systemPrompt)
+ },[preview,fullDirty])
  useEffect(()=>{
   const controller=new AbortController()
   const params=new URLSearchParams({input:previewQuery,toolsEnabled:String(toolsEnabled),koreanReasoning:String(koreanReasoning)})
@@ -93,9 +101,36 @@ export function SystemPromptPanel(){
   }catch(error){setLoadError((error as Error).message)}
   finally{setBusy(false)}
  }
+ const saveFullPrompt=async()=>{
+  if(busy||!fullDirty||fullDraft.length>32000)return
+  setBusy(true);setLoadError('');setFullNotice('')
+  try{
+   await post('/api/settings/system-prompt/override',{
+    ...(agentId?{agentId}:{}),prompt:fullDraft
+   })
+   setFullDirty(false);setRevision(x=>x+1)
+   setFullNotice(tr('전체 시스템 프롬프트를 저장했습니다. 다음 일반 채팅부터 실제 모델 입력에 사용합니다.',
+    'Saved. The exact text will be sent for subsequent private-chat turns.',en))
+  }catch(error){setLoadError((error as Error).message)}
+  finally{setBusy(false)}
+ }
+ const resetFullPrompt=async()=>{
+  if(busy||!preview?.ownOverrideActive)return
+  if(!window.confirm(tr('선택한 범위의 직접 편집 프롬프트를 초기화하고 자동 생성 지침으로 돌아가시겠습니까?',
+   'Remove this custom prompt and return to the generated instructions?',en)))return
+  setBusy(true);setLoadError('');setFullNotice('')
+  try{
+   await post('/api/settings/system-prompt/override',{
+    ...(agentId?{agentId}:{}),prompt:null
+   })
+   setFullDirty(false);setRevision(x=>x+1)
+   setFullNotice(tr('직접 편집 지침을 초기화했습니다.','Custom prompt reset.',en))
+  }catch(error){setLoadError((error as Error).message)}
+  finally{setBusy(false)}
+ }
  const copyPrompt=async()=>{
   if(!preview)return
-  try{await navigator.clipboard.writeText(preview.systemPrompt);setPersonaNotice(tr('시스템 프롬프트를 복사했습니다.','System prompt copied.',en))}
+  try{await navigator.clipboard.writeText(fullDraft);setFullNotice(tr('편집 중인 시스템 프롬프트를 복사했습니다.','Draft system prompt copied.',en))}
   catch(error){setLoadError((error as Error).message)}
  }
  return <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
@@ -125,7 +160,7 @@ export function SystemPromptPanel(){
     <p className="mb-3 text-xs text-[#7C7469]">{tr('에이전트 설정의 systemPrompt와 같은 필드입니다. 여기서 수정해도 다른 에이전트의 지침은 바뀌지 않습니다.',
     'This is the same systemPrompt field used in Agent settings. Changes affect only the selected agent.',en)}</p>
     <FormField label={tr('에이전트 선택','Select agent',en)}>
-     <SelectInput value={agentId} disabled={busy} onChange={e=>setAgentId(e.target.value)}>
+     <SelectInput value={agentId} disabled={busy} onChange={e=>{if(fullDirty&&!window.confirm(tr('저장하지 않은 전체 프롬프트 변경을 버리시겠습니까?','Discard unsaved system-prompt changes?',en)))return;setAgentId(e.target.value)}}>
       <option value="">{tr('에이전트 미선택 · 공통만','No agent · shared only',en)}</option>
       {agents.value.map(agent=><option key={agent.id} value={agent.id}>{agent.name}</option>)}
      </SelectInput>
@@ -152,11 +187,11 @@ export function SystemPromptPanel(){
      <Button disabled={!preview} onClick={()=>void copyPrompt()}><Copy size={14}/>{tr('복사','Copy',en)}</Button>
     </div>
     <p className="mt-2 text-xs leading-5 text-[#7C7469]">{tr(
-     'Rust 채팅 엔진과 동일한 조립 함수를 호출합니다. 실행 중 추가되는 도구 스키마·대화 기록·일시적 실행 지침은 별도이며, 모델 API를 호출하지 않습니다.',
-     'Uses the real Rust chat prompt compiler without calling a model. Per-turn tools, history and temporary overrides are not part of this preview.',en)}</p>
+     'Rust 채팅 엔진의 실제 시스템 프롬프트입니다. 아래에서 직접 수정하고 저장하면 일반 채팅의 고정 문구·페르소나·기본 안내를 통째로 대체합니다. 저장한 글이 비어 있으면 빈 시스템 메시지가 전달됩니다. 권한·도구 실행 가능 여부는 Rust가 따로 검사합니다.',
+     'Edit and save the actual model-facing system prompt. A saved override replaces built-in identity, persona, and instruction text for private chat; empty text sends an empty system message. Rust still enforces tool access.',en)}</p>
     <div className="mt-4 grid gap-3 sm:grid-cols-2">
      <FormField label={tr('대화 적용 범위','Conversation scope',en)}>
-      <SelectInput value={sessionId} onChange={e=>setSessionId(e.target.value)}>
+      <SelectInput value={sessionId} onChange={e=>{if(fullDirty&&!window.confirm(tr('저장하지 않은 전체 프롬프트 변경을 버리시겠습니까?','Discard unsaved system-prompt changes?',en)))return;setSessionId(e.target.value)}}>
        <option value="">{tr('새 일반 대화 기준','New private chat',en)}</option>
        {privateSessions.map(s=><option key={s.id} value={s.id}>{s.title||s.id}</option>)}
       </SelectInput>
@@ -187,8 +222,32 @@ export function SystemPromptPanel(){
       </div>
      </div>
      <div>
-      <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold"><FileText size={14}/>{tr('매 요청에 조립되는 시스템 프롬프트','System prompt compiled per request',en)}</h4>
-      <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-4 font-mono text-xs leading-6" tabIndex={0}>{preview.systemPrompt}</pre>
+      <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold"><FileText size={14}/>{tr('전체 시스템 프롬프트 · 직접 편집','Full system prompt · editable',en)}</h4>
+      <p className="mb-2 text-xs leading-5 text-[#7C7469]">
+       {preview.ownOverrideActive?tr('현재 선택한 범위에서 직접 편집한 프롬프트가 사용 중입니다.',
+        'A custom prompt is active at this scope.',en):
+        preview.effectiveOverrideScope==='global'?tr('공통 직접 편집 프롬프트가 적용 중입니다. 여기에 저장하면 선택한 에이전트에만 별도 적용됩니다.',
+         'A shared prompt override is active. Saving here creates a separate override for this agent.',en):
+        tr('현재 자동 생성된 문구입니다. 수정 후 저장하면 직접 편집 모드로 바뀝니다.',
+         'Currently generated by Rust. Editing and saving switches this scope to a custom prompt.',en)}
+      </p>
+      <TextArea className="min-h-[260px] w-full font-mono text-xs leading-6" rows={13} 
+       aria-label={tr('실제 시스템 프롬프트 직접 편집','Edit actual system prompt',en)}
+       disabled={busy||previewLoading} value={fullDraft}
+       onChange={e=>{setFullDraft(e.target.value);setFullDirty(true);setFullNotice('')}}/>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+       <span className="text-xs text-[#8A8176]">{tr('편집 중','Draft',en)} {fullDraft.length.toLocaleString()} / 32,000{fullDirty?' · '+tr('저장되지 않음','Unsaved',en):''}</span>
+       <div className="flex flex-wrap gap-2">
+        <Button variant="secondary" disabled={busy||!preview.ownOverrideActive}
+         onClick={()=>void resetFullPrompt()}><RotateCcw size={14}/>{tr('기본값 복원','Restore generated',en)}</Button>
+        <Button disabled={busy||!fullDirty||fullDraft.length>32000} onClick={()=>void saveFullPrompt()}>
+         <Save size={14}/>{tr('전체 프롬프트 저장','Save full prompt',en)}</Button>
+       </div>
+      </div>
+      {fullNotice&&<p role="status" className="mt-2 text-xs text-emerald-700">{fullNotice}</p>
+      <p className="mt-2 text-xs leading-5 text-[#7C7469]">{tr(
+       '도구 활성화·작업 공간·추론 언어 등 실행별 문구도 저장 시점의 고정 문장으로 바뀝니다. 필요한 문장만 남기거나 전부 삭제할 수 있습니다. 그룹 대화 프롬프트는 그룹 화면에서 별도로 관리합니다.',
+       'This freezes run-dependent tool/workspace/language wording as edited text. Keep only what you need, or delete everything. Room prompts are separate.',en)}</p>
      </div>
      <details className="rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-3">
       <summary className="flex cursor-pointer items-center gap-2 text-sm font-semibold"><BookText size={14}/>{tr('추가 문맥 · 별도 메시지','Retrieved context · separate message',en)}</summary>
