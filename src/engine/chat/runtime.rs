@@ -199,7 +199,13 @@ async fn run_turn_with_policy(
     }
     let generation = state.cancellation_generation(&session_id);
     let mut request = request.clone();
-    if request.agent_id.is_none() {
+    if request.direct_chat {
+        // A direct chat must not inherit the agent used earlier in this session.
+        request.agent_id = None;
+        request.tools_enabled = false;
+        request.tools_execution_enabled = false;
+        request.auto_learning = false;
+    } else if request.agent_id.is_none() {
         request.agent_id = session
             .get("agentId")
             .and_then(Value::as_str)
@@ -229,6 +235,7 @@ async fn run_turn_with_policy(
     // A room shares a transcript but each speaker keeps its own identity.
     if session.get("roomId").is_none() {
         session["agentId"] = json!(request.agent_id);
+        session["chatMode"] = json!(if request.direct_chat { "chat" } else { "agent" });
     }
     state
         .store
@@ -429,7 +436,7 @@ async fn run_turn_body(
             .and_then(|message| message["content"].as_str().map(str::to_string)),
         None => Some(task_input(&session,&request.input).to_string()),
     };
-    let mut acceptance = if request.verification_owner.as_deref() == Some("parent") {
+    let mut acceptance = if request.direct_chat || request.verification_owner.as_deref() == Some("parent") {
         // The independently verified parent goal owns review;
         // investigating and declining a change must not trigger forced writes.
         // The child still
@@ -446,7 +453,7 @@ async fn run_turn_body(
             .or_else(|| crate::engine::job_control::initial_acceptance(state,&session,acceptance_source.as_deref().unwrap_or(&request.input)))
             .or_else(|| acceptance_source.as_deref().and_then(|text| prepare_owner_action(state, text)))
     };
-    if let Some(command)=session["nativeSdkVerifyCommand"].as_str().or_else(||session["nativeJobVerifyCommand"].as_str()).filter(|s|!s.trim().is_empty()){
+    if let Some(command)=session["nativeSdkVerifyCommand"].as_str().or_else(||session["nativeJobVerifyCommand"].as_str()).filter(|s|!s.trim().is_empty() && !request.direct_chat){
         let (text,mut checks)=acceptance.take().unwrap_or_else(||(request.input.clone(),json!([])));
         if let Some(items)=checks.as_array_mut(){items.push(json!({"type":"command_succeeded","command":command}));}
         acceptance=Some((text,checks));
@@ -539,14 +546,14 @@ async fn run_turn_body(
         state,session_id,request.agent_id.as_deref(),execution_id,
     );
     let decision_limits=intelligence.execution_limits(MAX_ROUNDS,MAX_TOOL_CALLS);
-    let mut max_rounds=decision_limits.max_rounds;
+    let mut max_rounds=if request.direct_chat { 1 } else { decision_limits.max_rounds };
     if let Some(limit)=session["nativeSdkMaxRounds"].as_u64(){
         let used=state.store.sdk_used_model_calls(session_id,execution_id)?;
         let remaining=limit.clamp(1,80).saturating_sub(used);
         if remaining==0{return Err("SDK의 누적 모델 호출 한도에 도달했습니다.".into());}
         max_rounds=remaining as usize;
     }
-    let mut max_tools=decision_limits.max_tools;
+    let mut max_tools=if request.direct_chat { 0 } else { decision_limits.max_tools };
     let elapsed_limit=MAX_ELAPSED;
     let simple_creation_target = if !session["roomId"].is_string() {
         simple_file_creation(state,&request.input,&acceptance)
@@ -558,10 +565,10 @@ async fn run_turn_body(
     };
     let is_room = session["roomId"].is_string();
     let social_private = !is_room && super::context_engine::is_social_turn(&request.input);
-    let plain_private = !is_room && record_input && acceptance.is_none()
+    let plain_private = request.direct_chat || (!is_room && record_input && acceptance.is_none()
         && simple_creation_target.is_none() && session["delegated"]!=true
         && request.attachment_ids.is_empty()
-        && !tool_catalog::private_tool_request(&request.input);
+        && !tool_catalog::private_tool_request(&request.input));
     if social_private || plain_private {
         // A greeting cannot benefit from hundreds of registered MCP schemas
         // or a tool discovery gateway, even when tool access is enabled.
