@@ -62,6 +62,32 @@ async fn send(child:&mut Child,value:Value)->Result<(),String>{
 fn needs_host_approval(event:&Value)->bool{
     event.get("id").is_some()&&event.get("method").is_some()
 }
+fn codex_denial(method:&str)->Option<Value>{
+    match method{
+        "item/commandExecution/requestApproval"|
+        "item/fileChange/requestApproval"|
+        "item/permissions/requestApproval" => Some(json!({"decision":"decline"})),
+        _=>None
+    }
+}
+/// Codex app-server's current JSON-RPC approval vocabulary is explicit:
+/// decline supported write/shell/network requests. This keeps the native
+/// Codex turn alive while preserving the owner's read-only grant. Never
+/// convert a model's approval request into host tool authority.
+async fn decline_codex_request(
+    ctx:&JobContext,child:&mut Child,event:&Value
+)->Result<bool,String>{
+    let Some(method)=event["method"].as_str() else{return Ok(false)};
+    let Some(result)=codex_denial(method) else{return Ok(false)};
+    ctx.ensure_running()?;
+    send(child,json!({"id":event["id"],"result":result})).await?;
+    ctx.checkpoint(json!({
+        "bridgeLastDeniedApproval":{"method":method,
+            "at":chrono::Utc::now().to_rfc3339()},
+        "bridgeAuthority":"read_only"
+    }))?;
+    Ok(true)
+}
 /// Notifications can legitimately precede the JSON-RPC response for
 /// turn/start. Retain these frames rather than swallowing a finished turn
 /// and then waiting forever for a second completion notification.
@@ -73,7 +99,8 @@ async fn rpc(ctx:&JobContext,child:&mut Child,reader:&mut BufReader<ChildStdout>
     for _ in 0..512{
         let event=read(ctx,reader,started).await?;
         if needs_host_approval(&event){
-            return Err("External harness requested unmediated approval".into());
+            if decline_codex_request(ctx,child,&event).await?{continue;}
+            return Err("External harness requested unknown unmediated approval".into());
         }
         if event["id"]==id {
             if !event["error"].is_null(){return Err(format!("{method}: {}",event["error"]));}
@@ -165,6 +192,10 @@ async fn run_codex(ctx:&JobContext,child:&mut Child,started:Instant,
     }
     for _ in 0..4096 {
         let event=read(ctx,&mut reader,started).await?;
+        if needs_host_approval(&event){
+            if decline_codex_request(ctx,child,&event).await?{continue;}
+            return Err("Codex requested an unsupported external authority".into());
+        }
         if let Some(completed)=codex_event(&event,&mut answer)? {
             return codex_finish(&thread_id,completed,&answer);
         }
@@ -467,6 +498,15 @@ mod tests{
         assert_eq!(result["sessionId"],"fixture");
         assert_eq!(result["evidenceGrade"],"external_unverified");
         crate::test_support::cleanup_dir(&root);
+    }
+    #[test] fn codex_app_server_requests_are_explicitly_declined(){
+        for method in ["item/commandExecution/requestApproval",
+                       "item/fileChange/requestApproval",
+                       "item/permissions/requestApproval"]{
+            assert_eq!(codex_denial(method).unwrap()["decision"],"decline");
+        }
+        assert!(codex_denial("tool/requestUserInput").is_none());
+        assert!(codex_denial("item/readOnlyMessage").is_none());
     }
     #[test] fn codex_notifications_do_not_promote_failed_turns(){
         let mut text=String::new();
