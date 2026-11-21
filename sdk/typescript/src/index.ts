@@ -19,7 +19,7 @@ export interface Room extends RecordItem { name: string; agentIds: string[]; ses
 export interface Approval extends RecordItem { status: string; sessionId?: string; tool?: string; args?: unknown }
 export interface StreamEvent { type: string; [key: string]: unknown }
 export interface DurableEvent extends StreamEvent { seq: number }
-export type RunKind = 'execution' | 'job' | 'room_work_assignment' | 'task_team_work';
+export type RunKind = 'execution' | 'job' | 'room_work_assignment' | 'task_team_work' | 'managed_team' | 'managed_team_task';
 export type RunState = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'needs_review' | 'skipped';
 /** Source-addressed, versioned state from the one Rust journal. */
 export interface RunStateEvent extends DurableEvent {
@@ -29,11 +29,12 @@ export interface RunStateEvent extends DurableEvent {
   /** Native Task Team work carries its parent execution and DAG references. */
   parentRunId?:string|null; teamNodeId?:string|null; nodeId?:string|null;
   dependsOn?:string[]|null; evidenceStatus?:string|null;
+  verified?:boolean|null; workerJobId?:string|null;
 }
 /** A runtime guard: do not promote unknown or mismatched event versions. */
 export function isRunStateEvent(event:DurableEvent):event is RunStateEvent {
   return event.type==='run_state' && event.schemaVersion===1
-    && ['execution','job','room_work_assignment','task_team_work'].includes(String(event.runKind))
+    && ['execution','job','room_work_assignment','task_team_work','managed_team','managed_team_task'].includes(String(event.runKind))
     && typeof event.runId==='string' && event.runId.length>0
     && (typeof event.sourceMessageId==='string' || event.sourceMessageId===null)
     && (typeof event.agentId==='string' || event.agentId===null)
