@@ -210,7 +210,13 @@ impl DiscordClient {
                 .get("retry-after")
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.parse::<f64>().ok());
-            let value: Value = response.json().await.unwrap_or(Value::Null);
+            let value: Value = crate::integrations::network::read_bounded_json(
+                response,
+                512 * 1024,
+                "Discord API",
+            )
+            .await
+            .unwrap_or(Value::Null);
             if status.as_u16() == 429 {
                 let seconds = value
                     .get("retry_after")

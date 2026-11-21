@@ -9,6 +9,11 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::time::Duration;
 
+#[cfg(test)]
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
 #[derive(Clone, Debug)]
 pub struct RemoteConfig {
     pub base_url: String,

@@ -1932,7 +1932,13 @@ async fn load_lmstudio(
             .await
         {
             if response.status().is_success() {
-                let value: Value = response.json().await.unwrap_or_else(|_| json!({}));
+                let value: Value = crate::integrations::network::read_bounded_json(
+                    response,
+                    1024 * 1024,
+                    "LM Studio model list",
+                )
+                .await
+                .unwrap_or_else(|_| json!({}));
                 if !value["data"].as_array().is_some_and(|items| {
                     items.iter().any(|item| item["id"].as_str() == Some(served.as_str()))
                 }) {
