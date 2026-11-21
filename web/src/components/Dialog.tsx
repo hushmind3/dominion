@@ -8,6 +8,7 @@ export function DialogBackdrop({children,onDismiss,...props}:HTMLAttributes<HTML
  children:ReactNode;onDismiss:()=>void
 }){
  const dismiss = useRef(onDismiss)
+ const backdrop = useRef<HTMLDivElement>(null)
  dismiss.current = onDismiss
  useLayoutEffect(() => {
   const id = Symbol()
@@ -18,8 +19,38 @@ export function DialogBackdrop({children,onDismiss,...props}:HTMLAttributes<HTML
   }
   dialogs.push(id)
   const origin = document.activeElement
+  const focusable = () => Array.from(
+   backdrop.current?.querySelectorAll<HTMLElement>(
+    'a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
+   ) || []
+  ).filter(node => node.getClientRects().length>0 && !node.closest('[inert]'))
+  // A modal must own keyboard focus, even when navigation opened it from
+  // the underlying chat, which becomes inert. Nested dialogs take priority.
+  const initial = focusable()[0] || backdrop.current?.querySelector<HTMLElement>('[role="dialog"]')
+  if (initial) {
+   if (!initial.hasAttribute('tabindex') && initial.getAttribute('role')==='dialog') initial.tabIndex=-1
+   initial.focus({preventScroll:true})
+  }
   const onKeyDown = (event: KeyboardEvent) => {
-   if (dialogs.at(-1) === id && event.key === 'Escape' && !event.isComposing) dismiss.current()
+   if (dialogs.at(-1) !== id || event.isComposing) return
+   if (event.key === 'Escape') {
+    event.preventDefault()
+    dismiss.current()
+   } else if (event.key === 'Tab') {
+    const items = focusable()
+    if (!items.length) {
+     event.preventDefault()
+     backdrop.current?.querySelector<HTMLElement>('[role="dialog"]')?.focus({preventScroll:true})
+     return
+    }
+    const first=items[0],last=items[items.length-1]
+    if (!backdrop.current?.contains(document.activeElement) ||
+      (event.shiftKey && document.activeElement===first) ||
+      (!event.shiftKey && document.activeElement===last)) {
+     event.preventDefault()
+     ;(event.shiftKey?last:first).focus({preventScroll:true})
+    }
+   }
   }
   document.addEventListener('keydown', onKeyDown)
   return () => {
@@ -30,7 +61,7 @@ export function DialogBackdrop({children,onDismiss,...props}:HTMLAttributes<HTML
    if (top && origin instanceof HTMLElement && origin.isConnected) origin.focus({preventScroll: true})
   }
  }, [])
- return <div {...props} className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-[2px]"
+ return <div ref={backdrop} {...props} className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-[2px]"
   onMouseDown={event=>{if(event.target===event.currentTarget)onDismiss()}}>{children}</div>
 }
 export function DialogPanel({children,size='default',className='',...props}:HTMLAttributes<HTMLDivElement>&{
