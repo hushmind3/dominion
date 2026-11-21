@@ -80,10 +80,21 @@ fn frame_key(message: &Value, source: &str, index: usize) -> String {
 fn append_unseen_frames(frames:&mut Vec<Value>,fresh:&[Value]){
     let seen=frames.iter().filter_map(|frame|frame["key"].as_str().map(str::to_string))
         .collect::<std::collections::HashSet<_>>();
+    // A status can recur (9/9 -> 7/9 -> 9/9). Semantic deduplication
+    // against ALL earlier snapshots would suppress that genuine latest
+    // observation and leave the model believing the previous status won.
+    // Re-emit only when the most recent snapshot differs; unchanged status
+    // is still reused without extra provider input.
+    let latest_shared=frames.iter().rev().find_map(|frame|
+        frame["key"].as_str().filter(|key|key.starts_with("room-shared:"))
+    ).map(str::to_string);
     frames.extend(fresh.iter().filter(|frame|{
         let key=frame["key"].as_str().unwrap_or("");
-        !seen.contains(key) && !key.strip_prefix("room-peer-index:")
-            .is_some_and(|source|seen.contains(source))
+        let renewed_status=key.starts_with("room-shared:")
+            && latest_shared.as_deref()!=Some(key);
+        (!seen.contains(key) || renewed_status)
+            && !key.strip_prefix("room-peer-index:")
+                .is_some_and(|source|seen.contains(source))
     }).cloned());
 }
 
@@ -627,6 +638,20 @@ mod tests {
             > changed_wire.iter().position(|m|m["content"]=="confirmed room state stable"));
         assert_eq!(third_plan["workingView"]["appendedFrames"],2);
         drop(state); std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recurring_room_status_is_reemitted_only_when_it_becomes_latest_again(){
+        let status=|key:&str,text:&str|json!({"key":format!("room-shared:{key}"),
+            "message":{"role":"user","content":text}});
+        let first=status("all","all nine responded");
+        let changed=status("partial","seven responded");
+        let mut carried=vec![first.clone(),changed];
+        append_unseen_frames(&mut carried,&[first.clone()]);
+        assert_eq!(carried.len(),3);
+        assert_eq!(carried.last().unwrap(),&first);
+        append_unseen_frames(&mut carried,&[first.clone()]);
+        assert_eq!(carried.len(),3,"stable current status must not repeat");
     }
 
     #[test]
