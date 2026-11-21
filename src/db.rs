@@ -2034,6 +2034,28 @@ mod tests {
     }
 
     #[test]
+    fn short_circuit_memory_existence_keeps_scope_predicate_and_no_full_list() {
+        let (store,dir)=temp_store();
+        for index in 0..80 {
+            store.put("memory",&json!({
+                "id":format!("record-{index}"),
+                "status":"active","scope":"global","text":format!("Memory {index}")
+            })).unwrap();
+        }
+        let mut inspected=0usize;
+        assert!(store.any_record_matching("memory",|record|{
+            inspected+=1;
+            record["scope"]=="global"
+        }).unwrap());
+        assert_eq!(inspected,1,"positive eligibility must stop after first record");
+        let no_match=store.any_record_matching("memory",|record|
+            record["scope"]=="another-private-partition").unwrap();
+        assert!(!no_match);
+        assert!(!store.any_record_matching("nonexistent-record-kind",|_|true).unwrap());
+        drop(store);let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn task_team_work_claim_checks_parent_status_and_phase_atomically(){
         let (store,dir)=temp_store();
         store.put("execution",&json!({
