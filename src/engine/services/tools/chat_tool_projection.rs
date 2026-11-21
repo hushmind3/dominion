@@ -339,8 +339,8 @@ pub(super) fn select_tool_definitions(
         .iter().any(|word|query.to_lowercase().contains(word));
     let delegated=|name:&str|core.contains("delegate_task") && (
         (matches!(name,"team_workers"|"team_execute"|"team_status") && team_intent)
-        || (matches!(name,"external_harness_run"|"external_harness_sessions")
-            && external_intent)
+        || name=="external_harness_run"
+        || (name=="external_harness_sessions" && external_intent)
     );
     if strategy == "core" {
         return definitions
