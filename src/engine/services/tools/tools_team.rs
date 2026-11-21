@@ -43,6 +43,32 @@ fn ui_team_selection(ctx:&ToolContext<'_>)->Option<(Vec<String>,Option<String>)>
     if roster.is_empty(){return None;}
     Some((roster,session["teamUiRemoteWorkerId"].as_str().map(str::to_string)))
 }
+/// Keep remote investigators on the selected node while permitting a
+/// local Writer to apply verified changes in the Lead workspace.
+fn validate_ui_worker_route(roster:&[String],remote:Option<&str>,node:&Value)->Result<(),String>{
+    let agent=node["agentId"].as_str().ok_or("Team task missing agentId")?;
+    if !roster.iter().any(|name|name==agent){
+        return Err("Agent is outside the UI-selected Worker roster".into());
+    }
+    let actual=node["remoteWorkerId"].as_str();
+    match remote{
+        Some(selected)=>{
+            if actual.is_some_and(|name|name!=selected){
+                return Err("A different remote Worker was requested".into());
+            }
+            if node["readOnly"]!=false && actual!=Some(selected){
+                return Err("Remote investigator must use the selected Worker".into());
+            }
+            // Writer may remain local. Remote writer capability is validated
+            // separately by worker_available(read_only=false).
+        }
+        None if actual.is_some()=>{
+            return Err("Local Team must not use an unselected remote Worker".into());
+        }
+        None=>{},
+    }
+    Ok(())
+}
 fn plan(nodes:&[Value])->Result<Vec<Vec<usize>>,String>{
     if nodes.is_empty()||nodes.len()>MAX_TEAM_NODES{
         return Err("Team requires 1..8 agent tasks".into());
@@ -172,13 +198,16 @@ fn summary(ctx:&ToolContext<'_>,team:&Value)->Result<Value,String>{
         }));
     }
     let awaits_owner_merge=!pending_remote_artifact_task_ids.is_empty();
+    let cancelled=team["status"]=="cancelled" || team["cancelRequested"]==true;
     Ok(json!({
         "teamId":id,"leadSessionId":team["leadSessionId"],
-        "status":if blocked {"needs_review"}else if complete {"completed"}else{"running"},
-        "evidenceVerified":complete && verified,
+        "status":if cancelled {"cancelled"}else if blocked {"needs_review"}
+            else if complete {"completed"}else{"running"},
+        "evidenceVerified":complete && verified && !cancelled,
         "taskCount":nodes.len(),"tasks":results,
         "pendingRemoteArtifactTaskIds":pending_remote_artifact_task_ids,
-        "hint":if awaits_owner_merge {
+        "hint":if cancelled {"Team cancelled; inspect in-flight effects and do not auto-resume"}
+            else if awaits_owner_merge {
                 "Remote Writer files await Lead approval: use team_remote_apply({teamId, remoteTaskId}) for each pending task, then team_execute({teamId}) to resume"
             }else if blocked {"Review failed or uncertain workers; do not automatically replay effects"}
             else if complete {"Use task_result(jobId) for full native operation evidence"}
@@ -437,12 +466,7 @@ fn create(ctx:&ToolContext<'_>,args:&Value,run_id:&str)->Result<Value,String>{
     for task in tasks {
         let agent=task["agentId"].as_str().ok_or("agentId required")?;
         if let Some((roster,remote))=&ui_selection{
-            if !roster.iter().any(|id|id==agent){
-                return Err("Team node agent is outside the UI-selected Worker roster".into());
-            }
-            if task["remoteWorkerId"].as_str()!=remote.as_deref(){
-                return Err("Team node remote routing differs from the UI-selected device".into());
-            }
+            validate_ui_worker_route(roster,remote.as_deref(),task)?;
         }
         if let Some(remote_id)=task["remoteWorkerId"].as_str(){
             crate::remote::worker_available(ctx.state,remote_id,agent,
@@ -459,6 +483,10 @@ fn create(ctx:&ToolContext<'_>,args:&Value,run_id:&str)->Result<Value,String>{
         ctx.session_id,run_id,&canonical,
     ]));
     let created=json!({"id":team_id,"kind":"managed_agent_team",
+        "uiOwnerJobId":if ui_selection.is_some(){
+            ctx.store.get("session",ctx.session_id)
+                .map(|s|s["teamUiOwnerJobId"].clone()).unwrap_or(Value::Null)
+        }else{Value::Null},
         "leadSessionId":ctx.session_id,"leadAgentId":ctx.agent_id,
         "originRunId":run_id,"tasks":tasks,"waves":waves,
         "status":"running"});
@@ -603,6 +631,24 @@ pub(super) fn status(ctx:&ToolContext<'_>,args:&Value)->Result<Value,String>{
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn selected_remote_research_can_depend_on_a_local_writer(){
+        let roster=vec!["researcher".to_string(),"builder".to_string()];
+        let research=json!({"agentId":"researcher","readOnly":true,
+            "remoteWorkerId":"remote-1"});
+        let writer=json!({"agentId":"builder","readOnly":false});
+        assert!(validate_ui_worker_route(&roster,Some("remote-1"),&research).is_ok());
+        assert!(validate_ui_worker_route(&roster,Some("remote-1"),&writer).is_ok());
+        assert!(validate_ui_worker_route(&roster,None,&writer).is_ok());
+        assert!(validate_ui_worker_route(&roster,Some("remote-1"),
+            &json!({"agentId":"researcher","readOnly":true})).is_err());
+        assert!(validate_ui_worker_route(&roster,Some("remote-1"),
+            &json!({"agentId":"builder","readOnly":false,
+                "remoteWorkerId":"remote-2"})).is_err());
+        assert!(validate_ui_worker_route(&roster,None,&research).is_err());
+        assert!(validate_ui_worker_route(&roster,Some("remote-1"),
+            &json!({"agentId":"unselected","remoteWorkerId":"remote-1"})).is_err());
+    }
     #[test]
     fn explicit_team_acceptance_uses_native_verifier_contract(){
         let valid=vec![json!({"id":"impl","agentId":"coder",
