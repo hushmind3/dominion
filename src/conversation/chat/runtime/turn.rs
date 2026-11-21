@@ -860,8 +860,10 @@ pub(super) async fn run_turn_body(
             }
         }
         let (mut completion, selected_provider) = completion_result?;
-        kernel_state.model_in_flight = false;
-        dominion_agent_sdk::Journal::save(&kernel_journal, &kernel_state)?;
+        // The paid call has returned, but it is NOT settled yet. Keep the
+        // durable unknown-outcome marker until provider usage and the typed
+        // decision tape are both journaled. A crash in between cannot cause
+        // an automatic replay of the same paid generation.
         if selected_provider.id != provider.id {
             // The streamed response came from a fallback route; later rounds
             // must continue on that route rather than retrying the dead one.
@@ -1036,6 +1038,28 @@ pub(super) async fn run_turn_body(
                 );
             }
         }
+
+        // The exact model response (including text-only completions) is a
+        // durable decision, not a claim of tool success. Model/tool receipts
+        // are still separately authenticated by the shared dispatcher.
+        kernel_state.step = round + 1;
+        kernel_state.model_calls = metrics.lock().unwrap().model_calls as usize;
+        kernel_state.charged_tokens = total_tokens;
+        kernel_state.decision_tape.push(dominion_agent_sdk::Decision{
+            plan:Vec::new(),
+            actions:completion.tool_calls.iter().map(|call|
+                dominion_agent_sdk::Action{
+                    id:call.id.clone(),tool:call.name.clone(),
+                    arguments:serde_json::from_str(&call.arguments)
+                        .unwrap_or_else(|_|json!({"unparsed":call.arguments})),
+                    depends_on:Vec::new()
+                }).collect(),
+            answer:if completion.tool_calls.is_empty(){
+                Some(completion.content.clone())
+            }else{None}
+        });
+        kernel_state.model_in_flight=false;
+        dominion_agent_sdk::Journal::save(&kernel_journal,&kernel_state)?;
 
         if completion.tool_calls.is_empty() {
             {
