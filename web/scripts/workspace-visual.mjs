@@ -276,9 +276,16 @@ try{
    pendingCalls:[{id:'assembling-tool-1',name:'workspace_read'}]
   }
  }}
- await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
+ const liveReadBaseline=requests.sdkDetailReads
+ // App's authenticated SSE bus invalidation should refresh only this job
+ // promptly, without requiring a new EventSource inside the Native panel.
+ await page.evaluate(()=>window.dispatchEvent(new CustomEvent(
+  'dominion-data-change',{detail:{targets:['/api/jobs/sdk-ux-1'],
+   sessions:[],rooms:[]}})))
  const progressPreview=page.getByLabel('확정 전 모델 진행 내용')
  await progressPreview.waitFor({timeout:8000})
+ assert.ok(requests.sdkDetailReads>liveReadBaseline,
+  'A matching shared SSE event must refresh the live Native run')
  assert.equal(await progressPreview.getByText('UNCONFIRMED_NATIVE_STREAM_PREVIEW').count(),1)
  assert.equal(await progressPreview.getByText('모델 작성 중 · 확정된 결과가 아닙니다').count(),1)
  assert.match(await progressPreview.textContent(),/workspace_read/)
