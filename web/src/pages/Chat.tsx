@@ -48,7 +48,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const approvals=useRemote<Approval[]>('/api/approvals',[],active);
  const [input,setInput]=useState('');
  const [modeChoice,setModeChoice]=useState<{scope?:string;mode:ChatMode}>()
- const mode:ChatMode=(modeChoice?.scope===current?modeChoice.mode:undefined)??
+ const mode:ChatMode=(modeChoice&&modeChoice.scope===current?modeChoice.mode:undefined)??
   (selectedSession?.mode==='agent'||(!selectedSession?.mode&&Boolean(selectedSession?.agentId))||(!current&&Boolean(initialAgent))?'agent':'chat')
  const agentMode=mode==='agent'
  const [agentChoice,setAgentChoice]=useState<{scope?:string;id:string}>();
