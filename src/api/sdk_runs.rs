@@ -354,6 +354,12 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
             return error(StatusCode::BAD_REQUEST,
                 "이 모델은 네이티브 작업 도구 실행을 지원하지 않습니다.");
         }
+        // Provider defaults are not a capability grant for an owner-selected
+        // different model. Reject exact model-level toolCalling=false BEFORE
+        // persisting a job or making a billable model request.
+        if let Err(reason)=route.capabilities.require_native_tools(){
+            return error(StatusCode::BAD_REQUEST,&reason);
+        }
         input["model"]=json!(route.model);
     }
     if let Some(rounds)=body["maxRounds"].as_u64(){
@@ -576,6 +582,40 @@ mod tests{
         })).unwrap();
         (state,root)
     }
+    #[tokio::test]
+    async fn explicit_model_without_native_tools_is_rejected_before_enqueue(){
+        let (state,root)=temporary_state();
+        let mut provider=state.store.get("provider","native-main-default").unwrap();
+        provider["modelCapabilities"]=json!({
+            "test-native":{"toolCalling":true},
+            "model-without-tools":{"toolCalling":false},
+            "model-with-tools":{"toolCalling":true}
+        });
+        state.store.put("provider",&provider).unwrap();
+        let denied=create(State(state.clone()),Json(json!({
+            "instruction":"Write a file using authorized tools",
+            "providerId":"native-main-default","model":"model-without-tools"
+        }))).await;
+        assert_eq!(denied.status(),StatusCode::BAD_REQUEST,
+            "an exact model override must not inherit provider default tool access");
+        let body:Value=serde_json::from_slice(&to_bytes(
+            denied.into_body(),1024*1024).await.unwrap()).unwrap();
+        assert!(body["error"].as_str().unwrap_or("").contains("네이티브 도구"));
+        assert!(state.store.recent_native_panel_jobs(30).unwrap().is_empty(),
+            "rejected unsupported models must not create queued jobs");
+
+        let accepted=create(State(state.clone()),Json(json!({
+            "instruction":"Inspect a file","providerId":"native-main-default",
+            "model":"model-with-tools"
+        }))).await;
+        assert_eq!(accepted.status(),StatusCode::ACCEPTED);
+        let output:Value=serde_json::from_slice(&to_bytes(
+            accepted.into_body(),1024*1024).await.unwrap()).unwrap();
+        let saved=state.store.get("job",output["id"].as_str().unwrap()).unwrap();
+        assert_eq!(saved["input"]["model"],"model-with-tools");
+        crate::test_support::cleanup_dir(root);
+    }
+
     #[tokio::test]
     async fn native_run_api_forwards_algorithm_and_returns_pinned_revision(){
         let (state,root)=temporary_state();
