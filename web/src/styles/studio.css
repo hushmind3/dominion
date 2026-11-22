@@ -1,0 +1,235 @@
+/* DOMINION SUB3 / 2026: unified product workspace.
+ * The same route rail is rendered beside Chat, Room and all studio pages.
+ * This intentionally replaces the old 'settings over conversation' layout. */
+.dominion-studio{
+ --studio-rail-width:236px;
+ --studio-background:#eef2f0;
+ --studio-deep:#122f33;
+ --studio-border:#dbe4df;
+ --studio-accent:#df9e6b;
+ position:relative;display:block;width:100%;height:100dvh;
+ overflow:hidden;background:var(--studio-background);color:#1e3435;
+}
+.dominion-studio--compact{--studio-rail-width:72px}
+.dominion-studio-stage{
+ height:100dvh;min-width:0;margin-left:var(--studio-rail-width);
+ overflow:hidden;position:relative;
+ background:var(--studio-background);
+}
+.dominion-studio-conversations{height:100%;min-height:0;overflow:hidden}
+.dominion-studio .page-chat,.dominion-studio .page-rooms{height:100%;min-height:0}
+.dominion-studio .page-chat>div{height:100%;min-height:0}
+.dominion-studio .rooms-app{height:100%;min-height:0}
+.dominion-studio>aside{
+ position:absolute!important;inset:0 auto 0 0!important;
+ z-index:35!important;display:flex!important;
+ width:var(--studio-rail-width)!important;
+ transform:none!important;flex-direction:column!important;
+ background:var(--studio-deep)!important;color:#e3ece9!important;
+ border:0!important;border-right:1px solid #2a5052!important;
+ box-shadow:8px 0 24px rgb(10 36 40 / .08);
+ transition:width .2s ease;
+}
+.dominion-studio>aside>div:first-child{
+ min-height:76px;height:76px;border-color:#335456!important;
+ padding-inline:18px;
+}
+.dominion-studio>aside>div:first-child>div:first-child{
+ background:linear-gradient(145deg,#eaaa75,#bf6a4a);
+ border:1px solid #e5b48a;box-shadow:0 4px 14px rgb(0 0 0 / .18);
+}
+.dominion-studio>aside>div:first-child>div:nth-child(2){
+ color:#f5faf5!important;font-size:15px!important;letter-spacing:.2em;
+}
+.dominion-studio>aside nav{
+ margin-top:12px;min-height:0;overflow-y:auto;
+ padding:0 11px 24px;
+}
+.dominion-studio>aside nav section{margin-top:16px}
+.dominion-studio>aside nav section h2{
+ color:#8ea8a2!important;
+ font-size:10px!important;
+ letter-spacing:.13em;text-transform:uppercase;
+}
+.dominion-studio>aside nav button{
+ height:auto!important;min-height:43px;width:100%;
+ border:1px solid transparent!important;
+ border-radius:10px!important;
+ padding-inline:12px!important;
+ font-size:12px!important;
+ color:#c2d4cf!important;
+}
+.dominion-studio>aside nav button svg{
+ width:17px;height:17px;stroke-width:1.8;flex-shrink:0;
+}
+.dominion-studio>aside nav button:hover{
+ color:#fafff9!important;background:#2a4d4d!important;
+}
+.dominion-studio>aside nav button[aria-current="page"]{
+ color:#fff!important;background:#315b55!important;
+ border-color:#477469!important;
+ box-shadow:inset 3px 0 var(--studio-accent),0 5px 14px #10282b33!important;
+}
+.dominion-studio>aside nav button[aria-current="page"] svg{color:#f3be96}
+.dominion-studio>aside>div:last-child{
+ height:64px;border-color:#315053!important;
+}
+.dominion-studio>aside>div:last-child span:last-child{color:#b9cfc8!important}
+.dominion-studio>aside [aria-label="Owner profile"],.dominion-studio>aside>section{color:#e6eee9}
+.dominion-studio--compact>aside.settings-nav-collapsed>nav{
+ display:block!important;overflow-y:auto!important;
+ padding:4px 7px!important;margin-top:14px!important;
+}
+.dominion-studio--compact>aside nav section{margin-top:8px}
+.dominion-studio--compact>aside nav section h2{display:none}
+.dominion-studio--compact>aside nav button{
+ display:flex!important;justify-content:center!important;
+ width:55px!important;min-height:49px!important;
+ padding:0!important;margin:0 auto 4px;
+}
+.dominion-studio--compact>aside nav button>span{display:none!important}
+.dominion-studio--compact>aside nav button svg{width:19px;height:19px}
+.dominion-studio--compact>aside>div:first-child{
+ display:flex!important;justify-content:center;gap:5px;
+ padding:4px!important;
+}
+.dominion-studio--compact>aside>div:first-child>div:first-child{
+ display:grid!important;width:28px;height:28px;flex-shrink:0;
+}
+.dominion-studio--compact>aside>div:first-child>div:nth-child(2){display:none!important}
+.dominion-studio--compact>aside>div:first-child button{display:flex!important}
+.dominion-studio--compact>aside>div:last-child{display:flex!important;padding:0;justify-content:center}
+.dominion-studio--compact>aside>div:last-child span:last-child{display:none}
+.dominion-studio .workspace-settings.dominion-studio-workspace{
+ position:relative!important;inset:auto!important;
+ z-index:1!important;display:flex!important;
+ height:100%!important;max-height:100%!important;width:100%!important;
+ max-width:none!important;overflow:hidden!important;
+ margin:0!important;border:0!important;border-radius:0!important;
+ box-shadow:none!important;background:var(--studio-background)!important;
+ flex-direction:column;
+}
+.dominion-studio-workspace>header{
+ flex-shrink:0;min-height:73px;
+ border-color:var(--studio-border)!important;
+ background:#fbfcfa!important;
+}
+.dominion-studio-workspace .workspace-settings-content{
+ flex:1;min-height:0;overflow:auto;
+ padding:22px clamp(18px,2.8vw,42px) 52px!important;
+ background:var(--studio-background);
+}
+.dominion-studio-workspace .workspace-settings-content>:first-child{
+ margin-inline:auto;max-width:1600px;
+}
+.dominion-studio .chat-header{
+ background:#fbfcfa!important;
+ border-color:var(--studio-border)!important;
+ box-shadow:0 3px 16px #1a393512;
+}
+.dominion-studio .chat-message--assistant>.chat-message-inner{
+ border:1px solid #dbe7e0;background:#fff;
+ border-radius:4px 17px 17px 17px;
+ padding:16px 19px 14px;
+ box-shadow:0 5px 16px #1b3b3510;
+}
+.dominion-studio .chat-message--assistant>.chat-message-inner .chat-message-text{
+ color:#253c38;line-height:1.8;
+}
+.dominion-studio .chat-message--user .chat-message-inner{
+ background:#244c49;border-radius:16px 16px 4px 16px;
+ padding:12px 17px;color:#fff;
+}
+.dominion-studio .chat-message--user .chat-message-text{color:#fff!important}
+.dominion-studio .chat-message--assistant>div:first-child{
+ background:#264e49!important;color:#f5cba9!important;
+}
+.dominion-studio .conversation-composer-wrap{
+ background:linear-gradient(0deg,#ecf2ee 45%,#ecf2eeed 80%,transparent)!important;
+ padding:16px 19px max(19px,env(safe-area-inset-bottom))!important;
+}
+.dominion-studio .conversation-composer{
+ background:#fff!important;border-color:#c5d9cd!important;
+ border-radius:18px!important;
+ box-shadow:0 10px 35px #1637301c!important;
+}
+.dominion-studio .conversation-composer:focus-within{
+ border-color:#48947e!important;
+ box-shadow:0 0 0 3px #48947e2b,0 14px 44px #1637301d!important;
+}
+.dominion-studio .conversation-composer-input{background:#fff!important;color:#183a34!important}
+.dominion-studio .conversation-composer-send{
+ background:#244f46!important;border-color:#244f46!important;
+}
+.dominion-studio .conversation-composer-send:hover{background:#36755f!important}
+.dominion-studio .chat-inspector{background:#ebf2ed!important}
+.dominion-studio .chat-history-entry[aria-current="true"]{background:#e2eae4!important}
+@media(max-width:1100px){
+ .dominion-studio{--studio-rail-width:70px}
+ .dominion-studio>aside{width:70px!important}
+ .dominion-studio>aside nav{display:block!important;padding-inline:6px!important}
+ .dominion-studio>aside nav h2{display:none}
+ .dominion-studio>aside nav button{
+  display:flex!important;justify-content:center!important;
+  min-height:46px;width:55px!important;margin:auto auto 3px;
+  padding:0!important;gap:0!important;
+ }
+ .dominion-studio>aside nav button span{display:none}
+ .dominion-studio>aside>div:first-child{padding:0!important;justify-content:center}
+ .dominion-studio>aside>div:first-child>div:nth-child(2){display:none}
+ .dominion-studio>aside>div:last-child{padding-inline:0!important;justify-content:center}
+ .dominion-studio>aside>div:last-child span:last-child{display:none}
+}
+@media(max-width:767px){
+ .dominion-studio,.dominion-studio--compact{--studio-rail-width:0px}
+ .dominion-studio-stage{height:calc(100dvh - 66px);margin-left:0!important}
+ .dominion-studio>aside,.dominion-studio--compact>aside{
+  position:fixed!important;top:auto!important;bottom:0!important;left:0!important;right:0!important;
+  width:100%!important;height:66px!important;min-height:66px!important;
+  border-right:0!important;border-top:1px solid #34585a!important;
+  box-shadow:0 -7px 25px #09252527!important;
+  z-index:65!important;
+  padding:0!important;flex-direction:row!important;
+  transform:none!important;
+ }
+ .dominion-studio>aside>div:first-child,
+ .dominion-studio>aside>div:last-child,
+ .dominion-studio>aside>div:not(:first-child):not(:last-child):not(:has(nav)){
+  display:none!important;
+ }
+ .dominion-studio>aside nav,.dominion-studio--compact>aside nav{
+  display:flex!important;width:100%!important;height:65px!important;
+  margin:0!important;padding:4px 6px!important;gap:2px!important;
+  align-items:center!important;overflow-x:auto!important;overflow-y:hidden!important;
+  scrollbar-width:none;scroll-snap-type:x proximity;
+ }
+ .dominion-studio>aside nav::-webkit-scrollbar{display:none}
+ .dominion-studio>aside nav section,
+ .dominion-studio>aside nav section>div{display:contents!important}
+ .dominion-studio>aside nav section h2{display:none!important}
+ .dominion-studio>aside nav button,.dominion-studio--compact>aside nav button{
+  flex:0 0 67px!important;display:flex!important;
+  flex-direction:column!important;justify-content:center!important;
+  align-items:center!important;gap:3px!important;
+  min-height:56px!important;width:67px!important;
+  padding:5px 4px!important;border-radius:10px!important;
+  font-size:9.5px!important;line-height:1.15!important;scroll-snap-align:start;
+ }
+ .dominion-studio>aside nav button span{
+  display:block!important;width:100%;flex:initial!important;
+  min-width:0;text-align:center;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
+ }
+ .dominion-studio>aside nav button svg{width:19px!important;height:19px!important}
+ .dominion-studio .page-chat>div,.dominion-studio .rooms-app{height:100%!important}
+ .dominion-studio-workspace .workspace-settings-content{
+  padding:14px 11px 30px!important;
+ }
+ .dominion-studio .chat-header{height:54px;min-height:54px}
+ .dominion-studio .conversation-composer-wrap{
+  padding:7px 8px max(9px,env(safe-area-inset-bottom))!important;
+ }
+ .dominion-studio .chat-message--assistant>.chat-message-inner{padding:11px 13px}
+}
+@media(prefers-reduced-motion:reduce){
+ .dominion-studio>aside,.dominion-studio *{transition-duration:.01ms!important}
+}
