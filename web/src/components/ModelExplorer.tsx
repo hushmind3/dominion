@@ -70,6 +70,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
  const [loading,setLoading]=useState(false)
  const [working,setWorking]=useState('')
  const [error,setError]=useState('')
+ const [snapshotLoaded,setSnapshotLoaded]=useState(false),[installedUnavailable,setInstalledUnavailable]=useState(false),[snapshotUnavailable,setSnapshotUnavailable]=useState(false)
  const [pendingLaunch,setPendingLaunch]=useState<PendingLaunch|null>(readPendingLaunch)
  const [pendingEngineLaunch,setPendingEngineLaunch]=useState<PendingEngineLaunch|null>(readPendingEngineLaunch)
  useEffect(()=>{try{if(pendingEngineLaunch)window.sessionStorage.setItem(engineLaunchKey,JSON.stringify(pendingEngineLaunch));else window.sessionStorage.removeItem(engineLaunchKey)}catch{/* private session */}},[pendingEngineLaunch])
@@ -83,6 +84,9 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
  const [context,setContext]=useState(4096)
  const refresh=useCallback(async()=>{
   const results=await Promise.allSettled([get<Installed[]>('/api/model-library/installed'),get<Job[]>('/api/model-library/jobs'),get<Runtime>('/api/model-library/runtime'),get<any>('/api/model-library/runtimes')])
+  setSnapshotLoaded(true)
+  setInstalledUnavailable(results[0].status==='rejected')
+  setSnapshotUnavailable(results.some(result=>result.status==='rejected'))
   if(results[0].status==='fulfilled')setInstalled(results[0].value)
   if(results[1].status==='fulfilled')setJobs(results[1].value)
   if(results[2].status==='fulfilled')setRuntime(results[2].value)
@@ -274,10 +278,11 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
  const btn='inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-[#E7E0D5] bg-white px-3 text-[11px] font-semibold text-[#3A342D] hover:bg-[#f5f7fa] disabled:opacity-40'
  return <section className="overflow-hidden rounded-xl border border-[#E7E0D5] bg-white">
   <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#EFE9DF] px-4 py-3">
-   <div className="flex flex-wrap items-center gap-1">{(!hideNavigation||view!=='search')&&viewTabs.map(tab=>{const Icon=tab.icon;return <Button variant="bare" key={tab.id} type="button" onClick={()=>{setView(tab.id);setError('')}} className={'flex h-8 items-center gap-1.5 rounded-lg px-3 text-[12px] font-semibold '+(view===tab.id?'bg-[#F7E8E1] text-[#A94E30]':'text-[#7C7469] hover:bg-[#F3EEE5]')}><Icon size={14}/>{t(tab.label)}{tab.id==='installed'&&<span className="ml-1 rounded bg-white/75 px-1.5 text-[10px]">{installed.length}</span>}</Button>})}</div>
+   <div className="flex flex-wrap items-center gap-1">{(!hideNavigation||view!=='search')&&viewTabs.map(tab=>{const Icon=tab.icon;return <Button variant="bare" key={tab.id} type="button" onClick={()=>{setView(tab.id);setError('')}} className={'flex h-8 items-center gap-1.5 rounded-lg px-3 text-[12px] font-semibold '+(view===tab.id?'bg-[#F7E8E1] text-[#A94E30]':'text-[#7C7469] hover:bg-[#F3EEE5]')}><Icon size={14}/>{t(tab.label)}{tab.id==='installed'&&<span className="ml-1 rounded bg-white/75 px-1.5 text-[10px]">{snapshotLoaded&&!installedUnavailable?installed.length:'—'}</span>}</Button>})}</div>
    <div className="flex items-center gap-2 text-[11px] text-[#7C7469]"><span className={'size-1.5 rounded-full '+(runtime.status==='ready'?'bg-emerald-500':runtime.status==='loading'?'bg-amber-500':'bg-slate-300')}/>{runtime.status==='ready'?t('models.status.ready'):runtime.status==='loading'?t('models.status.loading'):runtime.status==='installing'?t('models.status.installing'):t('models.status.idle')}<Button variant="bare" type="button" aria-label={t('models.refresh')} onClick={()=>void refresh()} className="ml-2 text-[#9C9388] hover:text-[#4A443C]"><RefreshCw size={14}/></Button></div>
   </div>
   {error&&<div role="alert" className="mx-4 mt-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700"><CircleAlert size={15}/><span className="flex-1">{error}</span><Button variant="bare" aria-label={t('models.ui.close')} onClick={()=>setError('')}><X size={14}/></Button></div>}
+  {snapshotUnavailable&&<div role="status" className="mx-4 mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">{t('models.snapshotUnavailable')}<Button variant="bare" type="button" className="font-semibold underline" onClick={()=>void refresh()}>{t('models.refresh')}</Button></div>}
   {pendingEngineLaunch&&view!=='import'&&<div role="status" className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#D9DFC8] bg-[#F6F8F0] px-3 py-2 text-[11px] text-[#5C544A]">
    <span className="min-w-0 break-all">실행기 설치 후 이어갈 모델 · {pendingEngineLaunch.id}</span>
    <Button variant="bare" type="button" className={btn} onClick={()=>setView('import')}><ArrowRight size={13}/>실행 준비 이어가기</Button>
@@ -297,7 +302,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
   </div>}
   {view==='installed'&&<div className="p-4">
    <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h3 className="text-[13px] font-bold">{t('models.installedTitle')}</h3><Button variant="bare" type="button" className={btn} onClick={()=>setView('import')}><FolderOpen size={14}/> {t('models.importFile')}</Button></div>
-   {installed.length?<div className="divide-y divide-[#EFE9DF] rounded-lg border border-[#EFE9DF]">{installed.map(m=><div key={m.id} className="flex flex-wrap items-center gap-3 p-3">
+   {!snapshotLoaded?<div role="status" className="flex min-h-48 items-center justify-center rounded-lg border border-dashed border-[#E7E0D5] bg-[#FAF7F1] px-4 py-7 text-center text-[12px] text-[#8A8176]">{t('models.snapshotLoading')}</div>:installedUnavailable?<div role="alert" className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-amber-200 bg-amber-50 px-4 py-7 text-center text-[12px] text-amber-800">{t('models.snapshotUnavailable')}<Button variant="bare" type="button" className={btn} onClick={()=>void refresh()}>{t('models.refresh')}</Button></div>:installed.length?<div className="divide-y divide-[#EFE9DF] rounded-lg border border-[#EFE9DF]">{installed.map(m=><div key={m.id} className="flex flex-wrap items-center gap-3 p-3">
     <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-[#F3EEE5] text-[#A94E30]"><Cpu size={17}/></div>
     <div className="min-w-0 flex-1"><div className="break-all text-[12px] font-semibold text-[#24211D]">{m.repo}</div><div className="mt-1 text-[11px] text-[#8A8176]">{m.format.toUpperCase()} · {fmt(m.bytes)} · {m.source==='external'?t('models.source.external'):m.source==='lmstudio'?t('models.source.lmstudio'):t('models.source.downloaded')}{m.externalPath?' · '+shorten(m.externalPath,65):''}</div>{modelPreflight(m,runtime.capabilities).status==='blocked'&&<div className="mt-1 text-[11px] font-semibold text-rose-700">실행기 필요 · {modelPreflight(m,runtime.capabilities).engine}</div>}{modelPreflight(m,runtime.capabilities).status==='warning'&&<div className="mt-1 text-[11px] font-semibold text-amber-700">메모리 여유 부족 가능 · 실행 전 확인</div>}</div>
     <div className="flex items-center gap-1.5">{runtime.status==='ready'&&runtime.id===m.id?<span className="mr-1 rounded bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700">{t('models.inUse')}</span>:<Button variant="bare" type="button" className={btn+' !border-[#C96442] !bg-[#C96442] !text-white hover:!bg-[#A94E30]'} disabled={Boolean(working)||runtime.status==='loading'} onClick={()=>void load(m.id)}><Play size={13}/>{working==='load'+m.id?t('models.loadingModel'):t('models.run')}</Button>}

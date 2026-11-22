@@ -449,6 +449,8 @@ const ko = {
   'models.status.installing': '실행기 설치 중',
   'models.status.idle': '모델 대기',
   'models.refresh': '새로고침',
+  'models.snapshotLoading': '서버에서 설치된 모델을 불러오는 중…',
+  'models.snapshotUnavailable': '서버에서 일부 모델 상태를 불러오지 못했습니다.',
   'models.chat': '채팅으로 이동',
   'models.stop': '중지',
   'models.installedTitle': '실행할 수 있는 모델',

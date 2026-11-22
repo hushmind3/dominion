@@ -450,6 +450,8 @@ const en: Record<LocaleKey, string> = {
   'models.status.installing': 'Installing runner',
   'models.status.idle': 'Model idle',
   'models.refresh': 'Refresh',
+  'models.snapshotLoading': 'Loading installed models from the server…',
+  'models.snapshotUnavailable': 'Some model state could not be loaded from the server.',
   'models.chat': 'Open chat',
   'models.stop': 'Stop',
   'models.installedTitle': 'Models you can run',
