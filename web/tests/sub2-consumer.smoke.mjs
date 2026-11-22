@@ -34,7 +34,9 @@ try{
  const page=await browser.newPage({viewport:{width:1280,height:800},locale:'ko-KR'})
  const pageErrors=[]
  page.on('pageerror',err=>pageErrors.push(err.message))
- await page.route('**/api/**',async route=>{
+ // Match owner HTTP routes only: glob **/api/** would also intercept
+ // Vite's source modules at /src/api/*.ts and prevent React from booting.
+ await page.route(url=>new URL(url).pathname.startsWith('/api/'),async route=>{
   const req=route.request()
   const path=new URL(req.url()).pathname
   if(path==='/api/events'){
