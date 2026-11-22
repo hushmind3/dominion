@@ -350,12 +350,11 @@ export function ModelHub(){
  const tabs:Array<{id:Tab;label:string;count?:number}>= [
   {id:'providers',label:t('models.simple.mine'),count:providers.value.filter(p=>!p.local).length},
   {id:'connect',label:t('models.simple.connect')},
+  {id:'catalog',label:t('models.simple.catalog')},
   {id:'local',label:t('models.simple.local')},
  ]
  const moreTabs:Array<{id:Tab;label:string}>= [
-  {id:'cloud',label:t('models.simple.cloud')},
   {id:'free',label:t('models.filter.free')},
-  {id:'catalog',label:t('models.simple.catalog')},
   {id:'huggingface',label:t('models.simple.files')},
   {id:'oauth',label:t('models.simple.accounts')},
  ]
@@ -389,7 +388,6 @@ export function ModelHub(){
   </section>}
   {tab==='connect'&&<QuickConnect accountConnected={cli.value.some(item=>item.id==='codex'&&item.connected)} canImport={cli.value.some(item=>item.id==='codex'&&item.importAvailable)} busy={Boolean(oauthBusy)} pending={loginPending} loginUrl={loginUrl} message={loginMessage}
    onLogin={()=>void startCodexLogin()} onImport={()=>void importCli('codex')} onKey={name=>{const preset=providerPresets.find(item=>item.name===name);if(preset)openPreset(preset)}} onLocal={()=>setTab('local')} onBrowse={()=>setTab('catalog')}/>}
-  {tab==='cloud'&&<div className="mb-4"><DominionCloudAccount initialTab="cloud" hideManagementNavigation onProviderAdded={providers.reload}/></div>}
   {tab==='catalog'&&browseProviderId&&<><Button variant="ghost" className="mb-4" onClick={()=>setBrowseProviderId('')}><ArrowRight size={14} className="rotate-180"/>{t('models.simple.catalog')}</Button><DominionCloudAccount key={browseProviderId} initialTab="providers" initialProviderId={browseProviderId} hideManagementNavigation onProviderAdded={providers.reload}/></>}
    {tab==='catalog'&&!browseProviderId&&<section className="rounded-2xl border border-divider bg-surface p-5 shadow-[0_1px_2px_rgba(36,33,29,.04)]">
    <div className="mb-3 flex flex-wrap items-start justify-between gap-2"><div><h2 className="m-0 text-[16px] font-bold text-ink">{t('models.catalog.title')}</h2><p className="mt-1 text-[12px] text-muted">{t('models.catalog.desc')}</p></div><Button type="button" variant="ghost" size="sm" disabled={catalog.loading} onClick={()=>void catalog.reload()}>{catalog.loading?<RefreshCw size={13} className="animate-spin"/>:<RefreshCw size={13}/>} {t('models.catalog.refresh')}</Button></div>
