@@ -53,12 +53,14 @@ const accents = [
   "#6d8b9f",
 ];
 export function AgentsPage() {
-  useLocale();
+  const locale=useLocale();
   const agents = useRemote<Agent[]>("/api/agents", []),
     providers = useRemote<Provider[]>("/api/providers", []);
   const [edit, setEdit] = useState<Partial<Agent> | null>(null),
     [error, setError] = useState(""), [saving, setSaving] = useState(false);
   const [showPersonaImport,setShowPersonaImport]=useState(false);
+  const [agentSearch,setAgentSearch]=useState('');
+  const [agentFilter,setAgentFilter]=useState<'all'|'configured'|'setup'>('all');
   const [bulk, setBulk] = useState(false),
     [selected, setSelected] = useState<string[]>([]),
     [bulkProvider, setBulkProvider] = useState(""),
@@ -67,6 +69,17 @@ export function AgentsPage() {
     [bulkBusy, setBulkBusy] = useState(false),
     [bulkNotice, setBulkNotice] = useState("");
   const enabledProviders = providers.value.filter(p => p.enabled !== false);
+  const configured=(agent:Agent)=>Boolean(agent.providerId&&agent.model
+    &&agent.enabled!==false&&agent.disabled!==true);
+  const displayedAgents=agents.value.filter(agent=>{
+    const match=[agent.name,agent.description,agent.role,agent.model,agent.providerId,
+      ...(agent.aliases||[])].filter(Boolean).join(' ').toLocaleLowerCase()
+      .includes(agentSearch.trim().toLocaleLowerCase());
+    return match&&(agentFilter==='all'||agentFilter==='configured'&&configured(agent)
+      ||agentFilter==='setup'&&!configured(agent));
+  });
+  const allDisplayedSelected=displayedAgents.length>0
+    &&displayedAgents.every(agent=>selected.includes(agent.id));
   const editProvider = enabledProviders.find(p => p.id === edit?.providerId);
   const editModels = useProviderModels(edit?.providerId || "");
   const bulkModels = useProviderModels(bulk ? bulkProvider : "");
@@ -169,6 +182,22 @@ export function AgentsPage() {
           </p>
         </div>
       </div>
+      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-3">
+       <TextInput aria-label={locale==='en'?'Find agents':'에이전트 검색'} value={agentSearch}
+        onChange={event=>setAgentSearch(event.target.value)} placeholder={locale==='en'?'Search agents by name, model or role':'이름·역할·모델로 에이전트 검색'}
+        className="min-w-[160px] flex-1"/>
+       <SelectInput aria-label={locale==='en'?'Agent readiness':'에이전트 준비 상태'} value={agentFilter}
+        onChange={event=>setAgentFilter(event.target.value as 'all'|'configured'|'setup')} className="w-full sm:w-44">
+        <option value="all">{locale==='en'?'All agents':'전체 에이전트'}</option>
+        <option value="configured">{locale==='en'?'Configured':'모델 설정 완료'}</option>
+        <option value="setup">{locale==='en'?'Needs setup':'설정 필요'}</option>
+       </SelectInput>
+       <span className="w-full text-[11px] text-[#8A8176] sm:w-auto">
+        {agents.loading?'…':agents.error?'—':displayedAgents.length+'/'+agents.value.length}
+       </span>
+       {agents.error&&<Button type="button" variant="secondary" size="sm" onClick={()=>void agents.reload()}>
+        {locale==='en'?'Retry loading':'다시 불러오기'}</Button>}
+      </div>
       {bulkNotice && (
         <div className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
           <Check size={16} />
@@ -193,13 +222,12 @@ export function AgentsPage() {
               <TextInput
                 type="checkbox"
                 checked={
-                  selected.length === agents.value.length &&
-                  agents.value.length > 0
+                  allDisplayedSelected
                 }
                 onChange={(e) =>
-                  setSelected(
-                    e.target.checked ? agents.value.map((a) => a.id) : [],
-                  )
+                  setSelected(previous=>e.target.checked
+                   ?[...new Set([...previous,...displayedAgents.map(agent=>agent.id)])]
+                   :previous.filter(id=>!displayedAgents.some(agent=>agent.id===id)))
                 }
               />{" "}
               {t('agents.selectAll')}
@@ -251,7 +279,7 @@ export function AgentsPage() {
         </Panel>
       )}
       <div className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {agents.value.map((a, i) => (
+        {displayedAgents.map((a, i) => (
           <Panel className="flex min-w-0 flex-col gap-3 p-5" key={a.id}>
             <div className="flex items-start justify-between gap-3">
               <div
@@ -328,6 +356,10 @@ export function AgentsPage() {
         {!agents.value.length&&agents.loading&&<Panel className="p-5 text-center text-sm text-[#7C7469]">{t('agents.loading')}</Panel>}
         {!agents.value.length&&agents.error&&<Panel role="status" className="p-5 text-center text-sm text-[#7C7469]">{t('agents.unavailable')}</Panel>}
         {!agents.value.length&&!agents.loading&&!agents.error&&<Panel><Empty icon={Bot} title={t('agents.empty')}/></Panel>}
+        {!agents.loading&&!agents.error&&agents.value.length>0&&!displayedAgents.length&&<Panel className="p-5 text-center text-[12px] text-[#8A8176]">
+         {locale==='en'?'No agents match your search.':'검색 조건에 맞는 에이전트가 없습니다.'}
+         <Button variant="ghost" size="sm" onClick={()=>{setAgentSearch('');setAgentFilter('all')}}>{locale==='en'?'Clear filters':'필터 초기화'}</Button>
+        </Panel>}
       </div>
       {!edit && <Notice message={error || agents.error || providers.error} />}
       {showPersonaImport&&<PersonaImportDialog agents={agents.value} onClose={()=>setShowPersonaImport(false)} onImported={async(count)=>{await agents.reload();refresh();setBulkNotice(t('agents.personaImported', { count }))}}/>}
