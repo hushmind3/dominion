@@ -379,7 +379,7 @@
 .dominion-studio .chat-header>button[aria-controls="chat-history"][aria-expanded="true"]{
  background:#e8e8e8;color:#45464c;
 }
-.dominion-studio .chat-header>button[title="새 채팅"]{
+.dominion-studio .chat-header>button.chat-new-session{
  color:#686a72;border:1px solid transparent;
 }
 .dominion-studio .page-chat>div>aside#chat-history{
@@ -409,5 +409,21 @@
  .dominion-studio .chat-welcome h1{font-size:23px!important}
  .dominion-studio .chat-transcript{gap:21px!important}
  .dominion-studio .chat-header>button[aria-controls="chat-history"]{grid-column:1;grid-row:1}
- .dominion-studio .chat-header>button[title="새 채팅"]{grid-column:2;grid-row:1;justify-self:start;margin-left:0}
+ .dominion-studio .chat-header{
+  grid-template-columns:34px 34px minmax(0,1fr) auto!important;
+ }
+ .dominion-studio .chat-header>button.chat-new-session{
+  grid-column:2!important;grid-row:1!important;
+  justify-self:start;margin:0;
+ }
+ .dominion-studio .chat-header>.conversation-switch{
+  grid-column:3!important;grid-row:1!important;
+  justify-self:start;max-width:100%;overflow:hidden;
+ }
+ .dominion-studio .chat-header>div:last-child{
+  grid-column:4!important;grid-row:1!important;z-index:3;
+ }
+ .dominion-studio .chat-header>div:last-child>button:nth-last-child(-n+2){
+  display:none!important;
+ }
 }
