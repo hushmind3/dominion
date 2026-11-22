@@ -20,7 +20,7 @@ const badge=(s:string)=>{const keys:Record<string,LocaleKey>={connected:'conn.st
 const active=(s:string)=>s==='connected';
 
 export function ConnectionsPage(){
- useLocale()
+ const en=useLocale()==='en'
  const registry=useRemote<ChannelEntry[]>('/api/channels/catalog',[]);
  const channels=useRemote<Channel[]>('/api/channels',[]);
  const oauth=useRemote<OAuthProvider[]>('/api/oauth/providers',[]);
@@ -95,7 +95,33 @@ export function ConnectionsPage(){
  }
  const tabs=[{id:'channels',label:t('conn.tab.channels'),icon:RadioTower},{id:'quick-connect',label:t('conn.tab.quickConnect'),icon:Link2},{id:'accounts',label:t('conn.tab.accounts'),icon:KeyRound},{id:'market',label:'MCP 마켓',icon:Blocks},{id:'installed',label:t('ext.tab.installed'),icon:Server},{id:'skills',label:t('ext.tab.skills'),icon:BookOpenText},{id:'plugins',label:t('ext.tab.plugins'),icon:PackagePlus},{id:'capabilities',label:'역량 마켓',icon:Sparkles}] as const
  const pageHeader=<div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h1 className="m-0 text-[19px] font-bold text-[#24211D]">{t('conn.title')}</h1><p className="mt-1 text-[12px] text-[#7C7469]">{t('conn.description')}</p></div>{section==='channels'&&<Button type="button" variant="secondary" disabled={refreshing} onClick={()=>void refreshChannels()}>{refreshing?<LoaderCircle size={15} className="animate-spin"/>:<Activity size={15}/>} {t('conn.refresh')}</Button>}</div>
- const sectionTabs=<nav className="connection-tabs" aria-label="연결 및 확장 기능">{tabs.map(({id,label,icon:Icon})=><Button key={id} variant="bare" aria-current={section===id?'page':undefined} onClick={()=>setSection(id)}><Icon size={15}/>{label}</Button>)}</nav>
+ // The eight destinations remain intact, but users choose a task area first.
+ // No new global sidebar item or separate extension route is introduced.
+ const groupsOfTabs=[
+  {id:'channel',name:en?'Channels':'채널 연결',default:'channels',members:['channels']},
+  {id:'account',name:en?'Accounts':'외부 계정',default:'quick-connect',members:['quick-connect','accounts']},
+  {id:'extension',name:en?'MCP & skills':'MCP·스킬',default:'market',members:['market','installed','skills','plugins']},
+  {id:'capability',name:en?'Capabilities':'역량 마켓',default:'capabilities',members:['capabilities']}
+ ] as const
+ const selectedGroup=groupsOfTabs.find(group=>(group.members as readonly string[]).includes(section))||groupsOfTabs[0]
+ const sectionTabs=<div className="mb-5 space-y-2">
+  <nav aria-label={en?'Connection categories':'연결 영역'} className="grid grid-cols-2 gap-2 rounded-xl border border-[#E7E0D5] bg-[#F3EEE5] p-1.5 sm:grid-cols-4">
+   {groupsOfTabs.map(group=><Button type="button" key={group.id} variant="bare"
+    aria-current={selectedGroup.id===group.id?'page':undefined}
+    onClick={()=>setSection(group.default as typeof section)}
+    className={'min-h-10 rounded-lg px-2 py-2 text-[12px] font-semibold transition-colors '+
+     (selectedGroup.id===group.id?'bg-[#FFFDF9] text-[#24211D] shadow-sm':'text-[#786F63] hover:bg-white/70')}>
+    {group.name}
+   </Button>)}
+  </nav>
+  {selectedGroup.members.length>1&&<nav className="connection-tabs" aria-label={en?'Connection section':'연결 상세'}>
+   {tabs.filter(tab=>(selectedGroup.members as readonly string[]).includes(tab.id))
+    .map(({id,label,icon:Icon})=><Button key={id} variant="bare"
+     aria-current={section===id?'page':undefined} onClick={()=>setSection(id)}>
+     <Icon size={15}/>{label}
+    </Button>)}
+  </nav>}
+ </div>
  if(section!=='channels'&&section!=='accounts'&&section!=='quick-connect')return <div className="mx-auto w-full max-w-[1320px] px-4 py-3 sm:px-6">{pageHeader}{sectionTabs}{section==='capabilities'?<CapabilitiesPage navigate={page=>setSection(page==='extensions'?'market':'channels')}/>:<ExtensionsPage section={section} embedded/>}</div>
  return <div className="mx-auto w-full max-w-[1320px] px-4 py-3 sm:px-6">
   {pageHeader}
