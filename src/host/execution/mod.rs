@@ -9,6 +9,7 @@ pub mod program;
 pub mod verification;
 pub mod recovery;
 pub mod jobs;
+pub mod job_control;
 pub mod lease;
 pub mod run_state;
 pub mod remote_worker;

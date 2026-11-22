@@ -127,8 +127,8 @@ fn core(state: &AppState, request: &TurnRequest, room: &Value, _query: &str) -> 
     // Owner overrides: `systemPromptOverride` replaces the whole static
     // prompt for this room; `systemPromptCommon` replaces only the shared
     // contract before the speaker persona.
-    let final_override = room["systemPromptOverride"].as_str().filter(|text| !text.is_empty());
-    let common_override = room["systemPromptCommon"].as_str().filter(|text| !text.is_empty());
+    let final_override = room["systemPromptOverride"].as_str();
+    let common_override = room["systemPromptCommon"].as_str();
     let (mut prompt,mut items)=match (final_override,common_override) {
         (Some(text),_)=>(text.to_string(),Vec::new()),
         (None,Some(text))=>(text.to_string(),Vec::new()),

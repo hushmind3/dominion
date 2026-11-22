@@ -66,8 +66,9 @@ at 1440px and 390px. It showed no horizontal overflow, matching transcript and
 composer widths, and three visible group prompt editors. This rendering check
 made no backend writes and does not stand in for a real model response.
 
-Production builds, Rust compilation and test suites were not run, following the
-user's instruction. The already-running engine binary predates these backend
-source edits. New backend behavior requires rebuilding / restarting that binary.
-The inspected sub3 store has no AI connections, so successful real-model replies
-are not claimed. Browser navigation does not import main's credentials or data.
+The initial frontend pass did not compile or replace the backend. The subsequent
+[backend command refactor](SUB3-BACKEND-COMMANDS-2026-11-23.md) supersedes that
+deployment boundary: it includes Rust diagnostics, a local development executable
+and isolated real-HTTP verification of the changed persistence and execution
+paths. Test suites and release builds remain separate. No external paid-model
+success or imported credentials are claimed.

@@ -4,6 +4,13 @@ use std::collections::HashMap;
 use serde_json::{json,Value};
 use super::response::error;
 
+pub async fn save_persona(State(state):State<AppState>,Path(id):Path<String>,Json(body):Json<Value>)->Response{
+    match crate::features::collaboration::prompt_settings::save_persona(&state,&id,&body){
+        Ok(saved)=>Json(saved).into_response(),
+        Err(value)=>super::response::prompt_error(value),
+    }
+}
+
 /// `?summary=1` keeps list fields and omits the persona prompt. The home
 /// screen only needs names and counts, and a full agent catalog is ~100 KB.
 pub async fn list_agents(

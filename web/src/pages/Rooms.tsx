@@ -31,8 +31,8 @@ const MAX_ROOM_PARTICIPANTS=32
 
 type RoutingMode='discussion'|'round_robin'|'mentioned'
 type RoomModel={providerId:string;model:string;reasoningEffort?:string}
-type RoomConfig={id:string;name:string;topic?:string;description?:string;ownerName?:string;agentIds:string[];routingMode?:RoutingMode;rounds?:number;maxTurns?:number;tokenBudget?:number;contextBudgetTokens?:number;toolsEnabled?:boolean;autoLearning?:boolean;autoModels?:boolean;models?:RoomModel[];reasoningEffort?:string;sessionId?:string;status?:string;activeAgentId?:string;pauseReason?:string;updatedAt?:string}
-type RoomDraft={id?:string;name:string;topic:string;ownerName:string;agentIds:string[];routingMode:RoutingMode;rounds:number;maxTurns:number;tokenBudget:number;contextBudgetTokens:number;autoModels:boolean;toolsEnabled:boolean;autoLearning:boolean;models:RoomModel[];reasoningEffort:string}
+type RoomConfig={configRevision?:number;id:string;name:string;topic?:string;description?:string;ownerName?:string;agentIds:string[];routingMode?:RoutingMode;rounds?:number;maxTurns?:number;tokenBudget?:number;contextBudgetTokens?:number;toolsEnabled?:boolean;autoLearning?:boolean;autoModels?:boolean;models?:RoomModel[];reasoningEffort?:string;sessionId?:string;status?:string;activeAgentId?:string;pauseReason?:string;updatedAt?:string}
+type RoomDraft={expectedConfigRevision?:number;id?:string;name:string;topic:string;ownerName:string;agentIds:string[];routingMode:RoutingMode;rounds:number;maxTurns:number;tokenBudget:number;contextBudgetTokens:number;autoModels:boolean;toolsEnabled:boolean;autoLearning:boolean;models:RoomModel[];reasoningEffort:string}
 type Job={id:string;kind:string;status:string;stepIndex?:number;stepTotal?:number;error?:string;createdAt?:string;input?:{roomId?:string;sessionId?:string};result?:{memories?:number;status?:string};roomState?:{activeAgentId?:string;inFlight?:boolean}}
 type Execution={id:string;status:string;agentId?:string;sessionId?:string;toolCalls?:number;tokens?:number;reason?:string}
 type Operation={id:string;runId?:string;tool?:string;toolName?:string;name?:string;status?:string;result?:unknown;error?:string;arguments?:unknown}
@@ -50,7 +50,7 @@ const labels:Record<string,LocaleKey>={queued:'rooms.st.waiting',running:'rooms.
 const modes:Record<RoutingMode,{label:LocaleKey;description:LocaleKey}>={discussion:{label:'rooms.mode.discussion.label',description:'rooms.mode.discussion.desc'},round_robin:{label:'rooms.mode.round_robin.label',description:'rooms.mode.round_robin.desc'},mentioned:{label:'rooms.mode.mentioned.label',description:'rooms.mode.mentioned.desc'}}
 const active=(status?:string)=>status==='queued'||status==='running'
 const stamp=(value?:string)=>{if(!value)return '';const normalized=value.includes('T')?value:value.replace(' ','T')+'Z';const date=new Date(normalized);return Number.isNaN(date.getTime())?'':date.toLocaleTimeString(getLocale()==='en'?'en-US':'ko-KR',{hour:'2-digit',minute:'2-digit'})}
-const draftOf=(room?:RoomConfig):RoomDraft=>({id:room?.id,name:room?.name||'',topic:room?.topic||room?.description||'',ownerName:room?.ownerName||t('rooms.me'),agentIds:room?.agentIds||[],routingMode:room?.routingMode||'discussion',rounds:room?.rounds||1,maxTurns:room?.maxTurns??0,tokenBudget:room?.tokenBudget??0,contextBudgetTokens:room?.contextBudgetTokens??2000,toolsEnabled:room?.toolsEnabled===true,autoLearning:room?.autoLearning===true,autoModels:room?.autoModels!==false,models:room?.models||[],reasoningEffort:room?.reasoningEffort||''})
+const draftOf=(room?:RoomConfig):RoomDraft=>({expectedConfigRevision:room?.configRevision??0,id:room?.id,name:room?.name||'',topic:room?.topic||room?.description||'',ownerName:room?.ownerName||t('rooms.me'),agentIds:room?.agentIds||[],routingMode:room?.routingMode||'discussion',rounds:room?.rounds||1,maxTurns:room?.maxTurns??0,tokenBudget:room?.tokenBudget??0,contextBudgetTokens:room?.contextBudgetTokens??2000,toolsEnabled:room?.toolsEnabled===true,autoLearning:room?.autoLearning===true,autoModels:room?.autoModels!==false,models:room?.models||[],reasoningEffort:room?.reasoningEffort||''})
 export function RoomsPage({openSession,settingsTarget,active:visibleView=true,onOpenNavigation,selectedRoom,onSelectRoom,newRoomRevision=0}:{openSession:(id:string)=>void;settingsTarget?:HTMLElement|null;active?:boolean;onOpenNavigation?:()=>void;selectedRoom?:string;onSelectRoom?:(id:string)=>void;newRoomRevision?:number}){
  useLocale()
  const rooms=useRemote<RoomConfig[]>('/api/rooms',[],visibleView)
@@ -296,8 +296,8 @@ function RoomConversation({settingsTarget,room,agents,providers,openList,openSes
   if(optionsBusy)return
   setOptionsBusy(true);setError('')
   try{
-   const updated=await post<RoomConfig>('/api/rooms',{id:room.id,[field]:value})
-   dataVersion.current+=1;setFeed(previous=>({...previous,room:updated}));setDraft(previous=>({...previous,[field]:value}))
+   const updated=await post<RoomConfig>('/api/rooms',{id:room.id,[field]:value,expectedConfigRevision:current.configRevision??0})
+   dataVersion.current+=1;setFeed(previous=>({...previous,room:updated}));setDraft(previous=>({...previous,[field]:value,expectedConfigRevision:updated.configRevision??0}))
    await onSaved()
   }catch(e){setError((e as Error).message)}finally{setOptionsBusy(false)}
  }
@@ -326,26 +326,20 @@ function RoomConversation({settingsTarget,room,agents,providers,openList,openSes
   const id=promptAgent;let persisted=false
   setPromptSaving(true);setPromptError('');setPromptNotice('')
   try{
-   if(personaDraft!==prompt.persona){
-    const latest=(await get<Agent[]>('/api/agents')).find(agent=>agent.id===id)
-    if(!latest)throw Error(t('rooms.noAgents'))
-    if((latest.systemPrompt||'')!==prompt.persona)throw Error(getLocale()==='en'?'This persona changed elsewhere. Reload and review before saving.':'다른 곳에서 페르소나가 수정되었습니다. 작성한 내용은 유지했으니 원본을 다시 확인해 주세요.')
-    const saved=await post<Agent>('/api/agents',{...latest,systemPrompt:personaDraft})
-    persisted=true;setPrompt(previous=>previous?{...previous,persona:saved.systemPrompt}:previous)
-   }
+   const personaChanged=personaDraft!==prompt.persona
    const commonChanged=commonDraft!==(prompt.commonOverride??prompt.common)
    const finalChanged=finalDraft!==(prompt.finalOverride??prompt.prompt)
-   if(commonChanged||finalChanged){
-    await post('/api/rooms/'+room.id+'/system-prompt',{
-     ...(commonChanged?{common:commonDraft}:{}),
-     ...(finalChanged?{final:finalDraft}:{}),
-    })
-    persisted=true
-   }
+   await post('/api/rooms/'+room.id+'/system-prompt',{
+    ...(personaChanged?{persona:{agentId:id,prompt:personaDraft,expectedPrompt:prompt.persona}}:{}),
+    ...(commonChanged?{common:commonDraft,expectedCommon:prompt.commonOverride??null}:{}),
+    ...(finalChanged?{final:finalDraft,expectedFinal:prompt.finalOverride??null}:{}),
+   })
+   persisted=true
+   setPrompt(previous=>previous?{...previous,...(personaChanged?{persona:personaDraft}:{}),...(commonChanged?{commonOverride:commonDraft}:{}),...(finalChanged?{finalOverride:finalDraft}:{})}:previous)
    refresh()
    const preview=await previewPrompt(id)
    setPrompt(preview);setPersonaDraft(preview.persona);setCommonDraft(preview.commonOverride??preview.common);setFinalDraft(preview.finalOverride??preview.prompt);setPromptNotice(t('rooms.promptSaved'))
-  }catch(e){setPromptError((persisted?t('rooms.promptPartialSave')+' ':'')+(e as Error).message)}
+  }catch(e){setPromptError((persisted?(getLocale()==='en'?'Saved, but the updated preview could not be loaded. ':'저장은 완료했지만 최신 미리보기를 불러오지 못했습니다. '):'')+(e as Error).message)}
   finally{setPromptSaving(false)}
  }
  const loadKnowledge=async()=>{setKnowledgeBusy(true);try{setKnowledge(await get<any[]>('/api/rooms/'+room.id+'/knowledge'))}catch(e){setError((e as Error).message)}finally{setKnowledgeBusy(false)}}

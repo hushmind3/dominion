@@ -105,10 +105,23 @@ impl Route {
 /// A provider that runs on this machine. It is eligible for any room or chat
 /// route; the gateway uses this flag for local concurrency admission.
 pub fn is_local_provider(provider: &Value) -> bool {
-    let base = provider["baseUrl"].as_str().unwrap_or("");
-    provider["local"].as_bool() == Some(true)
-        || base.contains("127.0.0.1")
-        || base.contains("localhost")
+    if provider["local"].as_bool() == Some(true) {
+        return true;
+    }
+    let Some(url) = provider["baseUrl"]
+        .as_str()
+        .and_then(|base| reqwest::Url::parse(base).ok())
+    else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .trim_matches(&['[', ']'][..])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 /// A provider may explicitly declare `capabilities.text=false`; absence means
@@ -116,6 +129,22 @@ pub fn is_local_provider(provider: &Value) -> bool {
 pub fn provider_eligible(provider: &Value) -> bool {
     provider["enabled"].as_bool() != Some(false)
         && provider["capabilities"]["text"].as_bool() != Some(false)
+}
+
+pub fn credential_required(provider: &Value) -> bool {
+    if provider["kind"] == "codex" {
+        return true;
+    }
+    if let Some(required) = provider["requiresKey"].as_bool() {
+        return required;
+    }
+    if provider["auth"] == "none" {
+        return false;
+    }
+    matches!(
+        provider["auth"].as_str(),
+        Some("api_key" | "apiKey" | "bearer")
+    ) || (provider["kind"] == "anthropic" && !is_local_provider(provider))
 }
 
 /// A declared capability profile always outranks the legacy model-name digit
@@ -227,7 +256,20 @@ pub fn route_from_provider(
     }
     let base_url = resolved_base_url(provider);
     if base_url.is_empty() {
-        return Err("제공자에 baseUrl 이 없습니다.".into());
+        return Err("연결할 서버 주소가 없습니다.".into());
+    }
+    let parsed = reqwest::Url::parse(&base_url).map_err(|_| "연결할 서버 주소를 확인하세요.")?;
+    let cli = provider["kind"] == "cli";
+    if (cli && parsed.scheme() != "cli")
+        || (!cli && !matches!(parsed.scheme(), "http" | "https"))
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return Err("연결할 서버 주소를 확인하세요.".into());
+    }
+    if base_url.contains("ACCOUNT_ID") || base_url.contains("{accountId}") {
+        return Err("연결 설정에서 계정 ID를 입력하거나 연결 정보를 다시 저장하세요.".into());
     }
     let model = model_override
         .filter(|value| !value.is_empty())
@@ -239,39 +281,46 @@ pub fn route_from_provider(
                 .map(str::to_string)
         })
         .ok_or("이 API에서 사용할 모델을 선택하거나 모델 ID를 입력하세요.")?;
-    let kind = provider["kind"]
-        .as_str()
-        .unwrap_or("openai")
-        .to_string();
+    if model.chars().count() > 256 || model.chars().any(char::is_control) {
+        return Err("모델 ID를 확인하세요.".into());
+    }
+    let kind = provider["kind"].as_str().unwrap_or("openai").to_string();
     let api_key = state
         .read_secret(&format!("provider:{id}"))
-        .or_else(|| {
-            provider["apiKey"]
-                .as_str()
-                .map(str::to_string)
-        })
+        .or_else(|| provider["apiKey"].as_str().map(str::to_string))
         .unwrap_or_default();
+    if state.store.has_secret(&format!("provider:{id}")) && api_key.is_empty() {
+        return Err("저장한 인증 정보를 읽을 수 없습니다. 연결 설정에서 다시 등록하세요.".into());
+    }
+    if api_key.is_empty() && credential_required(provider) {
+        return Err("이 연결에 필요한 인증 정보가 없습니다. 연결 설정을 확인하세요.".into());
+    }
+    if kind == "codex"
+        && provider["accountId"]
+            .as_str()
+            .is_none_or(|id| id.trim().is_empty())
+    {
+        return Err("계정 정보가 없습니다. 계정을 다시 연결하세요.".into());
+    }
     let local = is_local_provider(provider);
     // Model + endpoint overrides provider-wide marketing context limits.
-    let context_tokens=provider["modelCapabilities"][model.as_str()]["contextTokens"]
+    let context_tokens = provider["modelCapabilities"][model.as_str()]["contextTokens"]
         .as_u64()
-        .or_else(||provider["capabilities"]["contextTokens"].as_u64())
-        .or_else(||provider["contextTokens"].as_u64());
+        .or_else(|| provider["capabilities"]["contextTokens"].as_u64())
+        .or_else(|| provider["contextTokens"].as_u64());
     let max_output_tokens = provider["modelCapabilities"][model.as_str()]["maxOutputTokens"]
         .as_u64()
-        .or_else(||provider["capabilities"]["maxOutputTokens"].as_u64())
+        .or_else(|| provider["capabilities"]["maxOutputTokens"].as_u64())
         .or_else(|| provider["maxOutputTokens"].as_u64());
-    let tool_mode=default_tool_mode(provider,&kind);
-    let capabilities=ModelCapabilities::from_provider(provider,&model,&tool_mode);
-    let disable_thinking=capabilities.reasoning
-        .map(|supported|!supported)
-        .unwrap_or_else(||disable_thinking(provider,local));
+    let tool_mode = default_tool_mode(provider, &kind);
+    let capabilities = ModelCapabilities::from_provider(provider, &model, &tool_mode);
+    let disable_thinking = capabilities
+        .reasoning
+        .map(|supported| !supported)
+        .unwrap_or_else(|| disable_thinking(provider, local));
     Ok(Route {
         capabilities,
-        name: provider["name"]
-            .as_str()
-            .unwrap_or("Provider")
-            .to_string(),
+        name: provider["name"].as_str().unwrap_or("Provider").to_string(),
         tool_mode,
         reasoning_protocol: default_reasoning_protocol(provider, &kind, &model, &id),
         local,
@@ -302,8 +351,13 @@ pub fn resolve(
     model_override: Option<&str>,
 ) -> Result<Route, String> {
     let provider = if provider_id.is_empty() {
-        let mut providers = state.store.all("provider").into_iter()
-            .filter(provider_eligible).collect::<Vec<_>>();
+        let mut providers = state
+            .store
+            .all("provider")
+            .into_iter()
+            .filter(provider_eligible)
+            .filter(|provider| route_from_provider(state, provider, model_override).is_ok())
+            .collect::<Vec<_>>();
         // Respect explicitly marked defaults, then select deterministically.
         // Editing a provider or SQLite's tie order must not silently reroute
         // an unpinned model call to a different (possibly paid) account.
@@ -311,8 +365,11 @@ pub fn resolve(
             provider["isDefault"].as_bool() == Some(true)
                 || provider["default"].as_bool() == Some(true)
         };
-        providers.sort_by(|a,b| marked(b).cmp(&marked(a))
-            .then_with(|| a["id"].as_str().cmp(&b["id"].as_str())));
+        providers.sort_by(|a, b| {
+            marked(b)
+                .cmp(&marked(a))
+                .then_with(|| a["id"].as_str().cmp(&b["id"].as_str()))
+        });
         providers.into_iter().next()
     } else {
         state.store.get("provider", provider_id)

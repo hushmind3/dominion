@@ -52,11 +52,14 @@ pub fn select_provider(state: &AppState, complexity: Complexity) -> Option<Value
         .all("provider")
         .into_iter()
         .filter(gateway::provider_eligible)
+        .filter(|provider| gateway::route_from_provider(state, provider, None).is_ok())
         .filter(|provider| provider["enabled"] != false)
         .collect::<Vec<_>>();
     if candidates.is_empty() {
         return None;
     }
+    // The capability sorts below are stable; equal scores keep this ID order.
+    candidates.sort_by(|a,b| a["id"].as_str().cmp(&b["id"].as_str()));
     let score = |provider: &Value| gateway::capability_score(provider);
     match complexity {
         Complexity::Light => {

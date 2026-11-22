@@ -35,7 +35,7 @@ pub fn ingest(
     }
     let can_use_tools = config["toolsEnabled"] == true && allowed.iter().any(|id| id == author_id);
     let origin = json!({"kind":config["kind"],"channelBindingId":config["id"],"messageId":message_id,"authorId":author_id,"authorName":author_name,"authorKind":"human","authorIsBot":false});
-    crate::api::rooms::submit_internal(state,text(config,"roomId"),&json!({"input":content,"clientMessageId":format!("bridge-{}",memory::stable_id(&[text(config,"kind"),text(config,"guildId"),text(config,"channelId"),text(config,"chatId"),message_id])),"thinking":false,"reasoningEffort":"low"}),Some(origin),can_use_tools).map_err(|(_,error)|error)
+    crate::features::collaboration::submission::submit(state,text(config,"roomId"),&json!({"input":content,"clientMessageId":format!("bridge-{}",memory::stable_id(&[text(config,"kind"),text(config,"guildId"),text(config,"channelId"),text(config,"chatId"),message_id])),"thinking":false,"reasoningEffort":"low"}),Some(origin),can_use_tools).map_err(|error|error.to_string())
 }
 pub fn is_sent(state: &AppState, binding: &str, remote_id: &str) -> bool {
     state

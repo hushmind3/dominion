@@ -6,6 +6,9 @@ use std::time::{Duration,Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use super::response::error;
+use crate::features::providers::connections::{self, ConnectionDraft, ConnectionError, public_provider};
+#[cfg(test)]
+use crate::features::providers::connections::normalize_endpoint as official_opencode_go_url;
 
 fn home_file(relative: &str) -> Option<std::path::PathBuf> {
     std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(relative))
@@ -87,18 +90,6 @@ fn local_opencode_go_key() -> Option<(String, &'static str)> {
     None
 }
 
-fn official_opencode_go_url(url: &str) -> String {
-    let trimmed = url.trim().trim_end_matches('/');
-    if trimmed.starts_with("https://opencode.ai/zen/go")
-        || trimmed == "https://opencode.ai/inference/go"
-        || trimmed == "https://opencode.ai/inference/go/v1"
-    {
-        "https://opencode.ai/inference/go/openai/v1".to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
 fn direct_opencode_go(state: &AppState) -> Option<Value> {
     state.store.all("provider").into_iter().find(|provider| {
         provider["integration"] == "opencode-go"
@@ -126,13 +117,13 @@ fn import_opencode_go(state: &AppState) -> Result<Value, String> {
         "reflection": previous["reflection"].as_bool().unwrap_or(false),
         "requestsPerMinute": previous["requestsPerMinute"].as_u64().unwrap_or(0)
     });
-    state.save_secret(&format!("provider:{id}"), &key);
-    let saved = state.store.put("provider", &record)
-        .ok_or("OpenCode Go 연결 정보를 저장하지 못했습니다.")?;
+    let mut command = record;
+    command["apiKey"] = json!(key);
+    let saved = ConnectionDraft::parse(state, &command).and_then(|draft| draft.commit(state))
+        .map_err(|_| "OpenCode Go 연결 정보를 저장하지 못했습니다.")?;
     state.store.audit("provider.credential_imported",
         json!({"providerId":id,"source":source,"credentialCopied":true}));
-    state.bus.record("provider", &saved);
-    let mut result = public_provider(state, saved);
+    let mut result = saved;
     result["importedCount"] = json!(1);
     result["credentialSource"] = json!(source);
     result["verification"] = json!("not_tested");
@@ -234,9 +225,9 @@ fn import_opencode(state: &AppState) -> Result<Value, String> {
             "learning": previous["reflection"].as_bool().unwrap_or(false),
             "requestsPerMinute": previous["requestsPerMinute"].as_u64().unwrap_or(0),
         });
-        state.save_secret(&format!("provider:{id}"), &key);
-        if let Some(saved) = state.store.put("provider", &record) {
-            state.bus.record("provider", &saved);
+        let mut command = record;
+        command["apiKey"] = json!(key);
+        if let Ok(saved) = ConnectionDraft::parse(state, &command).and_then(|draft| draft.commit(state)) {
             if first.is_none() {
                 first = Some(public_provider(state, saved));
             }
@@ -1211,242 +1202,47 @@ async fn discover_cloudflare_account(api_key: &str) -> Option<String> {
         .find_map(|account| account["id"].as_str().map(str::to_string))
 }
 
-async fn fill_missing_account(state: &AppState, provider: &Value) -> Option<String> {
-    if !needs_account_discovery(provider) {
-        return None;
-    }
-    let id = provider["id"].as_str()?;
-    let key = state.read_secret(&format!("provider:{id}"))?;
-    discover_cloudflare_account(&key).await
-}
-
 pub async fn list_providers(State(state): State<AppState>) -> Json<Value> {
-    let mut items = Vec::new();
-    for mut provider in state.store.all("provider") {
-        // Lazily fill `ACCOUNT_ID` from the key the owner already saved, then
-        // persist it so chat/model routes use the real URL.
-        if let Some(account) = fill_missing_account(&state, &provider).await {
-            provider["accountId"] = json!(account);
-            if let Some(saved) = state.store.put("provider", &provider) {
-                state.bus.record("provider", &saved);
-            }
-        }
-        items.push(public_provider(&state, provider));
-    }
-    Json(json!(items))
+    // A workspace read must not call external account APIs or rewrite settings.
+    Json(json!(state.store.all("provider").into_iter()
+        .map(|provider| public_provider(&state, provider)).collect::<Vec<_>>()))
 }
 
-fn public_provider(state: &AppState, mut provider: Value) -> Value {
-    let id = provider
-        .get("id")
-        .and_then(|value| value.as_str())
-        .unwrap_or_default()
-        .to_string();
-    if let Value::Object(ref mut map) = provider {
-        let reflection = map
-            .get("reflection")
-            .and_then(Value::as_bool)
-            .or_else(|| map.get("learning").and_then(Value::as_bool))
-            .unwrap_or(false);
-        map.insert("reflection".into(), json!(reflection));
-        map.remove("apiKey");
-        map.insert(
-            "hasKey".into(),
-            json!(state.store.has_secret(&format!("provider:{id}"))),
-        );
-    }
-    provider
+fn connection_error(error_value: ConnectionError) -> Response {
+    let (status, message) = match error_value {
+        ConnectionError::Invalid(message) => (StatusCode::BAD_REQUEST, message),
+        ConnectionError::Missing => (StatusCode::NOT_FOUND, "API 연결을 찾을 수 없습니다.".into()),
+        ConnectionError::Changed => (StatusCode::CONFLICT, "다른 곳에서 연결 정보가 변경되었습니다. 입력한 내용을 유지하고 최신 설정을 확인하세요.".into()),
+        ConnectionError::Storage(message) => {
+            // Storage diagnostics belong in logs, never in a connection secret response.
+            eprintln!("Provider connection storage: {message}");
+            (StatusCode::INTERNAL_SERVER_ERROR, "API 연결을 저장할 수 없습니다.".into())
+        },
+    };
+    error(status, &message)
 }
 
 pub async fn save_provider(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
-    if let Some(profile)=body.get("nativeRouting") {
-        if let Err(message)=crate::engine::native_routing::validate_profile(profile) {
-            return error(StatusCode::BAD_REQUEST,&message);
-        }
-    }
-    if let Err(message) = crate::engine::reasoning::validate(&body) {
-        return error(StatusCode::BAD_REQUEST, &message);
-    }
-    let name = body
-        .get("name")
-        .and_then(|value| value.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    let base_url = body
-        .get("baseUrl")
-        .and_then(|value| value.as_str())
-        .unwrap_or("")
-        .trim()
-        .trim_end_matches('/')
-        .to_string();
-    let base_url = official_opencode_go_url(&base_url);
-    if base_url.is_empty() {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "서버 주소를 입력하세요.",
-        );
-    }
-    let parsed = match reqwest::Url::parse(&base_url) {
-        Ok(url) if matches!(url.scheme(), "http" | "https") => url,
-        _ => return error(StatusCode::BAD_REQUEST, "HTTP(S) 주소만 허용됩니다."),
+    let mut draft = match ConnectionDraft::parse(&state, &body) {
+        Ok(draft) => draft,
+        Err(message) => return connection_error(message),
     };
-
-    let name = if name.is_empty() { parsed.host_str().unwrap_or("API").to_owned() } else { name };
-
-    let id = body
-        .get("id")
-        .and_then(|value| value.as_str())
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
-    let kind = match body.get("kind").and_then(|value| value.as_str()) {
-        Some("ollama") => "ollama",
-        Some("anthropic") => "anthropic",
-        Some("codex") => "codex",
-        _ => "openai",
-    };
-    let existing = state.store.get("provider", &id);
-    let model = body
-        .get("model")
-        .and_then(Value::as_str)
-        .or_else(|| existing.as_ref().and_then(|provider| provider["model"].as_str()))
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if model.len() > 256 {
-        return error(StatusCode::BAD_REQUEST, "모델 ID가 너무 깁니다.");
-    }
-    // `reflection` is the public role. Older records and clients used
-    // `learning`, so accept it as a compatibility alias.
-    let reflection = body
-        .get("reflection")
-        .or_else(|| body.get("learning"))
-        .and_then(|value| value.as_bool())
-        .or_else(|| existing.as_ref().and_then(|provider| {
-            provider["reflection"].as_bool().or_else(|| provider["learning"].as_bool())
-        }))
-        .unwrap_or(false);
-    let review_model = body["reflectionModel"].as_str()
-        .or_else(|| existing.as_ref().and_then(|provider| provider["reflectionModel"].as_str()))
-        .unwrap_or(&model).trim();
-    if reflection && (review_model.is_empty() || review_model.len() > 256) {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "실행 검토에 사용할 모델 ID를 입력하세요.",
-        );
-    }
-
-    if body.get("accountId").and_then(Value::as_str).is_some_and(|value| value.len() > 128) {
-        return error(StatusCode::BAD_REQUEST, "Account ID가 너무 깁니다.");
-    }
-    let mut record = body.clone();
-    record["id"] = json!(id);
-    record["name"] = json!(name);
-    record["baseUrl"] = json!(parsed.to_string().trim_end_matches('/'));
-    record["kind"] = json!(kind);
-    record["reflection"] = json!(reflection);
-    // Keep the legacy key in sync so existing readers keep working.
-    record["learning"] = json!(reflection);
-    if reflection {
-        record["reflectionModel"] = json!(review_model);
-    } else if let Some(fields) = record.as_object_mut() {
-        fields.remove("reflectionModel");
-    }
-    if model.is_empty() {
-        if let Value::Object(ref mut map) = record {
-            map.remove("model");
-        }
-    } else {
-        record["model"] = json!(model);
-    }
-    record["enabled"] = json!(body
-        .get("enabled")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(true));
-    record["toolMode"] = json!(
-        match body.get("toolMode").and_then(|value| value.as_str()) {
-            Some("native") => "native",
-            Some("compat") => "compat",
-            Some("auto") => "auto",
-            _ =>
-                if kind == "ollama" || kind == "codex" {
-                    "compat"
-                } else if kind == "anthropic" {
-                    "native"
-                } else {
-                    "auto"
-                },
-        }
-    );
-    if let Value::Object(ref mut map) = record {
-        map.remove("apiKey");
-        map.remove("hasKey");
-    }
-
-    let mut fresh_key: Option<String> = None;
-    if let Some(api_key) = body.get("apiKey").and_then(|value| value.as_str()) {
-        if api_key.starts_with("••") {
-            // Masked placeholder sent back by the UI: keep the stored secret.
-        } else if api_key.is_empty() {
-            state.store.remove_secret(&format!("provider:{id}"));
-        } else {
-            state.save_secret(&format!("provider:{id}"), api_key);
-            fresh_key = Some(api_key.to_string());
+    if needs_account_discovery(&draft.record) {
+        if let Some(account) = discover_cloudflare_account(&draft.discovery_key(&state)).await {
+            draft.record["accountId"] = json!(account);
         }
     }
-    // Save the account ID immediately when the key can reveal it, so the next
-    // model list or chat does not need a second trip to the provider.
-    if needs_account_discovery(&record) {
-        let key = fresh_key
-            .clone()
-            .or_else(|| state.read_secret(&format!("provider:{id}")))
-            .unwrap_or_default();
-        if let Some(account) = discover_cloudflare_account(&key).await {
-            record["accountId"] = json!(account);
-        }
+    match draft.commit(&state) {
+        Ok(saved) => Json(saved).into_response(),
+        Err(message) => connection_error(message),
     }
-
-    let Some(saved) = state.store.put("provider", &record) else {
-        return error(StatusCode::INTERNAL_SERVER_ERROR, "API 연결을 저장할 수 없습니다.");
-    };
-    // Only one provider can own the reflection route. Selecting a new one
-    // clears both the public and legacy flags on every other provider.
-    if reflection {
-        for mut other in state.store.all("provider") {
-            if other["id"].as_str() != Some(id.as_str())
-                && (other["reflection"].as_bool() == Some(true)
-                    || other["learning"].as_bool() == Some(true))
-            {
-                other["reflection"] = json!(false);
-                other["learning"] = json!(false);
-                if let Some(saved) = state.store.put("provider", &other) {
-                    state.bus.record("provider", &saved);
-                }
-            }
-        }
-    }
-    state
-        .store
-        .audit("provider.saved", json!({ "providerId": saved.get("id") }));
-    state.bus.record("provider", &saved);
-    Json(public_provider(&state, saved)).into_response()
 }
 
 pub async fn delete_provider(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    if id == "dominion-native" {
-        return error(StatusCode::CONFLICT, "실행 중인 로컬 모델은 모델 관리에서 중지하세요.");
+    match connections::remove(&state, &id) {
+        Ok(()) => Json(json!({"ok":true})).into_response(),
+        Err(message) => connection_error(message),
     }
-    if state.store.get("provider", &id).is_none() {
-        return error(StatusCode::NOT_FOUND, "API 연결을 찾을 수 없습니다.");
-    }
-    if !state.store.remove("provider", &id) {
-        return error(StatusCode::INTERNAL_SERVER_ERROR, "API 연결을 해제할 수 없습니다.");
-    }
-    state.store.remove_secret(&format!("provider:{id}"));
-    state.bus.emit(json!({ "type": "record", "kind": "provider", "removed": id }));
-    Json(json!({ "ok": true })).into_response()
 }
 
 /// Returns (free?, source). `None` means the provider did not publish enough
@@ -1578,16 +1374,11 @@ pub async fn test_provider(
         let valid=super::cli_oauth::credential_verified(source).await;
         return Json(json!({"ok":valid,"message":if valid{"CLI 계정 인증을 확인했습니다."}else{"CLI 로그인이 필요합니다."}})).into_response();
     }
-    let key = body
-        .get("apiKey")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty() && !value.starts_with("••"))
-        .map(str::to_string)
-        .or_else(|| state.read_secret(&format!("provider:{id}")))
-        .unwrap_or_default();
-    if key.is_empty() {
-        return Json(json!({"ok":false,"message":"API 키가 저장되어 있지 않습니다."})).into_response();
-    }
+    let key = match body.get("apiKey") {
+        Some(Value::String(value)) if !value.starts_with("••") => value.trim().to_string(),
+        None | Some(Value::String(_)) => state.read_secret(&format!("provider:{id}")).unwrap_or_default(),
+        _ => return error(StatusCode::BAD_REQUEST,"API 키는 문자열이어야 합니다."),
+    };
     let key = key.trim();
     let base = crate::engine::gateway::resolved_base_url(&provider);
     if base.contains("ACCOUNT_ID") || base.contains("{accountId}") {
@@ -1595,7 +1386,6 @@ pub async fn test_provider(
             provider["accountId"] = json!(account);
         }
     }
-    let base = crate::engine::gateway::resolved_base_url(&provider);
     let kind = provider["kind"].as_str().unwrap_or("openai");
     let key = if kind == "codex" {
         let client=match state.account_http_client(30){
@@ -1615,11 +1405,7 @@ pub async fn test_provider(
         .or_else(|| provider["model"].as_str())
         .unwrap_or("")
         .to_string();
-    let cloudflare = base.contains("/client/v4/accounts/") && base.contains("/ai/v1");
-    let opencode_go = provider["integration"] == "opencode-go";
-    let tested_model = if cloudflare && model.is_empty() {
-        "@cf/zai-org/glm-4.7-flash".to_string()
-    } else if kind == "codex" && model.is_empty() {
+    let tested_model = if kind == "codex" && model.is_empty() {
         codex_model()
     } else {
         model.clone()
@@ -1656,103 +1442,7 @@ pub async fn test_provider(
             })).into_response(),
         }
     }
-    let request = if kind == "codex" {
-        let account = provider["accountId"].as_str().unwrap_or("");
-        if account.is_empty() {
-            return Json(json!({"ok":false,"message":"Codex 계정 ID가 없습니다. Codex를 다시 가져오세요."})).into_response();
-        }
-        client
-            .post(format!("{base}/responses"))
-            .header("Authorization", format!("Bearer {key}"))
-            .header("chatgpt-account-id", account)
-            .header("OpenAI-Beta", "responses=experimental")
-            .header("originator", "codex_cli_rs")
-            .header("User-Agent", "codex_cli_rs/0.0.0")
-            .json(&json!({
-                "model":tested_model,
-                "input":[{"role":"user","content":[{"type":"input_text","text":"ping"}]}],
-                "stream":false,
-                "store":false,
-                "max_output_tokens":16
-            }))
-    } else if opencode_go {
-        // No model generation is charged for this credential check.
-        client.get("https://opencode.ai/inference/go/v1/models")
-            .header("Authorization", format!("Bearer {key}"))
-    } else if cloudflare {
-        client
-            .post(format!("{base}/chat/completions"))
-            .header("Authorization", format!("Bearer {key}"))
-            .json(&json!({
-                "model":tested_model,
-                "messages":[{"role":"user","content":"ping"}],
-                "max_tokens":4,
-                "stream":false
-            }))
-    } else if kind == "ollama" {
-        client
-            .get(format!("{}/models", base.trim_end_matches("/v1").trim_end_matches('/')))
-            .header("Authorization", format!("Bearer {key}"))
-    } else if kind == "openai" && !model.is_empty() {
-        client
-            .post(format!("{base}/chat/completions"))
-            .header("Authorization", format!("Bearer {key}"))
-            .json(&json!({
-                "model":model,
-                "messages":[{"role":"user","content":"ping"}],
-                "max_tokens":4,
-                "stream":false
-            }))
-    } else if kind == "anthropic" {
-        client
-            .get(format!("{base}/models"))
-            .header("x-api-key", key.as_str())
-            .header("anthropic-version", "2023-06-01")
-    } else {
-        client
-            .get(format!("{base}/models"))
-            .header("Authorization", format!("Bearer {key}"))
-    };
-    match request.send().await {
-        Ok(response) if response.status().is_success() => {
-            Json(json!({
-                "ok":true,
-                "status":response.status().as_u16(),
-                "accountId":provider["accountId"],
-                "model":tested_model
-            })).into_response()
-        }
-        Ok(response) => {
-            let status = response.status();
-            let text=String::from_utf8_lossy(&crate::integrations::network::read_bounded_body(
-                response,256*1024,"Provider connection error").await.unwrap_or_default()).into_owned();
-            let detail = text.chars().take(300).collect::<String>();
-            let overloaded = detail.contains("1305")
-                || detail.to_ascii_lowercase().contains("temporarily overloaded");
-            let cloudflare_key_shape = cloudflare && key.len() != 40 && !key.starts_with("cfk_");
-            let message = if cloudflare_key_shape {
-                "Cloudflare API 토큰 형식이 아닙니다. 40자 토큰 또는 cfk_ 토큰을 붙여넣으세요."
-            } else if overloaded {
-                "제공자가 혼잡합니다(1305). 다른 무료 모델을 선택하거나 잠시 후 다시 시도하세요."
-            } else {
-                match status.as_u16() {
-                    401 | 403 => "키가 거부되었습니다. API 토큰 권한과 계정을 확인하세요.",
-                    404 | 405 => "주소는 응답했지만 이 경로를 지원하지 않습니다. 서버 주소를 확인하세요.",
-                    429 => "호출 한도에 걸렸습니다. 잠시 후 다시 시도하세요.",
-                    _ => "연결 테스트에 실패했습니다.",
-                }
-            };
-            Json(json!({
-                "ok":false,
-                "status":status.as_u16(),
-                "keyLength":key.chars().count(),
-                "model":tested_model,
-                "message":message,
-                "detail":detail
-            })).into_response()
-        }
-        Err(err) => Json(json!({"ok":false,"message":format!("연결할 수 없습니다: {err}")})).into_response(),
-    }
+    Json(crate::features::providers::probe::check(&state, &provider, &key).await).into_response()
 }
 
 /// Decode the account-specific Codex catalog, never manufacture model IDs.
@@ -1879,9 +1569,7 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
     if needs_account_discovery(&provider) {
         if let Some(account) = discover_cloudflare_account(&key).await {
             provider["accountId"] = json!(account);
-            if let Some(saved) = state.store.put("provider", &provider) {
-                state.bus.record("provider", &saved);
-            }
+
         }
     }
     let base = crate::engine::gateway::resolved_base_url(&provider);
@@ -1935,44 +1623,15 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
             }
         }
     }
-    // Cloudflare's OpenAI-compatible surface has no /models route. Its native
-    // model search returns the catalogue instead.
     let cloudflare = base.contains("/client/v4/accounts/") && base.contains("/ai/v1");
-    let url = if provider["integration"] == "opencode-go" {
-        "https://opencode.ai/inference/go/v1/models".to_string()
-    } else if kind == "ollama" {
-        let native = base.trim_end_matches("/v1").trim_end_matches('/');
-        format!("{native}/api/tags")
-    } else if cloudflare {
-        format!(
-            "{}/ai/models/search?per_page=100",
-            base.trim_end_matches("/ai/v1").trim_end_matches('/')
-        )
-    } else if kind == "anthropic" {
-        format!("{base}/models")
-    } else {
-        format!(
-            "{base}/models{}",
-            if provider["integration"] == "freellmapi" {
-                "?available=true"
-            } else {
-                ""
-            }
-        )
+    let client = match state.provider_http_client(12) {
+        Ok(client) => client,
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, &message),
     };
-
-    let client=match state.provider_http_client(12){
-        Ok(client)=>client,
-        Err(message)=>return error(StatusCode::INTERNAL_SERVER_ERROR,&message),
+    let request = match crate::features::providers::probe::catalog_request(&client, &provider, &key) {
+        Ok(request) => request,
+        Err(message) => return error(StatusCode::BAD_REQUEST, &message),
     };
-    let mut request = client.get(&url).timeout(Duration::from_secs(12));
-    if kind == "anthropic" {
-        request = request
-            .header("x-api-key", key.as_str())
-            .header("anthropic-version", "2023-06-01");
-    } else if !key.is_empty() {
-        request = request.header("Authorization", format!("Bearer {key}"));
-    }
     match request.send().await {
         Ok(response) if response.status().is_success() => {
             let Ok(value)=crate::integrations::network::read_bounded_json(

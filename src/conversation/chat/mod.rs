@@ -1,13 +1,16 @@
 //! Native Rust chat engine: shared request contract and stable public entry points.
 mod approval;
 mod budget;
-mod kernel_bridge;
 mod codex_ws;
 mod context;
 mod continuity;
+mod kernel_bridge;
+mod plain_context;
 mod room_context;
 
-pub(crate) fn estimate_text_tokens(text:&str)->u64 {room_context::estimate(text) as u64}
+pub(crate) fn estimate_text_tokens(text: &str) -> u64 {
+    room_context::estimate(text) as u64
+}
 
 /// Native SDK shares the persistent GUI-visible approval gate.
 /// The model cannot grant itself write or shell permissions.
@@ -22,8 +25,16 @@ pub(crate) async fn approve_native_tool(
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
     let approved = approval::request_approval(
-        state, &tx, session_id, name, args, run_id, operation_id, None
-    ).await;
+        state,
+        &tx,
+        session_id,
+        name,
+        args,
+        run_id,
+        operation_id,
+        None,
+    )
+    .await;
     drop(tx);
     let _ = drain.await;
     approved
@@ -39,23 +50,22 @@ mod tests;
 mod transport;
 
 pub use protocol::parse_text_tool_calls;
-pub use runtime::{run_room_turn, run_turn, run_turn_background, run_turn_resume, run_turn_plain};
+pub use runtime::{run_room_turn, run_turn, run_turn_background, run_turn_plain, run_turn_resume};
 
 /// The coordinator owns the fixture and assertions. Only aliases to the real
 /// runtime functions cross this boundary; candidate-owned test helpers cannot
 /// manufacture the oracle's observations.
 #[cfg(test)]
 pub(crate) mod context_oracle {
-    pub(crate) use super::room_context::compile;
+    pub(crate) use super::continuity::{commit, commit_projection, dependencies, prepare, project};
     pub(crate) use super::provider::select_provider;
-    pub(crate) use super::continuity::{dependencies,prepare,project,commit,commit_projection};
+    pub(crate) use super::room_context::compile;
 }
 
 /// Cancel approvals bound to a session that is being archived/reset.
 pub(crate) fn close_session_approvals(state: &crate::state::AppState, session_id: &str) {
     approval::close_pending_approvals(state, session_id);
 }
-
 
 /// Static prompt preview for the private-chat prompt editor. No model call,
 /// no persisted turn.
@@ -68,7 +78,12 @@ pub fn private_system_prompt_preview(
     korean_reasoning: bool,
 ) -> Result<serde_json::Value, String> {
     let agent = match agent_id {
-        Some(id) => Some(state.store.get("agent", id).ok_or("선택한 도우미를 찾을 수 없습니다.")?),
+        Some(id) => Some(
+            state
+                .store
+                .get("agent", id)
+                .ok_or("선택한 도우미를 찾을 수 없습니다.")?,
+        ),
         None => None,
     };
     let request = TurnRequest::from_value(&serde_json::json!({
@@ -80,12 +95,21 @@ pub fn private_system_prompt_preview(
         "reasoningLanguage": if korean_reasoning { "ko" } else { "original" }
     }))?;
     let session = session_id.unwrap_or("prompt-preview:private");
-    let compiled = context::system_prompt_with_manifest_at(state, &request, session, input, None, None);
+    let (prompt, dynamic_context) = if agent_id.is_none() {
+        let compiled = plain_context::compile(state, &request, session);
+        (compiled.prompt, compiled.dynamic_context)
+    } else {
+        let compiled =
+            context::system_prompt_with_manifest_at(state, &request, session, input, None, None);
+        (compiled.prompt, compiled.dynamic_context)
+    };
     let owner = state
         .store
         .get("assistant_settings", "global")
         .unwrap_or_else(|| serde_json::json!({"id":"global","instructions":"","enabled":true}));
-    let agent_override = agent.as_ref().and_then(|a| a["systemPromptOverride"].as_str());
+    let agent_override = agent
+        .as_ref()
+        .and_then(|a| a["systemPromptOverride"].as_str());
     let owner_override = owner["systemPromptOverride"].as_str();
     let own_override = agent_override.or(owner_override);
     let scope = if agent_override.is_some() {
@@ -96,12 +120,13 @@ pub fn private_system_prompt_preview(
         None
     };
     Ok(serde_json::json!({
-        "systemPrompt": compiled.prompt,
-        "dynamicContext": compiled.dynamic_context,
-        "systemChars": compiled.prompt.chars().count(),
-        "systemTokensEstimated": room_context::estimate(&compiled.prompt),
-        "contextChars": compiled.dynamic_context.chars().count(),
-        "contextTokensEstimated": room_context::estimate(&compiled.dynamic_context),
+        "systemPrompt": prompt,
+        "dynamicContext": dynamic_context,
+        "systemChars": prompt.chars().count(),
+        "systemTokensEstimated": room_context::estimate(&prompt),
+        "contextChars": dynamic_context.chars().count(),
+        "contextTokensEstimated": room_context::estimate(&dynamic_context),
+        "mode": if agent_id.is_some() {"agent"} else {"chat"},
         "agentId": agent_id,
         "agentName": agent.as_ref().and_then(|a| a["name"].as_str()),
         "ownerEnabled": owner["enabled"] != false,
@@ -134,6 +159,7 @@ pub(crate) fn expire_stale_approvals(state: &crate::state::AppState) -> usize {
 use serde_json::Value;
 use std::time::Duration;
 pub use transport::run;
+pub use transport::{run_command, ChatCommand};
 
 const MAX_ROUNDS: usize = 8;
 
@@ -191,6 +217,50 @@ impl TurnRequest {
     }
 
     pub fn from_value(value: &Value) -> Result<Self, String> {
+        if !value.is_object() {
+            return Err("대화 요청은 객체여야 합니다.".into());
+        }
+        for (key, max) in [
+            ("input", 64_000),
+            ("sessionId", 256),
+            ("agentId", 256),
+            ("providerId", 160),
+            ("model", 256),
+            ("systemOverride", 32_000),
+            ("taskId", 256),
+            ("parentTaskId", 256),
+            ("taskRevision", 256),
+            ("verificationOwner", 32),
+            ("reasoningLanguage", 16),
+        ] {
+            if value.get(key).is_some_and(|item| {
+                !item.is_null() && item.as_str().is_none_or(|text| text.chars().count() > max)
+            }) {
+                return Err(format!("{key}는 {max}자 이내 문자열이어야 합니다."));
+            }
+        }
+        for key in [
+            "toolsEnabled",
+            "toolsExecutionEnabled",
+            "thinking",
+            "autoLearning",
+        ] {
+            if value
+                .get(key)
+                .is_some_and(|item| !item.is_null() && !item.is_boolean())
+            {
+                return Err(format!("{key}는 true/false여야 합니다."));
+            }
+        }
+        if value.get("reasoningLanguage").is_some_and(|item| {
+            !item.is_null()
+                && !matches!(
+                    item.as_str(),
+                    Some("" | "ko" | "original" | "default" | "auto")
+                )
+        }) {
+            return Err("추론 언어 설정이 올바르지 않습니다.".into());
+        }
         crate::engine::reasoning::validate(value)?;
         let text = value
             .get("input")
@@ -226,18 +296,17 @@ impl TurnRequest {
                 .unwrap_or(true),
             thinking: value.get("thinking").and_then(|item| item.as_bool()),
             reasoning_effort: match string("reasoningEffort") {
-                Some(effort) if crate::engine::reasoning::valid_effort(&effort) =>
-                {
-                    Some(effort)
-                }
-                Some(_) => {
-                    return Err(
-                        "추론 강도 값이 올바르지 않습니다.".into(),
-                    )
-                }
+                Some(effort) if crate::engine::reasoning::valid_effort(&effort) => Some(effort),
+                Some(_) => return Err("추론 강도 값이 올바르지 않습니다.".into()),
                 None => None,
             },
-            reasoning_language: string("reasoningLanguage"),
+            reasoning_language: string("reasoningLanguage").map(|language| {
+                if language == "default" {
+                    "original".into()
+                } else {
+                    language
+                }
+            }),
             // Experience recording and strategy improvement require an
             // Explicit owner opt-in; ordinary chat does not start unattended learning.
             auto_learning: value

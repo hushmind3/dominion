@@ -126,6 +126,12 @@ fn select_records(
 
 // Remote compute leases and receipts share the same Store and SQLite transaction boundary.
 mod remote_tasks;
+mod provider_connections;
+mod room_admission;
+mod conditional_patch;
+pub use conditional_patch::ConditionalPatch;
+pub use room_admission::{RoomReceipt, RoomAdmissionError};
+pub use provider_connections::{ProviderSecretChange, ProviderWriteError};
 
 impl Store {
     pub fn open(path: &Path) -> rusqlite::Result<Self> {

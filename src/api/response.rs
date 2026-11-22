@@ -5,6 +5,22 @@ use axum::{
 };
 use serde_json::json;
 
+pub(super) fn prompt_error(
+    value: crate::features::collaboration::prompt_settings::PromptError,
+) -> Response {
+    use crate::features::collaboration::prompt_settings::PromptError;
+    let (status,message)=match value{
+        PromptError::Invalid(message)=>(StatusCode::BAD_REQUEST,message),
+        PromptError::Missing=>(StatusCode::NOT_FOUND,"수정할 AI 또는 그룹을 찾을 수 없습니다.".into()),
+        PromptError::Changed=>(StatusCode::CONFLICT,"다른 곳에서 프롬프트나 참가자가 변경되었습니다. 작성한 내용은 유지하고 원본을 다시 확인하세요.".into()),
+        PromptError::Storage(message)=>{
+            eprintln!("Prompt settings storage: {message}");
+            (StatusCode::INTERNAL_SERVER_ERROR,"프롬프트 변경을 저장할 수 없습니다.".into())
+        },
+    };
+    error(status, &message)
+}
+
 pub(super) fn error(status: StatusCode, message: &str) -> Response {
     // Every API error body is read by the owner, so upstream text is turned
     // into a sentence here instead of at each handler.

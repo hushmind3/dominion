@@ -2,9 +2,13 @@
 pub mod debate;
 pub mod personas;
 pub mod rooms;
+pub mod submission;
+pub mod prompt_settings;
 pub mod room_knowledge;
 pub mod room_state;
 pub(crate) mod workboard;
 pub(crate) mod room_cursor;
 pub mod task_team;
 pub(crate) mod worktree;
+
+pub mod room_config;

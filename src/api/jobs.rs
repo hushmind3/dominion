@@ -151,53 +151,20 @@ pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Respon
     };
     match engine::jobs::enqueue(&state,kind,clean){Some(job)=>(StatusCode::ACCEPTED,Json(job)).into_response(),None=>error(StatusCode::INTERNAL_SERVER_ERROR,"작업을 대기열에 저장할 수 없습니다.")}
 }
-pub async fn cancel(State(state):State<AppState>,Path(id):Path<String>)->Response{
-    let Some(job)=state.store.get("job",&id)else{return error(StatusCode::NOT_FOUND,"작업이 없습니다.")};
-    if !matches!(job["status"].as_str(),Some("queued"|"running")){return error(StatusCode::CONFLICT,"진행 중인 작업만 중단할 수 있습니다.");}
-    // Claim cancellation durably first. Do not cancel a shared session if
-    // another worker already finished this job between lookup and CAS.
-    match state.store.patch_if("job",&id,"status",&job["status"],&json!({
-        "status":"cancelled","cancelRequested":true,
-        "finishedAt":chrono::Utc::now().to_rfc3339()
-    })){
-        Some(saved)=>{
-            if let Some(session)=saved["sessionId"].as_str(){state.cancel_session(session);}
-            state.bus.record("job",&saved);
-            Json(saved).into_response()
-        },
-        None=>error(StatusCode::CONFLICT,
-            "작업 상태가 변경되어 취소하지 않았습니다. 최신 상태를 다시 확인하세요.")
+fn control_response(result:Result<Value,crate::host::execution::job_control::ControlError>)->Response{
+    use crate::host::execution::job_control::ControlError;
+    match result{
+        Ok(saved)=>Json(saved).into_response(),
+        Err(ControlError::Invalid(message))=>error(StatusCode::BAD_REQUEST,&message),
+        Err(ControlError::Missing)=>error(StatusCode::NOT_FOUND,"작업을 찾을 수 없습니다."),
+        Err(ControlError::Changed(message))=>error(StatusCode::CONFLICT,&message),
     }
 }
-
-/// Native job steering is revisioned through a single CAS mutation. It
-/// never changes tool permissions or replays completed effects. Both existing
-/// /directive and the current main /steer route use this authority.
-fn apply_steering(state:&AppState,id:&str,instruction:&str,mode:&str)->Response {
-    let instruction=instruction.trim();
-    if instruction.is_empty()||instruction.len()>16_000 {
-        return error(StatusCode::BAD_REQUEST,"작업 변경 지시가 필요합니다.");
-    }
-    if !matches!(mode,"append"|"replace") {
-        return error(StatusCode::BAD_REQUEST,"변경 방식은 append 또는 replace여야 합니다.");
-    }
-    let Some(job)=state.store.get("job",id)
-    else{return error(StatusCode::NOT_FOUND,"작업을 찾을 수 없습니다.");};
-    if job["kind"]!="prompt"||!matches!(job["status"].as_str(),Some("queued"|"running")){
-        return error(StatusCode::CONFLICT,"진행 중인 일반 작업에만 새 지시를 전달할 수 있습니다.");
-    }
-    let old=job["nativeDirective"].as_str().unwrap_or("");
-    let directive=if mode=="append"&&!old.trim().is_empty() {
-        format!("{old}\n\n{instruction}")
-    }else{instruction.to_string()};
-    if directive.len()>32_000 {
-        return error(StatusCode::BAD_REQUEST,"작업 변경 지시가 너무 깁니다.");
-    }
-    let Some(updated)=state.store.patch_if("job",id,"status",&job["status"],&json!({
-        "nativeDirective":directive,"directiveUpdatedAt":chrono::Utc::now().to_rfc3339()
-    })) else{return error(StatusCode::CONFLICT,"작업 상태가 변경되었습니다.");};
-    state.bus.record("job",&updated);
-    Json(json!({"ok":true,"jobId":id,"directive":directive,"mode":mode})).into_response()
+pub async fn cancel(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    control_response(crate::host::execution::job_control::cancel(&state,&id))
+}
+fn apply_steering(state:&AppState,id:&str,instruction:&str,mode:&str)->Response{
+    control_response(crate::host::execution::job_control::steer(state,id,instruction,mode))
 }
 pub async fn steer(State(state):State<AppState>,Path(id):Path<String>,
     Json(body):Json<Value>)->Response{

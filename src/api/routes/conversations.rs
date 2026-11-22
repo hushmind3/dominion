@@ -20,6 +20,7 @@ pub(super) fn router() -> Router<AppState> {
         .route("/api/personas/import", post(personas::import))
         .route("/api/agents/:id/growth", get(agents::growth))
         .route("/api/agents/:id/avatar", get(personas::avatar))
+        .route("/api/agents/:id/persona", post(agents::save_persona))
         .route(
             "/api/agents/:id",
             axum::routing::delete(agents::delete_agent),

@@ -100,7 +100,7 @@ export function useModelHub(){
   setSaving(true);setError('')
   try{
    const saved=await post<Provider>('/api/providers',{
-    ...edit,name:name.trim(),baseUrl:baseUrl.trim(),kind,apiKey:apiKey.trim()||undefined,local,integration,accountId:accountId.trim()||undefined,requestsPerMinute:Number(rpm)||0,
+    ...edit,name:name.trim(),baseUrl:baseUrl.trim(),kind,...(presetMode?{auth:freePreset?'none':'api_key'}:{}),apiKey:apiKey.trim()||undefined,local,integration,accountId:accountId.trim()||undefined,requestsPerMinute:Number(rpm)||0,
     toolMode:edit?.kind===kind?edit.toolMode:undefined,
     capabilities:{...((edit?.capabilities as Record<string,unknown>|undefined)||{}),vision},
     reasoningEffort:defaultEffort,enabled:edit?.enabled??true,model:defaultModel.trim()||edit?.model,reflection,reflectionModel:reflection?modelId.trim():undefined,

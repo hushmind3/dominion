@@ -11,3 +11,5 @@ pub mod models;
 pub mod codex_oauth;
 pub mod router;
 pub mod reasoning;
+pub mod connections;
+pub mod probe;

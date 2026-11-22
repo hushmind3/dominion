@@ -1,5 +1,5 @@
 import {useEffect, useState} from 'react'
-import {get, post, koreanReasoningEnabled, type Agent, type ChatSession} from '../../api'
+import {post, koreanReasoningEnabled, type Agent, type ChatSession} from '../../api'
 import {useRemote} from '../../hooks/useRemote'
 import {refresh} from '../../dataRefresh'
 import {useLocale} from '../../i18n'
@@ -51,10 +51,7 @@ export function usePromptEditor() {
   if (busy || !selectedAgent || !persona.dirty || persona.conflict) return
   setBusy('persona'); setError(''); setNotice('')
   try {
-   const latest = (await get<Agent[]>('/api/agents')).find(agent => agent.id === agentId)
-   if (!latest) throw Error(tr('수정할 AI를 찾을 수 없습니다.', 'The selected AI no longer exists.'))
-   if ((latest.systemPrompt || '') !== persona.baseline) throw Error(tr('다른 곳에서 페르소나가 수정되었습니다. 내용을 다시 불러온 뒤 변경을 확인해 주세요.', 'This persona changed elsewhere. Reload and review before saving.'))
-   const saved = await post<Agent>('/api/agents', {...latest, systemPrompt: persona.value})
+   const saved = await post<Agent>('/api/agents/'+encodeURIComponent(agentId)+'/persona', {prompt:persona.value,expectedPrompt:persona.baseline})
    persona.accept(saved.systemPrompt || ''); agents.setValue(rows => rows.map(agent => agent.id === saved.id ? saved : agent))
    refresh('/api/agents'); await preview.reload()
    setNotice(tr('페르소나를 저장했습니다. 다음 대화부터 적용됩니다.', 'Persona saved for subsequent turns.'))

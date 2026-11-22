@@ -145,8 +145,7 @@ pub(crate) fn select_provider(
             session
                 .get("providerId")
                 .and_then(|value| value.as_str())
-                .filter(|id| state.store.get("provider", id)
-                    .is_some_and(|provider| provider["enabled"] != false))
+                .filter(|id| !id.is_empty())
                 .map(str::to_string)
         });
 
@@ -164,20 +163,13 @@ pub(crate) fn select_provider(
                 request.attachment_ids.len(),
                 messages,
             );
-            crate::engine::router::select_provider(state, complexity).or_else(|| {
-                state.store.all("provider").into_iter().find(|provider| {
-                    provider
-                        .get("enabled")
-                        .and_then(|value| value.as_bool())
-                        .unwrap_or(true)
-                })
-            })
+            crate::engine::router::select_provider(state, complexity)
         }
     };
 
     let Some(provider) = provider else {
         return Err(
-            "모델 제공자가 설정되지 않았습니다. 모델 관리에서 OpenAI 호환 제공자를 추가하세요."
+            "선택한 AI 연결을 사용할 수 없습니다. AI 연결에서 서버와 모델 설정을 확인하세요."
                 .into(),
         );
     };
@@ -1769,7 +1761,7 @@ async fn stream_codex_once(
     let (instructions, input) = codex_input(messages);
     let mut body = json!({
         "model": provider.model,
-        "instructions": if instructions.is_empty() { "You are a helpful assistant. Answer in Korean unless the user writes in another language.".to_string() } else { instructions },
+        "instructions": instructions,
         "input": input.clone(),
         "stream": true,
         "store": false,

@@ -20,7 +20,12 @@ for(const p of [
   'src/conversation/chat/runtime/input_contract.rs',
   'src/storage/sqlite/remote_tasks.rs',
   'src/features/cognition/algorithms/catalogue.rs',
-  'web/e2e/sub3-native-live.mjs',
+  'src/features/collaboration/submission.rs',
+  'src/features/collaboration/prompt_settings.rs',
+  'src/features/collaboration/room_config.rs',
+  'src/features/providers/connections.rs',
+  'src/features/providers/probe.rs',
+  'src/host/execution/job_control.rs',
   'src/host/execution/native_agent.rs',
   'src/conversation/chat/runtime/turn.rs',
   'src/features/collaboration/room_cursor.rs',
@@ -89,8 +94,18 @@ has('src/features/providers/native_stream.rs',
    'native_chat_does_not_replay_message_when_delta_already_arrived',
    'pub(crate) fn validate_anthropic_stop_reason']);
 has('src/conversation/chat/provider.rs',['validate_anthropic_stop_reason(reason)?']);
-has('web/e2e/sub3-native-live.mjs',
-  ['SUB3_VERIFIED','nativeState','chromium.launch','await page.reload']);
+// The retired browser fixture is not a product architecture dependency.
+// Owner commands can be called by HTTP and transport adapters independently.
+assert.ok(!text('src/integrations/channels/bridge.rs').includes('crate::api::'),
+  'Channel ingestion may not call an HTTP handler');
+for(const p of ['src/features/collaboration/submission.rs',
+  'src/features/collaboration/prompt_settings.rs',
+  'src/features/collaboration/room_config.rs',
+  'src/features/providers/connections.rs',
+  'src/features/providers/probe.rs',
+  'src/host/execution/job_control.rs']){
+  assert.ok(!text(p).includes('axum::'),p+' must not depend on HTTP handlers');
+}
 has('crates/dominion-agent-algorithms/src/harness.rs',
   ['macro_rules! harness_steps','both_loop_styles_share_one_control_flow_source']);
 has('crates/dominion-agent-algorithms/src/agent_loop.rs',
