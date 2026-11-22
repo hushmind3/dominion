@@ -17,7 +17,7 @@ type OAuthProvider={id:string;configured:boolean;scope:string;callback?:string;c
 type Connection={id:string;provider:string;displayName:string;scopes:string;hasToken:boolean}
 
 export function ConnectionsPage(){
- useLocale()
+ const locale=useLocale()
  const [section,setSection]=useState<'channels'|'quick-connect'|'accounts'|'capabilities'|ExtensionTab>('channels');
  const tabsRef=useRef<HTMLElement>(null)
  useEffect(()=>{
@@ -125,13 +125,22 @@ export function ConnectionsPage(){
    <Activity size={15} className={refreshing?'animate-spin':''}/><span className="hidden sm:inline">{t('conn.refresh')}</span>
   </Button>
  </header>
- const sectionTabs=<nav ref={tabsRef} className="connection-tabs" aria-label={t('conn.navigation')}>{tabs.map(({id,label,icon:Icon},index)=><span key={id} className="inline-flex shrink-0 items-center gap-1">
-  {(index===3||index===7)&&<span aria-hidden="true" className="mx-2 h-5 w-px shrink-0 bg-[#DED4C8]"/>}
-  <Button variant="bare" aria-current={section===id?'page':undefined} onClick={()=>setSection(id)}><Icon size={15}/>{label}</Button>
- </span>)}</nav>
- if(section!=='channels'&&section!=='accounts'&&section!=='quick-connect')return <div className="mx-auto w-full max-w-[1320px] px-4 py-3 sm:px-6">{sectionTabs}{section==='capabilities'?<CapabilitiesPage embedded navigate={page=>setSection(page==='extensions'?'market':'channels')}/>:<ExtensionsPage section={section} embedded/>}</div>
- return <div className="mx-auto w-full max-w-[1320px] px-4 py-3 sm:px-6">
-  {section==='channels'&&pageHeader}
+ const sectionTabs=<nav ref={tabsRef} className="connection-tabs connection-workbench-tabs" aria-label={t('conn.navigation')}>
+  {([
+   {ko:'연결 및 채널',english:'Connections',items:tabs.slice(0,3)},
+   {ko:'확장 및 도구',english:'Tools & Extensions',items:tabs.slice(3,7)},
+   {ko:'역량 탐색',english:'Capabilities',items:tabs.slice(7)},
+  ] as const).map(group=><section key={group.ko} className="connection-workbench-group">
+   <h2 className="text-[10px] font-bold tracking-[.1em] text-[#8A8176]">{locale==='en'?group.english:group.ko}</h2>
+   <div className="mt-2 flex flex-wrap gap-1">
+    {group.items.map(({id,label,icon:Icon})=><Button key={id} variant="bare" aria-current={section===id?'page':undefined}
+     onClick={()=>setSection(id)}><Icon size={15}/>{label}</Button>)}
+   </div>
+  </section>)}
+ </nav>
+ if(section!=='channels'&&section!=='accounts'&&section!=='quick-connect')return <div className="mx-auto w-full max-w-[1480px] px-4 py-3 sm:px-6">{pageHeader}{sectionTabs}{section==='capabilities'?<CapabilitiesPage embedded navigate={page=>setSection(page==='extensions'?'market':'channels')}/>:<ExtensionsPage section={section} embedded/>}</div>
+ return <div className="mx-auto w-full max-w-[1480px] px-4 py-3 sm:px-6">
+  {pageHeader}
   {sectionTabs}
   {section==='quick-connect'&&<ConnectedAccounts onSetupApp={id=>{setOauthError('');setOauthEditor({id,clientId:'',clientSecret:''});setSection('accounts')}}/>}
   {info&&<div role="status" className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{info}</div>}
