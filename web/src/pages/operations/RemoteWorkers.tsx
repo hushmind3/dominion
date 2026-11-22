@@ -4,6 +4,7 @@ import {ApiError,get,post} from '../../api'
 import {formatDateTime,useLocale} from '../../i18n'
 import {Action,Notice,Panel} from '../../components/UI'
 import {StatusPill} from '../../components/StatusPill'
+import {matchesRefreshTarget,type RefreshScope} from '../../refreshEvents'
 
 export type RemoteAvailability={enabled:boolean;online:number;loaded:boolean}
 type Worker={workerId:string;model:string;capabilities:string[];lastSeenAt?:string;online:boolean}
@@ -58,7 +59,12 @@ export function RemoteWorkersPanel({onAvailability}:{
  useEffect(()=>{
   void refresh()
   const timer=window.setInterval(()=>{void refresh()},5000)
-  return()=>{window.clearInterval(timer);refreshSequence.current++}
+  const onDataChange=(event:Event)=>{
+   const scope=(event as CustomEvent<RefreshScope>).detail
+   if(matchesRefreshTarget('/api/remote/tasks',scope?.targets??[]))void refresh()
+  }
+  window.addEventListener('dominion-data-change',onDataChange)
+  return()=>{window.clearInterval(timer);window.removeEventListener('dominion-data-change',onDataChange);refreshSequence.current++}
  },[refresh])
  const online=workers.filter(w=>w.online).length
  const validPrompt=prompt.trim().length>0 &&

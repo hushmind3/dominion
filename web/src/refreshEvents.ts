@@ -40,6 +40,8 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
    case 'algorithm':case 'algorithm_stat':case 'algorithm_usage':
     add('/api/algorithms','/api/synergy');break
    case 'job':add('/api/jobs');if(id)add('/api/jobs/'+encoded(id));break
+   case 'dev_job':if(id)add('/api/dev/jobs/'+encoded(id));break
+   case 'remote_task':add('/api/remote/tasks');if(id)add('/api/remote/tasks/'+encoded(id));break
    case 'execution':add('/api/executions');break
    case 'execution_operation':add('/api/executions');break
    case 'approval':add('/api/approvals');break

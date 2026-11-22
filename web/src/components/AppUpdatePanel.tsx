@@ -3,6 +3,7 @@ import {RefreshCw,Download} from 'lucide-react'
 import {Button} from './Primitives'
 import {Panel,Subheading,useRemote} from './UI'
 import {get,post} from '../api'
+import {matchesRefreshTarget,type RefreshScope} from '../refreshEvents'
 
 type VersionInfo={supported:boolean;available:boolean;local?:string;remote?:string;running?:string;reason?:string}
 type Job={id:string;kind:string;status:string;error?:string;logs?:string[]}
@@ -16,7 +17,7 @@ export function AppUpdatePanel(){
  useEffect(()=>{
   if(!jobId)return
   let attempts=0,closed=false
-  const handle=setInterval(()=>{
+  const refreshJob=()=>{
    void get<Job>('/api/dev/jobs/'+jobId).then(job=>{
     if(closed)return
     attempts=0
@@ -37,8 +38,15 @@ export function AppUpdatePanel(){
      setError('업데이트 상태를 확인하지 못했습니다. 서버 연결을 다시 확인하세요.')
     }else setMessage('업데이트 또는 엔진 재시작 진행 중입니다.')
    })
-  },1500)
-  return()=>{closed=true;clearInterval(handle)}
+  }
+  const onDataChange=(event:Event)=>{
+   const scope=(event as CustomEvent<RefreshScope>).detail
+   if(matchesRefreshTarget('/api/dev/jobs/'+encodeURIComponent(jobId),scope?.targets??[]))refreshJob()
+  }
+  void refreshJob()
+  const handle=setInterval(refreshJob,5000)
+  window.addEventListener('dominion-data-change',onDataChange)
+  return()=>{closed=true;clearInterval(handle);window.removeEventListener('dominion-data-change',onDataChange)}
  },[jobId])
  const apply=async()=>{
   if(busy||!version.value.supported)return
