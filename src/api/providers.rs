@@ -1891,7 +1891,7 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
         // Subscription models are not metered as ordinary API-key purchases.
         let client=match state.account_http_client(15){
             Ok(client)=>client,
-            Err(error)=>return Json(json!({"models":[],"error":error})).into_response(),
+            Err(message)=>return error(StatusCode::BAD_GATEWAY,&message),
         };
         let account = provider["accountId"].as_str().unwrap_or("");
         let cached = state.store.get("codex_model_catalog", &id)
