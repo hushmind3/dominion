@@ -1,5 +1,5 @@
 import {OwnerProfileEditor} from './OwnerProfile'
-import {Activity,BookOpenText,Bot,Cpu,House,MessageSquare,RadioTower,Settings2,UsersRound,Plus,X,Settings,Menu} from 'lucide-react'
+import {Activity,BookOpenText,Bot,Cpu,House,MessageSquare,RadioTower,Settings2,UsersRound,Plus,X,Settings,Menu,Search} from 'lucide-react'
 import {Button} from './Primitives'
 import {t,type LocaleKey,useLocale} from '../i18n'
 
@@ -39,13 +39,15 @@ export function WorkspaceSidebar({page,open,collapsed,online,running,pending,onN
   </aside>
  </>
 }
-export function SettingsHeader({page,online,build,onClose}:{page:PageId;online:boolean;build?:{branch:string;commit:string}|null;onClose:()=>void}){
+export function SettingsHeader({page,online,build,onClose,onSearch}:{page:PageId;online:boolean;build?:{branch:string;commit:string}|null;onClose:()=>void;onSearch:()=>void}){
  useLocale()
  const selected=items.find(x=>x.id===page)
  return <header className="flex h-13 shrink-0 items-center gap-3 border-b border-[#E7E0D5] bg-[#FFFDF9] px-4">
   <Settings size={17} className="text-[#8A8176]"/><h1 className="min-w-0 flex-1 truncate text-[14px] font-semibold text-[#24211D]">{selected?t(selected.label):t('nav.settings')}</h1>
   <span className={'hidden items-center gap-1.5 text-[11px] sm:inline-flex '+(online?'text-emerald-700':'text-rose-600')}><i className={'size-1.5 rounded-full '+(online?'bg-emerald-500':'bg-rose-500')}/>{online?t('shell.connected'):t('shell.disconnected')}</span>
   {build?.branch&&build.branch!=='unknown'&&<span className="hidden max-w-[185px] truncate rounded-md border border-[#E7E0D5] bg-[#F7F3EC] px-2 py-1 text-[10px] font-mono text-[#8A8176] lg:block" title={build.branch+' · '+build.commit}>{build.branch.replace(/^dominion-/,'')} · {build.commit.slice(0,7)}</span>}
+  <Button variant="ghost" size="sm" aria-label={useLocale()==='en'?'Search pages':'메뉴 빠른 검색'} onClick={onSearch}
+   title={useLocale()==='en'?'Search pages (Ctrl+K)':'메뉴 검색 (Ctrl+K)'}><Search size={16}/><span className="hidden text-[11px] sm:inline">Ctrl K</span></Button>
   <Button variant="ghost" size="icon" aria-label={t('rooms.close')} onClick={onClose}><X size={18}/></Button>
  </header>
 }

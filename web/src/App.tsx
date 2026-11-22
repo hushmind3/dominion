@@ -1,4 +1,5 @@
 import {DialogBackdrop} from './components/Dialog'
+import {QuickSwitcher} from './components/QuickSwitcher'
 import { ContextMenu } from './components/ContextMenu'
 import {OwnerProfileProvider} from './components/OwnerProfile'
 import {Component,lazy,Suspense,useCallback,useEffect,useLayoutEffect,useState,type ReactNode} from 'react'
@@ -101,6 +102,7 @@ export default function App(){
  const [mode,setMode]=useState<'chat'|'rooms'>(()=>locationState().page==='rooms'?'rooms':'chat')
  const [visited,setVisited]=useState(()=>({chat:locationState().page!=='rooms',rooms:locationState().page==='rooms'}))
  const [chatDraft,setChatDraft]=useState(0)
+ const [searchOpen,setSearchOpen]=useState(false)
  const [settingsNav,setSettingsNav]=useState(()=>{try{return localStorage.getItem('dominion.settings.nav')!=='0'}catch{return true}})
  const toggleSettingsNav=useCallback(()=>setSettingsNav(open=>{const next=!open;try{localStorage.setItem('dominion.settings.nav',next?'1':'0')}catch{}return next}),[])
  const settingsOpen=page!=='chat'&&page!=='rooms'
@@ -208,6 +210,7 @@ export default function App(){
   }
   const shortcuts=(e:KeyboardEvent)=>{
    if((e.metaKey||e.ctrlKey)&&e.key===','){e.preventDefault();navigate('settings')}
+   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();setSearchOpen(open=>!open)}
   }
   window.addEventListener('keydown',shortcuts)
   return()=>{mounted=false;clearInterval(poll);clearTimeout(refreshTimer);clearTimeout(statusTimer);clearTimeout(approvalsTimer);stream.close();window.removeEventListener('keydown',shortcuts)}
@@ -227,7 +230,7 @@ export default function App(){
   {settingsOpen&&<DialogBackdrop onDismiss={closeSettings}><div role="dialog" aria-modal="true" aria-label="설정" className="workspace-settings relative h-[calc(100dvh-40px)] w-full max-w-[1440px] overflow-hidden rounded-2xl border border-[#E7E0D5] bg-[#F6F3EC] shadow-2xl">
    <WorkspaceSidebar settingsOnly page={page} open collapsed={false} online={online} running={running} pending={pending} onNavigate={navigate} onNewChat={()=>navigate('chat')} onClose={closeSettings} navOpen={settingsNav} onToggleNav={toggleSettingsNav}/>
    <div className={'workspace-settings-main flex h-full min-w-0 flex-col '+(settingsNav?'ml-[216px]':'ml-14')}>
-    <SettingsHeader page={page} online={online} build={engineBuild} onClose={closeSettings}/>
+    <SettingsHeader page={page} online={online} build={engineBuild} onClose={closeSettings} onSearch={()=>setSearchOpen(true)}/>
     <div className="workspace-settings-content min-h-0 flex-1 overflow-y-auto">
      <PageLoadBoundary key={page}><Suspense fallback={<div role="status" className="p-8 text-sm text-[#7C7469]">화면 불러오는 중…</div>}>
       {page==='home'&&<HomePage navigate={navigate}/>}
@@ -242,5 +245,7 @@ export default function App(){
     </div>
    </div>
   </div></DialogBackdrop>}
+  {searchOpen&&<QuickSwitcher page={page} onClose={()=>setSearchOpen(false)}
+   onNavigate={navigate} onNewChat={()=>navigate('chat')} running={running} pending={pending}/>}
  </div></OwnerProfileProvider>
 }
