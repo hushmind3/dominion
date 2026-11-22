@@ -225,7 +225,7 @@ async function waitScreen(page){
 }
 async function open(page,name){
  await page.goto(base+'/#/'+name,{waitUntil:'domcontentloaded'})
- const nav=page.locator('.workspace-settings>aside nav [aria-current="page"]')
+ const nav=page.locator('.dominion-studio>aside nav [aria-current="page"]')
  await nav.waitFor({timeout:15000})
  await waitScreen(page)
  await overflow(page,name,page.viewportSize().width)
@@ -244,7 +244,7 @@ try{
  await screenshot(page,'1440-home.png')
  // Click the genuine sidebar buttons, not only hash routes.
  for(let i=1;i<pages.length;i++){
-  const buttons=page.locator('.workspace-settings>aside nav button')
+  const buttons=page.locator('.dominion-studio>aside nav button')
   const sidebarOrder=['home','chat','rooms','models','agents','connections','memory','activity','settings']
   assert.equal(await buttons.count(),sidebarOrder.length,'Every workspace destination remains available in the new sidebar')
   const destination=sidebarOrder.indexOf(pages[i])
@@ -260,7 +260,7 @@ try{
  await page.getByRole('button',{name:'고급 설정 접기'}).waitFor()
  await screenshot(page,'1440-settings-expanded.png')
  await page.keyboard.press('Tab')
- assert.ok(await page.evaluate(()=>Boolean(document.activeElement?.closest('.workspace-settings'))),
+ assert.ok(await page.evaluate(()=>Boolean(document.activeElement?.closest('.dominion-studio'))),
   'Keyboard focus must remain in the active routed workspace')
  // Native agent strategy and budget are part of the actual POST.
  // A stale initial empty list must never displace a newly created task.
@@ -546,7 +546,7 @@ try{
    await open(page,route)
    await screenshot(page,String(viewport.width)+'-'+route+'.png')
   }
-  const nav=page.locator('.workspace-settings>aside nav')
+  const nav=page.locator('.dominion-studio>aside nav')
   const selected=nav.locator('[aria-current="page"]')
   const a=await nav.boundingBox(),b=await selected.boundingBox()
   assert.ok(a&&b&&b.x>=a.x-4&&b.x+b.width<=a.x+a.width+4,
@@ -571,6 +571,14 @@ try{
   await screenshot(page,'320-'+route+'.png')
   visits.push({name:route,width:320})
  }
+ // All conversation routes expose the same workspace navigation.
+ const globalNav=page.locator('.dominion-studio>aside nav')
+ assert.equal(await globalNav.locator('button').count(),9,
+  'The global product rail must be available from Chat and Room')
+ await globalNav.locator('button').nth(3).click()
+ await page.waitForFunction(()=>location.hash==='#/models')
+ await globalNav.locator('button').nth(1).click()
+ await page.waitForFunction(()=>location.hash.startsWith('#/chat'))
  await page.keyboard.press('Control+,')
  await page.locator('.workspace-settings').waitFor({timeout:10000})
  await page.keyboard.press('Escape')
