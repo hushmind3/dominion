@@ -2,7 +2,7 @@ import { ContextMenu } from './components/ContextMenu'
 import {OwnerProfileProvider} from './components/OwnerProfile'
 import {Component,lazy,Suspense,useCallback,useEffect,useLayoutEffect,useState,type ReactNode} from 'react'
 import {useWorkspaceSignals} from './hooks/useWorkspaceSignals'
-import {WorkspaceSidebar,SettingsHeader} from './components/WorkspaceShell'
+import {WorkspaceTopBar,SettingsHeader} from './components/WorkspaceShell'
 import {isPageId,type PageId} from './navigation'
 import {WorkspaceSearch} from './components/WorkspaceSearch'
 const HomePage=lazy(()=>import('./pages/Home').then(module=>({default:module.HomePage})))
@@ -101,9 +101,7 @@ export default function App(){
  const [mode,setMode]=useState<'chat'|'rooms'>(()=>locationState().page==='rooms'?'rooms':'chat')
  const [visited,setVisited]=useState(()=>({chat:locationState().page!=='rooms',rooms:locationState().page==='rooms'}))
  const [chatDraft,setChatDraft]=useState(0)
- const [settingsNav,setSettingsNav]=useState(()=>{try{return localStorage.getItem('dominion.settings.nav')!=='0'}catch{return true}})
  const [searchOpen,setSearchOpen]=useState(false)
- const toggleSettingsNav=useCallback(()=>setSettingsNav(open=>{const next=!open;try{localStorage.setItem('dominion.settings.nav',next?'1':'0')}catch{}return next}),[])
  const settingsOpen=page!=='chat'&&page!=='rooms'
  const navigate=useCallback((target:PageId,sessionId?:string)=>{
   const next='#/'+target+(sessionId?'?session='+encodeURIComponent(sessionId):'')
@@ -114,6 +112,15 @@ export default function App(){
   void checkForUpdatedUi()
  },[])
  const {online,running,pending,engineBuild}=useWorkspaceSignals(navigate,setSearchOpen)
+ useEffect(()=>{
+  const onKey=(event:KeyboardEvent)=>{
+   if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k'){
+    event.preventDefault();setSearchOpen(open=>!open)
+   }
+  }
+  window.addEventListener('keydown',onKey)
+  return()=>window.removeEventListener('keydown',onKey)
+ },[])
  useEffect(()=>{
   const sync=()=>setRoute(locationState())
   window.addEventListener('hashchange',sync)
@@ -152,16 +159,14 @@ export default function App(){
   return()=>{window.removeEventListener('focus',check);document.removeEventListener('visibilitychange',check)}
  },[])
 
- return <OwnerProfileProvider><div className={'dominion-studio relative grid h-dvh min-h-0 w-full overflow-hidden bg-canvas text-ink grid-rows-[minmax(0,1fr)_4rem] md:grid-rows-1 '+(settingsNav?'md:grid-cols-[14rem_minmax(0,1fr)]':'md:grid-cols-[4rem_minmax(0,1fr)]')}>
+ return <OwnerProfileProvider><div className="relative grid h-dvh min-h-0 w-full grid-rows-[3.5rem_minmax(0,1fr)] overflow-hidden bg-canvas text-ink">
   <ContextMenu/>
-  {/* One navigation system owns the full product: conversation, rooms, and workspaces.
-      The chat/room trees stay mounted to preserve drafts and active turn state. */}
-  <WorkspaceSidebar settingsOnly page={page} open collapsed={false}
-   online={online} running={running} pending={pending}
+  {/* One light chrome owns the whole product. Chat and room trees stay mounted
+      below it so drafts and active turns survive every menu switch. */}
+  <WorkspaceTopBar page={page} online={online} running={running} pending={pending}
    onNavigate={target=>target==='chat'?returnToChat():navigate(target)}
-   onNewChat={()=>{setChatDraft(value=>value+1);navigate('chat')}}
-   onClose={closeSettings} navOpen={settingsNav} onToggleNav={toggleSettingsNav}/>
-  <div className="dominion-studio-stage col-start-1 row-start-1 min-h-0 min-w-0 overflow-hidden bg-canvas md:col-start-2 md:row-start-1">
+   onSearch={()=>setSearchOpen(true)}/>
+  <div className="min-h-0 min-w-0 overflow-hidden bg-canvas">
    <main hidden={settingsOpen} inert={settingsOpen||searchOpen} className="dominion-studio-conversations h-full min-h-0 min-w-0 overflow-hidden">
     {visited.chat&&<div hidden={mode!=='chat'} className="h-full page-chat">
      <PageLoadBoundary><Suspense fallback={<div role="status" className="p-8 text-sm">대화 불러오는 중…</div>}>
@@ -183,9 +188,8 @@ export default function App(){
     </div>}
    </main>
    {settingsOpen&&<section aria-label="DOMINION workspace" inert={searchOpen}
-      className="workspace-settings dominion-studio-workspace flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-canvas">
-    <SettingsHeader page={page} online={online} build={engineBuild}
-     onSearch={()=>setSearchOpen(true)} onClose={closeSettings}/>
+      className="workspace-settings flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-canvas">
+    <SettingsHeader page={page} online={online} build={engineBuild} onClose={closeSettings}/>
     <div className="workspace-settings-content min-h-0 min-w-0 flex-1 overflow-y-auto bg-canvas p-4 md:p-7">
      <PageLoadBoundary key={page}><Suspense fallback={<div role="status" className="p-8 text-sm">화면 불러오는 중…</div>}>
       {page==='home'&&<HomePage navigate={navigate}/>}

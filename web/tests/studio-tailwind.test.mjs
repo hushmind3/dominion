@@ -15,16 +15,17 @@ const entry=read('src/main.tsx')
 
 test('shared tokens are declared once in Tailwind CSS v4 theme',()=>{
  assert.match(theme,/@import "tailwindcss"/)
- for(const token of ['--color-workspace-sidebar','--color-workspace-sidebar-text','--color-workspace-selected','--color-workspace-accent'])
+ for(const token of ['--color-canvas','--color-surface','--color-ink','--color-divider','--color-brand'])
   assert.ok(theme.includes(token),'Missing reusable Tailwind token: '+token)
 })
-test('React layout is responsive and does not depend on an absolute sidebar stylesheet',()=>{
- assert.match(app,/grid-rows-\[minmax\(0,1fr\)_4rem\]/)
- assert.match(app,/md:grid-cols-\[14rem_minmax\(0,1fr\)\]/)
- assert.match(app,/dominion-studio-stage col-start-1 row-start-1/)
- assert.match(shell,/md:row-start-1 md:h-full md:border-t-0/)
- assert.match(shell,/onToggleNav/)
- assert.match(shell,/bg-workspace-selected/)
+test('React shell is one light top bar with a command palette, not a sidebar',()=>{
+ assert.match(app,/grid-rows-\[3\.5rem_minmax\(0,1fr\)\]/)
+ assert.match(app,/WorkspaceTopBar/)
+ assert.match(app,/metaKey\|\|event\.ctrlKey/)
+ assert.match(shell,/export function WorkspaceTopBar/)
+ assert.match(shell,/h-14/)
+ assert.match(shell,/bg-surface/)
+ assert.match(shell,/const primary/)
 })
 test('chat and work modes own their responsive layout in React components',()=>{
  assert.match(chat,/grid-rows-\[2\.5rem_2\.25rem\]/)
