@@ -414,6 +414,7 @@ function RoomConversation({sidebarModal,settingsTarget,room,agents,providers,ope
       <div className="chat-composer-options conversation-composer-options">
        <Button variant="ghost" size="icon" className="md:hidden" onClick={openList} aria-label={showList?t('rooms.listCollapse'):t('rooms.listExpand')}><Menu size={17}/></Button>
        <RoomActions active={visibleView} actions={[
+        {label:t('rooms.taskAction'),icon:<UsersRound size={16}/>,run:()=>{setTeamOpen(true);setInspector(false)}},
         {label:t('rooms.editParticipants'),icon:<UsersRound size={16}/>,run:()=>{setInspector(true);setRecipientsOpen(false)}},
         {label:t('rooms.sharedKnowledge'),icon:<BookOpenText size={16}/>,run:()=>void openKnowledge()},
         {label:t('rooms.systemPrompt'),icon:<FileText size={16}/>,run:()=>void openPrompt()},

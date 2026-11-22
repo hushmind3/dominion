@@ -1,5 +1,6 @@
 use crate::{engine,state::AppState};
-use axum::{extract::{Path,State},http::StatusCode,response::{IntoResponse,Response},Json};
+use std::collections::HashMap;
+use axum::{extract::{Path,Query,State},http::StatusCode,response::{IntoResponse,Response},Json};
 use serde_json::{json,Value};
 use super::response::error;
 /// An API request describes what must be true; only the Rust kernel may
@@ -16,7 +17,30 @@ fn native_acceptance_checks(items:&[Value])->Result<Vec<Value>,String> {
     }).collect()
 }
 
-pub async fn list(State(state):State<AppState>)->Json<Value>{Json(json!(state.store.all("job")))}
+pub async fn list(State(state):State<AppState>,Query(query):Query<HashMap<String,String>>)->Json<Value>{
+    let limit=query.get("limit").and_then(|v|v.parse::<usize>().ok()).unwrap_or(200).min(500);
+    let session=query.get("sessionId").filter(|v|!v.is_empty());
+    let mut jobs=state.store.all("job");
+    if let Some(session)=session{
+        jobs.retain(|job|{
+            job["sessionId"].as_str()==Some(session)
+                ||job.pointer("/input/sessionId").and_then(Value::as_str)==Some(session)
+        });
+    }
+    if jobs.len()>limit{jobs=jobs.split_off(jobs.len()-limit);}
+    Json(json!(jobs))
+}
+
+/// Worker jobs spawned by a team lead, keyed by the parent team job.
+pub async fn team_steps(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    if state.store.get("job",&id).is_none(){
+        return error(StatusCode::NOT_FOUND,"작업을 찾을 수 없습니다.");
+    }
+    let jobs:Vec<Value>=state.store.all("job").into_iter().filter(|job|{
+        job.pointer("/input/parentRunId").and_then(Value::as_str)==Some(id.as_str())
+    }).collect();
+    Json(json!({"teamId":id,"jobs":jobs,"missing":Vec::<String>::new()})).into_response()
+}
 pub async fn one(State(state):State<AppState>,Path(id):Path<String>)->Response{match state.store.get("job",&id){Some(j)=>Json(j).into_response(),None=>error(StatusCode::NOT_FOUND,"작업을 찾을 수 없습니다.")}}
 /// Client requests describe work, never mutable runtime status or evidence.
 pub async fn create(State(state):State<AppState>,Json(body):Json<Value>)->Response{

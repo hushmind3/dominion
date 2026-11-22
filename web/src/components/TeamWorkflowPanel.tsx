@@ -120,16 +120,24 @@ function TeamCard({team,summary,onCreated,initiallyOpen=false,agentNames}:{team:
  const [showAllReports,setShowAllReports]=useState(false)
  const details=useRemote<TeamSteps>(open?'/api/jobs/'+encodeURIComponent(team.id)+'/team-steps':null,
   {teamId:team.id,jobs:[],missing:[]})
- const plan=team.input?.plan||[]
+ // The engine projects worker rows under result.tasks; older payloads carried
+ // them under input.plan. Accept both so the panel always explains progress.
+ const rows=(team.result?.tasks as Array<Record<string,unknown>>|undefined)||[]
+ const plan=(team.input?.plan as Step[]|undefined)?.length
+  ?team.input!.plan as Step[]
+  :rows.map(row=>({id:String(row.taskId||''),jobId:String(row.childJobId||''),agentId:row.agentId?String(row.agentId):undefined}))
  const fresh=open&&!details.loading&&!details.error&&details.value.teamId===team.id
  const records=fresh?new Map(details.value.jobs.map(j=>[j.id,j])):summary
  const statuses=Object.fromEntries(plan.map(step=>[step.id,records.get(step.jobId)?.status||'unknown']))
  const complete=plan.filter(step=>records.get(step.jobId)?.status==='completed').length
  const unknown=plan.filter(step=>!records.has(step.jobId)).length
  const review=classifyTeamReview(team)
- const reports=Array.isArray(team.result?.nodes)?team.result.nodes.filter(
+ const nodes=Array.isArray(team.result?.nodes)
+  ?team.result.nodes
+  :rows.map(row=>({agentId:row.agentId,answer:row.answerExcerpt}))
+ const reports=nodes.filter(
   (node):node is Record<string,unknown>=>Boolean(node)&&typeof node==='object'&&!Array.isArray(node)
- ).filter(node=>typeof node.answer==='string'&&node.answer.length>0):[]
+ ).filter(node=>typeof node.answer==='string'&&String(node.answer).length>0)
  useEffect(()=>{
   if(!open||!['queued','running'].includes(team.status||''))return
   const timer=setInterval(()=>{if(!document.hidden)void details.reload()},5000)

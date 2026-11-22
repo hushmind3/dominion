@@ -617,6 +617,152 @@ pub async fn remove(State(state): State<AppState>, Path(id): Path<String>) -> Re
     })())
 }
 
+
+/// Owner-launched Team task inside a group room. The engine turns the goal
+/// into one worker task per eligible room agent and runs them through the
+/// existing native team job journal.
+pub async fn team_launch(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<Value>,
+) -> Response {
+    response((|| {
+        let goal = body["goal"]
+            .as_str()
+            .map(str::trim)
+            .filter(|text| !text.is_empty() && text.len() <= 4000)
+            .ok_or_else(|| bad("맡길 작업은 1~4000자여야 합니다."))?;
+        let nonce = body["clientRequestId"]
+            .as_str()
+            .filter(|text| uuid::Uuid::parse_str(text).is_ok())
+            .ok_or_else(|| bad("요청 ID가 올바르지 않습니다."))?;
+        let parallel = body["maxParallel"].as_u64().unwrap_or(3);
+        if !(1..=4).contains(&parallel) {
+            return Err(bad("동시 작업은 1~4개까지 가능합니다."));
+        }
+        let _guard = lock(&state, &id)?;
+        let config = room(&state, &id)?;
+        if config["toolsEnabled"] != true {
+            return Err((StatusCode::FORBIDDEN, "그룹의 도구 사용을 먼저 켜세요.".into()));
+        }
+        if config["status"].as_str() == Some("running") {
+            return Err(conflict("그룹 대화가 진행 중입니다. 끝난 뒤 다시 시도하세요."));
+        }
+        let session = rooms::ensure_room_session(&state, &id).map_err(bad)?;
+        let session_id = session["id"].as_str().ok_or_else(|| failed("그룹 세션이 없습니다."))?;
+        let launch_id = format!("room-team-launch:{}", memory::stable_id(&[&id, nonce]));
+        if let Some(previous) = state.store.get("room_team_launch", &launch_id) {
+            if previous["roomId"] != id || previous["goal"] != goal {
+                return Err(conflict("같은 요청 ID로 다른 작업을 시작할 수 없습니다."));
+            }
+            return Ok(previous);
+        }
+        let agents = config["agentIds"]
+            .as_array()
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|value| value.as_str())
+                    .filter_map(|agent_id| state.store.get("agent", agent_id))
+                    .filter(|agent| agent["enabled"] != false)
+                    .filter(|agent| agent["providerId"].as_str().is_some_and(|p| !p.is_empty()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if agents.is_empty() {
+            return Err(bad("이 그룹에는 작업을 맡길 수 있는 AI가 없습니다. AI 연결을 확인하세요."));
+        }
+        let mut tasks = Vec::new();
+        let mut plan_steps = Vec::new();
+        for (index, agent) in agents.iter().take(4).enumerate() {
+            let task_id = format!("team-{}", index + 1);
+            plan_steps.push((task_id.clone(), agent["id"].clone()));
+            tasks.push(json!({
+                "id": task_id,
+                "prompt": format!("{goal}\n\n맡은 역할에 따라 조사하고, 실제로 확인한 내용만 한국어로 간결하게 보고하세요."),
+                "mode": "read",
+                "runtime": "native",
+                "agentId": agent["id"],
+            }));
+        }
+        let team = json!({
+            "goal": goal,
+            "tasks": tasks,
+            "maxParallel": parallel.min(3),
+        });
+        let Some(job) = crate::engine::jobs::enqueue(&state, "team", team) else {
+            return Err(failed("Team 작업을 시작하지 못했습니다."));
+        };
+        let job_id = job["id"].as_str().unwrap_or_default().to_string();
+        let mut patched = job.clone();
+        patched["sessionId"] = json!(session_id);
+        patched["roomId"] = json!(id);
+        patched["teamLaunchId"] = json!(launch_id);
+        // The UI reads input.plan to show step progress; worker ids are
+        // deterministic (team-child:<job>:<task>), so they can be written now.
+        let plan: Vec<Value> = plan_steps
+            .iter()
+            .map(|(task_id, agent_id)| {
+                json!({
+                    "id": task_id,
+                    "agentId": agent_id,
+                    "jobId": crate::features::collaboration::task_team::child_id(&job_id, task_id),
+                })
+            })
+            .collect();
+        patched["input"]["plan"] = json!(plan);
+        patched["input"]["sessionId"] = json!(session_id);
+        if let Some(saved) = state.store.put("job", &patched) {
+            state.bus.record("job", &saved);
+        }
+        let launch = json!({
+            "id": launch_id,
+            "roomId": id,
+            "sessionId": session_id,
+            "status": "planning",
+            "goal": goal,
+            "maxParallel": parallel,
+            "createdAt": chrono::Utc::now().to_rfc3339(),
+            "clientRequestId": nonce,
+            "jobId": job_id,
+            "error": Value::Null,
+        });
+        let saved = state
+            .store
+            .put_if_absent("room_team_launch", &launch)
+            .unwrap_or(launch);
+        state.bus.record("room_team_launch", &saved);
+        Ok(saved)
+    })())
+}
+
+pub async fn team_launch_status(
+    State(state): State<AppState>,
+    Path((id, launch_id)): Path<(String, String)>,
+) -> Response {
+    response((|| {
+        let Some(mut launch) = state.store.get("room_team_launch", &launch_id) else {
+            return Err((StatusCode::NOT_FOUND, "Team 요청을 찾을 수 없습니다.".into()));
+        };
+        if launch["roomId"].as_str() != Some(id.as_str()) {
+            return Err((StatusCode::NOT_FOUND, "Team 요청을 찾을 수 없습니다.".into()));
+        }
+        if let Some(job_id) = launch["jobId"].as_str() {
+            if let Some(job) = state.store.get("job", job_id) {
+                let status = job["status"].as_str().unwrap_or("queued");
+                launch["status"] = json!(match status {
+                    "queued" | "running" | "planning" | "preparing" => "planning",
+                    "failed" | "cancelled" | "interrupted" => "failed",
+                    _ => "queued",
+                });
+                if matches!(status, "failed" | "cancelled" | "interrupted") {
+                    launch["error"] = job["error"].clone();
+                }
+            }
+        }
+        Ok(launch)
+    })())
+}
+
 /// Archives the current room transcript and binds the room to a fresh empty
 /// session. The room, members, settings and knowledge stay intact; the old
 /// session and all of its messages remain available as a durable archive.

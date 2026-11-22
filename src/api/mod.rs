@@ -104,6 +104,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/jobs/:id/cancel",post(jobs::cancel))
         .route("/api/jobs/:id/directive",post(jobs::directive))
         .route("/api/jobs/:id/steer",post(jobs::steer))
+        .route("/api/jobs/:id/team-steps",get(jobs::team_steps))
         // Keep the historic API paths, not a second active harness for NEW jobs.
         // Old FileJournal sessions retain their original recovery protocol.
         // New /api/harness/runs requests share the native SDK job kernel.
@@ -210,6 +211,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/rooms/:id/state", get(rooms::state))
         .route("/api/rooms/:id/knowledge", get(rooms::knowledge))
         .route("/api/rooms/:id/system-prompt", get(rooms::system_prompt))
+        .route("/api/rooms/:id/team-launches", post(rooms::team_launch))
+        .route("/api/rooms/:id/team-launches/:launch_id", get(rooms::team_launch_status))
         .route("/api/rooms/:id/knowledge/learn", post(rooms::learn))
         .route("/api/rooms/:id/run", post(rooms::run))
         .route("/api/rooms/:id/reset", post(rooms::reset))

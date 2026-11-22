@@ -45,6 +45,11 @@ pub struct Team {
     pub tasks:Vec<Task>,
     #[serde(default="default_parallel")] pub max_parallel:usize,
     #[serde(default)] pub max_read_retries:u8,
+    /// Presentation metadata written by callers (room sessions): which worker
+    /// job backs each step, and which conversation it belongs to. The
+    /// orchestrator never reads them; they let the UI show progress.
+    #[serde(default)] pub plan:Option<serde_json::Value>,
+    #[serde(default)] pub session_id:Option<String>,
 }
 fn default_parallel()->usize{MAX_CONCURRENT_WORKERS}
 fn valid_id(id:&str)->bool {
