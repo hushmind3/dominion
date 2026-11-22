@@ -134,7 +134,9 @@ pub(super) async fn credential_verified(source:&str)->bool{
 
 async fn state(source:&str,login:&Arc<Login>)->Value{
     let p=login.progress.lock().await;
-    json!({"source":source,"status":p.phase,"message":p.message,"url":p.url,"requiresInput":p.phase=="input"})
+    let user_code=if source=="github"{github_device_code(&p.text)}else{None};
+    json!({"source":source,"status":p.phase,"message":p.message,"url":p.url,
+        "userCode":user_code,"requiresInput":p.phase=="input"})
 }
 async fn set_phase(login:&Arc<Login>, phase:&'static str, message:&str){
     let mut p=login.progress.lock().await;

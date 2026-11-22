@@ -2,12 +2,18 @@ import {useCallback,useEffect,useState} from 'react'
 import {CheckCircle2,ExternalLink,Github,Globe2,Link2,RefreshCcw,Unlink} from 'lucide-react'
 import {del,get,openOAuth,post} from '../api'
 import {Action,Notice,Panel,StateTag,useRemote} from './UI'
-import {t} from '../i18n'
+import {StatusPill} from './StatusPill'
+import {t,type LocaleKey} from '../i18n'
 import {supportedOAuthAccounts,type OAuthAccountId} from '../utils/oauthAccounts'
 
 type Provider={id:string;name:string;configured:boolean;connected:boolean;account?:string|null;scope?:string;credentialSource?:'application'|'local'|'missing'}
 type Account={provider:string;displayName:string;hasToken:boolean;scopes:string}
 type CliLogin={source:string;status:string;message?:string;url?:string|null;userCode?:string|null;requiresInput?:boolean}
+const cliPhaseLabels:Record<string,LocaleKey>={
+ starting:'conn.quick.githubCliStatus.starting',browser:'conn.quick.githubCliStatus.browser',
+ input:'conn.quick.githubCliStatus.input',completed:'conn.quick.githubCliStatus.completed',
+ failed:'conn.quick.githubCliStatus.failed',cancelled:'conn.quick.githubCliStatus.cancelled',
+}
 
 export function ConnectedAccounts({onSetupApp}:{onSetupApp?:(id:OAuthAccountId)=>void}={}){
  const providers=useRemote<Provider[]>('/api/oauth/providers',[])
@@ -69,8 +75,13 @@ export function ConnectedAccounts({onSetupApp}:{onSetupApp?:(id:OAuthAccountId)=
   {githubCli&&<Panel className="p-5">
    <div className="flex flex-wrap items-start justify-between gap-3">
     <div><h3 className="text-base font-bold text-[#24211D]">{t('conn.quick.githubCliTitle')}</h3>
-     <p role="status" className="mt-1 text-sm text-[#7C7469]">{githubCli.message||t('conn.quick.githubCliStarting')}</p></div>
-    <StateTag online={githubCli.status==='completed'}>{githubCli.status}</StateTag>
+     <p role="status" className="mt-1 text-sm text-[#7C7469]">{githubCli.status==='browser'?
+      githubCli.userCode?t('conn.quick.githubCliStatus.enterCode',{code:githubCli.userCode}):t('conn.quick.githubCliStatus.browser'):
+      githubCli.status==='starting'?t('conn.quick.githubCliStarting'):
+      githubCli.status==='completed'?t('conn.quick.githubCliStatus.completed'):
+      githubCli.status==='input'?t('conn.quick.githubCliStatus.input'):
+      githubCli.message||t('conn.quick.githubCliStatus.failed')}</p></div>
+    <StatusPill status={githubCli.status}>{t(cliPhaseLabels[githubCli.status]||'conn.quick.githubCliStatus.unknown')}</StatusPill>
    </div>
    {githubCli.userCode&&<div className="mt-4 rounded-xl bg-[#F7F1E6] p-4">
     <p className="text-xs font-semibold text-[#7C7469]">{t('conn.quick.githubCliCode')}</p>
