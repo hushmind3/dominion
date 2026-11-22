@@ -730,10 +730,10 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
             <div className="rounded-xl bg-canvas p-3 text-xs leading-5 text-muted">
               {t('ext.registryNote')}
             </div>
-            <div className="registry-results grid gap-2.5">
+            <div className="registry-results grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
               {catalog.map((x) => (
                 <div
-                  className="flex min-w-0 flex-wrap items-start gap-3 rounded-xl border border-divider bg-white p-3.5 transition-colors hover:border-[var(--color-brand)] sm:flex-nowrap"
+                  className="flex min-w-0 flex-col gap-3 rounded-xl border border-divider bg-surface p-4 transition-colors hover:border-brand/40"
                   key={x.name}
                 >
                   <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand">
@@ -748,7 +748,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                     (mcp.value.some((r: any) => r.name === x.name) ? (
                       <Button
                         variant="secondary"
-                        className="shrink-0 whitespace-nowrap"
+                        className="mt-auto w-full justify-center whitespace-nowrap"
                         onClick={async () => {
                           const rec = mcp.value.find((r: any) => r.name === x.name);
                           if (!rec) return;
@@ -761,6 +761,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                     ) : (
                       <Button
                         variant="secondary"
+                        className="mt-auto w-full justify-center"
                         onClick={() =>
                           install({
                             name: x.name,
