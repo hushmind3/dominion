@@ -63,6 +63,7 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
     add('/api/transfer','/api/synergy');break
    case 'policy':add('/api/policy');break
    case 'owner_profile':add('/api/settings/owner-profile');break
+   case 'assistant_settings':add('/api/settings/assistant');break
    case 'oauth_config':case 'oauth_connection':add('/api/oauth/providers','/api/oauth/connections');break
    case 'sdk_run':add('/api/sdk/runs');if(id)add('/api/sdk/runs/'+encoded(id));break
    case 'memory':add('/api/memories','/api/memory/overview','/api/memory/*');break
