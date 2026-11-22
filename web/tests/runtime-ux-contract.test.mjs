@@ -383,7 +383,7 @@ test('transcript reconciliation uses authoritative persisted owner IDs, not repe
 
 test('stop retains streamed assistant text and restores pre-session unsaved owner prompt',()=>{
  const chat=source('src/pages/Chat.tsx')
- assert.match(chat,/if\(optimisticOwner\?\.sessionId===undefined\)/)
+ assert.match(chat,/if\(optimisticOwner&&optimisticOwner\.sessionId===undefined\)/)
  assert.match(chat,/setInput\(previous=>previous\.trim\(\)\?previous:optimisticOwner\.content\)/)
  assert.match(chat,/if\(controller\)flushStreamBuffer\(\);[\s\S]*?controller\?\.abort\(\)/)
  assert.match(chat,/setBusy\(false\);setLiveApproval\(null\);setToolStatus\(''\);/)
@@ -434,7 +434,7 @@ test('streaming and persisted assistant replies share the same width and message
 test('chat error alerts can be dismissed even when failure comes from transcript or learning jobs',()=>{
  const chat=source('src/pages/Chat.tsx')
  assert.match(chat,/const alertMessage=error\|\|transcript\.error\|\|translateError\(job\.error\|\|''\)/)
- assert.match(chat,/const visibleAlert=alertMessage&&!\(dismissedError\?\.session===current&&dismissedError\.message===alertMessage\)/)
+ assert.match(chat,/const visibleAlert=alertMessage&&!\(dismissedError\?\.session===current&&dismissedError\?\.message===alertMessage\)/)
  assert.match(chat,/\{visibleAlert&&<div role="alert"/)
  assert.match(chat,/aria-label="오류 닫기"/)
  assert.match(chat,/setDismissedError\(\{session:current,message:visibleAlert\}\)/)
@@ -458,7 +458,7 @@ test('logical client-turn keys dedupe effectful retries and locate earlier persi
  const e2e=source('../tests/e2e/http_execution.rs')
  assert.match(api,/clientTurnId\?: string/)
  assert.match(chat,/const pendingTurn=useRef<\{scope\?:string;text:string;id:string\}\|null>\(null\)/)
- assert.match(chat,/previousTurn\?\.scope===current&&previousTurn\.text===text/)
+ assert.match(chat,/previousTurn&&previousTurn\.scope===current&&previousTurn\.text===text/)
  assert.match(chat,/crypto\.randomUUID\?\.\(\)/)
  assert.match(chat,/sessionId:id,clientTurnId,agentId:/)
  assert.match(chat,/if\(pendingTurn\.current\?\.id===clientTurnId\)pendingTurn\.current=null/)

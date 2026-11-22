@@ -187,7 +187,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const usageRevision=JSON.stringify([messages.at(-1)?.id,messages.length]);
  useEffect(()=>{if(!current){setServerUsage(0);return}let alive=true;get<{totalTokens?:number}>('/api/sessions/'+encodeURIComponent(current)+'/usage').then(usage=>{if(alive)setServerUsage(Number(usage.totalTokens)||0)}).catch(()=>{});return()=>{alive=false}},[current,usageRevision])
  const alertMessage=error||transcript.error||translateError(job.error||'');
- const visibleAlert=alertMessage&&!(dismissedError?.session===current&&dismissedError.message===alertMessage)?alertMessage:'';
+ const visibleAlert=alertMessage&&!(dismissedError?.session===current&&dismissedError?.message===alertMessage)?alertMessage:'';
  const [moreBelow,setMoreBelow]=useState(false);
  const {scrollRef,onScroll,jumpDown}=useTranscriptScroll(current,transcriptRevision,setMoreBelow);
  const modelPanel=useAnchoredPanel(modelMenu,()=>setModelMenu(false),380);
@@ -293,7 +293,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     controller.abort();stream.current=null;clearStreamBuffer();
     // No session exists yet, so the owner prompt cannot be recovered from
     // SQLite. Return it to the draft before dismissing the optimistic bubble.
-    if(optimisticOwner?.sessionId===undefined)
+    if(optimisticOwner&&optimisticOwner.sessionId===undefined)
      setInput(previous=>previous.trim()?previous:optimisticOwner.content);
     setOptimisticOwner(undefined);
     pendingTurn.current=null;
@@ -413,7 +413,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   if(!providerId){setError(t('chat.err.connectApi'));return;}
   if(!model){setError(t('chat.err.pickModel'));return;}
   const previousTurn=pendingTurn.current;
-  const clientTurnId=previousTurn?.scope===current&&previousTurn.text===text
+  const clientTurnId=previousTurn&&previousTurn.scope===current&&previousTurn.text===text
    ?previousTurn.id
    :typeof crypto!=='undefined'?crypto.randomUUID?.():undefined;
   if(clientTurnId)pendingTurn.current={scope:current,text,id:clientTurnId};
@@ -485,7 +485,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      ownerSaved=true;
      if(pendingTurn.current?.id===clientTurnId)pendingTurn.current=null;
      releaseSentImages();
-     setOptimisticOwner(previous=>previous?.sessionId===id?{...previous,persistedId:String(event.messageId)}:previous);
+     setOptimisticOwner(previous=>previous&&previous.sessionId===id?{...previous,persistedId:String(event.messageId)}:previous);
      refresh('/api/sessions/'+encodeURIComponent(id!)+'/messages');
     }
     if(event.type==='assistant_saved'){
@@ -526,7 +526,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
       if(persisted){
        if(pendingTurn.current?.id===clientTurnId)pendingTurn.current=null;
        releaseSentImages();
-       setOptimisticOwner(previous=>previous?.sessionId===id?{...previous,persistedId:persisted!.id}:previous);
+       setOptimisticOwner(previous=>previous&&previous.sessionId===id?{...previous,persistedId:persisted!.id}:previous);
       }else{
        setInput(previous=>previous.trim()?previous:text);
        setOptimisticOwner(previous=>previous?.sessionId===id?undefined:previous);

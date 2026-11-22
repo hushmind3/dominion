@@ -7,6 +7,7 @@ version = "0.4.5"
 edition = "2021"
 license = "MIT"
 description = "Local-first Rust AI agent workspace and execution engine"
+repository = "https://github.com/hushmind3/dominion-rust"
 
 [dependencies]
 dominion-core = { path = "crates/dominion-core" }
