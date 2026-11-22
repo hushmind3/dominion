@@ -17,17 +17,40 @@ const statusLabels:Record<string,LocaleKey>={active:'memory.status.active',archi
 const sourceLabels:Record<string,LocaleKey>={user:'memory.source.user',learn:'memory.source.learn',agent:'memory.source.agent',reflect:'memory.source.reflect',compression:'memory.source.compression'}
 const displayTime=(time?:string)=>time&&Number.isFinite(Date.parse(time))?new Date(time).toLocaleString():t('memory.time.none')
 const statusOf=(memory:Memory)=>memory.retrievalEligible?'active':memory.status&&memory.status!=='active'?memory.status:'excluded'
+const memoryDraftKey='dominion.memory.compose.v1'
+function readMemoryDraft(){
+ const blank={text:'',scope:'shared'}
+ try{
+  const raw=sessionStorage.getItem(memoryDraftKey)
+  if(!raw||raw.length>16000)return blank
+  const saved:unknown=JSON.parse(raw)
+  if(!saved||typeof saved!=='object'||Array.isArray(saved))return blank
+  const data=saved as {text?:unknown;scope?:unknown}
+  return {text:typeof data.text==='string'?data.text.slice(0,12000):'',
+   scope:typeof data.scope==='string'&&data.scope.length<100?data.scope:'shared'}
+ }catch{return blank}
+}
 
 export function MemoryPage(){
- useLocale()
+ const locale=useLocale()
  const memories=useRemote<Memory[]>('/api/memories',[])
  const agents=useRemote<Agent[]>('/api/agents',[])
- const [query,setQuery]=useState(''),[text,setText]=useState(''),[scope,setScope]=useState('shared')
+ const [restoredDraft]=useState(readMemoryDraft)
+ const [query,setQuery]=useState(''),[text,setText]=useState(restoredDraft.text),[scope,setScope]=useState(restoredDraft.scope)
  const [status,setStatus]=useState('active'),[owner,setOwner]=useState('all')
  const [error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false)
  const [showRecords,setShowRecords]=useState(false)
  const [visibleLimit,setVisibleLimit]=useState(40)
  useEffect(()=>setVisibleLimit(40),[query,status,owner])
+ // Keep unsubmitted memories when navigating back to Chat or other pages.
+ // The draft is tab-local and never auto-submitted to the Rust memory store.
+ useEffect(()=>{
+  try{
+   if(!text.trim()&&scope==='shared')sessionStorage.removeItem(memoryDraftKey)
+   else sessionStorage.setItem(memoryDraftKey,JSON.stringify({text,scope}))
+  }catch{/* Private browsing may deny storage. */}
+ },[text,scope])
+ const scopeAvailable=scope==='shared'||agents.value.some(agent=>agent.id===scope)
  const agentNames=new Map(agents.value.map(agent=>[agent.id,agent.name]))
  const sessionScoped=(m:Memory)=>m.scope==='session'||(m.scope!=='global'&&!m.partitionKey&&['learn','agent'].includes(m.source??''))
  const agentOf=(m:Memory)=>{
@@ -49,7 +72,7 @@ export function MemoryPage(){
    &&[m.text,ownerName(m),m.source].join(' ').toLowerCase().includes(query.trim().toLowerCase())
  })
  const save=async()=>{
-  if(!text.trim()||busy)return
+  if(!text.trim()||busy||!scopeAvailable||agents.loading||Boolean(agents.error))return
   setBusy(true);setError('');setNotice('')
   try{
    await post('/api/memories',{text:text.trim(),status:'active',source:'user',...(scope==='shared'?{scope}:{scope:'agent',agentId:scope})})
@@ -67,9 +90,15 @@ export function MemoryPage(){
   {notice&&<div role="status" className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{notice}</div>}
   <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
    <Panel className="min-w-0 p-5">
-    <Subheading title={t('memory.new')} extra={<Action disabled={busy||!text.trim()} onClick={save}><Plus size={16}/> {t('memory.save')}</Action>}/>
+    <Subheading title={t('memory.new')} extra={<Action disabled={busy||!text.trim()||!scopeAvailable||agents.loading||Boolean(agents.error)} onClick={save}><Plus size={16}/> {t('memory.save')}</Action>}/>
     <FormField label={t('memory.content')}><TextArea rows={6} value={text} onChange={e=>setText(e.target.value)}/></FormField>
-    <FormField label={t('memory.scope')}><SelectInput value={scope} onChange={e=>setScope(e.target.value)}><option value="shared">{t('memory.scope.shared')}</option>{agents.value.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</SelectInput></FormField>
+    <FormField label={t('memory.scope')}><SelectInput value={scope} onChange={e=>setScope(e.target.value)}>
+     <option value="shared">{t('memory.scope.shared')}</option>
+     {!scopeAvailable&&<option value={scope} disabled>{scope} · {locale==='en'?'Unavailable':'현재 사용 불가'}</option>}
+     {agents.value.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
+    </SelectInput></FormField>
+    {!scopeAvailable&&<p role="alert" className="mt-2 text-[11px] text-amber-800">{locale==='en'?'The selected agent is no longer available. Choose a valid scope before saving.':'이전에 선택한 에이전트를 사용할 수 없습니다. 범위를 다시 지정한 뒤 저장하세요.'}</p>}
+    <p role="status" className="mt-2 text-[10px] text-[#8A8176]">{locale==='en'?'Unsaved text is retained in this tab only.':'작성 중인 기억은 현재 탭에만 임시 저장됩니다.'}</p>
     <p className="mt-4 text-sm text-[#7C7469]">{t('memory.note')}</p>
    </Panel>
    <div>
