@@ -26,6 +26,45 @@ type Bridge={enabled:boolean;binaryAvailable:boolean;authentication:string}
 const draft=(id:string):Draft=>({id,prompt:'',runtime:'native',mode:'read',
  isolation:'shared',providerId:'',model:'',dependsOn:[],resumeId:'',
  checkPath:'',checkText:''})
+
+const draftStorageKey='dominion.sub3.team.unsent.v1'
+type SavedTeamDraft={goal:string;steps:Draft[];parallel:number;retries:number;restored:boolean}
+function readTeamDraft():SavedTeamDraft {
+ const blank:SavedTeamDraft={goal:'',steps:[draft('inspect')],parallel:2,retries:0,restored:false}
+ try {
+  const data=JSON.parse(sessionStorage.getItem(draftStorageKey)||'null') as Record<string,unknown>|null
+  if(!data||typeof data.goal!=='string'||!Array.isArray(data.steps))return blank
+  const seen=new Set<string>(),list:Draft[]=[]
+  const text=(value:unknown,limit:number)=>typeof value==='string'?value.slice(0,limit):''
+  for(const raw of data.steps.slice(0,12)){
+   if(!raw||typeof raw!=='object'||Array.isArray(raw))continue
+   const value=raw as Record<string,unknown>
+   const id=text(value.id,128)
+   if(!id||seen.has(id)||!/^[A-Za-z0-9_-]+$/.test(id))continue
+   const mode:Mode=value.mode==='write'?'write':'read'
+   const available:Runtime[]=['native','codex','claude','qwen','remote']
+   const runtime:Runtime=mode==='write'?'native':
+    available.includes(value.runtime as Runtime)?value.runtime as Runtime:'native'
+   const isolation:Draft['isolation']=mode==='write'?'worktree':
+    value.isolation==='worktree'?'worktree':'shared'
+   const dependsOn=Array.isArray(value.dependsOn)?value.dependsOn
+    .filter((dep:unknown):dep is string=>typeof dep==='string'&&seen.has(dep)).slice(0,11):[]
+   list.push({id,prompt:text(value.prompt,32000),runtime,mode,isolation,
+    providerId:text(value.providerId,256),model:text(value.model,256),
+    dependsOn,resumeId:text(value.resumeId,128),
+    checkPath:text(value.checkPath,1024),checkText:text(value.checkText,8192)})
+   seen.add(id)
+  }
+  const steps=list.length?list:blank.steps
+  const goal=data.goal.slice(0,16000)
+  const parallel=Math.max(1,Math.min(3,Number(data.parallel)||2))
+  const retries=Math.max(0,Math.min(2,Number(data.retries)||0))
+  return {goal,steps,parallel,retries,restored:Boolean(goal||
+   steps.length>1||steps[0].prompt||steps[0].mode!=='read'||
+   steps[0].id!=='inspect'||parallel!==2||retries!==0)}
+ }catch{return blank}
+}
+
 const field='w-full min-w-0 rounded-lg border border-[#E7E0D5] bg-white px-3 py-2 text-[12px]'
 const btn='rounded-lg border border-[#E7E0D5] px-3 py-2 text-[11px] font-semibold hover:bg-[#FAF7F1] disabled:opacity-40'
 const active=new Set(['queued','running'])
@@ -42,12 +81,24 @@ const apiPath=(id:string,task?:string)=>'/api/task-teams/'+encodeURIComponent(id
 export function TaskTeamsPanel({providers}:{providers:Provider[]}){
  const en=useLocale()==='en'
  const t=(ko:string,english:string)=>en?english:ko
- const [open,setOpen]=useState(true),[editing,setEditing]=useState(false)
+ const [storedDraft]=useState(readTeamDraft)
+ const [open,setOpen]=useState(true),[editing,setEditing]=useState(storedDraft.restored)
  const [remoteAvailability,setRemoteAvailability]=useState<RemoteAvailability>({
   enabled:false,online:0,loaded:false
  })
- const [goal,setGoal]=useState(''),[steps,setSteps]=useState<Draft[]>([draft('inspect')])
- const [parallel,setParallel]=useState(2),[retries,setRetries]=useState(0)
+ const [goal,setGoal]=useState(storedDraft.goal),[steps,setSteps]=useState<Draft[]>(storedDraft.steps)
+ const [parallel,setParallel]=useState(storedDraft.parallel),[retries,setRetries]=useState(storedDraft.retries)
+ // Keep only unsent owner input in this tab, not model receipts or settled runs.
+ useEffect(()=>{
+  const pristine=!goal.trim()&&steps.length===1&&steps[0].id==='inspect'&&
+   !steps[0].prompt&&steps[0].mode==='read'&&steps[0].runtime==='native'&&
+   !steps[0].model&&!steps[0].providerId&&!steps[0].resumeId&&
+   steps[0].dependsOn.length===0&&parallel===2&&retries===0
+  try{
+   if(pristine)sessionStorage.removeItem(draftStorageKey)
+   else sessionStorage.setItem(draftStorageKey,JSON.stringify({goal,steps,parallel,retries}))
+  }catch{}
+ },[goal,steps,parallel,retries])
  const [teams,setTeams]=useState<Team[]>([]),[selected,setSelected]=useState('')
  const [teamQuery,setTeamQuery]=useState('')
  const [teamView,setTeamView]=useState<'all'|'active'|'attention'|'finished'>('all')
@@ -144,6 +195,8 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
    const created=await post<Team>('/api/task-teams',{
     goal:goal.trim(),maxParallel:parallel,maxReadRetries:retries,tasks})
    setEditing(false);setSelected(created.id);setDetails(created)
+    setGoal('');setSteps([draft('inspect')]);setParallel(2);setRetries(0)
+    try{sessionStorage.removeItem(draftStorageKey)}catch{}
    setNotice(t('팀이 실행 대기열에 등록됐습니다.','Team queued for execution.'))
    await refresh(created.id)
   }catch(err){setError((err as Error).message)}
