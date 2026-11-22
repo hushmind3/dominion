@@ -101,7 +101,11 @@ try{
   const page=await browser.newPage({viewport:{width,height:width===1440?900:760},locale:'ko-KR'})
   const pageErrors=[]
   page.on('pageerror',e=>pageErrors.push(e.message))
-  await page.addInitScript(()=>localStorage.setItem('dominion.locale','ko'))
+  await page.addInitScript(()=>{
+   localStorage.setItem('dominion.locale','ko')
+   // Old releases persisted a wide-open history by default.
+   localStorage.setItem('dominion.chat.sidebar','1')
+  })
   await page.route('**/api/**',mock)
   await page.goto(base+'/#/chat?session=chat-ui',{waitUntil:'domcontentloaded'})
   await page.locator('[data-role="assistant"] .chat-richtext h2').waitFor()
