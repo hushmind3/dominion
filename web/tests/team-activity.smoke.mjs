@@ -291,6 +291,12 @@ try{
   await page.goto(address+'/#/memory',{waitUntil:'domcontentloaded'});
   await memoryDraft.waitFor({timeout:10000});
   assert.equal(await memoryDraft.inputValue(),'아직 저장하지 않은 기억 초안');
+  await page.goto(address+'/#/chat',{waitUntil:'domcontentloaded'});
+  await page.locator('form.conversation-composer textarea').waitFor({timeout:10000});
+  assert.equal(await page.locator('.dominion-chat-hero,.dominion-chat-starters,.dominion-chat-welcome').count(),0,
+    'a new chat must not display the onboarding hero or starter cards');
+  assert.ok(await page.locator('form.conversation-composer textarea').isVisible(),
+    'a new chat must immediately expose the composer');
   await page.goto(address+'/#/chat?session=chat-one',{waitUntil:'domcontentloaded'});
   // Chat drafts are scoped to the actual session, including fresh chats.
   const inputSelector='textarea[placeholder^="무엇을 도와드릴까요?"]';
