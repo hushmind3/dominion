@@ -287,6 +287,98 @@ fn save_room(state: &AppState, id_override: Option<&str>, body: &Value) -> ApiRe
     room(state, &id)
 }
 
+
+fn project_room_team_launch(job:&Value)->Value{
+    let status=if matches!(job["status"].as_str(),Some("failed"|"cancelled"|"interrupted")){
+        "failed"
+    }else{"queued"};
+    json!({"id":job["id"],"roomId":job["input"]["roomId"],
+        "sessionId":job["input"]["parentSessionId"],
+        "status":status,"goal":job["input"]["goal"],
+        "maxParallel":job["input"]["maxParallel"],
+        "jobId":job["id"],"error":job["error"]})
+}
+fn owned_room_team_launch(state:&AppState,room_id:&str,id:&str)->ApiResult{
+    let job=state.store.get("job",id)
+        .ok_or((StatusCode::NOT_FOUND,"협업 실행 기록이 없습니다.".into()))?;
+    if job["kind"]!="prompt" || job["input"]["roomId"]!=room_id
+       || job["input"]["roomTeamLaunch"]!=true {
+        return Err((StatusCode::NOT_FOUND,"이 그룹의 협업 실행이 아닙니다.".into()));
+    }
+    Ok(project_room_team_launch(&job))
+}
+/// Stable request-ID reconciliation without creating a second team planner.
+/// Worker execution remains in Sub2's native team_workers/team_execute tools.
+pub async fn team_launch(
+    State(state):State<AppState>,Path(room_id):Path<String>,Json(body):Json<Value>,
+)->Response{
+    response((||{
+        let group=room(&state,&room_id)?;
+        if group["toolsEnabled"]!=true{return Err(bad("먼저 그룹의 도구 사용을 허용하세요."));}
+        let goal=body["goal"].as_str().map(str::trim)
+            .filter(|s|!s.is_empty()&&s.chars().count()<=4000)
+            .ok_or_else(||bad("목표는 1~4000자여야 합니다."))?;
+        let parallel=body["maxParallel"].as_u64().filter(|n|(1..=4).contains(n))
+            .ok_or_else(||bad("동시 실행은 1~4개까지 가능합니다."))?;
+        let id=body["clientRequestId"].as_str()
+            .and_then(|s|uuid::Uuid::parse_str(s).ok())
+            .ok_or_else(||bad("유효한 요청 UUID가 필요합니다."))?;
+        let run_id=format!("room-team-{}",
+            crate::engine::memory::stable_id(&[&room_id,&id.to_string()]));
+        if let Some(existing)=state.store.get("job",&run_id){
+            if existing["input"]["roomId"]!=room_id
+                ||existing["input"]["goal"]!=goal
+                ||existing["input"]["maxParallel"]!=parallel
+                ||existing["input"]["roomTeamLaunch"]!=true{
+                return Err(conflict("같은 요청 ID로 다른 작업을 시작할 수 없습니다."));
+            }
+            return Ok(project_room_team_launch(&existing));
+        }
+        let parent=rooms::ensure_room_session(&state,&room_id).map_err(bad)?;
+        let parent_id=parent["id"].as_str().ok_or_else(||failed("그룹 세션이 없습니다."))?;
+        let roster=group["agentIds"].as_array()
+            .ok_or_else(||bad("그룹 AI를 먼저 선택하세요."))?;
+        let mut runnable=roster.iter().filter_map(|entry|{
+            let id=entry.as_str()?;
+            let agent=state.store.get("agent",id)?;
+            if agent["enabled"]==false || agent["disabled"]==true ||
+               agent["providerId"].as_str().is_none_or(str::is_empty) ||
+               agent["model"].as_str().is_none_or(str::is_empty){return None;}
+            Some((id.to_owned(),agent))
+        }).take(9);
+        let (lead_id,lead)=runnable.next()
+            .ok_or_else(||bad("모델이 연결된 실행 가능한 AI가 없습니다."))?;
+        let mut workers=runnable.map(|(id,_)|id).take(8).collect::<Vec<_>>();
+        if workers.is_empty(){workers.push(lead_id.clone());}
+        let selected=workers.iter().map(|id|format!("- {id}"))
+            .collect::<Vec<_>>().join("\n");
+        let prompt=format!(
+            "OWNER REQUEST:\n{goal}\n\nUse native DOMINION team_workers and team_execute. \
+             Use only selected Worker IDs, up to {parallel} parallel tasks and \
+             eight DAG nodes. Keep dependency and verification evidence. \
+             Report actual teamId, worker receipts and pending approvals; \
+             never claim success before native verification.\n\nSELECTED WORKERS:\n{selected}"
+        );
+        // The Lead gets its own native job session; a room transcript is never
+        // passed as a writable execution session. Only parentSessionId links UI.
+        let input=json!({"prompt":prompt,"agentId":lead_id,
+            "providerId":lead["providerId"],"model":lead["model"],
+            "toolsEnabled":true,"toolsExecutionEnabled":true,
+            "autonomous":true,"maxAutonomousAttempts":2,
+            "uiSource":"team_activity","roomTeamLaunch":true,
+            "roomId":room_id,"parentSessionId":parent_id,
+            "goal":goal,"maxParallel":parallel,"teamUiWorkerIds":workers});
+        let job=crate::engine::jobs::enqueue_once(&state,&run_id,"prompt",input)
+            .ok_or_else(||conflict("협업 요청 기록을 안전하게 재사용할 수 없습니다."))?;
+        Ok(project_room_team_launch(&job))
+    })())
+}
+pub async fn team_launch_status(
+    State(state):State<AppState>,Path((room_id,id)):Path<(String,String)>,
+)->Response{
+    response(owned_room_team_launch(&state,&room_id,&id))
+}
+
 pub async fn list(State(state): State<AppState>) -> Json<Value> {
     Json(json!(state.store.all("room")))
 }

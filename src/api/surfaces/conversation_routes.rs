@@ -26,6 +26,8 @@ pub(super) fn routes()->Router<AppState>{
             "/api/rooms/:id/messages",
             get(rooms::messages).post(rooms::send_message),
         )
+        .route("/api/rooms/:id/team-launches",post(rooms::team_launch))
+        .route("/api/rooms/:id/team-launches/:launch_id",get(rooms::team_launch_status))
         .route("/api/rooms/:id/state", get(rooms::state))
         .route("/api/rooms/:id/knowledge", get(rooms::knowledge))
         .route("/api/rooms/:id/system-prompt", get(rooms::system_prompt))
