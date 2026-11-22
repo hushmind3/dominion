@@ -8,7 +8,7 @@ import {base64File,mergeChatFiles,type ChatFileDraft} from '../utils/chatAttachm
 import {createPortal} from 'react-dom'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormEvent,useEffect,useMemo,useRef,useState,type KeyboardEvent} from 'react'
-import {ArrowRight,ArrowUp,BrainCircuit,FileText,Paperclip,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
+import {ArrowRight,ArrowUp,BrainCircuit,FileText,Paperclip,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X,Archive,RotateCcw} from 'lucide-react'
 import {Agent,Approval,ChatMessage,ChatSession,Provider,get,post,resolveApproval,streamChat,koreanReasoningEnabled} from '../api'
 import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
@@ -52,7 +52,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const [input,setInput]=useChatDraft(current);
  const [fileSelection,setFileSelection]=useState<{scope?:string;files:ChatFileDraft[]}>()
  const draftFiles=fileSelection&&fileSelection.scope===current?fileSelection.files:[]
- const [historyQuery,setHistoryQuery]=useState('');
+ const [historyQuery,setHistoryQuery]=useState(''),[showArchived,setShowArchived]=useState(false),[archiveBusy,setArchiveBusy]=useState('');
  const [modeChoice,setModeChoice]=useState<{scope?:string;mode:ChatMode}>()
  const mode:ChatMode=(modeChoice&&modeChoice.scope===current?modeChoice.mode:undefined)??
   (selectedSession?.mode==='agent'||(!selectedSession?.mode&&Boolean(selectedSession?.agentId))||(!current&&Boolean(initialAgent))?'agent':'chat')
@@ -121,10 +121,11 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const historyEntries=useMemo(()=>{
   const query=historyQuery.trim().toLocaleLowerCase()
   const entries=sessions.value.filter(isPrivateChatSession)
+   .filter(session=>showArchived?session.archived===true:session.archived!==true)
    .filter(session=>!query||session.title.toLocaleLowerCase().includes(query))
   const lastActivity=(session:ChatSession)=>Date.parse(session.updatedAt||session.createdAt||'')||0
   return entries.sort((left,right)=>lastActivity(right)-lastActivity(left))
- },[sessions.value,historyQuery])
+ },[sessions.value,historyQuery,showArchived])
  const slashItems=slashOpen?slashCandidates(input,agents.value,models):[];
  const transcriptRevision=JSON.stringify([messages.at(-1)?.id,messages.length,pendingVisible?pendingOwner?.text:'',viewingTurn?live.length:0,viewingTurn?thought.length:0,viewingTurn?toolStatus:'',approval?.id]);
  const usageRevision=JSON.stringify([messages.at(-1)?.id,messages.length]);
@@ -235,6 +236,15 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   onSession(s.id);setAgentChoice(undefined);setOverride(undefined);setModeChoice(undefined);
   setError('');setCommandInfo('');setSlashOpen(false);
   if(window.innerWidth<768)setShowHistory(false);
+ };
+ const toggleArchive=async(session:ChatSession)=>{
+  if(archiveBusy)return
+  setArchiveBusy(session.id);setError('');setCommandInfo('')
+  try{
+   await post('/api/sessions/'+encodeURIComponent(session.id)+'/archive',{archived:!session.archived})
+   await sessions.reload()
+   setCommandInfo(t(session.archived?'chat.sessionRestored':'chat.sessionArchived'))
+  }catch(e){setError((e as Error).message)}finally{setArchiveBusy('')}
  };
  const resetLocal=()=>{
   setFileSelection(undefined)
@@ -476,10 +486,11 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  return <div className={'relative grid h-dvh min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] bg-[#FFFDF9] '+(showHistory?'md:grid-cols-[232px_minmax(0,1fr)]':'')}>
   {showHistory&&<Button type="button" aria-label={t('chat.listCollapse')} className="absolute inset-0 z-20 !h-auto !w-auto cursor-default !rounded-none !border-0 !bg-slate-900/30 md:hidden" onClick={()=>setShowHistory(false)}/>}
   <aside className={'flex min-h-0 flex-col overflow-hidden border-r border-[#E7E0D5] bg-[#FAF7F1] '+(showHistory?'max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:w-[232px] max-md:shadow-2xl':'hidden')}>
-   <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-2"><div className="min-w-0"><span className="block text-[10px] font-extrabold uppercase tracking-widest text-[#C96442]">{t('ui.label.conversations')}</span><strong className="mt-1 block text-sm text-[#3A342D]">{t('chat.recent')}</strong></div><Button size="icon" variant="ghost" onClick={resetLocal} title={t('chat.newChat')}><Plus size={19}/></Button></div>
+   <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-2"><div className="min-w-0"><span className="block text-[10px] font-extrabold uppercase tracking-widest text-[#C96442]">{t('ui.label.conversations')}</span><strong className="mt-1 block text-sm text-[#3A342D]">{t(showArchived?'chat.archived':'chat.recent')}</strong></div><Button size="icon" variant="ghost" onClick={resetLocal} title={t('chat.newChat')}><Plus size={19}/></Button></div>
    <Button className="mx-3 mb-4 inline-flex items-center justify-center gap-2 rounded-xl border border-[#EED9CC] bg-[#F7E8E1] px-4 py-2.5 text-xs font-bold text-[#A94E30] hover:bg-[#F1DCCF]" onClick={resetLocal}><Plus size={17}/> {t('chat.newChat')}</Button>
+   <Button variant="ghost" size="sm" aria-pressed={showArchived} onClick={()=>setShowArchived(value=>!value)} className="mx-3 mb-3 !justify-start gap-2 !text-xs"><Archive size={14}/>{t(showArchived?'chat.showRecent':'chat.showArchived')}</Button>
    <div className="px-3 pb-3"><TextInput aria-label={t('chat.historySearch')} placeholder={t('chat.historySearch')} value={historyQuery} onChange={event=>setHistoryQuery(event.target.value)} className="w-full text-xs"/></div>
-   <div className="min-h-0 flex-1 overflow-y-auto px-2">{historyEntries.map(s=><Button variant="bare" onClick={()=>pickSession(s)} key={s.id} title={s.title} className={'chat-history-entry flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-xs text-[#7C7469] hover:bg-[#F7E8E1] '+(current===s.id?'bg-[#F7E8E1] font-bold text-[#A94E30]':'')}><MessageCircle size={15} className="shrink-0"/><span className="truncate">{s.title}</span></Button>)}{!historyEntries.length&&<div className="p-5 text-center text-xs text-[#9C9388]">{historyQuery.trim()?t('chat.historyNoResults'):t('chat.first')}</div>}</div>
+   <div className="min-h-0 flex-1 overflow-y-auto px-2">{historyEntries.map(s=><div key={s.id} className={'chat-history-entry group flex items-center gap-1 rounded-xl pr-1 hover:bg-[#F7E8E1] '+(current===s.id?'bg-[#F7E8E1]':'')}><Button variant="bare" onClick={()=>pickSession(s)} title={s.title} className={'flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2.5 text-left text-xs text-[#7C7469] '+(current===s.id?'font-bold text-[#A94E30]':'')}><MessageCircle size={15} className="shrink-0"/><span className="truncate">{s.title}</span></Button><Button size="icon" variant="ghost" disabled={archiveBusy===s.id} onClick={()=>void toggleArchive(s)} aria-label={t(s.archived?'chat.restoreSession':'chat.archiveSession')} title={t(s.archived?'chat.restoreSession':'chat.archiveSession')} className="size-8 opacity-60 hover:opacity-100">{s.archived?<RotateCcw size={14}/>:<Archive size={14}/>}</Button></div>)}{!historyEntries.length&&<div className="p-5 text-center text-xs text-[#9C9388]">{historyQuery.trim()?t('chat.historyNoResults'):t(showArchived?'chat.noArchived':'chat.first')}</div>}</div>
    <div className="shrink-0 border-t border-[#E7E0D5] p-2"><Button variant="ghost" onClick={openSettings} className="w-full !justify-start gap-2 !text-xs" aria-label={t('nav.settings')}><Settings size={17}/>{t('nav.settings')}</Button></div>
   </aside>
   <div className="flex min-h-0 min-w-0 flex-col">
