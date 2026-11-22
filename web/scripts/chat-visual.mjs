@@ -199,6 +199,11 @@ try{
   await page.goto(base+'/#/chat?session=chat-ui',{waitUntil:'domcontentloaded'})
   await page.getByRole('combobox',{name:'대화 실행 모드'}).waitFor()
   assert.equal(await input.inputValue(),'첫 번째 대화에만 남는 임시 글','Original draft must return without leaking')
+  const newChat=page.locator('.chat-header .chat-new-session')
+  assert.ok(await newChat.isVisible(),'New chat must be accessible without opening the sidebar at '+width)
+  await newChat.click()
+  await page.locator('.chat-welcome').waitFor({state:'visible',timeout:8000})
+  assert.equal(await input.inputValue(),'','New conversation must have a separate clean draft at '+width)
   assert.deepEqual(pageErrors,[],'React failed at '+width)
   await page.close()
  }
