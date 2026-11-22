@@ -502,7 +502,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   <div className="flex min-h-0 min-w-0 flex-col">
    <header className="chat-header relative flex h-13 shrink-0 items-center justify-between gap-2 border-b border-[#E7E0D5] bg-[#FFFDF9] px-4">
     <Button size="icon" variant="ghost" onClick={()=>setShowHistory(x=>!x)} title={showHistory?t('chat.listCollapse'):t('chat.listExpand')} aria-label={showHistory?t('chat.listCollapse'):t('chat.listExpand')} aria-expanded={showHistory} aria-controls="chat-history"><Menu size={18}/></Button>
-    <Button size="icon" variant="ghost" onClick={resetLocal} title={t('chat.newChat')} aria-label={t('chat.newChat')}><Plus size={18}/></Button>
+    <Button size="icon" variant="ghost" className="chat-new-session" onClick={resetLocal} title={t('chat.newChat')} aria-label={t('chat.newChat')}><Plus size={18}/></Button>
     <ConversationSwitch mode="chat" onChange={switchMode}/>
     <div className="flex min-w-0 flex-1 items-center gap-1.5">
      <div className="chat-model-controls relative flex min-w-0 items-center gap-1">
