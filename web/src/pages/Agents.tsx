@@ -38,6 +38,7 @@ import {
   FormField,
   Headline,
   Notice,
+  PAGE_FRAME,
   Panel,
   Subheading,
   refresh,
@@ -152,7 +153,7 @@ export function AgentsPage() {
     }
   };
   return (
-    <div className="mx-auto w-full max-w-[1480px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8">
+    <div className={PAGE_FRAME}>
       <Headline
         eyebrow={t('ui.eyebrow.agents')}
         title={t('agents.title')}

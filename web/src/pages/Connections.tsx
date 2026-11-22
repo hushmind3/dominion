@@ -4,7 +4,7 @@ import {ChannelEditor} from '../components/ChannelEditor'
 import {useEffect,useRef,useState} from 'react'
 import {Activity,Blocks,BookOpenText,PackagePlus,Sparkles,Server,Check,Globe2,Github,KeyRound,Link2,RadioTower,Settings2,X} from 'lucide-react'
 import {del,post} from '../api'
-import {Action,FormField,Notice,Panel,StateTag,Subheading,useRemote} from '../components/UI'
+import {Action,FormField,Notice,PAGE_FRAME,Panel,StateTag,Subheading,useRemote} from '../components/UI'
 import {t,useLocale} from '../i18n'
 import {ChannelDirectory} from '../components/ChannelDirectory'
 import {normalizeChannelProbe,type ChannelProbe,type Channel,type ChannelEntry} from '../utils/channelView'
@@ -138,8 +138,8 @@ export function ConnectionsPage(){
    </div>
   </section>)}
  </nav>
- if(section!=='channels'&&section!=='accounts'&&section!=='quick-connect')return <div className="mx-auto w-full max-w-[1480px] px-4 py-3 sm:px-6">{pageHeader}{sectionTabs}{section==='capabilities'?<CapabilitiesPage embedded navigate={page=>setSection(page==='extensions'?'market':'channels')}/>:<ExtensionsPage section={section} embedded/>}</div>
- return <div className="mx-auto w-full max-w-[1480px] px-4 py-3 sm:px-6">
+ if(section!=='channels'&&section!=='accounts'&&section!=='quick-connect')return <div className={PAGE_FRAME}>{pageHeader}{sectionTabs}{section==='capabilities'?<CapabilitiesPage embedded navigate={page=>setSection(page==='extensions'?'market':'channels')}/>:<ExtensionsPage section={section} embedded/>}</div>
+ return <div className={PAGE_FRAME}>
   {pageHeader}
   {sectionTabs}
   {section==='quick-connect'&&<ConnectedAccounts onSetupApp={id=>{setOauthError('');setOauthEditor({id,clientId:'',clientSecret:''});setSection('accounts')}}/>}

@@ -2,7 +2,7 @@ import {useEffect,useMemo,useRef,useState} from 'react'
 import {ArrowRight,Check,Cloud,HardDrive,KeyRound,LogIn,Plus,RefreshCw,Search,Settings2,ShieldCheck,Sparkles,UserRound,X} from 'lucide-react'
 import {Provider,del,get,post} from '../api'
 import {Button,TextInput,SelectInput} from '../components/Primitives'
-import {FormField,Notice,refresh,useRemote} from '../components/UI'
+import {Action,FormField,Headline,Notice,PAGE_FRAME,refresh,useRemote} from '../components/UI'
 import {DialogBackdrop,DialogPanel} from '../components/Dialog'
 import {ModelExplorer} from '../components/ModelExplorer'
 import {DominionCloudAccount} from '../components/DominionCloudAccount'
@@ -349,27 +349,24 @@ export function ModelHub(){
   {tab:'oauth' as const,label:'키·로컬 등록',english:'Keys or local',count:credentialReady.length},
   {tab:'free' as const,label:'무료 모델 조회',english:'Free catalog',count:freeCatalog.value.counts?.free||0},
  ]
- return <div className="mx-auto w-full max-w-[1480px] px-4 pt-2 pb-5 sm:px-6 lg:pt-3">
-  <header className="mb-5 flex flex-wrap items-end justify-between gap-4 rounded-2xl border border-[#E4E7DE] bg-[linear-gradient(115deg,#203B38_0%,#344D44_55%,#756957_100%)] px-5 py-6 text-white sm:px-7">
-   <div className="min-w-0">
-    <p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#F2C6A2]">MODEL CONTROL CENTER</p>
-    <h1 className="mt-2 text-[23px] font-bold text-white">{locale==='en'?'Model workspace':'모델 연결 · 실행 환경'}</h1>
-    <p className="mt-2 max-w-xl text-[12px] leading-6 text-[#D5E3DB]">{locale==='en'?'Configure model sources and inspect available accounts.':'로컬 모델, 계정 인증, API 제공자를 연결하고 실제 실행에 사용할 모델을 선택합니다.'}</p>
-   </div>
-   <Button type="button" onClick={()=>open()} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-white/30 bg-white px-4 text-[12px] font-semibold text-[#2D433B] hover:bg-[#F7F3EA]"><Plus size={15}/>{t('models.apiAdd')}</Button>
-  </header>
+ return <div className={PAGE_FRAME}>
+  <Headline
+   eyebrow="MODEL CONTROL CENTER"
+   title={locale==='en'?'Model workspace':'모델 연결 · 실행 환경'}
+   description={locale==='en'?'Configure model sources and inspect available accounts.':'로컬 모델, 계정 인증, API 제공자를 연결하고 실제 실행에 사용할 모델을 선택합니다.'}
+   actions={<Action variant="primary" onClick={()=>open()}><Plus size={15}/>{t('models.apiAdd')}</Action>}/>
   <div className="mb-5 grid grid-cols-2 gap-2 lg:grid-cols-4" role="group" aria-label="Model overview">
    {overview.map(item=><button key={item.tab} type="button" onClick={()=>setTab(item.tab)}
      aria-pressed={tab===item.tab} className={'rounded-xl border px-4 py-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 '+
-      (tab===item.tab?'border-[#B68362] bg-[#FAF1E8]':'border-divider bg-white hover:bg-[#F7F5F0]')}>
-     <strong className="block text-[23px] font-extrabold leading-7 tabular-nums text-[#2A3733]">{item.count}</strong>
-     <span className="mt-1 block text-[11px] text-[#6F746C]">{locale==='en'?item.english:item.label}</span>
+      (tab===item.tab?'border-[var(--color-brand)] bg-[var(--color-brand-soft)]':'border-divider bg-white hover:bg-[var(--color-canvas)]')}>
+     <strong className="block text-[23px] font-extrabold leading-7 tabular-nums text-[var(--color-ink)]">{item.count}</strong>
+     <span className="mt-1 block text-[11px] text-[var(--color-muted)]">{locale==='en'?item.english:item.label}</span>
    </button>)}
   </div>
 
   <div className="mb-3 flex flex-wrap items-center gap-2">
    <nav ref={tabsRef} aria-label="Model sections" className="flex min-w-0 w-full gap-1 overflow-x-auto rounded-xl border border-divider bg-surface p-1 md:w-auto md:flex-wrap">
-    {tabs.map(item=><Button variant="bare" key={item.id} type="button" aria-current={tab===item.id?'page':undefined} onClick={()=>{setTab(item.id);setCategory('all');if(item.id==='connect')setBrowseProviderId('')}} className={'inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] font-semibold transition-colors '+(tab===item.id?'bg-brand text-white':'text-muted hover:bg-canvas')}>{item.label}{item.count!==undefined&&<span className={'rounded px-1.5 py-0.5 text-[10px] '+(tab===item.id?'bg-white/20':'bg-[#F0EAE0] text-muted')}>{item.count}</span>}</Button>)}
+    {tabs.map(item=><Button variant="bare" key={item.id} type="button" aria-current={tab===item.id?'page':undefined} onClick={()=>{setTab(item.id);setCategory('all');if(item.id==='connect')setBrowseProviderId('')}} className={'inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] font-semibold transition-colors '+(tab===item.id?'bg-brand text-white':'text-muted hover:bg-canvas')}>{item.label}{item.count!==undefined&&<span className={'rounded px-1.5 py-0.5 text-[10px] '+(tab===item.id?'bg-white/20':'bg-[var(--color-canvas)] text-muted')}>{item.count}</span>}</Button>)}
    </nav>
 
    {(tab==='providers'||tab==='local')&&<><div className="relative min-w-[180px] flex-1 sm:max-w-[280px]"><Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"/><TextInput value={query} onChange={e=>setQuery(e.target.value)} placeholder={t('models.providerSearch')} className="!pl-8 !text-[12px]"/></div>
@@ -379,7 +376,7 @@ export function ModelHub(){
   {tab==='free'&&<section className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-divider bg-surface px-3 py-2 text-[11px] text-muted" title={t('models.freeCheck.note')}>
    <strong className="text-ink">{t('models.freeCheck.title')}</strong>
    <span className="rounded bg-emerald-50 px-1.5 py-0.5 font-semibold text-emerald-700">{t('models.freeCheck.free',{count:freeCatalog.value.counts?.free||0})}</span>
-   <span className="rounded bg-[#F1ECE3] px-1.5 py-0.5 font-semibold text-muted">{t('models.freeCheck.unknown',{count:freeCatalog.value.counts?.unknown||0})}</span>
+   <span className="rounded bg-[var(--color-canvas)] px-1.5 py-0.5 font-semibold text-muted">{t('models.freeCheck.unknown',{count:freeCatalog.value.counts?.unknown||0})}</span>
    <span className="rounded bg-[#F7EEE9] px-1.5 py-0.5 font-semibold text-brand">{t('models.freeCheck.paid',{count:freeCatalog.value.counts?.paid||0})}</span>
    {freeCatalog.value.providers.filter(p=>!p.reachable).length>0&&<span className="font-semibold text-rose-600">{t('models.freeCheck.failed',{count:freeCatalog.value.providers.filter(p=>!p.reachable).length})}</span>}
    <span className="ml-auto text-[10px] text-muted">{freeCatalog.value.updatedAt?t('models.freeCheck.updated',{time:new Date(freeCatalog.value.updatedAt).toLocaleString()}):t('models.freeCheck.empty')}</span>
