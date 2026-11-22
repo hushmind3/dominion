@@ -46,7 +46,7 @@ export function WorkspaceSidebar({page,open,collapsed,online,running,pending,onN
       const count=item.id==='activity'?running:item.id==='settings'?pending:0
       return <Button variant="bare" key={item.id} type="button" aria-current={page===item.id?'page':undefined} title={t(item.label)} onClick={()=>onNavigate(item.id)}
        className={[
-        'group flex min-h-12 w-[68px] shrink-0 flex-col items-center justify-center gap-1 rounded-lg px-1 text-center text-[10px] leading-tight',
+        'group flex min-h-12 w-17 shrink-0 flex-col items-center justify-center gap-1 rounded-lg px-1 text-center text-[10px] leading-tight',
         'transition-colors md:min-h-10 md:w-full md:flex-row md:justify-start md:gap-3 md:px-3 md:text-left md:text-xs',
         compact?'md:justify-center md:px-0':'',
         page===item.id?'bg-workspace-selected font-semibold text-white ring-1 ring-workspace-line':'text-workspace-sidebar-text hover:bg-workspace-hover hover:text-white'
@@ -70,10 +70,10 @@ export function SettingsHeader({page,online,build,onClose,onSearch}:{page:PageId
  const locale=useLocale()
  const selected=items.find(x=>x.id===page)
  const SelectedIcon=selected?.icon||Settings
- return <header className="flex min-h-16 shrink-0 items-center gap-3 border-b border-[#E7E0D5] bg-[#FFFDF9] px-4 sm:px-6">
-  <SelectedIcon size={18} className="text-[#A35C3F]"/><div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[.14em] text-[#9C8A7A]">DOMINION / {locale==='en'?'Workspace':'워크스페이스'}</p><h1 className="mt-0.5 truncate text-[15px] font-bold text-[#24211D]">{selected?t(selected.label):t('nav.settings')}</h1></div>
+ return <header className="flex min-h-16 shrink-0 items-center gap-3 border-b border-divider bg-surface px-4 sm:px-6">
+  <SelectedIcon size={18} className="text-muted"/><div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-wide text-muted">DOMINION / {locale==='en'?'Workspace':'워크스페이스'}</p><h1 className="mt-0.5 truncate text-sm font-semibold text-ink">{selected?t(selected.label):t('nav.settings')}</h1></div>
   <span className={'hidden items-center gap-1.5 text-[11px] sm:inline-flex '+(online?'text-emerald-700':'text-rose-600')}><i className={'size-1.5 rounded-full '+(online?'bg-emerald-500':'bg-rose-500')}/>{online?t('shell.connected'):t('shell.disconnected')}</span>
-  {build?.branch&&build.branch!=='unknown'&&<span className="hidden max-w-[185px] truncate rounded-md border border-[#E7E0D5] bg-[#F7F3EC] px-2 py-1 text-[10px] font-mono text-[#8A8176] lg:block" title={build.branch+' · '+build.commit}>{build.branch.replace(/^dominion-/,'')} · {build.commit.slice(0,7)}</span>}
+  {build?.branch&&build.branch!=='unknown'&&<span className="hidden max-w-48 truncate rounded-md border border-divider bg-canvas px-2 py-1 text-[10px] font-mono text-muted lg:block" title={build.branch+' · '+build.commit}>{build.branch.replace(/^dominion-/,'')} · {build.commit.slice(0,7)}</span>}
   {onSearch&&<Button variant="ghost" size="icon" aria-label={locale==='en'?'Search workspace menus':'도미니언 메뉴 검색'} title="Ctrl / ⌘ K" onClick={onSearch}><Search size={18}/></Button>}
   <Button variant="ghost" size="icon" aria-label={t('rooms.close')} onClick={onClose}><X size={18}/></Button>
  </header>
@@ -81,5 +81,14 @@ export function SettingsHeader({page,online,build,onClose,onSearch}:{page:PageId
 /** Persistent toolbar navigation; independent of either session list. */
 export function ConversationSwitch({mode,onChange}:{mode:'chat'|'rooms';onChange:(mode:'chat'|'rooms')=>void}){
  useLocale()
- return <nav className="conversation-switch" aria-label={t('shell.conversationSwitch')}><Button variant="ghost" aria-current={mode==='chat'?'page':undefined} onClick={()=>onChange('chat')}><MessageSquare size={16}/><span>{t('nav.chat')}</span></Button><Button variant="ghost" aria-current={mode==='rooms'?'page':undefined} onClick={()=>onChange('rooms')}><UsersRound size={16}/><span>{t('rooms.listTitle')}</span></Button></nav>
+ return <nav className="conversation-switch flex min-w-0 shrink items-center gap-1 whitespace-nowrap" aria-label={t('shell.conversationSwitch')}>
+  <Button variant="ghost" aria-current={mode==='chat'?'page':undefined} onClick={()=>onChange('chat')}
+   className={mode==='chat'?'!bg-canvas !font-semibold !text-ink':'!text-muted hover:!bg-canvas hover:!text-ink'}>
+   <MessageSquare size={16}/><span>{t('nav.chat')}</span>
+  </Button>
+  <Button variant="ghost" aria-current={mode==='rooms'?'page':undefined} onClick={()=>onChange('rooms')}
+   className={mode==='rooms'?'!bg-canvas !font-semibold !text-ink':'!text-muted hover:!bg-canvas hover:!text-ink'}>
+   <UsersRound size={16}/><span>{t('rooms.listTitle')}</span>
+  </Button>
+ </nav>
 }
