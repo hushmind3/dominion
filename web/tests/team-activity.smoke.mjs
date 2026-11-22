@@ -54,6 +54,13 @@ try{
     let response=[];
     if(path==='/api/activity/teams')response=data;
     if(path==='/api/status')response={jobs:0};
+    // Model discovery expects structured catalog responses, not the generic
+    // [] fallback used for list endpoints. Broken fixtures should not crash
+    // the React page while testing navigation.
+    if(path==='/api/providers/free-catalog')response={
+      status:'ready',providers:[],counts:{free:0,paid:0,unknown:0}
+    };
+    if(path==='/api/providers/catalog')response={providers:[]};
     if(path==='/api/jobs')response=[
       {id:'job-running-fixture',kind:'prompt',status:'running',createdAt:'2026-11-22T00:02:00Z',
         sessionId:'chat-one',input:{prompt:'빌드와 코드 검토를 진행해'}},
