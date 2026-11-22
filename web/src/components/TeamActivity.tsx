@@ -233,17 +233,23 @@ export function TeamActivity(){
   'export DOMINION_REMOTE_WORKER_ID="worker-b"',
   './dominion-rust remote-worker'
  ]).join('\n')
- return <section className="mt-10" aria-label={en?'Agent teams':'에이전트 작업 팀'}>
-  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-   <div className="flex min-w-0 items-center gap-2">
-    <UsersRound size={17} className="text-[#7C7469]"/>
-    <h3 className="m-0 text-[14px] font-bold text-[#3A342D]">{en?'Agent teams':'멀티에이전트 팀 작업'}</h3>
-    {inProgress>0&&<span className="rounded-md bg-[#F7E8E1] px-2 py-0.5 text-[10px] text-[#A94E30]">{en?'Running':'진행'} {inProgress}</span>}
-    {reviewCount>0&&<span className="rounded-md bg-amber-50 px-2 py-0.5 text-[10px] text-amber-800">{en?'Review':'검토'} {reviewCount}</span>}
+ return <section className="dominion-team-workspace mt-8" aria-label={en?'Agent teams':'에이전트 작업 팀'}>
+  <div className="dominion-team-hero relative mb-4 overflow-hidden rounded-[24px] px-5 py-6 sm:px-7">
+   <div className="relative z-10 flex flex-wrap items-start justify-between gap-5">
+    <div className="min-w-0 flex-1">
+     <span className="text-[10px] font-extrabold uppercase tracking-[.19em] text-[#F6BB9E]">DOMINION / TEAM ORCHESTRATION</span>
+     <h3 className="mt-2 !text-[22px] font-extrabold text-white sm:!text-[25px]">{en?'Agent teams':'멀티에이전트 팀 작업'}</h3>
+     <p className="mt-2 max-w-xl text-[12px] leading-6 text-[#DDD4CB]">{en?'Plan with a Lead, execute through Workers, then inspect real outputs and required reviews.':'Lead가 계획하고 Worker가 실행합니다. 진행 상황과 검토할 파일 변경을 한곳에서 확인하세요.'}</p>
+    </div>
+    <div className="flex shrink-0 flex-wrap items-center gap-2">
+     <Button size="sm" variant="bare" onClick={()=>setCreateOpen(o=>!o)} aria-expanded={createOpen} className="!min-h-10 !rounded-xl !bg-[#F6D8C5] !px-4 !font-bold !text-[#5E3627] hover:!bg-white"><Play size={15}/>{hasDraft?(en?'Continue team draft':'팀 초안 이어쓰기'):(en?'New team task':'팀 작업 시작')}</Button>
+     <Button size="sm" variant="bare" onClick={reload} aria-label={en?'Refresh teams':'팀 새로고침'} className="!size-10 !rounded-xl !border !border-white/20 !bg-white/10 !text-white hover:!bg-white/20"><RefreshCw size={16}/></Button>
+    </div>
    </div>
-   <div className="flex gap-2">
-    <Button size="sm" variant="secondary" onClick={()=>setCreateOpen(o=>!o)} aria-expanded={createOpen}><Play size={13}/>{hasDraft?(en?'Continue team draft':'팀 초안 이어쓰기'):(en?'New team task':'팀 작업 시작')}</Button>
-    <Button size="sm" variant="ghost" onClick={reload} aria-label={en?'Refresh teams':'팀 새로고침'}><RefreshCw size={13}/></Button>
+   <div className="relative z-10 mt-6 grid grid-cols-3 gap-2">
+    <div className="dominion-team-stat"><span>{en?'Saved teams':'저장된 팀'}</span><strong>{activity.loading||activity.error?'—':activity.value.teams.length}</strong></div>
+    <div className="dominion-team-stat"><span>{en?'Running':'진행 중'}</span><strong>{activity.loading||activity.error?'—':inProgress}</strong></div>
+    <div className="dominion-team-stat"><span>{en?'Review needed':'검토 필요'}</span><strong>{activity.loading||activity.error?'—':reviewCount}</strong></div>
    </div>
   </div>
   {createOpen&&<Panel className="mb-4 space-y-3 p-4 sm:p-5">
@@ -299,7 +305,7 @@ export function TeamActivity(){
    {active(job.status)&&<Button size="sm" variant="danger" disabled={Boolean(busy)} onClick={()=>void cancelLead(job)}><Square size={13}/>{en?'Stop':'중단'}</Button>}
    {job.error&&<span role="alert" className="w-full break-words text-rose-700">{job.error}</span>}
   </div>)}
-  <Panel className="overflow-hidden p-4 sm:p-5">
+  <Panel className="dominion-team-board overflow-hidden !rounded-2xl p-4 sm:p-5">
    <div className="mb-3 flex flex-col gap-2 border-b border-[#EFE9DF] pb-3 sm:flex-row sm:items-center">
     <TextInput aria-label={en?'Find a team or Worker':'팀·Worker 검색'}
      value={teamSearch} onChange={event=>setTeamSearch(event.target.value)}
@@ -325,7 +331,7 @@ export function TeamActivity(){
      const done=team.tasks.filter(task=>task.status==='completed').length
      const pending=team.pendingRemoteArtifactTaskIds.length
      const width=team.tasks.length?Math.round(100*done/team.tasks.length):0
-     return <div key={team.id} className="min-w-0 rounded-xl border border-[#E7E0D5] bg-white">
+     return <div key={team.id} className="dominion-team-card min-w-0 rounded-xl border border-[#E7E0D5] bg-white">
       <Button variant="bare" className="flex w-full min-w-0 items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-[#FAF7F1]" onClick={()=>{setSelected(open?'':team.id);setReview(null)}} aria-expanded={open}>
        {open?<ChevronDown size={16} className="shrink-0 text-[#8A8176]"/>:<ChevronRight size={16} className="shrink-0 text-[#8A8176]"/>}
        <span className="min-w-0 flex-1"><strong className="block truncate text-[12px] text-[#3A342D]">{team.leadAgentId||'Lead'} · {en?'Team':'팀'} {team.id.slice(-9)}</strong>

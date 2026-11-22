@@ -42,10 +42,33 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
   {title:'dashboard.shortcut.models',desc:'dashboard.shortcut.models.desc',icon:Cpu,page:'models' as const},
   {title:'dashboard.shortcut.agents',desc:'dashboard.shortcut.agents.desc',icon:Bot,page:'agents' as const}
  ]
- return <PageContainer className="!max-w-[1200px] !py-5">
-  <div className="mb-5 flex flex-wrap items-end justify-between gap-3"><div><h1 className="m-0 text-[19px] font-bold tracking-tight">{t('dashboard.title')}</h1><p className="mt-1 text-[12px] text-[#7C7469]">{t('dashboard.subtitle')}</p></div><Button type="button" variant="primary" onClick={()=>navigate('chat')} className="flex h-8 items-center gap-2 rounded-lg px-3 text-[11px] font-semibold"><MessageSquare size={14}/> {t('dashboard.openChat')} <ArrowRight size={13}/></Button></div>
+ return <PageContainer className="dominion-home !max-w-[1320px] !py-7">
+  <section className="dominion-home-hero relative mb-5 overflow-hidden rounded-[28px] px-6 py-8 sm:px-9 sm:py-9">
+   <div className="relative z-10 flex flex-wrap items-start justify-between gap-5">
+    <div className="min-w-0 max-w-2xl">
+     <span className="text-[10px] font-bold uppercase tracking-[.22em] text-[#FFD1B9]">DOMINION / COMMAND CENTER</span>
+     <h1 className="mt-3 !text-[30px] font-extrabold tracking-[-.04em] text-white sm:!text-[36px]">{t('dashboard.title')}</h1>
+     <p className="mt-2 text-[13px] leading-6 text-[#E6DAD0]">{t('dashboard.subtitle')}</p>
+    </div>
+    <Button type="button" variant="bare" onClick={()=>navigate('chat')} className="!flex !min-h-11 !items-center !gap-2 !rounded-xl !bg-[#F8E7D8] !px-5 !text-[13px] !font-bold !text-[#633620] hover:!bg-white"><MessageSquare size={17}/>{t('dashboard.openChat')}<ArrowRight size={15}/></Button>
+   </div>
+   <div className="relative z-10 mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3">
+    <Button variant="bare" onClick={()=>navigate('activity')} className="dominion-home-hero-stat flex flex-col !items-start !rounded-xl !px-4 !py-3">
+     <span className="text-[11px] text-[#EADBD0]">{t('dashboard.metric.jobs')}</span><strong className="mt-1 text-[26px] font-extrabold text-white">{jobs.loading||jobs.error?'—':busy}</strong>
+    </Button>
+    <Button variant="bare" onClick={()=>navigate('models')} className="dominion-home-hero-stat flex flex-col !items-start !rounded-xl !px-4 !py-3">
+     <span className="text-[11px] text-[#EADBD0]">{t('dashboard.metric.providers')}</span><strong className="mt-1 text-[26px] font-extrabold text-white">{providers.loading||providers.error?'—':enabledProviders.length}</strong>
+    </Button>
+    <Button variant="bare" onClick={()=>navigate('agents')} className="dominion-home-hero-stat col-span-2 flex flex-col !items-start !rounded-xl !px-4 !py-3 sm:col-span-1">
+     <span className="text-[11px] text-[#EADBD0]">{t('dashboard.metric.agents')}</span><strong className="mt-1 text-[26px] font-extrabold text-white">{agents.loading||agents.error?'—':agents.value.length}</strong>
+    </Button>
+   </div>
+  </section>
   {failedSources.length>0&&<div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-900"><span>{t('dashboard.partialError',{count:failedSources.length})}</span><Button type="button" variant="secondary" size="sm" onClick={()=>void retryFailed()} disabled={retrying} aria-live="polite">{retrying?<><LoaderCircle size={13} className="animate-spin"/>{t('dashboard.retrying')}</>:t('dashboard.retry')}</Button></div>}
-  <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{metrics.map(m=>{const Icon=m.icon;return <Button type="button" key={m.name} onClick={()=>navigate(m.page)} aria-busy={m.source.loading} className="flex min-h-24 flex-col items-start rounded-xl border border-[#E7E0D5] bg-white p-4 text-left transition-colors hover:border-[#D8CFC2]"><span className="flex w-full items-center justify-between text-[11px] text-[#7C7469]">{t(m.name as any)}<Icon size={16} className="text-[#A79C8E]"/></span>{m.source.loading?<span className="mt-4 h-6 w-14 animate-pulse rounded-md bg-[#F3EEE5]" aria-label={t('dashboard.loading')}/>:<strong className="mt-4 text-[23px] font-bold leading-none tabular-nums text-[#24211D]">{m.source.error?'—':m.value}</strong>}</Button>})}</div>
+  <div className="dominion-home-metrics grid grid-cols-2 gap-3 lg:grid-cols-4">{metrics.map(m=>{const Icon=m.icon;return <Button variant="bare" type="button" key={m.name} onClick={()=>navigate(m.page)} aria-busy={m.source.loading} className="dominion-home-metric group flex min-h-[120px] flex-col !items-start !justify-between rounded-2xl border border-[#E7E0D5] bg-white px-5 py-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-[#D7B99F] hover:shadow-lg">
+    <span className="flex w-full items-center justify-between gap-2 text-[11px] font-semibold text-[#81766A]">{t(m.name as any)}<span className="grid size-9 place-items-center rounded-xl bg-[#F8F1EA] text-[#B35B3F]"><Icon size={17}/></span></span>
+    {m.source.loading?<span className="h-7 w-16 animate-pulse rounded-md bg-[#F3EEE5]" aria-label={t('dashboard.loading')}/>:<span className="flex w-full items-end justify-between"><strong className="text-[27px] font-extrabold leading-none tabular-nums text-[#2B2724]">{m.source.error?'—':m.value}</strong><ArrowRight size={15} className="text-[#B5A597] transition-transform group-hover:translate-x-1"/></span>}
+   </Button>})}</div>
   <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(270px,.72fr)]">
    <section className="rounded-xl border border-[#E7E0D5] bg-white">
     <div className="border-b border-[#F0EAE1] px-4 py-3"><h2 className="text-[13px] font-bold">{t('dashboard.runNow')}</h2><p className="mt-1 text-[11px] text-[#8A8176]">{t('dashboard.runNow.desc')}</p></div>
