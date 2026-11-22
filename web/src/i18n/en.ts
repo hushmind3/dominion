@@ -711,6 +711,7 @@ const en: Record<LocaleKey, string> = {
   'rooms.people': ' people',
   'rooms.withAgents': ' and {count} agents',
   'rooms.loading': 'Loading conversation',
+  'rooms.writeFirst': 'Write the first message',
   'rooms.firstDesc2': 'Participants read this room together and respond.',
   'rooms.mentionPlaceholder': 'Mention @name or select responders below.',
   'rooms.pickResponders': 'Select responders',
