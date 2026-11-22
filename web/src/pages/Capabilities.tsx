@@ -29,6 +29,7 @@ export function CapabilitiesPage({navigate}:{navigate:(page:Page)=>void}){
  const needle=query.trim().toLowerCase()
  const visible=items.filter(item=>(family==='all'||item.namespace===family)&&
   [item.name,item.id,item.description].join(' ').toLowerCase().includes(needle))
+ const countsKnown=!data.loading&&!catalog.loading&&!data.error&&!catalog.error
  const reload=async()=>{
   setRefreshing(true)
   try{await Promise.all([data.reload(),catalog.reload()])}finally{setRefreshing(false)}
@@ -38,14 +39,14 @@ export function CapabilitiesPage({navigate}:{navigate:(page:Page)=>void}){
   <Notice message={data.error||catalog.error}/>
   <div className="mb-4 flex items-center gap-2"><Search size={16}/><TextInput aria-label={t('cap.searchAria')} value={query} onChange={event=>setQuery(event.target.value)} placeholder={t('cap.searchPlaceholder')}/></div>
   <div className="mb-5 flex flex-wrap items-center gap-2 border-b border-[#E7E0D5] pb-3">
-   {families.map(({id,label,icon:Icon})=><Button key={id} variant={id===family?'primary':'ghost'} aria-pressed={id===family} onClick={()=>setFamily(id)}><Icon size={16}/>{label} {items.filter(item=>id==='all'||item.namespace===id).length}</Button>)}
+   {families.map(({id,label,icon:Icon})=><Button key={id} variant={id===family?'primary':'ghost'} aria-pressed={id===family} onClick={()=>setFamily(id)}><Icon size={16}/>{label} {countsKnown?items.filter(item=>id==='all'||item.namespace===id).length:'—'}</Button>)}
    {family!=='builtin'&&<label className="ml-auto flex items-center gap-2 text-sm"><TextInput type="checkbox" checked={showPlanned} onChange={event=>setShowPlanned(event.target.checked)}/> {t('cap.includePlanned')}</label>}
   </div>
   <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{visible.map(item=><Button key={item.namespace+':'+item.id} onClick={()=>setDetail(item)} className="!flex-col !items-start !justify-start !p-4 text-left">
    <span className="flex w-full items-center justify-between gap-2"><strong className="break-all text-sm">{item.name}</strong><StateTag online={item.available}>{item.namespace==='builtin'?t('cap.builtin'):!item.available?t('cap.unsupported'):item.mode==='outbound'?t('cap.outbound'):t('cap.supported')}</StateTag></span>
    <span className="text-sm font-normal text-[#7C7469]">{item.description}</span>
   </Button>)}</div>
-  {!visible.length&&<Panel className="p-5 text-sm text-[#7C7469]">{data.loading||catalog.loading?t('cap.loading'):t('cap.empty')}</Panel>}
+  {!visible.length&&<Panel className="p-5 text-sm text-[#7C7469]">{data.loading||catalog.loading?t('cap.loading'):data.error||catalog.error?t('cap.unavailable'):t('cap.empty')}</Panel>}
   {detail&&<DialogBackdrop onDismiss={()=>setDetail(undefined)}><DialogPanel aria-label={detail.name} className="p-5">
    <h2>{detail.name}</h2><p className="mt-2">{detail.description}</p>
    {detail.maxRoomParticipants&&<p className="mt-2">{t('cap.maxRoom',{count:detail.maxRoomParticipants})}</p>}

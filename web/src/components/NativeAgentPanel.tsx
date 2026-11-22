@@ -35,7 +35,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [error,setError]=useState('')
  useEffect(()=>{
   let alive=true
-  get<SdkRun[]>('/api/sdk/runs').then(list=>{if(alive&&list.length)setRun(list[0])}).catch(()=>{})
+  get<SdkRun[]>('/api/sdk/runs').then(list=>{if(alive&&list.length)setRun(list[0])}).catch(e=>{if(alive)setError((e as Error).message)})
   return()=>{alive=false}
  },[])
  useEffect(()=>{

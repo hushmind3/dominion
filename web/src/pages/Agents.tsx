@@ -325,6 +325,9 @@ export function AgentsPage() {
             </div>
           </Panel>
         ))}
+        {!agents.value.length&&agents.loading&&<Panel className="p-5 text-center text-sm text-[#7C7469]">{t('agents.loading')}</Panel>}
+        {!agents.value.length&&agents.error&&<Panel role="status" className="p-5 text-center text-sm text-[#7C7469]">{t('agents.unavailable')}</Panel>}
+        {!agents.value.length&&!agents.loading&&!agents.error&&<Panel><Empty icon={Bot} title={t('agents.empty')}/></Panel>}
       </div>
       {!edit && <Notice message={error || agents.error || providers.error} />}
       {showPersonaImport&&<PersonaImportDialog agents={agents.value} onClose={()=>setShowPersonaImport(false)} onImported={async(count)=>{await agents.reload();refresh();setBulkNotice(t('agents.personaImported', { count }))}}/>}
