@@ -54,6 +54,14 @@ try{
     let response=[];
     if(path==='/api/activity/teams')response=data;
     if(path==='/api/status')response={jobs:0};
+    if(path==='/api/jobs')response=[
+      {id:'job-running-fixture',kind:'prompt',status:'running',createdAt:'2026-11-22T00:02:00Z',
+        sessionId:'chat-one',input:{prompt:'빌드와 코드 검토를 진행해'}},
+      {id:'job-review-fixture',kind:'prompt',status:'needs_review',createdAt:'2026-11-22T00:01:00Z',
+        sessionId:'chat-two',input:{prompt:'원격 Writer 변경을 검토해'},error:'requires owner review'},
+      {id:'job-finished-fixture',kind:'prompt',status:'completed',createdAt:'2026-11-21T00:00:00Z',
+        sessionId:'chat-one',input:{prompt:'이전에 완료한 작업'}}
+    ];
     if(path==='/api/agents')response=[
       {id:'lead',name:'Lead',providerId:'fixture',model:'fixture',enabled:true},
       {id:'researcher',name:'Researcher',providerId:'fixture',model:'fixture',enabled:true},
@@ -136,6 +144,35 @@ try{
   });
   await page.goto(address+'/#/activity',{waitUntil:'domcontentloaded'});
   await page.getByRole('heading',{name:'멀티에이전트 팀 작업'}).waitFor({timeout:10000});
+  // A shared Home/Activity work queue prioritizes real attention states.
+  await page.getByRole('textbox',{name:'작업 검색'}).waitFor({timeout:10000});
+  const workFilter=page.getByRole('combobox',{name:'작업 상태 필터'});
+  await workFilter.selectOption('attention');
+  assert.ok(await page.getByText('원격 Writer 변경을 검토해').isVisible());
+  assert.equal(await page.getByText('빌드와 코드 검토를 진행해').count(),0);
+  await page.getByRole('button',{name:/원격 Writer 변경을 검토해/}).first().click();
+  assert.ok(await page.getByRole('link',{name:'대화에서 이어보기'}).isVisible());
+  await workFilter.selectOption('all');
+  await page.getByRole('textbox',{name:'작업 검색'}).fill('완료한 작업');
+  assert.ok(await page.getByText('이전에 완료한 작업').isVisible());
+  await page.getByRole('textbox',{name:'작업 검색'}).fill('');
+  // No new sidebar entry: Ctrl+K navigates by existing page identity.
+  await page.keyboard.press('Control+k');
+  const switcher=page.getByRole('dialog',{name:'작업공간 빠른 이동'});
+  await switcher.waitFor({timeout:10000});
+  await switcher.getByRole('combobox',{name:'기능 검색'}).fill('기억');
+  assert.equal(await switcher.getByRole('option').count(),1);
+  await switcher.getByRole('combobox',{name:'기능 검색'}).press('Enter');
+  await page.waitForURL('**/#/memory');
+  await page.goto(address+'/#/activity',{waitUntil:'domcontentloaded'});
+  // Team search surfaces blocked Writer/Worker DAG without a long scroll.
+  await page.getByRole('textbox',{name:'팀·Worker 검색'}).fill('researcher');
+  assert.ok(await page.getByText('Team m-fixture',{exact:false}).first().isVisible());
+  await page.getByRole('textbox',{name:'팀·Worker 검색'}).fill('');
+  await page.getByRole('combobox',{name:'팀 상태 필터'}).selectOption('attention');
+  assert.equal(await page.getByRole('button',{name:/Team m-fixture/}).count(),1);
+  await page.getByRole('combobox',{name:'팀 상태 필터'}).selectOption('all');
+
   await page.getByText('저장된 Lead 작업',{exact:false}).first()
     .waitFor({state:'visible',timeout:10000});
   await page.reload({waitUntil:'domcontentloaded'});

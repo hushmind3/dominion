@@ -35,7 +35,8 @@ export function QuickSwitcher({page,onClose,onNavigate,onNewChat,running,pending
   <DialogPanel size="wide" aria-label={en?'Go to a workspace page':'작업공간 빠른 이동'} className="max-w-[600px] overflow-hidden p-0">
    <div className="flex items-center gap-3 border-b border-[#EFE9DF] px-4 py-3">
     <Search size={19} className="shrink-0 text-[#A94E30]"/>
-    <TextInput ref={input} type="search" role="combobox" aria-expanded={choices.length>0}
+    <TextInput ref={input} type="search" role="combobox" aria-label={en?'Find feature':'기능 검색'}
+     aria-activedescendant={choice?'dominion-quick-'+Math.min(active,choices.length-1):undefined} aria-expanded={choices.length>0}
      aria-controls="dominion-quick-options" aria-autocomplete="list"
      value={query} onChange={event=>{setQuery(event.target.value);setActive(0)}}
      onKeyDown={event=>{
@@ -55,7 +56,7 @@ export function QuickSwitcher({page,onClose,onNavigate,onNewChat,running,pending
    <div id="dominion-quick-options" role="listbox" aria-label={en?'Results':'검색 결과'} className="max-h-[58dvh] overflow-y-auto p-2">
     {choices.map((item,index)=>{
      const Icon=item.icon
-     return <Button key={item.id} variant="bare" role="option"
+     return <Button key={item.id} id={'dominion-quick-'+index} variant="bare" role="option"
       aria-selected={index===active} onMouseEnter={()=>setActive(index)}
       onClick={()=>select(item)}
       className={'flex min-h-12 w-full min-w-0 items-center gap-3 rounded-xl px-3 py-2 text-left focus-visible:outline-2 focus-visible:outline-[#C96442] '+
