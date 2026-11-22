@@ -85,7 +85,17 @@ try{
  })
  await page.goto(origin+'/#/chat',{waitUntil:'domcontentloaded'})
  const composer=page.locator('form.conversation-composer textarea')
- await composer.waitFor({state:'visible',timeout:12000})
+ try{
+  await composer.waitFor({state:'visible',timeout:15000})
+ }catch(error){
+  console.error('SUB2 SMOKE DIAGNOSTIC',{
+   url:page.url(),pageErrors,
+   body:(await page.locator('body').innerText().catch(()=>'')).slice(0,2500),
+   html:(await page.locator('body').innerHTML().catch(()=>'')).slice(0,2500),
+   vite:log.slice(-1500)
+  })
+  throw error
+ }
  await composer.fill('웹 검색해서 확인해줘')
  await composer.press('Enter')
  await page.getByText('응답 확인 1').first().waitFor({timeout:12000})
