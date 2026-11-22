@@ -4,11 +4,13 @@ import {readFileSync} from 'node:fs'
 import {fileURLToPath} from 'node:url'
 const root=fileURLToPath(new URL('../',import.meta.url))
 const home=readFileSync(root+'src/pages/Home.tsx','utf8')
-test('home counts only private conversations, never Room or external channels',()=>{
+test('home stays a single task entry, not a telemetry dashboard',()=>{
  assert.match(home,/const privateSessions=sessions\.value\.filter/)
  assert.match(home,/!s\.roomId&&!s\.channelContext/)
  assert.match(home,/s\.kind!=='room'&&s\.kind!=='channel'&&!s\.archived/)
- assert.match(home,/dashboard\.metric\.chat',value:privateSessions\.length/)
+ assert.doesNotMatch(home,/data-dashboard-metric/)
+ assert.doesNotMatch(home,/dashboard\.usage/)
+ assert.match(home,/<NativeAgentPanel providers=\{providers\.value\}\/>/)
 })
 test('home exposes real owner-actionable pending approvals and uncertain jobs',()=>{
  assert.match(home,/\['awaiting_approval','needs_review'\]\.includes\(j\.status\)/)
@@ -16,9 +18,9 @@ test('home exposes real owner-actionable pending approvals and uncertain jobs',(
  assert.match(home,/onClick=\{\(\)=>navigate\('activity'\)\}/)
 })
 
-test('home uses measured audit totals rather than fabricated API prices',()=>{
- assert.match(home,/useRemote<\{calls:number;totalTokens:number;estimatedCalls:number\}>/)
- assert.match(home,/\/api\/model-usage/)
- assert.match(home,/data-home-usage/)
- assert.match(home,/usage\.value\.estimatedCalls>0/)
+test('home keeps one plain greeting and one recent-work list',()=>{
+ assert.match(home,/무엇을 도와드릴까요\?/)
+ assert.match(home,/최근 작업/)
+ assert.doesNotMatch(home,/token/i)
+ assert.doesNotMatch(home,/api\/model-usage/)
 })

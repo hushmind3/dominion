@@ -163,7 +163,7 @@ export default function App(){
   <ContextMenu/>
   {/* One light chrome owns the whole product. Chat and room trees stay mounted
       below it so drafts and active turns survive every menu switch. */}
-  <WorkspaceTopBar page={page} online={online} running={running} pending={pending} build={engineBuild}
+  <WorkspaceTopBar page={page} online={online} running={running} pending={pending}
    onNavigate={target=>target==='chat'?returnToChat():navigate(target)}
    onSearch={()=>setSearchOpen(true)}/>
   <div className="min-h-0 min-w-0 overflow-hidden bg-canvas">

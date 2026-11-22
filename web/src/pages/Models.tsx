@@ -331,23 +331,22 @@ export function ModelHub(){
  }),[providers.value,query,tab])
  const catalogVisible=useMemo(()=>{const term=query.trim().toLowerCase();const unique=new Map<string,CatalogProvider>();for(const p of catalog.value.providers){const key=p.api.replace(/\/$/,'').toLowerCase();const old=unique.get(key);if(!old||p.models>old.models)unique.set(key,p)}return [...unique.values()].filter(p=>!term||(p.name+' '+p.id+' '+p.api).toLowerCase().includes(term)).sort((a,b)=>catalogSort==='models'?b.models-a.models||a.name.localeCompare(b.name):a.name.localeCompare(b.name))},[catalog.value.providers,query,catalogSort])
  const tabs:Array<{id:Tab;label:string;count?:number}>= [
-  {id:'providers',label:'내 모델',count:providers.value.filter(p=>!p.local).length},
+  {id:'providers',label:'내 AI',count:providers.value.filter(p=>!p.local).length},
   {id:'cloud',label:'DOMINION Cloud'},
-  {id:'connect',label:'업체 연결'},
-  {id:'free',label:'무료 모델',count:freeCatalog.value.counts?.free||0},
-  {id:'catalog',label:'업체 탐색'},
-  {id:'huggingface',label:'허깅페이스 모델 탐색'},
-  {id:'local',label:'로컬',count:providers.value.filter(p=>p.local).length},
-  {id:'oauth',label:'계정 인증'},
+  {id:'connect',label:'AI 추가'},
+  {id:'free',label:'무료 AI',count:freeCatalog.value.counts?.free||0},
+  {id:'catalog',label:'AI 찾아보기'},
+  {id:'huggingface',label:'오픈 모델'},
+  {id:'local',label:'내 컴퓨터',count:providers.value.filter(p=>p.local).length},
+  {id:'oauth',label:'계정 연결'},
  ]
  const activeProviders=providers.value.filter(provider=>provider.enabled!==false)
  const localProviders=activeProviders.filter(provider=>provider.local)
  const credentialReady=activeProviders.filter(provider=>provider.local||provider.hasKey)
  return <div className={PAGE_FRAME}>
   <Headline
-   eyebrow="MODEL CONTROL CENTER"
-   title={locale==='en'?'Model workspace':'모델 연결 · 실행 환경'}
-   description={locale==='en'?'Configure model sources and inspect available accounts.':'로컬 모델, 계정 인증, API 제공자를 연결하고 실제 실행에 사용할 모델을 선택합니다.'}
+   title={locale==='en'?'Choose your AI':'AI 선택'}
+   description={locale==='en'?'Pick the AI that answers your conversations. You can add more services any time.':'대화에 쓸 AI를 고르세요. 다른 AI 서비스를 추가할 수도 있습니다.'}
    actions={<Action variant="primary" onClick={()=>open()}><Plus size={15}/>{t('models.apiAdd')}</Action>}/>
   <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
    <aside className="min-w-0">

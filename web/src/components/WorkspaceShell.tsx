@@ -1,5 +1,6 @@
+import {useEffect,useRef,useState} from 'react'
 import {OwnerProfileEditor} from './OwnerProfile'
-import {MessageSquare,Search,Settings,UsersRound} from 'lucide-react'
+import {ChevronDown,MessageSquare,Search,Settings,UsersRound} from 'lucide-react'
 import {Button} from './Primitives'
 import {t,useLocale} from '../i18n'
 import {navigationItems,pageLabels,type PageId} from '../navigation'
@@ -7,14 +8,38 @@ import {navigationItems,pageLabels,type PageId} from '../navigation'
 /** Primary surfaces stay visible as tabs; every other page lives in ⌘K. */
 const primary: PageId[] = ['home', 'chat', 'rooms', 'models', 'agents']
 
-export function WorkspaceTopBar({page,online,running,pending,build,onNavigate,onSearch}:{
+export function WorkspaceTopBar({page,online,running,pending,onNavigate,onSearch}:{
  page: PageId; online: boolean; running: number; pending: number
- build?: {branch: string; commit: string} | null
  onNavigate: (id: PageId) => void; onSearch: () => void
 }) {
  const locale = useLocale()
+ const [moreOpen, setMoreOpen] = useState(false)
+ const moreRef = useRef<HTMLDivElement>(null)
  const badge = running + pending
- return <header className="flex h-14 shrink-0 items-center gap-2 border-b border-divider bg-surface px-2 sm:px-3">
+ const secondary: PageId[] = ['models','agents','connections','extensions','capabilities','memory','activity']
+ useEffect(() => {
+  if (!moreOpen) return
+  const close = (event: MouseEvent) => {
+   if (!moreRef.current?.contains(event.target as Node)) setMoreOpen(false)
+  }
+  const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setMoreOpen(false) }
+  document.addEventListener('mousedown', close)
+  document.addEventListener('keydown', escape)
+  return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', escape) }
+ }, [moreOpen])
+ const menuItem = (id: PageId) => {
+  const entry = navigationItems.find(item => item.id === id)
+  if (!entry) return null
+  const Icon = entry.icon
+  const active = page === id
+  return <button key={id} type="button" aria-current={active ? 'page' : undefined}
+   onClick={() => { setMoreOpen(false); onNavigate(id) }}
+   className={'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12.5px] transition-colors '+
+    (active ? 'bg-canvas font-semibold text-ink' : 'text-ink hover:bg-canvas')}>
+   <Icon size={16} className="text-muted"/>{t(entry.label)}
+  </button>
+ }
+ return <header className="relative flex h-14 shrink-0 items-center gap-2 border-b border-divider bg-surface px-2 sm:px-3">
   <button type="button" onClick={() => onNavigate('home')} aria-label="DOMINION"
    className="flex shrink-0 items-center gap-2 rounded-lg px-1.5 py-1 transition-colors hover:bg-canvas">
    <span className="grid size-7 place-items-center rounded-lg bg-ink text-[11px] font-black text-white">D</span>
@@ -28,9 +53,9 @@ export function WorkspaceTopBar({page,online,running,pending,build,onNavigate,on
     const active = page === id
     return <button key={id} type="button" aria-current={active ? 'page' : undefined}
      title={t(item.label)} onClick={() => onNavigate(id)}
-     className={'inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-[12px] transition-colors '+
+     className={'inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-3 text-[13px] transition-colors '+
       (active ? 'bg-canvas font-semibold text-ink' : 'text-muted hover:bg-canvas hover:text-ink')}>
-     <Icon size={16}/><span className="hidden sm:inline">{t(item.label)}</span>
+     <Icon size={17}/><span className="hidden sm:inline">{t(item.label)}</span>
     </button>
    })}
   </nav>
@@ -39,13 +64,30 @@ export function WorkspaceTopBar({page,online,running,pending,build,onNavigate,on
     <i className="size-1.5 animate-pulse rounded-full bg-emerald-500"/>{badge}
    </span>}
    <Button variant="ghost" size="icon" aria-label={locale === 'en' ? 'Search' : '검색'} title="⌘K" onClick={onSearch}>
-    <Search size={17}/>
+    <Search size={18}/>
    </Button>
-   <span className={'hidden size-1.5 rounded-full sm:block '+(online ? 'bg-emerald-500' : 'bg-rose-500')} title={online ? t('shell.connected') : t('shell.disconnected')}/>
-   {build?.branch && build.branch !== 'unknown' && <span className="hidden max-w-40 truncate font-mono text-[10px] text-muted xl:block" title={build.branch + ' · ' + build.commit}>{build.branch.replace(/^dominion-/, '')} · {build.commit.slice(0, 7)}</span>}
-   <Button variant="ghost" size="icon" aria-label={t('nav.settings')} title={t('nav.settings')} onClick={() => onNavigate('settings')}>
-    <Settings size={17}/>
-   </Button>
+   <div className="relative" ref={moreRef}>
+    <Button variant="ghost" aria-label={t('shell.moreAria')} aria-expanded={moreOpen} onClick={() => setMoreOpen(open => !open)}
+     className={moreOpen ? '!bg-canvas !text-ink' : ''}>
+     <span className="hidden sm:inline">{t('shell.more')}</span><ChevronDown size={15} className={'transition-transform '+(moreOpen ? 'rotate-180' : '')}/>
+    </Button>
+    {moreOpen && <div role="menu" aria-label={t('shell.more')}
+     className="absolute right-0 top-full z-50 mt-2 w-60 rounded-xl border border-divider bg-surface p-1.5 shadow-[0_12px_40px_rgb(17_19_24_/_0.12)]">
+     {menuItem('models')}
+     {menuItem('agents')}
+     <div className="my-1.5 border-t border-divider"/>
+     {menuItem('connections')}
+     {menuItem('extensions')}
+     {menuItem('capabilities')}
+     <div className="my-1.5 border-t border-divider"/>
+     {menuItem('activity')}
+     {menuItem('memory')}
+     <div className="my-1.5 border-t border-divider"/>
+     {menuItem('settings')}
+    </div>}
+   </div>
+   <span className={'hidden size-2 rounded-full sm:block '+(online ? 'bg-emerald-500' : 'bg-rose-500')}
+    title={online ? t('shell.connected') : t('shell.disconnected')}/>
    <OwnerProfileEditor compact/>
   </div>
  </header>
