@@ -79,7 +79,7 @@ for(const route of teamRoutes){
  }
 }
 const teamControls=content.get('src/api/services/automation/team_controls.rs')||'';
-const activityUi=content.get('web/src/components/TeamActivity.tsx')||'';
+const activityUi=content.get('web/src/components/RemoteWorkPanel.tsx')||'';
 const operationUi=content.get('web/src/pages/Operations.tsx')||'';
 const chatUi=content.get('web/src/pages/Chat.tsx')||'';
 const teamTools=content.get('src/engine/services/tools/tools_team.rs')||'';
