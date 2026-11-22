@@ -47,7 +47,7 @@ export function AssistantInstructions(){
     <span>{en?'Use these instructions':'공통 지침 사용'}</span>
     <span className={Array.from(draft).length>16000?'text-rose-700':''}>{Array.from(draft).length.toLocaleString()} / 16,000</span>
    </div>
-   <Action disabled={saving||!changed||Array.from(draft).length>16000} onClick={()=>void save()}>
+   <Action disabled={saving||remote.loading||!changed||Array.from(draft).length>16000} onClick={()=>void save()}>
     {saving?(en?'Saving…':'저장 중…'):(en?'Save instructions':'지침 저장')}
    </Action>
   </div>
