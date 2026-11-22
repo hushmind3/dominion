@@ -197,6 +197,7 @@ test('owner Team UI routes through one native scheduler and reviewed patch gatew
   const team=source('src/engine/services/tools/tools_team.rs');
   const store=source('src/db.rs');
   const ui=source('web/src/components/TeamActivity.tsx');
+  const patchUi=source('web/src/components/RemoteWorkPanel.tsx');
   for(const action of ['start','stop','resume','preview','approve_apply','reject'])
     assert.match(routes,new RegExp('team_controls::'+action));
   assert.match(api,/engine::jobs::enqueue/);
@@ -208,9 +209,12 @@ test('owner Team UI routes through one native scheduler and reviewed patch gatew
   assert.match(team,/ui_team_selection/);
   assert.match(team,/claim_managed_team_member/);
   assert.match(store,/TransactionBehavior::Immediate/);
-  for(const action of ['/start','/resume','/apply','/reject'])
-    assert.ok(ui.includes(action),'missing UI route '+action);
-  assert.match(ui,/control\(team,'stop'\)/);
-  assert.match(ui,/reviewDigest/);
-  assert.match(ui,/remoteWorkers/);
+  assert.match(ui,/\/api\/activity\/teams\/start/);
+  assert.match(ui,/\+'\/'\+action/);
+  assert.match(ui,/control\(team\.id,'resume'\)/);
+  assert.match(ui,/control\(team\.id,'stop'\)/);
+  for(const action of ['/apply','/reject'])
+    assert.ok(patchUi.includes(action),'missing remote patch review '+action);
+  assert.match(patchUi,/reviewDigest/);
+  assert.match(patchUi,/remoteWorkers/);
 });
