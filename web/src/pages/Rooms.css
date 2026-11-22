@@ -1,7 +1,7 @@
 .rooms-app{position:relative;display:flex;height:100%;min-height:0;background:var(--color-canvas);overflow:hidden}
 .room-eyebrow{display:block;font-size:9px;font-weight:700;letter-spacing:.16em;color:var(--color-muted);margin-bottom:6px}
 .room-list{width:228px;flex:0 0 228px;display:flex;flex-direction:column;background:var(--color-surface);border-right:1px solid var(--color-divider);z-index:20;min-height:0}
-.room-list-closed{display:none}
+
 .room-list-title{display:flex;align-items:center;justify-content:space-between;padding:26px 18px 20px}
 #root .room-list-title h2{font-size:17px!important;margin:0;font-weight:750}
 .room-list-title button{color:var(--color-muted)}
