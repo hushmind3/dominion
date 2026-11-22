@@ -73,6 +73,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [runs,setRuns]=useState<SdkRun[]>([])
  const [observation,setObservation]=useState('')
  const [showEventHistory,setShowEventHistory]=useState(false)
+ const [detailView,setDetailView]=useState<'overview'|'activity'|'evidence'>('overview')
  const [olderHistory,setOlderHistory]=useState<OlderRunHistory|null>(null)
  const [olderReceipts,setOlderReceipts]=useState<OlderReceipts|null>(null)
  const [loadingReceipts,setLoadingReceipts]=useState(false)
@@ -105,6 +106,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   receiptPageEpoch.current+=1
   setLoadingHistory(false)
   setLoadingReceipts(false)
+  setDetailView('overview')
   setOlderReceipts(null)
   setReceiptPageError(null)
   setShowEventHistory(false)
@@ -376,7 +378,8 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     <p className="mt-0.5 text-[11px] text-[#8A8176]">{en?'Describe what you need. Dominion’s own Rust engine handles the steps.':'할 일을 말씀하시면 도미니언 Rust 엔진이 작업을 실행합니다.'}</p>
    </div>
   </div>
-  <div className="grid gap-3 p-4">
+  <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,4fr)_minmax(0,6fr)] xl:items-start">
+   <div className="grid min-w-0 gap-3 xl:sticky xl:top-4">
    <label className="text-[12px] font-semibold" htmlFor="sdk-goal">{en?'What would you like done?':'무엇을 해드릴까요?'}</label>
    <textarea id="sdk-goal" value={instruction} onChange={e=>editInstruction(e.target.value)}
     rows={3} maxLength={64000}
@@ -436,6 +439,8 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      aria-label={en?'Refresh task history':'작업 이력 새로고침'}
      onClick={()=>void reload()}><RefreshCw size={16}/></button>
    </div>}
+   </div>
+   <div className="min-w-0 space-y-3">
    {disconnected&&<p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">{en?'Connection lost. Actions may have changed; reconnecting to the server.':'서버 연결이 끊겼습니다. 실행 상태가 바뀌었을 수 있어 재연결 후 다시 확인합니다.'}</p>}
    {error&&<p role="alert" className="rounded-lg bg-[#FFF3EE] p-3 text-[11px] text-[#A54027]">{error}</p>}
    {run&&<div className="rounded-xl border border-[#E7E0D5] bg-[#FCFBF9] p-3">
@@ -448,7 +453,20 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     </div>
     <p className="mt-2 break-words text-[11px] text-[#766F67]" title={run.instruction}>{run.instruction}</p>
     <p className="mt-1 text-[10px] text-[#8A8176]">{en?'Strategy':'실행 전략'}: {run.algorithmId||'standard-v1'}</p>
-    {events.length>0&&<div className="mt-3 min-w-0 border-t border-[#E7E0D5] pt-2">
+     <nav aria-label={en?'Task details':'작업 상세 보기'} className="mt-3 flex min-w-0 flex-wrap gap-1 rounded-xl border border-[#E7E0D5] bg-white p-1">
+      {([
+       {id:'overview',ko:'결과 · 제어',english:'Outcome · Controls'},
+       {id:'activity',ko:'실행 기록',english:'Activity'},
+       {id:'evidence',ko:'검증 · 파일',english:'Evidence · Files'},
+      ] as const).map(view=><button key={view.id} type="button"
+       aria-pressed={detailView===view.id}
+       onClick={()=>setDetailView(view.id)}
+       className={'min-h-10 flex-1 rounded-lg px-2 text-[11px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 '+
+        (detailView===view.id?'bg-[#A4583E] text-white':'text-[#655A4F] hover:bg-[#F6F1E9]')}>
+       {en?view.english:view.ko}
+      </button>)}
+     </nav>
+    {detailView==='activity'&&events.length>0&&<div className="mt-3 min-w-0 border-t border-[#E7E0D5] pt-2">
      <div className="flex flex-wrap items-center justify-between gap-2">
       <strong className="text-[11px] text-[#5C544D]">
        {en?'Recorded run events':'저장된 실행 단계'} · {totalEvents}
@@ -549,8 +567,8 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
       </button>
      </div>
     </div>}
-    {run.answer||run.checkpoint?.answer?<div className="mt-3 whitespace-pre-wrap break-words border-t border-[#E7E0D5] pt-3 text-[12px]">{run.answer||run.checkpoint?.answer}</div>:null}
-    {(toolReceipts.length>0||toolReceiptsOmitted>0)&&<details className="mt-3 min-w-0 rounded-lg border border-[#E7E0D5] bg-white p-3 text-[11px]">
+    {detailView==='overview'&&(run.answer||run.checkpoint?.answer)?<div className="mt-3 whitespace-pre-wrap break-words border-t border-[#E7E0D5] pt-3 text-[12px]">{run.answer||run.checkpoint?.answer}</div>:null}
+    {detailView==='activity'&&(toolReceipts.length>0||toolReceiptsOmitted>0)&&<details className="mt-3 min-w-0 rounded-lg border border-[#E7E0D5] bg-white p-3 text-[11px]">
      <summary className="cursor-pointer font-semibold">
       {en?'Recorded tool calls':'도구 실행 기록'} · {run.checkpoint?.toolCalls??toolReceipts.length}
      </summary>
@@ -601,7 +619,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
       </p>}
      </div>}
     </details>}
-    {Boolean(run.checkpoint?.artifactEvidence?.entries?.length)&&<details
+    {detailView==='evidence'&&Boolean(run.checkpoint?.artifactEvidence?.entries?.length)&&<details
      className="mt-3 min-w-0 rounded-lg border border-[#E7E0D5] bg-white p-3 text-[11px]">
      <summary className="cursor-pointer font-semibold">
       {en?'Captured file evidence':'파일 검증 스냅샷'} · {run.checkpoint?.artifactEvidence?.entries.length}
@@ -647,7 +665,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
       </li>)}
      </ul>
     </details>}
-    {run.checkpoint?.verificationChecks?.length?
+    {detailView==='evidence'&&run.checkpoint?.verificationChecks?.length?
      <details className="mt-3 rounded-lg border border-[#E7E0D5] bg-white p-3 text-[11px]">
       <summary className="cursor-pointer font-semibold">{en?'Actual acceptance checks':'실제 결과 검증'} · {run.checkpoint.verificationChecks.filter(c=>c.satisfied).length}/{run.checkpoint.verificationChecks.length}</summary>
       <ul className="mt-2 grid gap-1">
@@ -656,7 +674,8 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
         {check.satisfied?'✓':'!'} {check.explanation||'—'}</li>)}
       </ul>
      </details>:null}
-    {status==='needs_review'&&<p role="status" className="mt-2 text-[11px] text-[#8A4C16]">{en?'The server requires review. No paid call or uncertain effect will be replayed automatically.':'서버가 검토를 요구하고 있습니다. 결과가 불분명한 유료 호출이나 변경 작업은 자동으로 재실행하지 않습니다.'}</p>}
+    {detailView==='evidence'&&!run.checkpoint?.verificationChecks?.length&&!run.checkpoint?.artifactEvidence?.entries?.length&&<p className="mt-3 rounded-lg border border-[#E7E0D5] bg-white p-3 text-[11px] text-[#7C7469]">{en?'No settled verification or file evidence for this run.':'이 작업에서 확정된 결과 검증이나 파일 증거가 없습니다.'}</p>}
+     {status==='needs_review'&&<p role="status" className="mt-2 text-[11px] text-[#8A4C16]">{en?'The server requires review. No paid call or uncertain effect will be replayed automatically.':'서버가 검토를 요구하고 있습니다. 결과가 불분명한 유료 호출이나 변경 작업은 자동으로 재실행하지 않습니다.'}</p>}
     {run.error&&<p className="mt-2 text-[11px] text-[#A54027]">{run.error}</p>}
     <div className="mt-3 flex gap-2">
      {cancellable.has(status)&&<button type="button" disabled={busy} onClick={()=>void action('cancel')} className="flex min-h-11 items-center gap-1 rounded-lg border border-[#E7E0D5] px-4 py-2 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2">
@@ -711,6 +730,12 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      </div>
     </div>}
    </div>}
+   {!run&&<div className="flex min-h-52 flex-col items-center justify-center rounded-xl border border-dashed border-[#DACEC0] bg-[#FCFBF9] p-6 text-center">
+    <Sparkles size={24} className="mb-3 text-[#A4583E]"/>
+    <strong className="text-[13px]">{en?'Your task workspace':'자동 작업 현황'}</strong>
+    <p className="mt-2 max-w-xs text-[11px] leading-5 text-[#81766B]">{en?'Start a task on the left. Review its outcome, approvals, activity and saved evidence here.':'왼쪽에서 작업을 시작하면 이곳에서 결과, 승인, 실행 기록과 저장된 검증 증거를 확인할 수 있습니다.'}</p>
+   </div>}
+   </div>
   </div>
  </section>
 }
