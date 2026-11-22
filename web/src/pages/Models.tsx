@@ -335,11 +335,39 @@ export function ModelHub(){
   {id:'local',label:'로컬',count:providers.value.filter(p=>p.local).length},
   {id:'oauth',label:'계정 인증'},
  ]
+ const modelAreas:{id:string;name:string;entry:Tab;pages:Tab[]}[]=[
+  {id:'mine',name:'내 모델·인증',entry:'providers',pages:['providers','local','oauth']},
+  {id:'discover',name:'모델 찾아보기',entry:'free',pages:['free','catalog','huggingface']},
+  {id:'service',name:'Cloud·업체',entry:'cloud',pages:['cloud','connect']}
+ ]
+ const modelArea=modelAreas.find(area=>area.pages.includes(tab))||modelAreas[0]
+ const selectModelTab=(next:Tab)=>{
+  setTab(next);setCategory('all')
+  if(next==='connect')setBrowseProviderId('')
+ }
  return <div className="mx-auto w-full max-w-[1200px] px-4 pt-2 pb-5 sm:px-6 lg:pt-3">
 
   <div className="mb-3 flex flex-wrap items-center gap-2">
-   <div className="flex flex-wrap gap-1 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-1">
-    {tabs.map(item=><Button variant="bare" key={item.id} type="button" onClick={()=>{setTab(item.id);setCategory('all');if(item.id==='connect')setBrowseProviderId('')}} className={'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors '+(tab===item.id?'bg-[#C96442] text-white':'text-[#6F675D] hover:bg-[#F3EEE5]')}>{item.label}{item.count!==undefined&&<span className={'rounded px-1.5 py-0.5 text-[10px] '+(tab===item.id?'bg-white/20':'bg-[#F0EAE0] text-[#8A8176]')}>{item.count}</span>}</Button>)}
+   <div className="flex w-full min-w-0 flex-col gap-2">
+    <nav aria-label="모델 영역" className="grid grid-cols-3 gap-1 rounded-xl border border-[#E7E0D5] bg-[#F3EEE5] p-1.5">
+     {modelAreas.map(area=><Button key={area.id} type="button" variant="bare"
+      aria-current={modelArea.id===area.id?'page':undefined}
+      onClick={()=>selectModelTab(area.entry)}
+      className={'min-h-10 min-w-0 rounded-lg px-2 py-2 text-[12px] font-semibold transition-colors '+
+       (modelArea.id===area.id?'bg-white text-[#24211D] shadow-sm':'text-[#786F63] hover:bg-white/70')}>
+      {area.name}
+     </Button>)}
+    </nav>
+    <nav aria-label="모델 상세" className="flex min-w-0 flex-wrap gap-1.5 border-b border-[#E7E0D5] pb-2">
+     {tabs.filter(item=>modelArea.pages.includes(item.id)).map(item=><Button variant="bare" key={item.id} type="button"
+      onClick={()=>selectModelTab(item.id)} aria-current={tab===item.id?'page':undefined}
+      className={'inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold '+
+       (tab===item.id?'bg-[#C96442] text-white':'text-[#6F675D] hover:bg-[#F3EEE5]')}>
+      {item.label}
+      {item.count!==undefined&&<span className={'rounded px-1.5 py-0.5 text-[10px] '+
+       (tab===item.id?'bg-white/20':'bg-[#F0EAE0] text-[#8A8176]')}>{item.count}</span>}
+     </Button>)}
+    </nav>
    </div>
    <Button type="button" onClick={()=>open()} className="ml-auto inline-flex h-8 items-center gap-2 rounded-lg border border-[#E1D9CC] bg-white px-3 text-[11px] font-semibold text-[#3A342D] hover:bg-[#FAF7F1]"><Plus size={14}/> {t('models.apiAdd')}</Button>
    {(tab==='providers'||tab==='local')&&<><div className="relative min-w-[180px] flex-1 sm:max-w-[280px]"><Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#A79C8E]"/><TextInput value={query} onChange={e=>setQuery(e.target.value)} placeholder={t('models.providerSearch')} className="!pl-8 !text-[12px]"/></div>
