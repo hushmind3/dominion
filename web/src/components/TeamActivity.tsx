@@ -237,13 +237,13 @@ export function TeamActivity(){
   <div className="dominion-team-hero relative mb-4 overflow-hidden rounded-[24px] px-5 py-6 sm:px-7">
    <div className="relative z-10 flex flex-wrap items-start justify-between gap-5">
     <div className="min-w-0 flex-1">
-     <span className="text-[10px] font-extrabold uppercase tracking-[.19em] text-[#F6BB9E]">DOMINION / TEAM ORCHESTRATION</span>
-     <h3 className="mt-2 !text-[22px] font-extrabold text-white sm:!text-[25px]">{en?'Agent teams':'멀티에이전트 팀 작업'}</h3>
-     <p className="mt-2 max-w-xl text-[12px] leading-6 text-[#DDD4CB]">{en?'Plan with a Lead, execute through Workers, then inspect real outputs and required reviews.':'Lead가 계획하고 Worker가 실행합니다. 진행 상황과 검토할 파일 변경을 한곳에서 확인하세요.'}</p>
+     <span className="text-[10px] font-extrabold uppercase tracking-[.19em] text-[#A65E43]">DOMINION / TEAM ORCHESTRATION</span>
+     <h3 className="mt-2 !text-[22px] font-extrabold text-[#362D27] sm:!text-[25px]">{en?'Agent teams':'멀티에이전트 팀 작업'}</h3>
+     <p className="mt-2 max-w-xl text-[12px] leading-6 text-[#77695F]">{en?'Plan with a Lead, execute through Workers, then inspect real outputs and required reviews.':'Lead가 계획하고 Worker가 실행합니다. 진행 상황과 검토할 파일 변경을 한곳에서 확인하세요.'}</p>
     </div>
     <div className="flex shrink-0 flex-wrap items-center gap-2">
      <Button size="sm" variant="bare" onClick={()=>setCreateOpen(o=>!o)} aria-expanded={createOpen} className="!min-h-10 !rounded-xl !bg-[#F6D8C5] !px-4 !font-bold !text-[#5E3627] hover:!bg-white"><Play size={15}/>{hasDraft?(en?'Continue team draft':'팀 초안 이어쓰기'):(en?'New team task':'팀 작업 시작')}</Button>
-     <Button size="sm" variant="bare" onClick={reload} aria-label={en?'Refresh teams':'팀 새로고침'} className="!size-10 !rounded-xl !border !border-white/20 !bg-white/10 !text-white hover:!bg-white/20"><RefreshCw size={16}/></Button>
+     <Button size="sm" variant="bare" onClick={reload} aria-label={en?'Refresh teams':'팀 새로고침'} className="!size-10 !rounded-xl !border !border-[#E7D5C5] !bg-white/70 !text-[#704C3A] hover:!bg-white"><RefreshCw size={16}/></Button>
     </div>
    </div>
    <div className="relative z-10 mt-6 grid grid-cols-3 gap-2">

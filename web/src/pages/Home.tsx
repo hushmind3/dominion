@@ -46,21 +46,21 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
   <section className="dominion-home-hero relative mb-5 overflow-hidden rounded-[28px] px-6 py-8 sm:px-9 sm:py-9">
    <div className="relative z-10 flex flex-wrap items-start justify-between gap-5">
     <div className="min-w-0 max-w-2xl">
-     <span className="text-[10px] font-bold uppercase tracking-[.22em] text-[#FFD1B9]">DOMINION / COMMAND CENTER</span>
-     <h1 className="mt-3 !text-[30px] font-extrabold tracking-[-.04em] text-white sm:!text-[36px]">{t('dashboard.title')}</h1>
-     <p className="mt-2 text-[13px] leading-6 text-[#E6DAD0]">{t('dashboard.subtitle')}</p>
+     <span className="text-[10px] font-bold uppercase tracking-[.22em] text-[#A65E43]">DOMINION / COMMAND CENTER</span>
+     <h1 className="mt-3 !text-[30px] font-extrabold tracking-[-.04em] text-[#362D27] sm:!text-[36px]">{t('dashboard.title')}</h1>
+     <p className="mt-2 text-[13px] leading-6 text-[#72655C]">{t('dashboard.subtitle')}</p>
     </div>
     <Button type="button" variant="bare" onClick={()=>navigate('chat')} className="!flex !min-h-11 !items-center !gap-2 !rounded-xl !bg-[#F8E7D8] !px-5 !text-[13px] !font-bold !text-[#633620] hover:!bg-white"><MessageSquare size={17}/>{t('dashboard.openChat')}<ArrowRight size={15}/></Button>
    </div>
    <div className="relative z-10 mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3">
     <Button variant="bare" onClick={()=>navigate('activity')} className="dominion-home-hero-stat flex flex-col !items-start !rounded-xl !px-4 !py-3">
-     <span className="text-[11px] text-[#EADBD0]">{t('dashboard.metric.jobs')}</span><strong className="mt-1 text-[26px] font-extrabold text-white">{jobs.loading||jobs.error?'—':busy}</strong>
+     <span className="text-[11px] text-[#7D6C61]">{t('dashboard.metric.jobs')}</span><strong className="mt-1 text-[26px] font-extrabold text-[#362D27]">{jobs.loading||jobs.error?'—':busy}</strong>
     </Button>
     <Button variant="bare" onClick={()=>navigate('models')} className="dominion-home-hero-stat flex flex-col !items-start !rounded-xl !px-4 !py-3">
-     <span className="text-[11px] text-[#EADBD0]">{t('dashboard.metric.providers')}</span><strong className="mt-1 text-[26px] font-extrabold text-white">{providers.loading||providers.error?'—':enabledProviders.length}</strong>
+     <span className="text-[11px] text-[#7D6C61]">{t('dashboard.metric.providers')}</span><strong className="mt-1 text-[26px] font-extrabold text-[#362D27]">{providers.loading||providers.error?'—':enabledProviders.length}</strong>
     </Button>
     <Button variant="bare" onClick={()=>navigate('agents')} className="dominion-home-hero-stat col-span-2 flex flex-col !items-start !rounded-xl !px-4 !py-3 sm:col-span-1">
-     <span className="text-[11px] text-[#EADBD0]">{t('dashboard.metric.agents')}</span><strong className="mt-1 text-[26px] font-extrabold text-white">{agents.loading||agents.error?'—':agents.value.length}</strong>
+     <span className="text-[11px] text-[#7D6C61]">{t('dashboard.metric.agents')}</span><strong className="mt-1 text-[26px] font-extrabold text-[#362D27]">{agents.loading||agents.error?'—':agents.value.length}</strong>
     </Button>
    </div>
   </section>

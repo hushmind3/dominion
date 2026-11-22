@@ -658,18 +658,18 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    </header>
    <div ref={scrollRef} onScroll={onScroll} data-chat-scroll className="dominion-chat-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain">{current&&transcript.loading&&!messages.length?<div className="flex min-h-full items-center justify-center p-6 text-sm text-[#8A8176]">{t('chat.transcriptLoading')}</div>:current&&transcript.error&&!messages.length?<div role="status" className="flex min-h-full items-center justify-center p-6 text-sm text-[#8A8176]">{t('chat.transcriptUnavailable')}</div>:!messages.length&&!(busy&&viewingTurn)?<div className="dominion-chat-welcome mx-auto flex min-h-full w-full max-w-[920px] flex-col justify-center px-5 py-10">
     <div className="dominion-chat-hero relative mb-5 overflow-hidden rounded-[28px] px-7 py-9 sm:px-10 sm:py-10">
-     <div className="relative z-10 mb-9 flex items-center gap-3 text-[11px] font-bold uppercase tracking-[.18em] text-[#F9C9AE]">
-      <span className="grid size-9 place-items-center rounded-xl border border-white/20 bg-white/10 text-[19px] font-black text-white">D</span> DOMINION <span className="h-1 w-1 rounded-full bg-[#F9C9AE]"/> AI WORKSPACE
+     <div className="relative z-10 mb-9 flex items-center gap-3 text-[11px] font-bold uppercase tracking-[.18em] text-[#A75E45]">
+      <span className="grid size-9 place-items-center rounded-xl border border-[#E5D5C8] bg-white/80 text-[19px] font-black text-[#342C26]">D</span> DOMINION <span className="h-1 w-1 rounded-full bg-[#F9C9AE]"/> AI WORKSPACE
      </div>
      <div className="relative z-10 max-w-[580px]">
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[.2em] text-[#F9C9AE]">{loc==='ko'?'무엇을 함께 해볼까요?':'WHAT WILL WE BUILD TODAY?'}</p>
-      <h1 className="text-[29px] font-extrabold tracking-[-.045em] text-white sm:text-[40px]">{t('chat.newChatHeading')}</h1>
-      <p className="mt-3 max-w-xl text-[14px] leading-7 text-[#DDD4CD]">{t('chat.newChatDesc')}</p>
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[.2em] text-[#A75E45]">{loc==='ko'?'무엇을 함께 해볼까요?':'WHAT WILL WE BUILD TODAY?'}</p>
+      <h1 className="text-[29px] font-extrabold tracking-[-.045em] text-[#342C26] sm:text-[40px]">{t('chat.newChatHeading')}</h1>
+      <p className="mt-3 max-w-xl text-[14px] leading-7 text-[#776A60]">{t('chat.newChatDesc')}</p>
      </div>
      <div className="relative z-10 mt-8 flex flex-wrap items-center gap-2 text-[11px]">
-      <span className="rounded-full border border-white/20 bg-white/10 px-3 py-1.5 font-semibold text-white">{t('nav.chat')}</span>
-      <Button variant="bare" type="button" onClick={()=>switchMode('rooms')} className="!min-h-7 !rounded-full !border !border-white/20 !bg-white/10 !px-3 !py-1.5 !text-[11px] !font-semibold !text-white hover:!bg-white/20">{t('nav.rooms')} <ArrowRight size={12}/></Button>
-      <Button variant="bare" type="button" onClick={openModels} className="!min-h-7 !rounded-full !border !border-white/20 !bg-white/10 !px-3 !py-1.5 !text-[11px] !font-semibold !text-white hover:!bg-white/20">{selectedProvider?.name||t('chat.connectFirst')} <Cpu size={12}/></Button>
+      <span className="rounded-full border border-[#E5D5C8] bg-white/80 px-3 py-1.5 font-semibold text-[#342C26]">{t('nav.chat')}</span>
+      <Button variant="bare" type="button" onClick={()=>switchMode('rooms')} className="!min-h-7 !rounded-full !border !border-[#E5D5C8] !bg-white/80 !px-3 !py-1.5 !text-[11px] !font-semibold !text-[#684B3A] hover:!bg-white">{t('nav.rooms')} <ArrowRight size={12}/></Button>
+      <Button variant="bare" type="button" onClick={openModels} className="!min-h-7 !rounded-full !border !border-[#E5D5C8] !bg-white/80 !px-3 !py-1.5 !text-[11px] !font-semibold !text-[#684B3A] hover:!bg-white">{selectedProvider?.name||t('chat.connectFirst')} <Cpu size={12}/></Button>
      </div>
     </div>
     <section className="dominion-chat-starters">
