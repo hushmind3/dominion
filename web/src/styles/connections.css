@@ -1,0 +1,9 @@
+/* Seven existing connection sections: swipeable on phones, fully visible on wide screens. */
+.connection-tabs{display:flex;gap:4px;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x proximity;scrollbar-width:thin;white-space:nowrap;padding:0 0 10px;margin-bottom:18px;border-bottom:1px solid #E7E0D5}
+.connection-tabs button{display:flex;align-items:center;justify-content:center;gap:6px;flex-shrink:0;min-height:40px;padding:8px 11px;scroll-snap-align:start;border-radius:9px;font-size:12px;color:#82786B}
+.connection-tabs button:hover{background:#F0EAE1}
+.connection-tabs [aria-current]{background:#F7E8E1;color:#A94E30;font-weight:650}
+@media(min-width:1150px){
+ .connection-tabs{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));overflow-x:visible}
+ .connection-tabs button{min-width:0;white-space:normal;text-align:center}
+}

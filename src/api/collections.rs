@@ -271,7 +271,7 @@ mod memory_correction_tests {
             "importance":0.9,
         })).unwrap();
         let id=original["id"].as_str().unwrap().to_string();
-        let uri=format!("/api/memories/{id}/correct").parse().unwrap();
+        let uri: axum::http::Uri=format!("/api/memories/{id}/correct").parse().unwrap();
         let response=action(State(state.clone()),OriginalUri(uri.clone()),
             Json(json!({"text":"수정된 사실"}))).await;
         assert_eq!(response.status(),StatusCode::OK);

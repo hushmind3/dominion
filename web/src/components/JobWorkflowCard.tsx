@@ -50,7 +50,7 @@ export function JobWorkflowCard({job,onChanged}:{job:WorkflowJob;onChanged:()=>v
  }
  return <Panel className="min-w-0 rounded-xl bg-white p-4">
   <div className="flex min-w-0 items-start gap-3">
-   <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]"><Workflow size={18}/></span>
+   <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-brand"><Workflow size={18}/></span>
    <div className="min-w-0 flex-1">
     <div className="flex flex-wrap items-center justify-between gap-2">
      <strong className="text-[12px] text-[#3A342D]">{job.kind==='meeting'?t('ops.meeting'):t('ops.agentJob')}</strong>
@@ -62,11 +62,11 @@ export function JobWorkflowCard({job,onChanged}:{job:WorkflowJob;onChanged:()=>v
     {job.error&&<p role="alert" className="mt-2 break-words text-[11px] text-rose-700">{translateError(job.error)}</p>}
     <div className="mt-2 flex flex-wrap items-center gap-2">
      {session&&<a href={'#/chat?session='+encodeURIComponent(session)}
-      className="inline-flex items-center gap-1 rounded-lg border border-[#E7E0D5] px-2.5 py-1.5 text-[11px] font-medium text-[#5C544A] hover:bg-[#FAF7F1]">
+      className="inline-flex items-center gap-1 rounded-lg border border-divider px-2.5 py-1.5 text-[11px] font-medium text-[#5C544A] hover:bg-[#FAF7F1]">
       <MessageSquare size={13}/>{en?'Open session':'관련 대화 열기'}
      </a>}
      {active&&isPrompt&&<button type="button" disabled={busy} onClick={()=>void run('cancel')}
-      className="inline-flex items-center gap-1 rounded-lg border border-[#E7E0D5] px-2.5 py-1.5 text-[11px] text-rose-700 hover:bg-rose-50 disabled:opacity-50">
+      className="inline-flex items-center gap-1 rounded-lg border border-divider px-2.5 py-1.5 text-[11px] text-rose-700 hover:bg-rose-50 disabled:opacity-50">
       <Square size={13}/>{en?'Stop task':'작업 중단'}
      </button>}
     </div>
@@ -75,7 +75,7 @@ export function JobWorkflowCard({job,onChanged}:{job:WorkflowJob;onChanged:()=>v
       onChange={event=>setSteering(event.target.value)}
       aria-label={en?'Additional instruction':'작업 추가 지시'}
       placeholder={en?'Add a follow-up instruction…':'진행 중인 작업에 추가 지시…'}
-      className="min-w-40 flex-1 rounded-lg border border-[#E7E0D5] bg-white px-3 py-2 text-[11px] outline-none focus:border-[#A36A4A]"/>
+      className="min-w-40 flex-1 rounded-lg border border-divider bg-white px-3 py-2 text-[11px] outline-none focus:border-[#A36A4A]"/>
      <button type="submit" disabled={!steering.trim()||busy}
       className="inline-flex items-center gap-1 rounded-lg border border-[#D9BAA6] px-3 py-2 text-[11px] font-semibold text-[#9D5039] hover:bg-[#F7E8E1] disabled:opacity-50">
       <Send size={13}/>{en?'Send':'추가 지시'}

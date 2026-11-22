@@ -116,6 +116,7 @@ mod outcome_tests {
         }));
         let session = json!({"id":session_id});
         let request = TurnRequest {
+            client_turn_id: None, direct_chat: false,
             session_id: Some(session_id.into()),
             input: "inspect the source and choose a safe repair".into(),
             attachment_ids: Vec::new(), agent_id: None, provider_id: None,
@@ -219,6 +220,7 @@ mod outcome_tests {
         state.store.put("session",&json!({"id":session_id}));
         state.store.put("execution",&json!({"id":execution_id,"sessionId":session_id,"status":"running"}));
         let request=TurnRequest {
+            client_turn_id: None, direct_chat: false,
             session_id:Some(session_id.into()),input:"inspect observed.txt".into(),
             attachment_ids:Vec::new(),agent_id:None,provider_id:None,
             model:None,tools_enabled:true,tools_execution_enabled:true,
@@ -327,6 +329,7 @@ mod outcome_tests {
         );
         let session = json!({"id":"s1","roomId":null});
         let request = TurnRequest {
+            client_turn_id: None, direct_chat: false,
             session_id: Some("s1".into()),
             input: "fallback.txt 파일을 만들어줘".into(),
             attachment_ids: Vec::new(),
@@ -409,6 +412,7 @@ mod outcome_tests {
         }));
         let session = json!({"id":"s1"});
         let request = TurnRequest {
+            client_turn_id: None, direct_chat: false,
             session_id: Some("s1".into()), input: "반복 작성".into(),
             attachment_ids: Vec::new(), agent_id: None, provider_id: None,
             model: None, tools_enabled: true, tools_execution_enabled: true,
@@ -465,6 +469,7 @@ mod outcome_tests {
         );
         let session = json!({"id":"s1"});
         let request = TurnRequest {
+            client_turn_id: None, direct_chat: false,
             session_id: Some("s1".into()),
             input: "실패 프로그램".into(),
             attachment_ids: Vec::new(),
@@ -529,6 +534,7 @@ mod outcome_tests {
             },
         );
         let request = TurnRequest {
+            client_turn_id: None, direct_chat: false,
             session_id: Some("session-1".into()),
             input: "bench 작업".into(),
             attachment_ids: Vec::new(),

@@ -43,12 +43,12 @@ export function GrowthDashboard(){
 
   <Panel className="min-w-0 p-4">
    <Subheading title={t('growth.observedGrowth')} extra={<span className="text-[10px] text-[#9C9388]">{t('ui.label.verifiedRuns')}</span>}/>
-   {!agents.length?<p className="text-sm text-[#7C7469]">{t('growth.noRuns')}</p>:<div className="grid gap-2">{agents.slice(0,10).map(agent=>{
+   {!agents.length?<p className="text-sm text-muted">{t('growth.noRuns')}</p>:<div className="grid gap-2">{agents.slice(0,10).map(agent=>{
     const growth=agent.growth||{}
     const failures=Object.entries(growth.toolFailures||{}).sort((a,b)=>number(b[1])-number(a[1])).slice(0,3)
     const guidance=(growth.guidance||[])[0]
     return <div className="rounded-lg border border-[#EFE9DF] p-3" key={agent.id}>
-     <div className="flex flex-wrap items-center gap-2"><strong className="text-sm">{label(agent.name,agent.id)}</strong><span className="text-[11px] text-[#7C7469]">{t('growth.runMeta',{runs:number(growth.runs),rated:number(growth.ratedRuns)})}</span><span className="ml-auto rounded bg-[#F7E8E1] px-1.5 py-0.5 text-[10px] font-semibold text-[#A94E30]">{percent(growth.successRate)}</span></div>
+     <div className="flex flex-wrap items-center gap-2"><strong className="text-sm">{label(agent.name,agent.id)}</strong><span className="text-[11px] text-muted">{t('growth.runMeta',{runs:number(growth.runs),rated:number(growth.ratedRuns)})}</span><span className="ml-auto rounded bg-[#F7E8E1] px-1.5 py-0.5 text-[10px] font-semibold text-brand-hover">{percent(growth.successRate)}</span></div>
      {failures.length>0&&<p className="mt-1 text-[11px] text-[#8A8176]">{t('growth.failedTools',{tools:failures.map(([tool,count])=>`${tool} ${number(count)}`).join(' · ')})}</p>}
      {guidance?.text&&<p className="mt-1 text-[11px] text-[#5C544A]">{t('growth.guidance',{text:guidance.text})}</p>}
     </div>
@@ -57,19 +57,19 @@ export function GrowthDashboard(){
 
   <Panel className="min-w-0 p-4">
    <Subheading title={t('growth.modelUsage')} extra={<span className="text-[10px] text-[#9C9388]">{t('ui.label.apiLocal')}</span>}/>
-   {!groups.length?<p className="text-sm text-[#7C7469]">{t('growth.noCalls')}</p>:<div className="grid gap-1 text-[11px]">{groups.map((group,index)=><div className="grid grid-cols-[1fr_auto_auto] gap-2 rounded-lg border border-[#EFE9DF] px-3 py-2" key={index}><span className="break-all font-semibold text-[#4A443C]">{label(group.model,t('growth.modelUnknown'))}</span><span className="text-[#7C7469]">{label(group.purpose,t('growth.purposeOther'))} · {t('growth.calls',{count:number(group.calls)})}</span><span className="text-[#7C7469]">{number(group.totalTokens).toLocaleString()} {t('growth.tokens')}</span></div>)}</div>}
+   {!groups.length?<p className="text-sm text-muted">{t('growth.noCalls')}</p>:<div className="grid gap-1 text-[11px]">{groups.map((group,index)=><div className="grid grid-cols-[1fr_auto_auto] gap-2 rounded-lg border border-[#EFE9DF] px-3 py-2" key={index}><span className="break-all font-semibold text-[#4A443C]">{label(group.model,t('growth.modelUnknown'))}</span><span className="text-muted">{label(group.purpose,t('growth.purposeOther'))} · {t('growth.calls',{count:number(group.calls)})}</span><span className="text-muted">{number(group.totalTokens).toLocaleString()} {t('growth.tokens')}</span></div>)}</div>}
   </Panel>
 
   <Panel className="min-w-0 p-4">
    <Subheading title={t('growth.transfer')} extra={<span className="text-[10px] text-[#9C9388]">{t('ui.label.provenance')}</span>}/>
-   {!principles.length&&!rules.length?<p className="text-sm text-[#7C7469]">{t('growth.noPrinciples')}</p>:<div className="grid gap-2">
+   {!principles.length&&!rules.length?<p className="text-sm text-muted">{t('growth.noPrinciples')}</p>:<div className="grid gap-2">
     {principles.slice(0,6).map(principle=><div className="rounded-lg border border-[#EFE9DF] p-3" key={principle.id}>
-     <div className="flex flex-wrap gap-2 text-[11px]"><strong>{label(principle.kind,t('growth.principle'))}</strong><span className="text-[#7C7469]">{label(principle.status)} · {t('growth.confidence',{value:percent(principle.confidence)})}</span><span className="ml-auto rounded bg-[#F7E8E1] px-1.5 py-0.5 text-[10px] text-[#A94E30]">{t('growth.cases',{count:number((principle.supportingCases||[]).length)})}</span></div>
+     <div className="flex flex-wrap gap-2 text-[11px]"><strong>{label(principle.kind,t('growth.principle'))}</strong><span className="text-muted">{label(principle.status)} · {t('growth.confidence',{value:percent(principle.confidence)})}</span><span className="ml-auto rounded bg-[#F7E8E1] px-1.5 py-0.5 text-[10px] text-brand-hover">{t('growth.cases',{count:number((principle.supportingCases||[]).length)})}</span></div>
      <p className="mt-1 text-[12px] text-[#4A443C]">{label(principle.principle)}</p>
      <p className="mt-1 text-[10px] text-[#8A8176]">{t('growth.contributors',{models:(principle.supportingModels||[]).join(', ')||t('growth.none')})} · {t('growth.agentsCount',{count:(principle.supportingAgents||[]).length})} · {t('growth.counterexamples',{count:number((principle.counterexamples||[]).length)})}</p>
     </div>)}
     {rules.slice(0,6).map(rule=><div className="rounded-lg border border-[#EFE9DF] p-3" key={rule.id}>
-     <div className="flex flex-wrap gap-2 text-[11px]"><strong>{t('growth.conditional')}</strong><span className="text-[#7C7469]">{label(rule.status)} · {t('growth.confidence',{value:percent(rule.confidence)})}</span><span className="ml-auto text-[10px] text-[#A94E30]">{t('growth.cases',{count:number((rule.supportingCases||[]).length)})}</span></div>
+     <div className="flex flex-wrap gap-2 text-[11px]"><strong>{t('growth.conditional')}</strong><span className="text-muted">{label(rule.status)} · {t('growth.confidence',{value:percent(rule.confidence)})}</span><span className="ml-auto text-[10px] text-brand-hover">{t('growth.cases',{count:number((rule.supportingCases||[]).length)})}</span></div>
      <p className="mt-1 text-[12px] text-[#4A443C]">{label(rule.trigger)} → {label(rule.intervention?.tool,t('growth.tool'))}</p>
      <p className="mt-1 text-[10px] text-[#8A8176]">{t('growth.agentsCount',{count:(rule.supportingAgents||[]).length})} · {t('growth.counterexamples',{count:number((rule.counterexamples||[]).length)})}</p>
     </div>)}
@@ -78,8 +78,8 @@ export function GrowthDashboard(){
 
   <Panel className="min-w-0 p-4">
    <Subheading title={t('growth.usageLog')} extra={<span className="text-[10px] text-[#9C9388]">{usages.length}</span>}/>
-   {!usages.length?<p className="text-sm text-[#7C7469]">{t('growth.none')}</p>:<div className="grid gap-1">{usages.slice(0,8).map((usage:any)=><div className="rounded-lg border border-[#EFE9DF] px-3 py-2 text-[11px]" key={usage.id}>
-    <div className="flex flex-wrap items-center gap-2"><strong className="min-w-0 flex-1 truncate">{label(usage.principle,t('growth.principle'))}</strong><span className="rounded bg-[#F7E8E1] px-1.5 py-0.5 text-[10px] text-[#A94E30]">{statusLabel(usage.outcome||usage.status)||t('growth.none')}</span></div>
+   {!usages.length?<p className="text-sm text-muted">{t('growth.none')}</p>:<div className="grid gap-1">{usages.slice(0,8).map((usage:any)=><div className="rounded-lg border border-[#EFE9DF] px-3 py-2 text-[11px]" key={usage.id}>
+    <div className="flex flex-wrap items-center gap-2"><strong className="min-w-0 flex-1 truncate">{label(usage.principle,t('growth.principle'))}</strong><span className="rounded bg-[#F7E8E1] px-1.5 py-0.5 text-[10px] text-brand-hover">{statusLabel(usage.outcome||usage.status)||t('growth.none')}</span></div>
     <p className="mt-1 text-[10px] text-[#8A8176]">{t('growth.usageReused',{model:label(usage.model,t('growth.modelUnknown'))})} · {t('growth.usageContributed',{models:(usage.contributingModels||[]).join(', ')||t('growth.none')})} · {t('growth.usageAgent',{agent:label(usage.agentId,t('growth.none'))})}</p>
     <p className="text-[10px] text-[#9C9388]">{formatDateTime(usage.execution?.startedAt||usage.createdAt)}</p>
    </div>)}</div>}

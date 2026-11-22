@@ -133,7 +133,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const canRecheck=status==='needs_review'&&run?.failureClass==='completion_evidence_unavailable'
  const canResume=['interrupted','failed'].includes(status)||canRecheck
  const events=(run?.checkpoint?.events||[]).slice(-4)
- return <section className="mt-4 rounded-xl border border-[#E7E0D5] bg-white">
+ return <section className="mt-4 rounded-xl border border-divider bg-white">
   <div className="flex items-center gap-2 border-b border-[#F0EAE1] px-4 py-3">
    <Sparkles size={17} className="text-[#AF5B3A]"/>
    <div><h2 className="text-[13px] font-bold">{en?'Autonomous work':'자동 작업'}</h2>
@@ -162,12 +162,12 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    <textarea id="sdk-goal" value={instruction} onChange={e=>setInstruction(e.target.value)}
     rows={3} maxLength={64000}
     placeholder={en?'Describe a task, such as inspecting a project or fixing an issue.':'프로젝트를 분석하거나 문제를 해결하는 등 필요한 작업을 적어주세요.'}
-    className="w-full resize-y rounded-xl border border-[#E7E0D5] bg-[#FCFBF9] p-3 text-[12px] outline-none focus:border-[#A36A4A]"/>
+    className="w-full resize-y rounded-xl border border-divider bg-[#FCFBF9] p-3 text-[12px] outline-none focus:border-[#A36A4A]"/>
    <div className="flex flex-wrap items-end gap-3">
     <label className="flex min-w-44 flex-1 flex-col gap-1 text-[11px] text-[#746A5F]">
      {en?'AI model':'사용할 AI 모델'}
      <select value={providerId} onChange={e=>setProviderId(e.target.value)}
-      className="h-9 rounded-lg border border-[#E7E0D5] bg-white px-3 text-[12px]">
+      className="h-9 rounded-lg border border-divider bg-white px-3 text-[12px]">
       <option value="">{en?'Automatic selection':'자동 선택'}</option>
       {providers.filter(p=>p.enabled).map(p=><option key={p.id} value={p.id}>{p.name}{p.model?` · ${p.model}`:''}</option>)}
      </select>
@@ -184,10 +184,10 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     </label>
     <input id="sdk-verify" value={verification} onChange={e=>setVerification(e.target.value)}
      maxLength={2048} placeholder="cargo test"
-     className="mt-1 h-9 w-full rounded-lg border border-[#E7E0D5] px-3 text-[12px]"/>
+     className="mt-1 h-9 w-full rounded-lg border border-divider px-3 text-[12px]"/>
    </details>
    {error&&<p role="alert" className="rounded-lg bg-[#FFF3EE] p-3 text-[11px] text-[#A54027]">{error}</p>}
-   {run&&<div className="rounded-xl border border-[#E7E0D5] bg-[#FCFBF9] p-3">
+   {run&&<div className="rounded-xl border border-divider bg-[#FCFBF9] p-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
      <strong className="text-[12px]">{en?stateNames[status]?.[1]||status:stateNames[status]?.[0]||status}</strong>
      <span className="text-[11px] text-[#82796D]">{run.checkpoint?.rounds??0} {en?'rounds':'회 판단'} · {run.checkpoint?.toolCalls??0} {en?'actions':'회 도구 실행'}</span>
@@ -196,7 +196,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     </p>}
     </div>
     <p className="mt-2 line-clamp-2 text-[11px] text-[#766F67]">{run.instruction}</p>
-    {events.length>0&&<div className="mt-3 space-y-1 border-t border-[#E7E0D5] pt-2">
+    {events.length>0&&<div className="mt-3 space-y-1 border-t border-divider pt-2">
      {events.map((event,i)=><p key={i} className="text-[11px] text-[#82796D]">
       {event.kind==='tool_started'?(en?'Running tool':'도구 실행'):
        event.kind==='model_started'?(en?'Model is working':'모델 판단 중'):
@@ -218,13 +218,13 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
       {en?'Reject this action':'이 작업 거절'}
      </button>
     </div>}
-    {run.answer||run.checkpoint?.answer?<div className="mt-3 whitespace-pre-wrap break-words border-t border-[#E7E0D5] pt-3 text-[12px]">{run.answer||run.checkpoint?.answer}</div>:null}
+    {run.answer||run.checkpoint?.answer?<div className="mt-3 whitespace-pre-wrap break-words border-t border-divider pt-3 text-[12px]">{run.answer||run.checkpoint?.answer}</div>:null}
     {run.error&&<p className="mt-2 text-[11px] text-[#A54027]">{run.error}</p>}
     {notice&&<p role="status" className="mt-2 text-[11px] text-emerald-700">{notice}</p>}
     {(['queued','running'].includes(status))&&!run.readOnly&&<form onSubmit={event=>{event.preventDefault();void followUp()}} className="mt-3 flex flex-wrap gap-2">
      <input type="text" maxLength={4000} value={steering} disabled={busy} onChange={e=>setSteering(e.target.value)}
       aria-label={en?'Steer current task':'실행 중 추가 지시'} placeholder={en?'Add a follow-up instruction…':'진행 중인 작업에 추가 지시…'}
-      className="min-w-40 flex-1 rounded-lg border border-[#E7E0D5] bg-white px-3 py-2 text-[11px]"/>
+      className="min-w-40 flex-1 rounded-lg border border-divider bg-white px-3 py-2 text-[11px]"/>
      <button type="submit" disabled={busy||!steering.trim()} className="rounded-lg border border-[#D9BAA6] px-3 py-2 text-[11px] text-[#A4583E] disabled:opacity-40">{en?'Submit':'전달'}</button>
     </form>}
     {(run.runRef?.executionId||run.checkpoint?.executionId)&&<>
@@ -232,10 +232,10 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
       <RunEventTimeline executionId={(run.runRef?.executionId||run.checkpoint?.executionId)!}/>
     </>}
     <div className="mt-3 flex gap-2">
-     {running.has(status)&&<button type="button" disabled={busy} onClick={()=>void action('cancel')} className="flex items-center gap-1 rounded-lg border border-[#E7E0D5] px-3 py-2 text-[11px]">
+     {running.has(status)&&<button type="button" disabled={busy} onClick={()=>void action('cancel')} className="flex items-center gap-1 rounded-lg border border-divider px-3 py-2 text-[11px]">
       <Square size={13}/>{en?'Stop':'중단'}
      </button>}
-     {canResume&&<button type="button" disabled={busy} onClick={()=>void action('resume')} className="flex items-center gap-1 rounded-lg border border-[#E7E0D5] px-3 py-2 text-[11px]">
+     {canResume&&<button type="button" disabled={busy} onClick={()=>void action('resume')} className="flex items-center gap-1 rounded-lg border border-divider px-3 py-2 text-[11px]">
       <RefreshCw size={13}/>{canRecheck?(en?'Recheck completion evidence':'완료 증거 재확인'):(en?'Resume':'재개')}
      </button>}
     </div>
@@ -249,14 +249,14 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      <textarea id="sdk-observation" rows={2} maxLength={8192}
       value={observation} onChange={e=>setObservation(e.target.value)}
       placeholder={en?'Describe the files or outcomes you inspected.':'실제로 확인한 파일 상태나 실행 결과를 입력하세요.'}
-      className="mt-1 w-full rounded-lg border border-[#E7E0D5] p-2 text-[11px]" />
+      className="mt-1 w-full rounded-lg border border-divider p-2 text-[11px]" />
      <div className="mt-2 flex flex-wrap gap-2">
       <button type="button" disabled={busy||!observation.trim()} onClick={()=>void reconcile(true)}
-       className="rounded-lg border border-[#E7E0D5] px-3 py-2 text-[11px] disabled:opacity-40">
+       className="rounded-lg border border-divider px-3 py-2 text-[11px] disabled:opacity-40">
        {en?'Effect already applied':'변경이 적용됐음'}
       </button>
       <button type="button" disabled={busy||!observation.trim()} onClick={()=>void reconcile(false)}
-       className="rounded-lg border border-[#E7E0D5] px-3 py-2 text-[11px] disabled:opacity-40">
+       className="rounded-lg border border-divider px-3 py-2 text-[11px] disabled:opacity-40">
        {en?'Effect not applied':'변경이 적용되지 않았음'}
       </button>
      </div>

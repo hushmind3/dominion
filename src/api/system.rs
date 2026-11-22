@@ -68,6 +68,8 @@ pub async fn status(State(state): State<AppState>) -> Json<Value> {
         "mcp": state.store.count("mcp"),
         "skills": state.store.count("skill"),
         "memories": state.store.count("memory"),
+        "branch": crate::build_identity::running().branch,
+        "commit": crate::build_identity::running().commit,
         "jobs": running,
         "executions": state.store.count("execution"),
         "workspace": state.config.workspace.to_string_lossy(),
