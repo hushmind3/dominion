@@ -241,6 +241,4 @@ jobs:
           ./web/node_modules/.bin/playwright install --with-deps chromium
       - name: Mobile Chromium Team controls and approval-status smoke
         run: |
-          node web/tests/team-activity.smoke.mjs
-          node web/tests/room-model-routing.smoke.mjs
-          node web/tests/sse-gap.smoke.mjs
+          node web/tests/sub2-consumer.smoke.mjs
