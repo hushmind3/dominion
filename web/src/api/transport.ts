@@ -1,4 +1,5 @@
 import {translateError} from '../i18n/errors'
+import {plainError} from '../i18n/plain'
 import {t} from '../i18n'
 
 let authToken = ''
@@ -37,7 +38,7 @@ export async function readJson(res: Response) {
  try { return JSON.parse(content) }
  catch {
   throw new ApiError(res.status, !res.ok && content && !content.trimStart().startsWith('<')
-   ? translateError(content) : t('request.invalidResponse'), 'invalid_response', true)
+   ? plainError(translateError(content)) : t('request.invalidResponse'), 'invalid_response', true)
  }
 }
 
@@ -53,7 +54,7 @@ export function responseError(status: number, data: unknown): ApiError {
  const body = data && typeof data === 'object' ? data as Record<string, unknown> : {}
  const fallback = status === 401 ? 'request.signIn' : status === 429 ? 'request.rateLimited' : 'request.failed'
  return new ApiError(status,
-  typeof body.error === 'string' ? translateError(body.error) : t(fallback),
+  typeof body.error === 'string' ? plainError(translateError(body.error)) : t(fallback),
   typeof body.code === 'string' ? body.code : undefined,
   typeof body.retryable === 'boolean' ? body.retryable : [408, 429, 502, 503, 504].includes(status),
  )

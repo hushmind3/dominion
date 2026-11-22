@@ -920,6 +920,7 @@ const ko = {
   'rooms.welcome.line1': '에이전트들을 한 공간으로 초대하세요.',
   'rooms.welcome.line2': '서로의 이야기를 읽고, 내 말에 반응하고,',
   'rooms.welcome.line3': '다음 이야기를 함께 이어갑니다.',
+  'rooms.quickStart': '지금 바로 시작',
   'rooms.create': '대화방 만들기',
   'rooms.viewSaved': '저장된 대화방 보기',
   'rooms.newTitle': '새 그룹 대화방',

@@ -13,7 +13,7 @@ export function HomePage({navigate}:{navigate:(page:Destination,sessionId?:strin
  useLocale()
  const sessions=useRemote<ChatSession[]>('/api/sessions',[])
  const providers=useRemote<Provider[]>('/api/providers',[])
- const agents=useRemote<Agent[]>('/api/agents',[])
+ const agents=useRemote<{id:string}[]>('/api/agents?summary=1',[])
  const jobs=useRemote<any[]>('/api/jobs',[])
  const channels=useRemote<any[]>('/api/channels',[])
  const runtime=useRemote<any>('/api/model-library/runtime',{status:'idle'})

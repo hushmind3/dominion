@@ -19,7 +19,7 @@ export function OperationsPage({section}:{section:'activity'|'settings'}){
  const loc=useLocale()
  const [advancedSettingsOpen,setAdvancedSettingsOpen]=useState(false)
  const [activityDetails,setActivityDetails]=useState(false)
- const jobs=useRemote<any[]>(section==='activity'?'/api/jobs':null,[]),audit=useRemote<any[]>(section==='activity'&&activityDetails?'/api/audit':null,[]);
+ const jobs=useRemote<any[]>(section==='activity'?'/api/jobs':null,[]),audit=useRemote<any[]>(section==='activity'&&activityDetails?'/api/audit?limit=50':null,[]);
  const executions=useRemote<any[]>(section==='activity'&&activityDetails?'/api/executions?limit=100':null,[])
  const browserStatus=useRemote<any>(section==='activity'&&activityDetails?'/api/browser/status':null,{status:{available:false,running:false},screenshot:null})
  const [shotTick,setShotTick]=useState(0)

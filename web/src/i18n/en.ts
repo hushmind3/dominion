@@ -921,6 +921,7 @@ const en: Record<LocaleKey, string> = {
   'rooms.welcome.line1': 'Invite your agents into one space.',
   'rooms.welcome.line2': 'They read each other, respond to you,',
   'rooms.welcome.line3': 'and continue the story together.',
+  'rooms.quickStart': 'Start now',
   'rooms.create': 'Create room',
   'rooms.viewSaved': 'View saved rooms',
   'rooms.newTitle': 'New group room',
