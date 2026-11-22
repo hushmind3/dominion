@@ -283,6 +283,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/channels/:id/delivery/:delivery_id/reconcile",post(channels::reconcile_delivery))
         .route("/api/executions", get(executions::list))
         .route("/api/executions/active", get(executions::active_executions))
+        .route("/api/executions/:id/operations", get(executions::execution_operations))
         .route("/api/experience", get(experience::list))
         .route("/api/transfer", get(experience::transfer))
         .route("/api/executions/:id", get(executions::one))

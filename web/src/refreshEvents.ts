@@ -43,7 +43,12 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
    case 'dev_job':if(id)add('/api/dev/jobs/'+encoded(id));break
    case 'remote_task':add('/api/remote/tasks');if(id)add('/api/remote/tasks/'+encoded(id));break
    case 'execution':add('/api/executions');break
-   case 'execution_operation':add('/api/executions');break
+   case 'execution_operation':{
+    add('/api/executions')
+    const runId=field(row,'runId')
+    if(runId)add('/api/executions/'+encoded(runId)+'/operations')
+    break
+   }
    case 'approval':add('/api/approvals');break
    case 'mcp':add('/api/mcp','/api/mcp/discover');break
    case 'skill':add('/api/skills');break
