@@ -368,7 +368,7 @@ pub async fn public_catalog_models(
             "providerId":id,
             "models":cached.as_ref().map(|value|value["models"].clone()).unwrap_or_else(||json!([])),
             "cached":cached.is_some(),
-            "error":format!("공개 모델 목록을 새로 가져오지 못했습니다: {error}")
+            "error":format!("공개 모델 목록을 새로 가져오지 못했습니다. {}", crate::plain::error(&error.to_string()))
         }))
     }
 }
@@ -424,7 +424,7 @@ pub async fn public_openrouter_free_catalog(State(state):State<AppState>)->Json<
         Err(error)=>Json(json!({
             "models":cached.as_ref().map(|value|value["models"].clone()).unwrap_or_else(||json!([])),
             "cached":cached.is_some(),
-            "error":format!("무료 모델 목록 조회 실패: {error}")
+            "error":format!("무료 모델 목록을 불러오지 못했습니다. {}", crate::plain::error(&error.to_string()))
         }))
     }
 }
@@ -475,10 +475,10 @@ pub async fn provider_catalog(State(state): State<AppState>) -> Json<Value> {
                 return Json(json!({
                     "providers":cached["providers"],
                     "cached":true,
-                    "error":format!("최신 카탈로그를 가져오지 못했습니다: {error}")
+                    "error":format!("최신 목록을 불러오지 못했습니다. {}", crate::plain::error(&error.to_string()))
                 }));
             }
-            return Json(json!({"providers":[],"error":format!("공개 카탈로그를 가져오지 못했습니다: {error}")}));
+            return Json(json!({"providers":[],"error":format!("공개 목록을 불러오지 못했습니다. {}", crate::plain::error(&error.to_string()))}));
         }
     };
     let mut providers = Vec::new();
@@ -532,7 +532,7 @@ pub async fn refresh_free_catalog(state: &AppState) -> Value {
         .build()
     {
         Ok(client) => client,
-        Err(error) => return json!({"id":"catalog","status":"error","error":error.to_string()}),
+        Err(error) => return json!({"id":"catalog","status":"error","error":crate::plain::error(&error.to_string())}),
     };
     let port = state.config.port;
     let mut providers = Vec::new();
