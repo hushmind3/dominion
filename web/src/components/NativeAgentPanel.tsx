@@ -2,6 +2,7 @@ import {useEffect, useRef, useState} from 'react'
 import {Check, Play, RefreshCw, ShieldAlert, Square, Sparkles, MessageSquareText} from 'lucide-react'
 import {get, post, type Provider} from '../api'
 import {useLocale} from '../i18n'
+import {NativeRunNavigator} from './NativeRunNavigator'
 
 type SdkState = {state: string; detail?: {call_id?: string; tool?: string}}
 type RunEvent={kind:string;detail:unknown}
@@ -371,20 +372,27 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const toolReceiptsOmitted=run?.checkpoint?.toolReceiptsOmitted??0
  const loadedReceipts=olderReceipts?.runId===run?.id&&
   olderReceipts?.boundary===toolReceiptsOmitted?olderReceipts:null
- return <section className="mt-4 rounded-xl border border-[#E7E0D5] bg-white">
-  <div className="flex items-center gap-2 border-b border-[#F0EAE1] px-4 py-3">
-   <Sparkles size={17} className="text-[#AF5B3A]"/>
-   <div><h2 className="text-[13px] font-bold">{en?'Autonomous work':'자동 작업'}</h2>
-    <p className="mt-0.5 text-[11px] text-[#8A8176]">{en?'Describe what you need. Dominion’s own Rust engine handles the steps.':'할 일을 말씀하시면 도미니언 Rust 엔진이 작업을 실행합니다.'}</p>
+ return <section className="native-command-center" aria-label={en?'Autonomous work studio':'자동 작업 스튜디오'}>
+  <header className="native-command-header">
+   <div className="native-command-header-icon"><Sparkles size={23}/></div>
+   <div className="native-command-header-copy">
+    <span className="native-command-kicker">{en?'NATIVE EXECUTION / OWNER STUDIO':'NATIVE EXECUTION / 작업 스튜디오'}</span>
+    <h2>{en?'Build, run and inspect':'작업을 맡기고, 실행을 확인하세요'}</h2>
+    <p>{en?'Launch work, switch between saved runs, inspect results and intervene only when needed.':'작업 생성부터 실행 이력, 승인과 결과 검토까지 한 화면에서 처리합니다.'}</p>
    </div>
-  </div>
-  <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,4fr)_minmax(0,6fr)] xl:items-start">
-   <div className="grid min-w-0 gap-3 xl:sticky xl:top-4">
+   <div className="native-command-header-summary" aria-label={en?'Saved task summary':'저장 작업 요약'}>
+    <span><b>{runs.filter(item=>running.has(item.status)).length}</b>{en?'ACTIVE':'진행 중'}</span>
+    <span><b>{runs.filter(item=>['awaiting_approval','in_doubt','needs_review','interrupted'].includes(item.status)).length}</b>{en?'REVIEW':'확인 필요'}</span>
+   </div>
+  </header>
+  <div className="native-command-grid">
+   <div className="native-command-compose">
+    <span className="native-command-step">{en?'01 / NEW REQUEST':'01 / 작업 요청'}</span>
    <label className="text-[12px] font-semibold" htmlFor="sdk-goal">{en?'What would you like done?':'무엇을 해드릴까요?'}</label>
    <textarea id="sdk-goal" value={instruction} onChange={e=>editInstruction(e.target.value)}
     rows={3} maxLength={64000}
     placeholder={en?'Describe a task, such as inspecting a project or fixing an issue.':'프로젝트를 분석하거나 문제를 해결하는 등 필요한 작업을 적어주세요.'}
-    className="w-full resize-y rounded-xl border border-[#E7E0D5] bg-[#FCFBF9] p-3 text-[12px] outline-none focus:border-[#A36A4A]"/>
+    className="native-command-textarea"/>
    <div className="flex flex-wrap items-end gap-3">
     <label className="flex min-w-44 flex-1 flex-col gap-1 text-[11px] text-[#746A5F]">
      {en?'AI model':'사용할 AI 모델'}
@@ -395,7 +403,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      </select>
     </label>
     <button type="button" onClick={()=>void start()} disabled={busy||!instruction.trim()}
-     className="flex min-h-11 items-center gap-2 rounded-lg bg-[#AE5337] px-4 text-[12px] font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40">
+     className="native-command-submit">
      <Play size={14}/>{busy?(en?'Please wait…':'처리 중…'):(en?'Start task':'작업 시작')}
     </button>
    </div>
@@ -424,23 +432,18 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      maxLength={2048} placeholder="cargo test"
      className="mt-1 min-h-11 w-full rounded-lg border border-[#E7E0D5] px-3 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2"/>
    </details>
-   {runs.length>0&&<div className="flex min-w-0 flex-wrap items-end gap-2 rounded-lg bg-[#FAF7F1] p-2">
-    <label htmlFor="sdk-history" className="grid min-w-0 flex-1 gap-1 text-[11px] text-[#746A5F]">
-     {en?'Previous tasks':'이전 자동 작업'}
-     <select id="sdk-history" className="min-h-11 min-w-0 rounded-lg border border-[#E7E0D5] bg-white px-2 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2"
-      value={run?.id||''} onChange={e=>{
-       const item=runs.find(row=>row.id===e.target.value)
-       if(item){selectRun(item);setSteering('');setObservation('');setError('')}
-      }}>
-      {runs.map(item=><option key={item.id} value={item.id}>
-       {item.status} · {item.instruction.slice(0,75)}</option>)}
-     </select></label>
-    <button type="button" className="flex size-11 items-center justify-center rounded-lg border border-[#E7E0D5] bg-white focus-visible:outline-2 focus-visible:outline-offset-2"
-     aria-label={en?'Refresh task history':'작업 이력 새로고침'}
-     onClick={()=>void reload()}><RefreshCw size={16}/></button>
-   </div>}
    </div>
-   <div className="min-w-0 space-y-3">
+   <NativeRunNavigator runs={runs} selectedId={run?.id} en={en}
+    onRefresh={()=>void reload()}
+    onSelect={id=>{
+     const item=runs.find(row=>row.id===id)
+     if(item){selectRun(item);setSteering('');setObservation('');setError('')}
+    }}/>
+   <div className="native-command-results">
+    <div className="native-command-results-head">
+     <span className="native-command-step">{en?'03 / RUN INSPECTOR':'03 / 작업 결과 및 제어'}</span>
+     {run&&<code title={run.id}>{run.id.slice(0,8)}</code>}
+    </div>
    {disconnected&&<p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">{en?'Connection lost. Actions may have changed; reconnecting to the server.':'서버 연결이 끊겼습니다. 실행 상태가 바뀌었을 수 있어 재연결 후 다시 확인합니다.'}</p>}
    {error&&<p role="alert" className="rounded-lg bg-[#FFF3EE] p-3 text-[11px] text-[#A54027]">{error}</p>}
    {run&&<div className="rounded-xl border border-[#E7E0D5] bg-[#FCFBF9] p-3">
