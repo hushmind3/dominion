@@ -66,7 +66,7 @@ const providerPresets:ProviderPreset[]=[
 const sameProvider=(p:Provider,preset:ProviderPreset)=>p.name===preset.name||p.baseUrl.replace(/\/$/,'')===preset.baseUrl.replace(/\/$/,'')
 
 export function ModelHub(){
- useLocale()
+ const locale=useLocale()
  const providers=useRemote<Provider[]>('/api/providers',[])
  const cli=useRemote<CliCredential[]>('/api/providers/cli',[])
  const [counts,setCounts]=useState<Record<string,{list:string[];error?:string;info?:string;busy?:boolean}>>({})
@@ -340,13 +340,38 @@ export function ModelHub(){
   {id:'local',label:'로컬',count:providers.value.filter(p=>p.local).length},
   {id:'oauth',label:'계정 인증'},
  ]
- return <div className="mx-auto w-full max-w-[1200px] px-4 pt-2 pb-5 sm:px-6 lg:pt-3">
+ const activeProviders=providers.value.filter(provider=>provider.enabled!==false)
+ const localProviders=activeProviders.filter(provider=>provider.local)
+ const credentialReady=activeProviders.filter(provider=>provider.local||provider.hasKey)
+ const overview=[
+  {tab:'providers' as const,label:'등록한 제공자',english:'Configured providers',count:providers.value.length},
+  {tab:'local' as const,label:'로컬 모델',english:'Local models',count:localProviders.length},
+  {tab:'oauth' as const,label:'인증 준비',english:'Credentials set',count:credentialReady.length},
+  {tab:'free' as const,label:'무료 모델 조회',english:'Free catalog',count:freeCatalog.value.counts?.free||0},
+ ]
+ return <div className="mx-auto w-full max-w-[1480px] px-4 pt-2 pb-5 sm:px-6 lg:pt-3">
+  <header className="mb-5 flex flex-wrap items-end justify-between gap-4 rounded-2xl border border-[#E4E7DE] bg-[linear-gradient(115deg,#203B38_0%,#344D44_55%,#756957_100%)] px-5 py-6 text-white sm:px-7">
+   <div className="min-w-0">
+    <p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#F2C6A2]">MODEL CONTROL CENTER</p>
+    <h1 className="mt-2 text-[23px] font-bold text-white">{locale==='en'?'Model workspace':'모델 연결 · 실행 환경'}</h1>
+    <p className="mt-2 max-w-xl text-[12px] leading-6 text-[#D5E3DB]">{locale==='en'?'Configure model sources and inspect available accounts.':'로컬 모델, 계정 인증, API 제공자를 연결하고 실제 실행에 사용할 모델을 선택합니다.'}</p>
+   </div>
+   <Button type="button" onClick={()=>open()} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-white/30 bg-white px-4 text-[12px] font-semibold text-[#2D433B] hover:bg-[#F7F3EA]"><Plus size={15}/>{t('models.apiAdd')}</Button>
+  </header>
+  <div className="mb-5 grid grid-cols-2 gap-2 lg:grid-cols-4" role="group" aria-label="Model overview">
+   {overview.map(item=><button key={item.tab} type="button" onClick={()=>setTab(item.tab)}
+     aria-pressed={tab===item.tab} className={'rounded-xl border px-4 py-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 '+
+      (tab===item.tab?'border-[#B68362] bg-[#FAF1E8]':'border-[#E7E0D5] bg-white hover:bg-[#F7F5F0]')}>
+     <strong className="block text-[23px] font-extrabold leading-7 tabular-nums text-[#2A3733]">{item.count}</strong>
+     <span className="mt-1 block text-[11px] text-[#6F746C]">{locale==='en'?item.english:item.label}</span>
+   </button>)}
+  </div>
 
   <div className="mb-3 flex flex-wrap items-center gap-2">
    <nav ref={tabsRef} aria-label="Model sections" className="flex min-w-0 w-full gap-1 overflow-x-auto rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-1 md:w-auto md:flex-wrap">
     {tabs.map(item=><Button variant="bare" key={item.id} type="button" aria-current={tab===item.id?'page':undefined} onClick={()=>{setTab(item.id);setCategory('all');if(item.id==='connect')setBrowseProviderId('')}} className={'inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] font-semibold transition-colors '+(tab===item.id?'bg-[#C96442] text-white':'text-[#6F675D] hover:bg-[#F3EEE5]')}>{item.label}{item.count!==undefined&&<span className={'rounded px-1.5 py-0.5 text-[10px] '+(tab===item.id?'bg-white/20':'bg-[#F0EAE0] text-[#8A8176]')}>{item.count}</span>}</Button>)}
    </nav>
-   <Button type="button" onClick={()=>open()} className="ml-auto inline-flex h-8 items-center gap-2 rounded-lg border border-[#E1D9CC] bg-white px-3 text-[11px] font-semibold text-[#3A342D] hover:bg-[#FAF7F1]"><Plus size={14}/> {t('models.apiAdd')}</Button>
+
    {(tab==='providers'||tab==='local')&&<><div className="relative min-w-[180px] flex-1 sm:max-w-[280px]"><Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#A79C8E]"/><TextInput value={query} onChange={e=>setQuery(e.target.value)} placeholder={t('models.providerSearch')} className="!pl-8 !text-[12px]"/></div>
     {tab==='providers'&&<div className="flex flex-wrap gap-1">{(['all','free','cloud'] as const).map(value=><Button variant="bare" key={value} type="button" onClick={()=>setCategory(value)} className={'rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold '+(category===value?'border-[#C96442] bg-[#FBF1EC] text-[#A94E30]':'border-[#E7E0D5] bg-white text-[#7C7469]')}>{t(value==='all'?'models.filter.all':value==='free'?'models.filter.free':'models.filter.cloud')}</Button>)}</div>}</>}
   </div>
