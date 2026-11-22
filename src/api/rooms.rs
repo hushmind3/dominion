@@ -382,6 +382,44 @@ pub async fn system_prompt(
     })())
 }
 
+
+/// Owner edits for the room prompt. `common` replaces the shared contract,
+/// `final` replaces the whole static prompt; null clears either override.
+pub async fn save_system_prompt(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<Value>,
+) -> Response {
+    response((|| {
+        let _guard = lock(&state, &id)?;
+        let mut room = room(&state, &id)?;
+        for key in ["common", "final"] {
+            let Some(value) = body.get(key) else { continue };
+            match value {
+                Value::Null => {
+                    if let Some(fields) = room.as_object_mut() {
+                        fields.remove(if key == "common" { "systemPromptCommon" } else { "systemPromptOverride" });
+                    }
+                }
+                Value::String(text) if text.chars().count() <= 32_000 => {
+                    room[if key == "common" { "systemPromptCommon" } else { "systemPromptOverride" }] =
+                        json!(text);
+                }
+                _ => {
+                    return Err(bad("프롬프트는 32000자 이내 문자열이거나 초기화용 null이어야 합니다."))
+                }
+            }
+        }
+        match state.store.put("room", &room) {
+            Some(saved) => {
+                state.bus.record("room", &saved);
+                Ok(saved)
+            }
+            None => Err(failed("그룹 프롬프트를 저장하지 못했습니다.")),
+        }
+    })())
+}
+
 pub async fn knowledge(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     response((|| {
         room(&state, &id)?;

@@ -231,7 +231,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/rooms/:id/events", get(rooms::events))
         .route("/api/rooms/:id/state", get(rooms::state))
         .route("/api/rooms/:id/knowledge", get(rooms::knowledge))
-        .route("/api/rooms/:id/system-prompt", get(rooms::system_prompt))
+        .route("/api/rooms/:id/system-prompt", get(rooms::system_prompt).post(rooms::save_system_prompt))
         .route("/api/rooms/:id/team-launches", post(rooms::team_launch))
         .route("/api/rooms/:id/team-launches/:launch_id", get(rooms::team_launch_status))
         .route("/api/rooms/:id/knowledge/learn", post(rooms::learn))
