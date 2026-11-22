@@ -76,8 +76,8 @@ try{
       {id:'separate',name:'Separate',providerId:'agent-route',model:'agent-model',enabled:true}
     ];
     if(path==='/api/providers')response=[
-      {id:'fixture',name:'Fixture',model:'fixture',enabled:true,kind:'openai'},
-      {id:'agent-route',name:'Agent provider',model:'agent-model',enabled:true,kind:'openai'}
+      {id:'fixture',name:'Fixture',baseUrl:'https://fixture.invalid/v1',model:'fixture',enabled:true,kind:'openai'},
+      {id:'agent-route',name:'Agent provider',baseUrl:'https://agent.invalid/v1',model:'agent-model',enabled:true,kind:'openai'}
     ];
     if(path==='/api/sessions')response=[
       {id:'chat-one',title:'Conversation One',agentId:'lead',providerId:'fixture',model:'fixture'},

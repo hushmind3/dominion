@@ -135,7 +135,7 @@ export function ModelHub(){
  }
  const open=(p?:Provider)=>{setEdit(p||null);setIntegration(p?.integration==='freellmapi'?'freellmapi':p?.integration==='opencode-go'?'opencode-go':undefined);setFreePreset(false);setPresetMode(false);setName(p?.name||'');setBaseUrl(p?.baseUrl||'');setKind(p?.kind||'openai');setApiKey('');setLocal(Boolean(p?.local));setModelId(p?.reflectionModel||(p?.reflection??p?.learning?p?.model:'')||'');setDefaultModel(p?.model||'');setDefaultEffort(String(p?.reasoningEffort||''));setReflection(Boolean(p?.reflection ?? p?.learning));setRpm(p?.requestsPerMinute?String(p.requestsPerMinute):'');setAccountId(p?.accountId||'');setTestResult(null);setError('');setModal(true)}
  const openPreset=(preset:ProviderPreset)=>{setEdit(null);setIntegration(preset.integration);setFreePreset(Boolean(preset.free&&preset.auth==='none'));setPresetMode(true);setName(preset.name);setBaseUrl(preset.baseUrl);setKind(preset.kind);setLocal(preset.local);setApiKey('');setModelId('');setDefaultModel('');setDefaultEffort('');setReflection(false);setRpm(preset.requestsPerMinute?String(preset.requestsPerMinute):'');setAccountId('');setTestResult(null);setError('');setModal(true)}
- const goProvider=providers.value.find(p=>p.integration==='opencode-go'||p.baseUrl.includes('opencode.ai/zen/go')||p.baseUrl.includes('opencode.ai/inference/go'))
+ const goProvider=providers.value.find(p=>p.integration==='opencode-go'||(p.baseUrl||'').includes('opencode.ai/zen/go')||(p.baseUrl||'').includes('opencode.ai/inference/go'))
  const connectOpencodeGo=()=>{if(goProvider)open(goProvider);else openPreset(opencodeGoPreset)}
  const needsNewKey=presetMode&&!freePreset&&(!local||integration==='freellmapi')
  const testConnection=async()=>{
