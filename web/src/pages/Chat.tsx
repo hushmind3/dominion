@@ -489,9 +489,9 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const columnLayout=showHistory
   ?showInspector?'md:grid-cols-[232px_minmax(0,1fr)] xl:grid-cols-[232px_minmax(0,1fr)_300px]':'md:grid-cols-[232px_minmax(0,1fr)]'
   :showInspector?'xl:grid-cols-[minmax(0,1fr)_300px]':''
- return <div className={'relative grid h-dvh min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] bg-[#FFFDF9] '+columnLayout}>
+ return <div className={'relative grid h-full min-h-0 min-w-0 grid-cols-1 grid-rows-[minmax(0,1fr)] bg-canvas '+columnLayout}>
   {showHistory&&<Button type="button" aria-label={t('chat.listCollapse')} className="absolute inset-0 z-20 !h-auto !w-auto cursor-default !rounded-none !border-0 !bg-slate-900/30 md:hidden" onClick={()=>setShowHistory(false)}/>}
-  <aside id="chat-history" aria-label={t('ui.label.conversations')} className={'flex min-h-0 flex-col overflow-hidden border-r border-[#E7E0D5] bg-[#FAF7F1] '+(showHistory?'max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:w-[232px] max-md:shadow-2xl':'hidden')}>
+  <aside id="chat-history" aria-label={t('ui.label.conversations')} className={'flex min-h-0 flex-col overflow-hidden border-r border-divider bg-surface '+(showHistory?'max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:w-[232px] max-md:shadow-2xl':'hidden')}>
    <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-2"><div className="min-w-0"><span className="block text-[10px] font-extrabold uppercase tracking-widest text-[#C96442]">{t('ui.label.conversations')}</span><strong className="mt-1 block text-sm text-[#3A342D]">{t(showArchived?'chat.archived':'chat.recent')}</strong></div><Button size="icon" variant="ghost" onClick={resetLocal} title={t('chat.newChat')}><Plus size={19}/></Button></div>
    <Button className="mx-3 mb-4 inline-flex items-center justify-center gap-2 rounded-xl border border-[#EED9CC] bg-[#F7E8E1] px-4 py-2.5 text-xs font-bold text-[#A94E30] hover:bg-[#F1DCCF]" onClick={resetLocal}><Plus size={17}/> {t('chat.newChat')}</Button>
    <Button variant="ghost" size="sm" aria-pressed={showArchived} onClick={()=>setShowArchived(value=>!value)} className="mx-3 mb-3 !justify-start gap-2 !text-xs"><Archive size={14}/>{t(showArchived?'chat.showRecent':'chat.showArchived')}</Button>
@@ -499,12 +499,12 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    <div className="min-h-0 flex-1 overflow-y-auto px-2">{historyEntries.map(s=>{const actionLabel=t(s.archived?'chat.restoreSession':'chat.archiveSession');const running=current===s.id&&(busy||stopping);return <div key={s.id} className={'chat-history-entry group flex items-center gap-1 rounded-xl pr-1 hover:bg-[#F7E8E1] '+(current===s.id?'bg-[#F7E8E1]':'')}><Button variant="bare" onClick={()=>pickSession(s)} title={s.title} className={'flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2.5 text-left text-xs text-[#7C7469] '+(current===s.id?'font-bold text-[#A94E30]':'')}><MessageCircle size={15} className="shrink-0"/><span className="truncate">{s.title}</span></Button><Button size="icon" variant="ghost" disabled={Boolean(archiveBusy)||running} onClick={()=>void toggleArchive(s)} aria-label={actionLabel} title={running?t('chat.archiveWait'):actionLabel} className="size-8 opacity-60 hover:opacity-100">{s.archived?<RotateCcw size={14}/>:<Archive size={14}/>}</Button></div>})}{!historyEntries.length&&<div className="p-5 text-center text-xs text-[#9C9388]">{historyQuery.trim()?t('chat.historyNoResults'):t(showArchived?'chat.noArchived':'chat.first')}</div>}</div>
    <div className="shrink-0 border-t border-[#E7E0D5] p-2"><Button variant="ghost" onClick={openSettings} className="w-full !justify-start gap-2 !text-xs" aria-label={t('nav.settings')}><Settings size={17}/>{t('nav.settings')}</Button></div>
   </aside>
-  <div className="flex min-h-0 min-w-0 flex-col">
-   <header className="chat-header relative flex h-13 shrink-0 items-center justify-between gap-2 border-b border-[#E7E0D5] bg-[#FFFDF9] px-4">
+  <div className="flex min-h-0 min-w-0 flex-col bg-canvas">
+   <header className="chat-header relative z-20 grid shrink-0 grid-cols-[2rem_2rem_minmax(0,1fr)_auto] grid-rows-[2.5rem_2.25rem] items-center gap-x-1 border-b border-divider bg-surface px-2 py-1 sm:flex sm:h-14 sm:gap-2 sm:px-4">
     <Button size="icon" variant="ghost" onClick={()=>setShowHistory(x=>!x)} title={showHistory?t('chat.listCollapse'):t('chat.listExpand')} aria-label={showHistory?t('chat.listCollapse'):t('chat.listExpand')} aria-expanded={showHistory} aria-controls="chat-history"><Menu size={18}/></Button>
     <Button size="icon" variant="ghost" className="chat-new-session" onClick={resetLocal} title={t('chat.newChat')} aria-label={t('chat.newChat')}><Plus size={18}/></Button>
-    <ConversationSwitch mode="chat" onChange={switchMode}/>
-    <div className="flex min-w-0 flex-1 items-center gap-1.5">
+    <div className="col-start-3 row-start-1 min-w-0 sm:contents"><ConversationSwitch mode="chat" onChange={switchMode}/></div>
+    <div className="col-span-4 row-start-2 flex min-w-0 items-center gap-1.5 border-t border-divider sm:flex-1 sm:border-0">
      <div className="chat-model-controls relative flex min-w-0 items-center gap-1">
       <SelectInput aria-label={t('chat.selectProvider')} title={selectedProvider?.name||t('chat.autoProvider')} value={manual?.providerId??''} onChange={e=>{if(e.target.value)setRoute(e.target.value,'');else{setOverride(undefined);if(initialProvider)onSession(undefined)}}} className="!w-[124px] !pl-1.5 !border-0 !bg-transparent !py-1 !pr-6 !text-[12px]"><option value="">{t('chat.autoProvider')}</option>{providers.value.filter(p=>p.enabled).map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</SelectInput>
       <span className="text-[#B8AFA2]">/</span>
@@ -525,25 +525,25 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
       ,document.body)}
      </div>
     </div>
-    <div className="relative z-[2] flex shrink-0 items-center gap-0.5 sm:gap-1">
+    <div className="relative z-[2] col-start-4 row-start-1 flex shrink-0 items-center gap-0.5 sm:gap-1">
      {sessionTokens>0&&<span title={usageDetails} className="hidden rounded-lg border border-[#E7DDCC] bg-[#F7F1E6] px-2 py-1 text-[10px] font-semibold text-[#8A775F] sm:inline-flex">{t('usage.sessionTotal',{count:sessionTokens.toLocaleString()})}{sessionCalls>0&&<span className="ml-1">{' · '}{t('usage.calls',{count:sessionCalls.toLocaleString()})}</span>}</span>}
 
      
      <Button size="icon" variant="ghost" aria-expanded={showInspector} aria-controls="chat-session-inspector"
       title={loc==='en'?'Session details':'대화 정보 패널'} aria-label={loc==='en'?'Session details':'대화 정보 패널'}
       onClick={()=>setShowInspector(value=>!value)}><PanelRight size={18}/></Button>
-     <Button size="icon" variant="ghost" title={t('chat.modelManage')} aria-label={t('chat.modelManage')} onClick={openModels}><Cpu size={18}/></Button>
-     <Button size="icon" variant="ghost" className="conversation-settings" title={t('nav.settings')} aria-label={t('nav.settings')} onClick={openSettings}><Settings size={18}/></Button>
+     <Button size="icon" variant="ghost" className="!hidden sm:!inline-flex" title={t('chat.modelManage')} aria-label={t('chat.modelManage')} onClick={openModels}><Cpu size={18}/></Button>
+     <Button size="icon" variant="ghost" className="conversation-settings !hidden sm:!inline-flex" title={t('nav.settings')} aria-label={t('nav.settings')} onClick={openSettings}><Settings size={18}/></Button>
     </div>
    </header>
    <div ref={scrollRef} onScroll={onScroll} data-chat-scroll className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{!messages.length&&!(busy&&viewingTurn)?<div className="mx-auto flex min-h-full max-w-xl flex-col justify-center px-5 py-8">
-    <div className="chat-welcome">
-     <span className="chat-welcome-mark" aria-hidden="true"><Sparkles size={22}/></span>
-     <h1>{t('chat.newChatHeading')}</h1>
-     <p>{t('chat.newChatDesc')}</p>
-     <details className="chat-welcome-examples">
-      <summary>{t('chat.examples')} <ChevronDown size={14}/></summary>
-      <div>{[t('chat.example1'),t('chat.example2'),t('chat.example3')].map(example=><Button type="button" key={example} onClick={()=>{setInput(example);inputRef.current?.focus({preventScroll:true})}} className="chat-welcome-example">{example}<ArrowRight size={14}/></Button>)}</div>
+    <div className="chat-welcome my-auto flex w-full flex-col items-start gap-2 py-5 text-ink">
+     <span className="chat-welcome-mark mb-3 grid size-11 place-items-center rounded-xl border border-divider bg-surface text-muted" aria-hidden="true"><Sparkles size={22}/></span>
+     <h1 className="text-2xl font-semibold tracking-tight text-ink">{t('chat.newChatHeading')}</h1>
+     <p className="text-sm text-muted">{t('chat.newChatDesc')}</p>
+     <details className="chat-welcome-examples mt-5 w-full border-t border-divider pt-3">
+      <summary className="flex cursor-pointer items-center gap-2 py-2 text-xs text-muted">{t('chat.examples')} <ChevronDown size={14}/></summary>
+      <div className="grid gap-1">{[t('chat.example1'),t('chat.example2'),t('chat.example3')].map(example=><Button type="button" key={example} onClick={()=>{setInput(example);inputRef.current?.focus({preventScroll:true})}} className="chat-welcome-example flex w-full items-center justify-between rounded-lg border border-transparent px-3 py-2 text-left text-xs text-muted hover:border-divider hover:bg-surface">{example}<ArrowRight size={14}/></Button>)}</div>
      </details>
     </div>
     {!model&&<Button type="button" onClick={openModels} className="mt-4 inline-flex items-center gap-2 self-start text-[12px] font-semibold text-[#C96442]"><Compass size={15}/> {t('chat.connectFirst')} <ArrowRight size={14}/></Button>}
