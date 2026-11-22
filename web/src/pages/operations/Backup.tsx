@@ -138,12 +138,12 @@ export function BackupPanel() {
     <div className="mt-5 border-t border-divider pt-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <strong className="text-[13px] text-ink">{t('ops.backup.files')}</strong>
-        <span className="text-[10px] font-bold uppercase tracking-widest text-muted">{backups.value.length} FILES</span>
+        <span className="text-[11px] text-muted">{backups.value.length}개</span>
       </div>
       {backups.value.length ? <div className="mt-2 grid gap-2">
         {backups.value.map(backup => <label key={backup.name} className={'flex min-w-0 flex-wrap items-center gap-3 rounded-xl border px-3 py-2 text-[11px] ' + (selected === backup.name ? 'border-brand bg-[#F2EADF]' : 'border-divider bg-white')}>
           <TextInput type="radio" name="backup" disabled={!backup.encrypted} checked={selected === backup.name} onChange={() => { setSelected(backup.name); setConfirm(false) }}/>
-          <span className="min-w-0 flex-1"><strong className="block break-all text-[11px] text-ink">{backup.name}</strong><small className="text-[10px] text-muted">{formatBytes(backup.bytes)} · {backup.modifiedAt ? formatDateTime(backup.modifiedAt) : ''} · {backup.encrypted ? t('ops.backup.encrypted') : t('ops.backup.plain')}</small></span>
+          <span className="min-w-0 flex-1"><strong className="block truncate text-[12px] text-ink" title={backup.name}>{backup.modifiedAt ? formatDateTime(backup.modifiedAt) + ' 백업' : '백업'}</strong><small className="text-[10px] text-muted">{formatBytes(backup.bytes)} · {backup.encrypted ? t('ops.backup.encrypted') : t('ops.backup.plain')}</small></span>
         </label>)}
       </div> : <p className="mt-2 text-[11px] text-muted">{t('ops.backup.noFiles')}</p>}
       <div className="mt-3 rounded-xl border border-divider bg-brand-soft p-3">
