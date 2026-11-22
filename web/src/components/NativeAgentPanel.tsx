@@ -456,7 +456,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     {run&&<div className="native-command-results-head">
      <span className="native-command-step">{en?'Current run':'선택한 작업'}</span>
      <code title={run.id}>{run.id.slice(0,8)}</code>
-    </div>
+    </div>}
    {disconnected&&<p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">{en?'Connection lost. Actions may have changed; reconnecting to the server.':'서버 연결이 끊겼습니다. 실행 상태가 바뀌었을 수 있어 재연결 후 다시 확인합니다.'}</p>}
    {error&&<p role="alert" className="rounded-lg bg-[#FFF3EE] p-3 text-[11px] text-[#A54027]">{error}</p>}
    {run&&<div className="rounded-xl border border-[#E7E0D5] bg-[#FCFBF9] p-3">
