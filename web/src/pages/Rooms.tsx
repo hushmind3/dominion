@@ -102,7 +102,23 @@ export function RoomsPage({openSession,openSettings,switchMode,active:visibleVie
    </div>
    <div className="room-list-footer"><Button variant="ghost" onClick={openSettings} className="w-full !justify-start gap-2 !text-xs" aria-label={t('nav.settings')}><Settings size={17}/>{t('nav.settings')}</Button></div>
   </aside>
-  {current?<RoomConversation key={current.id} room={current} openSettings={openSettings} visibleView={visibleView} switchMode={switchMode} agents={agents.value} providers={providers.value} openList={()=>setShowList(v=>!v)} showList={showList} openSession={openSession} onSaved={async()=>{await rooms.reload();refresh()}} onRemoved={async()=>{setSelected('');await rooms.reload()}}/>:<div className="room-welcome"><header className="room-empty-header"><Button variant="ghost" size="icon" aria-label={t('rooms.listExpand')} onClick={()=>setShowList(value=>!value)}><Menu size={18}/></Button><ConversationSwitch mode="rooms" onChange={switchMode}/><Button variant="ghost" size="icon" className="conversation-settings" aria-label={t('nav.settings')} onClick={openSettings}><Settings size={18}/></Button></header><div className="room-welcome-mark"><UsersRound size={40}/></div><span className="room-eyebrow">{t('ui.label.teamPlace')}</span><h1>{t('rooms.welcome.title')}</h1><p>{t('rooms.welcome.line1')}<br/>{t('rooms.welcome.line2')}<br/>{t('rooms.welcome.line3')}</p><Button variant="primary" onClick={()=>{setCreating(draftOf());setError('')}}><Plus size={16}/> {t('rooms.create')}</Button><Button variant="bare" className="room-mobile-list-button" onClick={()=>setShowList(true)}>{t('rooms.viewSaved')}</Button></div>}
+  {current?<RoomConversation key={current.id} room={current} openSettings={openSettings} visibleView={visibleView} switchMode={switchMode} agents={agents.value} providers={providers.value} openList={()=>setShowList(v=>!v)} showList={showList} openSession={openSession} onSaved={async()=>{await rooms.reload();refresh()}} onRemoved={async()=>{setSelected('');await rooms.reload()}}/>:<div className="room-welcome flex min-h-0 min-w-0 flex-1 flex-col bg-canvas">
+   <header className="room-empty-header flex min-h-14 shrink-0 items-center gap-2 border-b border-divider bg-surface px-3 sm:px-5">
+    <Button variant="ghost" size="icon" aria-label={t('rooms.listExpand')} onClick={()=>setShowList(value=>!value)}><Menu size={18}/></Button>
+    <ConversationSwitch mode="rooms" onChange={switchMode}/>
+    <Button variant="ghost" size="icon" className="conversation-settings ml-auto" aria-label={t('nav.settings')} onClick={openSettings}><Settings size={18}/></Button>
+   </header>
+   <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col items-start justify-center gap-3 px-6 py-10 text-ink sm:px-10">
+    <div className="room-welcome-mark grid size-11 place-items-center rounded-xl border border-divider bg-surface text-muted"><UsersRound size={21}/></div>
+    <span className="text-[11px] font-medium text-muted">{t('ui.label.teamPlace')}</span>
+    <h1 className="text-2xl font-semibold tracking-tight text-ink">{t('rooms.welcome.title')}</h1>
+    <p className="max-w-lg text-sm leading-relaxed text-muted">{t('rooms.welcome.line1')} {t('rooms.welcome.line2')} {t('rooms.welcome.line3')}</p>
+    <div className="mt-4 flex flex-wrap items-center gap-3">
+     <Button variant="bare" onClick={()=>{setCreating(draftOf());setError('')}} className="flex min-h-11 items-center gap-2 rounded-lg bg-ink px-4 text-xs font-semibold text-white hover:bg-workspace-selected"><Plus size={16}/>{t('rooms.create')}</Button>
+     <Button variant="bare" className="room-mobile-list-button flex min-h-11 items-center gap-2 rounded-lg border border-divider bg-surface px-4 text-xs text-ink hover:bg-canvas" onClick={()=>setShowList(true)}>{t('rooms.viewSaved')}</Button>
+    </div>
+   </div>
+  </div>}
   {(error||rooms.error||agents.error)&&!creating&&<div className="room-global-error"><Notice message={error||rooms.error||agents.error}/></div>}
   {creating&&<DialogBackdrop onDismiss={()=>{if(!saving)setCreating(null)}}><DialogPanel size="wide" aria-label={t('rooms.newTitle')}><div className="room-dialog-header"><div><span className="room-eyebrow">{t('ui.label.startConversation')}</span><h2>{t('rooms.who')}</h2></div><Button size="icon" variant="ghost" aria-label={t('rooms.close')} onClick={()=>setCreating(null)} disabled={saving}><X size={18}/></Button></div><div className="room-dialog-body"><RoomSettings value={creating} onChange={setCreating} agents={agents.value} providers={providers.value} disabled={saving}/><Notice message={error}/></div><div className="room-dialog-footer"><span>{t('rooms.createHint')}</span><Button variant="primary" onClick={()=>void createRoom()} disabled={saving||!creating.name.trim()||!creating.agentIds.length}>{saving?<LoaderCircle size={15} className="animate-spin"/>:<Plus size={15}/>} {t('rooms.create')}</Button></div></DialogPanel></DialogBackdrop>}
  </div>
