@@ -114,6 +114,8 @@ export type StreamEvent = {type: string; [key: string]: any}
 export type ChatRequest = {
   sessionId: string
   clientTurnId?: string
+  requestId?: string
+  conversationMode?: 'chat' | 'agent'
   agentId?: string
   directChat?: boolean
   providerId?: string
