@@ -151,25 +151,42 @@ export default function App(){
   return()=>{window.removeEventListener('focus',check);document.removeEventListener('visibilitychange',check)}
  },[])
 
- return <OwnerProfileProvider><div className="h-dvh overflow-hidden bg-[#FFFDF9] font-sans text-[#24211D]">
+ return <OwnerProfileProvider><div className={'dominion-studio '+(settingsNav?'dominion-studio--wide':'dominion-studio--compact')}>
   <ContextMenu/>
-  <main inert={settingsOpen||searchOpen} className="h-dvh min-w-0">
-   {visited.chat&&<div hidden={mode!=='chat'} className="h-full page-chat"><PageLoadBoundary><Suspense fallback={<div role="status" className="p-8 text-sm text-[#7C7469]">대화 불러오는 중…</div>}>
-    <ChatPage key={chatDraft} active={mode==='chat'&&!settingsOpen} sessionId={chatRoute.session} initialAgent={chatRoute.agent} initialProvider={chatRoute.provider} initialModel={chatRoute.model} onSession={id=>{
-     setChatRoute(previous=>({...previous,session:id}))
-     if(locationState().page==='chat')navigate('chat',id)
-    }} openModels={()=>navigate('models')} openSettings={()=>navigate('settings')} switchMode={switchMode}/>
-   </Suspense></PageLoadBoundary></div>}
-   {visited.rooms&&<div hidden={mode!=='rooms'} className="h-full page-rooms"><PageLoadBoundary><Suspense fallback={<div role="status" className="p-8 text-sm text-[#7C7469]">대화 불러오는 중…</div>}><RoomsPage active={mode==='rooms'&&!settingsOpen} openSession={id=>navigate('chat',id)} openSettings={()=>navigate('settings')} switchMode={switchMode}/></Suspense></PageLoadBoundary></div>}
-
-  </main>
-  {settingsOpen&&<section aria-label="DOMINION workspace" inert={searchOpen} className="workspace-settings workspace-route fixed inset-0 z-30 w-full overflow-hidden bg-[#F6F3EC]">
-   <WorkspaceSidebar settingsOnly page={page} open collapsed={false} online={online} running={running} pending={pending} onNavigate={target=>target==='chat'?returnToChat():navigate(target)} onNewChat={returnToChat} onClose={closeSettings} navOpen={settingsNav} onToggleNav={toggleSettingsNav}/>
-   <div className={'workspace-settings-main flex h-full min-w-0 flex-col '+(settingsNav?'ml-[216px]':'ml-14')}>
+  {/* One navigation system owns the full product: conversation, rooms, and workspaces.
+      The chat/room trees stay mounted to preserve drafts and active turn state. */}
+  <WorkspaceSidebar settingsOnly page={page} open collapsed={false}
+   online={online} running={running} pending={pending}
+   onNavigate={target=>target==='chat'?returnToChat():navigate(target)}
+   onNewChat={()=>{setChatDraft(value=>value+1);navigate('chat')}}
+   onClose={closeSettings} navOpen={settingsNav} onToggleNav={toggleSettingsNav}/>
+  <div className="dominion-studio-stage">
+   <main hidden={settingsOpen} inert={settingsOpen||searchOpen} className="dominion-studio-conversations min-w-0">
+    {visited.chat&&<div hidden={mode!=='chat'} className="h-full page-chat">
+     <PageLoadBoundary><Suspense fallback={<div role="status" className="p-8 text-sm">대화 불러오는 중…</div>}>
+      <ChatPage key={chatDraft} active={mode==='chat'&&!settingsOpen}
+       sessionId={chatRoute.session} initialAgent={chatRoute.agent}
+       initialProvider={chatRoute.provider} initialModel={chatRoute.model}
+       onSession={id=>{
+        setChatRoute(previous=>({...previous,session:id}))
+        if(locationState().page==='chat')navigate('chat',id)
+       }} openModels={()=>navigate('models')} openSettings={()=>navigate('settings')}
+       switchMode={switchMode}/>
+     </Suspense></PageLoadBoundary>
+    </div>}
+    {visited.rooms&&<div hidden={mode!=='rooms'} className="h-full page-rooms">
+     <PageLoadBoundary><Suspense fallback={<div role="status" className="p-8 text-sm">Room 불러오는 중…</div>}>
+      <RoomsPage active={mode==='rooms'&&!settingsOpen} openSession={id=>navigate('chat',id)}
+       openSettings={()=>navigate('settings')} switchMode={switchMode}/>
+     </Suspense></PageLoadBoundary>
+    </div>}
+   </main>
+   {settingsOpen&&<section aria-label="DOMINION workspace" inert={searchOpen}
+      className="workspace-settings workspace-route dominion-studio-workspace">
     <SettingsHeader page={page} online={online} build={engineBuild}
      onSearch={()=>setSearchOpen(true)} onClose={closeSettings}/>
     <div className="workspace-settings-content min-h-0 flex-1 overflow-y-auto">
-     <PageLoadBoundary key={page}><Suspense fallback={<div role="status" className="p-8 text-sm text-[#7C7469]">화면 불러오는 중…</div>}>
+     <PageLoadBoundary key={page}><Suspense fallback={<div role="status" className="p-8 text-sm">화면 불러오는 중…</div>}>
       {page==='home'&&<HomePage navigate={navigate}/>}
       {page==='capabilities'&&<CapabilitiesPage navigate={navigate}/>}
       {page==='memory'&&<MemoryPage/>}
@@ -180,8 +197,8 @@ export default function App(){
       {(page==='activity'||page==='settings')&&<OperationsPage section={page}/>}
      </Suspense></PageLoadBoundary>
     </div>
-   </div>
-  </section>}
+   </section>}
+  </div>
   {searchOpen&&<WorkspaceSearch onNavigate={navigate} onDismiss={()=>setSearchOpen(false)}/>}
  </div></OwnerProfileProvider>
 }
