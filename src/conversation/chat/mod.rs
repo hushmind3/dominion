@@ -56,6 +56,63 @@ pub(crate) fn close_session_approvals(state: &crate::state::AppState, session_id
     approval::close_pending_approvals(state, session_id);
 }
 
+
+/// Static prompt preview for the private-chat prompt editor. No model call,
+/// no persisted turn.
+pub fn private_system_prompt_preview(
+    state: &crate::state::AppState,
+    session_id: Option<&str>,
+    agent_id: Option<&str>,
+    input: &str,
+    tools_enabled: bool,
+    korean_reasoning: bool,
+) -> Result<serde_json::Value, String> {
+    let agent = match agent_id {
+        Some(id) => Some(state.store.get("agent", id).ok_or("선택한 도우미를 찾을 수 없습니다.")?),
+        None => None,
+    };
+    let request = TurnRequest::from_value(&serde_json::json!({
+        "input": input,
+        "sessionId": session_id,
+        "agentId": agent_id,
+        "toolsEnabled": tools_enabled,
+        "toolsExecutionEnabled": tools_enabled,
+        "reasoningLanguage": if korean_reasoning { "ko" } else { "original" }
+    }))?;
+    let session = session_id.unwrap_or("prompt-preview:private");
+    let compiled = context::system_prompt_with_manifest_at(state, &request, session, input, None, None);
+    let owner = state
+        .store
+        .get("assistant_settings", "global")
+        .unwrap_or_else(|| serde_json::json!({"id":"global","instructions":"","enabled":true}));
+    let agent_override = agent.as_ref().and_then(|a| a["systemPromptOverride"].as_str());
+    let owner_override = owner["systemPromptOverride"].as_str();
+    let own_override = agent_override.or(owner_override);
+    let scope = if agent_override.is_some() {
+        Some("agent")
+    } else if owner_override.is_some() {
+        Some("global")
+    } else {
+        None
+    };
+    Ok(serde_json::json!({
+        "systemPrompt": compiled.prompt,
+        "dynamicContext": compiled.dynamic_context,
+        "systemChars": compiled.prompt.chars().count(),
+        "systemTokensEstimated": room_context::estimate(&compiled.prompt),
+        "contextChars": compiled.dynamic_context.chars().count(),
+        "contextTokensEstimated": room_context::estimate(&compiled.dynamic_context),
+        "agentId": agent_id,
+        "agentName": agent.as_ref().and_then(|a| a["name"].as_str()),
+        "ownerEnabled": owner["enabled"] != false,
+        "sampleInput": input,
+        "sessionId": session_id,
+        "ownOverrideActive": own_override.is_some(),
+        "ownOverrideText": own_override,
+        "effectiveOverrideScope": scope
+    }))
+}
+
 /// Static prompt preview for the room settings UI.
 pub(crate) fn system_prompt_preview(
     state: &crate::state::AppState,

@@ -135,7 +135,7 @@ export function SystemPromptPanel(){
     <Panel className="min-w-0 p-5">
      <Subheading title={tr('전체 시스템 프롬프트','Full system prompt',en)}/>
      <p className="mb-3 text-xs leading-5 text-muted">
-      {tr('매번 모델로 전송하는 실제 지침입니다. 텍스트를 직접 수정하거나 비워서 저장하면 다음 일반 채팅부터 적용됩니다. 실행 권한과 도구 제한은 Rust가 별도로 관리합니다.',
+      {tr('매번 모델로 전송하는 실제 지침입니다. 직접 수정하거나 비워서 저장하면 다음 일반 채팅부터 적용됩니다. 실행 권한과 도구 제한은 엔진이 따로 관리합니다.',
       'Edit or clear the real system text sent to the model each private-chat turn. Rust separately enforces permissions and tool limits.',en)}
      </p>
      <FormField label={tr('적용할 에이전트','Agent scope',en)}>
@@ -198,9 +198,21 @@ export function SystemPromptPanel(){
         {tr('저장된 내용이 없으면 자동 생성 지침을 사용합니다. 빈 텍스트로 저장하면 기본 문구가 사라집니다.',
          'Without an override the compiler generates instructions. Saving empty text removes the default text.',en)}
        </p>
-       <p className="mt-3 text-xs text-[var(--color-muted)]">
-        {fullDraft.length.toLocaleString()} / 32,000 · {tr('현재 추정','Current estimate',en)} {preview.systemTokensEstimated.toLocaleString()} tokens
-       </p>
+       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs text-[var(--color-muted)]">
+         {fullDraft.length.toLocaleString()} / 32,000 · {tr('현재 추정','Current estimate',en)} {preview.systemTokensEstimated.toLocaleString()} tokens
+        </span>
+        <div className="flex flex-wrap gap-2">
+         <Button variant="secondary" disabled={busy||!preview.ownOverrideActive}
+          onClick={()=>void resetFullPrompt()}>
+          <RotateCcw size={14}/>{tr('기본값 복원','Restore default',en)}
+         </Button>
+         <Button disabled={busy||!fullDirty||fullDraft.length>32000}
+          onClick={()=>void saveFullPrompt()}>
+          <Save size={14}/>{tr('전체 프롬프트 저장','Save prompt',en)}
+         </Button>
+        </div>
+       </div>
        {fullNotice&&<p role="status" className="mt-3 text-xs text-emerald-700">{fullNotice}</p>}
        {preview.effectiveOverrideScope==='global'&&agentId!==''&&!preview.ownOverrideActive&&(
         <p className="mt-2 text-xs text-muted">{tr('공통 프롬프트가 현재 적용 중입니다. 여기서 저장하면 이 에이전트에만 별도 적용됩니다.',

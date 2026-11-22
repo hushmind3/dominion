@@ -86,6 +86,25 @@ pub(super) fn system_prompt_with_manifest(
     system_prompt_with_manifest_at(state, request, session_id, query, improvements, None)
 }
 
+
+/// A saved full-prompt override for this private chat, if any. Agents win over
+/// the shared owner setting. Explicit per-turn overrides (rooms, channels) are
+/// handled by their own callers and are not replaced here.
+pub(crate) fn private_override(state:&AppState, request:&TurnRequest)->Option<String>{
+    if let Some(id)=request.session_id.as_deref() {
+        if state.store.get("session",id).is_some_and(|s|s["roomId"].is_string()) {
+            return None;
+        }
+    }
+    if request.system_override.is_some(){return None}
+    let agent=request.agent_id.as_deref().and_then(|id|state.store.get("agent",id));
+    if let Some(text)=agent.as_ref().and_then(|a|a["systemPromptOverride"].as_str()){
+        return Some(text.to_string());
+    }
+    state.store.get("assistant_settings","global")
+        .and_then(|owner|owner["systemPromptOverride"].as_str().map(str::to_string))
+}
+
 pub(super) fn system_prompt_with_manifest_at(
     state: &AppState,
     request: &TurnRequest,
@@ -94,21 +113,29 @@ pub(super) fn system_prompt_with_manifest_at(
     improvements: Option<&[Value]>,
     execution_id: Option<&str>,
 ) -> PromptContext {
-    let (mut prompt,mut identity_items)=identity_prefix(state,request);
-    prompt.push_str(
-        "\n당신은 Rust 엔진에서 동작하는 에이전트형 AI 작업 공간 DOMINION입니다. \
-         사용자가 다른 언어로 쓰지 않는 한 한국어로 답하십시오.",
-    );
-    if request.tools_enabled && request.tools_execution_enabled {
-        prompt.push_str(" 작업에 필요하면 사용 가능한 도구를 사용하십시오. 도구 결과를 정확히 보고하십시오.");
-    } else {
-        prompt.push_str(" 이번 턴에는 도구가 비활성화되어 있습니다. 외부 작업을 수행했다고 말하지 마십시오.");
+    // Owner/agent edited system text replaces the built-in narrative for
+    // private chat only. Runtime permission and tool checks stay in Rust.
+    let custom_prompt = private_override(state, request);
+    let (mut prompt,mut identity_items)=match &custom_prompt {
+        Some(text)=>(text.clone(),Vec::new()),
+        None=>identity_prefix(state,request),
+    };
+    if custom_prompt.is_none() {
+        prompt.push_str(
+            "\n당신은 Rust 엔진에서 동작하는 에이전트형 AI 작업 공간 DOMINION입니다. \
+             사용자가 다른 언어로 쓰지 않는 한 한국어로 답하십시오.",
+        );
+        if request.tools_enabled && request.tools_execution_enabled {
+            prompt.push_str(" 작업에 필요하면 사용 가능한 도구를 사용하십시오. 도구 결과를 정확히 보고하십시오.");
+        } else {
+            prompt.push_str(" 이번 턴에는 도구가 비활성화되어 있습니다. 외부 작업을 수행했다고 말하지 마십시오.");
+        }
+        prompt.push_str(&format!(
+            "\n작업 공간 루트: {}\n현재 날짜: {}",
+            state.config.workspace.display(),
+            chrono::Local::now().format("%Y-%m-%d")
+        ));
     }
-    prompt.push_str(&format!(
-        "\n작업 공간 루트: {}\n현재 날짜: {}",
-        state.config.workspace.display(),
-        chrono::Local::now().format("%Y-%m-%d")
-    ));
     let mut dynamic = String::new();
     let mut items = Vec::new();
     items.append(&mut identity_items);
