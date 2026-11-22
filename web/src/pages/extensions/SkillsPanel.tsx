@@ -75,6 +75,7 @@ export function SkillsPanel(p:Props){
               {exists ? (
                 <Button
                   variant="secondary"
+                  disabled={skills.loading||Boolean(skills.error)}
                   onClick={async () => {
                     const target = skills.value.find((x: any) => x.name === template.name);
                     if (!target) return;
@@ -85,7 +86,7 @@ export function SkillsPanel(p:Props){
                   {t('sp.cancel')}
                 </Button>
               ) : (
-                <Button variant="secondary" onClick={() => void addSkillTemplate(template)}>
+                <Button variant="secondary" disabled={skills.loading||Boolean(skills.error)} onClick={() => void addSkillTemplate(template)}>
                   {t('sp.install')}
                 </Button>
               )}
@@ -128,6 +129,7 @@ export function SkillsPanel(p:Props){
             <div className="flex items-center gap-1">
               <Button
                 variant={x.enabled ? "ghost" : "primary"}
+                disabled={skills.loading||Boolean(skills.error)}
                 onClick={async () => {
                   try {
                     await post("/api/skills", {
@@ -155,6 +157,7 @@ export function SkillsPanel(p:Props){
               <Button
                 size="icon"
                 variant="ghost"
+                disabled={skills.loading||Boolean(skills.error)}
                 title={t('sp.delete')}
                 onClick={async () => {
                   if (!confirm(t('sp.confirmDelete', { name: x.name }))) return;
@@ -173,7 +176,7 @@ export function SkillsPanel(p:Props){
           </div>
         </Panel>
       ))}
-      {!skills.value.length && (
+      {skills.loading?<p className="p-5 text-center text-[12px] text-[#8A8176]">{t('sp.loading')}</p>:skills.error?<p role="status" className="p-5 text-center text-[12px] text-[#8A8176]">{t('sp.unavailable')}</p>:!skills.value.length && (
         <Panel>
           <Empty
             icon={BookOpenText}

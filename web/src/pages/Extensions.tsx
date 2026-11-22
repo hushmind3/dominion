@@ -360,6 +360,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
     [error, setError] = useState(""),
     [message, setMessage] = useState("");
   const tab=section??localTab;
+  const remoteError=tab==='installed'?mcp.error:tab==='skills'?skills.error:tab==='plugins'?catalogSkills.error:tab==='market'?presets.error||mcp.error:'';
   const [skillQuery, setSkillQuery] = useState(""),
     [skillCategory, setSkillCategory] = useState("all");
   const [pluginQuery, setPluginQuery] = useState(""),
@@ -641,7 +642,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
         }
       />
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] px-4 py-3 text-[11px] text-[#5C544A]">
-        <StatusLine label={t('ext.tab.servers')} value={mcp.value.length} />
+        <StatusLine label={t('ext.tab.servers')} value={mcp.loading||mcp.error?'—':mcp.value.length} />
         <StatusLine
           label={t('ext.tab.tools')}
           value={tools.filter((t) => !t.error).length}
@@ -649,9 +650,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
         <StatusLine
           label={t('ext.tab.skills')}
           value={
-            skills.value.filter((s) => s.enabled).length +
-            "/" +
-            skills.value.length
+            skills.loading||skills.error?'—':skills.value.filter((s) => s.enabled).length + "/" + skills.value.length
           }
         />
       </div>
@@ -672,7 +671,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
           variant={tab === "installed" ? "primary" : "ghost"}
           onClick={() => setTab("installed")}
         >
-          {t('ext.tab.installed')} <b>{mcp.value.length}</b>
+          {t('ext.tab.installed')} <b>{mcp.loading||mcp.error?'—':mcp.value.length}</b>
         </Button>
         <Button
           variant={tab === "skills" ? "primary" : "ghost"}
@@ -680,11 +679,11 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
         >
           <BookOpenText size={17} /> {t('ext.tab.skills')}{" "}
           <b>
-            {skills.value.filter((s) => s.enabled).length}/{skills.value.length}
+            {skills.loading||skills.error?'—':`${skills.value.filter((s) => s.enabled).length}/${skills.value.length}`}
           </b>
         </Button>
       </div>}
-      {error && <Notice message={error} />}
+      {(error||remoteError) && <Notice message={error||remoteError} />}
       {message && (
         <div className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
           <Check size={16} />
@@ -911,13 +910,13 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                 </div>
               );
             })}
-            {!visibleCatalog.length && (
+            {!visibleCatalog.length && (catalogSkills.loading?<p className="p-5 text-center text-[12px] text-[#8A8176]">{t('ext.reading')}</p>:catalogSkills.error?<p role="status" className="p-5 text-center text-[12px] text-[#8A8176]">{t('ext.catalogUnavailable')}</p>:(
               <Empty
                 icon={BookOpenText}
                 title={t('ext.catalogEmpty')}
                 description={t('ext.catalogHint')}
               />
-            )}
+            ))}
           </div>
           <div className="mb-6 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#8A8176]">
             <span>
@@ -1209,7 +1208,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                 </Button>
               </Panel>
             ))}
-            {!mcp.value.length && (
+            {!mcp.value.length && (mcp.loading?<p className="p-5 text-center text-[12px] text-[#8A8176]">{t('ext.serversLoading')}</p>:mcp.error?<p role="status" className="p-5 text-center text-[12px] text-[#8A8176]">{t('ext.serversUnavailable')}</p>:(
               <Panel>
                 <Empty
                   icon={Blocks}
@@ -1217,7 +1216,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                   description={t('ext.noServersDesc')}
                 />
               </Panel>
-            )}
+            ))}
           </div>
           {tools.length > 0 && (
             <Panel className="grid gap-3">
