@@ -67,8 +67,10 @@ fn main(){
     if let Some(branch)=git(&["symbolic-ref","--short","-q","HEAD"]){
         if safe(&branch){println!("cargo:rustc-env=DOMINION_BUILD_BRANCH={branch}");}
     }
+    // Cargo rewrites the tracked lockfile during the build itself; restoring it
+    // afterwards must not leave every binary branded dirty.
     if let Ok(output)=Command::new("git").current_dir(manifest_dir())
-        .args(["status","--porcelain","--untracked-files=no"]).output(){
+        .args(["status","--porcelain","--untracked-files=no","--",".",":(exclude)Cargo.lock"]).output(){
         if output.status.success() {
             println!("cargo:rustc-env=DOMINION_BUILD_DIRTY={}",!output.stdout.is_empty());
         }
