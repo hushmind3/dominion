@@ -1,3 +1,4 @@
+import {useState} from 'react'
 import {Activity,ArrowRight,Bot,CheckCircle2,Cpu,FolderOpen,MessageSquare,Play,RadioTower,Workflow} from 'lucide-react'
 import {Button,PageContainer} from '../components/Primitives'
 import {ExecutionMonitor} from '../components/ExecutionMonitor'
@@ -8,6 +9,7 @@ import {t,useLocale,formatDateTime,jobKindLabel} from '../i18n'
 import type {Agent,ChatSession,Provider} from '../api'
 type Destination='chat'|'models'|'agents'|'rooms'|'connections'|'memory'|'activity'
 export function HomePage({navigate}:{navigate:(page:Destination,sessionId?:string)=>void}){
+ const [advanced,setAdvanced]=useState(false)
  useLocale()
  const sessions=useRemote<ChatSession[]>('/api/sessions',[])
  const providers=useRemote<Provider[]>('/api/providers',[])
@@ -57,11 +59,11 @@ export function HomePage({navigate}:{navigate:(page:Destination,sessionId?:strin
    </section>
   </div>
   {recentChats.length>0&&<section className="mt-4 rounded-xl border border-divider bg-white"><div className="border-b border-[#F0EAE1] px-4 py-3"><h2 className="text-[13px] font-bold">{t('dashboard.recentChats')}</h2><p className="mt-1 text-[11px] text-[#8A8176]">{t('dashboard.recentChats.desc')}</p></div><div className="grid gap-1 p-2 sm:grid-cols-2">{recentChats.map(chat=><Button key={chat.id} type="button" onClick={()=>navigate('chat',chat.id)} className="flex min-w-0 items-center gap-3 rounded-lg px-3 py-3 text-left hover:bg-[#FAF7F1]"><MessageSquare size={16} className="shrink-0 text-brand-hover"/><span className="min-w-0 flex-1 truncate text-[12px] font-semibold">{chat.title||t('chat.sessionTitle')}</span><ArrowRight size={14} className="shrink-0 text-[#A79C8E]"/></Button>)}</div></section>}
-  <NativeAgentPanel providers={providers.value}/>
+  <details className="mt-5 rounded-xl border border-divider bg-surface p-4" onToggle={event=>setAdvanced(event.currentTarget.open)}><summary className="cursor-pointer text-xs text-muted">{t('workspace.advancedTools')}</summary>{advanced&&<><NativeAgentPanel providers={providers.value}/><ExecutionMonitor/></>}</details>
   <section className="mt-4 rounded-xl border border-divider bg-white">
    <div className="flex items-center justify-between border-b border-[#F0EAE1] px-4 py-3"><h2 className="text-[13px] font-bold">{t('dashboard.recent')}</h2><Button type="button" onClick={()=>navigate('activity')} className="flex items-center gap-1 text-[11px] font-medium text-brand">{t('dashboard.recent.all')} <ArrowRight size={13}/></Button></div>
    {recent.length?<div className="divide-y divide-[#F0EAE1]">{recent.map(job=><div key={job.id} className="flex items-center gap-3 px-4 py-3"><Workflow size={15} className="text-[#A79C8E]"/><div className="min-w-0 flex-1"><div className="truncate text-[12px] font-semibold">{job.input?.goal||job.input?.prompt||job.kind||t('dashboard.jobFallback')}</div><div className="mt-1 text-[10px] text-[#9C9388]">{jobKindLabel(job.kind)} · {job.createdAt?formatDateTime(job.createdAt):''}</div></div><StatusPill status={job.status} /></div>)}</div>:<div className="flex h-32 items-center justify-center text-[12px] text-[#9C9388]">{t('dashboard.recent.empty')}</div>}
   </section>
-  <div className="mt-4"><ExecutionMonitor/></div>
+
  </PageContainer>
 }

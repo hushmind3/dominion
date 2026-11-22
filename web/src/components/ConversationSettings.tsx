@@ -1,4 +1,5 @@
 import {createPortal} from 'react-dom'
+import type {ReactNode} from 'react'
 import {BookOpenCheck,BrainCircuit,Eye,Languages,SlidersHorizontal,Wrench,X} from 'lucide-react'
 import {Button,TextInput} from './Primitives'
 import {useAnchoredPanel} from '../hooks/useAnchoredPanel'
@@ -14,10 +15,11 @@ type Props={
  autoLearn:boolean;setAutoLearn:(value:boolean)=>void
  learning:boolean;learnDisabled:boolean;onLearn:()=>void|Promise<void>
  optionsBusy?:boolean;notice?:string
+ reasoningControl?:ReactNode
 }
 /** Shared chat controls: readable labels, native checkboxes and unchanged
  * persistence callbacks for both single chat and nine-agent rooms. */
-export function ConversationSettings({open,onOpenChange,showReasoning,setShowReasoning,reasoningKo,setReasoningKo,thinkingEnabled,setThinkingEnabled,canDisableThinking=true,reasoningEffort,setReasoningEffort,toolsEnabled,setToolsEnabled,autoLearn,setAutoLearn,learning,learnDisabled,onLearn,optionsBusy=false,notice}:Props){
+export function ConversationSettings({open,onOpenChange,showReasoning,setShowReasoning,reasoningKo,setReasoningKo,thinkingEnabled,setThinkingEnabled,canDisableThinking=true,reasoningEffort,setReasoningEffort,toolsEnabled,setToolsEnabled,autoLearn,setAutoLearn,learning,learnDisabled,onLearn,optionsBusy=false,notice,reasoningControl}:Props){
  const locale=useLocale()
  const en=locale==='en'
  const settingsPanel=useAnchoredPanel(open,()=>onOpenChange(false),340,'top')
@@ -80,6 +82,7 @@ export function ConversationSettings({open,onOpenChange,showReasoning,setShowRea
       disabled={!canDisableThinking} title={!canDisableThinking?'이 모델은 추론 끄기를 지원하지 않습니다. 낮은 강도를 선택하세요.':undefined}
       onChange={e=>{const on=e.target.checked;setThinkingEnabled(on);setReasoningEffort(on?'':'none')}}/>
     </label>
+    {reasoningControl&&<div className="px-3 pb-3">{reasoningControl}</div>}
     <label className={row}>
      <span className="flex min-w-0 items-start gap-2.5"><Wrench size={18} className="mt-0.5 shrink-0 text-[#957E65]"/>
       <span><strong className="block text-[13px] font-semibold">{t('chat.useTools')}</strong>

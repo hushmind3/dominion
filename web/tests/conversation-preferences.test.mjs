@@ -27,7 +27,7 @@ function storageFixture(){
 
 test('all private chat toggles survive read-back, including explicit false',()=>{
  storageFixture()
- const defaults={showReasoning:true,thinkingEnabled:true,toolsEnabled:true,autoLearn:false}
+ const defaults={showReasoning:false,thinkingEnabled:true,toolsEnabled:true,autoLearn:false}
  for(const [name,fallback] of Object.entries(defaults)){
   assert.equal(readConversationToggle(name),fallback)
   assert.equal(writeConversationToggle(name,false),true)
@@ -43,7 +43,7 @@ test('bad storage and unsupported values fail safely without enabling learning',
  data.set(conversationToggleKey('autoLearn'),'invalid')
  assert.equal(readConversationToggle('autoLearn'),false)
  data.set(conversationToggleKey('showReasoning'),'invalid')
- assert.equal(readConversationToggle('showReasoning'),true)
+ assert.equal(readConversationToggle('showReasoning'),false)
  data.set(conversationEffortKey,'<invalid>')
  assert.equal(readConversationEffort(),'')
  assert.equal(writeConversationEffort('<invalid>'),false)

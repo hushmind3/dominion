@@ -47,10 +47,11 @@ const OperationsPage = lazy(() =>
 )
 
 export type PageId = 'chat' | 'rooms' | SettingsPage
-type SettingsPage = keyof typeof settingsPages
+export type SettingsPage = keyof typeof settingsPages
 type Navigate = (page: PageId, sessionId?: string) => void
 type SettingsEntry = {
   label: LocaleKey
+  description: LocaleKey
   group: LocaleKey
   icon: LucideIcon
   render: (navigate: Navigate) => ReactNode
@@ -59,54 +60,63 @@ type SettingsEntry = {
 export const settingsPages = {
   home: {
     label: 'nav.home',
+    description: 'workspace.description.home',
     group: 'nav.group.workspace',
     icon: House,
     render: (navigate: Navigate) => <HomePage navigate={navigate} />,
   },
   models: {
     label: 'nav.models',
+    description: 'workspace.description.models',
     group: 'nav.group.workspace',
     icon: Cpu,
     render: () => <ModelHub />,
   },
   agents: {
     label: 'nav.agents',
+    description: 'workspace.description.agents',
     group: 'nav.group.workspace',
     icon: Bot,
     render: () => <AgentsPage />,
   },
   connections: {
     label: 'nav.connections',
+    description: 'workspace.description.connections',
     group: 'nav.group.extensions',
     icon: RadioTower,
     render: () => <ConnectionsPage />,
   },
   capabilities: {
     label: 'nav.capabilities',
+    description: 'workspace.description.capabilities',
     group: 'nav.group.extensions',
     icon: ShieldCheck,
     render: (navigate: Navigate) => <CapabilitiesPage navigate={navigate} />,
   },
   extensions: {
     label: 'nav.extensions',
+    description: 'workspace.description.extensions',
     group: 'nav.group.extensions',
     icon: Blocks,
     render: () => <ExtensionsPage />,
   },
   memory: {
     label: 'nav.memory',
+    description: 'workspace.description.memory',
     group: 'nav.group.extensions',
     icon: BookOpenText,
     render: () => <MemoryPage />,
   },
   activity: {
     label: 'nav.activity',
+    description: 'workspace.description.activity',
     group: 'nav.group.operations',
     icon: Activity,
     render: () => <OperationsPage section="activity" />,
   },
   settings: {
     label: 'nav.settings',
+    description: 'workspace.description.settings',
     group: 'nav.group.operations',
     icon: Settings2,
     render: () => <OperationsPage section="settings" />,

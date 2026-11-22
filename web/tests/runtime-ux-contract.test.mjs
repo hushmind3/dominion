@@ -118,7 +118,7 @@ test('room Team panel refreshes from native job events without manual reload',()
 
 test('nine-agent group exposes a real Team launch, permission gate, and persisted progress',()=>{
  const launcher=source('src/components/RoomTeamLauncher.tsx')
- const routes=source('../src/api/mod.rs')
+ const routes=source('../src/api/routes/conversations.rs')
  const roomApi=source('../src/api/rooms.rs')
  assert.match(rooms,/aria-label="Team 작업"/)
  assert.match(rooms,/<RoomTeamLauncher roomId=\{room\.id\}/)
@@ -220,7 +220,7 @@ test('room configuration keeps recognizable icons and usable roster hit targets'
 
 test('private chat separates owner and assistant sides and exposes usable scroll recovery',()=>{
  const chat=source('src/pages/Chat.tsx')
- const style=source('src/theme.css')
+ const style=source('src/styles/conversations.css')
  const scroll=source('src/hooks/useTranscriptScroll.ts')
  assert.match(chat,/data-message-role=\{human\?'user':'assistant'\}/)
  assert.match(chat,/chat-message--user justify-end/)
@@ -260,13 +260,13 @@ test('assistant rich text keeps code fences, lists, headings and safe outbound l
 
 test('private chat offers agent-free model conversation while preserving explicit agent tasks',()=>{
   const chat=source('src/pages/Chat.tsx')
-  const api=source('src/api.ts')
+  const api=source('src/api/types.ts')
   const request=source('../src/engine/chat/mod.rs')
   const runtime=source('../src/engine/chat/runtime.rs')
   const prompts=source('../src/addons/knowledge/chat_context.rs')
   assert.match(chat,/aria-label="대화 모드 및 에이전트 선택"/)
-  assert.match(chat,/<option value="">일반 채팅<\/option>/)
-  assert.match(chat,/에이전트 · /)
+  assert.match(chat,/<option value="">\{t\('welcome\.chatMode'\)\}<\/option>/)
+  assert.match(chat,/t\('welcome\.agentMode'\)/)
   assert.match(chat,/initialAgent\?'agent':'chat'/)
   assert.match(chat,/directChat:!agentMode/)
   assert.match(chat,/agentId:agentMode\?agentId:undefined/)
@@ -425,7 +425,7 @@ test('pending image previews survive rejected chat attempts and clear only after
 
 test('streaming and persisted assistant replies share the same width and message selectors',()=>{
  const chat=source('src/pages/Chat.tsx')
- const css=source('src/theme.css')
+ const css=source('src/styles/conversations.css')
  assert.match(chat,/data-message data-message-role="assistant"/)
  assert.match(chat,/chat-message-body relative min-w-0 flex-1/)
  assert.match(css,/\.page-chat \.chat-message--assistant>\.chat-message-body\{max-width:760px;min-width:0\}/)
@@ -452,7 +452,7 @@ test('uncertain transport disconnect never presents an unverified retry as harml
 
 test('logical client-turn keys dedupe effectful retries and locate earlier persisted inputs',()=>{
  const chat=source('src/pages/Chat.tsx')
- const api=source('src/api.ts')
+ const api=source('src/api/types.ts')
  const request=source('../src/engine/chat/mod.rs')
  const runtime=source('../src/engine/chat/runtime.rs')
  const e2e=source('../tests/e2e/http_execution.rs')

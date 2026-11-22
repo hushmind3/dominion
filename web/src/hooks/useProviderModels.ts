@@ -1,4 +1,4 @@
-import {useRemote} from '../components/UI'
+import {useRemote} from './useRemote'
 import type {ModelOption} from '../api'
 
 export function useProviderModels(providerId: string) {

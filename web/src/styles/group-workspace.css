@@ -1,0 +1,18 @@
+/* Keep the conversation space clear; occasional actions share one menu. */
+.room-header { min-height: 68px; }
+.room-extra-actions { position: relative; flex-shrink: 0; }
+.room-extra-actions summary { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 10px; color: #897762; cursor: pointer; list-style: none; }
+.room-extra-actions summary::-webkit-details-marker { display: none; }
+.room-extra-actions summary:hover, .room-extra-actions[open] summary { background: #f0e8dc; }
+.room-extra-actions summary:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.room-extra-actions > div { position: absolute; right: 0; top: calc(100% + 8px); z-index: 40; display: grid; min-width: 220px; gap: 4px; border: 1px solid var(--color-divider); border-radius: 14px; background: var(--color-surface); padding: 8px; box-shadow: 0 12px 40px #33291e21; }
+.room-extra-actions .room-roster-toggle { display: flex; width: 100%; justify-content: flex-start; gap: 9px; border-radius: 8px; padding: 10px; font-size: 12px; }
+.room-extra-actions .room-roster-toggle span { display: inline; }
+.room-list { background: var(--workspace-sidebar); }
+.room-list-item.is-selected { background: #e9dfd0; }
+.room-first-message h2 { color: #554332; letter-spacing: -.04em; }
+.room-first-message > p { color: #998773; font-size: 13px; line-height: 1.8; }
+@media (max-width: 767px) {
+  .room-header { min-height: 58px; }
+  .room-extra-actions > div { position: fixed; top: 62px; right: 12px; max-width: calc(100vw - 24px); }
+}
