@@ -29,6 +29,13 @@ const field='w-full min-w-0 rounded-lg border border-[#E7E0D5] bg-white px-3 py-
 const btn='rounded-lg border border-[#E7E0D5] px-3 py-2 text-[11px] font-semibold hover:bg-[#FAF7F1] disabled:opacity-40'
 const active=new Set(['queued','running'])
 const recoverable=new Set(['failed','interrupted','needs_review'])
+const phaseNames:Record<string,[string,string]>={
+ scheduling:['작업 준비 중','Scheduling'],
+ retrying_safe_reads:['안전한 읽기 작업 재시도 중','Retrying safe read tasks'],
+ dispatching:['Worker 실행 중','Dispatching workers'],
+ preparing_worktree:['작업 공간 준비 중','Preparing worktree'],
+ verified:['검증 완료','Verified'],
+}
 const apiPath=(id:string,task?:string)=>'/api/task-teams/'+encodeURIComponent(id)+
  (task?'/worktrees/'+encodeURIComponent(task):'')
 export function TaskTeamsPanel({providers}:{providers:Provider[]}){
@@ -336,7 +343,7 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
         value={details.tasks?.filter(task=>task.status==='completed').length||0}
         aria-label={t('완료된 Worker 수','Completed workers')}/>
        <p className="mt-1 text-[10px] text-[#82796D]">
-        {t('진행 단계','Phase')}: {details.teamState?.phase||'—'} ·
+        {t('진행 단계','Phase')}: {details.teamState?.phase?(phaseNames[details.teamState.phase]?.[en?1:0]||details.teamState.phase):'—'} ·
         {t(' 증거는 작업 완료와 별도로 검증됩니다.',' Evidence is checked separately from task completion.')}
        </p>
       </div>
@@ -372,7 +379,8 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
          {t('외부 모델의 응답이며 파일 변경 검증이 아닙니다.','External model result; not verified file changes.')}
         </p>}
         {task.worktree?.id&&<div className="mt-2 flex flex-wrap items-center gap-2">
-         <GitBranch size={13}/><small>{task.worktree.status} · {task.worktree.mergeStatus||'pending'}</small>
+         <GitBranch size={13}/><StatusPill status={task.worktree.status||'preparing'}/>
+         <StatusPill status={task.worktree.mergeStatus||'pending'}/>
          {details.status==='completed'&&task.mode==='write'&&task.worktree.mergeStatus!=='applied'&&
           <button type="button" className={btn} disabled={busy} onClick={()=>void inspect(task.taskId)}>
            {t('변경 미리보기','Preview changes')}</button>}
