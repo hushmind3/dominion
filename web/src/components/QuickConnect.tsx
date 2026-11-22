@@ -1,23 +1,18 @@
 import {useState} from 'react'
-import {ArrowRight, Check, HardDrive, KeyRound, LoaderCircle, LogIn, Sparkles} from 'lucide-react'
+import {ArrowRight, HardDrive, KeyRound, LoaderCircle} from 'lucide-react'
 import {Button, SelectInput} from './Primitives'
 import {t, useLocale} from '../i18n'
 
 type Props = {
-  accountConnected: boolean
-  canImport: boolean
   busy: boolean
   pending: boolean
   loginUrl: string
   message: string
-  onLogin: () => void
-  onImport: () => void
   onKey: (provider: string) => void
   onLocal: () => void
-  onBrowse: () => void
 }
 
-export function QuickConnect({accountConnected, canImport, busy, pending, loginUrl, message, onLogin, onImport, onKey, onLocal, onBrowse}: Props) {
+export function QuickConnect({busy, pending, loginUrl, message, onKey, onLocal}: Props) {
   useLocale()
   const [provider, setProvider] = useState('OpenAI')
   return <section className="quick-connect">
