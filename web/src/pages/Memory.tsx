@@ -2,7 +2,7 @@ import {useEffect,useState} from 'react'
 import {BookOpenText, Check, Pencil, Plus, Trash2, X} from 'lucide-react'
 import {del, post, type Agent} from '../api'
 import {Button, TextInput, TextArea, SelectInput} from '../components/Primitives'
-import {Action, FormField, Headline, Notice, Panel, Subheading, useRemote} from '../components/UI'
+import {Action, FormField, Headline, Notice, Panel, Subheading, useRemote,PAGE_FRAME} from '../components/UI'
 import {LearningRecords} from './memory/LearningRecords'
 import {formatDateTime,t,useLocale,type LocaleKey} from '../i18n'
 import {GrowthDashboard} from './memory/Growth'
@@ -83,7 +83,7 @@ export function MemoryPage(){
   {id:'archived',ko:'보관',english:'Archived',count:memories.value.filter(m=>statusOf(m)==='archived').length},
   {id:'excluded',ko:'검색 제외',english:'Excluded',count:memories.value.filter(m=>statusOf(m)==='excluded').length},
  ]
- return <div className="mx-auto w-full max-w-[1480px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8">
+ return <div className={PAGE_FRAME}>
   <Headline eyebrow={t('ui.eyebrow.memory')} title={t('memory.title')} description={t('memory.description')}/>
   <div className="mb-5 grid grid-cols-2 gap-2 md:grid-cols-4" role="group" aria-label={locale==='en'?'Memory filters':'기억 상태 필터'}>
    {statusOverview.map(item=><button key={item.id} type="button" onClick={()=>setStatus(item.id)}
