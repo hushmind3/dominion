@@ -50,7 +50,7 @@ test('team DAG and external resumption are backed by persisted job identities',(
  assert.match(jobs,/externalRunId/)
 })
 test('original screens use native APIs with measured and estimated token evidence',()=>{
- assert.doesNotMatch(operations,/<RemoteWorkPanel\/>/)
+ assert.match(operations,/<RemoteWorkPanel\/>/)
  assert.match(operations,/<TeamWorkflowPanel jobs=\{jobs\.value\}\/>/)
  assert.match(operations,/<RunEventTimeline executionId=\{selectedExecution\}\/>/)
  assert.match(rooms,/<RoomTeamLauncher roomId=\{room\.id\}/)

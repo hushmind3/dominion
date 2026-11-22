@@ -1219,6 +1219,66 @@ impl Store {
     }
 
     /// Durable idempotency key. Unlike `put`, this never overwrites a record.
+
+    /// Atomic read-modify-write for a single record. The closure may return
+    /// extra records that must commit in the same transaction.
+    pub fn mutate_record<F>(&self, kind: &str, id: &str, initial: Value, mutate: F) -> Result<Value, String>
+    where
+        F: FnOnce(&mut Value) -> Result<Vec<(String, Value)>, String>,
+    {
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let raw: Option<String> = tx
+            .query_row(
+                "SELECT data FROM records WHERE kind=?1 AND id=?2",
+                params![kind, id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        let mut value = match raw {
+            Some(raw) => serde_json::from_str(&raw).map_err(|e| e.to_string())?,
+            None => initial,
+        };
+        if value["id"].as_str() != Some(id) {
+            return Err("원자적 갱신 기록의 식별자가 다릅니다.".into());
+        }
+        let extra = mutate(&mut value)?;
+        upsert_tx(&tx, kind, &value)?;
+        for (extra_kind, record) in extra {
+            upsert_tx(&tx, &extra_kind, &record)?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(value)
+    }
+
+    /// Only queued remote jobs reach dispatch; history stays on disk.
+    pub fn queued_remote_jobs(&self) -> Result<Vec<Value>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT data,id,created_at,updated_at FROM records
+                 WHERE kind='remote_job' AND json_extract(data,'$.status')='queued'
+                 ORDER BY created_at ASC,id ASC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], record_from_row).map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    }
+
+    /// Outstanding leases for reconciliation only.
+    pub fn leased_remote_jobs(&self) -> Result<Vec<Value>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT data,id,created_at,updated_at FROM records
+                 WHERE kind='remote_job' AND json_extract(data,'$.status')='leased'",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], record_from_row).map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    }
+
     pub fn put_if_absent(&self, kind: &str, value: &Value) -> Option<Value> {
         let id = value.get("id")?.as_str().filter(|id| !id.is_empty())?;
         let conn = self.conn.lock().unwrap();

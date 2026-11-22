@@ -34,6 +34,9 @@ pub mod models;
 pub mod oauth;
 pub mod personas;
 pub mod rooms;
+pub mod remote_registry;
+pub mod remote_artifacts;
+pub mod remote_jobs;
 pub mod remote_workers;
 
 use crate::state::AppState;
@@ -134,7 +137,20 @@ pub fn router(state: AppState) -> Router {
         .route("/api/tasks", get(tasks::list))
         .route("/api/tasks/:id", get(tasks::one))
         .route("/api/runs/:id",get(runs::one))
-        .route("/api/remote/workers",get(remote_workers::owner_workers))
+        .route("/api/remote/workers",get(remote_registry::list).post(remote_registry::enroll))
+        .route("/api/remote/workers/:id/state",post(remote_registry::state))
+        .route("/api/remote/workers/:id/rotate",post(remote_registry::rotate))
+        .route("/api/remote/jobs",get(remote_jobs::list).post(remote_jobs::create))
+        .route("/api/remote/jobs/:id",get(remote_jobs::one))
+        .route("/api/remote/jobs/:id/review",post(remote_jobs::review))
+        .route("/api/remote/jobs/:id/cancel",post(remote_jobs::cancel))
+        .route("/api/remote/jobs/:id/artifact",get(remote_artifacts::get))
+        .route("/api/remote/jobs/:id/artifact/upload",post(remote_artifacts::upload))
+        .route("/api/remote/jobs/:id/artifact/review",post(remote_artifacts::accept))
+        .route("/api/remote/claim",post(remote_jobs::claim))
+        .route("/api/remote/reconcile",post(remote_jobs::reconcile))
+        .route("/api/remote/jobs/:id/heartbeat",post(remote_jobs::heartbeat))
+        .route("/api/remote/jobs/:id/finish",post(remote_jobs::finish))
         .route("/api/remote/tasks",get(remote_workers::owner_list).post(remote_workers::owner_create))
         .route("/api/remote/tasks/:id",get(remote_workers::owner_one))
         .route("/api/remote/tasks/:id/cancel",post(remote_workers::owner_cancel))
