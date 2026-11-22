@@ -33,7 +33,7 @@ export function SkillsPanel(p:Props){
     <Subheading
       title={t('sp.templates')}
       extra={
-        <span className="text-[11px] text-[#8A8176]">
+        <span className="text-[11px] text-muted">
           {t('sp.count', { count: filteredSkills.length })}
         </span>
       }
@@ -50,8 +50,8 @@ export function SkillsPanel(p:Props){
         </Button>
       ))}
     </div>
-    <div className="mb-5 flex items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] px-3 py-2">
-      <Search size={17} className="text-[#A79C8E]" />
+    <div className="mb-5 flex items-center gap-2 rounded-xl border border-divider bg-surface px-3 py-2">
+      <Search size={17} className="text-muted" />
       <TextInput
         value={skillQuery}
         onChange={(e) => setSkillQuery(e.target.value)}
@@ -66,12 +66,12 @@ export function SkillsPanel(p:Props){
             key={template.name}
             className="flex min-w-0 flex-col gap-3 p-5"
           >
-            <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]">
+            <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand">
               <BookOpenText size={20} />
             </div>
             <h3>{template.name}</h3>
             <p>{template.instructions}</p>
-            <div className="mt-auto border-t border-[#EFE9DF] pt-3">
+            <div className="mt-auto border-t border-divider pt-3">
               {exists ? (
                 <Button
                   variant="secondary"
@@ -109,19 +109,19 @@ export function SkillsPanel(p:Props){
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
       {skills.value.map((x:any) => (
         <Panel key={x.id} className="flex min-w-0 flex-col gap-3 p-5">
-          <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]">
+          <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand">
             <BookOpenText size={21} />
           </div>
           <h3>
             {x.name}
             {String(x.source || "").includes("anthropics") && (
-              <span className="ml-2 rounded bg-[#FFF3E8] px-1.5 py-0.5 text-[10px] font-semibold text-[#A94E30]">
+              <span className="ml-2 rounded bg-[#FFF3E8] px-1.5 py-0.5 text-[10px] font-semibold text-brand-hover">
                 {t('sp.claudeBasis')}
               </span>
             )}
           </h3>
           <p>{x.instructions.slice(0, 170)}</p>
-          <div className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-[#EFE9DF] pt-3">
+          <div className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-divider pt-3">
             <StateTag online={x.enabled}>
               {x.enabled ? t('sp.active') : t('sp.suggested')}
             </StateTag>
@@ -145,7 +145,7 @@ export function SkillsPanel(p:Props){
               <a
                 href={"/api/skills/" + x.id + "/export"}
                 download={x.name + ".md"}
-                className="inline-flex items-center gap-1 rounded-lg border border-[#E1D9CC] px-2 py-1 text-[11px] font-semibold text-[#3A342D] hover:bg-[#F7F2EA]"
+                className="inline-flex items-center gap-1 rounded-lg border border-divider px-2 py-1 text-[11px] font-semibold text-ink hover:bg-canvas"
               >
                 {t('sp.export')}
               </a>

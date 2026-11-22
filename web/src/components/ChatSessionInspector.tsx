@@ -25,13 +25,13 @@ export function ChatSessionInspector({
     <Button size="icon" variant="ghost" onClick={()=>onClose()} aria-label={locale==='en'?'Close details':'대화 정보 닫기'}><X size={18}/></Button>
    </header>
    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-    <section className="rounded-xl border border-[#E7E0D5] bg-white p-3">
+    <section className="rounded-xl border border-divider bg-white p-3">
      <h3 className="mb-3 text-[12px] font-semibold">{locale==='en'?'Current session':'현재 대화'}</h3>
      <p className="break-words text-[12px] font-medium">{title|| (locale==='en'?'New conversation':'새 대화')}</p>
-     <p className="mt-2 break-all text-[10px] text-[#82796D]">{sessionId|| (locale==='en'?'Not saved yet':'아직 저장 전')}</p>
-     <span className="mt-3 inline-flex rounded-md bg-[#F7E8E1] px-2 py-1 text-[10px] font-semibold text-[#94503B]">{agentMode?(locale==='en'?'Agent mode':'에이전트 실행'):(locale==='en'?'Direct chat':'일반 채팅')}</span>
+     <p className="mt-2 break-all text-[10px] text-muted">{sessionId|| (locale==='en'?'Not saved yet':'아직 저장 전')}</p>
+     <span className="mt-3 inline-flex rounded-md bg-brand-soft px-2 py-1 text-[10px] font-semibold text-[#94503B]">{agentMode?(locale==='en'?'Agent mode':'에이전트 실행'):(locale==='en'?'Direct chat':'일반 채팅')}</span>
     </section>
-    <section className="rounded-xl border border-[#E7E0D5] bg-white p-3">
+    <section className="rounded-xl border border-divider bg-white p-3">
      <h3 className="mb-3 text-[12px] font-semibold">{locale==='en'?'Model & execution':'모델 · 실행'}</h3>
      <p className="break-words text-[11px] text-[#61584F]">{providerName|| (locale==='en'?'No provider selected':'제공자 선택 전')}</p>
      <p className="mt-1 break-all font-mono text-[11px] font-semibold text-[#30302E]">{model||'—'}</p>
@@ -41,12 +41,12 @@ export function ChatSessionInspector({
       <div className="flex justify-between gap-2"><dt>{locale==='en'?'Thinking':'추론'}</dt><dd className="font-semibold">{reasoningEffort|| (locale==='en'?'Auto':'자동')}</dd></div>
      </dl>
     </section>
-    <section className="rounded-xl border border-[#E7E0D5] bg-white p-3">
+    <section className="rounded-xl border border-divider bg-white p-3">
      <h3 className="mb-3 text-[12px] font-semibold">{locale==='en'?'Session usage':'대화 사용량'}</h3>
      <p className="text-[25px] font-bold tabular-nums text-[#303B35]">{totalTokens.toLocaleString()}<span className="ml-1 text-[11px] font-normal text-[#83796C]">tokens</span></p>
      <dl className="mt-3 grid grid-cols-2 gap-3 text-[10px] text-[#83796C]">
-      <div><dt>{locale==='en'?'Model calls':'모델 호출'}</dt><dd className="mt-1 text-[15px] font-bold tabular-nums text-[#3A342D]">{calls}</dd></div>
-      <div><dt>{locale==='en'?'Cached input (known)':'캐시 입력 (확인분)'}</dt><dd className="mt-1 text-[15px] font-bold tabular-nums text-[#3A342D]">{(Number(cachedTokens)||0).toLocaleString()}</dd></div>
+      <div><dt>{locale==='en'?'Model calls':'모델 호출'}</dt><dd className="mt-1 text-[15px] font-bold tabular-nums text-ink">{calls}</dd></div>
+      <div><dt>{locale==='en'?'Cached input (known)':'캐시 입력 (확인분)'}</dt><dd className="mt-1 text-[15px] font-bold tabular-nums text-ink">{(Number(cachedTokens)||0).toLocaleString()}</dd></div>
      </dl>
     </section>
     {pendingTool&&<section className="rounded-xl border border-amber-200 bg-amber-50 p-3">

@@ -13,7 +13,7 @@ export function Feedback({message,kind='info',onDismiss}:{
 }){
  if(!message)return null;
  const colors=kind==='success'?'border-emerald-200 bg-emerald-50 text-emerald-800':
-  kind==='error'?'border-rose-200 bg-rose-50 text-rose-700':'border-[#E6C9B8] bg-[#F7E8E1] text-[#A94E30]';
+  kind==='error'?'border-rose-200 bg-rose-50 text-rose-700':'border-[#E6C9B8] bg-brand-soft text-brand-hover';
  const Icon=kind==='success'?CheckCircle2:kind==='error'?TriangleAlert:Info;
  return <div role={kind==='error'?'alert':'status'}
    className={'flex items-start gap-3 rounded-xl border p-3 text-xs leading-6 '+colors}>

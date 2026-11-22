@@ -80,9 +80,9 @@ class PageLoadBoundary extends Component<{children:ReactNode},{failed:boolean}>{
  }
  render(){
   if (!this.state.failed) return this.props.children
-  return <div role="alert" className="m-6 max-w-lg rounded-xl border border-[#E7DDCC] bg-white p-6 text-sm text-[#5C544A]">
+  return <div role="alert" className="m-6 max-w-lg rounded-xl border border-divider bg-white p-6 text-sm text-muted">
    <p className="mb-3 font-semibold">화면을 불러오지 못했습니다. 업데이트 중이었을 수 있습니다.</p>
-   <button type="button" className="rounded-lg bg-[#C96442] px-4 py-2 font-semibold text-white" onClick={()=>window.location.reload()}>최신 화면으로 다시 열기</button>
+   <button type="button" className="rounded-lg bg-brand px-4 py-2 font-semibold text-white" onClick={()=>window.location.reload()}>최신 화면으로 다시 열기</button>
   </div>
  }
 }

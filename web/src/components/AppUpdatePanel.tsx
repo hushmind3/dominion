@@ -59,16 +59,16 @@ export function AppUpdatePanel(){
  }
  return <Panel className="min-w-0 p-5">
   <Subheading title="업데이트" extra={<Button type="button" size="sm" variant="ghost" disabled={busy} onClick={()=>void version.reload()}><RefreshCw size={14}/> 확인</Button>}/>
-  <p className="text-[12px] leading-5 text-[#6F675D]">가능한 설치 환경에서는 최신 버전 확인부터 설치와 재시작까지 앱 안에서 처리합니다.</p>
-  <div className="mt-3 grid gap-1.5 text-[11px] text-[#8A8176]">
+  <p className="text-[12px] leading-5 text-muted">가능한 설치 환경에서는 최신 버전 확인부터 설치와 재시작까지 앱 안에서 처리합니다.</p>
+  <div className="mt-3 grid gap-1.5 text-[11px] text-muted">
    {version.value.running&&<span>실행 엔진 · {version.value.running.slice(0,12)}</span>}
    {version.value.local&&<span>소스 버전 · {version.value.local.slice(0,12)}</span>}
-   {version.value.running&&version.value.local&&version.value.running!==version.value.local&&<strong className="text-[#A05B48]">업데이트된 소스를 실행하려면 재빌드가 필요합니다.</strong>}
+   {version.value.running&&version.value.local&&version.value.running!==version.value.local&&<strong className="text-brand">업데이트된 소스를 실행하려면 재빌드가 필요합니다.</strong>}
    {version.value.remote&&<span>최신 버전 · {version.value.remote.slice(0,12)}</span>}
-   {version.value.reason&&<span className="text-[#A05B48]">{version.value.reason}</span>}
+   {version.value.reason&&<span className="text-brand">{version.value.reason}</span>}
    {version.value.available&&<strong className="text-emerald-700">설치할 새 버전이 있습니다.</strong>}
    {!version.value.available&&version.value.supported&&!version.value.reason&&<span>현재 최신 버전입니다.</span>}
-   {message&&<span role="status" className="text-[#5C544A]">{message}</span>}
+   {message&&<span role="status" className="text-muted">{message}</span>}
    {error&&<span role="alert" className="text-rose-700">{error}</span>}
   </div>
   <Button type="button" variant="primary" className="mt-3" disabled={!version.value.supported||busy} onClick={()=>void apply()}><Download size={15}/> {busy?'업데이트 처리 중':version.value.available?'업데이트 및 재시작':'재빌드 및 재시작'}</Button>

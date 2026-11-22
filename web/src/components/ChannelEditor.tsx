@@ -63,7 +63,7 @@ export function ChannelEditor({editor,rooms,agents,providers,saving,error,onChan
       <button type="button" onClick={()=>choose(index)} disabled={saving||(!edit&&index>step&&!((index===1&&credentialsReady)||(index===2&&credentialsReady&&destinationsReady)))}
        aria-current={step===index?'step':undefined}
        className={'flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left transition-colors '+(step===index?'bg-[#F2E2D6] text-[#9B543B]':index<step?'text-[#6F7766]':'text-[#9A8D80]')+' disabled:cursor-not-allowed disabled:opacity-60'}>
-       <span className={'grid size-7 shrink-0 place-items-center rounded-full text-[11px] font-bold '+(step===index?'bg-[#C96442] text-white':index<step?'bg-[#E1F0E1] text-[#51815C]':'bg-[#EFE9E1] text-[#897E72]')}>{index<step?<Check size={14}/>:stage.number}</span>
+       <span className={'grid size-7 shrink-0 place-items-center rounded-full text-[11px] font-bold '+(step===index?'bg-brand text-white':index<step?'bg-[#E1F0E1] text-[#51815C]':'bg-[#EFE9E1] text-[#897E72]')}>{index<step?<Check size={14}/>:stage.number}</span>
        <span className="hidden min-w-0 truncate text-[11px] font-semibold sm:inline">{stage.label}</span>
       </button>
      </li>)}
@@ -153,13 +153,13 @@ export function ChannelEditor({editor,rooms,agents,providers,saving,error,onChan
          <option value="round_robin">{t('conn.dlg.policyRound')}</option>
         </SelectInput>
        </FormField>}
-       {!isOutbound&&<label className="flex items-center gap-2 text-xs text-[#665A4F]"><TextInput type="checkbox"
+       {!isOutbound&&<label className="flex items-center gap-2 text-xs text-muted"><TextInput type="checkbox"
         checked={record.mentionOnly!==false} onChange={event=>changing('mentionOnly',event.target.checked)}/>{t('conn.mentionOnly')}</label>}
        {entry.id==='discord'&&<>
-        <label className="flex items-center gap-2 text-xs text-[#665A4F]"><TextInput type="checkbox" checked={Boolean(record.replyMentionBots)} onChange={event=>changing('replyMentionBots',event.target.checked)}/>{t('conn.dlg.discordMention')}</label>
-        <label className="flex items-center gap-2 text-xs text-[#665A4F]"><TextInput type="checkbox" checked={Boolean(record.toolsEnabled)} onChange={event=>changing('toolsEnabled',event.target.checked)}/>{t('conn.dlg.discordTools')}</label>
+        <label className="flex items-center gap-2 text-xs text-muted"><TextInput type="checkbox" checked={Boolean(record.replyMentionBots)} onChange={event=>changing('replyMentionBots',event.target.checked)}/>{t('conn.dlg.discordMention')}</label>
+        <label className="flex items-center gap-2 text-xs text-muted"><TextInput type="checkbox" checked={Boolean(record.toolsEnabled)} onChange={event=>changing('toolsEnabled',event.target.checked)}/>{t('conn.dlg.discordTools')}</label>
        </>}
-       {record.roomId&&<label className="flex items-center gap-2 text-xs text-[#665A4F]"><TextInput type="checkbox" checked={Boolean(record.syncRoomMessages)} onChange={event=>changing('syncRoomMessages',event.target.checked)}/>{t('conn.dlg.syncRoom')}</label>}
+       {record.roomId&&<label className="flex items-center gap-2 text-xs text-muted"><TextInput type="checkbox" checked={Boolean(record.syncRoomMessages)} onChange={event=>changing('syncRoomMessages',event.target.checked)}/>{t('conn.dlg.syncRoom')}</label>}
        {record.webhookPath&&<code className="block break-all rounded-lg bg-[#F7F3EC] p-3 text-xs text-[#756553]">{record.webhookPath}</code>}
       </div>
      </details>

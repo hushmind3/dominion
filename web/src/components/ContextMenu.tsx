@@ -87,7 +87,7 @@ export function ContextMenu() {
 
   if (translation) return <DialogBackdrop onDismiss={closeTranslation}><DialogPanel aria-label={t('ctx.translateTitle')} className="p-4">
     <header className="mb-3 flex items-center justify-between gap-3"><strong>{t('ctx.translate')}</strong><Button onClick={closeTranslation}>{t('ctx.close')}</Button></header>
-    <p className="mb-2 text-xs text-[#7C7469]">{t('ctx.privacy')}</p>
+    <p className="mb-2 text-xs text-muted">{t('ctx.privacy')}</p>
     {translation.pending?<p role="status">{t('ctx.pending')}</p>:translation.error?<p role="alert">{translation.error}</p>:<p className="whitespace-pre-wrap">{translation.text}</p>}
   </DialogPanel></DialogBackdrop>;
   if (!ctx) return null;
@@ -172,12 +172,12 @@ export function ContextMenu() {
   rows.push({ label: t('ctx.print'), run: () => { window.print(); setCtx(null); } });
 
   const item =
-    "block w-full whitespace-nowrap rounded-md px-3 py-1.5 text-left text-[12px] text-[#3A342D] hover:bg-[#F7F2EA]";
+    "block w-full whitespace-nowrap rounded-md px-3 py-1.5 text-left text-[12px] text-ink hover:bg-canvas";
   const height = rows.reduce((sum, row) => sum + (row === "sep" ? 9 : 28), 0) + 10;
 
   return (
     <div
-      className="fixed z-[9999] min-w-[190px] rounded-xl border border-[#E7E0D5] bg-white p-1 text-[#3A342D] shadow-xl"
+      className="fixed z-[9999] min-w-[190px] rounded-xl border border-divider bg-white p-1 text-ink shadow-xl"
       style={{
         left: Math.max(0, Math.min(ctx.x, window.innerWidth - 210)),
         top: Math.max(0, Math.min(ctx.y, window.innerHeight - height - 8)),
@@ -188,7 +188,7 @@ export function ContextMenu() {
     >
       {rows.map((row, index) =>
         row === "sep" ? (
-          <div key={"sep" + index} className="my-1 h-px bg-[#EFE9DF]" />
+          <div key={"sep" + index} className="my-1 h-px bg-divider" />
         ) : (
           <button key={row.label + index} type="button" className={item} onClick={row.run}>
             {row.label}

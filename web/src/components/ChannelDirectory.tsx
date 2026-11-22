@@ -118,7 +118,7 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
      {catalog.map(entry=>{
       const count=bindings.filter(binding=>binding.kind===entry.id).length
       return <button type="button" key={entry.id} disabled={!entry.available} onClick={()=>pick(entry)}
-       className="group flex min-h-[142px] min-w-0 flex-col rounded-2xl border border-[#E8DED3] bg-[#FFFDFB] p-4 text-left shadow-[0_2px_8px_rgba(40,30,20,.025)] transition-all hover:-translate-y-0.5 hover:border-[#CEA993] hover:shadow-[0_8px_26px_rgba(93,63,42,.10)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#BD7656] disabled:opacity-50">
+       className="group flex min-h-[142px] min-w-0 flex-col rounded-2xl border border-[#E8DED3] bg-surface p-4 text-left shadow-[0_2px_8px_rgba(40,30,20,.025)] transition-all hover:-translate-y-0.5 hover:border-[#CEA993] hover:shadow-[0_8px_26px_rgba(93,63,42,.10)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#BD7656] disabled:opacity-50">
        <div className="flex items-center gap-3"><PlatformIcon kind={entry.id}/>
         <span className="min-w-0 flex-1">
          <strong className="block truncate text-[14px] text-[#302A24]">{entry.name}</strong>
@@ -147,7 +147,7 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
    {loading&&bindings.length===0
     ?<div className="flex min-h-56 items-center justify-center rounded-2xl border border-[#E7DED4] bg-white text-sm text-[#8D8275]" role="status"><Activity size={16} className="mr-2 animate-spin"/>{t('conn.loading')}</div>
     :bindings.length===0
-     ?<section className="overflow-hidden rounded-[22px] border border-[#E7D9CD] bg-[#FFFDFB]">
+     ?<section className="overflow-hidden rounded-[22px] border border-[#E7D9CD] bg-surface">
        <div className="grid gap-0 lg:grid-cols-[1.15fr_.85fr]">
         <div className="relative overflow-hidden px-6 py-10 sm:px-10 sm:py-14">
          <div aria-hidden className="pointer-events-none absolute -right-20 -top-28 size-72 rounded-full border-[35px] border-[#FAF1EB]"/>
@@ -203,7 +203,7 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
           const hasIssues=needHelp(connection)
           return <button type="button" key={connection.id} aria-pressed={chosen}
            onClick={()=>{setSelectedId(connection.id);setMobileDetail(true)}}
-           className={'flex w-full items-start gap-3 border-l-[3px] px-3 py-3.5 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#C96442] '+(chosen?'border-[#C96442] bg-[#FBF1E9]':'border-transparent hover:bg-[#FAF8F5]')}>
+           className={'flex w-full items-start gap-3 border-l-[3px] px-3 py-3.5 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#C96442] '+(chosen?'border-brand bg-[#FBF1E9]':'border-transparent hover:bg-[#FAF8F5]')}>
            <PlatformIcon kind={connection.kind} size={18}/>
            <span className="min-w-0 flex-1">
             <span className="block truncate text-[13px] font-bold text-[#362E27]">{connection.name}</span>
@@ -219,7 +219,7 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
          {!filtered.length&&<p className="px-5 py-10 text-center text-xs leading-6 text-[#897B6B]">{t('conn.noMatchingConnections')}</p>}
         </div>
        </section>
-       <section aria-label={t('conn.connectionDetails')} className={(mobileDetail?'block':'hidden lg:block')+' min-w-0 overflow-hidden rounded-2xl border border-[#E6DDD2] bg-[#FFFDFB] shadow-[0_3px_18px_rgba(45,32,20,.025)]'}>
+       <section aria-label={t('conn.connectionDetails')} className={(mobileDetail?'block':'hidden lg:block')+' min-w-0 overflow-hidden rounded-2xl border border-[#E6DDD2] bg-surface shadow-[0_3px_18px_rgba(45,32,20,.025)]'}>
         {!selected?<p className="p-10 text-center text-sm text-[#887E72]">{t('conn.selectConnection')}</p>
         :<div>
          <header className="border-b border-[#EEE6DB] bg-white px-4 py-5 sm:px-6">

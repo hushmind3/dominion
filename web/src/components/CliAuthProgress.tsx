@@ -43,7 +43,7 @@ export function CliAuthProgress({session,onInput,onCancel}:Props){
     {active&&<Button size="sm" variant="ghost" onClick={()=>void onCancel()}><X size={13}/>{t('cliAuth.cancel')}</Button>}</div>
   </div>
   {session.url&&<a href={session.url} target="_blank" rel="noopener noreferrer"
-    className="mt-3 inline-flex min-h-9 items-center gap-2 rounded-lg bg-[#C96442] px-3 text-[12px] font-semibold text-white hover:bg-[#A94E30]"><LogIn size={14}/>{t('cliAuth.openLogin')}</a>}
+    className="mt-3 inline-flex min-h-9 items-center gap-2 rounded-lg bg-brand px-3 text-[12px] font-semibold text-white hover:bg-brand-hover"><LogIn size={14}/>{t('cliAuth.openLogin')}</a>}
   {session.userCode&&<div className="mt-3 rounded-lg border border-[#E2E2EE] bg-white px-3 py-2"><span className="block text-[10px] text-[#626278]">{t('cliAuth.userCode')}</span><code className="select-all font-mono text-lg font-bold tracking-widest text-[#363650]">{session.userCode}</code></div>}
   {active&&session.requiresInput&&<div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#E2E2EE] pt-3">
    <Button size="sm" variant="secondary" onClick={()=>void onInput('enter')}><RotateCcw size={13}/>{t('cliAuth.continue')}</Button>

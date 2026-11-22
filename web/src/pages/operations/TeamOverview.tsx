@@ -17,7 +17,7 @@ export function TeamStatusBar({counts,view,onChange,en}:{
   {labels.map(filter=><button key={filter.id} type="button"
    aria-pressed={view===filter.id} onClick={()=>onChange(filter.id)}
    className={'min-w-0 rounded-xl border px-3 py-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 '+
-    (view===filter.id?'border-[#AA7355] bg-[#F8EEE8] shadow-sm':'border-[#E7E0D5] bg-white hover:bg-[#FCF7F1]')}>
+    (view===filter.id?'border-[#AA7355] bg-[#F8EEE8] shadow-sm':'border-divider bg-white hover:bg-[#FCF7F1]')}>
    <strong className="block text-[22px] leading-none tabular-nums text-[#342A24]">{filter.count}</strong>
    <span className="mt-2 block text-[11px] text-[#756B61]">{en?filter.english:filter.ko}</span>
   </button>)}

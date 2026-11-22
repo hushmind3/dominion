@@ -44,7 +44,7 @@ export function ChatAttachment({file}:{file:SavedChatFile}){
  return <>
   <div className="inline-flex max-w-full flex-col gap-1">
    <button type="button" disabled={busy} onClick={()=>void open()}
-    className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-[#D6C8B7] bg-white px-2 py-1 text-[11px] text-[#4A443C] hover:border-[#A94E30] disabled:opacity-50"
+    className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-[#D6C8B7] bg-white px-2 py-1 text-[11px] text-ink hover:border-brand-hover disabled:opacity-50"
     title={t(file.isImage?'chat.previewImage':'chat.downloadAttachment',{name:file.name})}>
     {busy?<LoaderCircle size={12} className="shrink-0 animate-spin"/>:
       file.isImage?<ImageIcon size={12} className="shrink-0"/>:<FileText size={12} className="shrink-0"/>}
@@ -54,13 +54,13 @@ export function ChatAttachment({file}:{file:SavedChatFile}){
   </div>
   {preview&&createPortal(<DialogBackdrop onDismiss={close}>
    <DialogPanel size="wide" aria-label={t('chat.previewImage',{name:file.name})}>
-    <div className="flex items-center justify-between gap-3 border-b border-[#E7E0D5] px-4 py-3">
+    <div className="flex items-center justify-between gap-3 border-b border-divider px-4 py-3">
      <strong className="min-w-0 truncate text-sm">{file.name}</strong>
      <Button variant="ghost" type="button" size="icon" onClick={close} aria-label={t('chat.closePreview')}>
       <X size={18}/>
      </Button>
     </div>
-    <div className="flex min-h-24 items-center justify-center overflow-auto bg-[#F7F2EA] p-3">
+    <div className="flex min-h-24 items-center justify-center overflow-auto bg-canvas p-3">
      <img src={preview} alt={file.name} className="max-h-[72dvh] max-w-full object-contain"
       onError={()=>{close();setError(t('chat.fileDownloadFailed'))}}/>
     </div>

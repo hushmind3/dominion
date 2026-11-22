@@ -66,8 +66,8 @@ function readTeamDraft():SavedTeamDraft {
  }catch{return blank}
 }
 
-const field='w-full min-w-0 rounded-lg border border-[#E7E0D5] bg-white px-3 py-2 text-[12px]'
-const btn='rounded-lg border border-[#E7E0D5] px-3 py-2 text-[11px] font-semibold hover:bg-[#FAF7F1] disabled:opacity-40'
+const field='w-full min-w-0 rounded-lg border border-divider bg-white px-3 py-2 text-[12px]'
+const btn='rounded-lg border border-divider px-3 py-2 text-[11px] font-semibold hover:bg-canvas disabled:opacity-40'
 const active=new Set(['queued','running'])
 const recoverable=new Set(['failed','interrupted','needs_review'])
 const phaseNames:Record<string,[string,string]>={
@@ -272,13 +272,13 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
    {error&&<Notice message={error}/>} 
    {notice&&<p className="text-[12px] text-emerald-700" role="status">{notice}</p>}
    {editing&&<Panel className="p-4 sm:p-5">
-    <p className="mb-4 text-[12px] text-[#746A5F]">{t(
+    <p className="mb-4 text-[12px] text-muted">{t(
      '목표를 입력하고 바로 실행하거나 조사·수정 Worker를 추가하세요. 독립 조사 작업은 병렬 실행되고 파일 수정은 Git Worktree로 격리할 수 있습니다.',
      'Enter a goal to run one worker, or add investigation and editing workers. Independent research runs in parallel; edits can use isolated Git worktrees.')}</p>
     <label className="grid gap-1 text-[12px] font-semibold">{t('팀 목표','Team goal')}
      <textarea className={field} rows={2} maxLength={16000} value={goal}
       onChange={e=>setGoal(e.target.value)}/></label>
-    <p className={'-mt-3 text-right text-[10px] '+(goalBytes>16000?'text-rose-600':'text-[#8A8176]')}>
+    <p className={'-mt-3 text-right text-[10px] '+(goalBytes>16000?'text-rose-600':'text-muted')}>
      UTF-8 {goalBytes.toLocaleString()} / 16,000 bytes</p>
     <div className="my-4 flex flex-wrap gap-3">
      <label className="text-[11px]">{t('동시 Worker 수','Concurrent workers')}
@@ -290,7 +290,7 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
     </div>
     <TeamDependencyMap steps={steps} parallel={parallel} en={en}/>
     <div className="grid gap-3">
-     {steps.map((step,index)=><div id={'sub3-worker-'+step.id} tabIndex={-1} key={step.id} className="scroll-mt-3 rounded-xl border border-[#E7E0D5] bg-[#FCFAF7] p-3 focus-visible:outline-2 focus-visible:outline-offset-2">
+     {steps.map((step,index)=><div id={'sub3-worker-'+step.id} tabIndex={-1} key={step.id} className="scroll-mt-3 rounded-xl border border-divider bg-surface p-3 focus-visible:outline-2 focus-visible:outline-offset-2">
       <div className="mb-3 flex items-center justify-between gap-2">
        <strong className="text-[12px]">{index+1}. {step.id}</strong>
        <button type="button" className={btn} disabled={steps.length===1||busy} onClick={()=>
@@ -338,20 +338,20 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
         <option value="">{t('자동 선택','Automatic')}</option>
         {providers.filter(p=>p.enabled).map(p=><option key={p.id} value={p.id}>
          {p.name}{p.model?' · '+p.model:''}</option>)}
-       </select></label>:<p className="mt-3 text-[11px] text-[#746A5F]">
+       </select></label>:<p className="mt-3 text-[11px] text-muted">
        {step.runtime}: {step.runtime==='remote'?
         t('독립 실행 장치의 읽기 전용 추론','Remote text-only reasoning'):
         bridges[step.runtime]?.enabled&&bridges[step.runtime]?.binaryAvailable?
         t('CLI 설치 감지 · 인증은 별도','CLI detected · authentication unverified'):
         t('CLI가 비활성화됐거나 설치되지 않았습니다.','CLI disabled or unavailable')}</p>}
-      {step.runtime==='remote'&&<p className="mt-2 text-[11px] text-[#746A5F]">
+      {step.runtime==='remote'&&<p className="mt-2 text-[11px] text-muted">
        {remoteAvailability.online>0?
         t('온라인 워커 '+remoteAvailability.online+'대 · 별도 장치 모델 사용 · 외부 추론 결과는 독립 검증 전',
          remoteAvailability.online+' worker(s) online · uses each device model · results are unverified'):
         t('아래 원격 장치에서 연결 상태를 확인하세요.','Check remote device status below.')}
       </p>}
       <details className="mt-3 text-[11px]">
-       <summary className="cursor-pointer text-[#746A5F]">{t('모델 · 의존성 · 세션 설정','Model · dependencies · session')}</summary>
+       <summary className="cursor-pointer text-muted">{t('모델 · 의존성 · 세션 설정','Model · dependencies · session')}</summary>
        {step.runtime!=='remote'&&<label className="mt-2 grid gap-1">{t('모델 ID (선택)','Model ID (optional)')}
         <input className={field} value={step.model} onChange={e=>patch(step.id,{model:e.target.value})}/></label>}
        {step.runtime!=='native'&&step.runtime!=='remote'&&<label className="mt-2 grid gap-1">
@@ -382,8 +382,8 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
      <button className={btn} type="button" disabled={busy||steps.length>=12}
       onClick={()=>add('write')}><Plus size={12} className="mr-1 inline"/>{t('수정 Worker','Write worker')}</button>
     </div>
-    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#EFE9DF] pt-3">
-     <small className="text-[11px] text-[#8A8176]">{invalid||t('쓰기 작업은 검증 후 수동 병합합니다.','Writes require verified manual promotion.')}</small>
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-divider pt-3">
+     <small className="text-[11px] text-muted">{invalid||t('쓰기 작업은 검증 후 수동 병합합니다.','Writes require verified manual promotion.')}</small>
      <Action disabled={Boolean(invalid)||busy} onClick={()=>void create()}>
       <Workflow size={14}/>{t('팀 실행','Start team')}</Action>
     </div>
@@ -392,36 +392,36 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
     <Panel className="min-w-0 p-3 xl:sticky xl:top-4">
      <div className="flex items-center justify-between gap-2">
       <strong className="text-[12px]">{t('작업 탐색','Team explorer')}</strong>
-      <small className="text-[10px] text-[#82796D]">{filteredTeams.length} / {teams.length}</small>
+      <small className="text-[10px] text-muted">{filteredTeams.length} / {teams.length}</small>
      </div>
      <label className="mt-3 block">
       <span className="sr-only">{t('팀 검색','Search teams')}</span>
       <input type="search" value={teamQuery} onChange={event=>setTeamQuery(event.target.value)}
        placeholder={t('목표 · 팀 ID · Worker 검색','Search goal, team ID or worker')}
-       className="min-h-11 w-full min-w-0 rounded-lg border border-[#E7E0D5] bg-[#FCFBF9] px-3 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2"/>
+       className="min-h-11 w-full min-w-0 rounded-lg border border-divider bg-[#FCFBF9] px-3 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2"/>
      </label>
-     {filteredTeams.length===0?<p className="my-3 text-[11px] text-[#8A8176]">{teams.length?t('조건에 맞는 팀이 없습니다.','No teams match this view.'):t('아직 팀이 없습니다.','No teams yet.')}</p>:
+     {filteredTeams.length===0?<p className="my-3 text-[11px] text-muted">{teams.length?t('조건에 맞는 팀이 없습니다.','No teams match this view.'):t('아직 팀이 없습니다.','No teams yet.')}</p>:
      <div className="mt-3 grid max-h-[430px] gap-2 overflow-y-auto">
       {filteredTeams.slice(0,50).map(team=><button key={team.id} type="button"
        aria-pressed={selected===team.id}
        onClick={()=>{setSelected(team.id);setDetails(team);setPreview(null);setConsent(false)}}
        className={'rounded-lg border p-3 text-left '+(selected===team.id?
-        'border-[#C7B18F] bg-[#F7F0E5]':'border-[#E7E0D5] bg-white hover:bg-[#FAF7F1]')}>
+        'border-brand bg-[#F7F0E5]':'border-divider bg-white hover:bg-canvas')}>
        <div className="flex justify-between gap-2"><strong className="min-w-0 truncate text-[12px]">
         {team.goal}</strong><StatusPill status={team.status}/></div>
-       <small className="text-[10px] text-[#8A8176]">{team.tasks?.length||0} Workers · {formatDateTime(team.createdAt)}</small>
+       <small className="text-[10px] text-muted">{team.tasks?.length||0} Workers · {formatDateTime(team.createdAt)}</small>
       </button>)}
      </div>}
     </Panel>
     <Panel className="min-w-0 p-3">
-     {!details?<p className="p-4 text-center text-[11px] text-[#8A8176]">
+     {!details?<p className="p-4 text-center text-[11px] text-muted">
       {t('팀을 선택해 작업과 결과를 확인하세요.','Select a team to inspect workers and evidence.')}</p>:<>
       <div className="flex flex-wrap items-start justify-between gap-2">
        <div className="min-w-0"><strong className="block break-words text-[13px]">{details.goal}</strong>
-        <small className="break-all text-[10px] text-[#8A8176]">{details.id}</small></div>
+        <small className="break-all text-[10px] text-muted">{details.id}</small></div>
        <StatusPill status={details.status}/>
       </div>
-      <div className="my-3 rounded-lg border border-[#E7E0D5] bg-[#FCFAF7] p-3">
+      <div className="my-3 rounded-lg border border-divider bg-surface p-3">
        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
         <span className="font-semibold">{t('작업 진행','Task progress')}</span>
         <span>{details.tasks?.filter(task=>task.status==='completed').length||0} /
@@ -431,7 +431,7 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
         max={Math.max(details.tasks?.length||0,1)}
         value={details.tasks?.filter(task=>task.status==='completed').length||0}
         aria-label={t('완료된 Worker 수','Completed workers')}/>
-       <p className="mt-1 text-[10px] text-[#82796D]">
+       <p className="mt-1 text-[10px] text-muted">
         {t('진행 단계','Phase')}: {details.teamState?.phase?(phaseNames[details.teamState.phase]?.[en?1:0]||details.teamState.phase):'—'} ·
         {t(' 증거는 작업 완료와 별도로 검증됩니다.',' Evidence is checked separately from task completion.')}
        </p>
@@ -444,24 +444,24 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
       </div>
       {details.error&&<Notice message={details.error}/>}
       <div className="mt-3 grid gap-2">
-       {details.tasks?.map(task=><div key={task.taskId} className="rounded-lg border border-[#E7E0D5] bg-white p-3">
+       {details.tasks?.map(task=><div key={task.taskId} className="rounded-lg border border-divider bg-white p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
          <strong className="text-[12px]">{task.taskId}</strong>
          <StatusPill status={task.status||'queued'}/>
         </div>
-        <p className="mt-1 text-[10px] text-[#746A5F]">{task.runtime} · {task.mode} · {task.isolation}</p>
-        {task.dependsOn?.length>0&&<p className="text-[10px] text-[#8A8176]">
+        <p className="mt-1 text-[10px] text-muted">{task.runtime} · {task.mode} · {task.isolation}</p>
+        {task.dependsOn?.length>0&&<p className="text-[10px] text-muted">
          {t('선행 작업','Dependencies')}: {task.dependsOn.join(', ')}</p>}
-        <p className="mt-1 text-[10px] text-[#746A5F]">
+        <p className="mt-1 text-[10px] text-muted">
          {t('검증','Evidence')}: {task.evidenceGrade||'—'}
          {task.verified&&<ShieldCheck size={13} className="ml-2 inline text-emerald-600"/>}</p>
         {task.answerExcerpt&&<p className="mt-2 whitespace-pre-wrap break-words text-[11px]">{task.answerExcerpt}</p>}
-        {Boolean(task.observedOperations?.length)&&<details className="mt-2 rounded-lg bg-[#FCFAF7] p-2 text-[11px]">
-         <summary className="cursor-pointer font-semibold text-[#746A5F]">
+        {Boolean(task.observedOperations?.length)&&<details className="mt-2 rounded-lg bg-surface p-2 text-[11px]">
+         <summary className="cursor-pointer font-semibold text-muted">
           {t('실제 도구 실행 근거','Observed tool receipts')} · {task.observedOperations?.length}</summary>
          <ul className="mt-2 space-y-1">
           {task.observedOperations?.map((operation,index)=><li key={operation.operationId||index}
-           className="break-all text-[#746A5F]">{operation.tool||'tool'} · {operation.operationId||'—'}</li>)}
+           className="break-all text-muted">{operation.tool||'tool'} · {operation.operationId||'—'}</li>)}
          </ul>
         </details>}
         {task.evidenceGrade==='external_unverified'&&<p className="mt-1 text-[10px] text-amber-800">

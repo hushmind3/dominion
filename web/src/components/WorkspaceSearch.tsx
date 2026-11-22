@@ -33,8 +33,8 @@ export function WorkspaceSearch({onNavigate,onDismiss}:{
   <DialogPanel aria-label={en?'Find a workspace page':'도미니언 메뉴 검색'}
    className="w-[min(96vw,560px)] p-0">
    <label htmlFor="dominion-menu-search"
-    className="flex items-center gap-3 border-b border-[#E7E0D5] px-4 py-3">
-    <Search size={19} className="shrink-0 text-[#8A8176]"/>
+    className="flex items-center gap-3 border-b border-divider px-4 py-3">
+    <Search size={19} className="shrink-0 text-muted"/>
     <span className="sr-only">{en?'Search menus':'메뉴 검색'}</span>
     <input id="dominion-menu-search" type="search" autoComplete="off"
      placeholder={en?'Search pages and settings…':'대화, 모델, 에이전트, 연결 등 메뉴 검색…'}
@@ -42,7 +42,7 @@ export function WorkspaceSearch({onNavigate,onDismiss}:{
      value={query} onChange={event=>{setQuery(event.target.value);setActive(0)}}
      onKeyDown={keydown} aria-controls="dominion-menu-results"
      aria-activedescendant={items[active]?'dominion-menu-'+items[active].id:undefined}/>
-    <kbd className="hidden rounded-lg border border-[#E7E0D5] px-1.5 py-0.5 text-[10px] text-[#8A8176] sm:inline">
+    <kbd className="hidden rounded-lg border border-divider px-1.5 py-0.5 text-[10px] text-muted sm:inline">
      Esc</kbd>
    </label>
    <div id="dominion-menu-results" role="listbox" aria-label={en?'Workspace pages':'도미니언 메뉴'}
@@ -53,17 +53,17 @@ export function WorkspaceSearch({onNavigate,onDismiss}:{
       role="option" aria-selected={index===active} onMouseEnter={()=>setActive(index)}
       onClick={()=>select(item.id)}
       className={'flex min-h-12 w-full items-center gap-3 rounded-xl px-3 text-left '+
-       (index===active?'bg-[#F7E8E1] text-[#8E442D]':'text-[#51493D] hover:bg-[#F7F3EC]')}>
+       (index===active?'bg-brand-soft text-[#8E442D]':'text-[#51493D] hover:bg-[#F7F3EC]')}>
       <Icon size={17} className="shrink-0"/>
       <span className="min-w-0 flex-1">
        <strong className="block text-[12px]">{item.name}</strong>
-       <small className="block text-[10px] text-[#8A8176]">{item.group}</small>
+       <small className="block text-[10px] text-muted">{item.group}</small>
       </span><ArrowRight size={14} className="shrink-0 opacity-60"/>
      </button>
-    }):<p className="p-5 text-center text-[12px] text-[#8A8176]">
+    }):<p className="p-5 text-center text-[12px] text-muted">
      {en?'No matching menus.':'일치하는 메뉴가 없습니다.'}</p>}
    </div>
-   <p className="border-t border-[#E7E0D5] px-4 py-2 text-[10px] text-[#8A8176]">
+   <p className="border-t border-divider px-4 py-2 text-[10px] text-muted">
     {en?'Use ↑↓ to move, Enter to open, Esc to close · Ctrl/⌘ K':
      '↑↓ 이동 · Enter 열기 · Esc 닫기 · Ctrl/⌘ K'}
    </p>

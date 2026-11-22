@@ -7,7 +7,7 @@ export function StatusPill({status,children}:{status:string;children?:ReactNode}
  const tone=['completed','succeeded','success','ready','available','applied','active'].includes(status)?'bg-emerald-50 text-emerald-700 ring-emerald-100':
   ['failed','failure','budget_exceeded'].includes(status)?'bg-rose-50 text-rose-700 ring-rose-100':
   ['needs_review','repairing','awaiting_approval','interrupted','paused','candidate','needs_split','verifying','browser','input'].includes(status)?'bg-amber-50 text-amber-800 ring-amber-100':
-  ['running','reviewing','planning','preparing','resolving','checking','downloading','installing','extracting','applying','starting'].includes(status)?'bg-[#F7E8E1] text-[#A94E30] ring-[#F1DCCF]':'bg-[#F3EEE5] text-[#5C544A] ring-[#E0D8CC]';
+  ['running','reviewing','planning','preparing','resolving','checking','downloading','installing','extracting','applying','starting'].includes(status)?'bg-brand-soft text-brand-hover ring-brand-soft':'bg-canvas text-muted ring-divider';
  return <span className={'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset '+tone}>
   {children??(labels[status]?t(labels[status]):status)}
  </span>
