@@ -1,7 +1,8 @@
-import {formatDateTime} from '../../i18n'
+import {formatDateTime,t,type LocaleKey} from '../../i18n'
 import {useState} from 'react'
 import {Button} from '../../components/Primitives'
 import {Notice,useRemote} from '../../components/UI'
+import {statusLabel} from '../../components/StatusPill'
 
 type Rec=Record<string,any>
 type Row={key:string;title:string;subtitle?:string;tags:string[];facts:[string,string][];raw:Rec}
@@ -10,6 +11,15 @@ const sources=[
  {label:'알고리즘',endpoint:'/api/algorithms'},
 ] as const
 const str=(value:any)=>typeof value==='string'?value:typeof value==='number'?String(value):''
+const tagLabel=(value:string)=>{
+ const labels:Record<string,LocaleKey>={
+  global:'learningRecords.scope.global',shared:'learningRecords.scope.shared',
+  agent:'learningRecords.scope.agent',builtin:'learningRecords.source.builtin',
+  user:'learningRecords.source.user',owner:'learningRecords.source.owner',
+  usage_rebuild:'learningRecords.source.usageRebuild',
+ }
+ return labels[value]?t(labels[value]):statusLabel(value)||value
+}
 const count=(value:any)=>typeof value==='number'?value:undefined
 const list=(value:any)=>Array.isArray(value)?value.map(str).filter(Boolean):[]
 const facts=(items:[string,string][])=>items.filter(([,value])=>!!value) as [string,string][]
@@ -27,7 +37,7 @@ const experience=(rec:Rec,index:number):Row=>({
  key:str(rec.id)||`experience-${index}`,
  title:str(rec.lesson)||str(rec.request)||str(rec.id)||'경험',
  subtitle:str(rec.request)&&str(rec.request)!==str(rec.lesson)?str(rec.request):undefined,
- tags:[str(rec.outcome),str(rec.status),str(rec.scope)].filter(Boolean),
+ tags:[str(rec.outcome),str(rec.status),tagLabel(str(rec.scope))].filter(Boolean),
  facts:facts([
   ['피할 점',str(rec.avoid)],
   ['도구',list(rec.tools).join(', ')],
@@ -46,7 +56,8 @@ const algorithm=(rec:Rec,index:number,kind:Rec):Row=>{
   key:str(rec.id)||`algorithm-${index}`,
   title:str(rec.name)||str(rec.variant)||str(rec.id)||'알고리즘',
   subtitle:str(kind.label)||str(rec.kind),
-  tags:[adopted?'채택됨':str(rec.status),str(rec.source),str(rec.implementation)].filter(Boolean),
+  tags:[adopted?t('learningRecords.adopted'):tagLabel(str(rec.status)),
+   tagLabel(str(rec.source)),str(rec.implementation)].filter(Boolean),
   facts:facts([
    ['종류',str(rec.kind)],
    ['구현',str(rec.implementation)],

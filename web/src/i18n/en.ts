@@ -1405,5 +1405,13 @@ const en: Record<LocaleKey, string> = {
   'growth.usageContributed': 'Contributed by {models}',
   'growth.usageAgent': 'Agent {agent}',
   'growth.none': 'Not recorded',
+  'learningRecords.scope.global': 'Global',
+  'learningRecords.scope.shared': 'Shared',
+  'learningRecords.scope.agent': 'Agent only',
+  'learningRecords.source.builtin': 'Built in',
+  'learningRecords.source.user': 'User registered',
+  'learningRecords.source.owner': 'Owner selected',
+  'learningRecords.source.usageRebuild': 'Rebuilt from usage',
+  'learningRecords.adopted': 'Active selection',
 }
 export default en

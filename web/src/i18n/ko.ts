@@ -1404,6 +1404,14 @@ const ko = {
   'growth.usageContributed': '기여 {models}',
   'growth.usageAgent': '에이전트 {agent}',
   'growth.none': '기록 없음',
+  'learningRecords.scope.global': '전체 공유',
+  'learningRecords.scope.shared': '공유',
+  'learningRecords.scope.agent': '에이전트 전용',
+  'learningRecords.source.builtin': '기본 제공',
+  'learningRecords.source.user': '사용자 등록',
+  'learningRecords.source.owner': '사용자 선택',
+  'learningRecords.source.usageRebuild': '사용 기록에서 재구성',
+  'learningRecords.adopted': '활성 선택',
 } as const
 export type LocaleKey = keyof typeof ko
 export default ko
