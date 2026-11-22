@@ -3,6 +3,7 @@ import {Activity,Clock3,Play,RefreshCw,Square,Terminal} from 'lucide-react'
 import {post} from '../api'
 import {Button,SelectInput,TextArea} from './Primitives'
 import {Panel,useRemote} from './UI'
+import {StatusPill} from './StatusPill'
 import {t,useLocale,jobKindLabel,type LocaleKey} from '../i18n'
 import {translateError} from '../i18n/errors'
 
@@ -20,7 +21,7 @@ function ToolHistory({id}:{id:string}){
  return <div className="mt-3 max-h-44 space-y-2 overflow-y-auto">
   {log.value.map(o=><div key={o.id} className="flex items-center gap-2 rounded-lg bg-[#FAF7F1] px-3 py-2 text-xs">
    <Terminal size={13} className="shrink-0 text-[#7C7469]"/><span className="min-w-0 flex-1 truncate">{o.tool}</span>
-   <span className="text-[#7C7469]">{o.status}</span>
+   <StatusPill status={o.status}/>
   </div>)}
   {!log.value.length&&<p className="text-xs text-[#9C9388]">{t('em.noTools')}</p>}
  </div>
