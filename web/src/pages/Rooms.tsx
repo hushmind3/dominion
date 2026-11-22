@@ -60,7 +60,7 @@ export function RoomsPage({openSession,active:visibleView=true}:{openSession:(id
  const [showList,setShowList]=useState(false)
  useEffect(()=>{if(!visibleView)setShowList(false)},[visibleView])
  const [creating,setCreating]=useState<RoomDraft|null>(null)
- const [saving,setSaving]=useState(false),[error,setError]=useState(''),[query,setQuery]=useState('')
+ const [saving,setSaving]=useState(false),[quickBusy,setQuickBusy]=useState(false),[error,setError]=useState(''),[query,setQuery]=useState('')
  const [roomView,setRoomView]=useState<'all'|'running'|'attention'>('all')
  const current=rooms.value.find(room=>room.id===selected)
  useEffect(()=>{if(rooms.loading)return;if(!rooms.value.some(room=>room.id===selected))setSelected(rooms.value[0]?.id||'')},[rooms.value,rooms.loading,selected])
@@ -70,6 +70,15 @@ export function RoomsPage({openSession,active:visibleView=true}:{openSession:(id
   if(!creating||saving)return;setSaving(true);setError('')
   try{const created=await post<RoomConfig>('/api/rooms',creating);await rooms.reload();setSelected(created.id);setCreating(null);if(window.innerWidth<840)setShowList(false);refresh()}
   catch(e){setError((e as Error).message)}finally{setSaving(false)}
+ }
+ // One click from an empty group list to a working room. The owner can still
+ // pick members by hand, but saying hello should not require a roster form.
+ const quickRoom=async()=>{
+  if(quickBusy)return;setQuickBusy(true);setError('')
+  try{
+   const created=await post<RoomConfig>('/api/rooms',{name:getLocale()==='en'?'New group':'새 그룹'})
+   await rooms.reload();setSelected(created.id);if(window.innerWidth<840)setShowList(false);refresh()
+  }catch(e){setError((e as Error).message)}finally{setQuickBusy(false)}
  }
  const roomNeedsReview=(room:RoomConfig)=>['failed','paused','needs_review','interrupted','stopped'].includes(room.status||'')
  const runningCount=rooms.value.filter(room=>room.status==='running').length
@@ -110,7 +119,12 @@ export function RoomsPage({openSession,active:visibleView=true}:{openSession:(id
     <h1 className="text-2xl font-semibold tracking-tight text-ink">{t('rooms.welcome.title')}</h1>
     <p className="max-w-lg text-sm leading-relaxed text-muted">{t('rooms.welcome.line1')} {t('rooms.welcome.line2')} {t('rooms.welcome.line3')}</p>
     <div className="mt-4 flex flex-wrap items-center gap-3">
-     <Button variant="bare" onClick={()=>{setCreating(draftOf());setError('')}} className="flex min-h-11 items-center gap-2 rounded-lg bg-ink px-4 text-xs font-semibold text-white hover:bg-workspace-selected"><Plus size={16}/>{t('rooms.create')}</Button>
+     <Button variant="bare" onClick={()=>void quickRoom()} disabled={quickBusy}
+      className="flex min-h-11 items-center gap-2 rounded-lg bg-brand px-5 text-xs font-semibold text-white hover:bg-brand-hover disabled:opacity-60">
+      {quickBusy?<LoaderCircle size={16} className="animate-spin"/>:<Plus size={16}/>}
+      {getLocale()==='en'?'Start a group now':'지금 바로 시작'}
+     </Button>
+     <Button variant="bare" onClick={()=>{setCreating(draftOf());setError('')}} className="flex min-h-11 items-center gap-2 rounded-lg border border-divider bg-surface px-4 text-xs text-ink hover:bg-canvas">{t('rooms.create')}</Button>
      <Button variant="bare" className="room-mobile-list-button flex min-h-11 items-center gap-2 rounded-lg border border-divider bg-surface px-4 text-xs text-ink hover:bg-canvas" onClick={()=>setShowList(true)}>{t('rooms.viewSaved')}</Button>
     </div>
    </div>

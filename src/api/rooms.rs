@@ -142,13 +142,29 @@ fn validated_config(state: &AppState, id: &str, previous: &Value, body: &Value) 
     if name.is_empty() {
         return Err(bad("회의실 이름이 필요합니다."));
     }
-    let source = body
-        .get("agentIds")
-        .or_else(|| previous.get("agentIds"))
-        .and_then(Value::as_array)
-        .ok_or_else(|| bad("참가 에이전트 목록이 필요합니다."))?;
-    if source.is_empty() || source.len() > 32 {
-        return Err(bad("참가자는 1~32명이어야 합니다."));
+    // A room can be created without picking members. The owner should not have
+    // to build a roster before saying hello, so an empty request fills itself
+    // with up to three saved assistants.
+    let requested = body.get("agentIds").or_else(|| previous.get("agentIds"));
+    let filled: Vec<Value>;
+    let source = match requested.and_then(Value::as_array).filter(|ids| !ids.is_empty()) {
+        Some(ids) => ids,
+        None => {
+            filled = state
+                .store
+                .all("agent")
+                .into_iter()
+                .take(3)
+                .map(|agent| agent["id"].clone())
+                .collect();
+            if filled.is_empty() {
+                return Err(bad("먼저 도우미를 한 명 만들어 주세요."));
+            }
+            &filled
+        }
+    };
+    if source.len() > 32 {
+        return Err(bad("참가자는 32명까지 가능합니다."));
     }
     let mut known = HashSet::new();
     let mut agent_ids = Vec::new();
@@ -721,6 +737,17 @@ fn bounded_json(value: &Value, limit: usize) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_room_can_be_created_without_picking_members() {
+        let (state, dir) = test_state();
+        let body = json!({"name":"빠른 방"});
+        let saved = validated_config(&state, "room-quick", &json!({}), &body).unwrap();
+        let members = saved["agentIds"].as_array().unwrap();
+        assert!(!members.is_empty() && members.len() <= 3, "defaults must stay small");
+        drop(state);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     fn test_state() -> (AppState, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("dominion-room-api-{}", uuid::Uuid::new_v4()));
         let config = crate::config::Config {
