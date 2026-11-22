@@ -20,11 +20,19 @@ const optionalPaths=[
  '/api/channels/catalog','/api/channels','/api/channels/:id',
  '/api/channels/:id/diagnose','/api/webhooks/:id'
 ];
+const cloudPaths=[
+ '/api/cloud-auth/google/start','/api/cloud-auth/google/status',
+ '/api/cloud-auth/google/ack','/api/cloud-auth/google/callback'
+];
 const routes=text=>[...text.matchAll(/\.route\(\s*["'](\/api\/[^"']+)["']/g)].map(x=>x[1]);
 
-test('27 legacy optional API paths stay intact and outside the core router',()=>{
- assert.deepEqual(routes(extra),optionalPaths);
- for(const p of optionalPaths)assert.ok(!routes(core).includes(p),'core leaked '+p);
+test('27 legacy paths and four optional consumer Cloud sign-in paths stay outside core',()=>{
+ assert.deepEqual(routes(extra).filter(route=>!cloudPaths.includes(route)),optionalPaths);
+ assert.deepEqual(routes(extra).filter(route=>cloudPaths.includes(route)),cloudPaths);
+ const cloud=source('src/api/addons/cloud_auth.rs');
+ assert.match(cloud,/code_challenge_method/);
+ assert.match(cloud,/Phase::Done/);
+ for(const p of [...optionalPaths,...cloudPaths])assert.ok(!routes(core).includes(p),'core leaked '+p);
  assert.match(core,/router=router\.merge\(addons::routes\(\)\)/);
  assert.match(core,/middleware::from_fn_with_state\(state\.clone\(\), guard_writes\)/);
  assert.doesNotMatch(extra,/\.with_state\(|\.layer\(|TcpListener|fallback_service/);
