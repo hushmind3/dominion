@@ -11,7 +11,7 @@ type ToolReceipt={id:string;tool:string;success:boolean;step:number}
 type ReceiptPage={receipts:ToolReceipt[];total:number;from:number;to:number;nextBefore:number|null}
 type OlderReceipts={runId:string;boundary:number;receipts:ToolReceipt[];nextBefore:number|null}
 type SdkRun = {
- id: string; status: string; instruction: string; answer?: string; error?: string;
+ id: string; status: string; phase?:string; instruction: string; answer?: string; error?: string;
  algorithmId?:string; algorithmRevision?:string;
  checkpoint?: {
   state?: SdkState; rounds?: number; toolCalls?: number; answer?: string;
@@ -46,7 +46,10 @@ const saveDraft=(key:string,value:string):void=>{
 const running = new Set(['queued', 'running'])
 // Refusing a tool call is not the same as stopping its entire task.
 const cancellable = new Set(['queued', 'running', 'awaiting_approval'])
-const stopPolling = new Set(['completed','failed','cancelled','exhausted','denied'])
+const terminalPhases=new Set(['succeeded','failed','cancelled','interrupted','needs_review'])
+const terminalStatuses = new Set(['completed','succeeded','failed','cancelled','exhausted','denied','interrupted','needs_review','in_doubt'])
+const shouldStopPolling=(run:SdkRun)=>terminalStatuses.has(run.status)||
+ (typeof run.phase==='string'&&terminalPhases.has(run.phase))
 const stateNames:Record<string,[string,string]>={
  queued:['대기 중','Queued'], running:['작업 진행 중','Working'],
  completed:['완료','Completed'], failed:['실패','Failed'],
@@ -164,7 +167,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   // per second; retain the 2.5-second poll for missed events or reconnects.
   let pushTimer:number|undefined
   const onRunChange=(event:Event)=>{
-   if(stopPolling.has(run.status))return
+   if(shouldStopPolling(run))return
    const detail=(event as CustomEvent<{targets?:string[]}>).detail
    const targets=detail?.targets
    if(!Array.isArray(targets)||
@@ -176,7 +179,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   }
   // Terminal jobs do not need repeated idle HTTP/SQLite reads. Keep an
   // on-focus revalidation so cross-tab changes are still observable.
-  const timer=stopPolling.has(run.status)?undefined:window.setInterval(refresh,2500)
+  const timer=shouldStopPolling(run)?undefined:window.setInterval(refresh,2500)
   window.addEventListener('focus',refresh)
   window.addEventListener('dominion-data-change',onRunChange)
   document.addEventListener('visibilitychange',refresh)
