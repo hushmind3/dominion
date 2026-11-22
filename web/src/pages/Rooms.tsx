@@ -98,7 +98,7 @@ export function RoomsPage({openSession,openSettings,switchMode,active:visibleVie
   (room.name+' '+(room.topic||'')).toLowerCase().includes(query.toLowerCase())
   &&(roomFilter==='all'||roomFilter==='running'&&active(room.status)
    ||roomFilter==='attention'&&roomAttention(room.status))
- ).sort((a,b)=>Number(roomAttention(b.status))-Number(roomAttention(a.status))
+ ).sort((a,b)=>Number(roomAttention(b.status))-Number(roomAttention(a.status)))
  const attentionCount=rooms.value.filter(room=>roomAttention(room.status)).length
  return <div className="rooms-app">
   {showList&&<Button variant="bare" className="room-list-scrim" aria-label={t('rooms.listClose')} onClick={()=>setShowList(false)}/>}
