@@ -47,6 +47,12 @@ function goToLead(sessionId?:string){
  if(sessionId)window.location.hash='#/chat?session='+encodeURIComponent(sessionId)
 }
 const active=(status:string)=>status==='running'||status==='queued'||status==='launching'||status==='assigned'
+const needsAttention=(team:Team)=>team.status==='needs_review'
+ ||team.pendingRemoteArtifactTaskIds?.length>0
+ ||team.tasks.some(task=>task.pendingApproval
+  ||['approval_pending','offline','file_review_pending'].includes(task.displayState||'')
+  ||task.artifactApplyStatus==='needs_review'||task.artifactApplyStatus==='pending'
+  ||['failed','needs_review'].includes(task.status))
 const taskStateLabel=(state:string,en:boolean)=>({
  approval_pending:en?'Approval pending':'실행 승인 대기',
  offline:en?'Worker offline':'Worker 오프라인',
@@ -68,6 +74,8 @@ export function TeamActivity(){
  const [restoredDraft]=useState<TeamDraft>(restoreTeamDraft)
  const [createOpen,setCreateOpen]=useState(restoredDraft.open)
  const [selected,setSelected]=useState('')
+ const [teamFilter,setTeamFilter]=useState<'all'|'running'|'attention'>('all')
+ const [teamSearch,setTeamSearch]=useState('')
  const [prompt,setPrompt]=useState(restoredDraft.prompt)
  const [leadId,setLeadId]=useState(restoredDraft.leadId)
  const [workerIds,setWorkerIds]=useState<string[]>(restoredDraft.workerIds)
@@ -108,7 +116,15 @@ export function TeamActivity(){
  const invalidRemote=remoteRequired.length>0&&!selectedRemote
  const unavailableRemote=Boolean(remoteId&&!selectedRemote)
  const inProgress=activity.value.teams.filter(team=>team.status==='running').length
- const reviewCount=activity.value.teams.filter(team=>team.status==='needs_review').length
+ const reviewCount=activity.value.teams.filter(needsAttention).length
+ const visibleTeams=[...activity.value.teams]
+  .filter(team=>teamFilter==='all'||teamFilter==='running'&&team.status==='running'
+   ||teamFilter==='attention'&&needsAttention(team))
+  .filter(team=>!teamSearch.trim()||[
+   team.id,team.leadAgentId,...team.tasks.flatMap(task=>[
+    task.id,task.agentId,task.remoteWorkerId,task.error
+   ])].filter(Boolean).join(' ').toLowerCase().includes(teamSearch.trim().toLowerCase()))
+  .sort((a,b)=>Number(needsAttention(b))-Number(needsAttention(a)))
  // Preserve only the unsent composer state in the current browser tab.
  // Restoring a draft never enqueues work; only an explicit click can do so.
  useEffect(()=>{
@@ -259,6 +275,10 @@ export function TeamActivity(){
      {!workerChoices.length&&<p className="px-2 text-xs text-[#8A8176]">{en?'No runnable agents.':'실행 가능한 에이전트가 없습니다.'}</p>}
     </div>
    </div>
+   {selectedRemote&&<p role="status" className="text-[11px] text-[#7C7469]">{en
+    ?'This device can run '+workerIds.filter(id=>(workers.find(node=>node.id===selectedRemote)?.agents||[]).includes(id)).length+' selected agents; others stay local.'
+    :'이 장치에서 '+workerIds.filter(id=>(workers.find(node=>node.id===selectedRemote)?.agents||[]).includes(id)).length+'명 실행 가능 · 나머지는 로컬에서 실행됩니다.'}</p>}
+   {agents.error&&<p role="alert" className="text-[11px] text-rose-700">{en?'Could not refresh available agents; please retry before launching.':'실행 가능한 에이전트 정보를 갱신하지 못했습니다. 새로고침 후 실행하세요.'}</p>}
    {invalidRemote&&<p role="alert" className="text-[11px] text-amber-800">{en?'Remote-only agents need an online device that advertises all selected remote IDs.':'원격 전용 에이전트를 선택하려면 해당 ID를 모두 제공하는 온라인 원격 장치를 지정해야 합니다.'}</p>}
    {unavailableLead&&<p role="alert" className="break-words text-[11px] text-amber-800">{en?'The previously selected Lead is unavailable. Select another Lead before launch.':'이전에 선택한 Lead를 사용할 수 없습니다. 다른 Lead를 직접 선택한 뒤 실행하세요.'}</p>}
    {unavailableRemote&&<div role="alert" className="flex flex-wrap items-center gap-2 text-[11px] text-amber-800"><span>{en?'The selected remote device is unavailable. Choose an available device or switch to local execution.':'선택한 원격 장치를 사용할 수 없습니다. 다른 장치를 선택하거나 로컬 실행으로 전환하세요.'}</span><Button size="sm" variant="ghost" onClick={()=>setRemoteId('')}>{en?'Switch to local':'로컬 실행으로 변경'}</Button></div>}
@@ -268,7 +288,7 @@ export function TeamActivity(){
      <span className="text-[10px] text-[#8A8176]">{en?'Unsent draft stored in this tab':'보내지 않은 초안은 현재 탭에 임시 저장됩니다'}</span>
      {hasDraft&&<Button size="sm" variant="ghost" onClick={discardDraft} disabled={Boolean(busy)}>{en?'Discard draft':'초안 지우기'}</Button>}
     </div>
-    <Button variant="primary" disabled={Boolean(busy)||!prompt.trim()||!lead||workerIds.length<1||invalidRemote||unavailableWorkers.length>0||unavailableLead||unavailableRemote} onClick={()=>void launch()}><Play size={14}/>{busy==='launch'?(en?'Queuing…':'등록 중…'):(en?'Queue Lead task':'Lead 작업 시작')}</Button>
+    <Button variant="primary" disabled={Boolean(busy)||Boolean(agents.error)||Boolean(activity.error)||agents.loading||activity.loading||!prompt.trim()||!lead||workerIds.length<1||invalidRemote||unavailableWorkers.length>0||unavailableLead||unavailableRemote} onClick={()=>void launch()}><Play size={14}/>{busy==='launch'?(en?'Queuing…':'등록 중…'):(en?'Queue Lead task':'Lead 작업 시작')}</Button>
    </div>
   </Panel>}
   {error&&<p role="alert" className="mb-3 break-words rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}
@@ -280,9 +300,27 @@ export function TeamActivity(){
    {job.error&&<span role="alert" className="w-full break-words text-rose-700">{job.error}</span>}
   </div>)}
   <Panel className="overflow-hidden p-4 sm:p-5">
-   {!activity.value.teams.length&&<p className="py-5 text-center text-xs text-[#8A8176]">{activity.loading?(en?'Loading teams…':'팀 작업 불러오는 중…'):(en?'No saved managed teams yet.':'아직 저장된 팀 작업이 없습니다.')}</p>}
+   <div className="mb-3 flex flex-col gap-2 border-b border-[#EFE9DF] pb-3 sm:flex-row sm:items-center">
+    <TextInput aria-label={en?'Find a team or Worker':'팀·Worker 검색'}
+     value={teamSearch} onChange={event=>setTeamSearch(event.target.value)}
+     placeholder={en?'Find team, agent or failure':'팀·에이전트·오류 검색'} className="sm:flex-1"/>
+    <SelectInput aria-label={en?'Team status filter':'팀 상태 필터'}
+     value={teamFilter} onChange={event=>setTeamFilter(event.target.value as 'all'|'running'|'attention')}
+     className="sm:w-44">
+     <option value="all">{en?'All teams':'전체 팀'}</option>
+     <option value="running">{en?'Running':'진행 중'}</option>
+     <option value="attention">{en?'Needs action':'조치 필요'}</option>
+    </SelectInput>
+   </div>
+   {activity.error&&<div role="alert" className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-[11px] text-rose-700">
+    <span className="min-w-0 flex-1">{en?'Team state could not be refreshed. Displayed data may be stale.':'팀 상태를 갱신하지 못했습니다. 표시된 정보가 이전 기록일 수 있습니다.'}</span>
+    <Button size="sm" variant="secondary" onClick={reload}><RefreshCw size={13}/>{en?'Retry':'다시 시도'}</Button>
+   </div>}
+   {activity.loading&&<p role="status" className="py-5 text-center text-xs text-[#8A8176]">{en?'Loading teams…':'팀 작업 불러오는 중…'}</p>}
+   {!activity.loading&&!activity.error&&!activity.value.teams.length&&<p className="py-5 text-center text-xs text-[#8A8176]">{en?'No saved teams yet. Start a Lead task above.':'아직 저장된 팀이 없습니다. 위에서 Lead 작업을 시작할 수 있습니다.'}</p>}
+   {!activity.loading&&!activity.error&&activity.value.teams.length>0&&!visibleTeams.length&&<p className="py-5 text-center text-xs text-[#8A8176]">{en?'No teams match this search or filter.':'조건에 맞는 팀이 없습니다. 필터를 바꿔 보세요.'}</p>}
    <div className="space-y-2">
-    {activity.value.teams.map(team=>{
+    {visibleTeams.map(team=>{
      const open=selected===team.id
      const done=team.tasks.filter(task=>task.status==='completed').length
      const pending=team.pendingRemoteArtifactTaskIds.length
@@ -307,7 +345,7 @@ export function TeamActivity(){
          {task.artifactApprovalState==='approved'&&<span className="rounded-md bg-sky-50 px-2 py-0.5 text-[10px] text-sky-800">{en?'File changes approved':'파일 변경 승인됨'}</span>}
          {task.artifactApplied&&<span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-800">{en?'Local files applied and verified':'로컬 적용·해시 검증 완료'}</span>}
          {task.artifactApplyStatus&&task.artifactApplyStatus!=='not_required'&&<span className={'rounded-md px-2 py-0.5 text-[10px] '+(task.artifactApplyStatus==='applied'?'bg-emerald-50 text-emerald-700':'bg-amber-50 text-amber-800')}>{en?'Files: ':'산출물: '}{artifactLabel(task.artifactApplyStatus,en)}</span>}
-         {task.remoteTaskId&&task.artifactApplyStatus==='pending'&&<Button size="sm" variant="secondary" disabled={Boolean(busy)} onClick={()=>void openReview(team.id,task.remoteTaskId!)}><GitMerge size={12}/>{en?'Review diff':'파일 변경 검토'}</Button>}
+         {task.remoteTaskId&&task.artifactApplyStatus==='pending'&&<Button size="sm" variant="secondary" disabled={Boolean(busy)||Boolean(activity.error)} onClick={()=>void openReview(team.id,task.remoteTaskId!)}><GitMerge size={12}/>{en?'Review diff':'파일 변경 검토'}</Button>}
          {task.error&&<p className="w-full break-words text-rose-600">{task.error}</p>}
         </div>)}
        </div>
@@ -320,14 +358,14 @@ export function TeamActivity(){
         <p className="mt-1 break-all text-[10px] text-[#8A8176]">SHA-256: {review.reviewDigest}</p>
         <pre className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap break-all rounded-lg bg-[#24211D] p-3 text-[11px] leading-5 text-white">{review.patch}</pre>
         <div className="mt-3 flex flex-wrap justify-end gap-2">
-         <Button size="sm" variant="danger" disabled={Boolean(busy)} onClick={()=>void decide(false)}>{en?'Reject changes':'변경 거절'}</Button>
-         <Button size="sm" variant="primary" disabled={Boolean(busy)} onClick={()=>void decide(true)}><GitMerge size={13}/>{en?'Approve & apply':'승인 후 적용'}</Button>
+         <Button size="sm" variant="danger" disabled={Boolean(busy)||Boolean(activity.error)} onClick={()=>void decide(false)}>{en?'Reject changes':'변경 거절'}</Button>
+         <Button size="sm" variant="primary" disabled={Boolean(busy)||Boolean(activity.error)} onClick={()=>void decide(true)}><GitMerge size={13}/>{en?'Approve & apply':'승인 후 적용'}</Button>
         </div>
        </div>}
        <div className="mt-3 flex flex-wrap gap-2">
         {team.leadSessionId&&<Button size="sm" variant="ghost" onClick={()=>goToLead(team.leadSessionId)}>{en?'Lead conversation':'Lead 대화'} <ChevronRight size={13}/></Button>}
-        {team.status==='running'&&<Button size="sm" variant="secondary" disabled={Boolean(busy)||team.resumeAvailable===false} onClick={()=>void control(team,'resume')} title={team.resumeAvailable===false?(en?'Approval, offline Worker or file review blocks manual continuation':'승인 대기·장치 오프라인·파일 검토가 끝나야 재개할 수 있습니다.'):undefined}><RotateCcw size={13}/>{en?'Resume':'작업 재개'}</Button>}
-        {team.status==='running'&&<Button size="sm" variant="danger" disabled={Boolean(busy)} onClick={()=>void control(team,'stop')}><Square size={13}/>{en?'Stop team':'팀 중단'}</Button>}
+        {team.status==='running'&&<Button size="sm" variant="secondary" disabled={Boolean(busy)||Boolean(activity.error)||team.resumeAvailable===false} onClick={()=>void control(team,'resume')} title={team.resumeAvailable===false?(en?'Approval, offline Worker or file review blocks manual continuation':'승인 대기·장치 오프라인·파일 검토가 끝나야 재개할 수 있습니다.'):undefined}><RotateCcw size={13}/>{en?'Resume':'작업 재개'}</Button>}
+        {team.status==='running'&&<Button size="sm" variant="danger" disabled={Boolean(busy)||Boolean(activity.error)} onClick={()=>void control(team,'stop')}><Square size={13}/>{en?'Stop team':'팀 중단'}</Button>}
        </div>
       </div>}
      </div>
