@@ -150,8 +150,16 @@ pub async fn events(
     Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
 }
 
-pub async fn audit_log(State(state): State<AppState>) -> Json<Value> {
-    Json(json!(state.store.recent_audit(200)))
+pub async fn audit_log(
+    State(state): State<AppState>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Json<Value> {
+    let limit = query
+        .get("limit")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(200)
+        .clamp(1, 500);
+    Json(json!(state.store.recent_audit(limit)))
 }
 
 pub async fn model_usage(State(state): State<AppState>) -> Json<Value> {

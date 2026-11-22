@@ -14,7 +14,7 @@ import {AssistantInstructions} from '../components/AssistantInstructions'
 export function OperationsPage({section}:{section:'activity'|'settings'}){
  const loc=useLocale()
  const [advancedSettingsOpen,setAdvancedSettingsOpen]=useState(false)
- const jobs=useRemote<any[]>(section==='activity'?'/api/jobs':null,[]),audit=useRemote<any[]>(section==='activity'?'/api/audit':null,[]);
+ const jobs=useRemote<any[]>(section==='activity'?'/api/jobs':null,[]),audit=useRemote<any[]>(section==='activity'?'/api/audit?limit=50':null,[]);
  const executions=useRemote<any[]>(section==='activity'?'/api/executions?limit=100':null,[])
  const browserStatus=useRemote<any>(section==='activity'?'/api/browser/status':null,{status:{available:false,running:false},screenshot:null})
  const [shotTick,setShotTick]=useState(0)

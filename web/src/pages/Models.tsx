@@ -343,36 +343,23 @@ export function ModelHub(){
  const activeProviders=providers.value.filter(provider=>provider.enabled!==false)
  const localProviders=activeProviders.filter(provider=>provider.local)
  const credentialReady=activeProviders.filter(provider=>provider.local||provider.hasKey)
- const overview=[
-  {tab:'providers' as const,label:'등록한 제공자',english:'Configured providers',count:providers.value.length},
-  {tab:'local' as const,label:'로컬 모델',english:'Local models',count:localProviders.length},
-  {tab:'oauth' as const,label:'키·로컬 등록',english:'Keys or local',count:credentialReady.length},
-  {tab:'free' as const,label:'무료 모델 조회',english:'Free catalog',count:freeCatalog.value.counts?.free||0},
- ]
  return <div className={PAGE_FRAME}>
   <Headline
    eyebrow="MODEL CONTROL CENTER"
    title={locale==='en'?'Model workspace':'모델 연결 · 실행 환경'}
    description={locale==='en'?'Configure model sources and inspect available accounts.':'로컬 모델, 계정 인증, API 제공자를 연결하고 실제 실행에 사용할 모델을 선택합니다.'}
    actions={<Action variant="primary" onClick={()=>open()}><Plus size={15}/>{t('models.apiAdd')}</Action>}/>
-  <div className="mb-5 grid grid-cols-2 gap-2 lg:grid-cols-4" role="group" aria-label="Model overview">
-   {overview.map(item=><button key={item.tab} type="button" onClick={()=>setTab(item.tab)}
-     aria-pressed={tab===item.tab} className={'rounded-xl border px-4 py-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 '+
-      (tab===item.tab?'border-[var(--color-brand)] bg-[var(--color-brand-soft)]':'border-divider bg-white hover:bg-[var(--color-canvas)]')}>
-     <strong className="block text-[23px] font-extrabold leading-7 tabular-nums text-[var(--color-ink)]">{item.count}</strong>
-     <span className="mt-1 block text-[11px] text-[var(--color-muted)]">{locale==='en'?item.english:item.label}</span>
-   </button>)}
-  </div>
-
-  <div className="mb-3 flex flex-wrap items-center gap-2">
-   <nav ref={tabsRef} aria-label="Model sections" className="flex min-w-0 w-full gap-1 overflow-x-auto rounded-xl border border-divider bg-surface p-1 md:w-auto md:flex-wrap">
-    {tabs.map(item=><Button variant="bare" key={item.id} type="button" aria-current={tab===item.id?'page':undefined} onClick={()=>{setTab(item.id);setCategory('all');if(item.id==='connect')setBrowseProviderId('')}} className={'inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] font-semibold transition-colors '+(tab===item.id?'bg-brand text-white':'text-muted hover:bg-canvas')}>{item.label}{item.count!==undefined&&<span className={'rounded px-1.5 py-0.5 text-[10px] '+(tab===item.id?'bg-white/20':'bg-[var(--color-canvas)] text-muted')}>{item.count}</span>}</Button>)}
-   </nav>
-
+  <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+   <aside className="min-w-0">
+    <nav ref={tabsRef} aria-label="Model sections" className="flex gap-1 overflow-x-auto lg:flex-col lg:overflow-visible">
+     {tabs.map(item=><Button variant="bare" key={item.id} type="button" aria-current={tab===item.id?'page':undefined} onClick={()=>{setTab(item.id);setCategory('all');if(item.id==='connect')setBrowseProviderId('')}} className={'inline-flex shrink-0 items-center justify-between gap-2 rounded-lg px-3 py-2 text-[12px] font-semibold transition-colors lg:w-full '+(tab===item.id?'bg-brand text-white':'text-muted hover:bg-canvas')}>{item.label}{item.count!==undefined&&<span className={'rounded px-1.5 py-0.5 text-[10px] '+(tab===item.id?'bg-white/20':'bg-canvas text-muted')}>{item.count}</span>}</Button>)}
+    </nav>
+   </aside>
+   <div className="min-w-0">
+    <div className="mb-3 flex flex-wrap items-center gap-2">
    {(tab==='providers'||tab==='local')&&<><div className="relative min-w-[180px] flex-1 sm:max-w-[280px]"><Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"/><TextInput value={query} onChange={e=>setQuery(e.target.value)} placeholder={t('models.providerSearch')} className="!pl-8 !text-[12px]"/></div>
     {tab==='providers'&&<div className="flex flex-wrap gap-1">{(['all','free','cloud'] as const).map(value=><Button variant="bare" key={value} type="button" onClick={()=>setCategory(value)} className={'rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold '+(category===value?'border-brand bg-brand-soft text-brand-hover':'border-divider bg-white text-muted')}>{t(value==='all'?'models.filter.all':value==='free'?'models.filter.free':'models.filter.cloud')}</Button>)}</div>}</>}
   </div>
-
   {tab==='free'&&<section className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-divider bg-surface px-3 py-2 text-[11px] text-muted" title={t('models.freeCheck.note')}>
    <strong className="text-ink">{t('models.freeCheck.title')}</strong>
    <span className="rounded bg-emerald-50 px-1.5 py-0.5 font-semibold text-emerald-700">{t('models.freeCheck.free',{count:freeCatalog.value.counts?.free||0})}</span>
@@ -456,6 +443,8 @@ export function ModelHub(){
 
   {removedName&&<p role="status" className="mb-4 mt-4 text-[12px] text-emerald-700">{t('models.dlg.disconnected',{name:removedName})}</p>}
   {!modal&&<div className="mt-4"><Notice message={error||providers.error}/></div>}
+  </div>
+  </div>
   {modal&&<DialogBackdrop onDismiss={close}><DialogPanel size="default">
    <div className="flex items-center justify-between border-b border-divider p-4"><h2 className="text-[15px] font-bold">{presetMode&&!edit?name+' '+t('models.editConnection'):edit?t('models.editConnection'):t('models.addConnection')}</h2><Button size="icon" variant="ghost" aria-label={t('models.close')} onClick={close} disabled={saving}><X size={16}/></Button></div>
    <div className="grid gap-3 p-4">
