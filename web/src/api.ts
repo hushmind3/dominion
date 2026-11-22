@@ -115,3 +115,13 @@ export async function streamChat(data: ChatRequest, onEvent: (e: StreamEvent) =>
   await reader.cancel().catch(() => {})
  }
 }
+
+/** Provider names sometimes already include the default model, e.g.
+ *  "DOMINION Cloud · @cf/...". Appending it again would show it twice. */
+export function providerLabel(provider:{name:string;model?:string}):string{
+ const model=(provider.model||'').trim()
+ if(!model)return provider.name
+ const suffix=' · '+model
+ if(!provider.name.endsWith(suffix))return provider.name+suffix
+ return provider.name
+}

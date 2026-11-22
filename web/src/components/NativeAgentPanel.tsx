@@ -1,6 +1,6 @@
 import {useEffect, useRef, useState} from 'react'
 import {Check, Play, RefreshCw, ShieldAlert, Square, Sparkles, MessageSquareText, PanelLeftOpen, PanelLeftClose, History} from 'lucide-react'
-import {get, post, type Provider} from '../api'
+import {get, post, providerLabel, type Provider} from '../api'
 import {useLocale} from '../i18n'
 import {NativeRunNavigator} from './NativeRunNavigator'
 
@@ -394,7 +394,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      <select value={providerId} onChange={e=>setProviderId(e.target.value)}
       className="min-h-11 rounded-lg border border-divider bg-white px-3 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2">
       <option value="">{en?'Automatic selection':'자동 선택'}</option>
-      {providers.filter(p=>p.enabled).map(p=><option key={p.id} value={p.id}>{p.name}{p.model?` · ${p.model}`:''}</option>)}
+      {providers.filter(p=>p.enabled).map(p=><option key={p.id} value={p.id}>{providerLabel(p)}</option>)}
      </select>
     </label>
     <button type="button" onClick={()=>void start()} disabled={busy||!instruction.trim()}

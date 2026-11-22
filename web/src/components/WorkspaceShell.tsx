@@ -6,7 +6,7 @@ import {t,useLocale} from '../i18n'
 import {navigationItems,pageLabels,type PageId} from '../navigation'
 
 /** Primary surfaces stay visible as tabs; every other page lives in ⌘K. */
-const primary: PageId[] = ['home', 'chat', 'rooms', 'models', 'agents']
+const primary: PageId[] = ['home', 'chat', 'rooms']
 
 export function WorkspaceTopBar({page,online,running,pending,onNavigate,onSearch}:{
  page: PageId; online: boolean; running: number; pending: number

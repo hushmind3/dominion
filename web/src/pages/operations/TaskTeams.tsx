@@ -1,6 +1,6 @@
 import {useCallback,useEffect,useRef,useState} from 'react'
 import {GitBranch,Plus,RefreshCw,ShieldCheck,Square,Workflow} from 'lucide-react'
-import {get,post,type Provider} from '../../api'
+import {get,post,providerLabel,type Provider} from '../../api'
 import {formatDateTime,useLocale} from '../../i18n'
 import {Action,Notice,Panel,Subheading} from '../../components/UI'
 import {StatusPill} from '../../components/StatusPill'
@@ -337,7 +337,7 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
         onChange={e=>patch(step.id,{providerId:e.target.value,model:''})}>
         <option value="">{t('자동 선택','Automatic')}</option>
         {providers.filter(p=>p.enabled).map(p=><option key={p.id} value={p.id}>
-         {p.name}{p.model?' · '+p.model:''}</option>)}
+         {providerLabel(p)}</option>)}
        </select></label>:<p className="mt-3 text-[11px] text-muted">
        {step.runtime}: {step.runtime==='remote'?
         t('독립 실행 장치의 읽기 전용 추론','Remote text-only reasoning'):
