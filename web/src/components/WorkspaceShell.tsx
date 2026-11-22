@@ -7,8 +7,9 @@ import {navigationItems,pageLabels,type PageId} from '../navigation'
 /** Primary surfaces stay visible as tabs; every other page lives in ⌘K. */
 const primary: PageId[] = ['home', 'chat', 'rooms', 'models', 'agents']
 
-export function WorkspaceTopBar({page,online,running,pending,onNavigate,onSearch}:{
+export function WorkspaceTopBar({page,online,running,pending,build,onNavigate,onSearch}:{
  page: PageId; online: boolean; running: number; pending: number
+ build?: {branch: string; commit: string} | null
  onNavigate: (id: PageId) => void; onSearch: () => void
 }) {
  const locale = useLocale()
@@ -40,7 +41,8 @@ export function WorkspaceTopBar({page,online,running,pending,onNavigate,onSearch
    <Button variant="ghost" size="icon" aria-label={locale === 'en' ? 'Search' : '검색'} title="⌘K" onClick={onSearch}>
     <Search size={17}/>
    </Button>
-   <span className={'hidden size-1.5 rounded-full sm:block '+(online ? 'bg-emerald-500' : 'bg-rose-500')}/>
+   <span className={'hidden size-1.5 rounded-full sm:block '+(online ? 'bg-emerald-500' : 'bg-rose-500')} title={online ? t('shell.connected') : t('shell.disconnected')}/>
+   {build?.branch && build.branch !== 'unknown' && <span className="hidden max-w-40 truncate font-mono text-[10px] text-muted xl:block" title={build.branch + ' · ' + build.commit}>{build.branch.replace(/^dominion-/, '')} · {build.commit.slice(0, 7)}</span>}
    <Button variant="ghost" size="icon" aria-label={t('nav.settings')} title={t('nav.settings')} onClick={() => onNavigate('settings')}>
     <Settings size={17}/>
    </Button>

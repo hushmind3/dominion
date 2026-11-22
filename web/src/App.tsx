@@ -2,7 +2,7 @@ import { ContextMenu } from './components/ContextMenu'
 import {OwnerProfileProvider} from './components/OwnerProfile'
 import {Component,lazy,Suspense,useCallback,useEffect,useLayoutEffect,useState,type ReactNode} from 'react'
 import {useWorkspaceSignals} from './hooks/useWorkspaceSignals'
-import {WorkspaceTopBar,SettingsHeader} from './components/WorkspaceShell'
+import {WorkspaceTopBar} from './components/WorkspaceShell'
 import {isPageId,type PageId} from './navigation'
 import {WorkspaceSearch} from './components/WorkspaceSearch'
 const HomePage=lazy(()=>import('./pages/Home').then(module=>({default:module.HomePage})))
@@ -163,7 +163,7 @@ export default function App(){
   <ContextMenu/>
   {/* One light chrome owns the whole product. Chat and room trees stay mounted
       below it so drafts and active turns survive every menu switch. */}
-  <WorkspaceTopBar page={page} online={online} running={running} pending={pending}
+  <WorkspaceTopBar page={page} online={online} running={running} pending={pending} build={engineBuild}
    onNavigate={target=>target==='chat'?returnToChat():navigate(target)}
    onSearch={()=>setSearchOpen(true)}/>
   <div className="min-h-0 min-w-0 overflow-hidden bg-canvas">
@@ -188,8 +188,7 @@ export default function App(){
    </main>
    {settingsOpen&&<section aria-label="DOMINION workspace" inert={searchOpen}
       className="workspace-settings flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-canvas">
-    <SettingsHeader page={page} online={online} build={engineBuild} onClose={closeSettings}/>
-    <div className="workspace-settings-content min-h-0 min-w-0 flex-1 overflow-y-auto bg-canvas p-4 md:p-7">
+    <div className="workspace-settings-content min-h-0 min-w-0 flex-1 overflow-y-auto bg-canvas">
      <PageLoadBoundary key={page}><Suspense fallback={<div role="status" className="p-8 text-sm">화면 불러오는 중…</div>}>
       {page==='home'&&<HomePage navigate={navigate}/>}
       {page==='capabilities'&&<CapabilitiesPage navigate={navigate}/>}
