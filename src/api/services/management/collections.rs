@@ -120,6 +120,83 @@ pub async fn save(
     }
 }
 
+
+/// The consumer memory editor creates a new owner-corrected revision while
+/// retaining the original evidence and immutable scope on the old record.
+fn memory_revision(previous:&Value,text:&str)->(Value,Value){
+    let new_id=uuid::Uuid::new_v4().to_string();
+    let mut revised=previous.clone();
+    revised["id"]=json!(new_id);
+    revised["text"]=json!(text);
+    revised["status"]=json!("active");
+    revised["verification"]=json!("owner_correction");
+    revised["source"]=json!("user");
+    revised["sourceMessageIds"]=json!([]);
+    revised["evidenceQuote"]=Value::Null;
+    revised["supersedes"]=previous["id"].clone();
+    if let Some(fields)=revised.as_object_mut(){
+        fields.remove("supersededBy");
+        fields.remove("sourceAuthors");
+        fields.remove("sourceRole");
+    }
+    revised["createdAt"]=json!(chrono::Utc::now().to_rfc3339());
+    revised["revision"]=json!(crate::engine::memory::content_revision(&revised));
+    let mut prior=previous.clone();
+    prior["status"]=json!("superseded");
+    prior["supersededBy"]=json!(new_id);
+    prior["revision"]=json!(crate::engine::memory::content_revision(&prior));
+    (prior,revised)
+}
+pub async fn correct_memory(
+    State(state):State<AppState>,
+    axum::extract::Path(id):axum::extract::Path<String>,
+    Json(body):Json<Value>,
+)->Response{
+    let Some(text)=body["text"].as_str().map(str::trim)
+        .filter(|text|!text.is_empty()&&text.chars().count()<=1600)
+    else{return (StatusCode::BAD_REQUEST,Json(json!({"error":"기억 수정 내용은 1~1600자여야 합니다."}))).into_response()};
+    let Some(previous)=state.store.get("memory",&id)else{
+        return (StatusCode::NOT_FOUND,Json(json!({"error":"기억 기록이 없습니다."}))).into_response();
+    };
+    if previous["status"]!="active"{
+        return (StatusCode::CONFLICT,Json(json!({"error":"활성 기억만 수정할 수 있습니다."}))).into_response();
+    }
+    let (prior,revised)=memory_revision(&previous,text);
+    // Both records commit together under the original status guard; the
+    // memory retriever never sees a superseded original with no replacement.
+    match state.store.transaction_if_status("memory",&id,"active", &[
+        ("memory".to_string(),prior.clone()),
+        ("memory".to_string(),revised.clone()),
+    ]){
+        Ok(true)=>{
+            state.bus.record("memory",&prior);
+            state.bus.record("memory",&revised);
+            Json(revised).into_response()
+        }
+        Ok(false)=>(StatusCode::CONFLICT,Json(json!({"error":"기억이 이미 변경되었습니다."}))).into_response(),
+        Err(error)=>(StatusCode::INTERNAL_SERVER_ERROR,Json(json!({"error":error}))).into_response(),
+    }
+}
+
+#[cfg(test)]
+mod memory_revision_contract_tests{
+    use super::*;
+    #[test]
+    fn correction_preserves_scope_and_stales_old_evidence(){
+        let old=json!({"id":"m1","text":"old","scope":"agent",
+            "agentId":"a1","partitionKey":"tenant","status":"active",
+            "sourceMessageIds":["message-1"],"evidenceQuote":"old"});
+        let (prior,next)=memory_revision(&old,"new corrected fact");
+        assert_eq!(prior["status"],"superseded");
+        assert_eq!(prior["supersededBy"],next["id"]);
+        assert_eq!(next["supersedes"],"m1");
+        assert_eq!(next["partitionKey"],"tenant");
+        assert_eq!(next["agentId"],"a1");
+        assert_eq!(next["verification"],"owner_correction");
+        assert_eq!(next["sourceMessageIds"],json!([]));
+        assert!(next["evidenceQuote"].is_null());
+    }
+}
 pub async fn one(State(state): State<AppState>, OriginalUri(uri): OriginalUri) -> Response {
     let kind = kind_from_uri(&uri);
     match id_from_uri(&uri) {

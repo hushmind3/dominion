@@ -1,6 +1,6 @@
 //! Optional product service APIs: no second server, policy, middleware or UI.
 use crate::state::AppState;
-use axum::{Router,routing::get};
+use axum::{Router,routing::{get,post}};
 use super::collections;
 mod provider_routes;
 mod conversation_routes;
@@ -15,6 +15,7 @@ pub(super) fn routes()->Router<AppState>{
         .merge(automation_routes::routes())
         .merge(evaluation_routes::routes())
         .merge(management_routes::routes())
+        .route("/api/memories/:id/correct",post(collections::correct_memory))
         ;
 
     for kind in collections::COLLECTIONS {
