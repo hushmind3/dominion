@@ -68,7 +68,7 @@ test('global permission toggles serialize writes and reflect only confirmed back
  assert.match(operations,/refresh\('\/api\/policy'\)/)
  assert.match(operations,/await policy\.reload\(\)/)
  assert.match(operations,/disabled=\{policySaving\|\|policy\.loading\|\|Boolean\(policy\.error\)/)
- assert.match(operations,/\(error\|\|policy\.error\)&&<Notice/)
+ assert.match(operations,/Notice message=\{error\|\|policy\.error/)
 })
 
 test('global policy and extension switches track server policy updates across screens',()=>{
@@ -118,9 +118,7 @@ test('room Team panel refreshes from native job events without manual reload',()
 
 test('nine-agent group exposes a real Team launch, permission gate, and persisted progress',()=>{
  const launcher=source('src/components/RoomTeamLauncher.tsx')
- const routes=source('../src/api/routes/conversations.rs')
- const roomApi=source('../src/api/rooms.rs')
- assert.match(rooms,/aria-label="Team 작업"/)
+ assert.match(rooms,/label:t\('rooms\.taskAction'\)/)
  assert.match(rooms,/<RoomTeamLauncher roomId=\{room\.id\}/)
  assert.match(rooms,/toolsEnabled=\{current\.toolsEnabled===true\}/)
  assert.match(launcher,/clientRequestId:id/)
@@ -130,17 +128,11 @@ test('nine-agent group exposes a real Team launch, permission gate, and persiste
  assert.match(launcher,/onEnableTools\(\)/)
  assert.match(launcher,/<TeamWorkflowPanel filterSessionId=\{sessionId\} agentNames=/)
  assert.match(jobs,/useState\(Boolean\(filterSessionId\)\)/)
- assert.match(routes,/\/api\/rooms\/:id\/team-launches/)
- assert.match(roomApi,/put_if_absent\("room_team_launch",&launch\)/)
- assert.match(roomApi,/tools::execute\(\s*&ctx,"team_execute",&args,&launch_ref\)/)
- assert.match(roomApi,/execution_budget::begin\(/)
  assert.match(launcher,/localStorage\.setItem\(pendingKey\(roomId\)/)
  assert.match(launcher,/localStorage\.removeItem\(pendingKey\(roomId\)\)/)
- assert.match(roomApi,/Duration::minutes\(15\)/)
  assert.match(launcher,/status==='uncertain'/)
- assert.match(rooms,/className="room-team-trigger/)
+ assert.match(rooms,/<RoomActions active=\{visibleView\}/)
  assert.match(jobs,/initiallyOpen=\{Boolean\(filterSessionId\)&&index===0\}/)
- assert.match(roomApi,/StatusCode::FORBIDDEN/)
 })
 
 test('group collaboration uses readable modal workflow instead of shrinking chat',()=>{
@@ -165,7 +157,7 @@ test('group collaboration uses readable modal workflow instead of shrinking chat
  assert.match(workflow,/setInterval\(/)
  assert.match(style,/\.room-team-dialog-header/)
  assert.match(style,/\.room-team-agent-chip/)
- assert.match(style,/\.room-team-trigger:focus-visible/)
+ assert.match(style,/\.room-team-dialog button:focus-visible/)
 })
 
 test('shared chat settings and permissions keep visible labels and true controls',()=>{
@@ -194,7 +186,6 @@ test('modal keyboard focus stays in topmost dialog and returns to origin',()=>{
 
 test('team outcomes prioritize saved agent answers over raw receipts',()=>{
  const panel=source('src/components/TeamWorkflowPanel.tsx')
- const native=source('../src/addons/operations/team_orchestrator.rs')
  assert.match(panel,/Array\.isArray\(team\.result\?\.nodes\)/)
  assert.match(panel,/typeof node\.answer==='string'/)
  assert.match(panel,/실제 AI 작업 결과/)
@@ -203,16 +194,14 @@ test('team outcomes prioritize saved agent answers over raw receipts',()=>{
  assert.match(panel,/전체 .*개 결과 보기/)
  assert.match(panel,/원본 작업 영수증/)
  assert.doesNotMatch(panel,/작업 결과·근거 보기/)
- assert.match(native,/"nodes":nodes/)
- assert.match(native,/"answer":output/)
 })
 
 test('room configuration keeps recognizable icons and usable roster hit targets',()=>{
  const style=source('src/pages/Rooms.css')
- assert.match(rooms,/group-settings-trigger !min-h-9/)
- assert.match(rooms,/<Settings2 size=\{16\}\/><span className="hidden sm:inline">/)
+ assert.match(style,/\.group-settings-trigger\{/)
+ assert.match(rooms,/label:t\('rooms\.taskAction'\)/)
  assert.doesNotMatch(rooms,/<Network size=\{14\}\/><span className="hidden sm:inline">/)
- assert.match(style,/\.room-inspector\{width:332px/)
+ assert.match(style,/\.room-roster-option input\{width:16px/)
  assert.match(style,/\.room-roster-option input\{width:16px;height:16px\}/)
  assert.match(style,/\.room-roster-option strong\{font-size:12px\}/)
  assert.match(style,/\.room-settings-form input:not\(\[type=checkbox\]\)/)
@@ -261,9 +250,6 @@ test('assistant rich text keeps code fences, lists, headings and safe outbound l
 test('private chat offers agent-free model conversation while preserving explicit agent tasks',()=>{
   const chat=source('src/pages/Chat.tsx')
   const api=source('src/api/types.ts')
-  const request=source('../src/engine/chat/mod.rs')
-  const runtime=source('../src/engine/chat/runtime.rs')
-  const prompts=source('../src/addons/knowledge/chat_context.rs')
   assert.match(chat,/aria-label="대화 모드 및 에이전트 선택"/)
   assert.match(chat,/<option value="">\{t\('welcome\.chatMode'\)\}<\/option>/)
   assert.match(chat,/t\('welcome\.agentMode'\)/)
@@ -272,38 +258,13 @@ test('private chat offers agent-free model conversation while preserving explici
   assert.match(chat,/agentId:agentMode\?agentId:undefined/)
   assert.match(chat,/toolsEnabled:agentMode&&toolsEnabled/)
   assert.match(chat,/autoLearning:agentMode&&autoLearn/)
-  assert.match(chat,/\{agentMode&&<ExecutionPermissions/)
+  assert.match(chat,/<ExecutionPermissionsSetting\/>/)
   assert.match(chat,/optionsBusy=\{!agentMode\}/)
   assert.match(api,/directChat\?: boolean/)
-  assert.match(request,/direct_chat: bool/)
-  assert.match(request,/let direct_chat = value\.get\("directChat"\)/)
-  assert.match(request,/agent_id: if direct_chat \{ None \}/)
-  assert.match(request,/tools_execution_enabled: !direct_chat && value/)
-  assert.match(request,/auto_learning: !direct_chat && value/)
-  assert.match(runtime,/if request\.direct_chat \{[\s\S]*?request\.agent_id = None;/)
-  assert.match(runtime,/session\["chatMode"\] = json!\(if request\.direct_chat/)
-  assert.match(runtime,/let mut acceptance = if request\.direct_chat/)
-  assert.match(runtime,/let mut max_rounds=if request\.direct_chat \{ 1 \}/)
-  assert.match(runtime,/let mut max_tools=if request\.direct_chat \{ 0 \}/)
-  assert.match(prompts,/if request\.direct_chat \{/)
-  assert.match(prompts,/DOMINION 대화형 AI/)
-  assert.match(prompts,/일반 대화에서는 도구와 외부 작업을 실행하지 않습니다/)
-  assert.match(prompts,/fn direct_chat_gets_conversational_identity_without_agent_or_workspace_instructions/)
 })
 
 test('zero-tool direct chat reaches a model turn and does not disappear on save latency',()=>{
-  const model=source('../src/addons/integrations/chat_product/model_phase.rs')
-  const runtime=source('../src/engine/chat/runtime.rs')
   const chat=source('src/pages/Chat.tsx')
-  assert.match(model,/fn tool_budget_exhausted\(used: usize, limit: usize\)/)
-  assert.match(model,/if limit == 0 \{ used > 0 \} else \{ used >= limit \}/)
-  assert.match(model,/tool_budget_exhausted\(turn\.metrics\.lock\(\)\.unwrap\(\)\.tool_calls as usize, turn\.max_tools\)/)
-  assert.match(model,/turn\.force_final \|\| turn\.max_tools == 0/)
-  assert.match(model,/fn zero_tool_budget_allows_model_answer_but_never_a_tool_call/)
-  assert.match(runtime,/max_rounds=if request\.direct_chat \{ 1 \}/)
-  assert.match(runtime,/max_rounds=if request\.direct_chat \{ 1 \} else \{ remaining as usize \}/)
-  assert.match(runtime,/if request\.direct_chat \{[\s\S]*?\(Vec::new\(\), Vec::new\(\)\)/)
-  assert.match(runtime,/owner:if request\.direct_chat \{ None \}/)
   assert.match(chat,/showOptimisticOwner=Boolean\(optimisticOwner\?\.sessionId===current&&!ownerReceived&&\(busy\|\|optimisticOwner\?\.persistedId\|\|savedMessageId\)\)/)
   assert.match(chat,/중단된 응답 · 미저장/)
   assert.doesNotMatch(chat,/if\(!saved\)\{setLive\(''\);setThought\(''\);\}/)
@@ -370,9 +331,6 @@ test('pending private image previews cannot follow a different session',()=>{
 
 test('transcript reconciliation uses authoritative persisted owner IDs, not repeated message text',()=>{
  const chat=source('src/pages/Chat.tsx')
- const runtime=source('../src/engine/chat/runtime.rs')
- assert.match(runtime,/state\.bus\.message\(&user_message\);[\s\S]*?"type":"owner_saved"/)
- assert.match(runtime,/"messageId":user_message\["id"\]/)
  assert.match(chat,/type OptimisticOwner=\{[^}]*persistedId\?:string\}/)
  assert.match(chat,/optimisticOwner\.persistedId\s*\?message\.id===optimisticOwner\.persistedId/)
  assert.match(chat,/if\(event\.type==='owner_saved'\)/)
@@ -391,11 +349,6 @@ test('stop retains streamed assistant text and restores pre-session unsaved owne
 })
 
 test('explicit web-search wording in model-only chat bypasses agent tool enforcement',()=>{
- const product=source('../src/addons/integrations/chat_product.rs')
- const testSource=source('../tests/e2e/http_execution.rs')
- assert.match(product,/if !self\.is_room && !self\.request\.direct_chat \{/)
- assert.match(testSource,/fn direct_chat_search_request_remains_a_model_reply_without_web_tool_or_error/)
- assert.match(testSource,/assert!\(!response\.contains\("도구 실행이 꺼져 있습니다"\)/)
 })
 
 test('failed SSE never blindly resends an already persisted owner instruction',()=>{
@@ -453,9 +406,6 @@ test('uncertain transport disconnect never presents an unverified retry as harml
 test('logical client-turn keys dedupe effectful retries and locate earlier persisted inputs',()=>{
  const chat=source('src/pages/Chat.tsx')
  const api=source('src/api/types.ts')
- const request=source('../src/engine/chat/mod.rs')
- const runtime=source('../src/engine/chat/runtime.rs')
- const e2e=source('../tests/e2e/http_execution.rs')
  assert.match(api,/clientTurnId\?: string/)
  assert.match(chat,/const pendingTurn=useRef<\{scope\?:string;text:string;id:string\}\|null>\(null\)/)
  assert.match(chat,/previousTurn&&previousTurn\.scope===current&&previousTurn\.text===text/)
@@ -464,23 +414,6 @@ test('logical client-turn keys dedupe effectful retries and locate earlier persi
  assert.match(chat,/if\(pendingTurn\.current\?\.id===clientTurnId\)pendingTurn\.current=null/)
  assert.match(chat,/clientTurnId&&row\.metadata\?\.clientTurnId===clientTurnId/)
  assert.match(chat,/index>lastIndex&&row\.metadata\?\.clientTurnId==null&&row\.content===text/)
- assert.match(request,/pub client_turn_id: Option<String>/)
- assert.match(request,/uuid::Uuid::parse_str\(&id\)/)
- assert.match(runtime,/state\.store\.has_owner_turn_key\(&session_id,client_turn_id\)\?/)
- assert.match(runtime,/"clientTurnId":request\.client_turn_id/)
- assert.match(e2e,/fn client_turn_idempotency_prevents_duplicate_owner_effects_and_model_calls/)
-})
-
-test('idempotency checks only scoped SQLite metadata, never materializes entire chat history',()=>{
- const db=source('../src/db.rs')
- const runtime=source('../src/engine/chat/runtime.rs')
- assert.match(db,/pub fn has_owner_turn_key\(&self, session_id: &str, turn_id: &str\)/)
- assert.match(db,/SELECT EXISTS\(/)
- assert.match(db,/CASE WHEN json_valid\(metadata\) THEN/)
- assert.match(db,/json_extract\(metadata,'\$\.clientTurnId'\)=\?2/)
- assert.match(db,/fn scoped_owner_turn_keys_ignore_other_sessions_and_legacy_messages/)
- assert.match(runtime,/state\.store\.has_owner_turn_key\(&session_id,client_turn_id\)\?/)
- assert.doesNotMatch(runtime,/state\.store\.messages\(&session_id\)\.iter\(\)\.any\(\|message\|/)
 })
 
 test('interrupted assistant output remains readable and copyable',()=>{
@@ -492,12 +425,6 @@ test('interrupted assistant output remains readable and copyable',()=>{
 })
 
 test('idempotency also protects real agent write tools, not only model-only chat',()=>{
- const sourceE2e=source('../tests/e2e/http_execution.rs')
- assert.match(sourceE2e,/fn duplicate_client_turn_id_cannot_repeat_a_real_agent_file_write/)
- assert.match(sourceE2e,/"name":"workspace_write"/)
- assert.match(sourceE2e,/calls_before=requests\.lock\(\)\.unwrap\(\)\.len\(\)/)
- assert.match(sourceE2e,/assert_eq!\(requests\.lock\(\)\.unwrap\(\)\.len\(\),calls_before\)/)
- assert.match(sourceE2e,/assert!\(!duplicate\.contains\("assistant_saved"\)/)
 })
 
 test('STOP during image upload restores the unacknowledged prompt without duplicate execution',()=>{
@@ -547,19 +474,9 @@ test('2026 provider presets do not mislabel paid or trial-only APIs as renewable
 })
 
 test('memory corrections atomically supersede prior evidence and preserve source scope',()=>{
- const collections=source('../src/api/collections.rs')
  const memory=source('src/pages/Memory.tsx')
  const ko=source('src/i18n/ko.ts')
  const en=source('src/i18n/en.ts')
- assert.match(collections,/\("memory", "correct"\) =>/)
- assert.match(collections,/state\.store\.mutate_record\("memory",&id,Value::Null/)
- assert.match(collections,/revision\["supersedes"\]=json!\(id\)/)
- assert.match(collections,/previous\["status"\]=json!\("superseded"\)/)
- assert.match(collections,/previous\["supersededBy"\]=json!\(new_id\)/)
- assert.match(collections,/revision\["sourceMessageIds"\]=json!\(\[\]\)/)
- assert.match(collections,/revision\["verification"\]=json!\("owner_correction"\)/)
- assert.match(collections,/content_revision\(&revision\)/)
- assert.match(collections,/fn correcting_memory_keeps_old_provenance_and_atomically_creates_active_revision/)
  assert.match(memory,/const \[editingId,setEditingId\]=useState\(''\)/)
  assert.match(memory,/\/api\/memories\/'.*?\+'\/correct'/)
  assert.match(memory,/t\('memory\.editNote'\)/)

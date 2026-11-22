@@ -27,9 +27,15 @@ pub async fn avatar(State(state): State<AppState>, Path(id): Path<String>) -> Re
             bytes,
         )
             .into_response(),
+        // A missing portrait is a data gap, not a client error. Serving a
+        // neutral placeholder keeps the console clean and the list calm.
         Err(_) => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error":"아바타를 찾을 수 없습니다."})),
+            [
+                (header::CONTENT_TYPE, "image/svg+xml".to_string()),
+                (header::CACHE_CONTROL, "private, max-age=30".to_string()),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff".into()),
+            ],
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="18" fill="#F3EEE5"/><circle cx="32" cy="25" r="9" fill="#A79C8E"/><path d="M14 56c3-11 10-16 18-16s15 5 18 16z" fill="#A79C8E"/></svg>"##,
         )
             .into_response(),
     }
