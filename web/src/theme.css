@@ -288,3 +288,12 @@
  .dominion-chat-starter,.dominion-home-metric,.dominion-team-card{transition:none}
  .dominion-chat-starter:hover,.dominion-home-metric:hover{transform:none}
 }
+
+/* The global chat heading rule must not shrink the new primary workspace title. */
+#root main .dominion-chat-hero h1{font-size:40px!important;line-height:1.15;letter-spacing:-.045em}
+.dominion-chat-history :is(button,input):focus-visible{outline:2px solid #FFD1B9!important;outline-offset:3px}
+.dominion-chat-hero button:focus-visible,.dominion-home-hero button:focus-visible,.dominion-team-hero button:focus-visible{outline:2px solid #FFFFFF!important;outline-offset:3px}
+@media(max-width:767px){
+ #root main .dominion-chat-hero h1{font-size:29px!important}
+ .dominion-chat-composer-wrap .conversation-composer-input{font-size:16px!important}
+}
