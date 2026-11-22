@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react'
-import {Check, Play, RefreshCw, ShieldAlert, Square, Sparkles, MessageSquareText} from 'lucide-react'
+import {Check, Play, RefreshCw, ShieldAlert, Square, MessageSquareText, PanelLeftOpen, PanelLeftClose, History} from 'lucide-react'
 import {get, post, type Provider} from '../api'
 import {useLocale} from '../i18n'
 import {NativeRunNavigator} from './NativeRunNavigator'
@@ -75,6 +75,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [observation,setObservation]=useState('')
  const [showEventHistory,setShowEventHistory]=useState(false)
  const [detailView,setDetailView]=useState<'overview'|'activity'|'evidence'>('overview')
+ const [historyOpen,setHistoryOpen]=useState(false)
  const [olderHistory,setOlderHistory]=useState<OlderRunHistory|null>(null)
  const [olderReceipts,setOlderReceipts]=useState<OlderReceipts|null>(null)
  const [loadingReceipts,setLoadingReceipts]=useState(false)
@@ -374,20 +375,26 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   olderReceipts?.boundary===toolReceiptsOmitted?olderReceipts:null
  return <section className="native-command-center" aria-label={en?'Autonomous work studio':'자동 작업 스튜디오'}>
   <header className="native-command-header">
-   <div className="native-command-header-icon"><Sparkles size={23}/></div>
    <div className="native-command-header-copy">
-    <span className="native-command-kicker">{en?'NATIVE EXECUTION / OWNER STUDIO':'NATIVE EXECUTION / 작업 스튜디오'}</span>
-    <h2>{en?'Build, run and inspect':'작업을 맡기고, 실행을 확인하세요'}</h2>
-    <p>{en?'Launch work, switch between saved runs, inspect results and intervene only when needed.':'작업 생성부터 실행 이력, 승인과 결과 검토까지 한 화면에서 처리합니다.'}</p>
+    <span className="native-command-kicker">DOMINION / CODE</span>
+    <h2>{en?'Work':'자동 작업'}</h2>
    </div>
-   <div className="native-command-header-summary" aria-label={en?'Saved task summary':'저장 작업 요약'}>
-    <span><b>{runs.filter(item=>running.has(item.status)).length}</b>{en?'ACTIVE':'진행 중'}</span>
-    <span><b>{runs.filter(item=>['awaiting_approval','in_doubt','needs_review','interrupted'].includes(item.status)).length}</b>{en?'REVIEW':'확인 필요'}</span>
+   <div className="native-command-header-actions">
+    {runs.some(item=>['awaiting_approval','in_doubt','needs_review','interrupted'].includes(item.status))&&
+     <button type="button" className="native-attention-link" onClick={()=>setHistoryOpen(true)}>
+      <ShieldAlert size={14}/>{en?'Review required':'확인할 작업'} <b>{runs.filter(item=>['awaiting_approval','in_doubt','needs_review','interrupted'].includes(item.status)).length}</b>
+     </button>}
+    <button type="button" className="native-history-toggle" onClick={()=>setHistoryOpen(v=>!v)}
+     aria-expanded={historyOpen} aria-controls="native-run-history">
+     {historyOpen?<PanelLeftClose size={16}/>:<PanelLeftOpen size={16}/>}
+     {en?'History':'작업 이력'} <span>{runs.length}</span>
+    </button>
    </div>
   </header>
-  <div className="native-command-grid">
-   <div className="native-command-compose">
-    <span className="native-command-step">{en?'01 / NEW REQUEST':'01 / 작업 요청'}</span>
+  <div className={'native-command-grid '+(historyOpen?'has-history':'')}>
+   <div className="native-command-main">
+    <div className="native-command-compose">
+     <span className="native-command-step">{en?'What should I do?':'어떤 작업을 수행할까요?'}</span>
    <label className="text-[12px] font-semibold" htmlFor="sdk-goal">{en?'What would you like done?':'무엇을 해드릴까요?'}</label>
    <textarea id="sdk-goal" value={instruction} onChange={e=>editInstruction(e.target.value)}
     rows={3} maxLength={64000}
@@ -433,16 +440,22 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      className="mt-1 min-h-11 w-full rounded-lg border border-[#E7E0D5] px-3 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2"/>
    </details>
    </div>
-   <NativeRunNavigator runs={runs} selectedId={run?.id} en={en}
-    onRefresh={()=>void reload()}
-    onSelect={id=>{
-     const item=runs.find(row=>row.id===id)
-     if(item){selectRun(item);setSteering('');setObservation('');setError('')}
-    }}/>
+   {runs.length>0&&<div className="native-command-current">
+    <span><History size={14}/>{en?'Recent task':'최근 작업'}</span>
+    <select id="sdk-history" aria-label={en?'Previous tasks':'이전 자동 작업'}
+     value={run?.id||''} onChange={e=>{
+      const item=runs.find(row=>row.id===e.target.value)
+      if(item){selectRun(item);setSteering('');setObservation('');setError('')}
+     }}>
+     {!run&&<option value="">{en?'Select a task':'작업 선택'}</option>}
+     {runs.map(item=><option key={item.id} value={item.id}>{item.status} · {item.instruction.slice(0,75)}</option>)}
+    </select>
+    <button type="button" onClick={()=>void reload()} aria-label={en?'Refresh task history':'작업 이력 새로고침'} title={en?'Refresh':'새로고침'}><RefreshCw size={15}/></button>
+   </div>}
    <div className="native-command-results">
-    <div className="native-command-results-head">
-     <span className="native-command-step">{en?'03 / RUN INSPECTOR':'03 / 작업 결과 및 제어'}</span>
-     {run&&<code title={run.id}>{run.id.slice(0,8)}</code>}
+    {run&&<div className="native-command-results-head">
+     <span className="native-command-step">{en?'Current run':'선택한 작업'}</span>
+     <code title={run.id}>{run.id.slice(0,8)}</code>
     </div>
    {disconnected&&<p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">{en?'Connection lost. Actions may have changed; reconnecting to the server.':'서버 연결이 끊겼습니다. 실행 상태가 바뀌었을 수 있어 재연결 후 다시 확인합니다.'}</p>}
    {error&&<p role="alert" className="rounded-lg bg-[#FFF3EE] p-3 text-[11px] text-[#A54027]">{error}</p>}
@@ -739,6 +752,15 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     <p className="mt-2 max-w-xs text-[11px] leading-5 text-[#81766B]">{en?'Start a task on the left. Review its outcome, approvals, activity and saved evidence here.':'왼쪽에서 작업을 시작하면 이곳에서 결과, 승인, 실행 기록과 저장된 검증 증거를 확인할 수 있습니다.'}</p>
    </div>}
    </div>
+   </div>
+   {historyOpen&&<div className="native-command-history" id="native-run-history">
+    <NativeRunNavigator runs={runs} selectedId={run?.id} en={en}
+     onRefresh={()=>void reload()}
+     onSelect={id=>{
+      const item=runs.find(row=>row.id===id)
+      if(item){selectRun(item);setSteering('');setObservation('');setError('');setHistoryOpen(false)}
+     }}/>
+   </div>}
   </div>
  </section>
 }
