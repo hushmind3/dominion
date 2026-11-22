@@ -6,16 +6,16 @@ import {
   Suspense,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useState,
 } from 'react'
 import {
   PageLoadBoundary,
   checkForUpdatedUi,
 } from './components/PageLoadBoundary'
-import { settingsPages, isSettingsPage, type PageId } from './workspacePages'
+import { settingsPages, isSettingsPage } from './workspacePages'
 import { t, useLocale } from './i18n'
 import { useEngineStatus } from './hooks/useEngineStatus'
+import { useWorkspaceNavigation } from './hooks/useWorkspaceNavigation'
 import { WorkspaceSidebar, SettingsHeader } from './components/WorkspaceShell'
 const ChatPage = lazy(() =>
   import('./pages/Chat').then((module) => ({ default: module.ChatPage })),
@@ -23,41 +23,9 @@ const ChatPage = lazy(() =>
 const RoomsPage = lazy(() =>
   import('./pages/Rooms').then((module) => ({ default: module.RoomsPage })),
 )
-function locationState() {
-  const raw = window.location.hash.replace(/^#\/?/, '')
-  const [name, query] = raw.split('?')
-  const valid = name === 'chat' || name === 'rooms' || isSettingsPage(name)
-  const params = new URLSearchParams(query)
-  return {
-    page: (valid ? name : 'chat') as PageId,
-    session: params.get('session') || undefined,
-    agent: params.get('agent') || undefined,
-    provider: params.get('provider') || undefined,
-    model: params.get('model') || undefined,
-  }
-}
 export default function App() {
-  const [{ page, session, agent, provider, model }, setRoute] =
-    useState(locationState)
-  const [chatRoute, setChatRoute] = useState(() => {
-    const route = locationState()
-    return route.page === 'chat'
-      ? route
-      : {
-          page: 'chat' as PageId,
-          session: undefined,
-          agent: undefined,
-          provider: undefined,
-          model: undefined,
-        }
-  })
-  const [mode, setMode] = useState<'chat' | 'rooms'>(() =>
-    locationState().page === 'rooms' ? 'rooms' : 'chat',
-  )
-  const [visited, setVisited] = useState(() => ({
-    chat: locationState().page !== 'rooms',
-    rooms: locationState().page === 'rooms',
-  }))
+  const { page, mode, visited, chatRoute, navigate, switchMode, selectChatSession } =
+    useWorkspaceNavigation()
   useLocale()
   const [settingsNav, setSettingsNav] = useState(() => {
     try {
@@ -79,57 +47,6 @@ export default function App() {
   )
   const settingsOpen = isSettingsPage(page)
   const { online, running, pending, engineBuild } = useEngineStatus()
-  const navigate = useCallback((target: PageId, sessionId?: string) => {
-    const next =
-      '#/' +
-      target +
-      (sessionId ? '?session=' + encodeURIComponent(sessionId) : '')
-    if (window.location.hash !== next) window.history.pushState(null, '', next)
-    setRoute(locationState())
-    // Hash navigation stays immediate. Reload only when the server's built
-    // entry changed; never block menu clicks on a network request.
-    void checkForUpdatedUi()
-  }, [])
-  useEffect(() => {
-    const sync = () => setRoute(locationState())
-    window.addEventListener('hashchange', sync)
-    window.addEventListener('popstate', sync)
-    return () => {
-      window.removeEventListener('hashchange', sync)
-      window.removeEventListener('popstate', sync)
-    }
-  }, [])
-  useLayoutEffect(() => {
-    if (page === 'chat') {
-      setChatRoute({ page, session, agent, provider, model })
-      setMode('chat')
-      setVisited((previous) =>
-        previous.chat ? previous : { ...previous, chat: true },
-      )
-    }
-    if (page === 'rooms') {
-      setMode('rooms')
-      setVisited((previous) =>
-        previous.rooms ? previous : { ...previous, rooms: true },
-      )
-    }
-  }, [page, session, agent, provider, model])
-  const returnToChat = useCallback(() => {
-    const params = new URLSearchParams()
-    for (const key of ['session', 'agent', 'provider', 'model'] as const)
-      if (chatRoute[key]) params.set(key, chatRoute[key]!)
-    const next = '#/chat' + (params.size ? '?' + params.toString() : '')
-    if (window.location.hash !== next) window.history.pushState(null, '', next)
-    setRoute(locationState())
-    void checkForUpdatedUi()
-  }, [chatRoute])
-  const switchMode = useCallback(
-    (next: 'chat' | 'rooms') => {
-      if (next === 'chat') returnToChat()
-      else navigate('rooms')
-    },
-    [returnToChat, navigate],
-  )
   const closeSettings = useCallback(() => switchMode(mode), [switchMode, mode])
   useEffect(() => {
     const check = () => {
@@ -173,10 +90,7 @@ export default function App() {
                     initialAgent={chatRoute.agent}
                     initialProvider={chatRoute.provider}
                     initialModel={chatRoute.model}
-                    onSession={(id) => {
-                      setChatRoute((previous) => ({ ...previous, session: id }))
-                      if (locationState().page === 'chat') navigate('chat', id)
-                    }}
+                    onSession={selectChatSession}
                     openModels={() => navigate('models')}
                     openSettings={() => navigate('settings')}
                     switchMode={switchMode}

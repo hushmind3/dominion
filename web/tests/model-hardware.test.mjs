@@ -174,9 +174,9 @@ test('a public models.dev document is shared by provider and model browsing',()=
 })
 test('catalog registration selects the Anthropic protocol and chat route retains its model',()=>{
  const account=readFileSync(new URL('../src/components/DominionCloudAccount.tsx',import.meta.url),'utf8')
- const app=readFileSync(new URL('../src/App.tsx',import.meta.url),'utf8')
+ const navigation=readFileSync(new URL('../src/hooks/useWorkspaceNavigation.ts',import.meta.url),'utf8')
  assert.match(account,/catalogProviderKind=\(provider:CatalogProvider\)/)
  assert.match(account,/kind:catalogProviderKind\(entry\)/)
- assert.match(app,/provider:\s*params\.get\('provider'\)\s*\|\|\s*undefined/)
- assert.match(app,/model:\s*params\.get\('model'\)\s*\|\|\s*undefined/)
+ assert.match(navigation,/provider:\s*params\.get\('provider'\)\s*\|\|\s*undefined/)
+ assert.match(navigation,/model:\s*params\.get\('model'\)\s*\|\|\s*undefined/)
 })
