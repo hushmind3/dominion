@@ -4,7 +4,7 @@
   "category": "community",
   "mode": "rest-poll",
   "docs": "https://docs.discord.com/developers/resources/message",
-  "description": "DOMINION Rust 직접 연결 · 지정 서버·채널의 메시지 수신과 응답",
+  "description": "DOMINION 직접 연결 · 지정 서버·채널의 메시지 수신과 응답",
   "features": [
     "text channels",
     "threads",

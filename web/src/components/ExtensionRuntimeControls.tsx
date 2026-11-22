@@ -7,7 +7,7 @@ import {Panel,refresh,useRemote} from './UI'
 type ExtensionKey='mcp'|'memory'|'skills'|'channels'|'strategies'|'connectors'
 type RuntimePolicy={enabled:Partial<Record<ExtensionKey,boolean>>;configured:Partial<Record<ExtensionKey,boolean>>;runtime?:string}
 const features:{key:ExtensionKey;ko:string;en:string;koDesc:string;enDesc:string}[]=[
- {key:'mcp',ko:'외부 MCP',en:'External MCP',koDesc:'연결된 외부 MCP 서버·도구 사용',enDesc:'Connected external MCP servers and tools'},
+ {key:'mcp',ko:'외부 도구',en:'External tools',koDesc:'연결된 외부 도구 사용',enDesc:'Connected external tools'},
  {key:'memory',ko:'장기 기억',en:'Long-term memory',koDesc:'대화 외의 기억 검색·학습 (대화 기록은 유지)',enDesc:'Recall and learning (chat history remains)'},
  {key:'skills',ko:'스킬',en:'Skills',koDesc:'선택형 스킬 탐색·지침',enDesc:'Optional skill search and instructions'},
  {key:'channels',ko:'메시지 채널',en:'Message channels',koDesc:'Discord·Telegram 등 외부 채널 처리',enDesc:'External channels such as Discord and Telegram'},

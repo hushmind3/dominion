@@ -18,7 +18,7 @@ pub fn definitions()->Vec<Value>{
     });
     let text=|description:&str|json!({"type":"string","description":description});
     vec![
-        tool("account_status", "List OAuth accounts connected to DOMINION", object(json!({}), vec![])),
+        tool("account_status", "DOMINION에 연결된 계정을 확인합니다.", object(json!({}), vec![])),
         tool("github_file_read", "Read a UTF-8 file on a specific GitHub repository branch. Returns a blob SHA for safe, conflict-checked updates.", object(json!({
             "owner":text("GitHub repository owner"),"repo":text("Repository name"),
             "branch":text("Exact branch to inspect"),"path":text("Relative repository file path")

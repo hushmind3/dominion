@@ -1,3 +1,4 @@
+import { koreanToolSummary } from '../lib/toolSummary'
 import {DialogBackdrop,DialogPanel} from "../components/Dialog";
 import {SkillsPanel} from "./extensions/SkillsPanel";
 import {t,useLocale} from "../i18n";
@@ -86,7 +87,7 @@ const featured = [
   },
   {
     name: "Hugging Face",
-    description: "모델·데이터셋을 검색하는 원격 MCP",
+    description: "모델·데이터셋을 검색하는 원격 도구",
     descriptionEn: "Remote MCP for searching models and datasets",
     icon: BrainIcon,
     transport: "http",
@@ -651,7 +652,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
           variant={tab === "market" ? "primary" : "ghost"}
           onClick={() => setTab("market")}
         >
-          <Blocks size={17} /> MCP
+          <Blocks size={17} /> 도구
         </Button>
         <Button
           variant={tab === "plugins" ? "primary" : "ghost"}
@@ -730,7 +731,19 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                   </span>
                   <div className="min-w-0 flex-1">
                     <strong className="block break-words text-sm">{x.name}</strong>
-                    <p className="mt-1 break-words text-xs leading-5 text-muted">{x.description || "MCP server"}</p>
+                    {/[가-힣]/.test(x.description || '') ? (
+                      <p className="mt-1 break-words text-xs leading-5 text-muted">{x.description}</p>
+                    ) : (
+                      <>
+                        <p className="mt-1 break-words text-xs leading-5 text-muted">{koreanToolSummary(x.name, x.description)}</p>
+                        {x.description && (
+                          <details className="mt-1 text-[11px] text-muted">
+                            <summary className="cursor-pointer select-none">원문 보기</summary>
+                            <p className="mt-1 leading-5">{x.description}</p>
+                          </details>
+                        )}
+                      </>
+                    )}
                     <small className="mt-1 block break-all text-[11px] text-[var(--color-muted)]">{x.packageName || x.url || t('ext.noInstallInfo')}</small>
                   </div>
                   {(x.packageName || x.url) &&
@@ -765,7 +778,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
           </Panel>
           <details className="mt-5 rounded-xl border border-divider bg-surface">
             <summary className="cursor-pointer px-4 py-3 text-[13px] font-semibold text-[var(--color-ink)]">
-              {loc==='en'?'Browse curated MCP server examples':'추천 MCP 서버 보기'} · {presets.value.length+featured.length}
+              {loc==='en'?'Browse curated MCP server examples':'추천 도구 보기'} · {presets.value.length+featured.length}
             </summary>
             <div className="border-t border-divider p-4">
           <div className="mb-4 flex flex-wrap items-center gap-1.5">
@@ -789,7 +802,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
             />
           </div>
           <Subheading
-            title={loc==='en'?'Recommended MCP servers':'추천 MCP 서버'}
+            title={loc==='en'?'Recommended MCP servers':'추천 도구'}
             extra={
               <span className="text-[11px] text-[var(--color-muted)]">
                 {t('ext.count', { count: filteredPresets.length })}
@@ -860,7 +873,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
             })}
           </div>
           <Subheading
-            title={loc==='en'?'Featured MCP connections':'주요 MCP 연결'}
+            title={loc==='en'?'Featured MCP connections':'주요 도구 연결'}
             extra={
               <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)]">
                 CURATED EXAMPLES

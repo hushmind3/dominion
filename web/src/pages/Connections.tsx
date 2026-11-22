@@ -265,7 +265,7 @@ export function ConnectionsPage(){
  const tabs=[
   {id:'channels',label:t('conn.tab.channels'),icon:RadioTower},
   {id:'quick-connect',label:t('conn.tab.quickConnect'),icon:Link2},
-  {id:'market',label:'MCP 마켓',icon:Blocks},
+  {id:'market',label:'도구 추가',icon:Blocks},
   {id:'installed',label:t('ext.tab.installed'),icon:Server},
   {id:'skills',label:t('ext.tab.skills'),icon:BookOpenText},
   {id:'plugins',label:t('ext.tab.plugins'),icon:PackagePlus},

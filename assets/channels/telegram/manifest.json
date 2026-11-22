@@ -4,7 +4,7 @@
   "category": "messaging",
   "mode": "polling",
   "docs": "https://core.telegram.org/bots/api",
-  "description": "DOMINION 자체 Rust Bot API · 공용 그룹 대화 · 수신과 전송 기록",
+  "description": "DOMINION 봇 · 공용 그룹 대화 · 받은 메시지와 보낸 기록",
   "features": [
     "dm",
     "groups",
