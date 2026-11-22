@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react'
-import {Check, Play, RefreshCw, ShieldAlert, Square, MessageSquareText, PanelLeftOpen, PanelLeftClose, History} from 'lucide-react'
+import {Check, Play, RefreshCw, ShieldAlert, Square, Sparkles, MessageSquareText, PanelLeftOpen, PanelLeftClose, History} from 'lucide-react'
 import {get, post, type Provider} from '../api'
 import {useLocale} from '../i18n'
 import {NativeRunNavigator} from './NativeRunNavigator'
