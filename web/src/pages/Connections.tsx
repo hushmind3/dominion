@@ -45,7 +45,8 @@ export function ConnectionsPage(){
  const [refreshing,setRefreshing]=useState(false);
  const openEditor=(entry:ChannelEntry,existing?:Channel)=>{
   if(!entry.available)return;
-  const record:any=existing?{...existing}:{name:entry.name,kind:entry.id,enabled:true,syncRoomMessages:entry.mode==='outbound',mentionOnly:true,roomId:'',roomPolicy:'all_or_named',agentId:'',providerId:'',model:''};
+  const defaultRoom=rooms.value[0]?.id||'';
+  const record:any=existing?{...existing}:{name:entry.name,kind:entry.id,enabled:true,syncRoomMessages:entry.mode==='outbound',mentionOnly:true,roomId:defaultRoom,roomPolicy:'all_or_named',agentId:'',providerId:'',model:''};
   for(const field of entry.fields)if(field.type==='secret')record[field.key]='';
   setEditor({entry,record});setError('');setInfo('');
  };

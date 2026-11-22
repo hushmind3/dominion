@@ -406,7 +406,7 @@ const ko = {
   'conn.scopeName': '권한 범위',
   'conn.oauthNeeded': 'OAuth 앱 설정 필요',
   'conn.reconnect': '다시 연결',
-  'conn.connect': '계정 연결',
+  'conn.connect': '연결',
   'conn.edit': '연결 설정 변경',
   'conn.new': '새 연결 설정',
   'conn.name': '연결 이름',

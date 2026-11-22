@@ -407,7 +407,7 @@ const en: Record<LocaleKey, string> = {
   'conn.scopeName': 'OAuth scopes',
   'conn.oauthNeeded': 'OAuth app required',
   'conn.reconnect': 'Reconnect',
-  'conn.connect': 'Connect account',
+  'conn.connect': 'Connect',
   'conn.edit': 'Edit connection',
   'conn.new': 'New connection',
   'conn.name': 'Connection name',

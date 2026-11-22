@@ -20,7 +20,7 @@ const identity:Record<string,{back:string;ink:string;dot:string}>={
  mattermost:{back:'bg-[#E7F0F9]',ink:'text-[#265E92]',dot:'bg-[#265E92]'},
  zulip:{back:'bg-[#F0EEFF]',ink:'text-[#6951B8]',dot:'bg-[#6951B8]'}
 }
-const colorFor=(kind:string)=>identity[kind]||{back:'bg-[#F3EBE3]',ink:'text-[#816D5F]',dot:'bg-[#816D5F]'}
+const colorFor=(kind:string)=>identity[kind]||{back:'bg-[var(--color-canvas)]',ink:'text-[var(--color-muted)]',dot:'bg-[var(--color-muted)]'}
 const stateLabels:Record<ChannelHealth,LocaleKey>={
  setup:'conn.health.setup',issue:'conn.health.issue',connected:'conn.status.connected',
  outbound:'conn.status.outbound_ready',paused:'conn.status.sync_disabled',
@@ -46,7 +46,7 @@ function State({connection}:{connection:Channel}){
  const color=status==='connected'||status==='outbound'?'text-emerald-700 bg-emerald-50 ring-emerald-200':
   status==='issue'||status==='setup'?'text-amber-800 bg-amber-50 ring-amber-200':
   status==='starting'?'text-blue-700 bg-blue-50 ring-blue-200':
-  'text-[#706659] bg-[#F4F0EA] ring-[#E8E0D7]'
+  'text-[#706659] bg-[var(--color-canvas)] ring-[#E8E0D7]'
  return <span className={'inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-semibold ring-1 ring-inset '+color}>
   <span className={'size-1.5 rounded-full '+(ready(connection)?'bg-emerald-500':needHelp(connection)?'bg-amber-500':'bg-muted/60')}/>
   {t(stateLabels[status])}
@@ -54,7 +54,7 @@ function State({connection}:{connection:Channel}){
 }
 function Pair({label,value}:{label:string;value:string}){
  return <div className="grid min-w-0 grid-cols-[105px_minmax(0,1fr)] gap-4 py-2.5 text-[12px]">
-  <dt className="text-[#94877A]">{label}</dt>
+  <dt className="text-[var(--color-muted)]">{label}</dt>
   <dd className="min-w-0 break-all text-right font-medium text-[#3F3830]">{value}</dd>
  </div>
 }
@@ -103,41 +103,41 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
     <Button variant="secondary" onClick={back}><ArrowLeft size={15}/>{t('conn.backToConnections')}</Button>
    </div>
    <div className="flex items-center gap-2 rounded-xl border border-[#E3D9CD] bg-white px-3 py-1.5 shadow-[0_2px_8px_rgba(40,30,20,.025)]">
-    <Search size={17} className="shrink-0 text-[#99897B]"/>
+    <Search size={17} className="shrink-0 text-[var(--color-muted)]"/>
     <TextInput autoFocus aria-label={t('conn.search')} value={query} onChange={e=>setQuery(e.target.value)}
      className="!border-0 !bg-transparent !px-1 !py-2 !shadow-none !ring-0" placeholder={t('conn.search')}/>
-    <span className="shrink-0 text-[11px] tabular-nums text-[#99897B]">{catalog.length} / {entries.length}</span>
+    <span className="shrink-0 text-[11px] tabular-nums text-[var(--color-muted)]">{catalog.length} / {entries.length}</span>
    </div>
    <div className="grid gap-5 lg:grid-cols-[190px_minmax(0,1fr)]">
     <div className="flex gap-1 overflow-x-auto pb-1 lg:flex-col" aria-label={t('conn.filterCategory')}>
      {categories.map(item=><button key={item.id} type="button" aria-pressed={category===item.id}
-      className={'flex shrink-0 items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left text-[12px] font-semibold transition-colors '+(category===item.id?'bg-[#F4E4D9] text-[#9A4B32]':'text-[#776C5F] hover:bg-[#F5F0E9]')}
+      className={'flex shrink-0 items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left text-[12px] font-semibold transition-colors '+(category===item.id?'bg-[#F4E4D9] text-[#9A4B32]':'text-[#776C5F] hover:bg-[var(--color-canvas)]')}
       onClick={()=>setCategory(item.id)}><span>{item.label}</span><ChevronRight size={14} className="hidden lg:block"/></button>)}
     </div>
     <div className="grid content-start gap-3 sm:grid-cols-2">
      {catalog.map(entry=>{
       const count=bindings.filter(binding=>binding.kind===entry.id).length
       return <button type="button" key={entry.id} disabled={!entry.available} onClick={()=>pick(entry)}
-       className="group flex min-h-[142px] min-w-0 flex-col rounded-2xl border border-[#E8DED3] bg-surface p-4 text-left shadow-[0_2px_8px_rgba(40,30,20,.025)] transition-all hover:-translate-y-0.5 hover:border-[#CEA993] hover:shadow-[0_8px_26px_rgba(93,63,42,.10)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#BD7656] disabled:opacity-50">
+       className="group flex min-h-[142px] min-w-0 flex-col rounded-2xl border border-[var(--color-divider)] bg-surface p-4 text-left shadow-[0_2px_8px_rgba(40,30,20,.025)] transition-all hover:-translate-y-0.5 hover:border-[var(--color-brand)] hover:shadow-[0_8px_26px_rgba(93,63,42,.10)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#BD7656] disabled:opacity-50">
        <div className="flex items-center gap-3"><PlatformIcon kind={entry.id}/>
         <span className="min-w-0 flex-1">
          <strong className="block truncate text-[14px] text-[#302A24]">{entry.name}</strong>
-         <span className="mt-0.5 block text-[11px] text-[#99887A]">{entry.mode==='outbound'?t('conn.outboundOnly'):t('conn.bidirectional')}{count>0?' · '+t('conn.boundCount',{count}):''}</span>
-        </span><ArrowUpRight size={16} className="shrink-0 text-[#B9A99C] transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"/>
+         <span className="mt-0.5 block text-[11px] text-[var(--color-muted)]">{entry.mode==='outbound'?t('conn.outboundOnly'):t('conn.bidirectional')}{count>0?' · '+t('conn.boundCount',{count}):''}</span>
+        </span><ArrowUpRight size={16} className="shrink-0 text-[var(--color-muted)] transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"/>
        </div>
-       <p className="mt-3 line-clamp-2 text-[12px] leading-[1.55] text-[#766B60]">{entry.description}</p>
-       <div className="mt-auto flex items-center gap-1 pt-3 text-[11px] font-semibold text-[#B65D40]">{t('conn.configurePlatform')}<ChevronRight size={13}/></div>
+       <p className="mt-3 line-clamp-2 text-[12px] leading-[1.55] text-[var(--color-muted)]">{entry.description}</p>
+       <div className="mt-auto flex items-center gap-1 pt-3 text-[11px] font-semibold text-[var(--color-brand)]">{t('conn.configurePlatform')}<ChevronRight size={13}/></div>
       </button>
      })}
-     {!catalog.length&&<div className="col-span-full rounded-2xl border border-dashed border-[#E3D9CB] bg-white px-6 py-12 text-center text-sm text-[#867B70]">{t('conn.noResults')}</div>}
+     {!catalog.length&&<div className="col-span-full rounded-2xl border border-dashed border-[var(--color-divider)] bg-white px-6 py-12 text-center text-sm text-[var(--color-muted)]">{t('conn.noResults')}</div>}
     </div>
    </div>
   </section>:<>
    <div className={'flex flex-wrap items-center justify-between gap-3 '+(mobileDetail?'hidden lg:flex':'')}>
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-     <h2 className="text-[21px] font-bold tracking-tight text-[#2F2922]">{t('conn.activeBindings')}</h2>
-     <span className="rounded-full bg-[#EDE5DB] px-2.5 py-1 text-[11px] font-semibold tabular-nums text-[#6F6355]">{bindings.length}</span>
-     {bindings.length>0&&<div className="flex items-center gap-3 text-[11px] text-[#8D8072]">
+     <h2 className="text-[21px] font-bold tracking-tight text-[var(--color-ink)]">{t('conn.activeBindings')}</h2>
+     <span className="rounded-full bg-[#EDE5DB] px-2.5 py-1 text-[11px] font-semibold tabular-nums text-[var(--color-muted)]">{bindings.length}</span>
+     {bindings.length>0&&<div className="flex items-center gap-3 text-[11px] text-[var(--color-muted)]">
       <span className="inline-flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-emerald-500"/>{t('conn.viewReady')} {healthy}</span>
       {attention>0&&<span className="inline-flex items-center gap-1.5 text-amber-800"><span className="size-1.5 rounded-full bg-amber-500"/>{t('conn.viewAttention')} {attention}</span>}
      </div>}
@@ -145,40 +145,40 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
     <Button variant="primary" onClick={showAdd}><Plus size={16}/>{t('conn.addChannel')}</Button>
    </div>
    {loading&&bindings.length===0
-    ?<div className="flex min-h-56 items-center justify-center rounded-2xl border border-[#E7DED4] bg-white text-sm text-[#8D8275]" role="status"><Activity size={16} className="mr-2 animate-spin"/>{t('conn.loading')}</div>
+    ?<div className="flex min-h-56 items-center justify-center rounded-2xl border border-[var(--color-divider)] bg-white text-sm text-[var(--color-muted)]" role="status"><Activity size={16} className="mr-2 animate-spin"/>{t('conn.loading')}</div>
     :bindings.length===0
-     ?<section className="overflow-hidden rounded-[22px] border border-[#E7D9CD] bg-surface">
+     ?<section className="overflow-hidden rounded-[22px] border border-[var(--color-divider)] bg-surface">
        <div className="grid gap-0 lg:grid-cols-[1.15fr_.85fr]">
         <div className="relative overflow-hidden px-6 py-10 sm:px-10 sm:py-14">
-         <div aria-hidden className="pointer-events-none absolute -right-20 -top-28 size-72 rounded-full border-[35px] border-[#FAF1EB]"/>
-         <h3 className="relative max-w-lg text-[27px] font-bold leading-tight tracking-[-.035em] text-[#312923] sm:text-[32px]">{t('conn.emptyTitle')}</h3>
-         <p className="relative mt-3 max-w-md text-[13px] leading-6 text-[#83766A]">{t('conn.emptyDescription')}</p>
-         <div className="relative mt-7 flex flex-wrap gap-2">{entries.filter(item=>item.available).slice(0,4).map(entry=>
+         <div aria-hidden className="pointer-events-none absolute -right-20 -top-28 size-72 rounded-full border-[35px] border-[var(--color-brand-soft)]"/>
+         <h3 className="relative max-w-lg text-[27px] font-bold leading-tight tracking-[-.035em] text-[var(--color-ink)] sm:text-[32px]">{t('conn.emptyTitle')}</h3>
+         <p className="relative mt-3 max-w-md text-[13px] leading-6 text-[var(--color-muted)]">{t('conn.emptyDescription')}</p>
+         <div className="relative mt-7 flex flex-wrap gap-2">{entries.filter(item=>item.available).map(entry=>
           <button type="button" key={entry.id} onClick={()=>pick(entry)}
-           className="inline-flex items-center gap-2 rounded-lg border border-[#E7DED5] bg-white px-3 py-2 text-[12px] font-semibold text-[#53463B] hover:border-[#C9A48C]">
-           <span className={'size-2 rounded-full '+colorFor(entry.id).dot}/>{entry.name}<Plus size={12} className="text-[#A99D90]"/></button>)}</div>
+           className="inline-flex items-center gap-2 rounded-lg border border-[var(--color-divider)] bg-white px-3 py-2 text-[12px] font-semibold text-[var(--color-ink)] hover:border-[var(--color-brand)]">
+           <span className={'size-2 rounded-full '+colorFor(entry.id).dot}/>{entry.name}<Plus size={12} className="text-[var(--color-muted)]"/></button>)}</div>
         </div>
-        <div className="border-t border-[#F0E8DF] bg-[#F9F4EE] px-7 py-9 lg:border-l lg:border-t-0 lg:px-8 lg:py-12">
-         <p className="mb-6 text-[11px] font-bold tracking-[.15em] text-[#9E7964]">{t('conn.onboardingTitle')}</p>
+        <div className="border-t border-[var(--color-divider)] bg-[var(--color-canvas)] px-7 py-9 lg:border-l lg:border-t-0 lg:px-8 lg:py-12">
+         <p className="mb-6 text-[11px] font-bold tracking-[.15em] text-[var(--color-muted)]">{t('conn.onboardingTitle')}</p>
          {[
           {n:'01',title:t('conn.onboardingPlatform'),desc:t('conn.onboardingPlatformDesc')},
           {n:'02',title:t('conn.onboardingCredentials'),desc:t('conn.onboardingCredentialsDesc')},
           {n:'03',title:t('conn.onboardingVerify'),desc:t('conn.onboardingVerifyDesc')}
          ].map((step,index)=><div key={step.n} className="flex gap-4">
           <div className="flex flex-col items-center">
-           <span className="grid size-9 shrink-0 place-items-center rounded-full border border-[#D8B8A7] bg-white text-[11px] font-bold text-[#A35D42]">{step.n}</span>
-           {index!==2&&<span className="my-1 h-11 w-px bg-[#DDC9BA]"/>}
+           <span className="grid size-9 shrink-0 place-items-center rounded-full border border-[var(--color-divider)] bg-white text-[11px] font-bold text-[var(--color-brand)]">{step.n}</span>
+           {index!==2&&<span className="my-1 h-11 w-px bg-[var(--color-divider)]"/>}
           </div>
-          <div className="pb-5"><strong className="text-[13px] text-[#43352B]">{step.title}</strong>
-           <p className="mt-1 text-xs leading-5 text-[#817467]">{step.desc}</p></div>
+          <div className="pb-5"><strong className="text-[13px] text-[var(--color-ink)]">{step.title}</strong>
+           <p className="mt-1 text-xs leading-5 text-[var(--color-muted)]">{step.desc}</p></div>
          </div>)}
         </div>
        </div>
       </section>
      :<div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(276px,340px)_minmax(0,1fr)]">
-       <section aria-label={t('conn.activeBindings')} className={(mobileDetail?'hidden lg:flex':'flex')+' min-w-0 flex-col overflow-hidden rounded-2xl border border-[#E6DDD2] bg-white'}>
-        <div className="border-b border-[#F0EAE2] p-3">
-         <label className="flex items-center gap-2 rounded-lg bg-[#F7F4F0] px-3 text-[#998A7A]">
+       <section aria-label={t('conn.activeBindings')} className={(mobileDetail?'hidden lg:flex':'flex')+' min-w-0 flex-col overflow-hidden rounded-2xl border border-[var(--color-divider)] bg-white'}>
+        <div className="border-b border-[var(--color-divider)] p-3">
+         <label className="flex items-center gap-2 rounded-lg bg-[var(--color-canvas)] px-3 text-[var(--color-muted)]">
           <Search size={16} className="shrink-0"/><TextInput value={query} onChange={e=>setQuery(e.target.value)}
            aria-label={t('conn.searchConnected')} placeholder={t('conn.searchConnected')}
            className="!border-0 !bg-transparent !px-0 !py-2.5 !shadow-none !ring-0"/>
@@ -189,7 +189,7 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
            {id:'attention' as Lens,label:t('conn.viewAttention'),count:attention},
            {id:'ready' as Lens,label:t('conn.viewReady'),count:healthy}
           ]).map(item=><button type="button" key={item.id} aria-pressed={lens===item.id} onClick={()=>setLens(item.id)}
-           className={'flex min-w-0 items-center justify-center gap-1.5 rounded-lg px-2.5 py-2 text-[11px] font-semibold transition-colors '+(lens===item.id?'bg-[#F3E7DE] text-[#A65335]':'text-[#8C8074] hover:bg-[#F6F2ED]')}>
+           className={'flex min-w-0 items-center justify-center gap-1.5 rounded-lg px-2.5 py-2 text-[11px] font-semibold transition-colors '+(lens===item.id?'bg-[var(--color-brand-soft)] text-[var(--color-brand)]':'text-[var(--color-muted)] hover:bg-[var(--color-canvas)]')}>
            <span className="truncate">{item.label}</span><span className="tabular-nums opacity-65">{item.count}</span>
           </button>)}
          </div>
@@ -201,12 +201,12 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
           const hasIssues=needHelp(connection)
           return <button type="button" key={connection.id} aria-pressed={chosen}
            onClick={()=>{setSelectedId(connection.id);setMobileDetail(true)}}
-           className={'flex w-full items-start gap-3 border-l-[3px] px-3 py-3.5 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#C96442] '+(chosen?'border-brand bg-[#FBF1E9]':'border-transparent hover:bg-[#FAF8F5]')}>
+           className={'flex w-full items-start gap-3 border-l-[3px] px-3 py-3.5 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-brand)] '+(chosen?'border-brand bg-[var(--color-brand-soft)]':'border-transparent hover:bg-[var(--color-canvas)]')}>
            <PlatformIcon kind={connection.kind} size={18}/>
            <span className="min-w-0 flex-1">
             <span className="block truncate text-[13px] font-bold text-[#362E27]">{connection.name}</span>
-            <span className="mt-0.5 block truncate text-[11px] text-[#8E8173]">{byKind.get(connection.kind)?.name||connection.kind}{place?' · '+place:''}</span>
-            <span className={'mt-2 inline-flex items-center gap-1.5 text-[11px] font-medium '+(hasIssues?'text-amber-800':ready(connection)?'text-emerald-700':'text-[#8E8173]')}>
+            <span className="mt-0.5 block truncate text-[11px] text-[var(--color-muted)]">{byKind.get(connection.kind)?.name||connection.kind}{place?' · '+place:''}</span>
+            <span className={'mt-2 inline-flex items-center gap-1.5 text-[11px] font-medium '+(hasIssues?'text-amber-800':ready(connection)?'text-emerald-700':'text-[var(--color-muted)]')}>
              <span className={'size-1.5 rounded-full '+(hasIssues?'bg-amber-500':ready(connection)?'bg-emerald-500':'bg-muted/60')}/>{t(stateLabels[channelHealth(connection)])}
              {(connection.delivery?.needsReview||0)>0&&<span className="ml-1 font-semibold">{connection.delivery?.needsReview}</span>}
             </span>
@@ -217,10 +217,10 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
          {!filtered.length&&<p className="px-5 py-10 text-center text-xs leading-6 text-[#897B6B]">{t('conn.noMatchingConnections')}</p>}
         </div>
        </section>
-       <section aria-label={t('conn.connectionDetails')} className={(mobileDetail?'block':'hidden lg:block')+' min-w-0 overflow-hidden rounded-2xl border border-[#E6DDD2] bg-surface shadow-[0_3px_18px_rgba(45,32,20,.025)]'}>
+       <section aria-label={t('conn.connectionDetails')} className={(mobileDetail?'block':'hidden lg:block')+' min-w-0 overflow-hidden rounded-2xl border border-[var(--color-divider)] bg-surface shadow-[0_3px_18px_rgba(45,32,20,.025)]'}>
         {!selected?<p className="p-10 text-center text-sm text-[#887E72]">{t('conn.selectConnection')}</p>
         :<div>
-         <header className="border-b border-[#EEE6DB] bg-white px-4 py-5 sm:px-6">
+         <header className="border-b border-[var(--color-divider)] bg-white px-4 py-5 sm:px-6">
           <Button variant="ghost" size="sm" className="mb-3 lg:hidden" onClick={()=>setMobileDetail(false)}><ArrowLeft size={15}/>{t('conn.backToConnections')}</Button>
           <div className="flex flex-wrap items-start justify-between gap-3">
            <div className="flex min-w-0 items-start gap-3">
@@ -238,7 +238,7 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
          </header>
          <div className="space-y-6 px-4 py-5 sm:px-6">
           {(needHelp(selected)||selected.runtimeError||selected.delivery?.lastError)&&<div role="status"
-           className="flex items-start gap-3 rounded-xl border border-[#EDCDAA] bg-[#FFF7EA] p-3.5">
+           className="flex items-start gap-3 rounded-xl border border-[#EDCDAA] bg-[var(--color-canvas)] p-3.5">
            <AlertCircle size={18} className="mt-0.5 shrink-0 text-[#B76E2D]"/>
            <div className="min-w-0">
             <h4 className="text-[12px] font-bold text-[#8A521D]">{t('conn.diagnosisTitle')}</h4>
@@ -249,7 +249,7 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
           </div>}
           <div>
            <div className="mb-2 flex items-center justify-between gap-3">
-            <h4 className="text-[12px] font-bold text-[#544637]">{t('conn.connectionDetails')}</h4>
+            <h4 className="text-[12px] font-bold text-[var(--color-ink)]">{t('conn.connectionDetails')}</h4>
             <span className="text-[10px] tracking-wide text-[#A39A8E]">CONFIGURATION</span>
            </div>
            <dl className="divide-y divide-[#F1EAE1] rounded-xl border border-[#EEE7DD] bg-white px-4">
@@ -261,7 +261,7 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
           </div>
           <div>
            <div className="mb-3 flex items-center justify-between gap-2">
-            <h4 className="text-[12px] font-bold text-[#544637]">{t('conn.deliveryTitle')}</h4>
+            <h4 className="text-[12px] font-bold text-[var(--color-ink)]">{t('conn.deliveryTitle')}</h4>
             <span className="inline-flex items-center gap-1 text-[11px] text-[#958A7E]"><Clock3 size={13}/>{t('conn.deliveryRecorded')}</span>
            </div>
            <div className="grid grid-cols-3 gap-2">
@@ -269,7 +269,7 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
              {label:t('conn.deliveryPending'),n:(selected.delivery?.pending||0)+(selected.delivery?.sending||0),color:'text-[#3E3730]'},
              {label:t('conn.deliverySent'),n:selected.delivery?.sent||0,color:'text-emerald-700'},
              {label:t('conn.deliveryReview'),n:selected.delivery?.needsReview||0,color:'text-amber-800'}
-            ].map(entry=><div key={entry.label} className="rounded-xl border border-[#EBE3D9] bg-[#FAF8F5] px-3 py-3">
+            ].map(entry=><div key={entry.label} className="rounded-xl border border-[#EBE3D9] bg-[var(--color-canvas)] px-3 py-3">
              <span className="block text-[10px] leading-4 text-[#8D8073]">{entry.label}</span>
              <strong className={'mt-1 block text-[23px] font-bold tabular-nums tracking-tight '+entry.color}>{entry.n}</strong>
             </div>)}
@@ -293,7 +293,7 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
            {busyAction==='probe:'+selected.id?t('conn.dlg.diagnosing'):t('conn.dlg.diagnose')}
           </Button>
           {selectedEntry?.docs&&<a href={selectedEntry.docs} target="_blank" rel="noopener noreferrer"
-           className="inline-flex min-h-9 items-center gap-1 rounded-lg px-3 text-xs font-semibold text-[#896650] hover:bg-[#FAF4EE]">
+           className="inline-flex min-h-9 items-center gap-1 rounded-lg px-3 text-xs font-semibold text-[#896650] hover:bg-[var(--color-canvas)]">
            {t('conn.docs')} <ExternalLink size={13}/></a>}
           <Button variant="ghost" size="sm" className="sm:ml-auto !text-rose-600 hover:!bg-rose-50"
            disabled={busyAction!==null} onClick={()=>onDelete(selected)}><Trash2 size={14}/>{t('conn.dlg.delete')}</Button>
