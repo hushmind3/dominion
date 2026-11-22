@@ -126,10 +126,12 @@ export function plainError(message?: string | null): string {
  const raw = String(message ?? '').trim()
  const en = getLocale() === 'en'
  if (!raw) return en ? generic.en : generic.ko
- if (/[가-힣]/.test(raw)) return raw
+ // A machine failure wins even when the engine wrapped it in Korean words
+ // ("모델 목록 조회 실패 (HTTP 401 Unauthorized)").
  for (const [pattern, ko, english] of rules) {
   if (pattern.test(raw)) return en ? english : ko
  }
+ if (/[가-힣]/.test(raw)) return raw
  // English locale keeps authored English messages; Korean locale never shows
  // an untranslated machine string.
  return en ? raw : generic.ko

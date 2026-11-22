@@ -26,6 +26,9 @@ test('technical failures map to actionable Korean', () => {
   assert.match(plain, /인터넷 연결을 확인한 뒤 다시 시도해 주세요\./)
   assert.match(plain, /서버가 잠시 응답하지 않습니다/)
   assert.match(plain, /\[가-힣\]/)
+  // Rule matching must run before the Korean pass-through, otherwise
+  // '모델 목록 조회 실패 (HTTP 401)' keeps its machine tail.
+  assert.ok(plain.indexOf('for (const [pattern, ko, english] of rules)') < plain.indexOf('if (/[가-힣]/.test(raw)) return raw'))
 })
 
 test('every surface uses the shared plain-language mapping', () => {

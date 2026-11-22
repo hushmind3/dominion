@@ -408,8 +408,8 @@ export function AgentsPage() {
          <div className="flex items-center justify-between gap-3"><span className="text-muted">{locale==='en'?'Model':'모델'}</span><strong className="min-w-0 truncate text-ink">{selectedAgent.model||enabledProviders.find(p=>p.id===selectedAgent.providerId)?.model||t('agents.modelNeeded')}</strong></div>
         </div>
         <details className="rounded-lg border border-divider p-3 text-[11px] text-muted">
-         <summary className="cursor-pointer font-semibold text-ink">{locale==='en'?'System prompt':'시스템 프롬프트'}</summary>
-         <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap font-sans text-[10px] leading-5">{selectedAgent.systemPrompt||(locale==='en'?'No prompt':'프롬프트 없음')}</pre>
+         <summary className="cursor-pointer font-semibold text-ink">{locale==='en'?'Instructions':'지시문'}</summary>
+         <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap font-sans text-[10px] leading-5">{selectedAgent.systemPrompt||(locale==='en'?'No instructions':'지시문 없음')}</pre>
         </details>
         <div className="flex flex-wrap gap-2">
          <Button size="sm" onClick={()=>{setError('');setEdit({...selectedAgent})}}><Edit3 size={14}/>{t('agents.editShort')}</Button>

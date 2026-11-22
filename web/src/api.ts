@@ -1,6 +1,7 @@
 import {t} from './i18n'
 import {translateError} from './i18n/errors'
 import {plainError} from './i18n/plain'
+import {getLocale} from './i18n'
 
 export type RecordItem = {id:string;name?:string;createdAt?:string;updatedAt?:string;[key:string]:any}
 export type Provider = RecordItem & {name:string;baseUrl:string;kind:string;enabled:boolean;hasKey?:boolean;model?:string;learning?:boolean;reflection?:boolean;reflectionModel?:string;accountId?:string}
@@ -121,8 +122,10 @@ export async function streamChat(data: ChatRequest, onEvent: (e: StreamEvent) =>
  *  "DOMINION Cloud · @cf/...". Appending it again would show it twice. */
 export function providerLabel(provider:{name:string;model?:string}):string{
  const model=(provider.model||'').trim()
- if(!model)return provider.name
- const suffix=' · '+model
- if(!provider.name.endsWith(suffix))return provider.name+suffix
- return provider.name
+ const suffix=model?' · '+model:''
+ const base=model&&provider.name.endsWith(suffix)?provider.name.slice(0,-suffix.length):provider.name
+ // Provider names come from the owner's data; the product name stays, the
+ // protocol word does not.
+ const plain=getLocale()==='en'?base:base.replace(/\bOAuth\b/g,'로그인').replace(/\bAPI\b/g,'AI')
+ return plain+suffix
 }
