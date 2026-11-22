@@ -7,6 +7,11 @@
  --color-ink: #24211D;
  --color-muted: #7C7469;
  --color-divider: #E7E0D5;
+ --color-brand-soft: #F7E8E1;
+ --color-success: #4F6F52;
+ --color-success-soft: #D9DFC8;
+ --color-info: #6B4FA0;
+ --color-info-soft: #E9E1F5;
  --radius-panel: 1rem;
  --radius-control: .65rem;
  --shadow-panel: 0 1px 2px rgb(36 33 29 / .04), 0 10px 30px rgb(36 33 29 / .04);

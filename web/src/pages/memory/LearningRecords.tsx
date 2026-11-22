@@ -101,10 +101,10 @@ export function LearningRecords(){
  return <div className="mt-3 grid gap-2">
   <div className="flex flex-wrap gap-2">{sources.map((item,i)=><Button key={item.label} variant={source===i?'primary':'ghost'} onClick={()=>{setSource(i);setLimit(20)}}>{item.label}</Button>)}</div>
   <Notice message={data.error}/>
-  {data.loading?<p>기록을 불러오는 중…</p>:!data.error&&!rows.length?<p>저장된 기록이 없습니다.</p>:rows.slice(0,limit).map(row=><details key={row.key} className="rounded-lg border border-[#EFE9DF] p-2">
-   <summary className="cursor-pointer text-sm"><strong>{row.title}</strong>{row.subtitle&&<span className="text-muted"> · {row.subtitle}</span>}{row.tags.map(tag=><span key={tag} className="ml-2 rounded bg-[#F7E8E1] px-1.5 py-0.5 text-[10px] font-semibold text-brand-hover">{tag}</span>)}</summary>
-   {row.facts.length>0&&<dl className="mt-2 grid grid-cols-1 gap-1 text-xs sm:grid-cols-[9rem_minmax(0,1fr)]">{row.facts.map(([label,value])=><div key={label} className="contents"><dt className="font-semibold text-muted">{label}</dt><dd className="break-all text-[#4A443C]">{value}</dd></div>)}</dl>}
-   <details className="mt-2 text-xs text-[#5C544A]"><summary className="cursor-pointer">원본 JSON</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(row.raw,null,2)}</pre></details>
+  {data.loading?<p>기록을 불러오는 중…</p>:!data.error&&!rows.length?<p>저장된 기록이 없습니다.</p>:rows.slice(0,limit).map(row=><details key={row.key} className="rounded-lg border border-[var(--color-divider)] p-2">
+   <summary className="cursor-pointer text-sm"><strong>{row.title}</strong>{row.subtitle&&<span className="text-muted"> · {row.subtitle}</span>}{row.tags.map(tag=><span key={tag} className="ml-2 rounded bg-[var(--color-brand-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-brand-hover">{tag}</span>)}</summary>
+   {row.facts.length>0&&<dl className="mt-2 grid grid-cols-1 gap-1 text-xs sm:grid-cols-[9rem_minmax(0,1fr)]">{row.facts.map(([label,value])=><div key={label} className="contents"><dt className="font-semibold text-muted">{label}</dt><dd className="break-all text-[var(--color-ink)]">{value}</dd></div>)}</dl>}
+   <details className="mt-2 text-xs text-[var(--color-muted)]"><summary className="cursor-pointer">원본 JSON</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(row.raw,null,2)}</pre></details>
   </details>)}
   {rows.length>limit&&<Button variant="secondary" onClick={()=>setLimit(n=>n+20)}>더 보기</Button>}
  </div>

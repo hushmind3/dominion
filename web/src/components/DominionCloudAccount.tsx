@@ -475,8 +475,8 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
      {visibleModels.map(m=><option key={m.id} value={m.id}>{m.name||m.id} · {m.id}</option>)}
     </select>:<p className="mt-2 text-[11px] text-muted">검색된 모델이 없습니다.</p>}
     {filteredModels.length>100&&<p className="mt-1 text-[11px] text-muted">처음 100개만 표시합니다. 검색어로 모델을 좁혀 주세요.</p>}
-    {catalogModels.find(m=>m.id===catalogModel)&&<p className="mt-2 break-all text-[11px] leading-5 text-[#5C544A]">모델 ID: {catalogModel}{catalogModels.find(m=>m.id===catalogModel)?.context?' · 컨텍스트 '+catalogModels.find(m=>m.id===catalogModel)?.context?.toLocaleString()+' 토큰':''}{catalogModels.find(m=>m.id===catalogModel)?.reasoning===true?' · 추론 지원':''}{catalogModels.find(m=>m.id===catalogModel)?.toolCall===true?' · 도구 호출 지원':''}</p>}
-    <div className="mt-3 flex flex-wrap gap-2 border-t border-[#EFE9DF] pt-3">
+    {catalogModels.find(m=>m.id===catalogModel)&&<p className="mt-2 break-all text-[11px] leading-5 text-[var(--color-muted)]">모델 ID: {catalogModel}{catalogModels.find(m=>m.id===catalogModel)?.context?' · 컨텍스트 '+catalogModels.find(m=>m.id===catalogModel)?.context?.toLocaleString()+' 토큰':''}{catalogModels.find(m=>m.id===catalogModel)?.reasoning===true?' · 추론 지원':''}{catalogModels.find(m=>m.id===catalogModel)?.toolCall===true?' · 도구 호출 지원':''}</p>}
+    <div className="mt-3 flex flex-wrap gap-2 border-t border-[var(--color-divider)] pt-3">
      <input type="password" autoComplete="off" aria-label="업체 API 키 (등록 시에만 필요)" value={catalogKey} onChange={e=>setCatalogKey(e.target.value)} placeholder="채팅 등록용 API 키 (조회에는 불필요)" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
      <button type="button" disabled={catalogBusy||!visibleModels.some(m=>m.id===catalogModel)} onClick={()=>void saveCatalogModel()} className="rounded-lg bg-brand px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">선택 모델 채팅 등록</button>
      <button type="button" disabled={catalogBusy} onClick={()=>void importCatalogModels()} className="rounded-lg border px-3 py-2 text-[12px] disabled:opacity-50">전체 등록</button>
@@ -496,10 +496,10 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
     <button type="button" disabled={routerBusy} onClick={()=>void browseOpenRouterFree()} className="rounded-lg border px-3 py-2 text-[12px] disabled:opacity-50">{routerBusy?'조회 중…':'무료 모델 조회 (키 불필요)'}</button>
     <input aria-label="OpenRouter 무료 모델 검색" value={routerSearch} onChange={e=>setRouterSearch(e.target.value)} placeholder="무료 모델 이름 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
    </div>
-   {routerModels.length>0&&<div className="mt-2 max-h-48 overflow-y-auto rounded-lg border bg-white px-3 py-2 text-[11px] text-[#5C544A]">
+   {routerModels.length>0&&<div className="mt-2 max-h-48 overflow-y-auto rounded-lg border bg-white px-3 py-2 text-[11px] text-[var(--color-muted)]">
     <strong>공개 무료 모델 · {filteredRouterModels.length} / {routerModels.length}개</strong>
-    {filteredRouterModels.slice(0,60).map(m=><button type="button" key={m.id} aria-pressed={routerSelected===m.id} onClick={()=>{setRouterSelected(m.id);setRegistered(null)}} className={'block w-full border-b border-[#EFE9DF] px-1 py-1.5 text-left hover:bg-[#FAF7F1] '+(routerSelected===m.id?'bg-[#F7E8E1]':'')}><span className="font-semibold">{m.name||m.id}</span><span className="ml-2 break-all text-[#8A8176]">{m.id}</span>{m.context?' · '+m.context.toLocaleString()+' 토큰':''}</button>)}
-    {filteredRouterModels.length>60&&<p className="mt-2 text-[#8A8176]">처음 60개만 표시합니다. 검색어로 좁혀 주세요.</p>}
+    {filteredRouterModels.slice(0,60).map(m=><button type="button" key={m.id} aria-pressed={routerSelected===m.id} onClick={()=>{setRouterSelected(m.id);setRegistered(null)}} className={'block w-full border-b border-[var(--color-divider)] px-1 py-1.5 text-left hover:bg-[var(--color-canvas)] '+(routerSelected===m.id?'bg-[var(--color-brand-soft)]':'')}><span className="font-semibold">{m.name||m.id}</span><span className="ml-2 break-all text-[var(--color-muted)]">{m.id}</span>{m.context?' · '+m.context.toLocaleString()+' 토큰':''}</button>)}
+    {filteredRouterModels.length>60&&<p className="mt-2 text-[var(--color-muted)]">처음 60개만 표시합니다. 검색어로 좁혀 주세요.</p>}
    </div>}
    <div className="mt-2 flex flex-wrap gap-2">
     <input type="password" autoComplete="off" aria-label="OpenRouter API 키 (등록 시에만 필요)" value={routerKey} onChange={e=>setRouterKey(e.target.value)} placeholder="채팅 등록용 API 키" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>

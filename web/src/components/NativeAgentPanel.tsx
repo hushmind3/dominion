@@ -134,15 +134,15 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const canResume=['interrupted','failed'].includes(status)||canRecheck
  const events=(run?.checkpoint?.events||[]).slice(-4)
  return <section className="mt-4 rounded-xl border border-divider bg-white">
-  <div className="flex items-center gap-2 border-b border-[#F0EAE1] px-4 py-3">
+  <div className="flex items-center gap-2 border-b border-[var(--color-canvas)] px-4 py-3">
    <Sparkles size={17} className="text-[#AF5B3A]"/>
    <div><h2 className="text-[13px] font-bold">{en?'Autonomous work':'자동 작업'}</h2>
-    <p className="mt-0.5 text-[11px] text-[#8A8176]">{en?'Describe what you need. Dominion’s own Rust engine handles the steps.':'할 일을 말씀하시면 도미니언 Rust 엔진이 작업을 실행합니다.'}</p>
+    <p className="mt-0.5 text-[11px] text-[var(--color-muted)]">{en?'Describe what you need. Dominion’s own Rust engine handles the steps.':'할 일을 말씀하시면 도미니언 Rust 엔진이 작업을 실행합니다.'}</p>
    </div>
   </div>
-  <div className="border-b border-[#F0EAE1] px-4 py-2">
+  <div className="border-b border-[var(--color-canvas)] px-4 py-2">
    <button type="button" onClick={()=>setHistoryOpen(v=>!v)} aria-expanded={historyOpen}
-    className="flex w-full items-center justify-between text-[11px] text-[#6F675D]">
+    className="flex w-full items-center justify-between text-[11px] text-[var(--color-muted)]">
     <span>{en?'Previous SDK runs':'기존 SDK 실행 기록'} ({history.length})</span>
     {historyOpen?'▴':'▾'}
    </button>
@@ -150,11 +150,11 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     <button type="button" className="mb-1 text-[10px] underline" onClick={()=>void refreshHistory().catch(e=>setError((e as Error).message))}>{en?'Refresh history':'목록 새로고침'}</button>
     {history.map(item=><button type="button" key={item.id}
       aria-pressed={run?.id===item.id} onClick={()=>void selectHistory(item.id)}
-      className={'flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-[11px] '+(run?.id===item.id?'bg-[#F7E8E1]':'bg-[#FAF7F1] hover:bg-[#F3EEE5]')}>
+      className={'flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-[11px] '+(run?.id===item.id?'bg-[var(--color-brand-soft)]':'bg-[var(--color-canvas)] hover:bg-[var(--color-canvas)]')}>
       <span className="min-w-0 flex-1 truncate">{item.instruction||item.id}</span>
-      <span className="shrink-0 text-[#8A8176]">{item.status}</span>
+      <span className="shrink-0 text-[var(--color-muted)]">{item.status}</span>
      </button>)}
-    {!history.length&&<p className="text-[11px] text-[#8A8176]">{en?'No previous runs':'이전 실행이 없습니다.'}</p>}
+    {!history.length&&<p className="text-[11px] text-[var(--color-muted)]">{en?'No previous runs':'이전 실행이 없습니다.'}</p>}
    </div>}
   </div>
   <div className="grid gap-3 p-4">
@@ -162,9 +162,9 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    <textarea id="sdk-goal" value={instruction} onChange={e=>setInstruction(e.target.value)}
     rows={3} maxLength={64000}
     placeholder={en?'Describe a task, such as inspecting a project or fixing an issue.':'프로젝트를 분석하거나 문제를 해결하는 등 필요한 작업을 적어주세요.'}
-    className="w-full resize-y rounded-xl border border-divider bg-[#FCFBF9] p-3 text-[12px] outline-none focus:border-[#A36A4A]"/>
+    className="w-full resize-y rounded-xl border border-divider bg-[var(--color-surface)] p-3 text-[12px] outline-none focus:border-[var(--color-brand)]"/>
    <div className="flex flex-wrap items-end gap-3">
-    <label className="flex min-w-44 flex-1 flex-col gap-1 text-[11px] text-[#746A5F]">
+    <label className="flex min-w-44 flex-1 flex-col gap-1 text-[11px] text-[var(--color-muted)]">
      {en?'AI model':'사용할 AI 모델'}
      <select value={providerId} onChange={e=>setProviderId(e.target.value)}
       className="h-9 rounded-lg border border-divider bg-white px-3 text-[12px]">
@@ -177,7 +177,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      <Play size={14}/>{busy?(en?'Please wait…':'처리 중…'):(en?'Start task':'작업 시작')}
     </button>
    </div>
-   <details className="text-[11px] text-[#746A5F]">
+   <details className="text-[11px] text-[var(--color-muted)]">
     <summary className="cursor-pointer select-none">{en?'Optional: verify the result with a command':'선택 사항: 명령어로 결과 검증'}</summary>
     <label className="mt-2 block" htmlFor="sdk-verify">
      {en?'Verification command (runs after the agent finishes)':'검증 명령어 (작업 결과를 확인할 때 실행)'}
@@ -186,31 +186,31 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      maxLength={2048} placeholder="cargo test"
      className="mt-1 h-9 w-full rounded-lg border border-divider px-3 text-[12px]"/>
    </details>
-   {error&&<p role="alert" className="rounded-lg bg-[#FFF3EE] p-3 text-[11px] text-[#A54027]">{error}</p>}
-   {run&&<div className="rounded-xl border border-divider bg-[#FCFBF9] p-3">
+   {error&&<p role="alert" className="rounded-lg bg-[#FFF3EE] p-3 text-[11px] text-[var(--color-brand-hover)]">{error}</p>}
+   {run&&<div className="rounded-xl border border-divider bg-[var(--color-surface)] p-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
      <strong className="text-[12px]">{en?stateNames[status]?.[1]||status:stateNames[status]?.[0]||status}</strong>
-     <span className="text-[11px] text-[#82796D]">{run.checkpoint?.rounds??0} {en?'rounds':'회 판단'} · {run.checkpoint?.toolCalls??0} {en?'actions':'회 도구 실행'}</span>
-    {run.checkpoint?.usage&&<p className="mt-2 text-[11px] text-[#82796D]">
+     <span className="text-[11px] text-[var(--color-muted)]">{run.checkpoint?.rounds??0} {en?'rounds':'회 판단'} · {run.checkpoint?.toolCalls??0} {en?'actions':'회 도구 실행'}</span>
+    {run.checkpoint?.usage&&<p className="mt-2 text-[11px] text-[var(--color-muted)]">
      {run.checkpoint.usage.estimated?(en?'Estimated tokens':'추정 토큰'):(en?'Token usage':'토큰 사용량')}: {fmtTokens(run.checkpoint.usage.prompt_tokens)} {en?'input':'입력'} · {fmtTokens(run.checkpoint.usage.completion_tokens)} {en?'output':'출력'} · {fmtTokens(run.checkpoint.usage.cached_prompt_tokens)} {en?'cached input':'캐시 입력'}
     </p>}
     </div>
     <p className="mt-2 line-clamp-2 text-[11px] text-[#766F67]">{run.instruction}</p>
     {events.length>0&&<div className="mt-3 space-y-1 border-t border-divider pt-2">
-     {events.map((event,i)=><p key={i} className="text-[11px] text-[#82796D]">
+     {events.map((event,i)=><p key={i} className="text-[11px] text-[var(--color-muted)]">
       {event.kind==='tool_started'?(en?'Running tool':'도구 실행'):
        event.kind==='model_started'?(en?'Model is working':'모델 판단 중'):
        event.kind==='verified'?(en?'Result verification':'결과 검증'):event.kind}
      </p>)}
     </div>}
-    {needsApproval&&<div className="mt-3 rounded-lg border border-[#E5C4AB] bg-white p-3">
+    {needsApproval&&<div className="mt-3 rounded-lg border border-[var(--color-divider)] bg-white p-3">
      <div className="flex items-center gap-2 text-[12px] font-semibold"><ShieldAlert size={16}/>
       {en?'Review before allowing this action':'아래 작업을 확인하고 승인하세요'}
      </div>
      <div className="mt-2 text-[11px] font-semibold">{call.name}</div>
      <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-[#F5F2EE] p-3 text-[11px]">{JSON.stringify(call.arguments,null,2)}</pre>
      <button type="button" disabled={busy} onClick={()=>void action('approve')}
-      className="mt-3 flex items-center gap-2 rounded-lg bg-[#A4583E] px-3 py-2 text-[11px] font-semibold text-white">
+      className="mt-3 flex items-center gap-2 rounded-lg bg-[var(--color-brand)] px-3 py-2 text-[11px] font-semibold text-white">
       <Check size={14}/>{en?'Approve this action only':'이 작업 1회 승인'}
      </button>
      <button type="button" disabled={busy} onClick={()=>void action('deny')}
@@ -219,13 +219,13 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      </button>
     </div>}
     {run.answer||run.checkpoint?.answer?<div className="mt-3 whitespace-pre-wrap break-words border-t border-divider pt-3 text-[12px]">{run.answer||run.checkpoint?.answer}</div>:null}
-    {run.error&&<p className="mt-2 text-[11px] text-[#A54027]">{run.error}</p>}
+    {run.error&&<p className="mt-2 text-[11px] text-[var(--color-brand-hover)]">{run.error}</p>}
     {notice&&<p role="status" className="mt-2 text-[11px] text-emerald-700">{notice}</p>}
     {(['queued','running'].includes(status))&&!run.readOnly&&<form onSubmit={event=>{event.preventDefault();void followUp()}} className="mt-3 flex flex-wrap gap-2">
      <input type="text" maxLength={4000} value={steering} disabled={busy} onChange={e=>setSteering(e.target.value)}
       aria-label={en?'Steer current task':'실행 중 추가 지시'} placeholder={en?'Add a follow-up instruction…':'진행 중인 작업에 추가 지시…'}
       className="min-w-40 flex-1 rounded-lg border border-divider bg-white px-3 py-2 text-[11px]"/>
-     <button type="submit" disabled={busy||!steering.trim()} className="rounded-lg border border-[#D9BAA6] px-3 py-2 text-[11px] text-[#A4583E] disabled:opacity-40">{en?'Submit':'전달'}</button>
+     <button type="submit" disabled={busy||!steering.trim()} className="rounded-lg border border-[var(--color-brand)] px-3 py-2 text-[11px] text-[var(--color-brand)] disabled:opacity-40">{en?'Submit':'전달'}</button>
     </form>}
     {(run.runRef?.executionId||run.checkpoint?.executionId)&&<>
       <ExecutionInsights executionId={(run.runRef?.executionId||run.checkpoint?.executionId)!} compact/>
@@ -239,8 +239,8 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
       <RefreshCw size={13}/>{canRecheck?(en?'Recheck completion evidence':'완료 증거 재확인'):(en?'Resume':'재개')}
      </button>}
     </div>
-    {status==='in_doubt'&&<div className="mt-3 rounded-lg border border-[#E5C4AB] bg-white p-3">
-     <p className="text-[11px] text-[#A54027]">
+    {status==='in_doubt'&&<div className="mt-3 rounded-lg border border-[var(--color-divider)] bg-white p-3">
+     <p className="text-[11px] text-[var(--color-brand-hover)]">
       {en?'The interrupted tool may have changed files. Inspect the workspace before continuing.':'중단 직전 도구가 파일을 변경했을 수 있습니다. 실제 상태를 확인한 뒤 기록하세요.'}
      </p>
      <label htmlFor="sdk-observation" className="mt-3 block text-[11px] font-semibold">

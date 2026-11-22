@@ -39,7 +39,7 @@ export function OwnerProfileProvider({children}:{children:ReactNode}){
 
 /** One owner identity, shared by the workspace, chats and multi-agent rooms. */
 export function OwnerAvatar({profile,size='normal',className=''}:{profile:OwnerProfile;size?:'small'|'normal';className?:string}){
- return <span className={'inline-grid shrink-0 place-items-center overflow-hidden rounded-xl bg-[#E9E2D7] text-[#6C594A] '+(size==='small'?'size-7':'size-9')+' '+className}>
+ return <span className={'inline-grid shrink-0 place-items-center overflow-hidden rounded-xl bg-[var(--color-canvas)] text-[#6C594A] '+(size==='small'?'size-7':'size-9')+' '+className}>
   {profile.avatar?<img src={profile.avatar} alt="" className="h-full w-full object-cover"/>:<UserRound size={size==='small'?15:19}/>}
  </span>
 }
@@ -69,18 +69,18 @@ export function OwnerProfileEditor({compact=false,active=true}:{compact?:boolean
   reader.onerror=()=>setError('이미지를 읽지 못했습니다.')
   reader.readAsDataURL(file)
  }
- return <div className={compact?'relative shrink-0':'relative shrink-0 border-t border-[#E0D8CC] p-3'}>
+ return <div className={compact?'relative shrink-0':'relative shrink-0 border-t border-[var(--color-divider)] p-3'}>
   <Button ref={panel.trigger} variant="bare" type="button" onClick={()=>setOpen(x=>!x)} aria-expanded={open} aria-haspopup="dialog" aria-label="내 프로필 편집" title="내 프로필"
-   className={compact?'flex items-center rounded-xl p-1 hover:bg-[#F3EEE5]':'group flex w-full items-center gap-2.5 rounded-xl px-2 py-2 text-left hover:bg-[#E8E0D3]'}>
+   className={compact?'flex items-center rounded-xl p-1 hover:bg-[var(--color-canvas)]':'group flex w-full items-center gap-2.5 rounded-xl px-2 py-2 text-left hover:bg-[#E8E0D3]'}>
    <OwnerAvatar profile={profile} size={compact?'small':'normal'}/>
-   {!compact&&<><span className="min-w-0 flex-1"><strong className="block truncate text-[12px] text-[#3A342D]">{profile.name}</strong><small className="block text-[10px] text-[#8A8176]">내 프로필</small></span>
+   {!compact&&<><span className="min-w-0 flex-1"><strong className="block truncate text-[12px] text-[var(--color-ink)]">{profile.name}</strong><small className="block text-[10px] text-[var(--color-muted)]">내 프로필</small></span>
    <Pencil size={13} className="text-[#998B7B] group-hover:text-brand-hover"/></>}
   </Button>
   {open&&active&&panel.position&&createPortal(<div ref={panel.panel} style={panel.position} role="dialog" aria-label="내 프로필" className="z-[90] overflow-y-auto overscroll-contain rounded-2xl border border-[#E7D8C7] bg-surface p-4 shadow-[0_18px_56px_rgba(43,36,29,.2)]">
-   <div className="mb-3 flex items-center justify-between"><strong className="text-[13px] text-[#3A342D]">내 프로필</strong><Button type="button" variant="bare" aria-label="닫기" onClick={close} className="rounded-lg p-1 hover:bg-[#F3EEE5]"><X size={16}/></Button></div>
+   <div className="mb-3 flex items-center justify-between"><strong className="text-[13px] text-[var(--color-ink)]">내 프로필</strong><Button type="button" variant="bare" aria-label="닫기" onClick={close} className="rounded-lg p-1 hover:bg-[var(--color-canvas)]"><X size={16}/></Button></div>
    <div className="mb-3 flex items-center gap-3">
     <OwnerAvatar profile={{name,avatar}} className="!size-14"/>
-    <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-divider bg-white px-2.5 py-2 text-[11px] font-semibold hover:bg-[#FAF7F1]"><ImagePlus size={14}/> 이미지 변경
+    <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-divider bg-white px-2.5 py-2 text-[11px] font-semibold hover:bg-[var(--color-canvas)]"><ImagePlus size={14}/> 이미지 변경
      <input type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" onChange={e=>{upload(e.target.files?.[0]);e.target.value=''}}/>
     </label>
     {avatar&&<Button type="button" variant="bare" onClick={()=>setAvatar('')} className="text-[11px] text-brand-hover">제거</Button>}

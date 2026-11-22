@@ -18,11 +18,11 @@ export function DialogPanel({children,size='default',className='',...props}:HTML
    size==='wide'?'max-w-3xl':'max-w-xl',className].join(' ')}>{children}</div>
 }
 export function DialogHeader({children}: {children:ReactNode}){
- return <header className="flex items-center justify-between gap-3 border-b border-[#EFE9DF] p-5">{children}</header>
+ return <header className="flex items-center justify-between gap-3 border-b border-[var(--color-divider)] p-5">{children}</header>
 }
 export function DialogBody({children}: {children:ReactNode}){
  return <div className="grid gap-4 p-5">{children}</div>
 }
 export function DialogActions({children}: {children:ReactNode}){
- return <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-[#EFE9DF] p-5">{children}</footer>
+ return <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-[var(--color-divider)] p-5">{children}</footer>
 }

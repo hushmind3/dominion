@@ -29,9 +29,9 @@ function workerTask(job:Job|undefined,step:Step){
 }
 const stateClass=(state?:string)=>state==='completed'?'border-emerald-200 bg-emerald-50 text-emerald-700':
  state==='failed'||state==='cancelled'?'border-rose-200 bg-rose-50 text-rose-700':
- state==='running'?'border-[#D9BAA6] bg-[#F7E8E1] text-[#9D5039]':
+ state==='running'?'border-[var(--color-brand)] bg-[var(--color-brand-soft)] text-[var(--color-brand-hover)]':
  state==='needs_review'?'border-amber-200 bg-amber-50 text-amber-800':
- 'border-divider bg-[#FAF7F1] text-muted'
+ 'border-divider bg-[var(--color-canvas)] text-muted'
 function ExternalContinuation({job,onCreated}:{job:Job;onCreated:()=>void}){
  const en=useLocale()==='en'
  const [open,setOpen]=useState(false)
@@ -44,13 +44,13 @@ function ExternalContinuation({job,onCreated}:{job:Job;onCreated:()=>void}){
  const parent=job.input?.parentSessionId
  return <div className="mt-2 min-w-0">
   <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted">
-   <span className="rounded-md bg-[#F3EEE5] px-2 py-0.5">{runtime}</span>
+   <span className="rounded-md bg-[var(--color-canvas)] px-2 py-0.5">{runtime}</span>
    <span>{en?'External receipt':'외부 실행 증거'}: {compact(job.result?.externalRunId)}</span>
    {job.input?.resumeFromJobId&&<span>{en?'Continued from':'이어받은 작업'}: {job.input.resumeFromJobId}</span>}
    {parent&&<a href={'#/chat?session='+encodeURIComponent(parent)} className="underline">{en?'Parent conversation':'원본 대화'}</a>}
   </div>
   {finished&&<button type="button" aria-expanded={open} onClick={()=>setOpen(v=>!v)}
-   className="mt-2 inline-flex items-center gap-1 rounded-lg border border-divider px-2.5 py-1.5 text-[11px] text-[#5C544A] hover:bg-[#FAF7F1]">
+   className="mt-2 inline-flex items-center gap-1 rounded-lg border border-divider px-2.5 py-1.5 text-[11px] text-[var(--color-muted)] hover:bg-[var(--color-canvas)]">
    <RefreshCw size={12}/>{en?'Continue verified inspection session':'검증된 조사 세션 이어하기'} {open?'▴':'▾'}
   </button>}
   {open&&finished&&<form className="mt-2 flex flex-wrap gap-2" onSubmit={event=>{
@@ -65,7 +65,7 @@ function ExternalContinuation({job,onCreated}:{job:Job;onCreated:()=>void}){
     value={prompt} onChange={e=>setPrompt(e.target.value)} maxLength={3000}
     aria-label={en?'Follow-up inspection instructions':'이어갈 조사 지시'}
     placeholder={en?'What should the same inspector check next?':'같은 에이전트가 이어서 조사할 내용'}/>
-   <button type="submit" disabled={busy||!prompt.trim()} className="rounded-lg border border-[#D9BAA6] px-3 py-2 text-[11px] font-semibold text-[#9D5039] disabled:opacity-50">{busy?(en?'Submitting':'전달 중'):(en?'Resume':'재개')}</button>
+   <button type="submit" disabled={busy||!prompt.trim()} className="rounded-lg border border-[var(--color-brand)] px-3 py-2 text-[11px] font-semibold text-[var(--color-brand-hover)] disabled:opacity-50">{busy?(en?'Submitting':'전달 중'):(en?'Resume':'재개')}</button>
   </form>}
   {error&&<p role="alert" className="mt-2 break-words text-[11px] text-rose-700">{error}</p>}
   {result&&<p role="status" className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-emerald-700"><Check size={12}/>{en?'Child inspection queued':'후속 조사 예약 완료'}: {result.jobId}{result.sessionId&&<a href={'#/chat?session='+encodeURIComponent(result.sessionId)} className="underline">{en?'Open session':'대화 열기'}</a>}</p>}
@@ -81,36 +81,36 @@ function WorkerStep({step,job,ids,onCreated,index=0,agentNames}:{step:Step;job?:
  return <div className="relative rounded-xl border border-divider bg-white p-3">
   <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
    <div className="flex min-w-0 items-center gap-2">
-    <span className="grid size-8 shrink-0 place-items-center rounded-full bg-[#F7E8E1] text-[12px] font-bold text-[#A4583E]">{index+1}</span>
+    <span className="grid size-8 shrink-0 place-items-center rounded-full bg-[var(--color-brand-soft)] text-[12px] font-bold text-[var(--color-brand)]">{index+1}</span>
     <div className="min-w-0">
      <strong className="block break-words text-[13px] leading-5">{workerTask(job,step)}</strong>
-     <small className="text-[12px] text-[#81766A]">{humanRole(step.profile,en)}</small>
+     <small className="text-[12px] text-[var(--color-muted)]">{humanRole(step.profile,en)}</small>
     </div>
    </div>
    <span className={'shrink-0 rounded-md border px-2.5 py-1 text-[12px] font-semibold '+stateClass(job?.status)}>{humanStatus(job?.status,en)}</span>
   </div>
-  <p className="mt-2 break-words text-[13px] font-medium text-[#514940]">
+  <p className="mt-2 break-words text-[13px] font-medium text-[var(--color-ink)]">
    {en?'Assigned AI':'담당 AI'}: {agentNames?.[step.agentId||'']||step.agentId||job?.input?.agentId||'—'}
-   {step.remoteWorker&&<span className="ml-2 rounded bg-[#F3EEE5] px-2 py-0.5 text-[11px] font-normal">{en?'Remote':'원격'}</span>}
+   {step.remoteWorker&&<span className="ml-2 rounded bg-[var(--color-canvas)] px-2 py-0.5 text-[11px] font-normal">{en?'Remote':'원격'}</span>}
   </p>
   <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[12px] text-muted">
-   {deps.length?<>{en?'After':'선행 단계'}: {deps.map((dep,index)=><span key={dep} className="inline-flex items-center gap-1 rounded bg-[#FAF7F1] px-1.5 py-1">
+   {deps.length?<>{en?'After':'선행 단계'}: {deps.map((dep,index)=><span key={dep} className="inline-flex items-center gap-1 rounded bg-[var(--color-canvas)] px-1.5 py-1">
      {index>0?', ':''}{dep}<span className={'size-1.5 rounded-full '+(Object.keys(ids).includes(dep)&&ids[dep]==='completed'?'bg-emerald-500':'bg-amber-400')}/>
     </span>)}</>:<span>{en?'No prerequisites':'선행 조건 없음'}</span>}
   </div>
   {job?.error&&<p role="alert" className="mt-2 break-words text-[11px] text-rose-700">{job.error}</p>}
-  {fileHash&&<p className="mt-2 break-all text-[10px] text-[#8A8176]">{en?'Frozen patch SHA256':'고정된 패치 SHA256'}: {fileHash}</p>}
+  {fileHash&&<p className="mt-2 break-all text-[10px] text-[var(--color-muted)]">{en?'Frozen patch SHA256':'고정된 패치 SHA256'}: {fileHash}</p>}
   {job?.input?.externalRuntime&&<ExternalContinuation job={job} onCreated={onCreated}/>}
   {job?.result&&<button type="button" aria-expanded={showResult} onClick={()=>setShowResult(v=>!v)}
-   className="mt-2 inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-[12px] font-semibold text-[#A4583E] hover:bg-[#F7E8E1] focus-visible:outline-2 focus-visible:outline-offset-2">
+   className="mt-2 inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-[12px] font-semibold text-[var(--color-brand)] hover:bg-[var(--color-brand-soft)] focus-visible:outline-2 focus-visible:outline-offset-2">
    <ShieldCheck size={16}/>{en?'Technical receipt':'작업 영수증(기술 정보)'} {showResult?'▴':'▾'}
   </button>}
   {job?.input?.sessionId&&<a href={'#/chat?session='+encodeURIComponent(job.input.sessionId)}
-   className="ml-2 mt-2 inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-divider px-3 py-1 text-[12px] font-medium text-[#5C544A] hover:bg-[#FAF7F1] focus-visible:outline-2 focus-visible:outline-offset-2">
+   className="ml-2 mt-2 inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-divider px-3 py-1 text-[12px] font-medium text-[var(--color-muted)] hover:bg-[var(--color-canvas)] focus-visible:outline-2 focus-visible:outline-offset-2">
    <MessageSquare size={16}/>{en?'Open agent conversation':'담당 AI 대화 보기'}
   </a>}
-  {showResult&&job?.result&&<pre aria-label={en?'Raw native job receipt':'원본 작업 영수증'} className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-[#FAF7F1] p-3 text-[12px] leading-5">{JSON.stringify(job.result,null,2)}</pre>}
-  {job&&<details className="mt-2 text-[11px] text-[#81766A]"><summary className="cursor-pointer py-1 focus-visible:outline-2">{en?'Technical job ID':'기술 정보'}</summary><code className="break-all text-[11px]">{job.id}</code></details>}
+  {showResult&&job?.result&&<pre aria-label={en?'Raw native job receipt':'원본 작업 영수증'} className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-[var(--color-canvas)] p-3 text-[12px] leading-5">{JSON.stringify(job.result,null,2)}</pre>}
+  {job&&<details className="mt-2 text-[11px] text-[var(--color-muted)]"><summary className="cursor-pointer py-1 focus-visible:outline-2">{en?'Technical job ID':'기술 정보'}</summary><code className="break-all text-[11px]">{job.id}</code></details>}
   {done&&<span className="sr-only">{en?'Completed':'완료'}</span>}
  </div>
 }
@@ -135,32 +135,32 @@ function TeamCard({team,summary,onCreated,initiallyOpen=false,agentNames}:{team:
   const timer=setInterval(()=>{if(!document.hidden)void details.reload()},5000)
   return()=>clearInterval(timer)
  },[open,team.status,details.reload])
- return <div className="rounded-xl border border-divider bg-[#FCFAF6] p-4">
+ return <div className="rounded-xl border border-divider bg-[var(--color-surface)] p-4">
   <button type="button" aria-expanded={open} onClick={()=>setOpen(v=>!v)} className="flex w-full min-w-0 justify-between gap-2 text-left">
    <span className="min-w-0"><strong className="block break-words text-[14px] leading-6">{team.input?.goal||team.id}</strong>
     <span className="mt-1 block text-[12px] text-muted">{en?'Steps finished':'완료된 단계'} {complete}/{plan.length}
      {unknown>0&&<> · {en?'Checking':'확인 중'} {unknown}</>}</span></span>
    <span className={'shrink-0 self-start rounded-lg border px-3 py-1.5 text-[12px] font-semibold '+stateClass(team.status)}>{humanStatus(team.status,en)}</span>
   </button>
-  <progress className="mt-3 block h-2 w-full accent-[#A4583E]" value={complete} max={Math.max(1,plan.length)}
+  <progress className="mt-3 block h-2 w-full accent-[var(--color-brand)]" value={complete} max={Math.max(1,plan.length)}
    aria-label={en?'Team steps completed':'완료된 협업 작업 단계'}/>
   {reports.length>0&&<section className="mt-4 rounded-xl border border-[#DFD5C6] bg-white p-4" aria-label={en?'Verified worker answers':'실제 AI 작업 결과'}>
    <div className="flex flex-wrap items-center justify-between gap-2">
-    <h4 className="text-[14px] font-bold text-[#3A342D]">{en?'What the agents found':'AI 작업 결과'}</h4>
+    <h4 className="text-[14px] font-bold text-[var(--color-ink)]">{en?'What the agents found':'AI 작업 결과'}</h4>
     <span className="text-[12px] text-muted">{reports.length}{en?' reports':'개 결과'}</span>
    </div>
-   <p className="mt-1 text-[12px] leading-5 text-[#81766A]">{en
+   <p className="mt-1 text-[12px] leading-5 text-[var(--color-muted)]">{en
     ?'These are saved worker answers; the code changes may still require your approval.'
     :'저장된 AI 답변입니다. 코드 수정 사항은 별도 승인·통합이 필요할 수 있습니다.'}</p>
    <div className="mt-3 space-y-3">
-    {(showAllReports?reports:reports.slice(0,2)).map((report,index)=><article key={String(report.jobId||index)} className="rounded-lg border border-[#EEE8DE] bg-[#FCFAF6] p-3">
+    {(showAllReports?reports:reports.slice(0,2)).map((report,index)=><article key={String(report.jobId||index)} className="rounded-lg border border-[#EEE8DE] bg-[var(--color-surface)] p-3">
      <strong className="block text-[12px] text-[#7A624B]">{agentNames?.[String(report.agentId||'')]||String(report.agentId|| (en?'Agent':'AI'))}
       {report.stepId?' · '+String(report.stepId):''}</strong>
-     <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-6 text-[#514940]">{String(report.answer)}</p>
+     <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-6 text-[var(--color-ink)]">{String(report.answer)}</p>
     </article>)}
    </div>
    {reports.length>2&&<button type="button" onClick={()=>setShowAllReports(v=>!v)}
-    className="mt-3 inline-flex min-h-9 items-center rounded-lg px-3 text-[12px] font-semibold text-[#A4583E] hover:bg-[#F7E8E1] focus-visible:outline-2 focus-visible:outline-offset-2">
+    className="mt-3 inline-flex min-h-9 items-center rounded-lg px-3 text-[12px] font-semibold text-[var(--color-brand)] hover:bg-[var(--color-brand-soft)] focus-visible:outline-2 focus-visible:outline-offset-2">
     {showAllReports?(en?'Show fewer':'간략히 보기'):(en?'Show all '+reports.length+' reports':'전체 '+reports.length+'개 결과 보기')}
    </button>}
   </section>}
@@ -185,9 +185,9 @@ function TeamCard({team,summary,onCreated,initiallyOpen=false,agentNames}:{team:
     <button type="button" onClick={()=>void details.reload()} className="ml-2 underline">{en?'Retry':'다시 조회'}</button></p>}
    {fresh&&details.value.missing.length>0&&<p role="alert" className="text-[11px] text-rose-700">{en?'Missing or mismatched Worker records':'누락되거나 소유권이 일치하지 않는 Worker 기록'}: {details.value.missing.length}</p>}
    {plan.map((step,index)=><WorkerStep key={step.id} index={index} agentNames={agentNames} step={step} job={records.get(step.jobId)} ids={statuses} onCreated={onCreated}/>)}
-   <p className="mt-2 text-[10px] text-[#8A8176]">{en?'States come from persisted Worker jobs; a completed step does not mean its patch was integrated.':'단계 상태는 저장된 Worker 기록 기준입니다. 완료된 단계가 패치 병합까지 뜻하지는 않습니다.'}</p>
+   <p className="mt-2 text-[10px] text-[var(--color-muted)]">{en?'States come from persisted Worker jobs; a completed step does not mean its patch was integrated.':'단계 상태는 저장된 Worker 기록 기준입니다. 완료된 단계가 패치 병합까지 뜻하지는 않습니다.'}</p>
    {team.error&&<p role="alert" className="text-[11px] text-rose-700">{team.error}</p>}
-   <span className="block break-all font-mono text-[10px] text-[#A79C8E]">{team.id}</span>
+   <span className="block break-all font-mono text-[10px] text-[var(--color-muted)]">{team.id}</span>
   </div>}
  </div>
 }
@@ -220,31 +220,31 @@ export function TeamWorkflowPanel({jobs,filterSessionId,agentNames}:{jobs?:Job[]
   return()=>clearInterval(timer)
  },[filterSessionId,jobs,hasActiveTeam,remote.reload])
  if(!parentTeams.length&&!standaloneExternal.length&&!dependentJobs.length&&!remote.loading){
-  return filterSessionId?<div className="mt-4 rounded-xl border border-dashed border-[#D7CCBD] bg-[#FAF7F1] p-5 text-center">
-   <p className="text-[13px] font-semibold text-[#5C544A]">{en?'No collaboration runs yet':'아직 실행한 협업 작업이 없습니다'}</p>
-   <p className="mt-1 text-[12px] text-[#8A8176]">{en?'Start a task above; its agent assignments and results will appear here.':'위에서 작업을 시작하면 AI별 진행 단계와 결과가 이곳에 나타납니다.'}</p>
+  return filterSessionId?<div className="mt-4 rounded-xl border border-dashed border-[#D7CCBD] bg-[var(--color-canvas)] p-5 text-center">
+   <p className="text-[13px] font-semibold text-[var(--color-muted)]">{en?'No collaboration runs yet':'아직 실행한 협업 작업이 없습니다'}</p>
+   <p className="mt-1 text-[12px] text-[var(--color-muted)]">{en?'Start a task above; its agent assignments and results will appear here.':'위에서 작업을 시작하면 AI별 진행 단계와 결과가 이곳에 나타납니다.'}</p>
   </div>:null
  }
  return <Panel className="mt-4 min-w-0 overflow-hidden">
   <button type="button" aria-expanded={expanded} onClick={()=>setExpanded(x=>!x)}
-   className="flex w-full flex-wrap items-center justify-between gap-2 p-4 text-left hover:bg-[#FAF7F1]">
-   <span className="flex items-center gap-2"><GitBranch size={17} className="text-[#A4583E]"/><span><strong className="block text-[13px]">{filterSessionId?(en?'Collaboration history':'협업 작업 기록'):(en?'Team dependency graph & external agents':'팀 작업 의존성·외부 에이전트')}</strong>
-     <small className="text-[11px] text-[#8A8176]">{filterSessionId?(en?'Progress, responsible agents and verified results':'진행 단계 · 담당 AI · 실제 작업 결과'):(en?'Recorded native steps, dependencies, actual worker outcomes.':'네이티브 작업 단계·선행 조건·실제 워커 결과를 연결합니다.')}</small></span></span>
+   className="flex w-full flex-wrap items-center justify-between gap-2 p-4 text-left hover:bg-[var(--color-canvas)]">
+   <span className="flex items-center gap-2"><GitBranch size={17} className="text-[var(--color-brand)]"/><span><strong className="block text-[13px]">{filterSessionId?(en?'Collaboration history':'협업 작업 기록'):(en?'Team dependency graph & external agents':'팀 작업 의존성·외부 에이전트')}</strong>
+     <small className="text-[11px] text-[var(--color-muted)]">{filterSessionId?(en?'Progress, responsible agents and verified results':'진행 단계 · 담당 AI · 실제 작업 결과'):(en?'Recorded native steps, dependencies, actual worker outcomes.':'네이티브 작업 단계·선행 조건·실제 워커 결과를 연결합니다.')}</small></span></span>
    {expanded?<ChevronDown size={15}/>:<ChevronRight size={15}/>}
   </button>
   {expanded&&<div className="space-y-3 border-t border-divider p-4">
    {jobs===undefined&&<button type="button" onClick={refresh} className="text-[11px] text-muted underline">{en?'Refresh native jobs':'작업 기록 새로고침'}</button>}
    {parentTeams.map((team,index)=><TeamCard key={team.id} team={team} summary={jobMap} onCreated={refresh} agentNames={agentNames} initiallyOpen={Boolean(filterSessionId)&&index===0}/>)}
-   {dependentJobs.length>0&&<section className="rounded-xl border border-divider bg-[#FCFAF6] p-3">
+   {dependentJobs.length>0&&<section className="rounded-xl border border-divider bg-[var(--color-surface)] p-3">
     <h3 className="mb-2 flex items-center gap-2 text-[12px] font-bold"><GitBranch size={14}/>{en?'Dependent delegated jobs':'의존성 있는 개별 위임 작업'}</h3>
-    <p className="mb-2 text-[10px] text-[#8A8176]">{en?'The arrows below represent durable sibling job dependencies, not inferred order.':'개별 위임 작업의 저장된 선행 작업 ID를 그대로 표시합니다. 화면 순서로 의존성을 추정하지 않습니다.'}</p>
+    <p className="mb-2 text-[10px] text-[var(--color-muted)]">{en?'The arrows below represent durable sibling job dependencies, not inferred order.':'개별 위임 작업의 저장된 선행 작업 ID를 그대로 표시합니다. 화면 순서로 의존성을 추정하지 않습니다.'}</p>
     <div className="space-y-2">{dependentJobs.map(job=><WorkerStep key={job.id} job={job} ids={independentStates} onCreated={refresh}
       step={{id:job.input?.teamStepId||job.id.slice(0,8),jobId:job.id,agentId:job.input?.agentId,
        profile:job.input?.delegationProfile,dependsOn:job.input?.dependsOnJobIds}}/>)}</div>
    </section>}
-   {standaloneExternal.length>0&&<section className="rounded-xl border border-divider bg-[#FCFAF6] p-3">
+   {standaloneExternal.length>0&&<section className="rounded-xl border border-divider bg-[var(--color-surface)] p-3">
     <h3 className="mb-2 flex items-center gap-2 text-[12px] font-bold"><Layers3 size={14}/>{en?'Standalone external inspections':'독립 외부 조사 기록'}</h3>
-    <div className="space-y-2">{standaloneExternal.map(job=><div key={job.id} className="rounded-lg border border-[#EFE9DF] bg-white p-3">
+    <div className="space-y-2">{standaloneExternal.map(job=><div key={job.id} className="rounded-lg border border-[var(--color-divider)] bg-white p-3">
      <div className="flex flex-wrap justify-between gap-2 text-[11px]"><strong className="min-w-0 break-words">{job.input?.prompt||job.id}</strong>
       <span className={'shrink-0 rounded border px-2 py-0.5 '+stateClass(job.status)}>{job.status}</span></div>
      <ExternalContinuation job={job} onCreated={refresh}/>

@@ -33,7 +33,7 @@ export function RoomMessage({message, agent, name, owner, index, showReasoning =
      ? <a key={item.id} href={item.url} target="_blank" rel="noreferrer" title={item.name} className="block overflow-hidden rounded-lg border border-divider">
         <img src={item.url} alt={item.name} className="h-24 w-24 object-cover"/>
        </a>
-     : <a key={item.id} href={item.url} target="_blank" rel="noreferrer" className="rounded-lg border border-divider bg-white px-2 py-1 text-[11px] text-[#5C544A]">{item.name}</a>)}
+     : <a key={item.id} href={item.url} target="_blank" rel="noreferrer" className="rounded-lg border border-divider bg-white px-2 py-1 text-[11px] text-[var(--color-muted)]">{item.name}</a>)}
    </div>}
    {Boolean(message.tool_calls?.length) && <span className="room-message-tools">
     <TerminalSquare size={12}/>{t('rooms.toolCallsSummary', {count: message.tool_calls!.length})}

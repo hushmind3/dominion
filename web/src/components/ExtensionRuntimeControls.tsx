@@ -36,30 +36,30 @@ export function ExtensionRuntimeControls(){
  }
  return <Panel className="min-w-0 p-5">
   <div className="flex flex-wrap items-center justify-between gap-3">
-   <div className="flex items-center gap-2"><SlidersHorizontal size={18} className="text-[#A4583E]"/>
+   <div className="flex items-center gap-2"><SlidersHorizontal size={18} className="text-[var(--color-brand)]"/>
     <h3 className="m-0 text-sm font-bold">{en?'Runtime features':'실행 기능 제어'}</h3>
    </div>
    <button type="button" disabled={Boolean(saving)||remote.loading}
     onClick={()=>void save({},'reset')}
-    className="inline-flex items-center gap-1.5 rounded-lg border border-divider px-2.5 py-1.5 text-[11px] text-[#5C544A] hover:bg-[#FAF7F1] disabled:opacity-50">
+    className="inline-flex items-center gap-1.5 rounded-lg border border-divider px-2.5 py-1.5 text-[11px] text-[var(--color-muted)] hover:bg-[var(--color-canvas)] disabled:opacity-50">
     <RefreshCw size={13}/>{en?'Restore defaults':'기본값 복원'}
    </button>
   </div>
-  <p className="mt-2 text-[11px] leading-5 text-[#8A8176]">{en
+  <p className="mt-2 text-[11px] leading-5 text-[var(--color-muted)]">{en
    ?'Enable or disable optional product capabilities. The native Rust engine, conversation records and stored credentials are not removed.'
    :'부가기능만 켜고 끕니다. Rust 실행 엔진·기존 대화·저장된 연결 정보는 삭제되지 않습니다.'}</p>
-  {remote.loading&&<p role="status" className="mt-3 text-[11px] text-[#8A8176]">{en?'Loading settings…':'설정 불러오는 중…'}</p>}
+  {remote.loading&&<p role="status" className="mt-3 text-[11px] text-[var(--color-muted)]">{en?'Loading settings…':'설정 불러오는 중…'}</p>}
   {remote.error&&<p role="alert" className="mt-2 text-xs text-rose-700">{remote.error}</p>}
   <div className="mt-3 grid gap-2">
-   {features.map(feature=><label key={feature.key} className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-[#EFE9DF] bg-white px-3 py-2.5">
-    <span className="min-w-0"><strong className="block text-[12px] text-[#3A342D]">{en?feature.en:feature.ko}</strong>
-     <small className="block text-[10px] leading-4 text-[#8A8176]">{en?feature.enDesc:feature.koDesc}</small>
+   {features.map(feature=><label key={feature.key} className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-[var(--color-divider)] bg-white px-3 py-2.5">
+    <span className="min-w-0"><strong className="block text-[12px] text-[var(--color-ink)]">{en?feature.en:feature.ko}</strong>
+     <small className="block text-[10px] leading-4 text-[var(--color-muted)]">{en?feature.enDesc:feature.koDesc}</small>
     </span>
     <input type="checkbox" role="switch" checked={remote.value.enabled[feature.key]!==false}
      disabled={remote.loading||Boolean(saving)||Boolean(remote.error)}
      aria-label={en?feature.en:feature.ko}
      onChange={event=>void save({...remote.value.configured,[feature.key]:event.target.checked},feature.key)}
-     className="size-4 shrink-0 accent-[#A4583E]"/>
+     className="size-4 shrink-0 accent-[var(--color-brand)]"/>
    </label>)}
   </div>
   {saved&&<p role="status" className="mt-3 flex items-center gap-1 text-[11px] text-emerald-700"><Check size={13}/>{en?'Feature policy saved':'실행 기능 설정을 저장했습니다.'}</p>}

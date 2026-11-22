@@ -8,7 +8,7 @@ export function StatusPill({status,children}:{status:string;children?:ReactNode}
  const tone=['completed','ready','available'].includes(status)?'bg-emerald-50 text-emerald-700 ring-emerald-100':
   ['failed','budget_exceeded'].includes(status)?'bg-rose-50 text-rose-700 ring-rose-100':
   ['needs_review','repairing'].includes(status)?'bg-amber-50 text-amber-800 ring-amber-100':
-  ['running','reviewing','planning'].includes(status)?'bg-[#F7E8E1] text-brand-hover ring-[#F1DCCF]':'bg-[#F3EEE5] text-[#5C544A] ring-[#E0D8CC]';
+  ['running','reviewing','planning'].includes(status)?'bg-[var(--color-brand-soft)] text-brand-hover ring-[var(--color-brand-soft)]':'bg-[var(--color-canvas)] text-[var(--color-muted)] ring-[var(--color-divider)]';
  return <span className={'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset '+tone}>
   {children??(labels[status]?t(labels[status]):plainStatus(status))}
  </span>

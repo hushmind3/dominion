@@ -49,7 +49,7 @@ function ChannelHealth({channel}:{channel:ChannelBinding}){
   online:'border-emerald-200 bg-emerald-50 text-emerald-700',
   pending:'border-amber-200 bg-amber-50 text-amber-800',
   error:'border-rose-200 bg-rose-50 text-rose-700',
-  disabled:'border-divider bg-[#F3EEE5] text-[#70675C]',
+  disabled:'border-divider bg-[var(--color-canvas)] text-[#70675C]',
  }
  return <span role="status" className={'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium '+colors[tone]}>
   <span className={'size-1.5 rounded-full '+(tone==='online'?'bg-emerald-500':tone==='error'?'bg-rose-500':tone==='pending'?'bg-amber-500':'bg-stone-400')}/>
@@ -67,7 +67,7 @@ function ChannelCard({entry,bindings,rooms,probe,probing,deleting,onEdit,onCreat
  const Icon=channelIcons[entry.id.toLowerCase()]||MessageCircle
  return <Panel className="flex min-w-0 flex-col gap-3 rounded-2xl border border-divider bg-white p-4 sm:p-5">
   <div className="flex min-w-0 items-start gap-3">
-   <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-brand"><Icon size={22}/></div>
+   <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[var(--color-brand-soft)] text-brand"><Icon size={22}/></div>
    <div className="min-w-0 flex-1">
     <h3 className="m-0 break-words text-[15px] font-bold text-ink">{entry.name}</h3>
     <p className="mt-1 break-words text-xs leading-5 text-muted">{entry.description}</p>
@@ -77,13 +77,13 @@ function ChannelCard({entry,bindings,rooms,probe,probing,deleting,onEdit,onCreat
    </StatusPill>
   </div>
   <div className="flex min-h-6 flex-wrap gap-1.5">
-   {entry.features.map(feature=><span key={feature} className="rounded-md bg-[#FAF7F1] px-2 py-1 text-[10px] text-[#776D63]">{feature}</span>)}
-   <span className="rounded-md bg-[#FAF7F1] px-2 py-1 text-[10px] text-[#776D63]">{entry.mode==='outbound'?t('conn.outboundOnly'):entry.mode}</span>
+   {entry.features.map(feature=><span key={feature} className="rounded-md bg-[var(--color-canvas)] px-2 py-1 text-[10px] text-[var(--color-muted)]">{feature}</span>)}
+   <span className="rounded-md bg-[var(--color-canvas)] px-2 py-1 text-[10px] text-[var(--color-muted)]">{entry.mode==='outbound'?t('conn.outboundOnly'):entry.mode}</span>
   </div>
-  {bindings.length>0&&<div className="grid gap-2 border-t border-[#EFE9DF] pt-3">
-   {bindings.map(channel=><div key={channel.id} className="min-w-0 rounded-xl border border-divider bg-[#FAF7F1] p-3">
+  {bindings.length>0&&<div className="grid gap-2 border-t border-[var(--color-divider)] pt-3">
+   {bindings.map(channel=><div key={channel.id} className="min-w-0 rounded-xl border border-divider bg-[var(--color-canvas)] p-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
-     <strong className="min-w-0 break-words text-[12px] font-semibold text-[#3A342D]">{channel.name}</strong>
+     <strong className="min-w-0 break-words text-[12px] font-semibold text-[var(--color-ink)]">{channel.name}</strong>
      <ChannelHealth channel={channel}/>
     </div>
     <div className="mt-1 grid gap-1 text-[11px] leading-5 text-muted">
@@ -110,7 +110,7 @@ function ChannelCard({entry,bindings,rooms,probe,probing,deleting,onEdit,onCreat
     </div>
    </div>)}
   </div>}
-  <div className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-[#EFE9DF] pt-3">
+  <div className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-divider)] pt-3">
    {entry.docs?<a href={entry.docs} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs font-semibold text-brand-hover">
     {t('conn.docs')}<ExternalLink size={13}/>
    </a>:<span/>}
@@ -134,9 +134,9 @@ function ChannelEditor({editor,saving,error,rooms,agents,providers,onClose,onSav
  const valid=!missing.length&&!invalidRoom
  return <DialogBackdrop onDismiss={()=>{if(!saving)onClose()}}>
   <DialogPanel size="wide">
-   <div className="flex items-start justify-between gap-3 border-b border-[#EFE9DF] p-5">
+   <div className="flex items-start justify-between gap-3 border-b border-[var(--color-divider)] p-5">
     <div className="min-w-0">
-     <small className="text-[10px] font-semibold tracking-widest text-[#8A8176]">{entry.name.toUpperCase()} · CHANNEL</small>
+     <small className="text-[10px] font-semibold tracking-widest text-[var(--color-muted)]">{entry.name.toUpperCase()} · CHANNEL</small>
      <h2 className="mt-1 text-lg font-bold text-ink">{record.id?t('conn.edit'):t('conn.new')}</h2>
      <p className="mt-1 text-xs leading-5 text-muted">{entry.description}</p>
     </div>
@@ -144,7 +144,7 @@ function ChannelEditor({editor,saving,error,rooms,agents,providers,onClose,onSav
    </div>
    <div className="grid max-h-[65vh] gap-5 overflow-y-auto p-5">
     <div className="grid gap-3">
-     <h3 className="text-[13px] font-bold text-[#3A342D]">{english?'Connection details':'연결 정보'}</h3>
+     <h3 className="text-[13px] font-bold text-[var(--color-ink)]">{english?'Connection details':'연결 정보'}</h3>
      <FormField label={t('conn.name')}><TextInput autoFocus value={String(record.name||'')} onChange={e=>set('name',e.target.value)}/></FormField>
      {entry.fields.map(field=><FormField key={field.key}
        label={field.label+(field.required?' *':'')}
@@ -156,8 +156,8 @@ function ChannelEditor({editor,saving,error,rooms,agents,providers,onClose,onSav
        onChange={e=>set(field.key,e.target.value)}/>
      </FormField>)}
     </div>
-    <div className="grid gap-3 border-t border-[#EFE9DF] pt-4">
-     <h3 className="text-[13px] font-bold text-[#3A342D]">{english?'Destination and routing':'전송 대상과 라우팅'}</h3>
+    <div className="grid gap-3 border-t border-[var(--color-divider)] pt-4">
+     <h3 className="text-[13px] font-bold text-[var(--color-ink)]">{english?'Destination and routing':'전송 대상과 라우팅'}</h3>
      <FormField label={entry.requiresRoom?t('conn.roomOrAgent'):t('conn.replyMode')}>
       <SelectInput value={record.roomId||''} onChange={e=>set('roomId',e.target.value)}>
        <option value="">{entry.requiresRoom?t('conn.pickRoom'):t('conn.singleAgent')}</option>
@@ -167,7 +167,7 @@ function ChannelEditor({editor,saving,error,rooms,agents,providers,onClose,onSav
        </option>)}
       </SelectInput>
      </FormField>
-     {record.roomId&&<div className="flex gap-2 rounded-xl border border-divider bg-[#FAF7F1] p-3 text-xs leading-5 text-muted">
+     {record.roomId&&<div className="flex gap-2 rounded-xl border border-divider bg-[var(--color-canvas)] p-3 text-xs leading-5 text-muted">
       <UsersRound size={16} className="shrink-0"/><div><strong>{t('conn.roomNote')}</strong><p>{entry.maxRoomParticipants?t('conn.dlg.maxParticipants',{count:entry.maxRoomParticipants}):entry.mode==='outbound'?t('conn.dlg.outboundNote'):t('conn.dlg.roomPolicyNote')}</p></div>
      </div>}
      {record.roomId&&entry.mode!=='outbound'&&<FormField label={t('conn.policy')}>
@@ -187,29 +187,29 @@ function ChannelEditor({editor,saving,error,rooms,agents,providers,onClose,onSav
        </SelectInput></FormField>
       </div>
       <FormField label={t('conn.model')}><TextInput value={record.model||''} placeholder={t('conn.dlg.agentDefaultModel')} onChange={e=>set('model',e.target.value)}/></FormField>
-      <label className="flex items-center gap-2 text-[12px] text-[#4A443C]">
+      <label className="flex items-center gap-2 text-[12px] text-[var(--color-ink)]">
        <TextInput type="checkbox" checked={record.mentionOnly!==false} onChange={e=>set('mentionOnly',e.target.checked)}/>{t('conn.mentionOnly')}
       </label>
      </>}
     </div>
-    <div className="grid gap-3 border-t border-[#EFE9DF] pt-4">
-     <h3 className="text-[13px] font-bold text-[#3A342D]">{english?'Delivery options':'전송 옵션'}</h3>
+    <div className="grid gap-3 border-t border-[var(--color-divider)] pt-4">
+     <h3 className="text-[13px] font-bold text-[var(--color-ink)]">{english?'Delivery options':'전송 옵션'}</h3>
      {entry.id==='discord'&&<>
-      <label className="flex items-center gap-2 text-[12px] text-[#4A443C]">
+      <label className="flex items-center gap-2 text-[12px] text-[var(--color-ink)]">
        <TextInput type="checkbox" checked={Boolean(record.replyMentionBots)} onChange={e=>set('replyMentionBots',e.target.checked)}/>{t('conn.dlg.discordMention')}
       </label>
-      <label className="flex items-center gap-2 text-[12px] text-[#4A443C]">
+      <label className="flex items-center gap-2 text-[12px] text-[var(--color-ink)]">
        <TextInput type="checkbox" checked={Boolean(record.toolsEnabled)} onChange={e=>set('toolsEnabled',e.target.checked)}/>{t('conn.dlg.discordTools')}
       </label>
      </>}
-     {record.roomId&&<label className="flex items-center gap-2 text-[12px] text-[#4A443C]">
+     {record.roomId&&<label className="flex items-center gap-2 text-[12px] text-[var(--color-ink)]">
       <TextInput type="checkbox" checked={Boolean(record.syncRoomMessages)} onChange={e=>set('syncRoomMessages',e.target.checked)}/>{t('conn.dlg.syncRoom')}
      </label>}
-     <label className="flex items-center gap-2 rounded-xl border border-divider bg-[#FAF7F1] p-3 text-[12px] font-semibold text-[#3A342D]">
+     <label className="flex items-center gap-2 rounded-xl border border-divider bg-[var(--color-canvas)] p-3 text-[12px] font-semibold text-[var(--color-ink)]">
       <TextInput type="checkbox" checked={Boolean(record.enabled)} onChange={e=>set('enabled',e.target.checked)}/>{t('conn.enable')}
      </label>
     </div>
-    {record.webhookPath&&<div className="rounded-xl bg-[#FAF7F1] p-3 text-xs text-[#4A443C]">
+    {record.webhookPath&&<div className="rounded-xl bg-[var(--color-canvas)] p-3 text-xs text-[var(--color-ink)]">
      <strong className="block">{t('conn.webhook')}</strong><code className="block break-all">{record.webhookPath}</code>
      <small>{t('conn.dlg.webhookNote')}</small>
     </div>}
@@ -220,8 +220,8 @@ function ChannelEditor({editor,saving,error,rooms,agents,providers,onClose,onSav
     </details>:null}
    </div>
    {error&&<div className="px-5"><Notice message={error}/></div>}
-   <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#EFE9DF] px-5 py-4">
-    <span role="status" className="text-[11px] text-[#8A8176]">
+   <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-divider)] px-5 py-4">
+    <span role="status" className="text-[11px] text-[var(--color-muted)]">
      {missing.length?(english?'Required fields missing':'필수 항목을 입력하세요'):invalidRoom?(english?'Room capacity exceeded':'회의실 참여 인원 초과'):''}
     </span>
     <div className="flex gap-2">
@@ -342,8 +342,8 @@ export function ConnectionsPage(){
      {label:t('conn.connected'),value:connected,icon:Check},
      {label:t('conn.outbound'),value:outbound,icon:Send},
     ].map(({label,value,icon:Icon})=><div key={label} className="flex min-w-0 items-center gap-3 rounded-xl border border-divider bg-white p-3 sm:p-4">
-     <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-[#F7E8E1] text-brand"><Icon size={17}/></span>
-     <div className="min-w-0"><small className="block text-[11px] text-[#8A8176]">{label}</small><strong className="block text-lg font-bold text-ink">{value}</strong></div>
+     <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-[var(--color-brand-soft)] text-brand"><Icon size={17}/></span>
+     <div className="min-w-0"><small className="block text-[11px] text-[var(--color-muted)]">{label}</small><strong className="block text-lg font-bold text-ink">{value}</strong></div>
     </div>)}
    </div>
    <Notice message={registry.error||channels.error||agents.error||rooms.error||providers.error} retrying={registry.refreshing||channels.refreshing||agents.refreshing||rooms.refreshing||providers.refreshing} onRetry={()=>{void Promise.all([registry.reload(),channels.reload(),agents.reload(),rooms.reload(),providers.reload()])}}/>
@@ -351,14 +351,14 @@ export function ConnectionsPage(){
    {info&&<div role="status" className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700"><Check size={16}/>{info}</div>}
    <div className="mb-4 grid gap-3">
     <div className="flex min-w-0 items-center gap-2 rounded-xl border border-divider bg-white px-3 py-1">
-     <Search size={17} className="shrink-0 text-[#8A8176]"/>
+     <Search size={17} className="shrink-0 text-[var(--color-muted)]"/>
      <TextInput aria-label={t('conn.search')} className="!border-0 !bg-transparent !shadow-none focus:!ring-0"
       value={query} onChange={e=>setQuery(e.target.value)} placeholder={t('conn.search')}
       onKeyDown={e=>{if(e.key==='Escape')setQuery('')}}/>
      {query&&<Button size="icon" variant="ghost" aria-label={english?'Clear search':'검색 지우기'} onClick={()=>setQuery('')}><X size={15}/></Button>}
     </div>
     <div className="flex flex-wrap items-center gap-1.5">
-     <Filter size={15} className="mr-1 text-[#8A8176]"/>
+     <Filter size={15} className="mr-1 text-[var(--color-muted)]"/>
      {groups.map(group=><Button key={group.id} size="sm"
       variant={category===group.id?'primary':'ghost'} onClick={()=>setCategory(group.id)}>
       {t(group.name)}
@@ -368,7 +368,7 @@ export function ConnectionsPage(){
       onClick={()=>setOnlyConfigured(current=>!current)} aria-pressed={onlyConfigured}>
       {english?'Configured only':'설정된 채널만'}
      </Button>
-     <span aria-live="polite" className="ml-auto text-[11px] text-[#8A8176]">{filtered.length} / {registry.value.length}</span>
+     <span aria-live="polite" className="ml-auto text-[11px] text-[var(--color-muted)]">{filtered.length} / {registry.value.length}</span>
     </div>
    </div>
    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -379,13 +379,13 @@ export function ConnectionsPage(){
      onRemove={channel=>{void remove(channel)}}/>)}
    </div>
    {!filtered.length&&<Panel><div className="flex min-h-40 flex-col items-center justify-center gap-3 p-6 text-center">
-    <Search size={23} className="text-[#8A8176]"/>
-    <strong className="text-sm text-[#3A342D]">{t('conn.noResults')}</strong>
+    <Search size={23} className="text-[var(--color-muted)]"/>
+    <strong className="text-sm text-[var(--color-ink)]">{t('conn.noResults')}</strong>
     <Button size="sm" variant="secondary" onClick={()=>{setQuery('');setCategory('all');setOnlyConfigured(false)}}>
      {english?'Reset filters':'필터 초기화'}
     </Button>
    </div></Panel>}
-   <Panel className="mt-4 flex items-start gap-3 rounded-xl border border-[#EED9CC] bg-[#F7E8E1] p-4 text-xs leading-5">
+   <Panel className="mt-4 flex items-start gap-3 rounded-xl border border-[var(--color-divider)] bg-[var(--color-brand-soft)] p-4 text-xs leading-5">
     <ShieldCheck size={20} className="shrink-0 text-brand-hover"/>
     <div><strong>{t('conn.noteTitle')}</strong><p className="mt-1">{t('conn.note')}</p></div>
    </Panel>

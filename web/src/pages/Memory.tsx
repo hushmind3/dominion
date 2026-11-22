@@ -80,11 +80,11 @@ export function MemoryPage(){
   {notice&&<div role="status" className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{notice}</div>}
   <div role="tablist" aria-label={locale==='en'?'Memory settings':'메모리 설정'} className="mb-5 flex flex-wrap gap-2 border-b border-divider pb-3">
    <button type="button" role="tab" aria-selected={tab==='memories'} onClick={()=>setTab('memories')}
-    className={'rounded-lg px-4 py-2 text-sm font-semibold '+(tab==='memories'?'bg-[#A4583E] text-white':'bg-[#F7F1E6] text-[#675C51] hover:bg-[#EEE5D9]')}>
+    className={'rounded-lg px-4 py-2 text-sm font-semibold '+(tab==='memories'?'bg-[var(--color-brand)] text-white':'bg-[var(--color-canvas)] text-[#675C51] hover:bg-[var(--color-canvas)]')}>
     {locale==='en'?'Memories':'기억'}
    </button>
    <button type="button" role="tab" aria-selected={tab==='systemPrompt'} onClick={()=>setTab('systemPrompt')}
-    className={'rounded-lg px-4 py-2 text-sm font-semibold '+(tab==='systemPrompt'?'bg-[#A4583E] text-white':'bg-[#F7F1E6] text-[#675C51] hover:bg-[#EEE5D9]')}>
+    className={'rounded-lg px-4 py-2 text-sm font-semibold '+(tab==='systemPrompt'?'bg-[var(--color-brand)] text-white':'bg-[var(--color-canvas)] text-[#675C51] hover:bg-[var(--color-canvas)]')}>
     {locale==='en'?'Reply instructions':'답변 방식'}
    </button>
   </div>
@@ -107,11 +107,11 @@ export function MemoryPage(){
      <div className="mb-2 flex flex-wrap items-center gap-2"><BookOpenText size={18}/><strong>{ownerName(m)}</strong><span className="text-xs text-muted">{t(statusLabels[statusOf(m)] ?? 'memory.status.excluded')}</span>{statusOf(m)==='active'&&<Button type="button" size="icon" variant="ghost" className="ml-auto" disabled={busy} onClick={()=>{setEditingId(m.id);setEditText(m.text);setError('')}} aria-label={t('memory.edit')}><Pencil size={16}/></Button>}<Button size="icon" variant="ghost" className={statusOf(m)==='active'?'':'ml-auto'} disabled={busy} onClick={()=>void drop(m.id)} aria-label={t('memory.delete')}><Trash2 size={16}/></Button></div>
      {editingId===m.id?<div className="grid gap-2">
       <TextArea rows={4} aria-label={t('memory.edit')} value={editText} onChange={event=>setEditText(event.target.value)}/>
-      <p className="text-[11px] text-[#8A8176]">{t('memory.editNote')}</p>
+      <p className="text-[11px] text-[var(--color-muted)]">{t('memory.editNote')}</p>
       <div className="flex flex-wrap gap-2"><Button type="button" variant="primary" disabled={busy||!editText.trim()||editText.trim()===m.text.trim()} onClick={()=>void correct(m.id)}><Check size={14}/> {t('memory.update')}</Button><Button type="button" variant="ghost" disabled={busy} onClick={()=>{setEditingId('');setEditText('')}}>{t('memory.cancel')}</Button></div>
      </div>:<p className="whitespace-pre-wrap">{m.text}</p>}
      <div className="mt-2 flex flex-wrap gap-x-3 text-xs text-muted"><span>{t('memory.source')} {sourceLabels[m.source??'user']?t(sourceLabels[m.source??'user'] as LocaleKey):m.source}</span><span>{t('memory.importance')} {typeof m.importance==='number'?m.importance.toFixed(2):t('memory.time.none')}</span><span>{t('memory.lastUsed')} {displayTime(m.lastUsedAt)}</span></div>
-     <details className="mt-2 text-xs text-[#5C544A]"><summary className="cursor-pointer">{t('memory.evidence')}</summary><div className="mt-2 grid gap-1 break-all"><span>{t('memory.created')} {displayTime(m.createdAt)}</span><span>{t('memory.verification')} {m.verification==='source_quote'?t('memory.verification.sourceQuote'):m.verification||t('memory.time.none')}</span>{m.partitionKey&&<span>{t('memory.workspace')} {m.partitionKey}</span>}{m.sessionId&&<span>{t('memory.sessionId')} {m.sessionId}</span>}{m.sourceMessageIds?.length?<span>{t('memory.sourceMessages')} {m.sourceMessageIds.join(', ')}</span>:null}{m.evidenceQuote&&<blockquote>{m.evidenceQuote}</blockquote>}{m.archiveReason||m.forgetReason?<span>{t('memory.archiveReason')} {m.archiveReason??m.forgetReason}</span>:null}{m.expiresAt&&<span>{t('memory.expires')} {displayTime(m.expiresAt)}</span>}</div></details>
+     <details className="mt-2 text-xs text-[var(--color-muted)]"><summary className="cursor-pointer">{t('memory.evidence')}</summary><div className="mt-2 grid gap-1 break-all"><span>{t('memory.created')} {displayTime(m.createdAt)}</span><span>{t('memory.verification')} {m.verification==='source_quote'?t('memory.verification.sourceQuote'):m.verification||t('memory.time.none')}</span>{m.partitionKey&&<span>{t('memory.workspace')} {m.partitionKey}</span>}{m.sessionId&&<span>{t('memory.sessionId')} {m.sessionId}</span>}{m.sourceMessageIds?.length?<span>{t('memory.sourceMessages')} {m.sourceMessageIds.join(', ')}</span>:null}{m.evidenceQuote&&<blockquote>{m.evidenceQuote}</blockquote>}{m.archiveReason||m.forgetReason?<span>{t('memory.archiveReason')} {m.archiveReason??m.forgetReason}</span>:null}{m.expiresAt&&<span>{t('memory.expires')} {displayTime(m.expiresAt)}</span>}</div></details>
     </Panel>)}</div>
     {filtered.length>visibleLimit&&<Button variant="secondary" className="w-full" onClick={()=>setVisibleLimit(value=>value+40)}>{t('memory.showMore',{count:filtered.length-visibleLimit})}</Button>}
     {!memories.error&&!filtered.length&&<Panel className="p-6 text-center text-sm text-muted">{memories.loading?t('memory.loading'):t('memory.empty')}</Panel>}

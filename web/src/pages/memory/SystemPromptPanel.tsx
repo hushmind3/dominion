@@ -164,7 +164,7 @@ export function SystemPromptPanel(){
         onChange={e=>setQueryDraft(e.target.value)}/>
       </FormField>
      </div>
-     <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-[#5C544A]">
+     <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-[var(--color-muted)]">
       <label className="flex items-center gap-1.5">
        <input type="checkbox" checked={toolsEnabled} onChange={e=>setToolsEnabled(e.target.checked)}/>
        {tr('도구 활성화 가정','Assume tools available',en)}
@@ -199,7 +199,7 @@ export function SystemPromptPanel(){
          'Without an override the compiler generates instructions. Saving empty text removes the default text.',en)}
        </p>
        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs text-[#8A8176]">
+        <span className="text-xs text-[var(--color-muted)]">
          {fullDraft.length.toLocaleString()} / 32,000 · {tr('현재 추정','Current estimate',en)} {preview.systemTokensEstimated.toLocaleString()} tokens
         </span>
         <div className="flex flex-wrap gap-2">
@@ -240,7 +240,7 @@ export function SystemPromptPanel(){
    <div className="grid min-w-0 gap-5">
     <Panel className="min-w-0 p-5">
      <Subheading title={tr('공통 사용자 지침','Shared owner instructions',en)}/>
-     <label className="mb-3 flex items-center gap-2 text-sm text-[#5C544A]">
+     <label className="mb-3 flex items-center gap-2 text-sm text-[var(--color-muted)]">
       <input type="checkbox" checked={ownerEnabled} disabled={loading||busy}
        onChange={e=>setOwnerEnabled(e.target.checked)}/>
       {tr('공통 지침 사용','Enable shared instructions',en)}

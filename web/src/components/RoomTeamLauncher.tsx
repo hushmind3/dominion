@@ -82,7 +82,7 @@ export function RoomTeamLauncher({roomId,sessionId,participantCount,agents,tools
  return <div className="room-team-workspace">
   <section className="room-team-members" aria-label={en?'Room team members':'그룹 참여 AI'}>
    <div className="flex items-center justify-between gap-3">
-    <div className="flex items-center gap-2"><UsersRound size={18} className="text-[#A4583E]"/>
+    <div className="flex items-center gap-2"><UsersRound size={18} className="text-[var(--color-brand)]"/>
      <strong className="text-[14px]">{en?'Available room agents':'함께 일할 AI'}</strong>
     </div>
     <span className="rounded-full bg-white px-3 py-1 text-[12px] font-semibold text-[#7C6250]">
@@ -130,9 +130,9 @@ export function RoomTeamLauncher({roomId,sessionId,participantCount,agents,tools
       <span className="ml-auto text-[12px] font-normal">{en?parallel+' concurrent tasks':'동시에 '+parallel+'개 작업'}</span>
      </summary>
      <div className="mt-3 border-t border-[#E8DFD2] pt-3">
-      <label className="flex flex-wrap items-center justify-between gap-3 text-[13px] text-[#514940]">
+      <label className="flex flex-wrap items-center justify-between gap-3 text-[13px] text-[var(--color-ink)]">
        <span><strong>{en?'Concurrent tasks':'동시 실행 작업 수'}</strong>
-        <small className="mt-1 block text-[12px] text-[#8A8176]">
+        <small className="mt-1 block text-[12px] text-[var(--color-muted)]">
          {en?'1–4 tasks at once. The system decides the order and dependencies.':'1~4개를 동시에 처리합니다. 순서와 선행 조건은 AI가 결정합니다.'}</small>
        </span>
        <SelectInput aria-label={en?'Concurrent tasks':'동시 실행 작업 수'} className="!w-24 !py-2 !text-[13px]"
