@@ -68,7 +68,14 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   !current&&initialProvider?{providerId:initialProvider,model:initialModel??''}:undefined;
  const enabledProviders=providers.value.filter(provider=>provider.enabled!==false);
  const sessionProvider=enabledProviders.find(provider=>provider.id===selectedSession?.providerId);
- const providerId=manual?.providerId??(activeAgent?.providerId||sessionProvider?.id||enabledProviders[0]?.id||'');
+ // Auto-selection must land on a provider that can answer. The first enabled
+ // entry can be a half-configured one whose key fails, which strands the owner
+ // behind "모델을 먼저 연결하기" before they have typed anything.
+ const readyProvider=enabledProviders.find(p=>p.local)
+  ||enabledProviders.find(p=>p.hasKey&&Boolean(p.model))
+  ||enabledProviders.find(p=>p.hasKey)
+  ||enabledProviders[0]
+ const providerId=manual?.providerId??(activeAgent?.providerId||sessionProvider?.id||readyProvider?.id||'');
  const selectedProvider=enabledProviders.find(provider=>provider.id===providerId);
  const model=manual?.model||((activeAgent?.providerId===providerId?activeAgent.model:'')||
   (selectedSession?.providerId===providerId&&(!agentMode||selectedSession.agentId===agentId)?selectedSession.model:'')||selectedProvider?.model||'');

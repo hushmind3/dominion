@@ -60,3 +60,10 @@ test('registry tools get a Korean one-line summary', () => {
   const extensions = read('src/pages/Extensions.tsx')
   assert.match(extensions, /koreanToolSummary\(x\.name, x\.description\)/)
 })
+
+test('auto-selection skips half-configured providers', () => {
+  const chat = read('src/pages/Chat.tsx')
+  assert.match(chat, /const readyProvider=enabledProviders\.find\(p=>p\.local\)/)
+  assert.match(chat, /enabledProviders\.find\(p=>p\.hasKey&&Boolean\(p\.model\)\)/)
+  assert.match(chat, /providerId=manual\?\.providerId\?\?\(activeAgent\?\.providerId\|\|sessionProvider\?\.id\|\|readyProvider\?\.id/)
+})
