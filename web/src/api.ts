@@ -1,5 +1,6 @@
 import {t} from './i18n'
 import {translateError} from './i18n/errors'
+import {plainError} from './i18n/plain'
 
 export type RecordItem = {id:string;name?:string;createdAt?:string;updatedAt?:string;[key:string]:any}
 export type Provider = RecordItem & {name:string;baseUrl:string;kind:string;enabled:boolean;hasKey?:boolean;model?:string;learning?:boolean;reflection?:boolean;reflectionModel?:string;accountId?:string}
@@ -40,7 +41,7 @@ async function readJson(res: Response) {
 export async function request<T = any>(url: string, init?: RequestInit): Promise<T> {
  const res = await apiFetch(url, init)
  const data = await readJson(res)
- if (!res.ok) throw new ApiError(res.status, translateError(data?.error || 'HTTP ' + res.status))
+ if (!res.ok) throw new ApiError(res.status, plainError(translateError(data?.error || 'HTTP ' + res.status)))
  return data as T
 }
 
@@ -59,7 +60,7 @@ export type ModelOption = {id: string; name?: string; free?: boolean|null; freeS
 export type Approval = {id: string; tool: string; args: unknown; status: string; sessionId: string}
 export async function resolveApproval(id: string, allow: boolean) {
  const result = await post<{resolved: boolean; error?: string}>('/api/approvals', {id, allow})
- if (!result.resolved) throw Error(result.error ? translateError(result.error) : t('chat.approvalGone'))
+ if (!result.resolved) throw Error(result.error ? plainError(translateError(result.error)) : t('chat.approvalGone'))
 }
 
 export async function openOAuth(id: string) {
@@ -88,7 +89,7 @@ export type ChatRequest = {
 
 export async function streamChat(data: ChatRequest, onEvent: (e: StreamEvent) => void, signal: AbortSignal) {
  const res = await apiFetch('/api/chat', {method: 'POST', body: JSON.stringify(data), signal})
- if (!res.ok) throw new ApiError(res.status, translateError((await readJson(res))?.error || 'HTTP ' + res.status))
+ if (!res.ok) throw new ApiError(res.status, plainError(translateError((await readJson(res))?.error || 'HTTP ' + res.status)))
  if (!res.body || !res.headers.get('Content-Type')?.startsWith('text/event-stream')) {
   throw Error('No streaming response')
  }

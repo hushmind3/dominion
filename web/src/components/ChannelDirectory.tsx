@@ -2,6 +2,7 @@ import {useEffect,useMemo,useState} from 'react'
 import {Activity,AlertCircle,ArrowLeft,ArrowRight,ArrowUpRight,Check,CheckCheck,ChevronRight,Clock3,ExternalLink,MessageCircle,Plus,Search,Send,Settings2,ShieldCheck,Trash2,Users,Wifi} from 'lucide-react'
 import {Button,TextInput} from './Primitives'
 import {t,useLocale,type LocaleKey} from '../i18n'
+import {plainError} from '../i18n/plain'
 import {ChannelDeliveryReview} from './ChannelDeliveryReview'
 import {channelHealth,matchingChannels,sortChannelBindings,type Channel,type ChannelEntry,type ChannelHealth,type ChannelProbe} from '../utils/channelView'
 
@@ -243,7 +244,7 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
            <div className="min-w-0">
             <h4 className="text-[12px] font-bold text-[#8A521D]">{t('conn.diagnosisTitle')}</h4>
             <p className="mt-1 break-words text-[12px] leading-5 text-[#815A35]">
-             {selected.runtimeError||selected.delivery?.lastError||(selected.missing?.length?t('conn.missingFields',{fields:selected.missing.join(', ')}):t('conn.setupNeededHint'))}
+             {plainError(selected.runtimeError||selected.delivery?.lastError)||(selected.missing?.length?t('conn.missingFields',{fields:selected.missing.join(', ')}):t('conn.setupNeededHint'))}
             </p>
            </div>
           </div>}
