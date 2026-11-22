@@ -23,10 +23,6 @@ export function QuickConnect({accountConnected, canImport, busy, pending, loginU
   return <section className="quick-connect">
     <div className="quick-connect-intro"><h3>{t('connect.title')}</h3><p>{t('connect.description')}</p></div>
     <div className="quick-connect-grid">
-      <div className="quick-connect-option"><span className="quick-connect-icon"><Sparkles size={24}/></span><h4>{t('connect.accountTitle')}</h4><p>{t('connect.accountDescription')}</p>
-        {accountConnected ? <a className="quick-connect-chat" href="#/chat?provider=codex-oauth"><Check size={16}/>{t('models.simple.start')}<ArrowRight size={15}/></a> : <Button variant="primary" disabled={busy || pending} onClick={onLogin}>{pending || busy ? <LoaderCircle size={16} className="animate-spin"/> : <LogIn size={16}/>} {t(pending ? 'connect.waiting' : 'connect.accountAction')}</Button>}
-        {canImport && !accountConnected && <Button variant="ghost" size="sm" disabled={busy || pending} onClick={onImport}>{t('connect.import')}</Button>}
-      </div>
       <div className="quick-connect-option"><span className="quick-connect-icon"><KeyRound size={24}/></span><h4>{t('connect.keyTitle')}</h4><p>{t('connect.keyDescription')}</p>
         <SelectInput value={provider} onChange={event => setProvider(event.target.value)} aria-label={t('connect.provider')}><option>OpenAI</option><option>Anthropic</option><option>Google Gemini</option><option>OpenRouter</option><option>Groq</option><option>DeepSeek</option></SelectInput>
         <Button variant="secondary" onClick={() => onKey(provider)}>{t('connect.keyAction')}<ArrowRight size={15}/></Button>
@@ -37,6 +33,5 @@ export function QuickConnect({accountConnected, canImport, busy, pending, loginU
     </div>
     {pending && <div className="quick-connect-progress" role="status"><LoaderCircle size={17} className="animate-spin"/><span>{t('connect.pendingDescription')}</span>{loginUrl && <a href={loginUrl} target="_blank" rel="noreferrer">{t('models.oauth.openBrowser')}<ArrowRight size={14}/></a>}</div>}
     {message && <p className="quick-connect-message" role="status">{message}</p>}
-    <Button variant="ghost" onClick={onBrowse} className="quick-connect-browse">{t('connect.browse')}<ArrowRight size={15}/></Button>
   </section>
 }
