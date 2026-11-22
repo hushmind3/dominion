@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
+const source=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8')
 import {classifyRuntimeFailure,engineForModel,memoryFit,modelPreflight,requiredMemory,selectRecommended,selectSmaller,planDownloadLaunch,preferredServerModelFormat} from '../src/utils/modelHardware.ts'
 
 const gguf=(id,bytes)=>({id,format:'gguf',bytes})
