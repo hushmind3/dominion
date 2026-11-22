@@ -34,7 +34,7 @@ export function WorkspaceSidebar({page,open,collapsed,online,running,pending,onN
    <nav ref={navigationRef} aria-label={t('shell.mainNav')} className="mt-4 min-h-0 flex-1 overflow-y-auto px-2.5 pb-4">
     {navigation.map(group=><section key={group.title} className="mt-5">
      <h2 className="mb-2 px-3 text-[11px] font-semibold text-[#8A8176]">{t(group.title)}</h2>
-     {<div className="space-y-0.5">{group.items.filter(item=>!settingsOnly||!['chat','rooms'].includes(item.id)).map(item=>{const Icon=item.icon;const count=item.id==='activity'?running:item.id==='settings'?pending:0;return <Button variant="bare" key={item.id} type="button" aria-current={page===item.id?'page':undefined} title={t(item.label)} onClick={()=>onNavigate(item.id)}
+     {<div className="space-y-0.5">{group.items.map(item=>{const Icon=item.icon;const count=item.id==='activity'?running:item.id==='settings'?pending:0;return <Button variant="bare" key={item.id} type="button" aria-current={page===item.id?'page':undefined} title={t(item.label)} onClick={()=>onNavigate(item.id)}
       className={'group flex h-9 w-full items-center gap-3 rounded-xl px-3 text-left text-[13px] transition-colors '+(page===item.id?'bg-[#FFFDF9] font-semibold text-[#24211D] shadow-[0_2px_8px_rgba(70,58,42,.07)]':'text-[#6F675D] hover:bg-[#E8E0D3] hover:text-[#24211D]')}>
       <Icon size={15} strokeWidth={1.8}/><span className="min-w-0 flex-1">{t(item.label)}</span>{count>0&&<span className="text-[10px] font-semibold text-[#C96442]">{count}</span>}
      </Button>})}</div>}
@@ -51,8 +51,9 @@ export function WorkspaceSidebar({page,open,collapsed,online,running,pending,onN
 export function SettingsHeader({page,online,build,onClose,onSearch}:{page:PageId;online:boolean;build?:{branch:string;commit:string}|null;onClose:()=>void;onSearch?:()=>void}){
  const locale=useLocale()
  const selected=items.find(x=>x.id===page)
- return <header className="flex h-13 shrink-0 items-center gap-3 border-b border-[#E7E0D5] bg-[#FFFDF9] px-4">
-  <Settings size={17} className="text-[#8A8176]"/><h1 className="min-w-0 flex-1 truncate text-[14px] font-semibold text-[#24211D]">{selected?t(selected.label):t('nav.settings')}</h1>
+ const SelectedIcon=selected?.icon||Settings
+ return <header className="flex min-h-16 shrink-0 items-center gap-3 border-b border-[#E7E0D5] bg-[#FFFDF9] px-4 sm:px-6">
+  <SelectedIcon size={18} className="text-[#A35C3F]"/><div className="min-w-0 flex-1"><p className="text-[10px] font-semibold uppercase tracking-[.14em] text-[#9C8A7A]">DOMINION / {locale==='en'?'Workspace':'워크스페이스'}</p><h1 className="mt-0.5 truncate text-[15px] font-bold text-[#24211D]">{selected?t(selected.label):t('nav.settings')}</h1></div>
   <span className={'hidden items-center gap-1.5 text-[11px] sm:inline-flex '+(online?'text-emerald-700':'text-rose-600')}><i className={'size-1.5 rounded-full '+(online?'bg-emerald-500':'bg-rose-500')}/>{online?t('shell.connected'):t('shell.disconnected')}</span>
   {build?.branch&&build.branch!=='unknown'&&<span className="hidden max-w-[185px] truncate rounded-md border border-[#E7E0D5] bg-[#F7F3EC] px-2 py-1 text-[10px] font-mono text-[#8A8176] lg:block" title={build.branch+' · '+build.commit}>{build.branch.replace(/^dominion-/,'')} · {build.commit.slice(0,7)}</span>}
   {onSearch&&<Button variant="ghost" size="icon" aria-label={locale==='en'?'Search workspace menus':'도미니언 메뉴 검색'} title="Ctrl / ⌘ K" onClick={onSearch}><Search size={18}/></Button>}
