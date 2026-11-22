@@ -201,7 +201,7 @@
 .quick-connect-intro { margin-bottom: 24px; }
 .quick-connect-intro h3 { color: #5d4b39; font-size: 18px; font-weight: 600; letter-spacing: -.025em; }
 .quick-connect-intro p { margin-top: 7px; color: #998974; font-size: 13px; }
-.quick-connect-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.quick-connect-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .quick-connect-option { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; border: 1px solid var(--color-divider); border-radius: 18px; background: var(--color-surface); padding: 26px 22px 22px; }
 .quick-connect-option:first-child { border-color: #dfc4ad; background: #fcf4e9; }
 .quick-connect-icon { display: grid; width: 46px; height: 46px; place-items: center; margin-bottom: 24px; border-radius: 14px; background: #f1e6d7; color: #ae7c55; }
