@@ -22,7 +22,7 @@ const displayTime=(time?:string)=>time&&Number.isFinite(Date.parse(time))?format
 const statusOf=(memory:Memory)=>memory.retrievalEligible?'active':memory.status&&memory.status!=='active'?memory.status:'excluded'
 
 export function MemoryPage(){
- useLocale()
+ const locale=useLocale()
  const memories=useRemote<Memory[]>('/api/memories',[])
  const agents=useRemote<Agent[]>('/api/agents',[])
  const [query,setQuery]=useState(''),[text,setText]=useState(''),[scope,setScope]=useState('shared')
@@ -77,12 +77,27 @@ export function MemoryPage(){
   setBusy(true);setError('');setNotice('')
   try{await del('/api/memories/'+encodeURIComponent(id));if(editing?.id===id)setEditing(null);await memories.reload()}catch(e){setError((e as Error).message)}finally{setBusy(false)}
  }
- return <div className="mx-auto w-full max-w-[1320px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8">
+ const statusOverview=[
+  {id:'all',ko:'전체 기억',english:'All memories',count:memories.value.length},
+  {id:'active',ko:'검색 가능',english:'Retrievable',count:memories.value.filter(m=>statusOf(m)==='active').length},
+  {id:'archived',ko:'보관',english:'Archived',count:memories.value.filter(m=>statusOf(m)==='archived').length},
+  {id:'excluded',ko:'검색 제외',english:'Excluded',count:memories.value.filter(m=>statusOf(m)==='excluded').length},
+ ]
+ return <div className="mx-auto w-full max-w-[1480px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8">
   <Headline eyebrow={t('ui.eyebrow.memory')} title={t('memory.title')} description={t('memory.description')}/>
+  <div className="mb-5 grid grid-cols-2 gap-2 md:grid-cols-4" role="group" aria-label={locale==='en'?'Memory filters':'기억 상태 필터'}>
+   {statusOverview.map(item=><button key={item.id} type="button" onClick={()=>setStatus(item.id)}
+    aria-pressed={status===item.id}
+    className={'min-w-0 rounded-xl border p-4 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 '+
+     (status===item.id?'border-[#B18A6E] bg-[#FAF1E8]':'border-[#E7E0D5] bg-white hover:bg-[#F7F4ED]')}>
+    <strong className="block text-[23px] font-bold tabular-nums text-[#304036]">{item.count}</strong>
+    <span className="mt-1 block text-[11px] text-[#7F746A]">{locale==='en'?item.english:item.ko}</span>
+   </button>)}
+  </div>
   <Notice message={error||memories.error||agents.error}/>
   {notice&&<div role="status" className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{notice}</div>}
   <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-   <Panel className="min-w-0 p-5">
+   <Panel className="min-w-0 p-5 xl:sticky xl:top-4">
     <Subheading title={t('memory.new')} extra={<Action disabled={busy||!text.trim()||memoryTextLength(text.trim())>MEMORY_TEXT_LIMIT} onClick={save}><Plus size={16}/> {t('memory.save')}</Action>}/>
     <FormField label={t('memory.content')}><TextArea rows={6} maxLength={MEMORY_TEXT_LIMIT*2} value={text} onChange={e=>setText(e.target.value)}/>
      <p className={'mt-1 text-right text-[10px] '+(memoryTextLength(text.trim())>MEMORY_TEXT_LIMIT?'text-rose-600':'text-[#9C9388]')}>
