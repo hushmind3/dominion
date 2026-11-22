@@ -112,3 +112,50 @@
  .native-command-header-actions{gap:2px}
 }
 @media(prefers-reduced-motion:reduce){.native-command-center *{transition:none!important}}
+
+/* Quiet home: primary task surface above compact status, no duplicate launcher cards. */
+.native-home{color:#303239}
+.native-home-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:3px 0 20px}
+.native-home-eyebrow{display:block;font-size:10px;letter-spacing:.11em;font-weight:750;color:#847f7c}
+.native-home-heading h1{font-size:24px!important;font-weight:710;letter-spacing:-.04em;margin:4px 0 5px;color:#232429}
+.native-home-heading p{font-size:12px;color:#77787e;margin:0}
+.native-home-chat-link{display:inline-flex;align-items:center;gap:8px!important;white-space:nowrap;font-size:12px!important;border:1px solid #d9d9dc!important;border-radius:9px!important;background:#fff!important;color:#38383f!important}
+.native-home-notice{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;padding:11px 13px;border:1px solid #e5d8c9;border-radius:9px;background:#fffaf2;font-size:12px;color:#6b5540}
+.native-home-notice>span,.native-home-notice>div{flex:1;min-width:150px}
+.native-home-notice button{font-size:11px;color:#865935}
+.native-home-notice--review{border-color:#e7c7aa;background:#fff6ec}
+.native-home-notice--review strong{display:block;font-size:12px;font-weight:650}
+.native-home-notice--review span{display:block;font-size:11px}
+.native-home-overview{display:flex;align-items:stretch;gap:15px;margin-top:15px;flex-wrap:wrap}
+.native-home-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));flex:1 1 570px;gap:7px}
+.native-home-metric{display:flex!important;flex-direction:row!important;align-items:center!important;gap:8px!important;text-align:left!important;min-height:48px!important;border:1px solid #dedfdf!important;border-radius:9px!important;background:#fafaf9!important;color:#7b7c81!important;padding:9px 11px!important;font-size:11px!important;box-shadow:none!important}
+.native-home-metric:hover{background:#fff!important;border-color:#c6c7cb!important}
+.native-home-metric svg{flex-shrink:0}
+.native-home-metric span{flex:1;min-width:0}
+.native-home-metric strong{font-size:16px;font-variant-numeric:tabular-nums;color:#34343b}
+.native-home-usage{flex:1 1 210px;min-width:210px;display:flex;align-items:start;justify-content:center;flex-direction:column;padding:7px 13px;border:1px solid #dedfdf;border-radius:9px;background:#fafaf9}
+.native-home-usage>span{font-size:10px;font-weight:750;color:#85868d}
+.native-home-usage p{font-size:11px;margin:2px 0!important;color:#43454b}
+.native-home-usage small{font-size:10px;color:#a56d47}
+.native-home-more{border-top:1px solid #dedfe0;margin:22px 0 12px;padding-top:5px}
+.native-home-more>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 2px;cursor:pointer;color:#6a6b72;font-size:12px;font-weight:600}
+.native-home-more>summary>span:last-child{font-size:10px;color:#8b8c93;font-weight:450}
+.native-home-more-body{padding:12px 2px 16px}
+.native-home-connections{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0 0 25px}
+.native-home-connections button{display:flex;align-items:center;gap:9px;justify-content:flex-start;text-align:left;min-height:39px;border:1px solid #e0e0e2;border-radius:8px;background:#fff;padding:10px;font-size:11px;color:#55565e}
+.native-home-connections button span{margin-left:auto;color:#85868c}
+.native-home-more-body h2{font-size:15px!important;font-weight:680}
+.native-home-recent>div{display:flex;align-items:center;gap:10px;padding:12px 6px;border-bottom:1px solid #e7e7e8}
+.native-home-recent>div>span{flex:1;min-width:0}
+.native-home-recent strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+.native-home-recent small{font-size:10px;color:#999}
+.native-home-empty{font-size:12px;color:#929399}
+@media(max-width:650px){
+ .native-home-heading{gap:8px}
+ .native-home-heading h1{font-size:20px!important}
+ .native-home-heading p{font-size:11px}
+ .native-home-chat-link{padding:7px!important}
+ .native-home-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .native-home-usage{min-width:0;width:100%}
+ .native-home-connections{grid-template-columns:1fr}
+}
