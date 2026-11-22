@@ -233,3 +233,68 @@
 @media(prefers-reduced-motion:reduce){
  .dominion-studio>aside,.dominion-studio *{transition-duration:.01ms!important}
 }
+
+
+/* The conversation list is a separate, quieter workspace layer. */
+.dominion-studio .page-chat>div>aside:not(.chat-inspector){
+ background:#e9f0eb!important;
+ border-color:#d1dfd6!important;
+}
+.dominion-studio .page-chat>div>aside:not(.chat-inspector) .chat-history-entry{
+ margin-block:2px;
+}
+.dominion-studio .page-chat>div>aside:not(.chat-inspector) .chat-history-entry:hover,
+.dominion-studio .page-chat>div>aside:not(.chat-inspector) .chat-history-entry[aria-current="true"]{
+ background:#d9e8dd!important;
+}
+.dominion-studio .page-chat>div>aside:not(.chat-inspector) .chat-history-entry button{
+ color:#35554c!important;
+}
+.dominion-studio .page-chat>div>aside:not(.chat-inspector)>div:first-child strong{
+ color:#183a33!important;font-size:16px!important;
+}
+.dominion-studio .page-chat>div>aside:not(.chat-inspector) input{
+ background:#fff!important;border-color:#c7dad0!important;
+}
+@media(max-width:767px){
+ /* Mobile is two deliberate header rows: navigation/actions above model routing.
+    The local-model buttons previously collided with the inspector control. */
+ .dominion-studio .chat-header{
+  display:grid!important;
+  grid-template-columns:34px minmax(0,1fr) auto!important;
+  grid-template-rows:43px 35px!important;
+  gap:0 4px!important;
+  height:84px!important;min-height:84px!important;
+  padding:0 10px 4px!important;
+  align-items:center!important;
+ }
+ .dominion-studio .chat-header>button:first-child{
+  grid-column:1!important;grid-row:1!important;
+  margin:0!important;
+ }
+ .dominion-studio .chat-header>.conversation-switch{
+  grid-column:2!important;grid-row:1!important;
+  justify-self:start;min-width:0;
+ }
+ .dominion-studio .chat-header>div:nth-of-type(1){
+  grid-column:1/-1!important;grid-row:2!important;
+  min-width:0;width:100%;
+  border-top:1px solid #e4ece7;
+ }
+ .dominion-studio .chat-header>div:last-child{
+  grid-column:3!important;grid-row:1!important;
+  justify-self:end;min-width:0;z-index:3;
+ }
+ .dominion-studio .chat-header .chat-model-controls{
+  min-width:0;width:100%;overflow:visible;
+ }
+ .dominion-studio .chat-header .chat-model-controls>select{
+  flex:0 1 84px;min-width:0;max-width:90px;
+ }
+ .dominion-studio .chat-header .chat-model-controls [aria-haspopup="dialog"]{
+  flex:1 1 auto!important;min-width:0!important;max-width:none!important;
+ }
+ .dominion-studio .chat-header .chat-model-controls>button:not([aria-haspopup="dialog"]){
+  display:none!important;
+ }
+}
