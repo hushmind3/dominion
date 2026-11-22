@@ -88,3 +88,37 @@ Read-only TypeScript diagnostics passed. Desktop/phone inspection confirmed
 sidebar collapse/expand/resize, profile bounds, modal/drawer focus restoration,
 settings return and group-to-assistant navigation. Production builds and test
 suites remain skipped under the owner's delivery constraint.
+
+## Conversation focus follow-up
+
+Group messages and the composer now share an 860px reading column instead of
+stretching the transcript across the window. Saved and streamed replies use the
+same Markdown renderer as direct chat. Message identity stays next to the reply;
+copy and message details stay below it. Token counts and execution insights load
+inside an optional message panel in both modes. Panels support outside click,
+Escape, viewport bounds and dismissal on navigation.
+
+The group composer keeps attachments, responder selection and sending together.
+A compact actions menu opens collaboration, room settings, shared knowledge and
+prompt editing. Room settings and execution history use dialogs instead of a
+second side column. Basic room setup presents the name, topic, participants and
+response mode; limits and model options are collapsed and loaded on demand.
+Creating a room only requires selecting participants; an empty name receives a
+default. Dialog actions remain visible while the settings body scrolls.
+Direct-chat permissions and reasoning effort live in the shared settings screen;
+permission panels stay inside that screen's focus boundary.
+
+Discussion turn limits are caps, not an instruction to make every participant
+speak. Normal routing still chooses a relevant subset; selecting Everyone sends
+an explicit responder list. New rooms default to one round with automatic
+learning off. The existing idle nine-member room on engine 4317 was updated to
+one round, automatic turn limits and automatic learning off using the supported
+room API. Its roster and transcript were preserved. This applies the cost policy
+without restarting the engine; the source-level cap correction still needs a
+future Rust build. No new model requests were made for this follow-up, so token
+savings have not been measured.
+
+Read-only TypeScript diagnostics and live browser inspection cover desktop
+1440px, wide 2560px and phone 390px layouts, menu dismissal, responder selection,
+blank-name creation readiness and visible dialog actions. Production builds and
+test suites were not run under the owner's constraint.

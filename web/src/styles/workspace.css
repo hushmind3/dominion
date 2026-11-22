@@ -269,3 +269,8 @@
 .workspace-reply-preferences > .workspace-conversation-settings { padding: 0 12px 12px; }
 .workspace-reply-preferences .conversation-settings-inline { border: 0; }
 @media (max-width: 767px) { .workspace-reply-preferences { margin: 12px 20px 24px; } }
+
+/* Message metadata is available on request in either conversation mode. */
+.message-info-trigger { display: inline-grid; width: 28px; height: 28px; place-items: center; border-radius: 7px; vertical-align: middle; color: #a49584; }
+.message-info-trigger:hover, .message-info-trigger[aria-expanded=true] { background: #f1ece4; color: #665442; }
+.message-info-panel { z-index: 80; display: grid; gap: 10px; overflow-y: auto; border: 1px solid var(--color-divider); border-radius: 12px; background: var(--color-surface); padding: 14px; color: #897762; font-size: 12px; line-height: 1.7; box-shadow: 0 8px 32px #33291e21; }

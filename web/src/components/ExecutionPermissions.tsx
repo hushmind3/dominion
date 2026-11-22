@@ -1,3 +1,4 @@
+import {Notice} from './UI'
 import {useEffect,useState} from 'react'
 import {createPortal} from 'react-dom'
 import {Check,ChevronDown,ShieldAlert,ShieldCheck} from 'lucide-react'
@@ -86,6 +87,16 @@ export function ExecutionPermissions({open,onOpenChange,onError,onChanged,active
       </Button>
      )}
     </div>
-   </div>,document.body)}
+   </div>,permissionPanel.trigger.current?.closest('[role="dialog"]')||document.body)}
+ </div>
+}
+
+/** Settings owns the popover and reports errors beside the control. */
+export function ExecutionPermissionsSetting() {
+ const [open, setOpen] = useState(false)
+ const [error, setError] = useState('')
+ return <div>
+  <ExecutionPermissions open={open} onOpenChange={setOpen} onError={setError}/>
+  <Notice message={error}/>
  </div>
 }
