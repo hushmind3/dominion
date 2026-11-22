@@ -198,21 +198,9 @@ export function SystemPromptPanel(){
         {tr('저장된 내용이 없으면 자동 생성 지침을 사용합니다. 빈 텍스트로 저장하면 기본 문구가 사라집니다.',
          'Without an override the compiler generates instructions. Saving empty text removes the default text.',en)}
        </p>
-       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs text-[var(--color-muted)]">
-         {fullDraft.length.toLocaleString()} / 32,000 · {tr('현재 추정','Current estimate',en)} {preview.systemTokensEstimated.toLocaleString()} tokens
-        </span>
-        <div className="flex flex-wrap gap-2">
-         <Button variant="secondary" disabled={busy||!preview.ownOverrideActive}
-          onClick={()=>void resetFullPrompt()}>
-          <RotateCcw size={14}/>{tr('기본값 복원','Restore default',en)}
-         </Button>
-         <Button disabled={busy||!fullDirty||fullDraft.length>32000}
-          onClick={()=>void saveFullPrompt()}>
-          <Save size={14}/>{tr('전체 프롬프트 저장','Save prompt',en)}
-         </Button>
-        </div>
-       </div>
+       <p className="mt-3 text-xs text-[var(--color-muted)]">
+        {fullDraft.length.toLocaleString()} / 32,000 · {tr('현재 추정','Current estimate',en)} {preview.systemTokensEstimated.toLocaleString()} tokens
+       </p>
        {fullNotice&&<p role="status" className="mt-3 text-xs text-emerald-700">{fullNotice}</p>}
        {preview.effectiveOverrideScope==='global'&&agentId!==''&&!preview.ownOverrideActive&&(
         <p className="mt-2 text-xs text-muted">{tr('공통 프롬프트가 현재 적용 중입니다. 여기서 저장하면 이 에이전트에만 별도 적용됩니다.',

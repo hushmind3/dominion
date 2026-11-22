@@ -3,9 +3,8 @@ import {ArrowLeft, ChevronDown, Menu, MessageSquare, Search, UsersRound, X} from
 import {OwnerProfileEditor} from './OwnerProfile'
 import {Button, TextInput} from './Primitives'
 import {t, useLocale} from '../i18n'
-import {settingsGroups, settingsPages, isSettingsPage, type SettingsPage} from '../workspacePages'
+import {settingsGroups, settingsPages, isSettingsPage, primarySettingsPages, secondarySettingsPages, type SettingsPage} from '../workspacePages'
 
-const primaryPages: SettingsPage[] = ['home', 'models', 'memory', 'settings']
 type SidebarProps = {
   page: SettingsPage
   navOpen: boolean
@@ -20,11 +19,11 @@ type SidebarProps = {
 export function WorkspaceSidebar({page, navOpen, online, connecting, running, pending, onNavigate, onToggleNav}: SidebarProps) {
   useLocale()
   const [query, setQuery] = useState('')
-  const [expanded, setExpanded] = useState(!primaryPages.includes(page))
-  useEffect(() => {if (!primaryPages.includes(page)) setExpanded(true)}, [page])
+  const [expanded, setExpanded] = useState(!primarySettingsPages.includes(page))
+  useEffect(() => {if (!primarySettingsPages.includes(page)) setExpanded(true)}, [page])
   const needle = navOpen ? query.trim().toLocaleLowerCase() : ''
   const visible = (id: SettingsPage) => !needle || [t(settingsPages[id].label), t(settingsPages[id].description)].join(' ').toLocaleLowerCase().includes(needle)
-  const secondaryPages = Object.keys(settingsPages).filter(isSettingsPage).filter(id => !primaryPages.includes(id))
+  const secondaryPages = secondarySettingsPages
   const renderItem = (id: SettingsPage) => {
     const entry = settingsPages[id]
     const Icon = entry.icon
@@ -34,7 +33,7 @@ export function WorkspaceSidebar({page, navOpen, online, connecting, running, pe
       <Icon size={18} strokeWidth={1.65}/><span>{t(entry.label)}</span>{count > 0 && <small>{count}</small>}
     </Button>
   }
-  const matches = [...primaryPages, ...secondaryPages].filter(visible)
+  const matches = [...primarySettingsPages, ...secondaryPages].filter(visible)
   return <aside aria-label={t('shell.mainNav')} className="workspace-sidebar" data-collapsed={!navOpen}>
     <div className="workspace-sidebar-brand"><span className="workspace-logo">D</span><strong>dominion</strong>
       <Button variant="ghost" size="icon" aria-label={navOpen ? t('shell.hideMenu') : t('shell.showMenu')} aria-expanded={navOpen} onClick={onToggleNav}><Menu size={17}/></Button>
@@ -42,7 +41,7 @@ export function WorkspaceSidebar({page, navOpen, online, connecting, running, pe
     {navOpen && <label className="workspace-nav-search"><Search size={15}/><TextInput value={query} onChange={event => setQuery(event.target.value)} aria-label={t('workspace.search')} placeholder={t('workspace.search')}/></label>}
     <nav className="workspace-nav">
       {navOpen && <h2>{t('workspace.personal')}</h2>}
-      {primaryPages.filter(visible).map(renderItem)}
+      {primarySettingsPages.filter(visible).map(renderItem)}
       {navOpen ? <>
         <Button variant="bare" className="workspace-nav-more" aria-expanded={expanded || !!needle} onClick={() => setExpanded(value => !value)}>
           {t('workspace.more')}<ChevronDown size={14} className={expanded || needle ? 'rotate-180' : ''}/>

@@ -353,7 +353,6 @@ export function ModelHub(){
   {id:'local',label:t('models.simple.local')},
  ]
  const moreTabs:Array<{id:Tab;label:string}>= [
-  {id:'cloud',label:t('models.simple.cloud')},
   {id:'free',label:t('models.filter.free')},
   {id:'catalog',label:t('models.simple.catalog')},
   {id:'huggingface',label:t('models.simple.files')},

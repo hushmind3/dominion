@@ -54,6 +54,9 @@ type SettingsEntry = {
   description: LocaleKey
   group: LocaleKey
   icon: LucideIcon
+  /** Shown in the always-visible part of the rail; everything else sits under
+   *  the 'more' section. Adding a page means adding one entry here. */
+  primary?: boolean
   render: (navigate: Navigate) => ReactNode
 }
 
@@ -63,6 +66,7 @@ export const settingsPages = {
     description: 'workspace.description.home',
     group: 'nav.group.workspace',
     icon: House,
+    primary: true,
     render: (navigate: Navigate) => <HomePage navigate={navigate} />,
   },
   models: {
@@ -70,6 +74,7 @@ export const settingsPages = {
     description: 'workspace.description.models',
     group: 'nav.group.workspace',
     icon: Cpu,
+    primary: true,
     render: () => <ModelHub />,
   },
   agents: {
@@ -105,6 +110,7 @@ export const settingsPages = {
     description: 'workspace.description.memory',
     group: 'nav.group.extensions',
     icon: BookOpenText,
+    primary: true,
     render: () => <MemoryPage />,
   },
   activity: {
@@ -119,6 +125,7 @@ export const settingsPages = {
     description: 'workspace.description.settings',
     group: 'nav.group.operations',
     icon: Settings2,
+    primary: true,
     render: () => <OperationsPage section="settings" />,
   },
 } satisfies Record<string, SettingsEntry>
@@ -137,3 +144,12 @@ for (const id of Object.keys(settingsPages).filter(isSettingsPage)) {
   group.push({ ...entry, id })
   settingsGroups.set(entry.group, group)
 }
+
+/** One source for the rail: primary pages stay visible, the rest are grouped. */
+export const primarySettingsPages = Object.keys(settingsPages)
+  .filter(isSettingsPage)
+  .filter((id) => (settingsPages[id] as SettingsEntry).primary === true)
+
+export const secondarySettingsPages = Object.keys(settingsPages)
+  .filter(isSettingsPage)
+  .filter((id) => (settingsPages[id] as SettingsEntry).primary !== true)

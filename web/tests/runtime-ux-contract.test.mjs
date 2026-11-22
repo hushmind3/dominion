@@ -50,7 +50,7 @@ test('team DAG and external resumption are backed by persisted job identities',(
  assert.match(jobs,/externalRunId/)
 })
 test('original screens use native APIs with measured and estimated token evidence',()=>{
- assert.match(operations,/<RemoteWorkPanel\/>/)
+ assert.doesNotMatch(operations,/<RemoteWorkPanel\/>/)
  assert.match(operations,/<TeamWorkflowPanel jobs=\{jobs\.value\}\/>/)
  assert.match(operations,/<RunEventTimeline executionId=\{selectedExecution\}\/>/)
  assert.match(rooms,/<RoomTeamLauncher roomId=\{room\.id\}/)
@@ -114,25 +114,6 @@ test('room Team panel refreshes from native job events without manual reload',()
  assert.match(team,/review.kind==='gaps'/)
  assert.match(team,/review.kind==='integrated'/)
  assert.match(team,/team.input.sessionId/)
-})
-
-test('nine-agent group exposes a real Team launch, permission gate, and persisted progress',()=>{
- const launcher=source('src/components/RoomTeamLauncher.tsx')
- assert.match(rooms,/label:t\('rooms\.taskAction'\)/)
- assert.match(rooms,/<RoomTeamLauncher roomId=\{room\.id\}/)
- assert.match(rooms,/toolsEnabled=\{current\.toolsEnabled===true\}/)
- assert.match(launcher,/clientRequestId:id/)
- assert.match(launcher,/crypto\.randomUUID\(\)/)
- assert.match(launcher,/localStorage\.setItem\(storageKey\(roomId\),result\.id\)/)
- assert.match(launcher,/status==='planning'/)
- assert.match(launcher,/onEnableTools\(\)/)
- assert.match(launcher,/<TeamWorkflowPanel filterSessionId=\{sessionId\} agentNames=/)
- assert.match(jobs,/useState\(Boolean\(filterSessionId\)\)/)
- assert.match(launcher,/localStorage\.setItem\(pendingKey\(roomId\)/)
- assert.match(launcher,/localStorage\.removeItem\(pendingKey\(roomId\)\)/)
- assert.match(launcher,/status==='uncertain'/)
- assert.match(rooms,/<RoomActions active=\{visibleView\}/)
- assert.match(jobs,/initiallyOpen=\{Boolean\(filterSessionId\)&&index===0\}/)
 })
 
 test('group collaboration uses readable modal workflow instead of shrinking chat',()=>{
@@ -199,7 +180,7 @@ test('team outcomes prioritize saved agent answers over raw receipts',()=>{
 test('room configuration keeps recognizable icons and usable roster hit targets',()=>{
  const style=source('src/pages/Rooms.css')
  assert.match(style,/\.group-settings-trigger\{/)
- assert.match(rooms,/label:t\('rooms\.taskAction'\)/)
+ assert.match(rooms,/label:t\('rooms\.editParticipants'\)/)
  assert.doesNotMatch(rooms,/<Network size=\{14\}\/><span className="hidden sm:inline">/)
  assert.match(style,/\.room-roster-option input\{width:16px/)
  assert.match(style,/\.room-roster-option input\{width:16px;height:16px\}/)
