@@ -349,7 +349,10 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
   }>("/api/skill-catalog", { items: [], total: 0, updatedAt: "" }, false);
   const [repo, setRepo] = useState(""),
     [repoBusy, setRepoBusy] = useState(false),
-    [pluginRemote, setPluginRemote] = useState<any[]>([]);
+    [pluginRemote, setPluginRemote] = useState<any[]>([]),
+    [pluginRemoteLoading, setPluginRemoteLoading] = useState(false),
+    [pluginRemoteError, setPluginRemoteError] = useState(''),
+    [pluginSearchReload, setPluginSearchReload] = useState(0);
   const [localTab, setTab] = useState<ExtensionTab>(
       "market",
     ),
@@ -586,23 +589,27 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
     const q = pluginQuery.trim();
     if (q.length < 2) {
       setPluginRemote([]);
+      setPluginRemoteError('');
+      setPluginRemoteLoading(false);
       return;
     }
     let alive = true;
     const timer = setTimeout(() => {
+      setPluginRemoteLoading(true);
+      setPluginRemoteError('');
       get<any[]>("/api/mcp/catalog?q=" + encodeURIComponent(q))
         .then((rows) => {
           if (alive) setPluginRemote(rows || []);
         })
-        .catch(() => {
-          if (alive) setPluginRemote([]);
-        });
+        .catch((e) => {
+          if (alive) {setPluginRemote([]);setPluginRemoteError((e as Error).message);}
+        }).finally(() => {if(alive)setPluginRemoteLoading(false);});
     }, 350);
     return () => {
       alive = false;
       clearTimeout(timer);
     };
-  }, [pluginQuery]);
+  }, [pluginQuery,pluginSearchReload]);
   const discover = async (silent = false) => {
     try {
       setTools(await get("/api/mcp/discover"));
@@ -936,11 +943,15 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
               title={t('ext.pluginResults')}
               extra={
                 <span className="text-[11px] text-[#8A8176]">
-                  {t('ext.count', { count: pluginRemote.length })}
+                  {pluginRemoteLoading||pluginRemoteError?'—':t('ext.count', { count: pluginRemote.length })}
                 </span>
               }
             />
-            {pluginRemote.length ? (
+            {pluginRemoteLoading ? (
+              <p role="status" className="mt-2 text-[11px] text-[#8A8176]">{t('ext.pluginLoading')}</p>
+            ) : pluginRemoteError ? (
+              <div role="alert" className="mt-2 flex items-center justify-between gap-3 text-[11px] text-rose-700"><span>{t('ext.pluginUnavailable')}</span><Button variant="bare" type="button" className="underline" onClick={()=>setPluginSearchReload(value=>value+1)}>{t('ext.pluginRetry')}</Button></div>
+            ) : pluginRemote.length ? (
               <div className="mt-2 grid gap-2">
                 {pluginRemote.map((x: any) => (
                   <div
@@ -989,7 +1000,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
               </div>
             ) : (
               <p className="mt-2 text-[11px] text-[#8A8176]">
-                {t('ext.remoteHint')}
+                {pluginQuery.trim().length<2?t('ext.remoteHint'):t('ext.pluginNoResults')}
               </p>
             )}
           </div>

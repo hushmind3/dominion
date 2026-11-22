@@ -21,7 +21,12 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
  const [token,setToken]=useState(()=>sessionStorage.getItem('dominion_cloud_session')||'')
  const [showLoginOptions,setShowLoginOptions]=useState(false)
  const [billing,setBilling]=useState<Billing|null>(null)
+ const [billingKnown,setBillingKnown]=useState(false)
+ const [billingLoading,setBillingLoading]=useState(false)
+ const [billingError,setBillingError]=useState('')
  const [identity,setIdentity]=useState<IdentityStatus|null>(null)
+ const [identityKnown,setIdentityKnown]=useState(false)
+ const [identityError,setIdentityError]=useState('')
  const [identityBusy,setIdentityBusy]=useState(false)
  const [showCheckout,setShowCheckout]=useState(false)
  const [billingMessage,setBillingMessage]=useState('')
@@ -74,11 +79,18 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   return()=>window.removeEventListener('message',listener)
  },[])
  async function loadBilling(session:string){
-  const response=await fetch(cloudUrl+'/v1/billing',{headers:{Authorization:'Bearer '+session}})
-  if(!response.ok)throw Error('구독 정보를 불러오지 못했습니다.')
-  setBilling(await response.json())
-  const identityResponse=await fetch(cloudUrl+'/v1/identity',{headers:{Authorization:'Bearer '+session}})
-  if(identityResponse.ok)setIdentity(await identityResponse.json())
+  setBillingLoading(true);setBillingKnown(false);setBillingError('');setIdentity(null);setIdentityKnown(false);setIdentityError('')
+  try{
+   const response=await fetch(cloudUrl+'/v1/billing',{headers:{Authorization:'Bearer '+session}})
+   if(!response.ok){setBilling(null);setBillingKnown(false);throw Error('구독 정보를 불러오지 못했습니다.')}
+   setBilling(await response.json());setBillingKnown(true)
+   try{
+    const identityResponse=await fetch(cloudUrl+'/v1/identity',{headers:{Authorization:'Bearer '+session}})
+    if(!identityResponse.ok)throw Error('본인확인 상태를 불러오지 못했습니다.')
+    setIdentity(await identityResponse.json());setIdentityKnown(true)
+   }catch(e){setIdentity(null);setIdentityKnown(false);setIdentityError((e as Error).message)}
+  }catch(e){setBilling(null);setBillingKnown(false);setBillingError((e as Error).message);throw e}
+  finally{setBillingLoading(false)}
  }
  async function verifyIdentity(){
   if(!token||identityBusy)return
@@ -101,7 +113,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   }catch(e){setBillingMessage((e as Error).message)}finally{setIdentityBusy(false)}
  }
  async function startCheckout(){
-  if(!token||!billing?.checkout_enabled)return
+  if(!token||billingLoading||!billingKnown||!billing?.checkout_enabled||!identityKnown)return
   if(!identity?.verified){setBillingMessage('유료 결제 전에 본인확인을 완료해 주세요.');return}
   setBillingBusy(true);setBillingMessage('')
   try{
@@ -414,18 +426,20 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
    <button type="button" disabled={busy||!selected||!models.some(model=>model.id===selected&&(modelFilter==='all'||(modelFilter==='free'?model.free:!model.free))&&(model.id+' '+(model.name||'')+' '+(model.provider||'')).toLowerCase().includes(modelSearch.toLowerCase()))} onClick={()=>void register()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">모델 등록</button>
   </div>}
   {token&&<div className="mt-3 rounded-xl border border-[#E7E0D5] bg-white p-3 text-[12px]">
-   <div className="flex flex-wrap items-center justify-between gap-2"><span>내 구독: <strong>{billing?.plan==='pro'?'Pro':'무료'}</strong>{billing?.valid_until&&billing.plan==='pro'?' · 만료 '+new Date(billing.valid_until*1000).toLocaleDateString('ko-KR'):''}</span>
-    <button type="button" className="rounded-lg border px-3 py-2" onClick={()=>setShowCheckout(true)}>요금제 · 결제</button></div>
-   <div className="mt-2 flex flex-wrap items-center gap-2"><span className="text-[#7C7469]">유료 API 본인확인: {identity?.verified?'완료':'미완료'}</span>{!identity?.verified&&<button type="button" disabled={identityBusy} onClick={()=>void verifyIdentity()} className="rounded-lg border px-3 py-2">{identityBusy?'인증 진행 중…':'PASS · 간편 본인확인'}</button>}</div>
+   <div className="flex flex-wrap items-center justify-between gap-2"><span>내 구독: <strong>{billingLoading?'확인 중…':billingKnown?(billing?.plan==='pro'?'Pro':'무료'):'확인할 수 없음'}</strong>{billingKnown&&billing?.valid_until&&billing.plan==='pro'?' · 만료 '+new Date(billing.valid_until*1000).toLocaleDateString('ko-KR'):''}</span>
+    <div className="flex gap-2"><button type="button" disabled={billingLoading} className="rounded-lg border px-3 py-2 disabled:opacity-50" onClick={()=>void loadBilling(token)}>상태 새로고침</button><button type="button" disabled={!billingKnown} className="rounded-lg border px-3 py-2 disabled:opacity-50" onClick={()=>setShowCheckout(true)}>요금제 · 결제</button></div></div>
+   {billingError&&<p role="alert" className="mt-2 text-[12px] text-rose-700">{billingError}</p>}
+   <div className="mt-2 flex flex-wrap items-center gap-2"><span className="text-[#7C7469]">유료 API 본인확인: {billingLoading?'확인 중…':identityKnown?(identity?.verified?'완료':'미완료'):'확인할 수 없음'}</span>{identityError&&<span role="alert" className="text-[11px] text-rose-700">{identityError}</span>}{identityKnown&&!identity?.verified&&<button type="button" disabled={identityBusy} onClick={()=>void verifyIdentity()} className="rounded-lg border px-3 py-2">{identityBusy?'인증 진행 중…':'PASS · 간편 본인확인'}</button>}</div>
    {billingMessage&&<p role="status" className="mt-2">{billingMessage}</p>}
   </div>}
-  {token&&billing&&<p className="mt-2 text-[12px] text-[#7C7469]" role="status">DOMINION 무료 AI: 오늘 {billing.free_daily_used ?? 0} / {billing.free_daily_limit ?? 20}회 사용 · 남은 {billing.free_daily_remaining ?? 0}회 (매일 오전 9시 KST 초기화)</p>}
+  {token&&billingKnown&&billing&&<p className="mt-2 text-[12px] text-[#7C7469]" role="status">DOMINION 무료 AI: 오늘 {billing.free_daily_used ?? 0} / {billing.free_daily_limit ?? 20}회 사용 · 남은 {billing.free_daily_remaining ?? 0}회 (매일 오전 9시 KST 초기화)</p>}
   {token&&showCheckout&&<div role="dialog" aria-modal="true" aria-label="DOMINION 구독 결제" className="mt-3 rounded-xl border border-[#E7E0D5] bg-white p-4">
    <div className="flex items-center justify-between"><strong>DOMINION Pro · 구독 결제</strong><button type="button" onClick={()=>setShowCheckout(false)}>닫기</button></div>
    <p className="mt-2 text-[12px]">무료 플랜은 계속 이용할 수 있습니다. Pro는 결제일부터 30일 이용권이며 자동 갱신되지 않습니다.</p>
-   <p className="mt-2 text-[14px] font-semibold">{billing?.pro_price_krw?.toLocaleString('ko-KR')||'가격 미설정'}원 / 30일</p>
-   <button type="button" disabled={!billing?.checkout_enabled||billingBusy} onClick={()=>void startCheckout()} className="mt-3 rounded-lg bg-[#C96442] px-4 py-2 text-white disabled:opacity-50">{billingBusy?'결제창 여는 중…':billing?.checkout_enabled?'토스페이먼츠 결제하기':'결제 준비 중'}</button>
-   {!billing?.checkout_enabled&&<p className="mt-2 text-[12px]">운영자 결제 키와 요금 설정 후 테스트 결제를 시작할 수 있습니다.</p>}
+   <p className="mt-2 text-[14px] font-semibold">{billingKnown?billing?.pro_price_krw?.toLocaleString('ko-KR')||'가격 미설정':'가격 조회 불가'}원 / 30일</p>
+   <button type="button" disabled={billingLoading||!billingKnown||!billing?.checkout_enabled||!identityKnown||!identity?.verified||billingBusy} onClick={()=>void startCheckout()} className="mt-3 rounded-lg bg-[#C96442] px-4 py-2 text-white disabled:opacity-50">{billingBusy?'결제창 여는 중…':billingLoading?'상태 확인 중…':!billingKnown?'구독 상태 확인 필요':!billing?.checkout_enabled?'결제 준비 중':!identityKnown?'본인확인 상태 확인 필요':!identity?.verified?'본인확인 후 결제':'토스페이먼츠 결제하기'}</button>
+   {billingKnown&&!billing?.checkout_enabled&&<p className="mt-2 text-[12px]">운영자 결제 키와 요금 설정 후 테스트 결제를 시작할 수 있습니다.</p>}
+   {!billingKnown&&<p role="status" className="mt-2 text-[12px] text-rose-700">구독 정보를 확인한 뒤 결제를 시작할 수 있습니다. 위에서 상태를 새로고침하세요.</p>}
   </div>}
   {registered?.source==='cloud'&&<button type="button" onClick={goToRegisteredChat} className="mt-2 rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white">등록한 모델로 채팅하기</button>}
   {token&&<button type="button" className="mt-3 rounded-lg border px-3 py-2 text-[12px]" onClick={logout}>로그아웃</button>}
