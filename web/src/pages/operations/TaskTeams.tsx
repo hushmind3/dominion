@@ -5,6 +5,7 @@ import {formatDateTime,useLocale} from '../../i18n'
 import {Action,Notice,Panel,Subheading} from '../../components/UI'
 import {StatusPill} from '../../components/StatusPill'
 import {RemoteWorkersPanel,type RemoteAvailability} from './RemoteWorkers'
+import {matchesRefreshTarget,type RefreshScope} from '../../refreshEvents'
 
 type Runtime='native'|'codex'|'claude'|'qwen'|'remote'
 type Mode='read'|'write'
@@ -74,7 +75,14 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
    .then(([,result])=>{if(alive)setBridges(result.bridges||{})})
    .catch(err=>{if(alive)setError((err as Error).message)})
   const timer=setInterval(()=>{void refresh().catch(()=>{})},3000)
-  return()=>{alive=false;clearInterval(timer);refreshSequence.current++}
+  const onDataChange=(event:Event)=>{
+   const scope=(event as CustomEvent<RefreshScope>).detail
+   const endpoint=selected?'/api/task-teams/'+encodeURIComponent(selected):'/api/task-teams'
+   if(matchesRefreshTarget('/api/task-teams',scope?.targets??[])||
+    matchesRefreshTarget(endpoint,scope?.targets??[]))void refresh().catch(()=>{})
+  }
+  window.addEventListener('dominion-data-change',onDataChange)
+  return()=>{alive=false;clearInterval(timer);window.removeEventListener('dominion-data-change',onDataChange);refreshSequence.current++}
  },[open,refresh])
  const patch=(id:string,value:Partial<Draft>)=>setSteps(rows=>
   rows.map(v=>v.id===id?{...v,...value}:v))

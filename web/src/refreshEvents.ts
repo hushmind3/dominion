@@ -39,7 +39,17 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
    case 'provider':add('/api/providers');break
    case 'algorithm':case 'algorithm_stat':case 'algorithm_usage':
     add('/api/algorithms','/api/synergy');break
-   case 'job':add('/api/jobs');if(id)add('/api/jobs/'+encoded(id));break
+   case 'job':{
+    add('/api/jobs');if(id)add('/api/jobs/'+encoded(id))
+    const parentRunId=field(input,'parentRunId')
+    if(field(row,'kind')==='team'){
+     add('/api/task-teams')
+     if(id)add('/api/task-teams/'+encoded(id))
+    }else if(parentRunId){
+     add('/api/task-teams','/api/task-teams/'+encoded(parentRunId))
+    }
+    break
+   }
    case 'dev_job':if(id)add('/api/dev/jobs/'+encoded(id));break
    case 'remote_task':add('/api/remote/tasks');if(id)add('/api/remote/tasks/'+encoded(id));break
    case 'execution':add('/api/executions');break
