@@ -8,7 +8,7 @@ import {base64File,mergeChatFiles,type ChatFileDraft} from '../utils/chatAttachm
 import {createPortal} from 'react-dom'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormEvent,useEffect,useMemo,useRef,useState,type KeyboardEvent} from 'react'
-import {ArrowRight,ArrowUp,BrainCircuit,FileText,Paperclip,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X,Archive,RotateCcw} from 'lucide-react'
+import {ArrowRight,ArrowUp,BrainCircuit,FileText,Paperclip,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Plus,Power,RefreshCw,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X,Archive,RotateCcw,PanelRight} from 'lucide-react'
 import {Agent,Approval,ChatMessage,ChatSession,Provider,get,post,resolveApproval,streamChat,koreanReasoningEnabled} from '../api'
 import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
@@ -48,6 +48,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   cachedPromptTokensKnown?:number;newPromptTokensKnown?:number;cacheReportedCalls?:number;
   cacheUnknownCalls?:number;estimatedCalls?:number}
  const [serverUsage,setServerUsage]=useState<SessionUsage>({});
+ const [showInspector,setShowInspector]=useState(false);
  const approvals=useRemote<Approval[]>('/api/approvals',[],active);
  const [input,setInput]=useChatDraft(current);
  const [fileSelection,setFileSelection]=useState<{scope?:string;files:ChatFileDraft[]}>()
@@ -483,7 +484,10 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void send();}
  };
  useEffect(()=>{if(!active){setModelMenu(false);setPermissionOpen(false);setShowSettings(false);setSlashOpen(false)}else setReasoningKo(koreanReasoningEnabled())},[active]);
- return <div className={'relative grid h-dvh min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] bg-[#FFFDF9] '+(showHistory?'md:grid-cols-[232px_minmax(0,1fr)]':'')}>
+ const columnLayout=showHistory
+  ?showInspector?'md:grid-cols-[232px_minmax(0,1fr)] xl:grid-cols-[232px_minmax(0,1fr)_300px]':'md:grid-cols-[232px_minmax(0,1fr)]'
+  :showInspector?'xl:grid-cols-[minmax(0,1fr)_300px]':''
+ return <div className={'relative grid h-dvh min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] bg-[#FFFDF9] '+columnLayout}>
   {showHistory&&<Button type="button" aria-label={t('chat.listCollapse')} className="absolute inset-0 z-20 !h-auto !w-auto cursor-default !rounded-none !border-0 !bg-slate-900/30 md:hidden" onClick={()=>setShowHistory(false)}/>}
   <aside className={'flex min-h-0 flex-col overflow-hidden border-r border-[#E7E0D5] bg-[#FAF7F1] '+(showHistory?'max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:w-[232px] max-md:shadow-2xl':'hidden')}>
    <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-2"><div className="min-w-0"><span className="block text-[10px] font-extrabold uppercase tracking-widest text-[#C96442]">{t('ui.label.conversations')}</span><strong className="mt-1 block text-sm text-[#3A342D]">{t(showArchived?'chat.archived':'chat.recent')}</strong></div><Button size="icon" variant="ghost" onClick={resetLocal} title={t('chat.newChat')}><Plus size={19}/></Button></div>
@@ -522,6 +526,9 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      {sessionTokens>0&&<span title={usageDetails} className="hidden rounded-lg border border-[#E7DDCC] bg-[#F7F1E6] px-2 py-1 text-[10px] font-semibold text-[#8A775F] sm:inline-flex">{t('usage.sessionTotal',{count:sessionTokens.toLocaleString()})}{sessionCalls>0&&<span className="ml-1">{' · '}{t('usage.calls',{count:sessionCalls.toLocaleString()})}</span>}</span>}
 
      
+     <Button size="icon" variant="ghost" aria-expanded={showInspector} aria-controls="chat-session-inspector"
+      title={loc==='en'?'Session details':'대화 정보 패널'} aria-label={loc==='en'?'Session details':'대화 정보 패널'}
+      onClick={()=>setShowInspector(value=>!value)}><PanelRight size={18}/></Button>
      <Button size="icon" variant="ghost" title={t('chat.modelManage')} aria-label={t('chat.modelManage')} onClick={openModels}><Cpu size={18}/></Button>
      <Button size="icon" variant="ghost" className="conversation-settings" title={t('nav.settings')} aria-label={t('nav.settings')} onClick={openSettings}><Settings size={18}/></Button>
     </div>
@@ -577,6 +584,47 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     </form></div>
    </div></div>
   </div>
+  {showInspector&&<button type="button" className="chat-inspector-scrim" aria-label={loc==='en'?'Close session details':'대화 정보 닫기'} onClick={()=>setShowInspector(false)}/>}
+  {showInspector&&<aside id="chat-session-inspector" aria-label={loc==='en'?'Session workspace':'대화 정보 워크스페이스'}
+   className="chat-inspector flex min-h-0 min-w-0 flex-col border-l border-[#E1DCD3] bg-[#F5F5F1]">
+   <header className="flex shrink-0 items-center justify-between border-b border-[#E1DCD3] px-4 py-4">
+    <div><span className="text-[10px] font-bold uppercase tracking-[.12em] text-[#A65D42]">DOMINION</span>
+     <h2 className="mt-1 text-[15px] font-bold">{loc==='en'?'Session details':'대화 정보'}</h2></div>
+    <Button size="icon" variant="ghost" onClick={()=>setShowInspector(false)} aria-label={loc==='en'?'Close details':'대화 정보 닫기'}><X size={18}/></Button>
+   </header>
+   <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+    <section className="rounded-xl border border-[#E7E0D5] bg-white p-3">
+     <h3 className="mb-3 text-[12px] font-semibold">{loc==='en'?'Current session':'현재 대화'}</h3>
+     <p className="break-words text-[12px] font-medium">{selectedSession?.title|| (loc==='en'?'New conversation':'새 대화')}</p>
+     <p className="mt-2 break-all text-[10px] text-[#82796D]">{current|| (loc==='en'?'Not saved yet':'아직 저장 전')}</p>
+     <span className="mt-3 inline-flex rounded-md bg-[#F7E8E1] px-2 py-1 text-[10px] font-semibold text-[#94503B]">{agentMode?(loc==='en'?'Agent mode':'에이전트 실행'):(loc==='en'?'Direct chat':'일반 채팅')}</span>
+    </section>
+    <section className="rounded-xl border border-[#E7E0D5] bg-white p-3">
+     <h3 className="mb-3 text-[12px] font-semibold">{loc==='en'?'Model & execution':'모델 · 실행'}</h3>
+     <p className="break-words text-[11px] text-[#61584F]">{selectedProvider?.name|| (loc==='en'?'No provider selected':'제공자 선택 전')}</p>
+     <p className="mt-1 break-all font-mono text-[11px] font-semibold text-[#30302E]">{model||'—'}</p>
+     <dl className="mt-3 grid gap-2 border-t border-[#F0EAE1] pt-3 text-[11px]">
+      <div className="flex justify-between gap-2"><dt>{loc==='en'?'Messages':'메시지'}</dt><dd className="font-semibold tabular-nums">{messages.length}</dd></div>
+      <div className="flex justify-between gap-2"><dt>{loc==='en'?'Tool access':'도구 접근'}</dt><dd className="font-semibold">{agentMode&&toolsEnabled?(loc==='en'?'Enabled':'허용'):(loc==='en'?'Off':'꺼짐')}</dd></div>
+      <div className="flex justify-between gap-2"><dt>{loc==='en'?'Thinking':'추론'}</dt><dd className="font-semibold">{reasoningEffort|| (loc==='en'?'Auto':'자동')}</dd></div>
+     </dl>
+    </section>
+    <section className="rounded-xl border border-[#E7E0D5] bg-white p-3">
+     <h3 className="mb-3 text-[12px] font-semibold">{loc==='en'?'Session usage':'대화 사용량'}</h3>
+     <p className="text-[25px] font-bold tabular-nums text-[#303B35]">{sessionTokens.toLocaleString()}<span className="ml-1 text-[11px] font-normal text-[#83796C]">tokens</span></p>
+     <dl className="mt-3 grid grid-cols-2 gap-3 text-[10px] text-[#83796C]">
+      <div><dt>{loc==='en'?'Model calls':'모델 호출'}</dt><dd className="mt-1 text-[15px] font-bold tabular-nums text-[#3A342D]">{sessionCalls}</dd></div>
+      <div><dt>{loc==='en'?'Cached input (known)':'캐시 입력 (확인분)'}</dt><dd className="mt-1 text-[15px] font-bold tabular-nums text-[#3A342D]">{(Number(serverUsage.cachedPromptTokensKnown)||0).toLocaleString()}</dd></div>
+     </dl>
+    </section>
+    {approval&&<section className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+     <h3 className="text-[12px] font-bold text-amber-900">{loc==='en'?'Approval pending':'도구 승인 대기 중'}</h3>
+     <p className="mt-1 break-all text-[11px] text-amber-800">{approval.tool}</p>
+     <p className="mt-2 text-[10px] text-amber-800">{loc==='en'?'Review the exact call in the composer before deciding.':'작성기 위의 정확한 호출 내용을 검토한 뒤 결정하세요.'}</p>
+    </section>}
+    {streamInterrupted&&<p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">{loc==='en'?'The last response was interrupted. Check the saved transcript before retrying.':'마지막 응답이 중단됐습니다. 재요청 전에 저장된 대화 기록을 확인하세요.'}</p>}
+   </div>
+  </aside>}
  </div>
 }
 function Message({message,agentName,showReasoning}:{message:ChatMessage;agentName?:string;showReasoning?:boolean}){
