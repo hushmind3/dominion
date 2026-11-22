@@ -79,7 +79,12 @@ pub(crate) fn private_system_prompt_preview(
         "reasoningLanguage":if korean_reasoning{"ko"}else{"en"},
     }))?;
     let compiled=context::system_prompt_with_manifest(state,&request,chosen,input,None);
-    let (own,scope)=context::configured_private_prompt(state,agent_id);
+    let (_,scope)=context::configured_private_prompt(state,agent_id);
+    let own=if let Some(id)=agent_id{
+        state.store.get("agent",id)
+    }else{
+        state.store.get("assistant_settings","global")
+    }.and_then(|record|record["systemPromptOverride"].as_str().map(str::to_owned));
     let agent_name=agent_id.and_then(|id|state.store.get("agent",id))
         .and_then(|agent|agent["name"].as_str().map(str::to_owned));
     let owner_enabled=state.store.get("assistant_settings","global")
