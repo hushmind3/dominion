@@ -64,12 +64,14 @@ const accents = [
   "#6d8b9f",
 ];
 export function AgentsPage() {
-  useLocale();
+  const locale=useLocale();
   const agents = useRemote<Agent[]>("/api/agents", []),
     providers = useRemote<Provider[]>("/api/providers", []);
   const [edit, setEdit] = useState<Partial<Agent> | null>(readAgentDraft),
     [error, setError] = useState(""), [saving, setSaving] = useState(false);
   const [showPersonaImport,setShowPersonaImport]=useState(false);
+  const [agentSearch,setAgentSearch]=useState('');
+  const [agentFilter,setAgentFilter]=useState<'all'|'configured'|'unconfigured'>('all');
   const [bulk, setBulk] = useState(false),
     [selected, setSelected] = useState<string[]>([]),
     [bulkProvider, setBulkProvider] = useState(""),
@@ -86,6 +88,18 @@ export function AgentsPage() {
     }catch{/* Storage disabled/full must not block editing. */}
   },[edit])
   const enabledProviders = providers.value.filter(p => p.enabled !== false);
+  const configuredAgents=agents.value.filter(agent=>Boolean(agent.providerId)&&
+   enabledProviders.some(provider=>provider.id===agent.providerId));
+  const visibleAgents=agents.value.filter(agent=>{
+   const configured=configuredAgents.some(candidate=>candidate.id===agent.id);
+   if(agentFilter==='configured'&&!configured)return false;
+   if(agentFilter==='unconfigured'&&configured)return false;
+   const needle=agentSearch.trim().toLocaleLowerCase();
+   if(!needle)return true;
+   const providerName=providers.value.find(provider=>provider.id===agent.providerId)?.name||'';
+   return [agent.name,agent.description,agent.role,providerName,agent.model]
+    .some(value=>String(value||'').toLocaleLowerCase().includes(needle));
+  });
   const editProvider = enabledProviders.find(p => p.id === edit?.providerId);
   const editModels = useProviderModels(edit?.providerId || "");
   const bulkModels = useProviderModels(bulk ? bulkProvider : "");
@@ -138,7 +152,7 @@ export function AgentsPage() {
     }
   };
   return (
-    <div className="mx-auto w-full max-w-[1320px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8">
+    <div className="mx-auto w-full max-w-[1480px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8">
       <Headline
         eyebrow={t('ui.eyebrow.agents')}
         title={t('agents.title')}
@@ -177,6 +191,30 @@ export function AgentsPage() {
           </>
         }
       />
+      <div className="mb-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,1.4fr)]">
+       <div className="grid grid-cols-3 gap-2" role="group" aria-label="Agent roster filters">
+        {([
+         {id:'all',ko:'전체',english:'All',count:agents.value.length},
+         {id:'configured',ko:'모델 지정',english:'Configured',count:configuredAgents.length},
+         {id:'unconfigured',ko:'설정 필요',english:'Needs setup',count:agents.value.length-configuredAgents.length},
+        ] as const).map(filter=><button key={filter.id} type="button"
+         aria-pressed={agentFilter===filter.id} onClick={()=>setAgentFilter(filter.id)}
+         className={'min-w-0 rounded-xl border p-3 text-left '+(agentFilter===filter.id?
+          'border-[#BF8B70] bg-[#FBF0E7]':'border-[#E7E0D5] bg-white hover:bg-[#FAF7F1]')}>
+         <strong className="block text-[22px] font-bold tabular-nums text-[#283933]">{filter.count}</strong>
+         <span className="block text-[10px] text-[#756D62]">{locale==='en'?filter.english:filter.ko}</span>
+        </button>)}
+       </div>
+       <label className="flex min-w-0 items-center gap-3 rounded-xl border border-[#E7E0D5] bg-white px-4 py-2">
+        <span className="min-w-0 flex-1">
+         <span className="block text-[11px] font-semibold">{locale==='en'?'Find an agent':'에이전트 검색'}</span>
+         <input type="search" value={agentSearch} onChange={event=>setAgentSearch(event.target.value)}
+          placeholder={locale==='en'?'Name, role, model, provider':'이름 · 역할 · 모델 · 제공자'}
+          className="mt-1 min-h-9 w-full border-none bg-transparent text-[12px] outline-none"/>
+        </span>
+        <span className="text-[11px] font-medium tabular-nums text-[#86796C]">{visibleAgents.length}/{agents.value.length}</span>
+       </label>
+      </div>
       <div className="mb-5 flex items-center gap-4 rounded-xl border border-[#EED9CC] bg-[#F7E8E1] p-5">
         <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-[#F1DCCF] text-[#C96442]">
           <BrainCircuit size={22} />
@@ -270,7 +308,7 @@ export function AgentsPage() {
         </Panel>
       )}
       <div className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {agents.value.map((a, i) => (
+        {visibleAgents.map((a, i) => (
           <Panel className="flex min-w-0 flex-col gap-3 p-5" key={a.id}>
             <div className="flex items-start justify-between gap-3">
               <div
@@ -345,6 +383,9 @@ export function AgentsPage() {
           </Panel>
         ))}
       </div>
+      {!visibleAgents.length&&!agents.loading&&<div className="rounded-xl border border-dashed border-[#DDCEBC] bg-white p-8 text-center text-[12px] text-[#84786B]">
+       {locale==='en'?'No agents match the current filters.':'현재 조건에 맞는 에이전트가 없습니다.'}
+      </div>}
       {!edit && <Notice message={error || agents.error || providers.error} />}
       {showPersonaImport&&<PersonaImportDialog agents={agents.value} onClose={()=>setShowPersonaImport(false)} onImported={async(count)=>{await agents.reload();refresh();setBulkNotice(t('agents.personaImported', { count }))}}/>}
       {edit && (
