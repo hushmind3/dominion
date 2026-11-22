@@ -262,6 +262,21 @@ pub async fn start(State(state): State<AppState>, Json(input): Json<Start>) -> R
     }
 }
 
+/// Native SDK panel steering shares the same durable, revisioned job gate as
+/// /api/jobs/:id/steer. The panel can only steer jobs it actually created.
+pub async fn steer(
+    State(state): State<AppState>,Path(id): Path<String>,Json(body): Json<Value>,
+)->Response{
+    if panel_job(&state,&id).is_none(){
+        return error(StatusCode::NOT_FOUND,"해당 자동 작업을 찾을 수 없습니다.");
+    }
+    let result=super::jobs::steer(
+        State(state.clone()),Path(id.clone()),Json(body),
+    ).await;
+    if !result.status().is_success(){return result;}
+    one(State(state),Path(id)).await
+}
+
 pub async fn cancel(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     if panel_job(&state, &id).is_none() {
         return error(StatusCode::NOT_FOUND, "해당 자동 작업을 찾을 수 없습니다.");

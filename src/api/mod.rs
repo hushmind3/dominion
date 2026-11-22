@@ -90,6 +90,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/sdk/runs/:id/approve", post(sdk_bridge::approve))
         .route("/api/sdk/runs/:id/resume", post(sdk_bridge::resume))
         .route("/api/sdk/runs/:id/reconcile", post(sdk_bridge::reconcile))
+        .route("/api/sdk/runs/:id/steer", post(sdk_bridge::steer))
         .route(
             "/api/executions/:id/operations",
             get(executions::execution_operations),
