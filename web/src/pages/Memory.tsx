@@ -4,7 +4,7 @@ import {del, post, type Agent} from '../api'
 import {Button, TextInput, TextArea, SelectInput} from '../components/Primitives'
 import {Action, FormField, Headline, Notice, Panel, Subheading, useRemote} from '../components/UI'
 import {LearningRecords} from './memory/LearningRecords'
-import {t,useLocale,type LocaleKey} from '../i18n'
+import {formatDateTime,t,useLocale,type LocaleKey} from '../i18n'
 import {GrowthDashboard} from './memory/Growth'
 
 type Memory={
@@ -18,7 +18,7 @@ const statusLabels:Record<string,LocaleKey>={active:'memory.status.active',archi
 const sourceLabels:Record<string,LocaleKey>={user:'memory.source.user',learn:'memory.source.learn',agent:'memory.source.agent',reflect:'memory.source.reflect',compression:'memory.source.compression'}
 const MEMORY_TEXT_LIMIT=16_000
 const memoryTextLength=(value:string)=>Array.from(value).length
-const displayTime=(time?:string)=>time&&Number.isFinite(Date.parse(time))?new Date(time).toLocaleString():t('memory.time.none')
+const displayTime=(time?:string)=>time&&Number.isFinite(Date.parse(time))?formatDateTime(time):t('memory.time.none')
 const statusOf=(memory:Memory)=>memory.retrievalEligible?'active':memory.status&&memory.status!=='active'?memory.status:'excluded'
 
 export function MemoryPage(){
