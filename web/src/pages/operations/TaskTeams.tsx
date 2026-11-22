@@ -49,6 +49,8 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
  const [goal,setGoal]=useState(''),[steps,setSteps]=useState<Draft[]>([draft('inspect')])
  const [parallel,setParallel]=useState(2),[retries,setRetries]=useState(0)
  const [teams,setTeams]=useState<Team[]>([]),[selected,setSelected]=useState('')
+ const [teamQuery,setTeamQuery]=useState('')
+ const [teamView,setTeamView]=useState<'all'|'active'|'attention'|'finished'>('all')
  const [details,setDetails]=useState<Team|null>(null)
  const [bridges,setBridges]=useState<Record<string,Bridge>>({})
  const [preview,setPreview]=useState<Preview|null>(null)
@@ -189,6 +191,16 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
   }catch(err){setError((err as Error).message)}
   finally{setBusy(false)}
  }
+ const activeCount=teams.filter(team=>active.has(team.status)).length
+ const attentionCount=teams.filter(team=>recoverable.has(team.status)).length
+ const finishedCount=teams.filter(team=>team.status==='completed'||team.status==='cancelled').length
+ const filteredTeams=teams.filter(team=>{
+  if(teamView==='active'&&!active.has(team.status))return false
+  if(teamView==='attention'&&!recoverable.has(team.status))return false
+  if(teamView==='finished'&&team.status!=='completed'&&team.status!=='cancelled')return false
+  const query=teamQuery.trim().toLocaleLowerCase()
+  return !query||[team.goal,team.id,...team.tasks.map(task=>task.taskId)].some(value=>value.toLocaleLowerCase().includes(query))
+ })
  return <div className="mt-8" aria-label={t('작업 팀','Task Teams')}>
   <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
    <Subheading title={t('작업 팀 · 다중 에이전트','Task Teams · Multi-agent')}/>
@@ -202,7 +214,21 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
    </div>
   </div>
   {open&&<div className="grid gap-4">
-   {error&&<Notice message={error}/>}
+   <div className="grid grid-cols-2 gap-2 md:grid-cols-4" role="group" aria-label={t('팀 실행 현황','Team run overview')}>
+    {([
+     {id:'all',ko:'전체 작업',english:'All teams',count:teams.length},
+     {id:'active',ko:'실행 중',english:'Active',count:activeCount},
+     {id:'attention',ko:'확인 필요',english:'Needs attention',count:attentionCount},
+     {id:'finished',ko:'종료',english:'Finished',count:finishedCount},
+    ] as const).map(filter=><button key={filter.id} type="button"
+     aria-pressed={teamView===filter.id} onClick={()=>setTeamView(filter.id)}
+     className={'min-w-0 rounded-xl border px-3 py-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 '+
+      (teamView===filter.id?'border-[#AA7355] bg-[#F8EEE8] shadow-sm':'border-[#E7E0D5] bg-white hover:bg-[#FCF7F1]')}>
+     <strong className="block text-[22px] leading-none tabular-nums text-[#342A24]">{filter.count}</strong>
+     <span className="mt-2 block text-[11px] text-[#756B61]">{t(filter.ko,filter.english)}</span>
+    </button>)}
+   </div>
+   {error&&<Notice message={error}/>} 
    {notice&&<p className="text-[12px] text-emerald-700" role="status">{notice}</p>}
    {editing&&<Panel className="p-4 sm:p-5">
     <p className="mb-4 text-[12px] text-[#746A5F]">{t(
@@ -320,12 +346,21 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
       <Workflow size={14}/>{t('팀 실행','Start team')}</Action>
     </div>
    </Panel>}
-   <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
-    <Panel className="min-w-0 p-3">
-     <strong className="text-[12px]">{t('최근 팀','Recent teams')}</strong>
-     {teams.length===0?<p className="my-3 text-[11px] text-[#8A8176]">{t('아직 팀이 없습니다.','No teams yet.')}</p>:
+   <div className="grid gap-4 xl:grid-cols-[minmax(280px,1fr)_minmax(0,1.8fr)] xl:items-start">
+    <Panel className="min-w-0 p-3 xl:sticky xl:top-4">
+     <div className="flex items-center justify-between gap-2">
+      <strong className="text-[12px]">{t('작업 탐색','Team explorer')}</strong>
+      <small className="text-[10px] text-[#82796D]">{filteredTeams.length} / {teams.length}</small>
+     </div>
+     <label className="mt-3 block">
+      <span className="sr-only">{t('팀 검색','Search teams')}</span>
+      <input type="search" value={teamQuery} onChange={event=>setTeamQuery(event.target.value)}
+       placeholder={t('목표 · 팀 ID · Worker 검색','Search goal, team ID or worker')}
+       className="min-h-11 w-full min-w-0 rounded-lg border border-[#E7E0D5] bg-[#FCFBF9] px-3 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2"/>
+     </label>
+     {filteredTeams.length===0?<p className="my-3 text-[11px] text-[#8A8176]">{teams.length?t('조건에 맞는 팀이 없습니다.','No teams match this view.'):t('아직 팀이 없습니다.','No teams yet.')}</p>:
      <div className="mt-3 grid max-h-[430px] gap-2 overflow-y-auto">
-      {teams.slice(0,35).map(team=><button key={team.id} type="button"
+      {filteredTeams.slice(0,50).map(team=><button key={team.id} type="button"
        aria-pressed={selected===team.id}
        onClick={()=>{setSelected(team.id);setDetails(team);setPreview(null);setConsent(false)}}
        className={'rounded-lg border p-3 text-left '+(selected===team.id?
