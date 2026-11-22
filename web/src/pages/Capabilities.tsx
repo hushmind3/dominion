@@ -5,6 +5,21 @@ import {DialogBackdrop,DialogPanel} from '../components/Dialog'
 import {Headline,Notice,PAGE_FRAME,Panel,StateTag,useRemote} from '../components/UI'
 import {t,useLocale} from '../i18n'
 
+/** Built-in tool descriptions come from the engine in English, written for
+ *  the model. The owner reads a short Korean label instead. */
+const koToolCopy:Record<string,{name:string;desc:string}>={
+ 'account_status':{name:'연결한 계정 보기',desc:'DOMINION에 연결해 둔 GitHub·Google 계정을 확인합니다.'},
+ 'github_file_read':{name:'GitHub 파일 읽기',desc:'저장소의 파일 내용을 읽습니다.'},
+ 'github_file_commit':{name:'GitHub 파일 저장',desc:'선택한 브랜치의 파일을 안전하게 고쳐 저장합니다.'},
+ 'github_api':{name:'GitHub 작업 실행',desc:'GitHub에서 필요한 작업을 대신 실행합니다. 쓰기는 확인 후 진행합니다.'},
+ 'github_work_read':{name:'GitHub 저장소 살펴보기',desc:'저장소, 브랜치, 이슈, PR, 실행 기록을 봅니다.'},
+ 'github_work_write':{name:'GitHub 브랜치·PR·이슈 만들기',desc:'브랜치, PR, 이슈를 만들고 결과를 확인합니다.'},
+ 'google_workspace_read':{name:'Google 메일·드라이브 읽기',desc:'Gmail, Drive, Docs, Calendar에서 필요한 내용을 찾습니다.'},
+ 'google_workspace_write':{name:'Google 메일·드라이브 쓰기',desc:'메일 발송, 문서 작성, 일정 추가를 확인 후 진행합니다.'},
+}
+const capName=(item:Capability,en:boolean)=>en?item.name:(koToolCopy[item.id]?.name||item.name)
+const capDesc=(item:Capability,en:boolean)=>en?item.description:(koToolCopy[item.id]?.desc||item.description)
+
 type Capability={id:string;name:string;description?:string;namespace:string;available?:boolean}
 type Channel=Omit<Capability,'namespace'>&{mode:string;features?:string[];docs?:string;requiresRoom?:boolean;maxRoomParticipants?:number}
 type Item=Capability&Partial<Channel>
@@ -16,7 +31,7 @@ const families=[
 ] as const
 
 export function CapabilitiesPage({navigate,embedded=false}:{navigate:(page:Page)=>void;embedded?:boolean}){
- useLocale()
+ const locale=useLocale()
  const data=useRemote<{items:Capability[]}>('/api/capabilities',{items:[]})
  const catalog=useRemote<Channel[]>('/api/channels/catalog',[])
  const [family,setFamily]=useState<(typeof families)[number]['id']>('all')
@@ -46,14 +61,14 @@ export function CapabilitiesPage({navigate,embedded=false}:{navigate:(page:Page)
    </aside>
    <div className="min-w-0">
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{visible.map(item=><Button key={item.namespace+':'+item.id} onClick={()=>setDetail(item)} className="!flex-col !items-start !justify-start !p-4 text-left">
-     <span className="flex w-full items-center justify-between gap-2"><strong className="break-all text-sm">{item.name}</strong><StateTag online={item.available}>{item.namespace==='builtin'?t('cap.builtin'):!item.available?t('cap.unsupported'):item.mode==='outbound'?t('cap.outbound'):t('cap.supported')}</StateTag></span>
-     <span className="text-sm font-normal text-muted">{item.description}</span>
+     <span className="flex w-full items-center justify-between gap-2"><strong className="break-all text-sm">{capName(item,locale==='en')}</strong><StateTag online={item.available}>{item.namespace==='builtin'?t('cap.builtin'):!item.available?t('cap.unsupported'):item.mode==='outbound'?t('cap.outbound'):t('cap.supported')}</StateTag></span>
+     <span className="text-sm font-normal text-muted">{capDesc(item,locale==='en')}</span>
     </Button>)}</div>
     {!visible.length&&<Panel className="mt-4 p-5 text-sm text-muted">{data.loading||catalog.loading?t('cap.loading'):t('cap.empty')}</Panel>}
    </div>
   </div>
   {detail&&<DialogBackdrop onDismiss={()=>setDetail(undefined)}><DialogPanel aria-label={detail.name} className="p-5">
-   <h2>{detail.name}</h2><p className="mt-2">{detail.description}</p>
+   <h2>{capName(detail,locale==='en')}</h2><p className="mt-2">{capDesc(detail,locale==='en')}</p>
    {detail.maxRoomParticipants&&<p className="mt-2">{t('cap.maxRoom',{count:detail.maxRoomParticipants})}</p>}
    {detail.namespace==='builtin'&&<p className="mt-2 text-sm">{t('cap.builtinNote')}</p>}
    <div className="mt-4 flex flex-wrap justify-end gap-2">
