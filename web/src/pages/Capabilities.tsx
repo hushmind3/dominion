@@ -2,7 +2,7 @@ import {useMemo,useState} from 'react'
 import {ArrowRight,ExternalLink,Layers3,MessageCircle,RefreshCw,Search,TerminalSquare} from 'lucide-react'
 import {Button,TextInput} from '../components/Primitives'
 import {DialogBackdrop,DialogPanel} from '../components/Dialog'
-import {Headline,Notice,Panel,StateTag,useRemote} from '../components/UI'
+import {Headline,Notice,PAGE_FRAME,Panel,StateTag,useRemote} from '../components/UI'
 import {t,useLocale} from '../i18n'
 
 type Capability={id:string;name:string;description?:string;namespace:string;available?:boolean}
@@ -33,7 +33,7 @@ export function CapabilitiesPage({navigate,embedded=false}:{navigate:(page:Page)
   setRefreshing(true)
   try{await Promise.all([data.reload(),catalog.reload()])}finally{setRefreshing(false)}
  }
- return <div className={embedded?'min-w-0':'mx-auto w-full max-w-[1320px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8'}>
+ return <div className={embedded?'min-w-0':PAGE_FRAME}>
   <Headline eyebrow={t('ui.eyebrow.capabilities')} title={t('cap.title')} description={t('cap.description')} actions={<Button variant="secondary" disabled={refreshing} onClick={()=>void reload()}><RefreshCw size={16}/> {t('cap.refresh')}</Button>}/>
   <Notice message={data.error||catalog.error}/>
   <div className="mb-4 flex items-center gap-2"><Search size={16}/><TextInput aria-label={t('cap.searchAria')} value={query} onChange={event=>setQuery(event.target.value)} placeholder={t('cap.searchPlaceholder')}/></div>

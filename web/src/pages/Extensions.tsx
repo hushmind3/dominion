@@ -42,6 +42,7 @@ import {
   Empty,
   FormField,
   Headline,
+  PAGE_FRAME,
   Notice,
   Panel,
   StateTag,
@@ -617,7 +618,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
     void loadCatalog();
   }, []);
   return (
-    <div className={embedded?"min-w-0":"mx-auto w-full max-w-[1320px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8"}>
+    <div className={embedded?"min-w-0":PAGE_FRAME}>
       <Headline
         eyebrow={embedded?undefined:t('ui.eyebrow.marketplace')}
         title={embedded?(tab==='market'?'MCP 마켓':tab==='installed'?t('ext.installedTitle'):tab==='plugins'?t('ext.tab.plugins'):t('ext.tab.skills')):t('ext.title')}
@@ -732,16 +733,16 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
             <div className="registry-results grid gap-2.5">
               {catalog.map((x) => (
                 <div
-                  className="flex min-w-0 flex-wrap items-start gap-3 rounded-xl border border-divider bg-white p-3.5 transition-colors hover:border-[#D7B59E] sm:flex-nowrap"
+                  className="flex min-w-0 flex-wrap items-start gap-3 rounded-xl border border-divider bg-white p-3.5 transition-colors hover:border-[var(--color-brand)] sm:flex-nowrap"
                   key={x.name}
                 >
                   <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand">
                     <Server size={19} />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <strong className="block truncate text-[13px] font-semibold text-[#392F28]">{x.name}</strong>
-                    <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-[#766C62]">{x.description || "MCP server"}</p>
-                    <small className="mt-1.5 block truncate font-mono text-[10px] text-[#978B7F]" title={x.packageName || x.url || ''}>{x.packageName || x.url || t('ext.noInstallInfo')}</small>
+                    <strong className="block truncate text-[13px] font-semibold text-[var(--color-ink)]">{x.name}</strong>
+                    <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-[var(--color-muted)]">{x.description || "MCP server"}</p>
+                    <small className="mt-1.5 block truncate font-mono text-[10px] text-[var(--color-muted)]" title={x.packageName || x.url || ''}>{x.packageName || x.url || t('ext.noInstallInfo')}</small>
                   </div>
                   {(x.packageName || x.url) &&
                     (mcp.value.some((r: any) => r.name === x.name) ? (

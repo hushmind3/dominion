@@ -115,7 +115,7 @@ export function SkillsPanel(p:Props){
           <h3>
             {x.name}
             {String(x.source || "").includes("anthropics") && (
-              <span className="ml-2 rounded bg-[#FFF3E8] px-1.5 py-0.5 text-[10px] font-semibold text-brand-hover">
+              <span className="ml-2 rounded bg-[var(--color-brand-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-brand-hover">
                 {t('sp.claudeBasis')}
               </span>
             )}
