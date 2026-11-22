@@ -255,6 +255,13 @@ try{
   assert.equal(await page.getByRole('heading',{name:'Lead'}).count(),0);
   await page.getByRole('combobox',{name:'에이전트 준비 상태'}).selectOption('setup');
   await page.getByText('검색 조건에 맞는 에이전트가 없습니다.').waitFor({timeout:10000});
+  await page.goto(address+'/#/models',{waitUntil:'domcontentloaded'});
+  const modelAreas=page.getByRole('navigation',{name:'모델 영역'});
+  await modelAreas.getByRole('button',{name:'모델 찾아보기'}).waitFor({timeout:10000});
+  await modelAreas.getByRole('button',{name:'모델 찾아보기'}).click();
+  assert.equal(await page.getByRole('navigation',{name:'모델 상세'}).getByRole('button').count(),3);
+  await modelAreas.getByRole('button',{name:'Cloud·업체'}).click();
+  assert.equal(await page.getByRole('navigation',{name:'모델 상세'}).getByRole('button').count(),2);
   await page.goto(address+'/#/memory',{waitUntil:'domcontentloaded'});
   const memoryDraft=page.locator('textarea').first();
   await memoryDraft.waitFor({timeout:10000});
