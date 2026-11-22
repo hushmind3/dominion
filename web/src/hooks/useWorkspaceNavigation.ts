@@ -21,6 +21,7 @@ type WorkspaceState = {
 
 function readWorkspaceRoute(): WorkspaceRoute {
   const [name, query] = window.location.hash.replace(/^#\/?/, '').split('?')
+  if (name === 'agents') return {page:'prompts'}
   if (name === 'rooms' || isSettingsPage(name)) return { page: name }
 
   const params = new URLSearchParams(query)
@@ -60,11 +61,17 @@ export function useWorkspaceNavigation() {
   const { chatRoute } = workspace
 
   const syncRoute = useCallback(() => {
+    if (/^#\/agents(?:\?|$)/.test(window.location.hash)) {
+      const params = new URLSearchParams(window.location.hash.split('?')[1])
+      params.set('view', 'personas')
+      window.history.replaceState(null, '', '#/prompts?' + params)
+    }
     const route = readWorkspaceRoute()
     setWorkspace((previous) => applyRoute(previous, route))
   }, [])
 
   useEffect(() => {
+    syncRoute()
     window.addEventListener('hashchange', syncRoute)
     window.addEventListener('popstate', syncRoute)
     return () => {
@@ -74,13 +81,18 @@ export function useWorkspaceNavigation() {
   }, [syncRoute])
 
   const navigateHash = useCallback((hash: string) => {
-    if (window.location.hash !== hash) window.history.pushState(null, '', hash)
-    syncRoute()
+    if (window.location.hash !== hash) {
+      window.history.pushState(null, '', hash)
+      window.dispatchEvent(new HashChangeEvent('hashchange'))
+    } else {
+      syncRoute()
+    }
     // Navigation is immediate while the updated UI check runs in the background.
     void checkForUpdatedUi()
   }, [syncRoute])
 
   const navigate = useCallback((page: PageId, sessionId?: string) => {
+    if(page==='agents'){navigateHash('#/prompts?view=personas');return}
     const query = sessionId ? `?session=${encodeURIComponent(sessionId)}` : ''
     navigateHash(`#/${page}${query}`)
   }, [navigateHash])

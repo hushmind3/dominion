@@ -1,13 +1,14 @@
 import {useCallback,useEffect,useLayoutEffect,useRef,useState} from 'react'
-import {ArrowDownToLine,ArrowRight,Check,ChevronDown,CircleAlert,CloudDownload,Cpu,ExternalLink,FolderOpen,HardDrive,LoaderCircle,Pause,Play,RefreshCw,Search,Square,Trash2,X} from 'lucide-react'
+import {ArrowDownToLine,ArrowRight,Check,CircleAlert,CloudDownload,Cpu,ExternalLink,FolderOpen,HardDrive,LoaderCircle,Play,RefreshCw,Search,Square,Trash2,X} from 'lucide-react'
 import {Button,SelectInput,TextInput} from './Primitives'
 import {get,post,del} from '../api'
 import {matchesRefreshTarget,type RefreshScope} from '../refreshEvents'
 import {t,useLocale} from '../i18n'
+import {ModelDownloadPanel,type DownloadOption} from '../features/models/ModelDownloadPanel'
 import {translateError} from '../i18n/errors'
 import {classifyRuntimeFailure,engineForModel,memoryFit as getMemoryFit,modelPreflight,planDownloadLaunch,preferredServerModelFormat,requiredMemory,selectRecommended,selectSmaller} from '../utils/modelHardware'
 type Catalog={id:string;author:string;name:string;library:string;createdAt?:string;downloads:number;likes:number;gated:boolean;updatedAt:string;description:string;task:string;tags:string[]}
-type Option={id:string;format:'gguf'|'mlx';label:string;quantization:string;bytes:number;files:string[];shards:number}
+type Option=DownloadOption
 type Detail=Catalog&{revision:string;license:string;architecture:string;options:Option[];readme:string}
 type Installed={id:string;repo:string;optionId?:string;source?:string;externalPath?:string;format:'gguf'|'mlx';label:string;bytes:number;installedAt:string}
 type Job={id:string;repo:string;optionId:string;revision?:string;status:string;downloaded:number;total:number;current:string;error:string;installedId?:string;startedAt?:string}
@@ -66,6 +67,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
  const [limit,setLimit]=useState(80)
  const [selected,setSelected]=useState('')
  const [detail,setDetail]=useState<Detail|null>(null)
+ const [detailError,setDetailError]=useState(''),[detailRevision,setDetailRevision]=useState(0),[downloadError,setDownloadError]=useState('')
  const [variant,setVariant]=useState('')
  const [loading,setLoading]=useState(false)
  const [working,setWorking]=useState('')
@@ -122,7 +124,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
    window.removeEventListener('dominion-data-change',onChange);
   };
  },[refresh])
- useLayoutEffect(()=>{if(detailScroll.current)detailScroll.current.scrollTop=0},[selected])
+ useLayoutEffect(()=>{if(detailScroll.current){detailScroll.current.scrollTop=0;if(selected&&window.matchMedia('(max-width: 1023px)').matches)detailScroll.current.scrollIntoView({block:'start',behavior:'smooth'})}},[selected])
  useLayoutEffect(()=>{if(catalogueScroll.current)catalogueScroll.current.scrollTop=0},[q])
  useEffect(()=>{
   if(view!=='search')return
@@ -141,12 +143,12 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
  useEffect(()=>{
   if(view!=='search'||!selected){setDetail(null);setVariant('');return}
   const controller=new AbortController()
-  setDetail(null);setVariant('')
+  setDetail(null);setVariant('');setDetailError('');setDownloadError('')
   get<Detail>('/api/model-library/details?id='+encodeURIComponent(selected),controller.signal).then(d=>{
    if(!controller.signal.aborted){setDetail(d);setVariant(d.options.find(o=>format==='all'||o.format===format)?.id||d.options[0]?.id||'')}
-  }).catch(e=>{if(!controller.signal.aborted)setError((e as Error).message)})
+  }).catch(e=>{if(!controller.signal.aborted)setDetailError((e as Error).message)})
   return()=>controller.abort()
- },[selected,view,format])
+ },[selected,view,format,detailRevision])
  const readmePlain=detail?cleanMarkdown(detail.readme):''
  const readmeSummary=detail?(detail.description||readmePlain.slice(0,600)):''
  const option=detail?.options.find(o=>o.id===variant)
@@ -241,14 +243,16 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
    if(autoLaunch)setPendingLaunch({jobId:previous.id,repo:detail.id,optionId:target.id,revision:detail.revision,createdAt:Date.now()})
    return
   }
-  setWorking('download');setError('')
+  if(working)return
+  setWorking('download');setError('');setDownloadError('')
   try{
    const job=plan==='resume'&&previous
     ?await post<Job>('/api/model-library/jobs/'+encodeURIComponent(previous.id)+'/resume',{})
     :await post<Job>('/api/model-library/download',{repo:detail.id,optionId:target.id,format:target.format,files:target.files,revision:detail.revision})
    if(autoLaunch)setPendingLaunch({jobId:job.id,repo:detail.id,optionId:target.id,revision:detail.revision,createdAt:Date.now()})
+   setJobs(current=>[job,...current.filter(item=>item.id!==job.id)])
    await refresh()
-  }catch(e){if(autoLaunch)setPendingLaunch(null);setError((e as Error).message)}
+  }catch(e){if(autoLaunch)setPendingLaunch(null);setDownloadError((e as Error).message)}
   finally{setWorking('')}
  }
  useEffect(()=>{
@@ -371,20 +375,18 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
     </div>
    </div>
    <div ref={detailScroll} className="min-w-0 max-h-[610px] overflow-y-auto overscroll-contain p-4 pr-2">
-    {!selected?<div className="flex min-h-52 flex-col items-center justify-center gap-3 text-[12px] text-muted"><CloudDownload size={23}/>{t('models.selectModel')}</div>:!detail?<div className="flex h-44 items-center justify-center text-[12px] text-muted"><LoaderCircle size={17} className="mr-2 animate-spin"/>{t('models.loadingDetail')}</div>:<>
+    {!selected?<div className="flex min-h-52 flex-col items-center justify-center gap-3 text-[12px] text-muted"><CloudDownload size={23}/>{t('models.selectModel')}</div>:detailError?<div role="alert" className="grid gap-3 p-4 text-sm text-danger"><p>{detailError}</p><Button onClick={()=>setDetailRevision(value=>value+1)}>{t('history.retry')}</Button></div>:!detail?<div className="flex h-44 items-center justify-center text-[12px] text-muted"><LoaderCircle size={17} className="mr-2 animate-spin"/>{t('models.loadingDetail')}</div>:<>
      <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="break-all text-[20px] font-bold tracking-[-.02em] text-ink">{detail.name||detail.id}</h3><div className="mt-1 break-all text-[11px] text-muted">{detail.id}</div><div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted"><span>↓ {compactNumber(detail.downloads)}</span><span>♡ {compactNumber(detail.likes)}</span><span>{detail.architecture||t('models.ui.languageModel')}</span>{detail.license&&<span>{detail.license}</span>}<span>{t('models.ui.formats',{count:detail.options.length})}</span></div></div><a href={'https://huggingface.co/'+detail.id} target="_blank" rel="noreferrer" aria-label={t('models.ui.viewHf')} className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold text-brand hover:bg-brand-soft">Hugging Face <ExternalLink size={14}/></a></div>
+     <ModelDownloadPanel options={detail.options} selected={variant} onSelect={setVariant} gated={detail.gated} repository={detail.id} job={selectedJob} installed={existing} busy={Boolean(working)} loading={runtime.status==='loading'} running={Boolean(existing&&runtime.status==='ready'&&runtime.id===existing.id)} autoLaunch={Boolean(pendingLaunch&&pendingLaunch.repo===detail.id&&pendingLaunch.optionId===option?.id)} error={downloadError}
+      onDownload={launch=>void requestDownload(launch)} onLoad={()=>{if(existing)void load(existing.id)}} onChat={existing&&runtime.status==='ready'&&runtime.id===existing.id&&runtime.model?()=>{window.location.hash='#/chat?'+new URLSearchParams({provider:'dominion-native',model:runtime.model!})}:undefined}
+      onJob={action=>{if(selectedJob)void safe(action,()=>post('/api/model-library/jobs/'+encodeURIComponent(selectedJob.id)+'/'+action,{}))}}/>
+     <details className="mt-4 rounded-xl border border-divider p-3"><summary className="cursor-pointer text-sm font-semibold">기기 적합도·모델 정보</summary>
      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
       <div className="rounded-xl border border-divider bg-surface p-3"><div className="text-[10px] text-muted">사용 가능한 형식</div><strong className="mt-1 block text-[13px] text-ink">{[...new Set(detail.options.map(o=>o.format.toUpperCase()))].join(' · ')||'—'}</strong></div>
       <div className="rounded-xl border border-divider bg-surface p-3"><div className="text-[10px] text-muted">양자화 선택지</div><strong className="mt-1 block text-[13px] text-ink">{new Set(detail.options.map(o=>o.quantization).filter(Boolean)).size}개</strong></div>
       <div className="rounded-xl border border-divider bg-surface p-3"><div className="text-[10px] text-muted">가장 작은 파일</div><strong className="mt-1 block text-[13px] text-ink">{detail.options.some(o=>o.bytes>0)?fmt(Math.min(...detail.options.filter(o=>o.bytes>0).map(o=>o.bytes))):'—'}</strong></div>
       <div className="rounded-xl border border-divider bg-surface p-3"><div className="text-[10px] text-muted">선택한 파일</div><strong className="mt-1 block text-[13px] text-ink">{option?fmt(option.bytes):'—'}</strong></div>
      </div>
-     <div className="mt-5 text-[13px] font-semibold text-ink">{t('models.downloadFiles')} <span className="ml-2 text-[11px] font-normal text-muted">원하는 양자화 파일을 선택하세요</span></div>
-     {detail.options.length>0&&<div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
-      <div className="rounded-lg bg-canvas p-2.5"><div className="text-[10px] text-muted">최소 다운로드 용량</div><strong className="text-[13px] text-ink">{detail.options.some(o=>(format==='all'||o.format===format)&&o.bytes>0)?fmt(Math.min(...detail.options.filter(o=>(format==='all'||o.format===format)&&o.bytes>0).map(o=>o.bytes))):'정보 없음'}</strong></div>
-      <div className="rounded-lg bg-canvas p-2.5"><div className="text-[10px] text-muted">선택한 양자화</div><strong className="text-[13px] text-ink">{option?.quantization||option?.format.toUpperCase()||'선택 전'}</strong></div>
-      <div className="col-span-2 rounded-lg bg-canvas p-2.5 sm:col-span-1"><div className="text-[10px] text-muted">선택한 용량</div><strong className="text-[13px] text-ink">{option?fmt(option.bytes):'선택 전'}</strong></div>
-     </div>}
      {recommendedOption&&<div className="mt-2 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-success-soft bg-canvas p-3">
       <div className="min-w-0"><div className="text-[11px] font-semibold text-success">내 기기 추천 양자화</div><div className="mt-1 truncate text-[12px] font-semibold text-ink">{recommendedOption.label} · {fmt(recommendedOption.bytes)}</div><p className="mt-1 text-[10px] text-muted">{recommendationBasis} 기준 · 실행 시 컨텍스트와 엔진 추가 메모리가 필요할 수 있습니다.</p></div>
       <Button variant="bare" type="button" onClick={()=>setVariant(recommendedOption.id)} className="shrink-0 rounded-lg bg-success px-3 py-2 text-[11px] font-semibold text-white">이 옵션 선택</Button>
@@ -395,23 +397,13 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
       <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-divider pt-2 text-[11px] text-muted"><span>GPU: {gpuKind||'정보 없음'}</span><span>여유 GPU 메모리: {gpuMemory?fmt(gpuMemory):'정보 없음'}</span><span className={'rounded px-2 py-0.5 font-semibold '+(gpuFit==='comfortable'?'bg-success-soft text-success':gpuFit==='tight'?'bg-warning-soft text-warning':gpuFit==='partial'?'bg-canvas text-muted':'bg-canvas text-muted')}>{gpuFit==='comfortable'?'GPU 전체 적재 여유':gpuFit==='tight'?'GPU 적재 빠듯':gpuFit==='partial'?'GPU 부분 적재 가능성':'GPU 적합도 정보 없음'}</span></div>
       <p className="mt-2 text-[10px] leading-4 text-muted">파일 크기의 약 1.3배를 기준으로 한 참고치입니다. 시스템 RAM과 GPU 메모리는 합산하지 않습니다. GPU 부분 적재는 실행 엔진의 오프로딩 지원 여부에 따라 달라집니다.</p>
      </div>}
-     <div className="mt-2 max-h-56 overflow-auto rounded-xl border border-divider">{detail.options.filter(o=>format==='all'||o.format===format).map(o=><Button variant="bare" type="button" key={o.id} onClick={()=>setVariant(o.id)} className={'flex w-full items-center gap-3 border-b border-divider px-3.5 py-3.5 text-left last:border-0 '+(variant===o.id?'bg-brand-soft':'hover:bg-canvas')}><span className="rounded bg-canvas px-2 py-1 text-[10px] font-semibold text-muted">{o.format.toUpperCase()}</span><span className="min-w-0 flex-1 text-[13px] font-semibold text-ink">{o.label}<span className="ml-2 text-[10px] font-normal text-muted">{o.quantization&&o.quantization!==o.label?o.quantization:''}{o.shards>1?' · '+t('models.ui.shardFiles',{count:o.shards}):''}</span></span><span className="text-[12px] text-muted">{fmt(o.bytes)}</span>{variant===o.id&&<Check size={15} className="text-brand"/>}</Button>)}</div>
-     {!detail.options.length&&<p className="mt-3 text-[12px] text-warning">{t('models.noGguf')}</p>}
      {selectedPreflight&&<div className={'mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3 text-[11px] '+(selectedPreflight.status==='blocked'?'border-danger/20 bg-danger-soft text-danger':selectedPreflight.status==='warning'?'border-warning/20 bg-warning-soft text-warning':'border-divider bg-canvas text-muted')}>
       <div className="min-w-0"><strong className="text-[12px]">실행 전 점검 · {selectedPreflight.status==='blocked'?'실행기 필요':selectedPreflight.status==='warning'?'메모리 주의':selectedPreflight.status==='ready'?'준비 상태 양호':'측정 정보 확인 중'}</strong>
       <p className="mt-1 leading-5">{selectedPreflight.status==='blocked'?selectedPreflight.engine+' 실행기가 없습니다. 먼저 설치하거나 기존 실행기를 연결하세요.':selectedPreflight.status==='warning'?'선택한 모델의 파일 크기에 비해 사용 가능한 메모리가 빠듯할 수 있습니다. 실제 사용량은 컨텍스트와 오프로딩 방식에 따라 달라집니다.':selectedPreflight.status==='ready'?'실행기 및 모델 용량에 대한 기본 점검을 통과했습니다.':'실행기 또는 사용 가능 메모리 정보가 부족합니다. 실행할 때 서버 상태를 다시 검사합니다.'}</p></div>
       {selectedPreflight.status==='blocked'&&<Button variant="bare" type="button" className={btn} onClick={()=>queueEngineSetup(existing)}><Cpu size={13}/>실행기 설치·확인</Button>}
       {selectedPreflight.status==='warning'&&smallerOption&&<Button variant="bare" type="button" className={btn} onClick={()=>setVariant(smallerOption.id)}>작은 양자화 선택</Button>}
      </div>}
-     {option&&<div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl bg-canvas p-3">
-      <span className="text-[12px] text-muted">{t('models.sizeLabel')} <strong>{fmt(option.bytes)}</strong></span>
-      {existing?<><Button variant="bare" type="button" className={btn+' !border-brand !bg-brand !text-white'} disabled={Boolean(working)||runtime.status==='loading'||(runtime.status==='ready'&&runtime.id===existing.id)} onClick={()=>void load(existing.id)}><Play size={13}/>{working==='load'+existing.id?t('models.loadingModel'):runtime.status==='ready'&&runtime.id===existing.id?t('models.inUse'):t('models.run')}</Button>{runtime.status==='ready'&&runtime.id===existing.id&&runtime.model&&<Button variant="bare" type="button" className={btn} onClick={()=>{window.location.hash='#/chat?'+new URLSearchParams({provider:'dominion-native',model:runtime.model!})}}><ArrowRight size={14}/>{t('models.chat')}</Button>}<Button variant="bare" type="button" className={btn} onClick={()=>setView('installed')}><Check size={14}/>{t('models.installedView')}</Button></>:
-       <><Button variant="bare" type="button" className="flex h-8 items-center gap-2 rounded-lg bg-brand px-3 text-[11px] font-semibold text-white disabled:opacity-40" disabled={Boolean(working)||['resolving','downloading','paused'].includes(selectedJob?.status||'')||detail.gated} onClick={()=>void requestDownload(false)}><ArrowDownToLine size={14}/>{working==='download'?t('models.requesting'):selectedJob?.status==='downloading'?t('models.downloading'):t('models.downloadStart')}</Button><Button variant="bare" type="button" className={btn} disabled={Boolean(working)||detail.gated||Boolean(pendingLaunch&&pendingLaunch.repo===detail.id&&pendingLaunch.optionId===option.id)} onClick={()=>void requestDownload(true)}><Play size={13}/>{pendingLaunch?.repo===detail.id&&pendingLaunch.optionId===option.id?'자동 실행 대기 중':['paused','failed','cancelled'].includes(selectedJob?.status||'')?'이어받고 실행':'다운로드 후 실행'}</Button></>}
-      {detail.gated&&<span className="text-[11px] text-warning">{t('models.approval')}</span>}
-     </div>}
-
-     {selectedJob?.status==='completed'&&!existing&&<div className="mt-2 rounded-lg border border-success/20 bg-success-soft px-3 py-2 text-[11px] text-success">다운로드가 완료되었습니다. 설치 목록을 새로고침하면 실행할 수 있습니다. <Button variant="bare" type="button" className="ml-2 underline" onClick={()=>void refresh()}>목록 새로고침</Button></div>}
-     {selectedJob&&<div className="mt-3 rounded-lg border border-divider p-3 text-[11px]"><div className="flex justify-between gap-3"><span>{selectedJob.status} {selectedJob.current&&'· '+shorten(selectedJob.current,30)}</span><span>{fmt(selectedJob.downloaded)} / {fmt(selectedJob.total)}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-canvas"><div className="h-full bg-brand" style={{width:Math.min(100,selectedJob.downloaded/Math.max(1,selectedJob.total)*100)+'%'}}/></div>{selectedJob.error&&<p className="mt-2 text-danger">{translateError(selectedJob.error)}</p>}<div className="mt-2 flex gap-2">{selectedJob.status==='downloading'&&<Button variant="bare" type="button" className={btn} onClick={()=>void safe('pause',()=>post('/api/model-library/jobs/'+selectedJob.id+'/pause',{}))}><Pause size={13}/> {t('models.pause')}</Button>}{['paused','failed','cancelled'].includes(selectedJob.status)&&<Button variant="bare" type="button" className={btn} onClick={()=>void safe('resume',()=>post('/api/model-library/jobs/'+selectedJob.id+'/resume',{}))}><Play size={13}/> {t('models.resume')}</Button>}{['resolving','downloading','paused'].includes(selectedJob.status)&&<Button variant="bare" type="button" className={btn} onClick={()=>void safe('cancel',()=>post('/api/model-library/jobs/'+selectedJob.id+'/cancel',{}))}><Square size={13}/> {t('models.download.cancel')}</Button>}</div></div>}
+     </details>
          <div className="mt-5 rounded-xl border border-divider bg-canvas p-4"><div className="flex items-center justify-between gap-2"><strong className="text-[13px] text-ink">{t('models.readme')}</strong><span className="text-[10px] font-semibold text-muted">HUGGING FACE</span></div><p className="mt-2 whitespace-pre-wrap text-[12px] leading-6 text-muted">{readmePlain.slice(0,1200)||readmeSummary||t('models.readmeEmpty')}</p>{readmePlain.length>1200&&<details className="mt-2"><summary className="cursor-pointer text-[11px] font-semibold text-brand">{t('models.showReadme')}</summary><pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-muted">{readmePlain.slice(0,14000)}</pre></details>}</div>
      </>}
    </div>

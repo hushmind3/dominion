@@ -8,8 +8,8 @@
  --color-muted: #7C7469;
  --color-divider: #E7E0D5;
  --color-brand-soft: #F7E8E1;
- --color-sidebar: #F4F1EA;
- --color-selected: #E9DFD0;
+ --color-sidebar: var(--color-surface);
+ --color-selected: var(--color-brand-soft);
  --color-danger: #AD4737;
  --color-danger-soft: #FFF1EC;
  --color-warning: #936128;

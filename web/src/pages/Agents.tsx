@@ -6,26 +6,20 @@ import {
   TextArea,
   SelectInput,
 } from "../components/Primitives";
-import {useEffect,useState} from "react";
+import {useEffect,useRef,useState} from "react";
 import {
-  Activity,
   ArrowRight,
   Bot,
   BrainCircuit,
   Check,
-  CirclePlus,
-  Clock3,
   Edit3,
   FolderInput,
   LoaderCircle,
-  MessageSquare,
-  Play,
   Plus,
   Save,
   Settings2,
   Sparkles,
   Trash2,
-  UsersRound,
   X,
 } from "lucide-react";
 import {Agent,Provider,del,get,post} from "../api";
@@ -34,7 +28,6 @@ import {ReasoningSelect} from "../components/ReasoningSelect";
 import {useProviderModels} from "../hooks/useProviderModels";
 import {
   Action,
-  Empty,
   FormField,
   Headline,
   Notice,
@@ -52,13 +45,15 @@ const accents = [
   "#e86e86",
   "#6d8b9f",
 ];
-export function AgentsPage() {
+export function AgentsPage({embedded=false,active=true,focusAgentId}:{embedded?:boolean;active?:boolean;focusAgentId?:string}) {
   useLocale();
   const agents = useRemote<Agent[]>("/api/agents", []),
     providers = useRemote<Provider[]>("/api/providers", []);
   const [edit, setEdit] = useState<Partial<Agent> | null>(null),
     [error, setError] = useState(""), [saving, setSaving] = useState(false);
   const [showPersonaImport,setShowPersonaImport]=useState(false);
+  const identityBaseline=useRef<Agent|null>(null);
+  useEffect(()=>{identityBaseline.current=edit?.id?agents.value.find(agent=>agent.id===edit.id)||null:null},[edit?.id]);
   const [bulk, setBulk] = useState(false),
     [selected, setSelected] = useState<string[]>([]),
     [bulkProvider, setBulkProvider] = useState(""),
@@ -66,6 +61,7 @@ export function AgentsPage() {
     [bulkEffort, setBulkEffort] = useState(""),
     [bulkBusy, setBulkBusy] = useState(false),
     [bulkNotice, setBulkNotice] = useState("");
+  useEffect(()=>{if(focusAgentId){const found=agents.value.find(agent=>agent.id===focusAgentId);if(found)setEdit({...found})}},[focusAgentId,agents.loading]);
   const enabledProviders = providers.value.filter(p => p.enabled !== false);
   const editProvider = enabledProviders.find(p => p.id === edit?.providerId);
   const editModels = useProviderModels(edit?.providerId || "");
@@ -83,6 +79,7 @@ export function AgentsPage() {
     try {
       await post("/api/agents", {
         ...edit,
+        ...(identityBaseline.current?{expectedIdentity:identityBaseline.current}:{}),
         name: edit.name.trim(),
         aliases: edit.aliases?.map(alias => alias.trim()).filter(Boolean),
         model: edit.providerId ? model : "",
@@ -119,7 +116,7 @@ export function AgentsPage() {
     }
   };
   return (
-    <div className="mx-auto w-full max-w-[1320px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8">
+    <div className={embedded?"w-full":"mx-auto w-full max-w-[1320px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8"}>
       <Headline
         eyebrow={t('ui.eyebrow.agents')}
         title={t('agents.title')}
@@ -327,8 +324,8 @@ export function AgentsPage() {
         ))}
       </div>
       {!edit && <Notice message={error || agents.error || providers.error} retrying={agents.refreshing||providers.refreshing} onRetry={!error?()=>{void agents.reload();void providers.reload()}:undefined}/>}
-      {showPersonaImport&&<PersonaImportDialog agents={agents.value} onClose={()=>setShowPersonaImport(false)} onImported={async(count)=>{await agents.reload();refresh();setBulkNotice(t('agents.personaImported', { count }))}}/>}
-      {edit && (
+      {active&&showPersonaImport&&<PersonaImportDialog agents={agents.value} onClose={()=>setShowPersonaImport(false)} onImported={async(count)=>{await agents.reload();refresh();setBulkNotice(t('agents.personaImported', { count }))}}/>}
+      {active && edit && (
         <DialogBackdrop onDismiss={closeEditor}>
           <DialogPanel size="wide">
             <div className="flex items-center justify-between border-b border-divider p-5">

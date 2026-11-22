@@ -1,5 +1,4 @@
 import {RoomWelcome, RoomFirstMessage} from '../components/rooms/RoomWelcome'
-import {RoomPromptEditor, type RoomPromptPreview} from '../features/prompts/RoomPromptEditor'
 import {useChatDraft} from '../hooks/useChatDraft'
 import {ConversationComposer, ComposerSendButton} from '../components/chat/ConversationComposer'
 import {ExecutionPermissionsSetting} from '../components/ExecutionPermissions'
@@ -16,7 +15,7 @@ import {RoomTeamLauncher} from '../components/RoomTeamLauncher'
 import {RunEventTimeline} from '../components/RunEventTimeline'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
 import {useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent} from 'react'
-import {Activity, ArrowDown, ArrowRight, ArrowUp, Workflow, BookOpenText, Check, ChevronDown, FileText, LoaderCircle, Menu, Paperclip, Plus, RefreshCw, RotateCcw, ShieldCheck, Square, TerminalSquare, Trash2, UsersRound, X} from 'lucide-react'
+import {Activity, ArrowDown, ArrowRight, ArrowUp, Workflow, BookOpenText, Check, ChevronDown, LoaderCircle, Menu, Paperclip, Plus, RefreshCw, RotateCcw, ShieldCheck, Square, TerminalSquare, Trash2, UsersRound, X} from 'lucide-react'
 import {get, post, del, resolveApproval, uploadAttachment, type Agent, type ChatMessage, type ModelOption, type Provider} from '../api'
 import {Button, TextArea, TextInput, SelectInput} from '../components/Primitives'
 import {DialogBackdrop, DialogPanel} from '../components/Dialog'
@@ -156,10 +155,6 @@ function RoomConversation({settingsTarget,room,agents,providers,openList,openSes
  const [inspector,setInspector]=useState(false),[draft,setDraft]=useState<RoomDraft>(()=>draftOf(room)),[dirty,setDirty]=useState(false),[saving,setSaving]=useState(false),[saved,setSaved]=useState(false)
  const [knowledgeOpen,setKnowledgeOpen]=useState(false),[knowledge,setKnowledge]=useState<any[]>([]),[knowledgeBusy,setKnowledgeBusy]=useState(false),[knowledgeNotice,setKnowledgeNotice]=useState('')
  const [approvalBusy,setApprovalBusy]=useState('')
- const [promptOpen,setPromptOpen]=useState(false),[promptAgent,setPromptAgent]=useState(''),[prompt,setPrompt]=useState<RoomPromptPreview|null>(null),[promptBusy,setPromptBusy]=useState(false),[promptError,setPromptError]=useState('')
- const [personaDraft,setPersonaDraft]=useState(''),[commonDraft,setCommonDraft]=useState(''),[finalDraft,setFinalDraft]=useState(''),[promptSaving,setPromptSaving]=useState(false),[promptNotice,setPromptNotice]=useState('')
- const promptSequence=useRef(0)
- const promptDirty=Boolean(prompt&&(personaDraft!==prompt.persona||commonDraft!==(prompt.commonOverride??prompt.common)||finalDraft!==(prompt.finalOverride??prompt.prompt)))
  const [learningNotice,setLearningNotice]=useState('')
  const [teamOpen,setTeamOpen]=useState(false)
  const [showActivity,setShowActivity]=useState(false),[live,setLive]=useState<LiveDraft|null>(null),[moreBelow,setMoreBelow]=useState(false)
@@ -303,45 +298,6 @@ function RoomConversation({settingsTarget,room,agents,providers,openList,openSes
  }
  const remove=async()=>{if(!confirm(t('rooms.deleteConfirm',{name:current.name})))return;setError('');try{await del('/api/rooms/'+room.id);await onRemoved()}catch(e){setError((e as Error).message)}}
  const reset=async()=>{if(!confirm(t('rooms.resetConfirm',{name:current.name})))return;setError('');setStopping(true);try{const result=await post<{sessionId:string}>('/api/rooms/'+room.id+'/reset',{});dataVersion.current+=1;if(activeTurnId.current)terminalTurnIds.current.add(activeTurnId.current);setMessages([]);setLive(null);setFeed(previous=>({...previous,sessionId:result.sessionId,jobs:[],executions:[],operations:[],approvals:[],status:'idle',activeAgentId:undefined}));setInspector(false);await load();await onSaved()}catch(e){setError((e as Error).message)}finally{setStopping(false)}}
- const previewPrompt=(id:string)=>get<NonNullable<typeof prompt>>(`/api/rooms/${room.id}/system-prompt?agentId=${encodeURIComponent(id)}`)
- const closePrompt=()=>{
-  if(promptSaving)return
-  if(promptDirty&&!window.confirm(t('rooms.promptDiscard')))return
-  promptSequence.current+=1;setPromptOpen(false)
- }
- const openPrompt=async(agentId?:string)=>{
-  if(promptSaving)return
-  if(promptOpen&&promptDirty&&!window.confirm(t('rooms.promptDiscard')))return
-  const id=agentId||promptAgent||current.agentIds[0]||'',sequence=++promptSequence.current
-  setPromptAgent(id);setPromptOpen(true);setPromptBusy(true);setPrompt(null);setPromptError('');setPromptNotice('')
-  try{
-   const preview=await previewPrompt(id)
-   if(!mounted.current||sequence!==promptSequence.current)return
-   setPrompt(preview);setPersonaDraft(preview.persona);setCommonDraft(preview.commonOverride??preview.common);setFinalDraft(preview.finalOverride??preview.prompt)
-  }catch(e){if(mounted.current&&sequence===promptSequence.current)setPromptError((e as Error).message)}
-  finally{if(mounted.current&&sequence===promptSequence.current)setPromptBusy(false)}
- }
- const savePrompt=async()=>{
-  if(promptSaving||promptBusy||!prompt||!promptDirty)return
-  const id=promptAgent;let persisted=false
-  setPromptSaving(true);setPromptError('');setPromptNotice('')
-  try{
-   const personaChanged=personaDraft!==prompt.persona
-   const commonChanged=commonDraft!==(prompt.commonOverride??prompt.common)
-   const finalChanged=finalDraft!==(prompt.finalOverride??prompt.prompt)
-   await post('/api/rooms/'+room.id+'/system-prompt',{
-    ...(personaChanged?{persona:{agentId:id,prompt:personaDraft,expectedPrompt:prompt.persona}}:{}),
-    ...(commonChanged?{common:commonDraft,expectedCommon:prompt.commonOverride??null}:{}),
-    ...(finalChanged?{final:finalDraft,expectedFinal:prompt.finalOverride??null}:{}),
-   })
-   persisted=true
-   setPrompt(previous=>previous?{...previous,...(personaChanged?{persona:personaDraft}:{}),...(commonChanged?{commonOverride:commonDraft}:{}),...(finalChanged?{finalOverride:finalDraft}:{})}:previous)
-   refresh()
-   const preview=await previewPrompt(id)
-   setPrompt(preview);setPersonaDraft(preview.persona);setCommonDraft(preview.commonOverride??preview.common);setFinalDraft(preview.finalOverride??preview.prompt);setPromptNotice(t('rooms.promptSaved'))
-  }catch(e){setPromptError((persisted?(getLocale()==='en'?'Saved, but the updated preview could not be loaded. ':'저장은 완료했지만 최신 미리보기를 불러오지 못했습니다. '):'')+(e as Error).message)}
-  finally{setPromptSaving(false)}
- }
  const loadKnowledge=async()=>{setKnowledgeBusy(true);try{setKnowledge(await get<any[]>('/api/rooms/'+room.id+'/knowledge'))}catch(e){setError((e as Error).message)}finally{setKnowledgeBusy(false)}}
  const openKnowledge=async()=>{setKnowledgeOpen(true);setKnowledgeNotice('');await loadKnowledge()}
  const learnKnowledge=async()=>{if(knowledgeBusy)return;setKnowledgeBusy(true);setKnowledgeNotice('');try{await post('/api/rooms/'+room.id+'/knowledge/learn',{});setKnowledgeNotice(t('rooms.knowledgeQueued'));setTimeout(()=>void loadKnowledge(),2500)}catch(e){setError((e as Error).message)}finally{setKnowledgeBusy(false)}}
@@ -404,7 +360,6 @@ function RoomConversation({settingsTarget,room,agents,providers,openList,openSes
      options={<>
        <Button variant="ghost" size="icon" className="md:hidden" onClick={openList} aria-label={t('rooms.listExpand')}><Menu size={17}/></Button>
        <Button variant="ghost" className="!min-h-9 !gap-1.5 !px-2 !py-1.5 !text-xs !font-medium" onClick={()=>{setTeamOpen(true);setInspector(false)}}><Workflow size={16}/>{t('rooms.taskAction')}</Button>
-       <Button variant="ghost" className="!min-h-9 !gap-1.5 !px-2 !py-1.5 !text-xs !font-medium" onClick={()=>void openPrompt()}><FileText size={16}/>{t('rooms.systemPrompt')}</Button>
        <RoomActions active={visibleView} actions={[
         {label:t('rooms.editParticipants'),icon:<UsersRound size={16}/>,run:()=>{setInspector(true);setRecipientsOpen(false)}},
         {label:t('rooms.sharedKnowledge'),icon:<BookOpenText size={16}/>,run:()=>void openKnowledge()},
@@ -444,9 +399,7 @@ function RoomConversation({settingsTarget,room,agents,providers,openList,openSes
    </DialogPanel>
   </DialogBackdrop>}
   {visibleView&&inspector&&<DialogBackdrop onDismiss={()=>setInspector(false)}><DialogPanel size="wide" className="room-settings-dialog" aria-label={t('rooms.groupSettings')}><div className="room-dialog-header"><h2>{t('rooms.groupSettings')}</h2><Button variant="ghost" size="icon" onClick={()=>setInspector(false)} aria-label={t('rooms.settingsClose')}><X size={18}/></Button></div><div className="room-dialog-body"><RoomSettings value={draft} onChange={updateDraft} agents={agents} providers={providers} disabled={saving}/>{saved&&<p className="room-saved"><Check size={13}/> {t('rooms.settingsSaved')}</p>}<Button variant="ghost" className="mt-3 w-full !justify-start !text-xs" onClick={()=>{setShowActivity(true);setInspector(false)}} aria-expanded={showActivity}><Activity size={14}/>{t('rooms.activity')}{feed.jobs.length>0&&' '+feed.jobs.length}</Button>{(learningNotice||learningActive>0||memoryCount>0)&&<p className="room-note">{learningNotice}{learningActive>0&&` · ${t('rooms.learning')} ${learningActive}`}{memoryCount>0&&` · ${t('rooms.memory',{count:memoryCount})}`}</p>}<Button variant="bare" className="room-reset" onClick={()=>void reset()} disabled={stopping}><RotateCcw size={13}/> {t('rooms.reset')}</Button><Button variant="bare" className="room-delete" onClick={()=>void remove()}><Trash2 size={13}/> {t('rooms.deleteRoom')}</Button></div><div className="room-dialog-footer"><Button variant="primary" disabled={!dirty||saving||!draft.name.trim()||!draft.agentIds.length} onClick={()=>void save()}>{saving?<LoaderCircle size={14} className="animate-spin"/>:<Check size={14}/>} {t('rooms.saveChanges')}</Button></div></DialogPanel></DialogBackdrop>}
-  {visibleView&&promptOpen&&<RoomPromptEditor roster={roster} agentId={promptAgent} preview={prompt} loading={promptBusy} saving={promptSaving} dirty={promptDirty} error={promptError} notice={promptNotice}
-   common={commonDraft} persona={personaDraft} final={finalDraft} onCommon={setCommonDraft} onPersona={setPersonaDraft} onFinal={setFinalDraft}
-   onAgent={id=>void openPrompt(id)} onSave={()=>void savePrompt()} onClose={closePrompt}/>}
+
 {visibleView&&knowledgeOpen&&<DialogBackdrop onDismiss={()=>setKnowledgeOpen(false)}><DialogPanel size="wide" aria-label={t('rooms.sharedKnowledge')}><div className="room-dialog-header"><div><span className="room-eyebrow">{t('ui.label.sharedKnowledge')}</span><h2>{t('rooms.knowledgeOf',{name:current.name})}</h2></div><Button size="icon" variant="ghost" aria-label={t('rooms.close')} onClick={()=>setKnowledgeOpen(false)}><X size={18}/></Button></div><div className="room-dialog-body"><p className="room-note">{t('rooms.knowledgeDesc')}</p><div className="room-knowledge-list">{knowledgeBusy&&!knowledge.length&&<p className="room-note"><LoaderCircle size={14} className="animate-spin"/> {t('rooms.knowledgeLoading')}</p>}{!knowledgeBusy&&!knowledge.length&&<p className="room-note">{t('rooms.knowledgeEmpty')}</p>}{knowledge.map(item=>{const sources=(item.sources||[]).map((source:any)=>[source.agentName||source.agentId||'?',source.model||t('rooms.modelUnrecorded')].filter(Boolean).join(' · ')).filter(Boolean).join(', ');return <div className={'room-knowledge-item '+(item.status==='superseded'?'is-superseded':'')} key={item.id}><div className="room-knowledge-head"><strong>{item.type}</strong><span>{item.verification||'unverified'}</span><span>{item.status==='active'?t('rooms.knowledgeActive'):t('rooms.knowledgeSuperseded')}</span></div><p>{item.text}</p><small>{t('rooms.source')}: {sources||t('rooms.noRecord')}</small></div>})}</div>{knowledgeNotice&&<p className="room-saved"><Check size={13}/>{knowledgeNotice}</p>}</div><div className="room-dialog-footer"><span>{t('rooms.selectedKnowledge')}</span><div className="flex gap-2"><Button variant="secondary" disabled={knowledgeBusy} onClick={()=>void learnKnowledge()}>{knowledgeBusy?<LoaderCircle size={14} className="animate-spin"/>:<RefreshCw size={14}/>} {t('rooms.learnNow')}</Button><Button onClick={()=>setKnowledgeOpen(false)}>{t('rooms.close')}</Button></div></div></DialogPanel></DialogBackdrop>}
  </div>
 }

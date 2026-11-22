@@ -328,6 +328,18 @@ fn format_bytes(bytes: u64) -> String {
 /// Installed local models: GGUF files under the data dir (recursive).
 pub async fn installed(state: &AppState) -> Vec<Value> {
     let dir = models_dir(state);
+    // Keep filesystem-derived runtime IDs, but display the repository and file
+    // selection from the completed receipt instead of a mangled local path.
+    let mut receipts = state.store.all(MODEL_KIND);
+    receipts.sort_by(|a, b| a["startedAt"].as_str().cmp(&b["startedAt"].as_str()));
+    let mut downloads = std::collections::HashMap::new();
+    for receipt in receipts {
+        if receipt["status"] == "completed" {
+            if let Some(id) = receipt["installedId"].as_str() {
+                downloads.insert(id.to_string(), receipt);
+            }
+        }
+    }
     let mut found = Vec::new();
     walk(&dir, 0, &mut found);
     let lms = lmstudio_models().await;
@@ -393,6 +405,15 @@ pub async fn installed(state: &AppState) -> Vec<Value> {
                 .as_str()
                 .is_some_and(|repo| !indexed.contains(repo))
         }))
+        .map(|mut model| {
+            if let Some(receipt) = model["id"].as_str().and_then(|id| downloads.get(id)) {
+                model["repo"] = receipt["repo"].clone();
+                model["optionId"] = receipt["optionId"].clone();
+                model["revision"] = receipt["revision"].clone();
+                model["source"] = json!("huggingface");
+            }
+            model
+        })
         .collect()
 }
 

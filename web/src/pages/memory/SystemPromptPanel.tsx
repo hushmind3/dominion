@@ -7,15 +7,10 @@ import {usePromptEditor} from '../../features/prompts/usePromptEditor'
 
 export function SystemPromptPanel() {
  const editor = usePromptEditor()
- const {tr, agents, owner, selectedAgent, ownerDraft, persona, full, preview, busy} = editor
+ const {tr, agents, owner, selectedAgent, ownerDraft, full, preview, busy} = editor
  const disabled = Boolean(busy)
- const conflict = ownerDraft.conflict || persona.conflict || full.conflict
+ const conflict = ownerDraft.conflict || full.conflict
  return <div className="grid gap-6">
-  <nav className="sticky top-0 z-10 flex flex-wrap gap-2 bg-surface py-3 [&>a]:rounded-xl [&>a]:border [&>a]:border-divider [&>a]:bg-surface [&>a]:px-3 [&>a]:py-2.5 [&>a]:text-sm [&>a]:font-semibold [&>a:hover]:bg-brand-soft" aria-label={tr('프롬프트 편집 영역', 'Prompt sections')}>
-   <a href="#prompt-shared" onClick={event => {event.preventDefault(); document.getElementById('prompt-shared')?.scrollIntoView({block:'start',behavior:'smooth'})}}>{tr('공통 프롬프트', 'Shared instructions')}</a>
-   <a href="#prompt-persona" onClick={event => {event.preventDefault(); document.getElementById('prompt-persona')?.scrollIntoView({block:'start',behavior:'smooth'})}}>{tr('페르소나', 'Personas')}</a>
-   <a href="#prompt-system" onClick={event => {event.preventDefault(); document.getElementById('prompt-system')?.scrollIntoView({block:'start',behavior:'smooth'})}}>{tr('전체 시스템 프롬프트', 'Full system prompt')}</a>
-  </nav>
   <Notice message={editor.error || owner.error || agents.error || preview.error} onRetry={() => void editor.reload()}/>
   {conflict && <Notice message={tr('원본이 다른 곳에서 변경됐습니다. 작성한 내용은 유지했습니다. 원본을 확인한 후 다시 편집해 주세요.', 'The original changed elsewhere. Your draft is retained; review the current version before saving.')}/>}
   {editor.notice && <p className="flex items-center gap-2 rounded-xl border border-success/20 bg-success-soft/25 p-4 text-sm text-success" role="status"><Check size={16}/>{editor.notice}</p>}
@@ -30,21 +25,8 @@ export function SystemPromptPanel() {
     <Button variant="primary" disabled={!ownerDraft.dirty || ownerDraft.conflict || disabled || ownerDraft.value.instructions.length > 16000} onClick={() => void editor.saveOwner()}><Save size={15}/>{tr('공통 프롬프트 저장', 'Save shared instructions')}</Button>
     </FormActions>
   </PromptSection>
-  <PromptSection id="prompt-persona" scope={tr('선택한 AI에 적용', 'Selected AI')} title={tr('페르소나', 'Persona')}>
-   <p>{tr('AI별 성격, 역할, 전문 지식과 답변 방식을 수정합니다.', 'Edit each AI’s personality, role, knowledge and response style.')}</p>
-   <FormField label={tr('수정할 AI', 'AI to edit')}><SelectInput value={editor.agentId} disabled={disabled} onChange={event => editor.setAgentId(event.target.value)}>
-    <option value="">{tr('AI를 선택하세요', 'Choose an AI')}</option>{agents.value.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
-   </SelectInput></FormField>
-   <FormField label={tr('페르소나 내용', 'Persona text')}><TextArea rows={10} disabled={!selectedAgent || disabled} value={persona.value} onChange={event => persona.change(event.target.value)}/></FormField>
-   {selectedAgent && preview.value?.effectiveOverrideScope && <p className="text-xs leading-6 text-muted">{tr('전체 시스템 프롬프트 직접 지정이 적용 중입니다. 현재 페르소나가 실제 입력에 포함되는지는 아래 전체 프롬프트에서 확인하세요.', 'A full system-prompt override is active. Check the full prompt below to see which persona text is sent.')}</p>}
-   {persona.conflict&&<PromptConflict current={persona.confirmed} onContinue={persona.rebase} onDiscard={persona.discard} english={editor.en}/>}
-   <FormActions description={<>{selectedAgent?.name || tr('AI 선택 필요', 'Choose an AI')} {persona.dirty && ' · ' + tr('저장하지 않음', 'Unsaved')}</>}>
-    <Button variant="ghost" disabled={!persona.dirty || disabled} onClick={persona.discard}>{tr('변경 취소', 'Discard changes')}</Button>
-    <Button variant="primary" disabled={!persona.dirty || persona.conflict || disabled || !selectedAgent} onClick={() => void editor.savePersona()}><Save size={15}/>{tr('페르소나 저장', 'Save persona')}</Button>
-    </FormActions>
-  </PromptSection>
   <PromptSection id="prompt-system" scope={editor.agentId ? selectedAgent?.name : tr('모든 일반 대화', 'All private chats')} title={tr('전체 시스템 프롬프트', 'Full system prompt')} controls={<><Button variant="ghost" disabled={!preview.value} onClick={() => void navigator.clipboard.writeText(full.value)}><Copy size={15}/>{tr('복사', 'Copy')}</Button></>}>
-   <p>{tr('실제 모델에 전달할 시스템 텍스트를 직접 수정할 수 있습니다. 직접 저장하면 이 범위의 기본 지침·공통 프롬프트·페르소나를 대체합니다. 그룹의 지침은 그룹 대화의 프롬프트 편집에서 확인합니다.', 'Edit the exact system text sent to the model. Saving an override replaces generated identity, shared instructions and persona in this scope. Room instructions are available in the group’s prompt editor.')}</p>
+   <p>{tr('실제 모델에 전달할 시스템 텍스트를 직접 수정할 수 있습니다. 직접 저장하면 이 범위의 기본 지침·공통 프롬프트·페르소나를 대체합니다. 그룹별 지침은 이 메뉴의 그룹 지침 탭에서 편집합니다.', 'Edit the exact system text sent to the model. Saving an override replaces generated identity, shared instructions and persona in this scope. Group instructions are edited in the Group instructions tab here.')}</p>
    <FormField label={tr('적용 범위', 'Override scope')}><SelectInput value={editor.agentId} disabled={disabled} onChange={event => editor.setAgentId(event.target.value)}>
     <option value="">{tr('공통 · 모든 일반 대화', 'Shared · all private chats')}</option>{agents.value.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
    </SelectInput></FormField>

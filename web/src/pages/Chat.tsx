@@ -1,6 +1,6 @@
 import {resolveConversationRoute} from '../features/conversations/resolveRoute'
 import {ConversationComposer,ComposerSendButton} from '../components/chat/ConversationComposer'
-import {ChatWelcome,ConversationStartActions} from '../components/chat/ChatWelcome'
+import {ChatWelcome} from '../components/chat/ChatWelcome'
 import {ConversationTargetPicker} from '../components/chat/ConversationTargetPicker'
 import {ConversationSettings} from '../components/ConversationSettings'
 import {ChatRichText} from '../components/ChatRichText'
@@ -10,7 +10,7 @@ import {ExecutionPermissionsSetting} from '../components/ExecutionPermissions'
 import {MessageInfo} from '../components/chat/MessageInfo'
 import {ExecutionInsights} from '../components/ExecutionInsights'
 import {createPortal} from 'react-dom'
-import {Button,TextArea,SelectInput} from '../components/Primitives'
+import {Button} from '../components/Primitives'
 import {FormEvent,useEffect,useLayoutEffect,useRef,useState,type ChangeEvent,type KeyboardEvent} from 'react'
 import {ArrowDown,ArrowRight,ArrowUp,BrainCircuit,Check,ChevronRight,CircleHelp,Copy,Menu,LoaderCircle,Paperclip,ShieldAlert,Sparkles,Square,TerminalSquare,X} from 'lucide-react'
 import {Agent,Approval,Attachment,ChatMessage,ChatSession,Provider,get,post,resolveApproval,streamChat,uploadAttachment} from '../api'
@@ -42,6 +42,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const messages=transcript.value
  const approvals=useRemote<Approval[]>('/api/approvals',[],active);
  const [input,setInput,adoptNewSession]=useChatDraft(current);
+ const [pickerRevision,setPickerRevision]=useState(0);
+ const chooseAI=()=>setPickerRevision(value=>value+1);
  const [agentChoice,setAgentChoice]=useState<{scope?:string;id:string}>();
  const [chatModeOverride,setChatModeOverride]=useState<{scope?:string;mode:'chat'|'agent'}>();
  const [override,setOverride]=useState<ModelOverride>();
@@ -352,7 +354,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   }
   if(stream.current||stoppingRef.current||selectedSession?.roomId||(current&&sessions.loading))return;
   if(providerId&&!selectedProvider){setError(t('chat.err.agentApi'));return;}
-  if(!providerId||!route.configured){openModels();return;}
+  if(!providerId||!route.configured){chooseAI();return;}
   if(!model){setError(t('chat.err.pickModel'));return;}
   const previousTurn=pendingTurn.current;
   const clientTurnId=previousTurn&&previousTurn.scope===current&&previousTurn.text===text
@@ -514,15 +516,15 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const lastNewConversation=useRef(0);
  useEffect(()=>{if(lastNewConversation.current!==newConversationRevision){lastNewConversation.current=newConversationRevision;resetLocal()}},[newConversationRevision]);
  return <div className="conversation-page flex h-full min-h-0">
-  <div className={'conversation-view relative flex h-full min-h-0 min-w-0 flex-1 flex-col '+(emptyConversation?'justify-center overflow-y-auto':'')}>
+  <div className="conversation-view relative flex h-full min-h-0 min-w-0 flex-1 flex-col">
 
-   <div ref={scrollRef} onScroll={onScroll} data-chat-scroll aria-label={t('ui.label.conversations')} className={emptyConversation?'shrink-0 overflow-visible':'min-h-0 flex-1 overflow-y-auto overscroll-contain'}>{current&&transcript.loading?<div className="flex h-full min-h-52 items-center justify-center gap-3 text-sm text-muted" role="status"><LoaderCircle size={20} className="animate-spin"/>{t('history.loading')}</div>:!messages.length&&!showOptimisticOwner&&!(busy&&viewingTurn)?<ChatWelcome ready={Boolean(route.configured&&model)} loading={sessions.loading||providers.loading||catalogue.loading} error={providers.error} onRetry={()=>{void providers.reload();void sessions.reload()}}
-    onConnect={openModels}/>
+   <div ref={scrollRef} onScroll={onScroll} data-chat-scroll aria-label={t('ui.label.conversations')} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{current&&transcript.loading?<div className="flex h-full min-h-52 items-center justify-center gap-3 text-sm text-muted" role="status"><LoaderCircle size={20} className="animate-spin"/>{t('history.loading')}</div>:!messages.length&&!showOptimisticOwner&&!(busy&&viewingTurn)?<ChatWelcome loading={sessions.loading||providers.loading||catalogue.loading} error={providers.error} onRetry={()=>{void providers.reload();void sessions.reload()}}
+    />
    :<div className={'chat-transcript mx-auto flex min-h-full w-full max-w-conversation flex-col gap-7 px-4 py-7 sm:px-7 '+(busy&&viewingTurn?'chat-transcript--responding':'')}>{messages.filter(m=>m.role!=='tool').map(m=><Message key={m.id} active={active} message={m} agentName={agents.value.find(a=>a.id===m.agent_id)?.name} showReasoning={showReasoning} />)}{showOptimisticOwner&&<Message key="optimistic-owner" message={{id:'optimistic-owner',session_id:current||'',role:'user',content:optimisticOwner!.content,created_at:''}}/>}{viewingTurn&&(live||thought||busy)&&<div className="chat-message chat-message--assistant flex min-w-0 items-start gap-3 justify-start assistant" data-message data-message-role="assistant"><div className="grid size-9 shrink-0 place-items-center rounded-xl bg-canvas text-ink ai"><Sparkles size={17}/></div><div className="chat-message-body relative min-w-0 flex-1"><div className="mb-2 flex items-center gap-2 text-xs font-bold text-ink">DOMINION <span>{busy?t('ui.label.live'):savedMessageId?'대화 내역 동기화 중':'중단된 응답 · 미저장'}</span>{busy&&thought&&!showReasoning&&<span className="inline-flex items-center gap-1 rounded bg-canvas px-1.5 py-0.5 text-[10px] font-medium text-muted"><BrainCircuit size={11}/> {t('chat.thinkingNow')}</span>}</div>{showReasoning&&thought&&<details className="mb-3 max-h-56 overflow-y-auto rounded-xl border border-divider bg-canvas p-3 text-[11px] leading-5 text-muted" open={thinking}><summary className="cursor-pointer select-none" onClick={e=>{e.preventDefault();setThinking(x=>!x)}}><BrainCircuit size={14} className="inline"/> {t('chat.reasoningProcess',{count:thought.length.toLocaleString()} )} <ChevronRight size={13} className="inline"/></summary><div className="mt-2 whitespace-pre-wrap">{thought}</div></details>}{live&&<div className="chat-message-content min-w-0 break-words text-base leading-7 text-ink [&_p]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-xl [&_pre]:bg-ink [&_pre]:p-4 [&_pre]:text-surface [&_code]:break-words [&_ul]:list-disc [&_ul]:pl-6"><ChatRichText text={live}/></div>}{!busy&&!savedMessageId&&live&&<Button type="button" variant="ghost" aria-label="중단된 답변 복사" onClick={()=>void navigator.clipboard.writeText(live)} className="mt-2 inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] text-muted hover:bg-canvas"><Copy size={14}/>내용 복사</Button>}{busy&&!live&&<div className="flex items-center gap-2 text-xs text-muted"><i/><i/><i/></div>}</div></div>}{viewingTurn&&toolStatus&&<div className="inline-flex items-center gap-2 rounded-lg bg-canvas px-3 py-1.5 text-xs text-muted"><TerminalSquare size={15}/>{toolStatus}</div>}</div>}</div>
    {moreBelow&&<Button type="button" variant="ghost" onClick={jumpDown} aria-label="최신 메시지로 이동" className="chat-scroll-to-bottom absolute bottom-[132px] left-1/2 z-20 -translate-x-1/2 inline-flex items-center gap-2 rounded-full border border-divider bg-surface px-3 py-2 text-[12px] font-semibold text-muted shadow-md hover:bg-canvas"><ArrowDown size={16}/>최신 메시지</Button>}
-   <div className={'conversation-composer-wrap z-10 w-full shrink-0 bg-surface px-3 pb-3 pt-2 sm:px-6 sm:pb-6 '+(emptyConversation?'mx-auto mt-3 max-w-conversation':'sticky bottom-0')}><div className="mx-auto w-full max-w-conversation">{approval&&<div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/20 bg-warning-soft p-3 text-xs text-warning"><div><ShieldAlert size={20}/><span><strong>{t('chat.approval')}</strong><small>{approval.tool} · {JSON.stringify(approval.args??{}).slice(0,150)}</small></span></div><div><Action variant="secondary" disabled={approvalBusy} onClick={()=>approve(false)}>{t('chat.deny')}</Action><Action disabled={approvalBusy} onClick={()=>approve(true)}><Check size={15}/> {t('chat.approve')}</Action></div></div>}
+   <div className="conversation-composer-wrap z-10 mt-auto w-full shrink-0 bg-surface px-3 pb-3 pt-2 sm:px-6 sm:pb-6"><div className="mx-auto w-full max-w-conversation">{approval&&<div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/20 bg-warning-soft p-3 text-xs text-warning"><div><ShieldAlert size={20}/><span><strong>{t('chat.approval')}</strong><small>{approval.tool} · {JSON.stringify(approval.args??{}).slice(0,150)}</small></span></div><div><Action variant="secondary" disabled={approvalBusy} onClick={()=>approve(false)}>{t('chat.deny')}</Action><Action disabled={approvalBusy} onClick={()=>approve(true)}><Check size={15}/> {t('chat.approve')}</Action></div></div>}
     {visibleAlert&&<div role="alert" className="mb-3 rounded-xl border border-danger/20 bg-danger-soft p-3 text-xs text-danger"><CircleHelp size={16}/>{visibleAlert}<Button type="button" aria-label="오류 닫기" onClick={()=>setDismissedError({session:current,message:visibleAlert})}><X size={14}/></Button></div>}
-    {modelError&&!model&&<div className="mb-3 text-xs text-muted">{t('welcome.modelError')} <Button onClick={openModels}>{t('chat.manage')} <ArrowRight size={13}/></Button></div>}
+    {modelError&&!model&&<div className="mb-3 text-xs text-muted">{t('welcome.modelError')} <Button onClick={chooseAI}>{t('chat.modelPick')} <ArrowRight size={13}/></Button></div>}
     {commandInfo&&<div role="status" className="mb-3 max-h-36 overflow-auto whitespace-pre-wrap rounded-xl border border-divider bg-brand-soft p-3 text-xs leading-6 text-ink">{commandInfo}</div>}
     <div className="relative">
     {pendingImages.length>0&&<div className="mb-2 flex flex-wrap items-center gap-2">
@@ -536,8 +538,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      onSend={send} inputRef={inputRef} label={t('chat.messageAria')} placeholder={t('chat.inputPlaceholder')} onKeyDown={appendKey} slashOpen={slashOpen}
      options={<>
        <Button variant="ghost" size="icon" className="!h-7 !w-7 md:hidden" onClick={onOpenNavigation} aria-label={t('chat.listExpand')} title={t('chat.recent')}><Menu size={17}/></Button>
-       <ConversationTargetPicker active={active} providers={enabledProviders} agents={agents.value} providerId={providerId} model={model} agentId={agentMode?agentId:''} catalogue={catalogue}
-        onModel={(provider,chosenModel)=>{setChatModeOverride({scope:current,mode:'chat'});setRoute(provider,chosenModel)}} onAgent={chooseAgent} onManage={openModels} onManageAgents={()=>{window.location.hash='#/agents'}}/>
+       <ConversationTargetPicker openRevision={pickerRevision} active={active} providers={enabledProviders} agents={agents.value} providerId={providerId} model={model} agentId={agentMode?agentId:''} catalogue={catalogue}
+        onModel={(provider,chosenModel)=>{setChatModeOverride({scope:current,mode:'chat'});setRoute(provider,chosenModel)}} onAgent={chooseAgent}/>
 
        <Button type="button" variant="ghost" size="icon" className="!h-7 !w-7 !border-0 !bg-transparent !text-muted" title={t('chat.attach')} aria-label={t('chat.attach')} onClick={()=>imageInputRef.current?.click()} disabled={busy||uploading||Boolean(selectedSession?.roomId)}>{uploading?<LoaderCircle size={16} className="animate-spin"/>:<Paperclip size={16}/>}</Button>
        <input ref={imageInputRef} type="file" accept={ATTACH_ALLOWED.join(',')} multiple className="sr-only" aria-label={t('chat.attach')} onChange={onPickImages}/>
@@ -549,7 +551,6 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
        :<ComposerSendButton disabled={stopping||uploading||Boolean(selectedSession?.roomId)||(Boolean(current)&&sessions.loading)||(!input.trim()&&!pendingImages.length)} type="submit" title={t('chat.send')}><ArrowUp size={19}/></ComposerSendButton>}</>}/>
 </div>
    </div></div>
-   {emptyConversation&&<ConversationStartActions onGroup={()=>switchMode('rooms')}/>}
   </div>
   {settingsTarget&&createPortal(<ConversationSettings permissionControl={agentMode?<ExecutionPermissionsSetting/>:undefined} reasoningControl={<ReasoningSelect value={effectiveReasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} model={selectedModel} requireCatalog={selectedProvider?.kind==='codex'} className="w-full"/>} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={effectiveThinkingEnabled} setThinkingEnabled={setThinkingEnabled} canDisableThinking={canDisableThinking} reasoningEffort={effectiveReasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={agentMode&&toolsEnabled} setToolsEnabled={setToolsEnabled} autoLearn={agentMode&&autoLearn} setAutoLearn={setAutoLearn} optionsBusy={!agentMode} learning={learning} learnDisabled={!agentMode||!current||Boolean(selectedSession?.roomId)||busy} onLearn={learnSession}/>,settingsTarget)}
  </div>

@@ -43,24 +43,10 @@ pub async fn list_agents(
 }
 
 pub async fn save_agent(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
-    if let Err(message) = crate::engine::reasoning::validate(&body) {
-        return error(StatusCode::BAD_REQUEST, &message);
+    match crate::features::collaboration::prompt_settings::save_identity(&state, &body) {
+        Ok(saved) => Json(saved).into_response(),
+        Err(value) => super::response::prompt_error(value),
     }
-    if body
-        .get("name")
-        .and_then(|value| value.as_str())
-        .unwrap_or("")
-        .trim()
-        .is_empty()
-    {
-        return error(StatusCode::BAD_REQUEST, "에이전트 이름이 필요합니다.");
-    }
-    let saved = match state.store.put("agent", &body) {
-        Some(record) => record,
-        None => return error(StatusCode::BAD_REQUEST, "에이전트를 저장할 수 없습니다."),
-    };
-    state.bus.record("agent", &saved);
-    Json(saved).into_response()
 }
 
 pub async fn bulk_agent_model(State(state): State<AppState>, Json(body): Json<Value>) -> Response {

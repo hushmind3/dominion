@@ -31,9 +31,8 @@ export function usePromptEditor() {
  const preview = useRemote<PromptPreview | null>('/api/settings/system-prompt/preview?' + params, null)
  const selectedAgent = agents.value.find(agent => agent.id === agentId)
  const ownerDraft = usePromptDraft('prompt:owner', {instructions: owner.value.instructions, enabled: owner.value.enabled !== false}, !owner.loading && !owner.error)
- const persona = usePromptDraft('prompt:persona:' + agentId, selectedAgent?.systemPrompt || '', Boolean(selectedAgent))
  const full = usePromptDraft('prompt:system:' + agentId, preview.value?.ownOverrideText ?? preview.value?.systemPrompt ?? '', Boolean(preview.value) && !preview.loading)
- const [busy, setBusy] = useState<'owner' | 'persona' | 'full' | null>(null)
+ const [busy, setBusy] = useState<'owner' | 'full' | null>(null)
  const [error, setError] = useState('')
  const [notice, setNotice] = useState('')
  useEffect(() => {setError(''); setNotice('')}, [agentId])
@@ -45,16 +44,6 @@ export function usePromptEditor() {
    ownerDraft.accept({instructions: saved.instructions, enabled: saved.enabled !== false})
    owner.setValue(saved); refresh('/api/settings/assistant'); await preview.reload()
    setNotice(tr('공통 프롬프트를 저장했습니다. 다음 대화부터 적용됩니다.', 'Shared instructions saved for subsequent turns.'))
-  } catch (e) {setError((e as Error).message)} finally {setBusy(null)}
- }
- const savePersona = async () => {
-  if (busy || !selectedAgent || !persona.dirty || persona.conflict) return
-  setBusy('persona'); setError(''); setNotice('')
-  try {
-   const saved = await post<Agent>('/api/agents/'+encodeURIComponent(agentId)+'/persona', {prompt:persona.value,expectedPrompt:persona.baseline})
-   persona.accept(saved.systemPrompt || ''); agents.setValue(rows => rows.map(agent => agent.id === saved.id ? saved : agent))
-   refresh('/api/agents'); await preview.reload()
-   setNotice(tr('페르소나를 저장했습니다. 다음 대화부터 적용됩니다.', 'Persona saved for subsequent turns.'))
   } catch (e) {setError((e as Error).message)} finally {setBusy(null)}
  }
  const saveFull = async (reset = false) => {
@@ -72,8 +61,8 @@ export function usePromptEditor() {
  }
  const reload = async () => {await Promise.all([owner.reload(), agents.reload(), sessions.reload(), preview.reload()])}
  return {en, tr, agents, sessions, owner, agentId, setAgentId, sessionId, setSessionId, selectedAgent, query, setQuery,
-  tools, setTools, korean, setKorean, preview, ownerDraft, persona, full, busy, error, notice,
-  saveOwner, savePersona, saveFull, reload, refreshPreview: () => {
+  tools, setTools, korean, setKorean, preview, ownerDraft, full, busy, error, notice,
+  saveOwner, saveFull, reload, refreshPreview: () => {
    const next = query.trim()
    if (next === previewQuery) void preview.reload()
    else setPreviewQuery(next)

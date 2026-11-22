@@ -70,6 +70,78 @@ pub fn save_persona(state: &AppState, id: &str, body: &Value) -> Result<Value, P
         .next()
         .ok_or_else(|| PromptError::Storage("Persona receipt missing".into()))
 }
+
+/// The unified persona form edits identity and prompt together. Omitted
+/// fields (such as a full-system override) are preserved, and an editor's
+/// captured baseline prevents an old form overwriting a newer change.
+pub fn save_identity(state: &AppState, body: &Value) -> Result<Value, PromptError> {
+    let fields = body
+        .as_object()
+        .ok_or_else(|| invalid("AI 설정 객체가 필요합니다."))?;
+    let name = body["name"]
+        .as_str()
+        .filter(|name| !name.trim().is_empty())
+        .ok_or_else(|| invalid("AI 이름을 입력하세요."))?;
+    crate::engine::reasoning::validate(body).map_err(PromptError::Invalid)?;
+    if let Some(prompt) = body.get("systemPrompt") {
+        text(prompt, false)?;
+    }
+    if let Some(prompt) = body.get("systemPromptOverride") {
+        text(prompt, true)?;
+    }
+    if body
+        .get("expectedIdentity")
+        .is_some_and(|value| !value.is_object())
+    {
+        return Err(invalid("AI 설정 원본을 확인할 수 없습니다."));
+    }
+    let id = body["id"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let current = state.store.get("agent", &id);
+    let mut patch = json!({});
+    for (field, value) in fields {
+        if !matches!(
+            field.as_str(),
+            "id" | "expectedIdentity" | "createdAt" | "updatedAt"
+        ) {
+            patch[field] = value.clone();
+        }
+    }
+    patch["name"] = json!(name.trim());
+    if let Some(current) = current {
+        let baseline = body.get("expectedIdentity").unwrap_or(&current);
+        let expected = patch
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|field| (field.clone(), baseline[field].clone()))
+            .collect();
+        let change = ConditionalPatch {
+            kind: "agent".into(),
+            id,
+            expected,
+            patch,
+        };
+        commit(state, &[change])?
+            .into_iter()
+            .next()
+            .ok_or(PromptError::Changed)
+    } else {
+        if body.get("expectedIdentity").is_some() {
+            return Err(PromptError::Changed);
+        }
+        patch["id"] = json!(id);
+        let saved = state
+            .store
+            .put_if_absent("agent", &patch)
+            .ok_or(PromptError::Changed)?;
+        state.bus.record("agent", &saved);
+        Ok(saved)
+    }
+}
 pub fn save_room(state: &AppState, id: &str, body: &Value) -> Result<Value, PromptError> {
     if !body.is_object() {
         return Err(invalid("프롬프트 설정 객체가 필요합니다."));

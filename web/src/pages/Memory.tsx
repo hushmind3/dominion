@@ -6,7 +6,6 @@ import {Action,FormField,Headline,Notice,Panel,Subheading,useRemote} from '../co
 import {LearningRecords} from './memory/LearningRecords'
 import {t,useLocale,type LocaleKey} from '../i18n'
 import {GrowthDashboard} from './memory/Growth'
-import {SystemPromptPanel} from './memory/SystemPromptPanel'
 
 type Memory={
  id:string;text:string;scope?:string;agentId?:string;sessionId?:string;partitionKey?:string;
@@ -20,8 +19,7 @@ const displayTime=(time?:string)=>time&&Number.isFinite(Date.parse(time))?new Da
 const statusOf=(memory:Memory)=>memory.retrievalEligible?'active':memory.status&&memory.status!=='active'?memory.status:'excluded'
 
 export function MemoryPage(){
- const locale=useLocale()
- const [tab,setTab]=useState<'memories'|'systemPrompt'>('memories')
+ useLocale()
  const memories=useRemote<Memory[]>('/api/memories',[])
  const agents=useRemote<Agent[]>('/api/agents',[])
  const [query,setQuery]=useState(''),[text,setText]=useState(''),[scope,setScope]=useState('shared')
@@ -78,17 +76,6 @@ export function MemoryPage(){
   <Headline eyebrow={t('ui.eyebrow.memory')} title={t('memory.title')} description={t('memory.description')}/>
   <Notice message={error||memories.error||agents.error} retrying={memories.refreshing||agents.refreshing} onRetry={!error?()=>{void memories.reload();void agents.reload()}:undefined}/>
   {notice&&<div role="status" className="my-3 flex items-center gap-2 rounded-xl border border-success/20 bg-success-soft p-3 text-sm text-success"><Check size={16}/>{notice}</div>}
-  <div role="tablist" aria-label={locale==='en'?'Memory settings':'메모리 설정'} className="mb-5 flex flex-wrap gap-2 border-b border-divider pb-3">
-   <button type="button" role="tab" aria-selected={tab==='memories'} onClick={()=>setTab('memories')}
-    className={'rounded-lg px-4 py-2 text-sm font-semibold '+(tab==='memories'?'bg-brand text-white':'bg-canvas text-success hover:bg-canvas')}>
-    {locale==='en'?'Memories':'기억'}
-   </button>
-   <button type="button" role="tab" aria-selected={tab==='systemPrompt'} onClick={()=>setTab('systemPrompt')}
-    className={'rounded-lg px-4 py-2 text-sm font-semibold '+(tab==='systemPrompt'?'bg-brand text-white':'bg-canvas text-success hover:bg-canvas')}>
-    {locale==='en'?'Reply instructions':'답변 방식'}
-   </button>
-  </div>
-  {tab==='systemPrompt'?<SystemPromptPanel/>:<>
   <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
    <Panel className="min-w-0 p-5">
     <Subheading title={t('memory.new')} extra={<Action disabled={busy||!text.trim()} onClick={save}><Plus size={16}/> {t('memory.save')}</Action>}/>
@@ -125,6 +112,5 @@ export function MemoryPage(){
    <summary className="cursor-pointer font-semibold">{t('memory.growth')}</summary>
    <GrowthDashboard/>
   </details>
-  </>}
  </div>
 }

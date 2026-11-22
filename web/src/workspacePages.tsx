@@ -34,9 +34,6 @@ const MemoryPage = lazy(() =>
 const ModelHub = lazy(() =>
   import('./pages/Models').then((module) => ({ default: module.ModelHub })),
 )
-const AgentsPage = lazy(() =>
-  import('./pages/Agents').then((module) => ({ default: module.AgentsPage })),
-)
 const ExtensionsPage = lazy(() =>
   import('./pages/Extensions').then((module) => ({
     default: module.ExtensionsPage,
@@ -101,12 +98,12 @@ export const settingsPages = {
     render: () => <ModelHub />,
   },
   agents: {
-    label: 'nav.agents',
+    label: 'nav.prompts',
     description: 'workspace.description.agents',
     group: 'nav.group.workspace',
     icon: Bot,
     primary: true,
-    render: () => <AgentsPage />,
+    render: () => <PromptsPage />,
   },
   connections: {
     label: 'nav.connections',

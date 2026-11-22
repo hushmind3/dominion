@@ -14,8 +14,8 @@ existing engine contracts.
 - `Primitives` and `ui/WorkspaceUI` own controls, surfaces, headers, search, empty
   states, view navigation and form actions. Conversation input and target
   selection have dedicated React components shared where behavior is identical.
-- `styles/foundation.css` owns the Tailwind theme. Ivory `#FFFDF9`, sidebar
-  `#F4F1EA` and coral `#C96442` match the selected preview. Components use semantic
+- `styles/foundation.css` owns the Tailwind theme. Chat and sidebar share
+  the same `surface` token (`#FFFDF9`); coral `#C96442` remains the action color. Components use semantic
   tokens. User-selected persona colors remain runtime data. Remaining room
   configuration / team-dialog CSS consumes the same tokens.
 - `features/models` separates service facts, connection operations and dialog
@@ -32,10 +32,12 @@ existing engine contracts.
   navigation. Unsaved prompt drafts survive route changes in memory and report
   conflicts instead of silently replacing the text. Backend compare-and-patch
   updates preserve unrelated settings and full-prompt overrides.
-- The upstream group prompt editing change is preserved, including its real POST
-  endpoint. `RoomPromptEditor` uses the shared prompt-section component and shows
-  all three editable layers without collapsed sections. Persona scope and the
-  precedence of a final override are explained beside the fields.
+- `PromptsPage` is the single prompt/persona workspace. Shared/system instructions,
+  AI/persona identities and group instructions have distinct tabs. Memory only owns
+  remembered information. Groups no longer render a second persona/prompt form.
+  The original group POST endpoint remains; `GroupPromptPanel` edits common/final
+  text there. Persona text is edited only in the AI/persona form, whose conditional
+  save preserves unrelated fields and rejects stale baselines.
 - Room messages and live replies share `RoomMessageFrame`. The transcript and
   composer use one conversation width. Token details are optional message
   information instead of permanent byline badges. Group creation asks the owner
@@ -63,7 +65,7 @@ path and handler composition, not only route counts.
 
 A populated group was also inspected with browser-only synthetic GET responses
 at 1440px and 390px. It showed no horizontal overflow, matching transcript and
-composer widths, and three visible group prompt editors. This rendering check
+composer widths, and the former inline group prompt editors. This historical rendering check
 made no backend writes and does not stand in for a real model response.
 
 The initial frontend pass did not compile or replace the backend. The subsequent
@@ -72,3 +74,33 @@ deployment boundary: it includes Rust diagnostics, a local development executabl
 and isolated real-HTTP verification of the changed persistence and execution
 paths. Test suites and release builds remain separate. No external paid-model
 success or imported credentials are claimed.
+
+## Follow-up: one editing location and uninterrupted conversation
+
+- The empty-chat composer stays at the bottom on desktop and mobile. AI selection
+  opens an anchored picker; adding/editing a connection reuses `ConnectionDialog`
+  inside chat, including the zero-provider case. No picker action changes pages.
+  Typed messages stay intact while connecting.
+- The legacy agents route resolves to the persona tab. Navigation notifies mounted
+  tab readers when query parameters change through the sidebar or browser history.
+- Local model search puts file choice, size, download/resume and live progress in
+  `ModelDownloadPanel` immediately below the model title. Hardware explanations
+  are optional detail. Paused jobs have an enabled resume action. A details error
+  exposes retry instead of leaving an indefinite spinner, and download failures
+  appear beside the action. Search-format filters do not hide downloadable files
+  inside a selected repository. Mobile selection scrolls to the selected model.
+  Completed receipts retain the original repository/file labels in the installed
+  library without changing runtime IDs or rewriting existing model files.
+- Validation uses an isolated engine/database and a loopback AI fixture for chat
+  and persistence. A small public GGUF download exercises the real worker without
+  adding model files, credentials or fixture records to the live user store.
+
+The follow-up browser pass exercised an actual loopback chat response, inline
+connection persistence without route/draft loss, canonical persona and group
+saves, and a stale persona save returning 409. The real download worker completed
+`ggml-org/models` / `tinyllamas/stories260K.gguf` (1,185,376 bytes) at an immutable
+revision and listed it under the original repository after reload. Recovery
+branches (paused resume and details-error retry) used browser HTTP fixtures;
+they do not claim a second real transfer. Desktop 1440×1000 and mobile 390×844
+showed a bottom composer and no horizontal overflow. No paid model calls or live
+user-store writes were made.

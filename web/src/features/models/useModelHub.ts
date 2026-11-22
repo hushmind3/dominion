@@ -5,12 +5,12 @@ import {useRemote} from '../../hooks/useRemote'
 import {useProviderModels} from '../../hooks/useProviderModels'
 import {t,useLocale} from '../../i18n'
 import type {CliAuthStatus} from '../../components/CliAuthProgress'
-import {opencodeGoPreset, providerPresets, sameProvider, updatedProviderEndpoint, type PresetCategory, type ProviderPreset, type CliCredential, type CatalogProvider, type CatalogResponse, type FreeCatalogModel, type FreeCatalogProvider, type FreeCatalog, type Tab} from './catalog'
+import {opencodeGoPreset, providerPresets, updatedProviderEndpoint, type PresetCategory, type ProviderPreset, type CliCredential, type CatalogProvider, type CatalogResponse, type FreeCatalog, type Tab} from './catalog'
 
-export function useModelHub(){
+export function useModelHub({inline=false}:{inline?:boolean}={}){
  useLocale()
  const providers=useRemote<Provider[]>('/api/providers',[])
- const cli=useRemote<CliCredential[]>('/api/providers/cli',[])
+ const cli=useRemote<CliCredential[]>(inline?null:'/api/providers/cli',[])
  const [counts,setCounts]=useState<Record<string,{list:string[];error?:string;info?:string;busy?:boolean}>>({})
  const [error,setError]=useState(''),[saving,setSaving]=useState(false)
  const [savedId,setSavedId]=useState(''),[removedName,setRemovedName]=useState('')
@@ -24,7 +24,7 @@ export function useModelHub(){
  const [browseProviderId,setBrowseProviderId]=useState('')
  const catalog=useRemote<CatalogResponse>(tab==='catalog'?'/api/providers/catalog':null,{providers:[]})
  const [loginPending,setLoginPending]=useState(false),[loginUrl,setLoginUrl]=useState(''),[loginMessage,setLoginMessage]=useState(''),[deviceCode,setDeviceCode]=useState<{userCode:string;verificationUrl:string}|null>(null)
- const freeCatalog=useRemote<FreeCatalog>('/api/providers/free-catalog',{providers:[]})
+ const freeCatalog=useRemote<FreeCatalog>(inline?null:'/api/providers/free-catalog',{providers:[]})
  const [freeBusy,setFreeBusy]=useState(false)
  const [oauthBusy,setOauthBusy]=useState('')
  const [cliAuth,setCliAuth]=useState<CliAuthStatus|null>(null)
