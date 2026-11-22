@@ -373,34 +373,34 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const toolReceiptsOmitted=run?.checkpoint?.toolReceiptsOmitted??0
  const loadedReceipts=olderReceipts?.runId===run?.id&&
   olderReceipts?.boundary===toolReceiptsOmitted?olderReceipts:null
- return <section className="native-command-center" aria-label={en?'Autonomous work studio':'자동 작업 스튜디오'}>
-  <header className="native-command-header">
-   <div className="native-command-header-copy">
-    <span className="native-command-kicker">DOMINION / CODE</span>
-    <h2>{en?'Work':'자동 작업'}</h2>
+ return <section className="native-command-center mx-auto mb-5 w-full max-w-5xl overflow-hidden rounded-xl border border-divider bg-surface text-ink shadow-sm" aria-label={en?'Autonomous work studio':'자동 작업 스튜디오'}>
+  <header className="native-command-header flex min-h-14 items-center justify-between gap-3 border-b border-divider px-4 py-3 sm:px-6">
+   <div className="native-command-header-copy flex min-w-0 items-center gap-3">
+    <span className="native-command-kicker text-[10px] font-semibold tracking-wide text-muted">DOMINION / CODE</span>
+    <h2 className="text-sm font-semibold text-ink">{en?'Work':'자동 작업'}</h2>
    </div>
-   <div className="native-command-header-actions">
+   <div className="native-command-header-actions ml-auto flex shrink-0 items-center gap-2">
     {runs.some(item=>['awaiting_approval','in_doubt','needs_review','interrupted'].includes(item.status))&&
-     <button type="button" className="native-attention-link" onClick={()=>setHistoryOpen(true)}>
+     <button type="button" className="native-attention-link inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-xs text-amber-700 hover:bg-amber-50" onClick={()=>setHistoryOpen(true)}>
       <ShieldAlert size={14}/>{en?'Review required':'확인할 작업'} <b>{runs.filter(item=>['awaiting_approval','in_doubt','needs_review','interrupted'].includes(item.status)).length}</b>
      </button>}
-    <button type="button" className="native-history-toggle" onClick={()=>setHistoryOpen(v=>!v)}
+    <button type="button" className="native-history-toggle inline-flex min-h-9 items-center gap-2 rounded-lg border border-divider bg-surface px-3 text-xs text-muted hover:bg-canvas hover:text-ink" onClick={()=>setHistoryOpen(v=>!v)}
      aria-expanded={historyOpen} aria-controls="native-run-history">
      {historyOpen?<PanelLeftClose size={16}/>:<PanelLeftOpen size={16}/>}
      {en?'History':'작업 이력'} <span>{runs.length}</span>
     </button>
    </div>
   </header>
-  <div className={'native-command-grid '+(historyOpen?'has-history':'')}>
-   <div className="native-command-main">
-    <div className="native-command-compose">
-   <label className="native-command-step" htmlFor="sdk-goal">{en?'What would you like done?':'무엇을 해드릴까요?'}</label>
+  <div className={'native-command-grid grid min-w-0 '+(historyOpen?'has-history lg:grid-cols-[minmax(0,1fr)_16rem]':'grid-cols-1')}>
+   <div className="native-command-main min-w-0">
+    <div className="native-command-compose flex min-w-0 flex-col gap-3 px-4 pb-5 pt-6 sm:px-7">
+   <label className="native-command-step text-xs font-medium text-ink" htmlFor="sdk-goal">{en?'What would you like done?':'무엇을 해드릴까요?'}</label>
    <textarea id="sdk-goal" value={instruction} onChange={e=>editInstruction(e.target.value)}
     rows={3} maxLength={64000}
     placeholder={en?'Describe a task, such as inspecting a project or fixing an issue.':'프로젝트를 분석하거나 문제를 해결하는 등 필요한 작업을 적어주세요.'}
-    className="native-command-textarea"/>
+    className="native-command-textarea min-h-36 w-full resize-y rounded-xl border border-divider bg-canvas px-4 py-3 text-sm leading-relaxed text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/15"/>
    <div className="flex flex-wrap items-end gap-3">
-    <label className="flex min-w-44 flex-1 flex-col gap-1 text-[11px] text-[#746A5F]">
+    <label className="flex min-w-44 flex-1 flex-col gap-1 text-xs text-muted">
      {en?'AI model':'사용할 AI 모델'}
      <select value={providerId} onChange={e=>setProviderId(e.target.value)}
       className="min-h-11 rounded-lg border border-[#E7E0D5] bg-white px-3 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2">
@@ -409,11 +409,11 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      </select>
     </label>
     <button type="button" onClick={()=>void start()} disabled={busy||!instruction.trim()}
-     className="native-command-submit">
+     className="native-command-submit inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-lg bg-ink px-5 text-xs font-semibold text-white hover:bg-workspace-selected disabled:cursor-not-allowed disabled:opacity-40">
      <Play size={14}/>{busy?(en?'Please wait…':'처리 중…'):(en?'Start task':'작업 시작')}
     </button>
    </div>
-   <details className="text-[11px] text-[#746A5F]">
+   <details className="text-xs text-muted">
     <summary className="cursor-pointer select-none">{en?'Advanced: strategy, budget and verification':'고급 설정: 전략 · 실행 한도 · 결과 검증'}</summary>
     <div className="mt-3 grid gap-3 sm:grid-cols-2">
      <label className="grid gap-1" htmlFor="sdk-strategy">{en?'Execution strategy':'실행 전략'}
@@ -439,9 +439,9 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      className="mt-1 min-h-11 w-full rounded-lg border border-[#E7E0D5] px-3 text-[12px] focus-visible:outline-2 focus-visible:outline-offset-2"/>
    </details>
    </div>
-   {runs.length>0&&<div className="native-command-current">
-    <span><History size={14}/>{en?'Recent task':'최근 작업'}</span>
-    <select id="sdk-history" aria-label={en?'Previous tasks':'이전 자동 작업'}
+   {runs.length>0&&<div className="native-command-current mx-4 flex min-w-0 items-center gap-2 border-y border-divider py-3 text-xs text-muted sm:mx-7">
+    <span className="hidden shrink-0 items-center gap-1.5 sm:inline-flex"><History size={14}/>{en?'Recent task':'최근 작업'}</span>
+    <select id="sdk-history" className="min-w-0 flex-1 rounded-lg border border-divider bg-surface px-2 py-2 text-xs text-ink" aria-label={en?'Previous tasks':'이전 자동 작업'}
      value={run?.id||''} onChange={e=>{
       const item=runs.find(row=>row.id===e.target.value)
       if(item){selectRun(item);setSteering('');setObservation('');setError('')}
@@ -449,16 +449,16 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      {!run&&<option value="">{en?'Select a task':'작업 선택'}</option>}
      {runs.map(item=><option key={item.id} value={item.id}>{item.status} · {item.instruction.slice(0,75)}</option>)}
     </select>
-    <button type="button" onClick={()=>void reload()} aria-label={en?'Refresh task history':'작업 이력 새로고침'} title={en?'Refresh':'새로고침'}><RefreshCw size={15}/></button>
+    <button type="button" className="grid size-9 shrink-0 place-items-center rounded-lg text-muted hover:bg-canvas hover:text-ink" onClick={()=>void reload()} aria-label={en?'Refresh task history':'작업 이력 새로고침'} title={en?'Refresh':'새로고침'}><RefreshCw size={15}/></button>
    </div>}
-   <div className="native-command-results">
-    {run&&<div className="native-command-results-head">
-     <span className="native-command-step">{en?'Current run':'선택한 작업'}</span>
-     <code title={run.id}>{run.id.slice(0,8)}</code>
+   <div className="native-command-results min-w-0 px-4 pb-7 pt-3 sm:px-7">
+    {run&&<div className="native-command-results-head mb-3 flex items-center justify-between gap-3">
+     <span className="native-command-step text-xs font-medium text-muted">{en?'Current run':'선택한 작업'}</span>
+     <code className="text-[10px] text-muted" title={run.id}>{run.id.slice(0,8)}</code>
     </div>}
    {disconnected&&<p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">{en?'Connection lost. Actions may have changed; reconnecting to the server.':'서버 연결이 끊겼습니다. 실행 상태가 바뀌었을 수 있어 재연결 후 다시 확인합니다.'}</p>}
    {error&&<p role="alert" className="rounded-lg bg-[#FFF3EE] p-3 text-[11px] text-[#A54027]">{error}</p>}
-   {run&&<div className="rounded-xl border border-[#E7E0D5] bg-[#FCFBF9] p-3">
+   {run&&<div className="rounded-xl border border-divider bg-surface p-4">
     <div className="flex flex-wrap items-center justify-between gap-2" aria-live="polite" aria-atomic="true">
      <strong className="text-[12px]">{en?stateNames[status]?.[1]||status:stateNames[status]?.[0]||status}</strong>
      <span className="text-[11px] text-[#82796D]">{run.checkpoint?.rounds??0} {en?'rounds':'회 판단'} · {run.checkpoint?.toolCalls??0} {en?'actions':'회 도구 실행'}</span>
@@ -745,14 +745,14 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      </div>
     </div>}
    </div>}
-   {!run&&<div className="flex min-h-52 flex-col items-center justify-center rounded-xl border border-dashed border-[#DACEC0] bg-[#FCFBF9] p-6 text-center">
+   {!run&&<div className="flex min-h-52 flex-col items-center justify-center rounded-xl border border-dashed border-divider bg-canvas p-6 text-center">
     <Sparkles size={24} className="mb-3 text-[#A4583E]"/>
     <strong className="text-[13px]">{en?'Your task workspace':'자동 작업 현황'}</strong>
     <p className="mt-2 max-w-xs text-[11px] leading-5 text-[#81766B]">{en?'Start a task on the left. Review its outcome, approvals, activity and saved evidence here.':'왼쪽에서 작업을 시작하면 이곳에서 결과, 승인, 실행 기록과 저장된 검증 증거를 확인할 수 있습니다.'}</p>
    </div>}
    </div>
    </div>
-   {historyOpen&&<div className="native-command-history" id="native-run-history">
+   {historyOpen&&<div className="native-command-history min-w-0 border-t border-divider bg-canvas lg:border-l lg:border-t-0" id="native-run-history">
     <NativeRunNavigator runs={runs} selectedId={run?.id} en={en}
      onRefresh={()=>void reload()}
      onSelect={id=>{
