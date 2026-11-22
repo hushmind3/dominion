@@ -41,7 +41,7 @@ export function CapabilitiesPage({navigate,embedded=false}:{navigate:(page:Page)
    </div>
    <Button variant="secondary" disabled={refreshing} onClick={()=>void reload()}><RefreshCw size={16}/>{t('cap.refresh')}</Button>
   </div>:<Headline eyebrow={t('ui.eyebrow.capabilities')} title={t('cap.title')} description={t('cap.description')} actions={<Button variant="secondary" disabled={refreshing} onClick={()=>void reload()}><RefreshCw size={16}/> {t('cap.refresh')}</Button>}/>}
-  <Notice message={data.error||catalog.error}/>
+  <Notice message={data.error||catalog.error} onRetry={()=>void reload()} retrying={refreshing}/>
   <div className="mb-4 flex items-center gap-2"><Search size={16}/><TextInput aria-label={t('cap.searchAria')} value={query} onChange={event=>setQuery(event.target.value)} placeholder={t('cap.searchPlaceholder')}/></div>
   {!embedded&&<div className="mb-5 flex flex-wrap items-center gap-2 border-b border-divider pb-3">
    {families.map(({id,label,icon:Icon})=><Button key={id} variant={id===family?'primary':'ghost'} aria-pressed={id===family} onClick={()=>setFamily(id)}><Icon size={16}/>{t(label)} {items.filter(item=>id==='all'||item.namespace===id).length}</Button>)}

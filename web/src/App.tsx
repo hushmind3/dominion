@@ -1,11 +1,11 @@
-import {lazy, useCallback, useEffect, useState} from 'react'
+import {lazy,useCallback,useEffect,useState} from 'react'
 import {ContextMenu} from './components/ContextMenu'
 import {OwnerProfileProvider} from './components/OwnerProfile'
 import {AsyncPage} from './components/AsyncPage'
 import {SettingsWorkspace} from './components/SettingsWorkspace'
 import {checkForUpdatedUi} from './components/PageLoadBoundary'
 import {isSettingsPage} from './workspacePages'
-import {t, useLocale} from './i18n'
+import {t,useLocale} from './i18n'
 import {useEngineStatus} from './hooks/useEngineStatus'
 import {useWorkspaceNavigation} from './hooks/useWorkspaceNavigation'
 
@@ -43,7 +43,7 @@ export default function App() {
   return <OwnerProfileProvider>
     <div className="h-dvh overflow-hidden bg-surface font-sans text-ink">
       <ContextMenu/>
-      <main inert={settingsOpen} className="h-dvh min-w-0">
+      <main inert={settingsOpen} aria-hidden={settingsOpen||undefined} className="h-dvh min-w-0">
         {visited.chat && <div hidden={mode !== 'chat'} className="h-full page-chat">
           <AsyncPage label={t('shell.loadingChat')}><ChatPage settingsTarget={mode==='chat'?conversationSettingsTarget:null} active={mode === 'chat' && !settingsOpen}
             sessionId={chatRoute.session} initialAgent={chatRoute.agent} initialProvider={chatRoute.provider} initialModel={chatRoute.model}

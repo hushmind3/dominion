@@ -1,12 +1,13 @@
 import {ConversationSwitch} from '../WorkspaceShell'
-import {useMemo, useState} from 'react'
-import {ArrowRight, LoaderCircle, MessageSquare, Plus, Search, Settings, X} from 'lucide-react'
+import {useMemo,useState} from 'react'
+import {ArrowRight,LoaderCircle,MessageSquare,PanelLeftClose,Plus,Search,Settings,X} from 'lucide-react'
 import type {ChatSession} from '../../api'
-import {t, useLocale} from '../../i18n'
-import {Button, TextInput} from '../Primitives'
+import {t,useLocale} from '../../i18n'
+import {Button,TextInput} from '../Primitives'
 import {OwnerProfileEditor} from '../OwnerProfile'
 
 type Props = {
+  active: boolean
   sessions: ChatSession[]
   selected?: string
   loading: boolean
@@ -19,7 +20,7 @@ type Props = {
   onRetry: () => void
 }
 
-export function ChatHistory({sessions, selected, loading, error, onSelect, onNew, onSettings, onSwitchMode, onClose, onRetry}: Props) {
+export function ChatHistory({active, sessions, selected, loading, error, onSelect, onNew, onSettings, onSwitchMode, onClose, onRetry}: Props) {
   useLocale()
   const [query, setQuery] = useState('')
   const groups = useMemo(() => {
@@ -40,7 +41,7 @@ export function ChatHistory({sessions, selected, loading, error, onSelect, onNew
   }, [sessions, query])
 
   return <>
-    <div className="chat-history-brand"><span className="workspace-logo">D</span><strong>dominion<span> / </span></strong><Button variant="ghost" size="icon" className="ml-auto md:hidden" aria-label={t('chat.listCollapse')} onClick={onClose}><X size={18}/></Button></div>
+    <div className="chat-history-brand"><span className="workspace-logo">D</span><strong>dominion<span> / </span></strong><Button variant="ghost" size="icon" className="chat-history-collapse" aria-label={t('chat.listCollapse')} title={t('chat.listCollapse')} aria-controls="conversation-sidebar" aria-expanded="true" onClick={onClose}><PanelLeftClose size={18}/></Button></div>
     <Button className="chat-new-button" variant="primary" onClick={onNew}><Plus size={17}/>{t('chat.newChat')}</Button>
     <div className="chat-history-modes"><ConversationSwitch mode="chat" onChange={onSwitchMode}/></div>
     <label className="chat-history-search">
@@ -61,7 +62,7 @@ export function ChatHistory({sessions, selected, loading, error, onSelect, onNew
       {!loading && !error && !groups.length && <div className="chat-history-empty"><MessageSquare size={21}/><p>{t(query ? 'history.noResults' : 'history.empty')}</p></div>}
     </nav>
     <div className="chat-history-footer">
-      <OwnerProfileEditor compact/>
+      <OwnerProfileEditor compact active={active}/>
       <Button variant="ghost" onClick={onSettings}><Settings size={16}/>{t('nav.settings')}</Button>
     </div>
   </>

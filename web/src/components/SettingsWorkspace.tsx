@@ -1,8 +1,8 @@
-import {useCallback, useState} from 'react'
+import {useCallback,useState} from 'react'
 import {DialogBackdrop} from './Dialog'
-import {WorkspaceSidebar, SettingsHeader} from './WorkspaceShell'
+import {WorkspaceSidebar,SettingsHeader} from './WorkspaceShell'
 import {AsyncPage} from './AsyncPage'
-import {settingsPages, type PageId, type SettingsPage} from '../workspacePages'
+import {settingsPages,type PageId,type SettingsPage} from '../workspacePages'
 import {t} from '../i18n'
 
 type Props = {
@@ -30,7 +30,9 @@ export function SettingsWorkspace({conversationSettingsRef, page, online, connec
       <WorkspaceSidebar page={page} online={online} connecting={connecting} running={running} pending={pending} onNavigate={onNavigate} navOpen={navOpen} onToggleNav={toggleNav}/>
       <div className="workspace-settings-main">
         <SettingsHeader page={page} onNavigate={onNavigate} online={online} connecting={connecting} onClose={onClose}/>
-        <div key={page} className="workspace-settings-content">{page==='settings'&&<div className="workspace-conversation-settings" ref={conversationSettingsRef}/>}<AsyncPage label={t('shell.loadingPage')}>{settingsPages[page].render(onNavigate)}</AsyncPage></div>
+        <div key={page} className="workspace-settings-content"><AsyncPage label={t('shell.loadingPage')}>{settingsPages[page].render(onNavigate)}</AsyncPage>
+          {page==='settings'&&<details className="workspace-reply-preferences"><summary>{t('chat.settings')}</summary><div className="workspace-conversation-settings" ref={conversationSettingsRef}/></details>}
+        </div>
       </div>
     </div>
   </DialogBackdrop>

@@ -1,13 +1,13 @@
-import { DialogBackdrop, DialogPanel } from "../components/Dialog";
-import { SkillsPanel } from "./extensions/SkillsPanel";
-import { t, useLocale } from "../i18n";
+import {DialogBackdrop,DialogPanel} from "../components/Dialog";
+import {SkillsPanel} from "./extensions/SkillsPanel";
+import {t,useLocale} from "../i18n";
 import {
   Button,
   TextInput,
   TextArea,
   SelectInput,
 } from "../components/Primitives";
-import { useEffect, useState } from "react";
+import {useEffect,useState} from "react";
 import {
   Activity,
   ArrowDownToLine,
@@ -36,7 +36,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { del, get, post } from "../api";
+import {del,get,post} from "../api";
 import {
   Action,
   Empty,
@@ -675,7 +675,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
           </b>
         </Button>
       </div>}
-      {error && <Notice message={error} />}
+      <Notice message={error||mcp.error||skills.error||presets.error||catalogSkills.error} retrying={mcp.refreshing||skills.refreshing||presets.refreshing||catalogSkills.refreshing} onRetry={()=>{void Promise.all([mcp.reload(),skills.reload(),presets.reload(),catalogSkills.reload()]);if(tab==='market')void loadCatalog();if(tab==='installed')void discover(true)}}/>
       {message && (
         <div className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
           <Check size={16} />

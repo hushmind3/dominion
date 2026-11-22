@@ -1,12 +1,12 @@
-import { DialogBackdrop, DialogPanel } from "../components/Dialog";
-import { StatusPill } from "../components/StatusPill";
+import {DialogBackdrop,DialogPanel} from "../components/Dialog";
+
 import {
   Button,
   TextInput,
   TextArea,
   SelectInput,
 } from "../components/Primitives";
-import { useEffect, useState } from "react";
+import {useEffect,useState} from "react";
 import {
   Activity,
   ArrowRight,
@@ -28,10 +28,10 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
-import { Agent, Provider, Room, del, get, post } from "../api";
-import { ModelPicker } from "../components/ModelPicker";
-import { ReasoningSelect } from "../components/ReasoningSelect";
-import { useProviderModels } from "../hooks/useProviderModels";
+import {Agent,Provider,del,get,post} from "../api";
+import {ModelPicker} from "../components/ModelPicker";
+import {ReasoningSelect} from "../components/ReasoningSelect";
+import {useProviderModels} from "../hooks/useProviderModels";
 import {
   Action,
   Empty,
@@ -43,7 +43,7 @@ import {
   refresh,
   useRemote,
 } from "../components/UI";
-import { t, useLocale } from "../i18n";
+import {t,useLocale} from "../i18n";
 const accents = [
   "#5979e8",
   "#9067d9",
@@ -326,7 +326,7 @@ export function AgentsPage() {
           </Panel>
         ))}
       </div>
-      {!edit && <Notice message={error || agents.error || providers.error} />}
+      {!edit && <Notice message={error || agents.error || providers.error} retrying={agents.refreshing||providers.refreshing} onRetry={!error?()=>{void agents.reload();void providers.reload()}:undefined}/>}
       {showPersonaImport&&<PersonaImportDialog agents={agents.value} onClose={()=>setShowPersonaImport(false)} onImported={async(count)=>{await agents.reload();refresh();setBulkNotice(t('agents.personaImported', { count }))}}/>}
       {edit && (
         <DialogBackdrop onDismiss={closeEditor}>

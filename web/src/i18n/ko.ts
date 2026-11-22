@@ -207,8 +207,8 @@ const ko = {
   'ops.noOperations': '이 실행에는 도구 호출 기록이 없습니다.',
   'ops.noEvents': '아직 실행 기록이 없습니다',
   'ops.noEvents.desc': '작업과 도구가 실행되면 기록됩니다.',
-  'conn.title': '연결할 수 있는 모든 세계.',
-  'conn.description': '메신저는 카탈로그에서 자동 발견합니다. 설치된 드라이버와 실제 인증 상태를 따로 표시합니다.',
+  'conn.title': '자주 쓰는 앱 연결',
+  'conn.description': '사용할 앱을 골라 연결하세요. 연결 상태와 필요한 설정을 여기에서 확인할 수 있어요.',
   'conn.refresh': '상태 새로고침',
   'conn.platforms': '발견된 플랫폼',
   'conn.code': '연결 코드 있음',
@@ -300,7 +300,7 @@ const ko = {
   'conn.status.disabled': '비활성',
   'conn.status.not_started': '미시작',
   'conn.status.stopped': '중지',
-  'agents.title': '에이전트',
+  'agents.title': '작업 도우미',
   'agents.description': '자주 쓰는 역할과 지침을 저장하고, 사용할 모델을 연결하세요.',
   'agents.import': '저장한 역할 가져오기',
   'agents.bulk': '여러 에이전트 모델 변경',
@@ -1308,6 +1308,12 @@ const ko = {
   'workspace.roomActions': '그룹 대화 메뉴',
   'welcome.connectionLost': '연결을 다시 확인해 주세요',
   'shell.checkingConnection': '연결 확인 중…',
+  'history.resize': '대화 목록 너비 조절',
+  'history.resizeHint': '끌어서 너비 조절 · 두 번 누르면 기본 너비',
+  'rooms.setupAssistants': '먼저 함께할 도우미를 만들어 주세요',
+  'rooms.setupAssistantsDescription': '도우미를 만든 뒤 돌아오면 이 대화방에 초대할 수 있어요. 작성 중인 내용은 그대로 둘게요.',
+  'rooms.setupAssistantsAction': '도우미 만들기',
+  'rooms.editParticipants': '참여자 편집',
 } as const
 export type LocaleKey = keyof typeof ko
 export default ko

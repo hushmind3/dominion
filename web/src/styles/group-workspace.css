@@ -1,5 +1,4 @@
 /* Keep the conversation space clear; occasional actions share one menu. */
-.room-header { min-height: 68px; }
 .room-extra-actions { position: relative; flex-shrink: 0; }
 .room-extra-actions summary { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 10px; color: #897762; cursor: pointer; list-style: none; }
 .room-extra-actions summary::-webkit-details-marker { display: none; }
@@ -13,6 +12,23 @@
 .room-first-message h2 { color: #554332; letter-spacing: -.04em; }
 .room-first-message > p { color: #998773; font-size: 13px; line-height: 1.8; }
 @media (max-width: 767px) {
-  .room-header { min-height: 58px; }
   .room-extra-actions > div { position: fixed; top: 62px; right: 12px; max-width: calc(100vw - 24px); }
 }
+
+/* Both conversation modes share sidebar navigation and an empty top area. */
+.rooms-app > .room-list { width: var(--conversation-sidebar-width,260px); flex: 0 0 var(--conversation-sidebar-width,260px); }
+.room-list-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.room-list-footer > button { width: auto; }
+.room-empty-menu { display: none; }
+.room-composer-options { min-width: 0; flex-wrap: wrap; row-gap: 4px; }
+.room-extra-actions > div { top: auto; bottom: calc(100% + 8px); }
+@media (max-width: 767px) {
+  .rooms-app > .room-list { width: min(300px,85vw); }
+  .room-empty-menu { position: absolute; bottom: max(16px,env(safe-area-inset-bottom)); left: 14px; display: inline-flex; gap: 8px; }
+  .room-extra-actions > div { position: absolute; top: auto; bottom: calc(100% + 8px); right: 0; }
+}
+.room-setup-next-step { margin-bottom: 20px; border: 1px solid #dfc4ad; border-radius: 14px; background: #fcf4e9; padding: 18px; text-align: left; }
+.room-setup-next-step strong { color: #6a4e37; font-size: 14px; }
+.room-setup-next-step p { margin: 8px 0 14px; color: #99816c; font-size: 12px; line-height: 1.7; }
+.room-extra-actions .room-participants-trigger { width: 100%; justify-content: flex-start; }
+@media (min-width: 768px) { .rooms-app .room-global-error { left: calc(var(--conversation-nav-width,260px) + 16px); } }

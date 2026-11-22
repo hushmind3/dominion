@@ -1,8 +1,8 @@
 import {useEffect,useState} from 'react'
-import {BookOpenText, Check, Pencil, Plus, Trash2} from 'lucide-react'
-import {del, post, type Agent} from '../api'
-import {Button, TextInput, TextArea, SelectInput} from '../components/Primitives'
-import {Action, FormField, Headline, Notice, Panel, Subheading, useRemote} from '../components/UI'
+import {BookOpenText,Check,Pencil,Plus,Trash2} from 'lucide-react'
+import {del,post,type Agent} from '../api'
+import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
+import {Action,FormField,Headline,Notice,Panel,Subheading,useRemote} from '../components/UI'
 import {LearningRecords} from './memory/LearningRecords'
 import {t,useLocale,type LocaleKey} from '../i18n'
 import {GrowthDashboard} from './memory/Growth'
@@ -76,7 +76,7 @@ export function MemoryPage(){
  }
  return <div className="mx-auto w-full max-w-[1320px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8">
   <Headline eyebrow={t('ui.eyebrow.memory')} title={t('memory.title')} description={t('memory.description')}/>
-  <Notice message={error||memories.error||agents.error}/>
+  <Notice message={error||memories.error||agents.error} retrying={memories.refreshing||agents.refreshing} onRetry={!error?()=>{void memories.reload();void agents.reload()}:undefined}/>
   {notice&&<div role="status" className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{notice}</div>}
   <div role="tablist" aria-label={locale==='en'?'Memory settings':'메모리 설정'} className="mb-5 flex flex-wrap gap-2 border-b border-divider pb-3">
    <button type="button" role="tab" aria-selected={tab==='memories'} onClick={()=>setTab('memories')}
@@ -85,7 +85,7 @@ export function MemoryPage(){
    </button>
    <button type="button" role="tab" aria-selected={tab==='systemPrompt'} onClick={()=>setTab('systemPrompt')}
     className={'rounded-lg px-4 py-2 text-sm font-semibold '+(tab==='systemPrompt'?'bg-[#A4583E] text-white':'bg-[#F7F1E6] text-[#675C51] hover:bg-[#EEE5D9]')}>
-    {locale==='en'?'System prompt':'시스템 프롬프트'}
+    {locale==='en'?'Reply instructions':'답변 방식'}
    </button>
   </div>
   {tab==='systemPrompt'?<SystemPromptPanel/>:<>
@@ -114,7 +114,7 @@ export function MemoryPage(){
      <details className="mt-2 text-xs text-[#5C544A]"><summary className="cursor-pointer">{t('memory.evidence')}</summary><div className="mt-2 grid gap-1 break-all"><span>{t('memory.created')} {displayTime(m.createdAt)}</span><span>{t('memory.verification')} {m.verification==='source_quote'?t('memory.verification.sourceQuote'):m.verification||t('memory.time.none')}</span>{m.partitionKey&&<span>{t('memory.workspace')} {m.partitionKey}</span>}{m.sessionId&&<span>{t('memory.sessionId')} {m.sessionId}</span>}{m.sourceMessageIds?.length?<span>{t('memory.sourceMessages')} {m.sourceMessageIds.join(', ')}</span>:null}{m.evidenceQuote&&<blockquote>{m.evidenceQuote}</blockquote>}{m.archiveReason||m.forgetReason?<span>{t('memory.archiveReason')} {m.archiveReason??m.forgetReason}</span>:null}{m.expiresAt&&<span>{t('memory.expires')} {displayTime(m.expiresAt)}</span>}</div></details>
     </Panel>)}</div>
     {filtered.length>visibleLimit&&<Button variant="secondary" className="w-full" onClick={()=>setVisibleLimit(value=>value+40)}>{t('memory.showMore',{count:filtered.length-visibleLimit})}</Button>}
-    {!filtered.length&&<Panel className="p-6 text-center text-sm text-muted">{memories.loading?t('memory.loading'):t('memory.empty')}</Panel>}
+    {!memories.error&&!filtered.length&&<Panel className="p-6 text-center text-sm text-muted">{memories.loading?t('memory.loading'):t('memory.empty')}</Panel>}
    </div>
   </div>
   <details className="mt-6 rounded-xl border border-divider bg-surface p-4" onToggle={event=>setShowRecords(event.currentTarget.open)}>

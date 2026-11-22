@@ -1,3 +1,6 @@
+import {ConversationRail} from '../components/chat/ConversationRail'
+import {useConversationSidebar} from '../hooks/useConversationSidebar'
+import type {CSSProperties} from 'react'
 import {ChatWelcome} from '../components/chat/ChatWelcome'
 import {ChatHistory} from '../components/chat/ChatHistory'
 import {ConversationModelPicker} from '../components/chat/ConversationModelPicker'
@@ -57,7 +60,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const selectedProvider=enabledProviders.find(provider=>provider.id===providerId);
  const model=manual?.model||((activeAgent?.providerId===providerId?activeAgent.model:'')||
   (selectedSession?.providerId===providerId&&(!agentMode||selectedSession.agentId===agentId)?selectedSession.model:'')||selectedProvider?.model||'');
- const catalogue=useProviderModels(providerId);
+ const catalogue=useProviderModels(providerId,active);
  const {value:models,error:modelError}=catalogue;
  const selectedModel=models.find(item=>item.id===model);
  useEffect(()=>{
@@ -79,13 +82,9 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const approval=(liveApproval?.sessionId===current?liveApproval:null)||
   approvals.value.find(item=>item.sessionId===current&&item.status==='pending');
  const [dismissedError,setDismissedError]=useState<{session?:string;message:string}>();
- const [error,setError]=useState(''),[busy,setBusy]=useState(false),[live,setLive]=useState(''),[thought,setThought]=useState(''),[thinking,setThinking]=useState(false),[showHistory,setShowHistory]=useState(()=>{try{if(window.innerWidth<768)return false;return localStorage.getItem('dominion.chat.sidebar')!=='0'}catch{return true}}),[toolStatus,setToolStatus]=useState('');
- useEffect(()=>{
-  const mobile=window.matchMedia('(max-width: 767px)');
-  const sync=()=>{if(mobile.matches)setShowHistory(false)};
-  mobile.addEventListener('change',sync);
-  return()=>mobile.removeEventListener('change',sync);
- },[]);
+ const [error,setError]=useState(''),[busy,setBusy]=useState(false),[live,setLive]=useState(''),[thought,setThought]=useState(''),[thinking,setThinking]=useState(false),[toolStatus,setToolStatus]=useState('');
+ const {open:showHistory,setOpen:setShowHistory,width:sidebarWidth,resize:resizeSidebar,mobile:sidebarMobile,panel:sidebarPanel}=useConversationSidebar('dominion.chat.sidebar',active);
+
  const [reasoningKo,setReasoningKo]=usePersistentKoreanReasoning();
  const [showReasoning,setShowReasoning]=usePersistentConversationToggle('showReasoning');
  const [toolsEnabled,setToolsEnabled]=usePersistentConversationToggle('toolsEnabled');
@@ -193,7 +192,6 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const [moreBelow,setMoreBelow]=useState(false);
  const {scrollRef,onScroll,jumpDown}=useTranscriptScroll(current,transcriptRevision,setMoreBelow);
  useEffect(()=>()=>{stream.current?.abort();clearStreamBuffer()},[]);
- useEffect(()=>{if(window.innerWidth<768)return;try{localStorage.setItem('dominion.chat.sidebar',showHistory?'1':'0')}catch{}},[showHistory]);
  const reportLearning=(result:LearningResult)=>setCommandInfo(
   t('chat.learn.done',{memories:result.memories,skills:result.skill?t('chat.learn.skillSuggested'):t('chat.learn.none')})+
   '\n'+t('chat.learn.hint'));
@@ -520,14 +518,16 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void send();}
  };
  useEffect(()=>{if(!active){setPermissionOpen(false);setSlashOpen(false)}},[active]);
- return <div className={'relative grid h-dvh min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] bg-surface '+(showHistory?'md:grid-cols-[260px_minmax(0,1fr)]':'')}>
+ return <div style={{'--conversation-sidebar-width':sidebarWidth+'px'} as CSSProperties} className={'relative grid h-dvh min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] bg-surface '+(showHistory?'md:grid-cols-[var(--conversation-sidebar-width)_minmax(0,1fr)]':'md:grid-cols-[52px_minmax(0,1fr)]')}>
   {showHistory&&<Button type="button" aria-label={t('chat.listCollapse')} className="absolute inset-0 z-20 !h-auto !w-auto cursor-default !rounded-none !border-0 !bg-slate-900/30 md:hidden" onClick={()=>setShowHistory(false)}/>}
-  <aside className={'chat-history flex min-h-0 flex-col overflow-hidden border-r border-divider '+(showHistory?'max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:w-[min(300px,85vw)] max-md:shadow-2xl':'hidden')}>
-   <ChatHistory sessions={sessions.value} selected={current} loading={sessions.loading} error={sessions.error}
+  <aside ref={sidebarPanel} role={sidebarMobile&&showHistory?'dialog':undefined} aria-modal={sidebarMobile&&showHistory?true:undefined} aria-label={t('chat.recent')} tabIndex={-1} id="conversation-sidebar" className={'chat-history md:relative flex min-h-0 flex-col overflow-hidden border-r border-divider '+(showHistory?'max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:w-[min(300px,85vw)] max-md:shadow-2xl':'hidden')}>
+   <ChatHistory active={active} sessions={sessions.value} selected={current} loading={sessions.loading} error={sessions.error}
     onNew={resetLocal} onSelect={pickSession} onSettings={openSettings} onSwitchMode={switchMode} onClose={()=>setShowHistory(false)} onRetry={()=>void sessions.reload()}/>
 
+   <div {...resizeSidebar} className="chat-history-resize" aria-label={t('history.resize')} title={t('history.resizeHint')}/>
   </aside>
-  <div className="relative flex min-h-0 min-w-0 flex-col">
+  {!showHistory&&<ConversationRail onExpand={()=>setShowHistory(true)} onNew={resetLocal} onSwitchMode={switchMode} onSettings={openSettings}/>}
+  <div inert={showHistory&&sidebarMobile} aria-hidden={showHistory&&sidebarMobile||undefined} className="relative flex min-h-0 min-w-0 flex-col">
 
    <div ref={scrollRef} onScroll={onScroll} data-chat-scroll aria-label={t('ui.label.conversations')} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{current&&transcript.loading?<div className="chat-transcript-loading" role="status"><LoaderCircle size={20} className="animate-spin"/>{t('history.loading')}</div>:!messages.length&&!showOptimisticOwner&&!(busy&&viewingTurn)?<ChatWelcome ready={Boolean(providerId&&model)} loading={providers.loading||catalogue.loading} error={providers.error} onRetry={()=>{void providers.reload();void sessions.reload()}}
     onConnect={openModels} onPrompt={prompt=>{setInput(prompt);inputRef.current?.focus({preventScroll:true})}}/>
@@ -549,8 +549,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      <TextArea ref={inputRef} rows={1} placeholder={t("chat.inputPlaceholder")} value={input} onChange={e=>{const next=e.target.value;setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n'));setSlashActive(0);const el=e.currentTarget;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,180)+'px'}} onKeyDown={appendKey} aria-controls="dominion-slash-menu" aria-expanded={slashOpen} className="conversation-composer-input"/>
      <div className="chat-composer-controls conversation-composer-controls">
       <div className="chat-composer-options conversation-composer-options">
-       <Button variant="ghost" size="icon" className="!h-7 !w-7" onClick={()=>setShowHistory(value=>!value)} aria-label={showHistory?t('chat.listCollapse'):t('chat.listExpand')} title={t('chat.recent')}><Menu size={17}/></Button>
-       <ConversationModelPicker providers={enabledProviders} providerId={providerId} model={model} catalogue={catalogue} onChange={setRoute} onManage={openModels}/>
+       <Button variant="ghost" size="icon" className="!h-7 !w-7 md:hidden" onClick={()=>setShowHistory(value=>!value)} aria-label={showHistory?t('chat.listCollapse'):t('chat.listExpand')} title={t('chat.recent')}><Menu size={17}/></Button>
+       <ConversationModelPicker active={active} providers={enabledProviders} providerId={providerId} model={model} catalogue={catalogue} onChange={setRoute} onManage={openModels}/>
 
        <Button type="button" variant="ghost" size="icon" className="!h-7 !w-7 !border-0 !bg-transparent !text-[#5C544A]" title={t('chat.attach')} aria-label={t('chat.attach')} onClick={()=>imageInputRef.current?.click()} disabled={busy||uploading||Boolean(selectedSession?.roomId)}>{uploading?<LoaderCircle size={16} className="animate-spin"/>:<Paperclip size={16}/>}</Button>
        <input ref={imageInputRef} type="file" accept={ATTACH_ALLOWED.join(',')} multiple className="sr-only" aria-label={t('chat.attach')} onChange={onPickImages}/>
@@ -569,7 +569,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     </form></div>
    </div></div>
   </div>
-  {settingsTarget&&createPortal(<ConversationSettings inline reasoningControl={!agentMode?<ReasoningSelect value={effectiveReasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} model={selectedModel} requireCatalog={selectedProvider?.kind==='codex'} className="w-full"/>:undefined} open={false} onOpenChange={()=>{}} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={effectiveThinkingEnabled} setThinkingEnabled={setThinkingEnabled} canDisableThinking={canDisableThinking} reasoningEffort={effectiveReasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={agentMode&&toolsEnabled} setToolsEnabled={setToolsEnabled} autoLearn={agentMode&&autoLearn} setAutoLearn={setAutoLearn} optionsBusy={!agentMode} learning={learning} learnDisabled={!agentMode||!current||Boolean(selectedSession?.roomId)||busy} onLearn={learnSession}/>,settingsTarget)}
+  {settingsTarget&&createPortal(<ConversationSettings reasoningControl={!agentMode?<ReasoningSelect value={effectiveReasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} model={selectedModel} requireCatalog={selectedProvider?.kind==='codex'} className="w-full"/>:undefined} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={effectiveThinkingEnabled} setThinkingEnabled={setThinkingEnabled} canDisableThinking={canDisableThinking} reasoningEffort={effectiveReasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={agentMode&&toolsEnabled} setToolsEnabled={setToolsEnabled} autoLearn={agentMode&&autoLearn} setAutoLearn={setAutoLearn} optionsBusy={!agentMode} learning={learning} learnDisabled={!agentMode||!current||Boolean(selectedSession?.roomId)||busy} onLearn={learnSession}/>,settingsTarget)}
  </div>
 }
 function Message({message,agentName,showReasoning}:{message:ChatMessage;agentName?:string;showReasoning?:boolean}){

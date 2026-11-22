@@ -6,12 +6,13 @@ export function connectEngineEvents(onStatus: () => void, onApprovals: () => voi
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   let pending = emptyRefreshScope()
   let connectedBefore = false
+  let disconnected = false
   const schedule = (key: string, delay: number, action: () => void) => {
     if (timers.has(key)) return
     timers.set(key, setTimeout(() => {timers.delete(key); action()}, delay))
   }
   stream.onopen = () => {
-    if (connectedBefore) {
+    if (connectedBefore || disconnected) {
       // Reconnects may have missed durable changes. Refetch once, then resume
       // the normal scoped events rather than leaving old conversations visible.
       window.dispatchEvent(new Event('dominion-refresh'))
@@ -19,6 +20,10 @@ export function connectEngineEvents(onStatus: () => void, onApprovals: () => voi
       onApprovals()
     }
     connectedBefore = true
+    disconnected = false
+  }
+  stream.onerror = () => {
+    if (!disconnected) {disconnected = true; onStatus()}
   }
   stream.onmessage = event => {
     let item: BusChange

@@ -1,48 +1,12 @@
-import {useLayoutEffect,useRef,type HTMLAttributes,type ReactNode} from 'react'
+import {useModalFocus} from '../hooks/useModalFocus'
+import {useRef,type HTMLAttributes,type ReactNode} from 'react'
 import {t} from '../i18n'
-
-const dialogs: symbol[] = []
-let previousOverflow = ''
 
 export function DialogBackdrop({children,onDismiss,...props}:HTMLAttributes<HTMLDivElement>&{
  children:ReactNode;onDismiss:()=>void
 }){
- const dismiss = useRef(onDismiss)
  const container = useRef<HTMLDivElement>(null)
- dismiss.current = onDismiss
- useLayoutEffect(() => {
-  const id = Symbol()
-  const root = document.documentElement
-  if (!dialogs.length) {
-   previousOverflow = root.style.overflow
-   root.style.overflow = 'hidden'
-  }
-  dialogs.push(id)
-  const origin = document.activeElement
-  const onKeyDown = (event: KeyboardEvent) => {
-   if(dialogs.at(-1)!==id)return
-   if(event.key==='Escape'&&!event.isComposing){event.preventDefault();dismiss.current();return}
-   if(event.key!=='Tab')return
-   const root=container.current
-   if(!root)return
-   const focusable=Array.from(root.querySelectorAll<HTMLElement>(
-    'button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
-   )).filter(element=>element.getClientRects().length>0&&element.getAttribute('aria-hidden')!=='true')
-   if(!focusable.length){event.preventDefault();root.focus();return}
-   const first=focusable[0],last=focusable[focusable.length-1],current=document.activeElement
-   if(!root.contains(current)){event.preventDefault();(event.shiftKey?last:first).focus()}
-   else if(event.shiftKey&&current===first){event.preventDefault();last.focus()}
-   else if(!event.shiftKey&&current===last){event.preventDefault();first.focus()}
-  }
-  document.addEventListener('keydown', onKeyDown)
-  return () => {
-   document.removeEventListener('keydown', onKeyDown)
-   const top = dialogs.at(-1) === id
-   dialogs.splice(dialogs.indexOf(id), 1)
-   if (!dialogs.length) root.style.overflow = previousOverflow
-   if (top && origin instanceof HTMLElement && origin.isConnected) origin.focus({preventScroll: true})
-  }
- }, [])
+ useModalFocus(container,onDismiss)
  return <div {...props} ref={container} tabIndex={-1} className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-[2px]"
   onMouseDown={event=>{if(event.target===event.currentTarget)onDismiss()}}>{children}</div>
 }

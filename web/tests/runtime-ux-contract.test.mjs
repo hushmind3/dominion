@@ -171,7 +171,7 @@ test('group collaboration uses readable modal workflow instead of shrinking chat
 test('shared chat settings and permissions keep visible labels and true controls',()=>{
  const settings=source('src/components/ConversationSettings.tsx')
  const permissions=source('src/components/ExecutionPermissions.tsx')
- assert.match(settings,/useAnchoredPanel\(open,\(\)=>onOpenChange\(false\),340/)
+ assert.match(settings,/conversation-settings-inline/)
  assert.match(settings,/min-h-12 cursor-pointer/)
  assert.match(settings,/size-5 shrink-0 cursor-pointer/)
  assert.match(settings,/disabled=\{!canDisableThinking\}/)
@@ -183,12 +183,12 @@ test('shared chat settings and permissions keep visible labels and true controls
  assert.match(permissions,/await post\('\/api\/policy'/)
 })
 test('modal keyboard focus stays in topmost dialog and returns to origin',()=>{
- const dialog=source('src/components/Dialog.tsx')
- assert.match(dialog,/dialogs\.at\(-1\)!==id/)
- assert.match(dialog,/event\.key!=='Tab'/)
- assert.match(dialog,/root\.querySelectorAll<HTMLElement>/)
- assert.match(dialog,/event\.shiftKey&&current===first/)
- assert.match(dialog,/!event\.shiftKey&&current===last/)
+ const dialog=source('src/hooks/useModalFocus.ts')
+ assert.match(dialog,/scopes\.at\(-1\)\s*!==\s*id/)
+ assert.match(dialog,/event\.key\s*!==\s*'Tab'/)
+ assert.match(dialog,/container\.current\?\.querySelectorAll<HTMLElement>/)
+ assert.match(dialog,/event\.shiftKey\s*&&\s*current\s*===\s*first/)
+ assert.match(dialog,/!event\.shiftKey\s*&&\s*current\s*===\s*last/)
  assert.match(dialog,/origin\.focus\(\{preventScroll: true\}\)/)
 })
 

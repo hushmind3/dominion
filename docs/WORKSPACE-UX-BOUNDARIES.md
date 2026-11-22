@@ -60,3 +60,30 @@ to stop those actions. The updated UI was inspected in the development server
 at desktop and mobile sizes. The preview uses the existing isolated backend
 binary; Rust source changes require a later build to run in that preview.
 Existing source-contract references were adjusted for the new file locations.
+
+## Interaction review
+
+The nine management pages and both conversation modes were reviewed at desktop
+and phone widths. The follow-up refactor addresses the underlying interactions:
+
+- Conversation sidebars share visibility, persisted width, pointer resizing,
+  keyboard resizing and a collapsed navigation rail. On phones they become
+  focus-contained drawers with Escape and focus restoration.
+- Chat and group navigation use the same locations. Neither conversation has a
+  top toolbar. Reply options belong to one collapsible section in settings.
+- Profile editing uses a viewport-positioned panel outside clipped sidebars,
+  stays inside an existing modal's focus boundary, and cannot be overwritten by
+  a slower pre-save profile read.
+- `useModalFocus` owns dialog/drawer nesting, scroll locks and keyboard focus.
+  Kept-alive hidden pages deactivate their popovers and modal listeners.
+- `useRemote` separates request lifetime from visibility subscriptions, exposes
+  refresh state, and refreshes once on return. Provider changes invalidate the
+  matching model list; first-connect recovery also reloads previously failed
+  views. Mutation retries are never automatic.
+- Remote failures have explicit reload actions. Group setup offers the missing
+  assistant-creation step and preserves the room draft when navigating away.
+
+Read-only TypeScript diagnostics passed. Desktop/phone inspection confirmed
+sidebar collapse/expand/resize, profile bounds, modal/drawer focus restoration,
+settings return and group-to-assistant navigation. Production builds and test
+suites remain skipped under the owner's delivery constraint.

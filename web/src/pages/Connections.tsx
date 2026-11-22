@@ -346,8 +346,7 @@ export function ConnectionsPage(){
      <div className="min-w-0"><small className="block text-[11px] text-[#8A8176]">{label}</small><strong className="block text-lg font-bold text-ink">{value}</strong></div>
     </div>)}
    </div>
-   {registry.error&&<Notice message={registry.error}/>}
-   {channels.error&&<Notice message={channels.error}/>}
+   <Notice message={registry.error||channels.error||agents.error||rooms.error||providers.error} retrying={registry.refreshing||channels.refreshing||agents.refreshing||rooms.refreshing||providers.refreshing} onRetry={()=>{void Promise.all([registry.reload(),channels.reload(),agents.reload(),rooms.reload(),providers.reload()])}}/>
    {error&&!editor&&<Notice message={error}/>}
    {info&&<div role="status" className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700"><Check size={16}/>{info}</div>}
    <div className="mb-4 grid gap-3">
