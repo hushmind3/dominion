@@ -276,7 +276,7 @@ pub fn start(state: AppState) {
                         let result = poll(&state, &config).await;
                         let patch = match result {
                             Ok(_) => json!({"status":"connected","runtimeError":null}),
-                            Err(error) => json!({"status":"error","runtimeError":error}),
+                            Err(error) => json!({"status":"error","runtimeError":crate::plain::error(&error)}),
                         };
                         if let Some(saved) = state.store.patch_if(
                             "channel",

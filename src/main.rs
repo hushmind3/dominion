@@ -11,6 +11,7 @@ mod events;
 mod features;
 mod integrations;
 mod platform;
+mod plain;
 mod storage;
 pub(crate) use crate::host::state;
 pub(crate) use crate::storage::{sqlite as db, migrations, vault};

@@ -367,7 +367,7 @@ fn status(state: &AppState, id: &str, value: &str, error: Option<&str>) {
                 "disabled"
             }
         );
-        config["runtimeError"] = json!(error);
+        config["runtimeError"] = json!(crate::plain::error(error.unwrap_or_default()));
         if let Some(saved) = state.store.put("channel", &config) {
             state.bus.record("channel", &saved);
         }

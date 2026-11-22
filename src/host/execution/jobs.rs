@@ -427,7 +427,7 @@ pub fn retry_failed_learning(state: &AppState) -> usize {
                 "status": "queued",
                 "availableAt": available.to_rfc3339(),
                 "retriedAt": chrono::Utc::now().to_rfc3339(),
-                "lastError": job["error"],
+                "lastError": crate::plain::error(job["error"].as_str().unwrap_or_default()),
                 "error": Value::Null,
             }),
         ) {

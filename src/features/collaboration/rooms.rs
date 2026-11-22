@@ -351,7 +351,7 @@ pub async fn run(context: &JobContext, job: &Value) -> Result<Value, String> {
                 patch_room(
                     &context.state,
                     room_id,
-                    json!({"status":if cancelled {"paused"} else {"needs_review"},"activeAgentId":null,"pauseReason":if cancelled {"stopped"} else {"execution_failed"},"lastError":error}),
+                    json!({"status":if cancelled {"paused"} else {"needs_review"},"activeAgentId":null,"pauseReason":if cancelled {"stopped"} else {"execution_failed"},"lastError":crate::plain::error(error)}),
                 );
             }
         }

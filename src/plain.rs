@@ -10,9 +10,6 @@ pub fn error(message: &str) -> String {
     if raw.is_empty() {
         return "문제가 생겼습니다. 다시 시도해 주세요.".to_string();
     }
-    if raw.chars().any(|ch| ('가'..='힣').contains(&ch)) {
-        return raw.to_string();
-    }
     let lower = raw.to_lowercase();
     let has = |needle: &str| lower.contains(needle);
     if has("failed to fetch")
@@ -46,6 +43,10 @@ pub fn error(message: &str) -> String {
     }
     if has("quota") || has("insufficient") || has("billing") {
         return "사용 한도를 넘었습니다. 요금제나 한도를 확인해 주세요.".to_string();
+    }
+    // A sentence the engine already wrote for the owner passes through.
+    if raw.chars().any(|ch| ('가'..='힣').contains(&ch)) {
+        return raw.to_string();
     }
     "문제가 생겼습니다. 다시 시도해 주세요.".to_string()
 }
@@ -82,6 +83,10 @@ mod tests {
         assert_eq!(
             error("request timed out after 30s"),
             "응답이 너무 늦습니다. 잠시 후 다시 시도해 주세요."
+        );
+        assert_eq!(
+            error("Telegram HTTP 401 / API 401: 권한·설정 또는 요청 제한을 확인하세요."),
+            "인증 정보가 올바르지 않습니다. 키나 토큰을 다시 확인해 주세요."
         );
     }
 
