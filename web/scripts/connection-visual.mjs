@@ -183,6 +183,13 @@ try{
  await teamPanel.getByRole('button',{name:'조사 Worker'}).click()
  await teamPanel.getByLabel('작업 지시문').nth(1).fill('Independently review the plan')
  await teamPanel.getByLabel('실행 엔진').nth(1).selectOption('qwen')
+ // A multi-worker plan is owner input; verify refresh preserves this unsent DAG.
+ await page.reload({waitUntil:'domcontentloaded'})
+ await teamPanel.getByLabel('팀 목표').waitFor({timeout:15000})
+ assert.equal(await teamPanel.getByLabel('팀 목표').inputValue(),'Review project with local and Qwen agents')
+ assert.equal(await teamPanel.getByLabel('작업 지시문').nth(1).inputValue(),'Independently review the plan')
+ assert.equal(await teamPanel.getByLabel('실행 엔진').nth(1).inputValue(),'qwen')
+ assert.equal(await teamPanel.getByLabel('작업 의존성 미리보기').count(),1)
  await shot(page,'16-task-team-create-desktop.png')
  await teamPanel.getByRole('button',{name:'팀 실행'}).click()
  await teamPanel.getByText('팀이 실행 대기열에 등록됐습니다.').waitFor()
