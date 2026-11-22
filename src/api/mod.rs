@@ -12,6 +12,7 @@ pub mod experience;
 pub mod memory;
 pub mod browser;
 pub mod extensions;
+pub mod improvements;
 pub mod approvals;
 pub mod sessions;
 pub mod agents;
@@ -138,6 +139,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/task-teams/:id/worktrees/:task/promote",
             post(task_teams::worktree_promote))
         .route("/api/tools", get(extensions::list_tools))
+        .route("/api/extensions/runtime", get(extensions::runtime_extensions).post(extensions::set_runtime_extensions))
+        .route("/api/improvements", get(improvements::list))
+        .route("/api/improvements/:id/:action", post(improvements::decide))
         .route("/api/browser/status", get(browser::status))
         .route("/api/browser/screenshot", get(browser::screenshot))
         .route("/api/browser/action", post(browser::action))

@@ -188,3 +188,58 @@ pub async fn mcp_catalog(Query(query): Query<HashMap<String, String>>) -> Respon
         .unwrap_or_default();
     Json(json!(items)).into_response()
 }
+
+/// Runtime toggles for optional extensions. The UI treats this as a replaceable
+/// policy object, so a partial map merges and an empty map restores defaults.
+pub async fn runtime_extensions(State(state): State<AppState>) -> Json<Value> {
+    let configured = stored_extensions(&state);
+    Json(json!({
+        "enabled": configured,
+        "configured": configured,
+        "runtime": "optional-extensions-v1"
+    }))
+}
+
+pub async fn set_runtime_extensions(
+    State(state): State<AppState>,
+    Json(body): Json<Value>,
+) -> Response {
+    let Some(patch) = body.as_object() else {
+        return error(StatusCode::BAD_REQUEST, "설정 형식이 올바르지 않습니다.");
+    };
+    let mut configured = stored_extensions(&state);
+    if patch.is_empty() {
+        configured = json!({});
+    } else {
+        for (key, value) in patch {
+            if let Some(on) = value.as_bool() {
+                configured[key] = json!(on);
+            }
+        }
+    }
+    if state
+        .store
+        .put(
+            "extension_policy",
+            &json!({"id":"default","extensions":configured}),
+        )
+        .is_none()
+    {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "설정을 저장하지 못했습니다.");
+    }
+    Json(json!({
+        "enabled": configured,
+        "configured": configured,
+        "runtime": "optional-extensions-v1"
+    }))
+    .into_response()
+}
+
+fn stored_extensions(state: &AppState) -> Value {
+    state
+        .store
+        .get("extension_policy", "default")
+        .and_then(|record| record.get("extensions").cloned())
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}))
+}
