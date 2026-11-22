@@ -1,6 +1,7 @@
 import {createContext,useContext,useEffect,useState,type ReactNode} from 'react'
 import {Check,ImagePlus,LoaderCircle,Pencil,UserRound,X} from 'lucide-react'
 import {get,post} from '../api'
+import type {RefreshScope} from '../refreshEvents'
 import {Button,TextInput} from './Primitives'
 
 export type OwnerProfile={id?:string;name:string;avatar:string;updatedAt?:string|null}
@@ -17,10 +18,15 @@ export function OwnerProfileProvider({children}:{children:ReactNode}){
   let live=true
   const load=()=>{void get<OwnerProfile>('/api/settings/owner-profile')
    .then(value=>{if(live)setProfile(value)}).catch(()=>{})}
+  const onDataChange=(event:Event)=>{
+   const targets=(event as CustomEvent<RefreshScope>).detail?.targets||[]
+   if(targets.includes('/api/settings/owner-profile'))load()
+  }
   load()
   const onFocus=()=>{if(document.visibilityState==='visible')load()}
   window.addEventListener('focus',onFocus)
-  return()=>{live=false;window.removeEventListener('focus',onFocus)}
+  window.addEventListener('dominion-data-change',onDataChange)
+  return()=>{live=false;window.removeEventListener('focus',onFocus);window.removeEventListener('dominion-data-change',onDataChange)}
  },[])
  return <OwnerProfileContext.Provider value={{profile,setProfile}}>{children}</OwnerProfileContext.Provider>
 }

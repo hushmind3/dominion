@@ -321,8 +321,18 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
   }catch(e){setPromptError((persisted?t('rooms.promptPartialSave')+' ':'')+(e as Error).message)}
   finally{setPromptSaving(false)}
  }
- const loadKnowledge=async()=>{setKnowledgeBusy(true);try{setKnowledge(await get<any[]>('/api/rooms/'+room.id+'/knowledge'))}catch(e){setError((e as Error).message)}finally{setKnowledgeBusy(false)}}
+ const loadKnowledge=useCallback(async()=>{setKnowledgeBusy(true);try{setKnowledge(await get<any[]>('/api/rooms/'+room.id+'/knowledge'))}catch(e){setError((e as Error).message)}finally{setKnowledgeBusy(false)}},[room.id])
  const openKnowledge=async()=>{setKnowledgeOpen(true);setKnowledgeNotice('');await loadKnowledge()}
+ useEffect(()=>{
+  if(!knowledgeOpen)return
+  const endpoint='/api/rooms/'+encodeURIComponent(room.id)+'/knowledge'
+  const onDataChange=(event:Event)=>{
+   const targets=(event as CustomEvent<RefreshScope>).detail?.targets||[]
+   if(targets.includes(endpoint))void loadKnowledge()
+  }
+  window.addEventListener('dominion-data-change',onDataChange)
+  return()=>window.removeEventListener('dominion-data-change',onDataChange)
+ },[knowledgeOpen,loadKnowledge,room.id])
  const learnKnowledge=async()=>{if(knowledgeBusy)return;setKnowledgeBusy(true);setKnowledgeNotice('');try{await post('/api/rooms/'+room.id+'/knowledge/learn',{});setKnowledgeNotice(t('rooms.knowledgeQueued'));setTimeout(()=>void loadKnowledge(),2500)}catch(e){setError((e as Error).message)}finally{setKnowledgeBusy(false)}}
  const send=async(event?:FormEvent)=>{
   event?.preventDefault();if(!input.trim()||sending)return;setSending(true);setError('');jumpDown()

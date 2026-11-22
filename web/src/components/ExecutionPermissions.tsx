@@ -5,6 +5,7 @@ import {get,post} from '../api'
 import {Button} from './Primitives'
 import {useAnchoredPanel} from '../hooks/useAnchoredPanel'
 import {t,useLocale,type LocaleKey} from '../i18n'
+import type {RefreshScope} from '../refreshEvents'
 
 type PermissionMode='request'|'workspace'|'full'
 const permissionCopy:Record<PermissionMode,{label:LocaleKey;detail:LocaleKey}>={
@@ -20,10 +21,16 @@ export function ExecutionPermissions({open,onOpenChange,onError,onChanged,active
  useEffect(()=>{
   if(!active)return
   const controller=new AbortController()
-  get<{autoApprove?:string[];autoApproveAll?:boolean}>('/api/policy',controller.signal).then(p=>{
+  const load=()=>get<{autoApprove?:string[];autoApproveAll?:boolean}>('/api/policy',controller.signal).then(p=>{
    if(!controller.signal.aborted)setPermissionMode(p.autoApproveAll?'full':(p.autoApprove||[]).includes('workspace_write')?'workspace':'request')
   }).catch(()=>{})
-  return()=>controller.abort()
+  const onDataChange=(event:Event)=>{
+   const targets=(event as CustomEvent<RefreshScope>).detail?.targets||[]
+   if(targets.includes('/api/policy'))void load()
+  }
+  void load()
+  window.addEventListener('dominion-data-change',onDataChange)
+  return()=>{controller.abort();window.removeEventListener('dominion-data-change',onDataChange)}
  },[active,open])
  const changePermission=async(mode:PermissionMode)=>{
   if(permissionBusy)return
