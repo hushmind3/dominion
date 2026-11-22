@@ -47,6 +47,11 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
   <WorkspaceHeader title={t('dashboard.title')} description={t('dashboard.subtitle')} actions={<Button type="button" variant="primary" onClick={()=>navigate('chat')}><MessageSquare size={16}/>{t('dashboard.openChat')}<ArrowRight size={14}/></Button>}/>
   {failedSources.length>0&&<div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-900"><span>{t('dashboard.partialError',{count:failedSources.length})}</span><Button type="button" variant="secondary" size="sm" onClick={()=>void retryFailed()} disabled={retrying} aria-live="polite">{retrying?<><LoaderCircle size={13} className="animate-spin"/>{t('dashboard.retrying')}</>:t('dashboard.retry')}</Button></div>}
   <WorkspaceMetrics items={metrics.map(metric=>({id:metric.name,label:t(metric.name as any),icon:metric.icon,value:metric.source.error?'—':metric.value,loading:metric.source.loading,onClick:()=>navigate(metric.page)}))}/>
+  <section className="mt-5 rounded-xl border border-divider bg-surface">
+   <div className="flex items-center justify-between border-b border-[#F0EAE1] px-4 py-3"><h2 className="text-[13px] font-bold">{t('dashboard.recent')}</h2><Button type="button" onClick={()=>navigate('activity')} className="flex items-center gap-1 text-[11px] font-medium text-[#C96442]">{t('dashboard.recent.all')} <ArrowRight size={13}/></Button></div>
+   <WorkQueue jobs={jobs.value} loading={jobs.loading} error={jobs.error}
+    compact onRefresh={()=>void jobs.reload()} onOpenActivity={()=>navigate('activity')}/>
+  </section>
   <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(270px,.72fr)]">
    <section className="rounded-xl border border-[#E7E0D5] bg-white">
     <div className="border-b border-[#F0EAE1] px-4 py-3"><h2 className="text-[13px] font-bold">{t('dashboard.runNow')}</h2><p className="mt-1 text-[11px] text-[#8A8176]">{t('dashboard.runNow.desc')}</p></div>
@@ -64,11 +69,6 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
    </section>
   </div>
   <NativeAgentPanel providers={providers.value}/>
-  <section className="mt-4 rounded-xl border border-[#E7E0D5] bg-white">
-   <div className="flex items-center justify-between border-b border-[#F0EAE1] px-4 py-3"><h2 className="text-[13px] font-bold">{t('dashboard.recent')}</h2><Button type="button" onClick={()=>navigate('activity')} className="flex items-center gap-1 text-[11px] font-medium text-[#C96442]">{t('dashboard.recent.all')} <ArrowRight size={13}/></Button></div>
-   <WorkQueue jobs={jobs.value} loading={jobs.loading} error={jobs.error}
-    compact onRefresh={()=>void jobs.reload()} onOpenActivity={()=>navigate('activity')}/>
-  </section>
   <div className="mt-4"><ExecutionMonitor/></div>
  </PageContainer>
 }

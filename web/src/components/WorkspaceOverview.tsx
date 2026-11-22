@@ -29,7 +29,7 @@ export function WorkspaceMetrics({items,columns='four'}:{items:WorkspaceMetric[]
     {item.loading?<span className="h-7 w-14 animate-pulse rounded-md bg-canvas" aria-label="Loading"/>:
      <strong className={'mt-2 block text-2xl font-bold leading-none tabular-nums '+(item.attention?'text-amber-700':'text-ink')}>{item.value}</strong>}
    </>
-   const style='flex min-h-24 min-w-0 flex-col items-start justify-between rounded-xl border border-divider bg-surface p-4 text-left shadow-sm'
+   const style='flex min-h-20 min-w-0 flex-col items-start justify-between rounded-xl border border-divider bg-surface p-3 text-left'
    return item.onClick?
     <Button variant="bare" key={item.id} type="button" aria-busy={item.loading} onClick={item.onClick} className={style+' transition-colors hover:border-brand'}>{content}</Button>:
     <div key={item.id} aria-busy={item.loading} className={style}>{content}</div>

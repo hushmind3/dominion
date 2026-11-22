@@ -2,6 +2,7 @@ import {ConversationSettings} from '../components/ConversationSettings'
 import {ExecutionPermissions} from '../components/ExecutionPermissions'
 import {TeamRunStrip} from '../components/TeamActivity'
 import {ConversationSwitch} from '../components/WorkspaceShell'
+import {ChatSessionSidebar} from '../components/ChatSessionSidebar'
 import {TokenUsage} from '../components/TokenUsage'
 import {MarkdownMessage} from '../components/MarkdownMessage'
 import {AttachmentLink} from '../components/AttachmentLink'
@@ -200,8 +201,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  }
  const [sessionFilter,setSessionFilter]=useState('')
  const [deletingSessionId,setDeletingSessionId]=useState('')
- const filteredSessions=sessions.value.filter(session=>!session.roomId
-  && session.title.toLocaleLowerCase('ko').includes(sessionFilter.trim().toLocaleLowerCase('ko')))
+
  const [turnSession,setTurnSession]=useState<string>();
  const [savedMessageId,setSavedMessageId]=useState<string>();
  const [approvalBusy,setApprovalBusy]=useState(false);
@@ -613,16 +613,11 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  useEffect(()=>{if(!active){setModelMenu(false);setPermissionOpen(false);setShowSettings(false);setSlashOpen(false)}else setReasoningKo(koreanReasoningEnabled())},[active]);
  return <div className="relative flex h-dvh min-h-0 bg-canvas">
   {showHistory&&<Button type="button" aria-label={t('chat.listCollapse')} className="absolute inset-0 z-20 !h-auto !w-auto cursor-default !rounded-none !border-0 !bg-slate-900/30 md:hidden" onClick={()=>setShowHistory(false)}/>}
-  <aside className={'min-h-0 shrink-0 flex-col overflow-hidden border-r border-divider bg-canvas text-ink '+(showHistory?'absolute inset-y-0 left-0 z-30 flex w-72 shadow-xl md:relative md:z-auto md:shadow-none':'hidden')}>
-   <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-2"><div className="min-w-0"><span className="block text-[10px] font-extrabold uppercase tracking-widest text-[#C96442]">{t('ui.label.conversations')}</span><strong className="mt-1 block text-sm text-[#3A342D]">{t('chat.recent')}</strong></div><Button size="icon" variant="ghost" onClick={resetLocal} title={t('chat.newChat')}><Plus size={19}/></Button></div>
-   <Button className="mx-3 mb-3 inline-flex items-center justify-center gap-2 rounded-xl border border-[#EED9CC] bg-[#F7E8E1] px-4 py-2.5 text-xs font-bold text-[#A94E30] hover:bg-[#F1DCCF]" onClick={resetLocal}><Plus size={17}/> {t('chat.newChat')}</Button>
-   <div className="chat-session-search"><Search size={14}/><input type="search" aria-label="대화 목록 검색" placeholder="대화 검색" value={sessionFilter} onChange={e=>setSessionFilter(e.target.value)}/>{sessionFilter&&<button type="button" aria-label="검색 지우기" onClick={()=>setSessionFilter('')}><X size={13}/></button>}</div>
-   <div className="min-h-0 flex-1 overflow-y-auto px-2">{filteredSessions.map(s=><div key={s.id} className={'group flex min-w-0 items-center rounded-xl '+(current===s.id?'bg-[#F7E8E1]':'hover:bg-[#F7E8E1]')}>
-     <Button variant="bare" aria-current={current===s.id?'page':undefined} onClick={()=>pickSession(s)} title={s.title} className={'!min-w-0 flex-1 !justify-start gap-3 !rounded-xl !px-3 !py-2.5 text-left text-xs '+(current===s.id?'font-bold text-[#A94E30]':'text-[#7C7469]')}><MessageCircle size={15} className="shrink-0"/><span className="min-w-0 truncate">{s.title}</span></Button>
-     <Button type="button" size="icon" variant="ghost" disabled={Boolean(deletingSessionId)||Boolean(stream.current&&activeTurnSession.current===s.id)} title={t('chat.deleteSession')} aria-label={s.title+' '+t('chat.deleteSession')} className="!mr-1 !size-7 shrink-0 !rounded-lg text-[#8A8176] hover:!bg-rose-50 hover:!text-rose-700" onClick={()=>void removePrivateSession(s)}><Trash2 size={13}/></Button>
-    </div>)}{sessions.loading&&!filteredSessions.length?<div className="p-5 text-center text-xs leading-5 text-[#9C9388]">{t('chat.sessionsLoading')}</div>:sessions.error&&!filteredSessions.length?<div role="status" className="p-5 text-center text-xs leading-5 text-[#9C9388]">{t('chat.sessionsUnavailable')}</div>:!filteredSessions.length&&<div className="p-5 text-center text-xs leading-5 text-[#9C9388]">{sessionFilter.trim()?'일치하는 대화가 없습니다.':t('chat.first')}</div>}</div>
-   <div className="shrink-0 border-t border-[#E7E0D5] p-2"><Button variant="ghost" onClick={openSettings} className="w-full !justify-start gap-2 !text-xs" aria-label={t('nav.settings')}><Settings size={17}/>{t('nav.settings')}</Button></div>
-  </aside>
+  <ChatSessionSidebar open={showHistory} sessions={sessions.value} loading={sessions.loading} error={sessions.error}
+   current={current} query={sessionFilter} onQuery={setSessionFilter} deletingSessionId={deletingSessionId}
+   activeTurnSessionId={activeTurnSession.current} streaming={Boolean(stream.current)}
+   onSelect={pickSession} onDelete={session=>void removePrivateSession(session)}
+   onNewChat={resetLocal} onSettings={openSettings}/>
   <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-surface">
    <header className="chat-header relative z-10 flex h-14 shrink-0 items-center justify-between gap-2 border-b border-divider bg-surface px-3 md:px-5">
     <Button size="icon" variant="ghost" onClick={()=>setShowHistory(x=>!x)} title={showHistory?t('chat.listCollapse'):t('chat.listExpand')} aria-label={showHistory?t('chat.listCollapse'):t('chat.listExpand')}><Menu size={18}/></Button>
