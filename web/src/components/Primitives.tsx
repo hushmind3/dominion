@@ -1,9 +1,9 @@
 import React,{forwardRef} from 'react'
-const focus='focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#C96442] focus-visible:ring-offset-1'
-const field='w-full min-w-0 rounded-xl border border-[#E1D9CC] bg-[#FFFDF9] px-3.5 py-2.5 text-[13px] text-[#2E2922] placeholder:text-[#A79C8E] transition-colors hover:border-[#D3C8B8] focus:border-[#C96442] focus:outline-none focus:ring-4 focus:ring-[#C96442]/10 disabled:cursor-not-allowed disabled:bg-[#F3EEE5] disabled:opacity-70'
+const focus='focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1'
+const field='w-full min-w-0 rounded-xl border border-divider bg-surface px-3.5 py-2.5 text-sm text-ink placeholder:text-muted transition-colors hover:border-muted/50 focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/10 disabled:cursor-not-allowed disabled:bg-canvas disabled:opacity-70'
 export type ButtonProps=React.ButtonHTMLAttributes<HTMLButtonElement>&{variant?:'primary'|'secondary'|'ghost'|'danger'|'bare';size?:'default'|'sm'|'icon'}
 export const Button=forwardRef<HTMLButtonElement,ButtonProps>(function Button({className='',variant='secondary',size='default',type='button',...props},ref){
- const tones={primary:'border-[#C96442] bg-[#C96442] text-white shadow-[0_4px_12px_rgba(201,100,66,.16)] hover:bg-[#A94E30]',secondary:'border-[#E1D9CC] bg-[#FFFDF9] text-[#3A342D] hover:bg-[#F7F2EA]',ghost:'border-transparent bg-transparent text-[#6F675D] hover:bg-[#F3EEE5]',danger:'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100',bare:''}
+ const tones={primary:'border-brand bg-brand text-white shadow-sm hover:bg-brand-hover',secondary:'border-divider bg-surface text-ink hover:bg-canvas',ghost:'border-transparent bg-transparent text-muted hover:bg-canvas',danger:'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100',bare:''}
  const isIcon=size==='icon'||/\b(icon-button|mobile-close)\b/.test(className)
  const base=variant==='bare'?'':isIcon?'inline-flex size-9 shrink-0 items-center justify-center rounded-xl border border-transparent':size==='sm'?'inline-flex min-h-8 items-center justify-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] font-semibold':'inline-flex min-h-9 items-center justify-center gap-1.5 rounded-xl border px-3.5 py-2 text-[13px] font-semibold'
  return <button ref={ref} type={type} className={[base,!isIcon&&tones[variant],focus,'transition-colors disabled:pointer-events-none disabled:opacity-45',className].filter(Boolean).join(' ')} {...props}/>
