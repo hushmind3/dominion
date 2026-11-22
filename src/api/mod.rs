@@ -60,6 +60,8 @@ pub mod gateways;
 pub mod models;
 #[path = "addons/oauth.rs"]
 pub mod oauth;
+#[path = "addons/cloud_auth.rs"]
+pub mod cloud_auth;
 #[path = "services/conversation/personas.rs"]
 pub mod personas;
 #[path = "services/conversation/rooms.rs"]

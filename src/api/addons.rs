@@ -6,7 +6,7 @@
 //! integration can install a second independent server or permission policy.
 use crate::state::AppState;
 use axum::{routing::{get,post},Router};
-use super::{browser,channels,compat,extensions,gateways,oauth};
+use super::{browser,channels,cloud_auth,compat,extensions,gateways,oauth};
 
 pub(super) fn routes()->Router<AppState>{
     Router::<AppState>::new()
@@ -24,6 +24,12 @@ pub(super) fn routes()->Router<AppState>{
         .route("/api/skill-catalog/meta", get(extensions::skill_catalog_meta))
         .route("/api/skill-catalog/import", post(extensions::import_skill))
         .route("/api/skills/import-repo", post(extensions::import_skill_repo))
+        // Consumer Cloud login is an optional edge adapter, isolated from
+        // the Sub2 Harness, agent credentials and tool execution paths.
+        .route("/api/cloud-auth/google/start", post(cloud_auth::start))
+        .route("/api/cloud-auth/google/status", get(cloud_auth::status))
+        .route("/api/cloud-auth/google/ack", post(cloud_auth::acknowledge))
+        .route("/api/cloud-auth/google/callback", get(cloud_auth::callback))
         .route("/api/oauth/providers", get(oauth::providers))
         .route("/api/oauth/connections", get(channels::connections))
         .route("/api/oauth/providers/:id", post(oauth::save))
