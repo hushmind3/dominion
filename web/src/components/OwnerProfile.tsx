@@ -6,23 +6,24 @@ import {Button,TextInput} from './Primitives'
 export type OwnerProfile={id?:string;name:string;avatar:string;updatedAt?:string|null}
 export const defaultOwnerProfile:OwnerProfile={name:'나',avatar:''}
 
-type OwnerProfileState={profile:OwnerProfile;setProfile:(profile:OwnerProfile)=>void}
+type OwnerProfileState={profile:OwnerProfile;setProfile:(profile:OwnerProfile)=>void;loading:boolean;loadError:string;reload:()=>void}
 const OwnerProfileContext=createContext<OwnerProfileState>({
- profile:defaultOwnerProfile,setProfile:()=>{}
+ profile:defaultOwnerProfile,setProfile:()=>{},loading:false,loadError:'',reload:()=>{}
 })
 export const useOwnerProfile=()=>useContext(OwnerProfileContext)
 export function OwnerProfileProvider({children}:{children:ReactNode}){
  const [profile,setProfile]=useState<OwnerProfile>(defaultOwnerProfile)
+ const [loading,setLoading]=useState(true),[loadError,setLoadError]=useState(''),[reloadKey,setReloadKey]=useState(0)
  useEffect(()=>{
   let live=true
-  const load=()=>{void get<OwnerProfile>('/api/settings/owner-profile')
-   .then(value=>{if(live)setProfile(value)}).catch(()=>{})}
+  const load=()=>{setLoading(true);setLoadError('');void get<OwnerProfile>('/api/settings/owner-profile')
+   .then(value=>{if(live)setProfile(value)}).catch(e=>{if(live)setLoadError((e as Error).message)}).finally(()=>{if(live)setLoading(false)})}
   load()
   const onFocus=()=>{if(document.visibilityState==='visible')load()}
   window.addEventListener('focus',onFocus)
   return()=>{live=false;window.removeEventListener('focus',onFocus)}
- },[])
- return <OwnerProfileContext.Provider value={{profile,setProfile}}>{children}</OwnerProfileContext.Provider>
+ },[reloadKey])
+ return <OwnerProfileContext.Provider value={{profile,setProfile,loading,loadError,reload:()=>setReloadKey(key=>key+1)}}>{children}</OwnerProfileContext.Provider>
 }
 
 /** One owner identity, shared by the workspace, chats and multi-agent rooms. */
@@ -33,7 +34,7 @@ export function OwnerAvatar({profile,size='normal',className=''}:{profile:OwnerP
 }
 
 export function OwnerProfileEditor({compact=false}:{compact?:boolean}){
- const {profile,setProfile}=useOwnerProfile()
+ const {profile,setProfile,loading,loadError,reload}=useOwnerProfile()
  const [open,setOpen]=useState(false),[name,setName]=useState(profile.name),[avatar,setAvatar]=useState(profile.avatar)
  const [working,setWorking]=useState(false),[error,setError]=useState('')
  useEffect(()=>{if(!open){setName(profile.name);setAvatar(profile.avatar)}},[profile,open])
@@ -64,6 +65,8 @@ export function OwnerProfileEditor({compact=false}:{compact?:boolean}){
   </Button>
   {open&&<div role="dialog" aria-label="내 프로필" className={'absolute z-[70] w-[min(304px,calc(100vw-24px))] rounded-2xl border border-[#E7D8C7] bg-[#FFFDF9] p-4 shadow-[0_18px_56px_rgba(43,36,29,.2)] '+(compact?'right-0 top-full mt-2':'bottom-full left-3')}>
    <div className="mb-3 flex items-center justify-between"><strong className="text-[13px] text-[#3A342D]">내 프로필</strong><Button type="button" variant="bare" aria-label="닫기" onClick={close} className="rounded-lg p-1 hover:bg-[#F3EEE5]"><X size={16}/></Button></div>
+  {loading&&<p role="status" className="mb-2 text-[11px] text-[#8A8176]">서버에서 프로필을 불러오는 중입니다.</p>}
+  {loadError&&<div role="alert" className="mb-2 rounded-lg bg-[#FFF3EE] p-2 text-[11px] text-[#A54027]">프로필 정보를 불러오지 못했습니다. 저장 전에 다시 확인해 주세요. <Button type="button" variant="bare" onClick={reload} className="ml-1 underline">다시 시도</Button></div>}
    <div className="mb-3 flex items-center gap-3">
     <OwnerAvatar profile={{name,avatar}} className="!size-14"/>
     <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#E7E0D5] bg-white px-2.5 py-2 text-[11px] font-semibold hover:bg-[#FAF7F1]"><ImagePlus size={14}/> 이미지 변경
@@ -74,7 +77,7 @@ export function OwnerProfileEditor({compact=false}:{compact?:boolean}){
    <label className="block text-[11px] font-semibold text-[#6D6052]">표시 이름</label>
    <TextInput value={name} maxLength={60} onChange={e=>setName(e.target.value)} className="mt-1 w-full" onKeyDown={e=>{if(e.key==='Enter')void save()}}/>
    {error&&<p role="alert" className="mt-2 text-[11px] text-rose-600">{error}</p>}
-   <Button type="button" variant="primary" onClick={()=>void save()} disabled={working||!name.trim()} className="mt-3 flex w-full items-center justify-center gap-1.5">
+   <Button type="button" variant="primary" onClick={()=>void save()} disabled={working||loading||Boolean(loadError)||!name.trim()} className="mt-3 flex w-full items-center justify-center gap-1.5">
     {working?<LoaderCircle size={14} className="animate-spin"/>:<Check size={14}/>} 저장
    </Button>
   </div>}

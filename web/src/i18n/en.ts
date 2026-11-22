@@ -939,6 +939,8 @@ const en: Record<LocaleKey, string> = {
   'usage.tokens': '{count} tokens',
   'usage.tokensEstimated': '~{count} tokens',
   'usage.sessionTotal': '{count} tokens total',
+  'usage.unavailable': 'Session usage unavailable',
+  'usage.loadedOnly': '{count} tokens in loaded messages; session total unavailable',
   'chat.reasoningEffort': 'Reasoning effort',
   'chat.agentAria': 'Agent',
   'rooms.st.waiting': 'Waiting',

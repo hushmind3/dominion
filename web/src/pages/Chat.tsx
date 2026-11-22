@@ -93,6 +93,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const messageUsage=useMemo(()=>messages.reduce((sum,message)=>sum+(Number(message.metadata?.usage?.totalTokens)||0),0),[messages])
  const [serverUsage,setServerUsage]=useState(0);
  const [usageBreakdown,setUsageBreakdown]=useState<SessionUsageBreakdown>();
+ const [usageUnavailable,setUsageUnavailable]=useState(false)
  const approvals=useRemote<Approval[]>('/api/approvals',[],active);
  // Composer state belongs to its exact conversation, not the current tab's
  // last displayed textarea. Switching Chat sessions cannot transplant an
@@ -248,7 +249,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   lines.push("캐시 입력은 총 입력에 포함되며, 캐시 수치는 제공자가 보고한 경우만 표시")
   return lines.join("\n")
  },[usageBreakdown]);
- useEffect(()=>{if(!current){setServerUsage(0);setUsageBreakdown(undefined);return}let alive=true;get<{totalTokens?:number;breakdown?:SessionUsageBreakdown}>('/api/sessions/'+encodeURIComponent(current)+'/usage').then(usage=>{if(alive){setServerUsage(Number(usage.totalTokens)||0);setUsageBreakdown(usage.breakdown)}}).catch(()=>{});return()=>{alive=false}},[current,usageRevision])
+ useEffect(()=>{if(!current){setServerUsage(0);setUsageBreakdown(undefined);setUsageUnavailable(false);return}let alive=true;get<{totalTokens?:number;breakdown?:SessionUsageBreakdown}>('/api/sessions/'+encodeURIComponent(current)+'/usage').then(usage=>{if(alive){setServerUsage(Number(usage.totalTokens)||0);setUsageBreakdown(usage.breakdown);setUsageUnavailable(false)}}).catch(()=>{if(alive)setUsageUnavailable(true)});return()=>{alive=false}},[current,usageRevision])
  const {scrollRef,onScroll,jumpDown}=useTranscriptScroll(current,transcriptRevision);
  const modelPanel=useAnchoredPanel(modelMenu,()=>setModelMenu(false),380);
  useEffect(()=>()=>stream.current?.abort(),[]);
@@ -648,7 +649,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      </div>
     </div>
     <div className="flex shrink-0 items-center gap-1">
-     {(serverUsage||messageUsage)>0&&<span title={tokenUsageTip} className="hidden rounded-lg border border-[#E7DDCC] bg-[#F7F1E6] px-2 py-1 text-[10px] font-semibold text-[#8A775F] sm:inline-flex">{t('usage.sessionTotal',{count:(serverUsage||messageUsage).toLocaleString()})}</span>}
+     {usageUnavailable?<span role="status" title={t('usage.unavailable')} className="hidden rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-800 sm:inline-flex">{messageUsage>0?t('usage.loadedOnly',{count:messageUsage.toLocaleString()}):t('usage.unavailable')}</span>:(serverUsage||messageUsage)>0&&<span title={tokenUsageTip} className="hidden rounded-lg border border-[#E7DDCC] bg-[#F7F1E6] px-2 py-1 text-[10px] font-semibold text-[#8A775F] sm:inline-flex">{t('usage.sessionTotal',{count:(serverUsage||messageUsage).toLocaleString()})}</span>}
 
      
      <Button size="icon" variant="ghost" title={t('chat.modelManage')} aria-label={t('chat.modelManage')} onClick={openModels}><Cpu size={18}/></Button>

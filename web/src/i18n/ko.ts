@@ -938,6 +938,8 @@ const ko = {
   'usage.tokens': '{count} 토큰',
   'usage.tokensEstimated': '약 {count} 토큰',
   'usage.sessionTotal': '누적 {count} 토큰',
+  'usage.unavailable': '세션 사용량을 불러올 수 없습니다',
+  'usage.loadedOnly': '불러온 대화 {count} 토큰 · 세션 누적량 확인 불가',
   'chat.reasoningEffort': '추론 강도',
   'chat.agentAria': '에이전트',
   'rooms.st.waiting': '응답 대기',
