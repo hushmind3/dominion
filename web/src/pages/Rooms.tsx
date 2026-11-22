@@ -62,6 +62,7 @@ export function RoomsPage({openSession,openSettings,switchMode,active:visibleVie
  useEffect(()=>{if(!visibleView)setShowList(false)},[visibleView])
  const [creating,setCreating]=useState<RoomDraft|null>(null)
  const [saving,setSaving]=useState(false),[error,setError]=useState(''),[query,setQuery]=useState('')
+ const [roomView,setRoomView]=useState<'all'|'running'|'attention'>('all')
  const current=rooms.value.find(room=>room.id===selected)
  useEffect(()=>{if(rooms.loading)return;if(!rooms.value.some(room=>room.id===selected))setSelected(rooms.value[0]?.id||'')},[rooms.value,rooms.loading,selected])
  useEffect(()=>{try{if(selected)localStorage.setItem('dominion.room.selected',selected)}catch{}},[selected])
@@ -71,14 +72,33 @@ export function RoomsPage({openSession,openSettings,switchMode,active:visibleVie
   try{const created=await post<RoomConfig>('/api/rooms',creating);await rooms.reload();setSelected(created.id);setCreating(null);if(window.innerWidth<840)setShowList(false);refresh()}
   catch(e){setError((e as Error).message)}finally{setSaving(false)}
  }
- const filtered=rooms.value.filter(room=>(room.name+' '+(room.topic||'')).toLowerCase().includes(query.toLowerCase()))
+ const roomNeedsReview=(room:RoomConfig)=>['failed','paused','needs_review','interrupted','stopped'].includes(room.status||'')
+ const runningCount=rooms.value.filter(room=>room.status==='running').length
+ const attentionCount=rooms.value.filter(roomNeedsReview).length
+ const filtered=rooms.value.filter(room=>{
+  if(roomView==='running'&&room.status!=='running')return false
+  if(roomView==='attention'&&!roomNeedsReview(room))return false
+  return (room.name+' '+(room.topic||'')).toLocaleLowerCase().includes(query.toLocaleLowerCase())
+ })
  return <div className="rooms-app">
   {showList&&<Button variant="bare" className="room-list-scrim" aria-label={t('rooms.listClose')} onClick={()=>setShowList(false)}/>}
   <aside className={'room-list '+(showList?'room-list-open':'room-list-closed')} aria-label={t('rooms.listAria')}>
    <div className="room-list-title"><div><span className="room-eyebrow">{t('ui.label.yourCircle')}</span><h2>{t('rooms.listTitle')}</h2></div><Button size="icon" variant="ghost" title={t('rooms.new')} aria-label={t('rooms.newAria')} onClick={()=>{setCreating(draftOf());setError('')}}><Plus size={19}/></Button></div>
-   <div className="room-list-search"><TextInput aria-label={t('rooms.searchAria')} placeholder={t('rooms.search')} value={query} onChange={e=>setQuery(e.target.value)}/></div>
+   <div className="room-list-search"><TextInput aria-label={t('rooms.searchAria')} placeholder={t('rooms.search')} value={query} onChange={e=>setQuery(e.target.value)}/>
+    <div className="room-list-filters" role="group" aria-label={getLocale()==='en'?'Filter rooms by status':'Room 상태별 보기'}>
+     {([
+      {id:'all',ko:'전체',en:'All',count:rooms.value.length},
+      {id:'running',ko:'진행 중',en:'Live',count:runningCount},
+      {id:'attention',ko:'확인 필요',en:'Review',count:attentionCount},
+     ] as const).map(view=><Button key={view.id} type="button" variant="bare"
+      aria-pressed={roomView===view.id} onClick={()=>setRoomView(view.id)}
+      className={'room-list-filter '+(roomView===view.id?'is-active':'')}>
+      {getLocale()==='en'?view.en:view.ko}<span>{view.count}</span>
+     </Button>)}
+    </div>
+   </div>
    <div className="room-list-items">{filtered.map(room=><Button variant="bare" key={room.id} className={'room-list-item '+(selected===room.id?'is-selected':'')} onClick={()=>selectRoom(room.id)} aria-current={selected===room.id?'true':undefined}><span className="room-list-icon"><Hash size={18}/></span><span className="room-list-copy"><strong>{room.name}</strong><small>{room.topic||t('rooms.space')}</small><span className="room-list-meta">{t('rooms.me')} + {room.agentIds?.length||0}{t('rooms.people')}{room.status==='running'&&<i title={t('rooms.st.running')}/>}</span></span></Button>)}
-    {!rooms.loading&&!filtered.length&&<div className="room-list-empty">{query?t('rooms.noSearch'):t('rooms.empty')}</div>}
+    {!rooms.loading&&!filtered.length&&<div className="room-list-empty">{query||roomView!=='all'?t('rooms.noSearch'):t('rooms.empty')}</div>}
    </div>
    <div className="room-list-footer"><Button variant="ghost" onClick={openSettings} className="w-full !justify-start gap-2 !text-xs" aria-label={t('nav.settings')}><Settings size={17}/>{t('nav.settings')}</Button></div>
   </aside>
