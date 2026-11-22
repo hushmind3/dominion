@@ -1,4 +1,6 @@
-import {useEffect,useRef,useState} from 'react'
+import {useCallback,useEffect,useRef,useState} from 'react'
+import {CloudEmailLogin} from './CloudEmailLogin'
+import {decodeNativeGoogleFlight,encodeNativeGoogleFlight} from '../utils/cloudAuthFlight'
 import {get,post} from '../api'
 
 type GoogleResponse={credential:string}
@@ -20,13 +22,12 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
  const button=useRef<HTMLDivElement>(null)
  const [token,setToken]=useState(()=>sessionStorage.getItem('dominion_cloud_session')||'')
  const [showLoginOptions,setShowLoginOptions]=useState(false)
+ const [googleClientId,setGoogleClientId]=useState(clientId)
+ const [desktopClientId,setDesktopClientId]=useState('')
+ const [emailReady,setEmailReady]=useState(false)
+ const [nativeFlow,setNativeFlow]=useState(()=>decodeNativeGoogleFlight(sessionStorage.getItem('dominion_cloud_google_native_flight')))
  const [billing,setBilling]=useState<Billing|null>(null)
- const [billingKnown,setBillingKnown]=useState(false)
- const [billingLoading,setBillingLoading]=useState(false)
- const [billingError,setBillingError]=useState('')
  const [identity,setIdentity]=useState<IdentityStatus|null>(null)
- const [identityKnown,setIdentityKnown]=useState(false)
- const [identityError,setIdentityError]=useState('')
  const [identityBusy,setIdentityBusy]=useState(false)
  const [showCheckout,setShowCheckout]=useState(false)
  const [billingMessage,setBillingMessage]=useState('')
@@ -60,37 +61,78 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
  const [routerMessage,setRouterMessage]=useState('')
  const [routerModels,setRouterModels]=useState<RemoteModel[]>([])
  const [routerSearch,setRouterSearch]=useState('')
- async function openSocialLogin(provider:'kakao'|'naver'){
-  if(!cloudUrl)return
-  const popup=window.open(cloudUrl+'/v1/auth/'+provider+'/start','dominion-'+provider,'width=520,height=720')
-  if(!popup)setMessage('브라우저에서 로그인 팝업을 허용해 주세요.')
- }
+ // All sign-in methods share one session persistence and hydration path.
+ // Keep this callback stable: email polling must not restart on parent rerenders.
+ const completeLogin=useCallback(async(session:string,method:'google'|'email')=>{
+  sessionStorage.setItem('dominion_cloud_session',session)
+  setToken(session);setShowLoginOptions(false)
+  setMessage(method==='google'?'Google 계정으로 로그인했습니다.':'이메일 확인으로 로그인했습니다.')
+  try{await Promise.all([fetchModels(session),loadBilling(session)])}
+  catch(error){setMessage('로그인은 완료됐지만 Cloud 정보 조회에 실패했습니다: '+(error as Error).message)}
+ },[])
+ const emailLoginComplete=useCallback(async(session:string)=>completeLogin(session,'email'),[completeLogin])
  useEffect(()=>{
   if(!cloudUrl)return
-  const listener=(event:MessageEvent)=>{
-   if(event.origin!==new URL(cloudUrl).origin||event.data?.type!=='dominion-oauth-session')return
-   const session=event.data.token
-   if(typeof session!=='string'||!/^[A-Za-z0-9_-]{32,}$/.test(session))return
-   sessionStorage.setItem('dominion_cloud_session',session)
-   setToken(session);setShowLoginOptions(false);setMessage(event.data.provider==='kakao'?'카카오 로그인 완료':'네이버 로그인 완료')
-   void Promise.all([fetchModels(session),loadBilling(session)]).catch(e=>setMessage((e as Error).message))
-  }
-  window.addEventListener('message',listener)
-  return()=>window.removeEventListener('message',listener)
+  const controller=new AbortController()
+  void fetch(cloudUrl+'/v1/public-config',{signal:controller.signal})
+   .then(async response=>{
+    const data=await response.json().catch(()=>({})) as {google_client_id?:string|null;google_desktop_client_id?:string|null;providers?:{email?:boolean};error?:string}
+    if(!response.ok)throw Error(data.error||'로그인 서버에 연결하지 못했습니다.')
+    if(!controller.signal.aborted){
+     if(typeof data.google_client_id==='string')setGoogleClientId(data.google_client_id)
+     if(typeof data.google_desktop_client_id==='string')setDesktopClientId(data.google_desktop_client_id)
+     setEmailReady(Boolean(data.providers?.email))
+     if(!data.google_client_id&&!data.google_desktop_client_id&&!data.providers?.email)setMessage('로그인 제공자 설정이 아직 완료되지 않았습니다.')
+    }
+   })
+   .catch(error=>{if(!controller.signal.aborted)setMessage('Google 로그인 설정 조회 실패: '+(error as Error).message)})
+  return()=>controller.abort()
  },[])
- async function loadBilling(session:string){
-  setBillingLoading(true);setBillingKnown(false);setBillingError('');setIdentity(null);setIdentityKnown(false);setIdentityError('')
+ const desktopGoogleReady=Boolean(desktopClientId&&['127.0.0.1','localhost'].includes(window.location.hostname))
+ async function startNativeGoogle(){
+  if(!desktopGoogleReady||nativeFlow||busy)return
+  setBusy(true);setMessage('')
   try{
-   const response=await fetch(cloudUrl+'/v1/billing',{headers:{Authorization:'Bearer '+session}})
-   if(!response.ok){setBilling(null);setBillingKnown(false);throw Error('구독 정보를 불러오지 못했습니다.')}
-   setBilling(await response.json());setBillingKnown(true)
-   try{
-    const identityResponse=await fetch(cloudUrl+'/v1/identity',{headers:{Authorization:'Bearer '+session}})
-    if(!identityResponse.ok)throw Error('본인확인 상태를 불러오지 못했습니다.')
-    setIdentity(await identityResponse.json());setIdentityKnown(true)
-   }catch(e){setIdentity(null);setIdentityKnown(false);setIdentityError((e as Error).message)}
-  }catch(e){setBilling(null);setBillingKnown(false);setBillingError((e as Error).message);throw e}
-  finally{setBillingLoading(false)}
+   const started=await post<{id:string;status:string}>('/api/cloud-auth/google/start',{})
+   if(!started.id||started.status!=='waiting')throw Error('Google 브라우저 인증을 시작하지 못했습니다.')
+   sessionStorage.setItem('dominion_cloud_google_native_flight',encodeNativeGoogleFlight(started.id))
+   setNativeFlow(started.id)
+   setMessage('브라우저에서 Google 계정을 선택하세요. 인증 후 DOMINION으로 돌아옵니다.')
+  }catch(error){setMessage((error as Error).message)}finally{setBusy(false)}
+ }
+ useEffect(()=>{
+  if(!nativeFlow)return
+  let active=true
+  const run=async()=>{
+   for(let tries=0;tries<300&&active;tries++){
+    await new Promise(resolve=>setTimeout(resolve,1000))
+    if(!active)return
+    let response:{status:string;token?:string;error?:string}
+    try{response=await get('/api/cloud-auth/google/status?id='+encodeURIComponent(nativeFlow))}
+    catch(error){
+     // Switching to the mail app or restarting the UI can briefly interrupt polling.
+     if([404,410].includes(Number((error as {status?:number}).status)))throw error
+     continue
+    }
+    if(response.status==='waiting'||response.status==='processing')continue
+    if(response.status!=='done'||!response.token)throw Error(response.error||'Google 인증을 완료하지 못했습니다.')
+    await completeLogin(response.token,'google')
+    sessionStorage.removeItem('dominion_cloud_google_native_flight')
+    setNativeFlow('')
+    void post('/api/cloud-auth/google/ack',{id:nativeFlow}).catch(()=>{})
+    return
+   }
+   if(active)throw Error('Google 인증 시간이 만료됐습니다. 다시 시도하세요.')
+  }
+  void run().catch(error=>{if(active){sessionStorage.removeItem('dominion_cloud_google_native_flight');setMessage((error as Error).message);setNativeFlow('')}})
+  return()=>{active=false}
+ },[nativeFlow,completeLogin])
+ async function loadBilling(session:string){
+  const response=await fetch(cloudUrl+'/v1/billing',{headers:{Authorization:'Bearer '+session}})
+  if(!response.ok)throw Error('구독 정보를 불러오지 못했습니다.')
+  setBilling(await response.json())
+  const identityResponse=await fetch(cloudUrl+'/v1/identity',{headers:{Authorization:'Bearer '+session}})
+  if(identityResponse.ok)setIdentity(await identityResponse.json())
  }
  async function verifyIdentity(){
   if(!token||identityBusy)return
@@ -113,7 +155,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   }catch(e){setBillingMessage((e as Error).message)}finally{setIdentityBusy(false)}
  }
  async function startCheckout(){
-  if(!token||billingLoading||!billingKnown||!billing?.checkout_enabled||!identityKnown)return
+  if(!token||!billing?.checkout_enabled)return
   if(!identity?.verified){setBillingMessage('유료 결제 전에 본인확인을 완료해 주세요.');return}
   setBillingBusy(true);setBillingMessage('')
   try{
@@ -137,53 +179,17 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   if(!saved||!cloudUrl)return
   const params=new URLSearchParams(window.location.search)
   const outcome=params.get('dominionPayment')
-  // Preserve the returned Toss order across a reload or gateway timeout.
-  // The Worker verifies every field against its stored order and Toss itself.
-  const pendingKey='dominion_cloud_pending_payment'
   if(outcome){
    window.history.replaceState(null,'',window.location.pathname+window.location.hash)
    if(outcome==='success'){
     const orderId=params.get('orderId'),paymentKey=params.get('paymentKey'),amount=Number(params.get('amount'))
-    if(!orderId||!paymentKey||!Number.isSafeInteger(amount)||amount<=0){
-     setBillingMessage('결제 정보가 올바르지 않습니다.')
-    }else{
-     sessionStorage.setItem(pendingKey,JSON.stringify({orderId,paymentKey,amount}))
-    }
+    if(!orderId||!paymentKey||!Number.isSafeInteger(amount)){setBillingMessage('결제 정보가 올바르지 않습니다.');return}
+    void fetch(cloudUrl+'/v1/billing/confirm',{method:'POST',headers:{Authorization:'Bearer '+saved,'content-type':'application/json'},body:JSON.stringify({orderId,paymentKey,amount})})
+     .then(async response=>{if(!response.ok)throw Error('결제 확인 중 오류가 발생했습니다. 주문번호: '+orderId);setBillingMessage('결제 확인 완료 · Pro 구독이 활성화됐습니다.');await loadBilling(saved)})
+     .catch(e=>setBillingMessage((e as Error).message))
    }else setBillingMessage('결제가 취소되었거나 실패했습니다.')
   }
-  const pendingRaw=outcome==='fail'?null:sessionStorage.getItem(pendingKey)
-  if(pendingRaw){
-   try{
-    const pending=JSON.parse(pendingRaw) as {orderId:string;paymentKey:string;amount:number}
-    if(!/^dominion_[a-f0-9]{32}$/.test(pending.orderId)||typeof pending.paymentKey!=='string'||!pending.paymentKey||
-      !Number.isSafeInteger(pending.amount)||pending.amount<=0)throw Error('Invalid pending order')
-    void fetch(cloudUrl+'/v1/billing/confirm',{method:'POST',headers:{Authorization:'Bearer '+saved,'content-type':'application/json'},body:JSON.stringify(pending)})
-     .then(async response=>{
-      const data=await response.json() as {status?:string;error?:string}
-      if(!response.ok||data.status!=='paid')throw Error(data.error||'결제 승인 상태를 다시 조회해 주세요.')
-      sessionStorage.removeItem(pendingKey)
-      setBillingMessage('결제 확인 완료 · Pro 구독이 활성화됐습니다.')
-      await loadBilling(saved)
-     })
-     .catch(()=>setBillingMessage('결제 승인 상태를 확인 중입니다. 새로고침하면 같은 주문을 다시 조회합니다.'))
-   }catch{
-    sessionStorage.removeItem(pendingKey)
-    setBillingMessage('저장된 결제 정보가 올바르지 않습니다.')
-   }
-  }
-  void Promise.allSettled([fetchModels(saved),loadBilling(saved)]).then(async results=>{
-   if(results.every(result=>result.status==='fulfilled'))return
-   // A temporary catalog/billing outage is not an expired session.
-   try{
-    const session=await fetch(cloudUrl+'/v1/me',{headers:{Authorization:'Bearer '+saved}})
-    if(session.status===401){
-     sessionStorage.removeItem('dominion_cloud_session');setToken('')
-     setMessage('Cloud 로그인 세션이 만료됐습니다. 다시 로그인해 주세요.')
-     return
-    }
-   }catch{ /* Network outage is not proof that credentials were revoked. */ }
-   setMessage('Cloud 계정은 연결된 상태입니다. 일부 정보를 불러오지 못했습니다.')
-  })
+  void Promise.all([fetchModels(saved),loadBilling(saved)]).catch(()=>{sessionStorage.removeItem('dominion_cloud_session');setToken('')})
  },[])
   async function fetchModels(session:string){
   const response=await fetch(cloudUrl+'/v1/models',{headers:{Authorization:'Bearer '+session}})
@@ -194,40 +200,37 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   setSelected(previous=>unique.some(m=>m.id===previous)?previous:(unique[0]?.id||''))
  }
  useEffect(()=>{
-  if(!cloudUrl||!clientId||!button.current)return
+  if(!showLoginOptions||desktopGoogleReady||!cloudUrl||!googleClientId||!button.current)return
   let active=true
-  const script=document.createElement('script')
-  script.src='https://accounts.google.com/gsi/client'
-  script.async=true
-  script.onload=()=>{
+  const initialize=()=>{
    if(!active||!button.current||!window.google)return
-   window.google.accounts.id.initialize({client_id:clientId,callback:async({credential})=>{
+   button.current.replaceChildren()
+   window.google.accounts.id.initialize({client_id:googleClientId,callback:async({credential})=>{
     setBusy(true);setMessage('')
     try{
      const response=await fetch(cloudUrl+'/v1/auth/google',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({credential})})
-     if(!response.ok)throw Error('도미니언 로그인 실패')
+     if(!response.ok){
+      const error=await response.json().catch(()=>({})) as {error?:string}
+      throw Error(error.error||'Google 계정 인증에 실패했습니다.')
+     }
      const data=await response.json() as {token:string}
-     // Authentication is complete when the gateway issues a session.
-     // Catalog and billing are independent reads; an outage must not undo login.
-     sessionStorage.setItem('dominion_cloud_session',data.token)
-     setToken(data.token);setShowLoginOptions(false);setMessage('도미니언 계정으로 연결됐습니다.')
-     const loaded=await Promise.allSettled([fetchModels(data.token),loadBilling(data.token)])
-     if(loaded.some(result=>result.status==='rejected'))
-      setMessage('로그인은 완료됐습니다. 모델 또는 구독 정보는 잠시 후 다시 조회해 주세요.')
+     await completeLogin(data.token,'google')
     }catch(error){setMessage((error as Error).message)}finally{setBusy(false)}
    }})
    window.google.accounts.id.renderButton(button.current,{theme:'outline',size:'large',text:'signin_with',width:240})
   }
+  if(window.google){initialize();return()=>{active=false}}
+  const script=document.createElement('script')
+  script.src='https://accounts.google.com/gsi/client'
+  script.async=true
+  script.onload=initialize
+  script.onerror=()=>{if(active)setMessage('Google 로그인 창을 불러오지 못했습니다. 네트워크나 차단 설정을 확인해 주세요.')}
   document.head.appendChild(script)
   return()=>{active=false;script.remove()}
- },[])
+ },[showLoginOptions,googleClientId,desktopGoogleReady,completeLogin])
  function logout(){
-  const session=token
   sessionStorage.removeItem('dominion_cloud_session');setIdentity(null);setBilling(null);setToken('');setModels([]);setSelected('');setModelSearch('');setMessage('DOMINION Cloud에서 로그아웃했습니다.');
   window.google?.accounts.id.disableAutoSelect?.()
-  // Local logout works offline; the gateway is asked to revoke the token.
-  if(session&&cloudUrl)void fetch(cloudUrl+'/v1/auth/logout',{method:'POST',headers:{Authorization:'Bearer '+session}})
-   .catch(()=>{ /* Browser is already signed out. */ })
  }
  async function loadCatalog(){
   setCatalogBusy(true)
@@ -369,14 +372,11 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   if(!token||!selected)return
   setBusy(true);setMessage('')
   try{
-   const existing=await get<Array<{id:string;name?:string;baseUrl:string;model:string;enabled?:boolean;toolMode?:string}>>('/api/providers')
+   const existing=await get<Array<{id:string;baseUrl:string;model:string}>>('/api/providers')
    const match=existing.find(p=>p.baseUrl.replace(/\/$/,'')===cloudUrl+'/v1'&&p.model===selected)
    if(match){
-    // A prior login may have expired: update the vault token without a duplicate.
-    const renewed=await post<{id:string}>('/api/providers',{...match,apiKey:token,enabled:true})
-    setRegistered({providerId:renewed.id,model:selected,source:'cloud'})
-    await onProviderAdded()
-    setMessage('기존 모델 연결의 로그인 세션을 갱신했습니다.')
+    setRegistered({providerId:match.id,model:selected,source:'cloud'})
+    setMessage('이미 등록된 모델입니다. 중복 등록하지 않았습니다.')
     return
    }
    const saved=await post<{id:string}>('/api/providers',{name:'DOMINION Cloud · '+selected,baseUrl:cloudUrl+'/v1',kind:'openai',apiKey:token,model:selected,enabled:true,local:false,toolMode:'compat'})
@@ -392,28 +392,33 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
  const visibleModels=filteredModels.slice(0,100)
  const filteredRouterModels=routerModels.filter(model=>(model.id+' '+(model.name||'')).toLowerCase().includes(routerSearch.toLowerCase()))
  const goToRegisteredChat=()=>{if(registered)window.location.hash='#/chat?'+new URLSearchParams({provider:registered.providerId,model:registered.model})}
- return <section className="rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-4">
-  {!hideManagementNavigation&&<div className="flex flex-wrap gap-2 border-b border-[#E7E0D5] pb-3 mb-3" role="tablist" aria-label="모델 연결 관리">
-   <button type="button" role="tab" aria-selected={managementTab==='cloud'} onClick={()=>setManagementTab('cloud')} className={`rounded-lg px-3 py-2 text-[12px] ${managementTab==='cloud'?'bg-[#C96442] text-white':'border'}`}>DOMINION Cloud</button>
-   <button type="button" role="tab" aria-selected={managementTab==='providers'} onClick={()=>{setManagementTab('providers');if(!catalog.length)void loadCatalog()}} className={`rounded-lg px-3 py-2 text-[12px] ${managementTab==='providers'?'bg-[#C96442] text-white':'border'}`}>업체·모델 연결</button>
+ return <section className="rounded-xl border border-divider bg-surface p-4">
+  {!hideManagementNavigation&&<div className="flex flex-wrap gap-2 border-b border-divider pb-3 mb-3" role="tablist" aria-label="모델 연결 관리">
+   <button type="button" role="tab" aria-selected={managementTab==='cloud'} onClick={()=>setManagementTab('cloud')} className={`rounded-lg px-3 py-2 text-[12px] ${managementTab==='cloud'?'bg-brand text-white':'border'}`}>DOMINION Cloud</button>
+   <button type="button" role="tab" aria-selected={managementTab==='providers'} onClick={()=>{setManagementTab('providers');if(!catalog.length)void loadCatalog()}} className={`rounded-lg px-3 py-2 text-[12px] ${managementTab==='providers'?'bg-brand text-white':'border'}`}>업체·모델 연결</button>
   </div>}
   {managementTab==='cloud'&&<><strong className="text-[13px]">{token?'DOMINION Cloud · 내 계정':'DOMINION Cloud · 간편 로그인'}</strong>
-  <p className="mt-1 text-[12px] text-[#7C7469]">{token?'로그인 상태입니다. Cloud 모델과 내 이용권을 관리할 수 있습니다.':'로그인 없이도 로컬 모델과 직접 등록한 API를 사용할 수 있습니다. Cloud 모델을 사용하려면 로그인하세요.'}</p>
+  <p className="mt-1 text-[12px] text-muted">{token?'로그인 상태입니다. Cloud 모델과 내 이용권을 관리할 수 있습니다.':'로그인 없이도 로컬 모델과 직접 등록한 API를 사용할 수 있습니다. Cloud 모델을 사용하려면 로그인하세요.'}</p>
   {!token&&cloudUrl&&<div className="mt-3">
-   <button type="button" onClick={()=>setShowLoginOptions(true)} className="rounded-lg bg-[#C96442] px-4 py-2 text-[12px] font-semibold text-white">가입 · 로그인</button>
+   <button type="button" onClick={()=>setShowLoginOptions(true)} className="rounded-lg bg-brand px-4 py-2 text-[12px] font-semibold text-white">가입 · 로그인</button>
    {showLoginOptions&&<div role="dialog" aria-modal="true" aria-label="DOMINION 가입 및 로그인" className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={()=>setShowLoginOptions(false)}>
     <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl" onClick={event=>event.stopPropagation()}>
      <div className="flex items-center justify-between gap-3"><strong className="text-base">DOMINION 가입 · 로그인</strong><button type="button" onClick={()=>setShowLoginOptions(false)} aria-label="닫기" className="rounded-lg border px-3 py-1">닫기</button></div>
-     <p className="my-3 text-[12px] text-[#7C7469]">처음 인증하면 자동 가입됩니다. 로그인 없이도 로컬 모델과 개인 API를 사용할 수 있습니다.</p>
+     <p className="my-3 text-[12px] text-muted">처음 인증하면 자동 가입됩니다. 로그인 없이도 로컬 모델과 개인 API를 사용할 수 있습니다.</p>
      <div className="flex flex-col items-start gap-3">
-      {clientId&&<div ref={button}/>}
-      <button type="button" onClick={()=>void openSocialLogin('kakao')} className="w-full rounded-lg bg-[#FEE500] px-4 py-2 text-[12px] font-semibold text-[#191919]">카카오로 계속하기</button>
-      <button type="button" onClick={()=>void openSocialLogin('naver')} className="w-full rounded-lg bg-[#03C75A] px-4 py-2 text-[12px] font-semibold text-white">네이버로 계속하기</button>
+      {desktopGoogleReady?
+       <button type="button" onClick={()=>void startNativeGoogle()} disabled={busy||Boolean(nativeFlow)} className="w-full rounded-lg border border-[#DADCE0] bg-white px-4 py-3 text-[13px] font-semibold text-[#1F1F1F] disabled:opacity-60">
+        {nativeFlow?'Google 인증 완료를 기다리는 중…':'Google로 계속하기'}
+       </button>
+       :googleClientId?<div ref={button} aria-label="Google 계정으로 계속하기"/>:<button type="button" disabled className="w-full rounded-lg border px-4 py-2 text-[12px] opacity-60">Google로 계속하기 · 설정 확인 중</button>}
+      <p className="text-[11px] text-muted">Google 계정으로 가입하고 로그인합니다. 비밀번호는 DOMINION에 입력하지 않습니다.</p>
+      {emailReady&&<CloudEmailLogin cloudUrl={cloudUrl} onSuccess={emailLoginComplete}/>}
+      {message&&<p role="status" className="text-[12px] text-[#9A3C29]">{message}</p>}
      </div>
     </div>
    </div>}
   </div>}
-  {!cloudUrl&&<p className="mt-2 text-[12px] text-[#7C7469]">DOMINION Cloud 서버 주소가 설정되지 않았습니다.</p>}
+  {!cloudUrl&&<p className="mt-2 text-[12px] text-muted">DOMINION Cloud 서버 주소가 설정되지 않았습니다.</p>}
   {token&&<div className="mt-3 flex flex-wrap items-center gap-2">
    <input aria-label="모델 검색" value={modelSearch} onChange={e=>setModelSearch(e.target.value)} placeholder="모델 이름 또는 업체 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
    <select aria-label="모델 요금 필터" value={modelFilter} onChange={e=>setModelFilter(e.target.value as 'all'|'free'|'paid')} className="rounded-lg border px-3 py-2 text-[12px]">
@@ -423,37 +428,35 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
     <option value="" disabled>모델을 선택하세요</option>
     {models.filter(model=>(modelFilter==='all'||(modelFilter==='free'?model.free:!model.free))&&(model.id+' '+(model.name||'')+' '+(model.provider||'')).toLowerCase().includes(modelSearch.toLowerCase())).map(model=><option key={model.id} value={model.id}>{model.name||model.id} · {model.free?'무료':'유료'}{model.provider?' · '+model.provider:''}</option>)}
    </select>
-   <button type="button" disabled={busy||!selected||!models.some(model=>model.id===selected&&(modelFilter==='all'||(modelFilter==='free'?model.free:!model.free))&&(model.id+' '+(model.name||'')+' '+(model.provider||'')).toLowerCase().includes(modelSearch.toLowerCase()))} onClick={()=>void register()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">모델 등록</button>
+   <button type="button" disabled={busy||!selected||!models.some(model=>model.id===selected&&(modelFilter==='all'||(modelFilter==='free'?model.free:!model.free))&&(model.id+' '+(model.name||'')+' '+(model.provider||'')).toLowerCase().includes(modelSearch.toLowerCase()))} onClick={()=>void register()} className="rounded-lg bg-brand px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">모델 등록</button>
   </div>}
-  {token&&<div className="mt-3 rounded-xl border border-[#E7E0D5] bg-white p-3 text-[12px]">
-   <div className="flex flex-wrap items-center justify-between gap-2"><span>내 구독: <strong>{billingLoading?'확인 중…':billingKnown?(billing?.plan==='pro'?'Pro':'무료'):'확인할 수 없음'}</strong>{billingKnown&&billing?.valid_until&&billing.plan==='pro'?' · 만료 '+new Date(billing.valid_until*1000).toLocaleDateString('ko-KR'):''}</span>
-    <div className="flex gap-2"><button type="button" disabled={billingLoading} className="rounded-lg border px-3 py-2 disabled:opacity-50" onClick={()=>void loadBilling(token)}>상태 새로고침</button><button type="button" disabled={!billingKnown} className="rounded-lg border px-3 py-2 disabled:opacity-50" onClick={()=>setShowCheckout(true)}>요금제 · 결제</button></div></div>
-   {billingError&&<p role="alert" className="mt-2 text-[12px] text-rose-700">{billingError}</p>}
-   <div className="mt-2 flex flex-wrap items-center gap-2"><span className="text-[#7C7469]">유료 API 본인확인: {billingLoading?'확인 중…':identityKnown?(identity?.verified?'완료':'미완료'):'확인할 수 없음'}</span>{identityError&&<span role="alert" className="text-[11px] text-rose-700">{identityError}</span>}{identityKnown&&!identity?.verified&&<button type="button" disabled={identityBusy} onClick={()=>void verifyIdentity()} className="rounded-lg border px-3 py-2">{identityBusy?'인증 진행 중…':'PASS · 간편 본인확인'}</button>}</div>
+  {token&&<div className="mt-3 rounded-xl border border-divider bg-white p-3 text-[12px]">
+   <div className="flex flex-wrap items-center justify-between gap-2"><span>내 구독: <strong>{billing?.plan==='pro'?'Pro':'무료'}</strong>{billing?.valid_until&&billing.plan==='pro'?' · 만료 '+new Date(billing.valid_until*1000).toLocaleDateString('ko-KR'):''}</span>
+    <button type="button" className="rounded-lg border px-3 py-2" onClick={()=>setShowCheckout(true)}>요금제 · 결제</button></div>
+   <div className="mt-2 flex flex-wrap items-center gap-2"><span className="text-muted">유료 API 본인확인: {identity?.verified?'완료':'미완료'}</span>{!identity?.verified&&<button type="button" disabled={identityBusy} onClick={()=>void verifyIdentity()} className="rounded-lg border px-3 py-2">{identityBusy?'인증 진행 중…':'PASS · 간편 본인확인'}</button>}</div>
    {billingMessage&&<p role="status" className="mt-2">{billingMessage}</p>}
   </div>}
-  {token&&billingKnown&&billing&&<p className="mt-2 text-[12px] text-[#7C7469]" role="status">DOMINION 무료 AI: 오늘 {billing.free_daily_used ?? 0} / {billing.free_daily_limit ?? 20}회 사용 · 남은 {billing.free_daily_remaining ?? 0}회 (매일 오전 9시 KST 초기화)</p>}
-  {token&&showCheckout&&<div role="dialog" aria-modal="true" aria-label="DOMINION 구독 결제" className="mt-3 rounded-xl border border-[#E7E0D5] bg-white p-4">
+  {token&&billing&&<p className="mt-2 text-[12px] text-muted" role="status">DOMINION 무료 AI: 오늘 {billing.free_daily_used ?? 0} / {billing.free_daily_limit ?? 20}회 사용 · 남은 {billing.free_daily_remaining ?? 0}회 (매일 오전 9시 KST 초기화)</p>}
+  {token&&showCheckout&&<div role="dialog" aria-modal="true" aria-label="DOMINION 구독 결제" className="mt-3 rounded-xl border border-divider bg-white p-4">
    <div className="flex items-center justify-between"><strong>DOMINION Pro · 구독 결제</strong><button type="button" onClick={()=>setShowCheckout(false)}>닫기</button></div>
    <p className="mt-2 text-[12px]">무료 플랜은 계속 이용할 수 있습니다. Pro는 결제일부터 30일 이용권이며 자동 갱신되지 않습니다.</p>
-   <p className="mt-2 text-[14px] font-semibold">{billingKnown?billing?.pro_price_krw?.toLocaleString('ko-KR')||'가격 미설정':'가격 조회 불가'}원 / 30일</p>
-   <button type="button" disabled={billingLoading||!billingKnown||!billing?.checkout_enabled||!identityKnown||!identity?.verified||billingBusy} onClick={()=>void startCheckout()} className="mt-3 rounded-lg bg-[#C96442] px-4 py-2 text-white disabled:opacity-50">{billingBusy?'결제창 여는 중…':billingLoading?'상태 확인 중…':!billingKnown?'구독 상태 확인 필요':!billing?.checkout_enabled?'결제 준비 중':!identityKnown?'본인확인 상태 확인 필요':!identity?.verified?'본인확인 후 결제':'토스페이먼츠 결제하기'}</button>
-   {billingKnown&&!billing?.checkout_enabled&&<p className="mt-2 text-[12px]">운영자 결제 키와 요금 설정 후 테스트 결제를 시작할 수 있습니다.</p>}
-   {!billingKnown&&<p role="status" className="mt-2 text-[12px] text-rose-700">구독 정보를 확인한 뒤 결제를 시작할 수 있습니다. 위에서 상태를 새로고침하세요.</p>}
+   <p className="mt-2 text-[14px] font-semibold">{billing?.pro_price_krw?.toLocaleString('ko-KR')||'가격 미설정'}원 / 30일</p>
+   <button type="button" disabled={!billing?.checkout_enabled||billingBusy} onClick={()=>void startCheckout()} className="mt-3 rounded-lg bg-brand px-4 py-2 text-white disabled:opacity-50">{billingBusy?'결제창 여는 중…':billing?.checkout_enabled?'토스페이먼츠 결제하기':'결제 준비 중'}</button>
+   {!billing?.checkout_enabled&&<p className="mt-2 text-[12px]">운영자 결제 키와 요금 설정 후 테스트 결제를 시작할 수 있습니다.</p>}
   </div>}
-  {registered?.source==='cloud'&&<button type="button" onClick={goToRegisteredChat} className="mt-2 rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white">등록한 모델로 채팅하기</button>}
+  {registered?.source==='cloud'&&<button type="button" onClick={goToRegisteredChat} className="mt-2 rounded-lg bg-brand px-3 py-2 text-[12px] font-semibold text-white">등록한 모델로 채팅하기</button>}
   {token&&<button type="button" className="mt-3 rounded-lg border px-3 py-2 text-[12px]" onClick={logout}>로그아웃</button>}
   </>}
-  {managementTab==='providers'&&<div className="mt-4 border-t border-[#E7E0D5] pt-4">
+  {managementTab==='providers'&&<div className="mt-4 border-t border-divider pt-4">
 
    <div className="mt-3"><strong className="text-[13px]">AI 업체 통합 연결 · models.dev</strong>
-   <p className="mt-1 text-[12px] text-[#7C7469]">업체 선택 → 공개 모델 조회·검색 (API 키 불필요) → 채팅 등록 시 인증 연결 · 공개 모델 목록과 실제 사용 권한은 다를 수 있습니다.</p>
+   <p className="mt-1 text-[12px] text-muted">업체 선택 → 공개 모델 조회·검색 (API 키 불필요) → 채팅 등록 시 인증 연결 · 공개 모델 목록과 실제 사용 권한은 다를 수 있습니다.</p>
    <div className="mt-2 flex flex-wrap gap-2">
     <button type="button" disabled={catalogBusy} onClick={()=>void loadCatalog()} className="rounded-lg border px-3 py-2 text-[12px]">업체 목록 불러오기</button>
     <input aria-label="AI 업체 검색" value={catalogSearch} onChange={e=>{setCatalogSearch(e.target.value);setProviderPage(0)}} placeholder="업체 이름 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
    </div>
    {catalog.length>0&&<div className="mt-2 flex flex-wrap items-center gap-2 text-[12px]">
-    <span className="text-[#7C7469]">{filteredCatalog.length} / {catalog.length}개 업체</span>
+    <span className="text-muted">{filteredCatalog.length} / {catalog.length}개 업체</span>
     <label className="flex items-center gap-1"><input type="checkbox" checked={providerMinModels} onChange={e=>{setProviderMinModels(e.target.checked);setProviderPage(0)}}/>모델 있는 업체만</label>
    </div>}
    {catalog.length>0&&<div className="mt-2 flex flex-wrap gap-2"><select aria-label="업체 정렬" value={providerSort} onChange={e=>{setProviderSort(e.target.value as 'name'|'models');setProviderPage(0)}} className="rounded-lg border px-3 py-2 text-[12px]"><option value="name">이름순</option><option value="models">모델 많은 순</option></select>
@@ -462,33 +465,33 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
      {visibleCatalog.map(p=><option key={p.id} value={p.id}>{p.name} ({p.models})</option>)}
     </select>
     <div className="flex items-center gap-2 text-[12px]"><button type="button" className="rounded border px-2 py-1" disabled={providerPage===0} onClick={()=>{catalogBrowseSeq.current++;setCatalogBusy(false);setProviderPage(p=>Math.max(0,p-1));setCatalogId('');setCatalogModels([]);setCatalogKey('');setCatalogModel('');setCatalogProviderId('')}}>이전</button><span>{providerPage+1} / {providerPageCount}</span><button type="button" className="rounded border px-2 py-1" disabled={providerPage+1>=providerPageCount} onClick={()=>{catalogBrowseSeq.current++;setCatalogBusy(false);setProviderPage(p=>p+1);setCatalogId('');setCatalogModels([]);setCatalogKey('');setCatalogModel('');setCatalogProviderId('')}}>다음</button></div>
-    <button type="button" disabled={catalogBusy||!catalogId} onClick={()=>void loadCatalogModels()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">{catalogBusy?'조회 중…':'모델 조회 (키 불필요)'}</button>
+    <button type="button" disabled={catalogBusy||!catalogId} onClick={()=>void loadCatalogModels()} className="rounded-lg bg-brand px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">{catalogBusy?'조회 중…':'모델 조회 (키 불필요)'}</button>
    </div>}
-   {catalogModels.length>0&&<div className="mt-3 rounded-xl border border-[#E7E0D5] bg-white p-3">
-    <div className="flex flex-wrap items-center justify-between gap-2 text-[12px]"><strong>공개 모델 목록 · {filteredModels.length} / {catalogModels.length}개</strong><span className="text-[#7C7469]">API 키 없이 검색 가능</span></div>
+   {catalogModels.length>0&&<div className="mt-3 rounded-xl border border-divider bg-white p-3">
+    <div className="flex flex-wrap items-center justify-between gap-2 text-[12px]"><strong>공개 모델 목록 · {filteredModels.length} / {catalogModels.length}개</strong><span className="text-muted">API 키 없이 검색 가능</span></div>
     <input aria-label="업체 모델 검색" value={catalogModelSearch} onChange={e=>setCatalogModelSearch(e.target.value)} placeholder="모델 이름 또는 ID 검색" className="mt-2 w-full rounded-lg border px-3 py-2 text-[12px]"/>
     {visibleModels.length>0?<select aria-label="공개 업체 모델 선택" value={visibleModels.some(m=>m.id===catalogModel)?catalogModel:''} onChange={e=>setCatalogModel(e.target.value)} className="mt-2 w-full rounded-lg border px-3 py-2 text-[12px]">
      <option value="">모델을 선택하세요</option>
      {visibleModels.map(m=><option key={m.id} value={m.id}>{m.name||m.id} · {m.id}</option>)}
-    </select>:<p className="mt-2 text-[11px] text-[#7C7469]">검색된 모델이 없습니다.</p>}
-    {filteredModels.length>100&&<p className="mt-1 text-[11px] text-[#7C7469]">처음 100개만 표시합니다. 검색어로 모델을 좁혀 주세요.</p>}
+    </select>:<p className="mt-2 text-[11px] text-muted">검색된 모델이 없습니다.</p>}
+    {filteredModels.length>100&&<p className="mt-1 text-[11px] text-muted">처음 100개만 표시합니다. 검색어로 모델을 좁혀 주세요.</p>}
     {catalogModels.find(m=>m.id===catalogModel)&&<p className="mt-2 break-all text-[11px] leading-5 text-[#5C544A]">모델 ID: {catalogModel}{catalogModels.find(m=>m.id===catalogModel)?.context?' · 컨텍스트 '+catalogModels.find(m=>m.id===catalogModel)?.context?.toLocaleString()+' 토큰':''}{catalogModels.find(m=>m.id===catalogModel)?.reasoning===true?' · 추론 지원':''}{catalogModels.find(m=>m.id===catalogModel)?.toolCall===true?' · 도구 호출 지원':''}</p>}
     <div className="mt-3 flex flex-wrap gap-2 border-t border-[#EFE9DF] pt-3">
      <input type="password" autoComplete="off" aria-label="업체 API 키 (등록 시에만 필요)" value={catalogKey} onChange={e=>setCatalogKey(e.target.value)} placeholder="채팅 등록용 API 키 (조회에는 불필요)" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
-     <button type="button" disabled={catalogBusy||!visibleModels.some(m=>m.id===catalogModel)} onClick={()=>void saveCatalogModel()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">선택 모델 채팅 등록</button>
+     <button type="button" disabled={catalogBusy||!visibleModels.some(m=>m.id===catalogModel)} onClick={()=>void saveCatalogModel()} className="rounded-lg bg-brand px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">선택 모델 채팅 등록</button>
      <button type="button" disabled={catalogBusy} onClick={()=>void importCatalogModels()} className="rounded-lg border px-3 py-2 text-[12px] disabled:opacity-50">전체 등록</button>
     </div>
-    <p className="mt-2 text-[11px] text-[#7C7469]">조회는 무료 공개 메타데이터입니다. 실제 모델 호출에는 해당 업체의 인증 및 사용 권한이 필요할 수 있습니다.</p>
+    <p className="mt-2 text-[11px] text-muted">조회는 무료 공개 메타데이터입니다. 실제 모델 호출에는 해당 업체의 인증 및 사용 권한이 필요할 수 있습니다.</p>
    </div>}
-   {catalog.length>0&&<p className="mt-2 text-[12px] text-[#7C7469]">검색 결과 {filteredCatalog.length}개 / 전체 {catalog.length}개 업체 · 중복 ID 제외</p>}
-   <p className="mt-2 text-[12px] text-[#7C7469]">공개 모델 목록은 API 키 없이 조회할 수 있습니다. 채팅 등록·호출에는 API 키 또는 기존 인증이 필요할 수 있습니다.</p>
-   {catalogMessage&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{catalogMessage}</p>}
-   {registered?.source==='catalog'&&<button type="button" onClick={goToRegisteredChat} className="mt-2 rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white">등록한 모델로 채팅하기</button>}
+   {catalog.length>0&&<p className="mt-2 text-[12px] text-muted">검색 결과 {filteredCatalog.length}개 / 전체 {catalog.length}개 업체 · 중복 ID 제외</p>}
+   <p className="mt-2 text-[12px] text-muted">공개 모델 목록은 API 키 없이 조회할 수 있습니다. 채팅 등록·호출에는 API 키 또는 기존 인증이 필요할 수 있습니다.</p>
+   {catalogMessage&&<p role="status" className="mt-2 text-[12px] text-muted">{catalogMessage}</p>}
+   {registered?.source==='catalog'&&<button type="button" onClick={goToRegisteredChat} className="mt-2 rounded-lg bg-brand px-3 py-2 text-[12px] font-semibold text-white">등록한 모델로 채팅하기</button>}
    </div>
   </div>}
-  {managementTab==='providers'&&<div className="mt-4 border-t border-[#E7E0D5] pt-4">
+  {managementTab==='providers'&&<div className="mt-4 border-t border-divider pt-4">
    <strong className="text-[13px]">OpenRouter 무료 모델 일괄 등록</strong>
-   <p className="mt-1 text-[12px] text-[#7C7469]">공개 무료 모델 이름·ID 검색은 API 키가 필요하지 않습니다. 실제 채팅 등록 시에만 키를 입력하세요.</p>
+   <p className="mt-1 text-[12px] text-muted">공개 무료 모델 이름·ID 검색은 API 키가 필요하지 않습니다. 실제 채팅 등록 시에만 키를 입력하세요.</p>
    <div className="mt-2 flex flex-wrap gap-2">
     <button type="button" disabled={routerBusy} onClick={()=>void browseOpenRouterFree()} className="rounded-lg border px-3 py-2 text-[12px] disabled:opacity-50">{routerBusy?'조회 중…':'무료 모델 조회 (키 불필요)'}</button>
     <input aria-label="OpenRouter 무료 모델 검색" value={routerSearch} onChange={e=>setRouterSearch(e.target.value)} placeholder="무료 모델 이름 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
@@ -500,11 +503,11 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
    </div>}
    <div className="mt-2 flex flex-wrap gap-2">
     <input type="password" autoComplete="off" aria-label="OpenRouter API 키 (등록 시에만 필요)" value={routerKey} onChange={e=>setRouterKey(e.target.value)} placeholder="채팅 등록용 API 키" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
-    <button type="button" disabled={routerBusy||!routerSelected} onClick={()=>void saveOpenRouterModel()} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">{routerBusy?'등록 중…':'선택 모델 등록'}</button>
+    <button type="button" disabled={routerBusy||!routerSelected} onClick={()=>void saveOpenRouterModel()} className="rounded-lg bg-brand px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">{routerBusy?'등록 중…':'선택 모델 등록'}</button>
     <button type="button" disabled={routerBusy||!routerModels.length} onClick={()=>void importOpenRouterFree()} className="rounded-lg border px-3 py-2 text-[12px] disabled:opacity-50">전체 등록</button>
    </div>
-   {routerMessage&&<p role="status" className="mt-2 text-[12px] text-[#7C7469]">{routerMessage}</p>}
-   {registered?.source==='openrouter'&&<button type="button" onClick={goToRegisteredChat} className="mt-2 rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white">등록한 모델로 채팅하기</button>}
+   {routerMessage&&<p role="status" className="mt-2 text-[12px] text-muted">{routerMessage}</p>}
+   {registered?.source==='openrouter'&&<button type="button" onClick={goToRegisteredChat} className="mt-2 rounded-lg bg-brand px-3 py-2 text-[12px] font-semibold text-white">등록한 모델로 채팅하기</button>}
   </div>}
  </section>
 }

@@ -1,7 +1,7 @@
 /** Pure SSE invalidation map. Unknown events do not invalidate the whole UI. */
-export type RefreshScope = {targets:string[];sessions:string[];rooms:string[];resync?:boolean}
+export type RefreshScope = {targets:string[];sessions:string[];rooms:string[]}
 type BusRow = Record<string,unknown>
-export type BusChange = {type?:string;kind?:string;record?:BusRow;message?:BusRow;approval?:BusRow;sessionId?:string;roomId?:string;jobId?:string;runKind?:string;runId?:string;sourceMessageId?:string;agentId?:string;eventSeq?:number;schemaVersion?:number;resyncRequired?:boolean}
+export type BusChange = {type?:string;kind?:string;record?:BusRow;message?:BusRow;approval?:BusRow;sessionId?:string;roomId?:string;jobId?:string}
 const field=(row:BusRow|undefined,name:string):string|undefined=>{
  const value=row?.[name]
  return typeof value==='string'&&value.length>0?value:undefined
@@ -13,11 +13,6 @@ const child=(row:BusRow|undefined,name:string):BusRow|undefined=>{
 const encoded=(value:string)=>encodeURIComponent(value)
 
 export function classifyRefreshEvent(event:BusChange):RefreshScope {
- // A bounded journal can expire while the tab is disconnected. Its gap
- // receipt must resynchronize all mounted data consumers, including the
- // selected Room transcript, rather than silently leaving stale results.
- if(event.type==='event_gap' && event.resyncRequired===true)
-  return {targets:['*'],sessions:[],rooms:[],resync:true}
  const targets=new Set<string>(), sessions=new Set<string>(), rooms=new Set<string>()
  const add=(...routes:string[])=>routes.forEach(route=>targets.add(route))
  const row=event.record
@@ -33,12 +28,24 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
    case 'message':add('/api/sessions');if(session)add('/api/sessions/'+encoded(session)+'/messages');break
    case 'room':add('/api/rooms');if(id){rooms.add(id);add('/api/rooms/'+encoded(id)+'/state')}break
    case 'agent':add('/api/agents');break
-   case 'provider':add('/api/providers');break
-   case 'job':add('/api/jobs');if(id)add('/api/jobs/'+encoded(id));break
+   case 'provider':add('/api/providers');if(id)add('/api/providers/'+encoded(id)+'/models');break
+   case 'policy':add('/api/policy');break
+   case 'extension_policy':add('/api/extensions/runtime','/api/tools');break
+   case 'job':
+    add('/api/jobs')
+    if(id)add('/api/jobs/'+encoded(id))
+    // Native Team views subscribe to their frozen DAG rather than the
+    // bounded session overview. Only the affected Team is invalidated.
+    const teamId=field(input,'teamJobId')||
+     (field(row,'kind')==='team'?id:undefined)
+    if(teamId)add('/api/jobs/'+encoded(teamId)+'/team-steps')
+    break
    case 'execution':add('/api/executions');break
-   case 'execution_operation':case 'task_team_work':add('/api/executions');break
-   case 'managed_team':case 'managed_team_task':case 'remote_task':case 'remote_worker':
-    add('/api/activity/teams');break
+   case 'execution_operation':
+    add('/api/executions')
+    const executionId=field(row,'executionId')
+    if(executionId)add('/api/executions/'+encoded(executionId)+'/operations')
+    break
    case 'approval':add('/api/approvals');break
    case 'mcp':add('/api/mcp','/api/mcp/discover');break
    case 'skill':add('/api/skills');break
@@ -51,19 +58,6 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
     break
   }
   if(event.kind==='job'&&field(row,'kind')?.startsWith('model_'))add('/api/model-library/*')
- }else if(event.type==='run_state' && event.schemaVersion===1 && typeof event.eventSeq==='number'){
-  // The same durable state stream is used by Rust and TypeScript SDKs.
-  // Update only the corresponding product surface; never reload menus.
-  if(event.runKind==='job'){
-   add('/api/jobs')
-   if(event.runId)add('/api/jobs/'+encoded(event.runId))
-  }else if(event.runKind==='execution'||event.runKind==='task_team_work'){
-   add('/api/executions')
-  }else if(['managed_team','managed_team_task','remote_task'].includes(event.runKind||'')){
-   add('/api/activity/teams')
-  }else if(event.runKind==='room_work_assignment'){
-   add('/api/rooms')
-  }
  }else if(event.type==='message'){
   add('/api/sessions')
   if(session)add('/api/sessions/'+encoded(session)+'/messages')
@@ -93,17 +87,16 @@ export function matchesRefreshTarget(endpoint:string|undefined,targets:readonly 
 }
 
 export function matchesRoomRefresh(scope:RefreshScope,roomId:string,sessionId?:string):boolean {
- return scope.resync===true||scope.rooms.includes(roomId)||
+ return scope.rooms.includes(roomId)||
   (Boolean(sessionId)&&scope.sessions.includes(sessionId!))
 }
 
 /** Combine bursts into one deterministic scope; no per-event network fetch. */
 export function mergeRefreshScopes(base:RefreshScope,next:RefreshScope):RefreshScope {
  return {
-  targets:base.targets.includes('*')||next.targets.includes('*')?['*']:[...new Set([...base.targets,...next.targets])],
+  targets:[...new Set([...base.targets,...next.targets])],
   sessions:[...new Set([...base.sessions,...next.sessions])],
-  rooms:[...new Set([...base.rooms,...next.rooms])],
-  ...(base.resync||next.resync?{resync:true}:{})
+  rooms:[...new Set([...base.rooms,...next.rooms])]
  }
 }
 export const emptyRefreshScope=():RefreshScope=>({targets:[],sessions:[],rooms:[]})

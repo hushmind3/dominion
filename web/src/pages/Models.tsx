@@ -1,5 +1,6 @@
+import {QuickConnect} from '../components/QuickConnect'
 import {useEffect,useMemo,useRef,useState} from 'react'
-import {ArrowRight,Check,Cloud,HardDrive,KeyRound,LogIn,Plus,RefreshCw,Search,Settings2,ShieldCheck,Sparkles,UserRound,X} from 'lucide-react'
+import {ArrowRight,Check,Cloud,HardDrive,KeyRound,LogIn,MessageSquare,Plus,RefreshCw,Search,Settings2,ShieldCheck,Sparkles,UserRound,X} from 'lucide-react'
 import {Provider,del,get,post} from '../api'
 import {Button,TextInput,SelectInput} from '../components/Primitives'
 import {FormField,Notice,refresh,useRemote} from '../components/UI'
@@ -34,12 +35,16 @@ const providerPresets:ProviderPreset[]=[
  {name:'Cloudflare Workers AI',baseUrl:'https://api.cloudflare.com/client/v4/accounts/ACCOUNT_ID/ai/v1',kind:'openai',local:false,free:true,category:'free'},
  {name:'OpenRouter',baseUrl:'https://openrouter.ai/api/v1',kind:'openai',local:false,free:true,category:'free'},
  {name:'Vercel AI Gateway',baseUrl:'https://ai-gateway.vercel.sh/v1',kind:'openai',local:false,free:true,category:'free'},
- {name:'Chutes',baseUrl:'https://llm.chutes.ai/v1',kind:'openai',local:false,free:true,category:'free'},
- {name:'Cerebras',baseUrl:'https://api.cerebras.ai/v1',kind:'openai',local:false,free:true,category:'free'},
+ {name:'Chutes',baseUrl:'https://llm.chutes.ai/v1',kind:'openai',local:false,category:'cloud'},
+ {name:'Cerebras',baseUrl:'https://api.cerebras.ai/v1',kind:'openai',local:false,category:'cloud'},
  {name:'SambaNova',baseUrl:'https://api.sambanova.ai/v1',kind:'openai',local:false,free:true,category:'free'},
- {name:'Hyperbolic',baseUrl:'https://api.hyperbolic.xyz/v1',kind:'openai',local:false,free:true,category:'free'},
- {name:'Nebius',baseUrl:'https://api.studio.nebius.ai/v1',kind:'openai',local:false,free:true,category:'free'},
- {name:'Novita',baseUrl:'https://api.novita.ai/v3/openai',kind:'openai',local:false,free:true,category:'free'},
+ {name:'Hyperbolic',baseUrl:'https://api.hyperbolic.ai/inference/v1',kind:'openai',local:false,category:'cloud'},
+ {name:'Nebius',baseUrl:'https://api.tokenfactory.nebius.com/v1',kind:'openai',local:false,category:'cloud'},
+ {name:'Novita',baseUrl:'https://api.novita.ai/v3/openai',kind:'openai',local:false,category:'cloud'},
+ // Updated against official provider billing/API docs in November 2026.
+ // Chutes ended its free plan; Cerebras/Nebius have limited trial credits;
+ // Hyperbolic Flux uses a new paid endpoint and requires new sk_live_ keys;
+ // Novita's credits are conditional, not a recurring no-cost quota.
  // Metered cloud APIs.
  {name:'Google Gemini',baseUrl:'https://generativelanguage.googleapis.com/v1beta/openai',kind:'openai',local:false,category:'cloud'},
  {name:'Anthropic',baseUrl:'https://api.anthropic.com/v1',kind:'anthropic',local:false,category:'cloud'},
@@ -64,6 +69,14 @@ const providerPresets:ProviderPreset[]=[
 ]
 
 const sameProvider=(p:Provider,preset:ProviderPreset)=>p.name===preset.name||p.baseUrl.replace(/\/$/,'')===preset.baseUrl.replace(/\/$/,'')
+const updatedProviderEndpoint=(p:Provider):string|undefined=>{
+ const url=p.baseUrl.replace(/\/+$/,'')
+ if(p.name==='Hyperbolic'&&url==='https://api.hyperbolic.xyz/v1')
+  return 'https://api.hyperbolic.ai/inference/v1'
+ if(p.name==='Nebius'&&url==='https://api.studio.nebius.ai/v1')
+  return 'https://api.tokenfactory.nebius.com/v1'
+ return undefined
+}
 
 export function ModelHub(){
  useLocale()
@@ -85,6 +98,12 @@ export function ModelHub(){
  const freeCatalog=useRemote<FreeCatalog>('/api/providers/free-catalog',{providers:[]})
  const [freeBusy,setFreeBusy]=useState(false)
  const [oauthBusy,setOauthBusy]=useState('')
+ const initialConnectionView=useRef(false)
+ useEffect(()=>{
+  if(providers.loading||providers.error||initialConnectionView.current)return;
+  initialConnectionView.current=true;
+  if(!providers.value.length)setTab('connect');
+ },[providers.loading,providers.error,providers.value]);
  const [cliAuth,setCliAuth]=useState<CliAuthStatus|null>(null)
  const cliLoginPopup=useRef<Window|null>(null)
  const cliLoginPopupUrl=useRef('')
@@ -107,7 +126,7 @@ export function ModelHub(){
   finally{setCliModelBusy('')}
  }
  useEffect(()=>{
-  if(tab!=='oauth')return
+  if(tab!=='oauth'&&tab!=='connect')return
   for(const item of cli.value){
    if(!item.connected||!['claude','gemini','opencode'].includes(item.id)||cliModelRequested.current.has(item.id))continue
    cliModelRequested.current.add(item.id)
@@ -127,17 +146,19 @@ export function ModelHub(){
  }
  const [name,setName]=useState(''),[baseUrl,setBaseUrl]=useState(''),[kind,setKind]=useState('openai'),[apiKey,setApiKey]=useState(''),[local,setLocal]=useState(false),[modelId,setModelId]=useState(''),[defaultModel,setDefaultModel]=useState(''),[reflection,setReflection]=useState(false),[rpm,setRpm]=useState(''),[accountId,setAccountId]=useState(''),[testBusy,setTestBusy]=useState(false),[testResult,setTestResult]=useState<{ok:boolean;message:string}|null>(null)
  const [defaultEffort,setDefaultEffort]=useState('')
+ const [vision,setVision]=useState(false)
  const editModels=useProviderModels(modal&&edit?edit.id:'')
  const probe=async(p:Provider)=>{
   setCounts(old=>({...old,[p.id]:{list:[],busy:true}}))
   try{const list=await get<{id:string;catalogStale?:boolean;catalogSource?:string}[]>('/api/providers/'+p.id+'/models');setCounts(old=>({...old,[p.id]:{list:list.map(m=>m.id),error:list.some(m=>m.catalogStale)?'최근 저장된 목록입니다. 실시간 Codex 조회가 실패했습니다.':undefined,info:list.some(m=>m.catalogSource==='models.dev')?'API 키 없이 공개 목록을 조회했습니다. 실제 채팅 사용에는 인증이 필요할 수 있습니다.':undefined}}))}
   catch(e){setCounts(old=>({...old,[p.id]:{list:[],error:(e as Error).message}}))}
  }
- const open=(p?:Provider)=>{setEdit(p||null);setIntegration(p?.integration==='freellmapi'?'freellmapi':p?.integration==='opencode-go'?'opencode-go':undefined);setFreePreset(false);setPresetMode(false);setName(p?.name||'');setBaseUrl(p?.baseUrl||'');setKind(p?.kind||'openai');setApiKey('');setLocal(Boolean(p?.local));setModelId(p?.reflectionModel||(p?.reflection??p?.learning?p?.model:'')||'');setDefaultModel(p?.model||'');setDefaultEffort(String(p?.reasoningEffort||''));setReflection(Boolean(p?.reflection ?? p?.learning));setRpm(p?.requestsPerMinute?String(p.requestsPerMinute):'');setAccountId(p?.accountId||'');setTestResult(null);setError('');setModal(true)}
- const openPreset=(preset:ProviderPreset)=>{setEdit(null);setIntegration(preset.integration);setFreePreset(Boolean(preset.free&&preset.auth==='none'));setPresetMode(true);setName(preset.name);setBaseUrl(preset.baseUrl);setKind(preset.kind);setLocal(preset.local);setApiKey('');setModelId('');setDefaultModel('');setDefaultEffort('');setReflection(false);setRpm(preset.requestsPerMinute?String(preset.requestsPerMinute):'');setAccountId('');setTestResult(null);setError('');setModal(true)}
- const goProvider=providers.value.find(p=>p.integration==='opencode-go'||(p.baseUrl||'').includes('opencode.ai/zen/go')||(p.baseUrl||'').includes('opencode.ai/inference/go'))
+ const open=(p?:Provider)=>{setEdit(p||null);setIntegration(p?.integration==='freellmapi'?'freellmapi':p?.integration==='opencode-go'?'opencode-go':undefined);setFreePreset(false);setPresetMode(false);setName(p?.name||'');setBaseUrl(p?(updatedProviderEndpoint(p)||p.baseUrl):'');setKind(p?.kind||'openai');setApiKey('');setLocal(Boolean(p?.local));setModelId(p?.reflectionModel||(p?.reflection??p?.learning?p?.model:'')||'');setDefaultModel(p?.model||'');setDefaultEffort(String(p?.reasoningEffort||''));setReflection(Boolean(p?.reflection ?? p?.learning));setRpm(p?.requestsPerMinute?String(p.requestsPerMinute):'');setAccountId(p?.accountId||'');setVision(p?.capabilities?.vision===true);setTestResult(null);setError('');setModal(true)}
+ const openPreset=(preset:ProviderPreset)=>{setEdit(null);setIntegration(preset.integration);setFreePreset(Boolean(preset.free&&preset.auth==='none'));setPresetMode(true);setName(preset.name);setBaseUrl(preset.baseUrl);setKind(preset.kind);setLocal(preset.local);setApiKey('');setModelId('');setDefaultModel('');setDefaultEffort('');setReflection(false);setRpm(preset.requestsPerMinute?String(preset.requestsPerMinute):'');setAccountId('');setVision(false);setTestResult(null);setError('');setModal(true)}
+ const goProvider=providers.value.find(p=>p.integration==='opencode-go'||p.baseUrl.includes('opencode.ai/zen/go')||p.baseUrl.includes('opencode.ai/inference/go'))
  const connectOpencodeGo=()=>{if(goProvider)open(goProvider);else openPreset(opencodeGoPreset)}
- const needsNewKey=presetMode&&!freePreset&&(!local||integration==='freellmapi')
+ const migratingHyperbolic=Boolean(edit&&edit.name==='Hyperbolic'&&updatedProviderEndpoint(edit)===baseUrl.trim())
+ const needsNewKey=presetMode&&!freePreset&&(!local||integration==='freellmapi')||migratingHyperbolic
  const testConnection=async()=>{
   if(testBusy||!baseUrl.trim())return
   setTestBusy(true);setTestResult(null)
@@ -158,11 +179,12 @@ export function ModelHub(){
    const saved=await post<Provider>('/api/providers',{
     ...edit,name:name.trim(),baseUrl:baseUrl.trim(),kind,apiKey:apiKey.trim()||undefined,local,integration,accountId:accountId.trim()||undefined,requestsPerMinute:Number(rpm)||0,
     toolMode:edit?.kind===kind?edit.toolMode:undefined,
+    capabilities:{...((edit?.capabilities as Record<string,unknown>|undefined)||{}),vision},
     reasoningEffort:defaultEffort,enabled:edit?.enabled??true,model:defaultModel.trim()||edit?.model,reflection,reflectionModel:reflection?modelId.trim():undefined,
    })
    providers.setValue(rows=>rows.some(p=>p.id===saved.id)?rows.map(p=>p.id===saved.id?saved:p):[...rows,saved])
    setCounts(rows=>{const next={...rows};delete next[saved.id];return next})
-   setSavedId(saved.id);setRemovedName('');setApiKey('');setModal(false);refresh()
+   setSavedId(saved.id);setRemovedName('');setApiKey('');setModal(false);setTab('providers');refresh('/api/providers')
    requestAnimationFrame(()=>{if(providerList.current)providerList.current.open=true})
   }catch(e){setError((e as Error).message)}finally{setSaving(false)}
  }
@@ -202,7 +224,7 @@ export function ModelHub(){
   }catch(e){loginWindow?.close();setOauthBusy('');setError((e as Error).message)}
  }
  useEffect(()=>{
-  if(tab!=='oauth')return
+  if(tab!=='oauth'&&tab!=='connect')return
   let alive=true
   get<{status:string;userCode?:string;verificationUrl?:string}>('/api/providers/codex/login/status').then(status=>{
    if(!alive||status.status!=='device_pending'||!status.userCode||!status.verificationUrl)return
@@ -326,83 +348,60 @@ export function ModelHub(){
  }),[providers.value,query,tab])
  const catalogVisible=useMemo(()=>{const term=query.trim().toLowerCase();const unique=new Map<string,CatalogProvider>();for(const p of catalog.value.providers){const key=p.api.replace(/\/$/,'').toLowerCase();const old=unique.get(key);if(!old||p.models>old.models)unique.set(key,p)}return [...unique.values()].filter(p=>!term||(p.name+' '+p.id+' '+p.api).toLowerCase().includes(term)).sort((a,b)=>catalogSort==='models'?b.models-a.models||a.name.localeCompare(b.name):a.name.localeCompare(b.name))},[catalog.value.providers,query,catalogSort])
  const tabs:Array<{id:Tab;label:string;count?:number}>= [
-  {id:'providers',label:'내 모델',count:providers.value.filter(p=>!p.local).length},
-  {id:'cloud',label:'DOMINION Cloud'},
-  {id:'connect',label:'업체 연결'},
-  {id:'free',label:'무료 모델',count:freeCatalog.value.counts?.free||0},
-  {id:'catalog',label:'업체 탐색'},
-  {id:'huggingface',label:'허깅페이스 모델 탐색'},
-  {id:'local',label:'로컬',count:providers.value.filter(p=>p.local).length},
-  {id:'oauth',label:'계정 인증'},
+  {id:'providers',label:t('models.simple.mine'),count:providers.value.filter(p=>!p.local).length},
+  {id:'connect',label:t('models.simple.connect')},
+  {id:'local',label:t('models.simple.local')},
  ]
- const modelAreas:{id:string;name:string;entry:Tab;pages:Tab[]}[]=[
-  {id:'mine',name:'내 모델·인증',entry:'providers',pages:['providers','local','oauth']},
-  {id:'discover',name:'모델 찾아보기',entry:'free',pages:['free','catalog','huggingface']},
-  {id:'service',name:'Cloud·업체',entry:'cloud',pages:['cloud','connect']}
+ const moreTabs:Array<{id:Tab;label:string}>= [
+  {id:'cloud',label:t('models.simple.cloud')},
+  {id:'free',label:t('models.filter.free')},
+  {id:'catalog',label:t('models.simple.catalog')},
+  {id:'huggingface',label:t('models.simple.files')},
+  {id:'oauth',label:t('models.simple.accounts')},
  ]
- const modelArea=modelAreas.find(area=>area.pages.includes(tab))||modelAreas[0]
- const selectModelTab=(next:Tab)=>{
-  setTab(next);setCategory('all')
-  if(next==='connect')setBrowseProviderId('')
- }
+ const selectTab=(next:Tab)=>{setTab(next);setCategory('all');if(next==='connect')setBrowseProviderId('')}
  return <div className="mx-auto w-full max-w-[1200px] px-4 pt-2 pb-5 sm:px-6 lg:pt-3">
 
+  <header className="model-hub-header"><div><h2>{t('models.simple.title')}</h2><p>{t('models.simple.description')}</p></div><Button variant="primary" disabled={providers.loading||!providers.value.some(provider=>provider.enabled!==false)} onClick={()=>{window.location.hash='#/chat'}}><MessageSquare size={16}/>{t('models.simple.start')}</Button></header>
+  <nav className="model-hub-tabs" aria-label={t('models.simple.title')}>
+    {tabs.map(item=><Button variant="ghost" key={item.id} aria-current={tab===item.id?'page':undefined} onClick={()=>selectTab(item.id)}>{item.label}{item.count? <span className="text-muted">{item.count}</span>:null}</Button>)}
+    <SelectInput aria-label={t('models.simple.more')} value={moreTabs.some(item=>item.id===tab)?tab:''} onChange={event=>{if(event.target.value)selectTab(event.target.value as Tab)}}><option value="" disabled>{t('models.simple.more')}</option>{moreTabs.map(item=><option key={item.id} value={item.id}>{item.label}</option>)}</SelectInput>
+  </nav>
   <div className="mb-3 flex flex-wrap items-center gap-2">
-   <div className="flex w-full min-w-0 flex-col gap-2">
-    <nav aria-label="모델 영역" className="grid grid-cols-3 gap-1 rounded-xl border border-[#E7E0D5] bg-[#F3EEE5] p-1.5">
-     {modelAreas.map(area=><Button key={area.id} type="button" variant="bare"
-      aria-current={modelArea.id===area.id?'page':undefined}
-      onClick={()=>selectModelTab(area.entry)}
-      className={'min-h-10 min-w-0 rounded-lg px-2 py-2 text-[12px] font-semibold transition-colors '+
-       (modelArea.id===area.id?'bg-white text-[#24211D] shadow-sm':'text-[#786F63] hover:bg-white/70')}>
-      {area.name}
-     </Button>)}
-    </nav>
-    <nav aria-label="모델 상세" className="flex min-w-0 flex-wrap gap-1.5 border-b border-[#E7E0D5] pb-2">
-     {tabs.filter(item=>modelArea.pages.includes(item.id)).map(item=><Button variant="bare" key={item.id} type="button"
-      onClick={()=>selectModelTab(item.id)} aria-current={tab===item.id?'page':undefined}
-      className={'inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold '+
-       (tab===item.id?'bg-[#C96442] text-white':'text-[#6F675D] hover:bg-[#F3EEE5]')}>
-      {item.label}
-      {item.count!==undefined&&<span className={'rounded px-1.5 py-0.5 text-[10px] '+
-       (tab===item.id?'bg-white/20':'bg-[#F0EAE0] text-[#8A8176]')}>{item.count}</span>}
-     </Button>)}
-    </nav>
-   </div>
-   <Button type="button" onClick={()=>open()} className="ml-auto inline-flex h-8 items-center gap-2 rounded-lg border border-[#E1D9CC] bg-white px-3 text-[11px] font-semibold text-[#3A342D] hover:bg-[#FAF7F1]"><Plus size={14}/> {t('models.apiAdd')}</Button>
+   {(tab==='providers'||tab==='local')&&<Button type="button" onClick={()=>open()} className="ml-auto inline-flex h-8 items-center gap-2 rounded-lg border border-[#E1D9CC] bg-white px-3 text-[11px] font-semibold text-[#3A342D] hover:bg-[#FAF7F1]"><Plus size={14}/> {t('models.apiAdd')}</Button>}
    {(tab==='providers'||tab==='local')&&<><div className="relative min-w-[180px] flex-1 sm:max-w-[280px]"><Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#A79C8E]"/><TextInput value={query} onChange={e=>setQuery(e.target.value)} placeholder={t('models.providerSearch')} className="!pl-8 !text-[12px]"/></div>
-    {tab==='providers'&&<div className="flex flex-wrap gap-1">{(['all','free','cloud'] as const).map(value=><Button variant="bare" key={value} type="button" onClick={()=>setCategory(value)} className={'rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold '+(category===value?'border-[#C96442] bg-[#FBF1EC] text-[#A94E30]':'border-[#E7E0D5] bg-white text-[#7C7469]')}>{t(value==='all'?'models.filter.all':value==='free'?'models.filter.free':'models.filter.cloud')}</Button>)}</div>}</>}
+    {tab==='providers'&&<div className="flex flex-wrap gap-1">{(['all','free','cloud'] as const).map(value=><Button variant="bare" key={value} type="button" onClick={()=>setCategory(value)} className={'rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold '+(category===value?'border-brand bg-[#FBF1EC] text-brand-hover':'border-divider bg-white text-muted')}>{t(value==='all'?'models.filter.all':value==='free'?'models.filter.free':'models.filter.cloud')}</Button>)}</div>}</>}
   </div>
 
-  {tab==='free'&&<section className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] px-3 py-2 text-[11px] text-[#7C7469]" title={t('models.freeCheck.note')}>
+  {tab==='free'&&<section className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-divider bg-surface px-3 py-2 text-[11px] text-muted" title={t('models.freeCheck.note')}>
    <strong className="text-[#3A342D]">{t('models.freeCheck.title')}</strong>
-   <span className="rounded bg-emerald-50 px-1.5 py-0.5 font-semibold text-emerald-700">{freeCatalog.loading||freeCatalog.error?'—':t('models.freeCheck.free',{count:freeCatalog.value.counts?.free||0})}</span>
-   <span className="rounded bg-[#F1ECE3] px-1.5 py-0.5 font-semibold text-[#8A8176]">{freeCatalog.loading||freeCatalog.error?'—':t('models.freeCheck.unknown',{count:freeCatalog.value.counts?.unknown||0})}</span>
-   <span className="rounded bg-[#F7EEE9] px-1.5 py-0.5 font-semibold text-[#A05B48]">{freeCatalog.loading||freeCatalog.error?'—':t('models.freeCheck.paid',{count:freeCatalog.value.counts?.paid||0})}</span>
-   {!freeCatalog.error&&freeCatalog.value.providers.filter(p=>!p.reachable).length>0&&<span className="font-semibold text-rose-600">{t('models.freeCheck.failed',{count:freeCatalog.value.providers.filter(p=>!p.reachable).length})}</span>}
-   <span className="ml-auto text-[10px] text-[#9C9388]">{freeCatalog.loading?t('models.freeCheck.loading'):freeCatalog.error?t('models.freeCheck.unavailable'):freeCatalog.value.updatedAt?t('models.freeCheck.updated',{time:new Date(freeCatalog.value.updatedAt).toLocaleString()}):t('models.freeCheck.empty')}</span>
+   <span className="rounded bg-emerald-50 px-1.5 py-0.5 font-semibold text-emerald-700">{t('models.freeCheck.free',{count:freeCatalog.value.counts?.free||0})}</span>
+   <span className="rounded bg-[#F1ECE3] px-1.5 py-0.5 font-semibold text-[#8A8176]">{t('models.freeCheck.unknown',{count:freeCatalog.value.counts?.unknown||0})}</span>
+   <span className="rounded bg-[#F7EEE9] px-1.5 py-0.5 font-semibold text-[#A05B48]">{t('models.freeCheck.paid',{count:freeCatalog.value.counts?.paid||0})}</span>
+   {freeCatalog.value.providers.filter(p=>!p.reachable).length>0&&<span className="font-semibold text-rose-600">{t('models.freeCheck.failed',{count:freeCatalog.value.providers.filter(p=>!p.reachable).length})}</span>}
+   <span className="ml-auto text-[10px] text-[#9C9388]">{freeCatalog.value.updatedAt?t('models.freeCheck.updated',{time:new Date(freeCatalog.value.updatedAt).toLocaleString()}):t('models.freeCheck.empty')}</span>
    <Button type="button" variant="ghost" size="sm" disabled={freeBusy} onClick={()=>void refreshFreeCatalog()}>{freeBusy?<RefreshCw size={13} className="animate-spin"/>:<RefreshCw size={13}/>} {freeBusy?t('models.freeCheck.checking'):t('models.freeCheck.refresh')}</Button>
   </section>}
-  {tab==='free'&&<section className="mb-4 rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-4">
+  {tab==='free'&&<section className="mb-4 rounded-2xl border border-divider bg-surface p-4">
    <h2 className="mb-2 text-[14px] font-semibold text-[#3A342D]">업체별 무료 모델 조회</h2>
-   <p className="mb-3 text-[12px] text-[#7C7469]">무료 여부는 제공 업체의 조회 결과를 기준으로 표시합니다. 실제 사용은 해당 업체 연결 상태에 따라 달라집니다.</p>
-   {freeCatalog.loading?<p className="text-[12px] text-[#8A8176]">{t('models.freeCheck.loading')}</p>:freeCatalog.error?<p role="status" className="text-[12px] text-[#8A8176]">{t('models.freeCheck.unavailable')}</p>:freeCatalog.value.providers.length===0?<p className="text-[12px] text-[#8A8176]">{t('models.freeCheck.noResults')}</p>:<div className="grid gap-2 sm:grid-cols-2">{freeCatalog.value.providers.map(provider=><div key={provider.providerId} className="rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] p-3"><div className="flex items-center justify-between gap-2"><strong className="text-[12px] text-[#3A342D]">{provider.providerName}</strong><span className={'text-[10px] '+(provider.reachable?'text-emerald-700':'text-rose-600')}>{provider.reachable?'조회됨':'연결 실패'}</span></div>{provider.error&&<p className="mt-1 text-[11px] text-rose-600">{provider.error}</p>}<div className="mt-2 max-h-40 space-y-1 overflow-auto">{provider.models.filter(model=>model.free===true).map(model=><p key={model.id} className="break-all text-[11px] text-[#6F675D]">{model.id}</p>)}{!provider.models.some(model=>model.free===true)&&<p className="text-[11px] text-[#8A8176]">무료로 분류된 모델 없음</p>}</div></div>)}</div>}
+   <p className="mb-3 text-[12px] text-muted">무료 여부는 제공 업체의 조회 결과를 기준으로 표시합니다. 실제 사용은 해당 업체 연결 상태에 따라 달라집니다.</p>
+   {freeCatalog.value.providers.length===0?<p className="text-[12px] text-[#8A8176]">조회된 모델이 없습니다. 위의 새로고침으로 확인하세요.</p>:<div className="grid gap-2 sm:grid-cols-2">{freeCatalog.value.providers.map(provider=><div key={provider.providerId} className="rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] p-3"><div className="flex items-center justify-between gap-2"><strong className="text-[12px] text-[#3A342D]">{provider.providerName}</strong><span className={'text-[10px] '+(provider.reachable?'text-emerald-700':'text-rose-600')}>{provider.reachable?'조회됨':'연결 실패'}</span></div>{provider.error&&<p className="mt-1 text-[11px] text-rose-600">{provider.error}</p>}<div className="mt-2 max-h-40 space-y-1 overflow-auto">{provider.models.filter(model=>model.free===true).map(model=><p key={model.id} className="break-all text-[11px] text-[#6F675D]">{model.id}</p>)}{!provider.models.some(model=>model.free===true)&&<p className="text-[11px] text-[#8A8176]">무료로 분류된 모델 없음</p>}</div></div>)}</div>}
   </section>}
-  {(tab==='cloud'||tab==='connect')&&<div className="mb-4"><DominionCloudAccount key={tab} initialTab={tab==='connect'?'providers':'cloud'} initialProviderId={tab==='connect'?browseProviderId:undefined} hideManagementNavigation onProviderAdded={providers.reload}/></div>}
-   {tab==='catalog'&&<section className="rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-5 shadow-[0_1px_2px_rgba(36,33,29,.04)]">
-   <div className="mb-3 flex flex-wrap items-start justify-between gap-2"><div><h2 className="m-0 text-[16px] font-bold text-[#24211D]">{t('models.catalog.title')}</h2><p className="mt-1 text-[12px] text-[#7C7469]">{t('models.catalog.desc')}</p></div><Button type="button" variant="ghost" size="sm" disabled={catalog.loading} onClick={()=>void catalog.reload()}>{catalog.loading?<RefreshCw size={13} className="animate-spin"/>:<RefreshCw size={13}/>} {t('models.catalog.refresh')}</Button></div>
-   <div className="mb-2 flex flex-wrap items-center gap-2"><TextInput value={query} onChange={e=>{setQuery(e.target.value);setCatalogLimit(60)}} placeholder={t('models.providerSearch')} className="min-w-[180px] flex-1 !text-[12px]"/><SelectInput aria-label="업체 정렬" value={catalogSort} onChange={e=>setCatalogSort(e.target.value as 'name'|'models')} className="!w-auto !text-[12px]"><option value="name">업체 이름순</option><option value="models">모델 많은 순</option></SelectInput><span className="text-[11px] text-[#7C7469]">{catalogVisible.length}개 업체 · 중복 주소 제외</span></div>
+  {tab==='connect'&&<QuickConnect accountConnected={cli.value.some(item=>item.id==='codex'&&item.connected)} canImport={cli.value.some(item=>item.id==='codex'&&item.importAvailable)} busy={Boolean(oauthBusy)} pending={loginPending} loginUrl={loginUrl} message={loginMessage}
+   onLogin={()=>void startCodexLogin()} onImport={()=>void importCli('codex')} onKey={name=>{const preset=providerPresets.find(item=>item.name===name);if(preset)openPreset(preset)}} onLocal={()=>setTab('local')} onBrowse={()=>setTab('catalog')}/>}
+  {tab==='cloud'&&<div className="mb-4"><DominionCloudAccount initialTab="cloud" hideManagementNavigation onProviderAdded={providers.reload}/></div>}
+  {tab==='catalog'&&browseProviderId&&<><Button variant="ghost" className="mb-4" onClick={()=>setBrowseProviderId('')}><ArrowRight size={14} className="rotate-180"/>{t('models.simple.catalog')}</Button><DominionCloudAccount key={browseProviderId} initialTab="providers" initialProviderId={browseProviderId} hideManagementNavigation onProviderAdded={providers.reload}/></>}
+   {tab==='catalog'&&!browseProviderId&&<section className="rounded-2xl border border-divider bg-surface p-5 shadow-[0_1px_2px_rgba(36,33,29,.04)]">
+   <div className="mb-3 flex flex-wrap items-start justify-between gap-2"><div><h2 className="m-0 text-[16px] font-bold text-ink">{t('models.catalog.title')}</h2><p className="mt-1 text-[12px] text-muted">{t('models.catalog.desc')}</p></div><Button type="button" variant="ghost" size="sm" disabled={catalog.loading} onClick={()=>void catalog.reload()}>{catalog.loading?<RefreshCw size={13} className="animate-spin"/>:<RefreshCw size={13}/>} {t('models.catalog.refresh')}</Button></div>
+   <div className="mb-2 flex flex-wrap items-center gap-2"><TextInput value={query} onChange={e=>{setQuery(e.target.value);setCatalogLimit(60)}} placeholder={t('models.providerSearch')} className="min-w-[180px] flex-1 !text-[12px]"/><SelectInput aria-label="업체 정렬" value={catalogSort} onChange={e=>setCatalogSort(e.target.value as 'name'|'models')} className="!w-auto !text-[12px]"><option value="name">업체 이름순</option><option value="models">모델 많은 순</option></SelectInput><span className="text-[11px] text-muted">{catalogVisible.length}개 업체 · 중복 주소 제외</span></div>
    {catalog.error&&<Notice message={catalog.error}/>}
    {catalog.loading&&<p className="py-4 text-center text-[11px] text-[#9C9388]">{t('models.catalog.loading')}</p>}
-   <div className="grid max-h-[420px] grid-cols-1 gap-2 overflow-auto sm:grid-cols-2 xl:grid-cols-3">{catalogVisible.slice(0,catalogLimit).map(p=><div key={p.id} className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] px-3 py-2.5"><div className="min-w-0"><strong className="block truncate text-[12px] text-[#3A342D]">{p.name}</strong><small className="block truncate text-[10px] text-[#A79C8E]">{p.api.replace(/^https?:\/\//,'')} · {t('models.catalog.modelCount',{count:p.models})}</small></div><Button type="button" size="sm" variant="secondary" onClick={()=>{setBrowseProviderId(p.id);setTab('connect')}}>모델 보기</Button></div>)}</div>
+   <div className="grid max-h-[420px] grid-cols-1 gap-2 overflow-auto sm:grid-cols-2 xl:grid-cols-3">{catalogVisible.slice(0,catalogLimit).map(p=><div key={p.id} className="flex min-w-0 items-center justify-between gap-2 rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] px-3 py-2.5"><div className="min-w-0"><strong className="block truncate text-[12px] text-[#3A342D]">{p.name}</strong><small className="block truncate text-[10px] text-[#A79C8E]">{p.api.replace(/^https?:\/\//,'')} · {t('models.catalog.modelCount',{count:p.models})}</small></div><Button type="button" size="sm" variant="secondary" onClick={()=>{setBrowseProviderId(p.id)}}>모델 보기</Button></div>)}</div>
    {catalogVisible.length>catalogLimit&&<div className="mt-3 text-center"><Button type="button" variant="secondary" onClick={()=>setCatalogLimit(n=>n+60)}>업체 더 보기 ({catalogVisible.length-catalogLimit}개 남음)</Button></div>}
   </section>}
 
-  {tab==='oauth'&&<section className="rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-5 shadow-[0_1px_2px_rgba(36,33,29,.04)]">
-   <div className="mb-4"><h2 className="m-0 text-[16px] font-bold text-[#24211D]">{t('models.oauth.title')}</h2><p className="mt-1 text-[12px] text-[#7C7469]">{t('models.oauth.desc')}</p></div>
-   {cli.loading&&!cli.value.length&&<p className="mb-3 text-center text-[12px] text-[#8A8176]">{t('models.oauth.loading')}</p>}
-   {cli.error&&!cli.value.length&&<p role="status" className="mb-3 text-center text-[12px] text-[#8A8176]">{t('models.oauth.unavailable')}</p>}
-   {!cli.loading&&!cli.error&&!cli.value.length&&<p className="mb-3 text-center text-[12px] text-[#8A8176]">{t('models.oauth.empty')}</p>}
+  {tab==='oauth'&&<section className="rounded-2xl border border-divider bg-surface p-5 shadow-[0_1px_2px_rgba(36,33,29,.04)]">
+   <div className="mb-4"><h2 className="m-0 text-[16px] font-bold text-ink">{t('models.oauth.title')}</h2><p className="mt-1 text-[12px] text-muted">{t('models.oauth.desc')}</p></div>
    <div className="grid grid-cols-1 items-stretch gap-3 md:grid-cols-2">
     {cli.value.map(item=><OAuthConnectionCard
      key={item.id}
@@ -424,7 +423,7 @@ export function ModelHub(){
      {item.id==='opencode-go'&&<Button type="button" variant="primary" size="sm" onClick={connectOpencodeGo}><KeyRound size={13}/> {goProvider?'키 / 모델 설정':'API 키 연결'}</Button>}
      {item.supported&&(item.importAvailable??item.available)&&<Button type="button" variant="secondary" size="sm" disabled={Boolean(oauthBusy)} onClick={()=>void importCli(item.id)}><KeyRound size={13}/> {item.id==='opencode-go'?'기존 키 가져오기':'기존 인증 가져오기'}</Button>}
      {(item.id==='claude'||item.id==='gemini')&&<Button type="button" variant="secondary" size="sm" onClick={()=>openPreset(providerPresets.find(p=>p.name===(item.id==='claude'?'Anthropic':'Google Gemini'))!)}><KeyRound size={13}/> 별도 API 연결(선택)</Button>}
-     {item.connected&&['claude','gemini','opencode'].includes(item.id)&&<div className="flex w-full flex-wrap items-center gap-2 rounded-lg border border-[#E7E0D5] bg-white p-2">
+     {item.connected&&['claude','gemini','opencode'].includes(item.id)&&<div className="flex w-full flex-wrap items-center gap-2 rounded-lg border border-divider bg-white p-2">
       <SelectInput aria-label={item.name+' 사용 모델 선택'} className="min-w-[145px] flex-1 !py-1 !text-[12px]"
        value={cliModelSelection[item.id]||item.model||'default'}
        onChange={event=>setCliModelSelection(old=>({...old,[item.id]:event.target.value}))}>
@@ -433,7 +432,7 @@ export function ModelHub(){
       </SelectInput>
       <Button size="sm" type="button" variant="ghost" disabled={Boolean(cliModelBusy)} onClick={()=>void fetchCliModels(item.id)}><RefreshCw size={13}/> 모델 조회</Button>
       <Button size="sm" type="button" variant="secondary" disabled={Boolean(cliModelBusy)} onClick={()=>void saveCliModel(item.id)}>모델 적용</Button>
-      <a className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white" href={'#/chat?provider=cli-'+item.id+'&model='+encodeURIComponent(cliModelSelection[item.id]||item.model||'default')}>채팅 시작</a>
+      <a className="rounded-lg bg-brand px-3 py-2 text-[12px] font-semibold text-white" href={'#/chat?provider=cli-'+item.id+'&model='+encodeURIComponent(cliModelSelection[item.id]||item.model||'default')}>채팅 시작</a>
      </div>}
      {item.id==='codex'&&item.connected&&<Button type="button" variant="ghost" size="sm" onClick={()=>{setTab('providers');const p=providers.value.find(p=>p.id==='codex-oauth');if(p)void probe(p)}}><RefreshCw size={13}/> 모델 확인</Button>}
      {item.id==='opencode-go'&&goProvider?.hasKey&&<Button type="button" variant="ghost" size="sm" disabled={counts[goProvider.id]?.busy} onClick={()=>void probe(goProvider)}><RefreshCw size={13}/> 모델 확인</Button>}
@@ -441,36 +440,37 @@ export function ModelHub(){
     </OAuthConnectionCard>)}
    </div>
    {cliAuth&&<CliAuthProgress session={cliAuth} onInput={sendCliInput} onCancel={cancelCliAuth}/>}
-   {deviceCode&&<div className="mt-3 rounded-xl border border-[#E7D9C8] bg-[#FFF9F0] px-4 py-3"><div className="text-[11px] text-[#8A775F]">{t('models.oauth.deviceHint')}</div><div className="my-2 font-mono text-[26px] font-bold tracking-[.18em] text-[#A94E30]">{deviceCode.userCode}</div><a className="text-[11px] font-semibold text-[#C96442] hover:underline" href={deviceCode.verificationUrl} target="_blank" rel="noreferrer">{t('models.oauth.openDevice')}</a></div>}
-   {loginPending&&!deviceCode&&<p className="mt-3 rounded-xl border border-[#E7E0DF] bg-[#F7F1E6] px-3 py-2 text-[11px] text-[#7C7469]">{t('models.oauth.loginHint')}{loginUrl&&<> · <a className="font-semibold text-[#C96442] hover:underline" href={loginUrl} target="_blank" rel="noreferrer">{t('models.oauth.openBrowser')}</a></>}</p>}
+   {deviceCode&&<div className="mt-3 rounded-xl border border-[#E7D9C8] bg-[#FFF9F0] px-4 py-3"><div className="text-[11px] text-[#8A775F]">{t('models.oauth.deviceHint')}</div><div className="my-2 font-mono text-[26px] font-bold tracking-[.18em] text-brand-hover">{deviceCode.userCode}</div><a className="text-[11px] font-semibold text-brand hover:underline" href={deviceCode.verificationUrl} target="_blank" rel="noreferrer">{t('models.oauth.openDevice')}</a></div>}
+   {loginPending&&!deviceCode&&<p className="mt-3 rounded-xl border border-[#E7E0DF] bg-[#F7F1E6] px-3 py-2 text-[11px] text-muted">{t('models.oauth.loginHint')}{loginUrl&&<> · <a className="font-semibold text-brand hover:underline" href={loginUrl} target="_blank" rel="noreferrer">{t('models.oauth.openBrowser')}</a></>}</p>}
    {loginMessage&&<p className="mt-3 rounded-xl border border-[#CFE0CF] bg-[#F4FAF3] px-3 py-2 text-[11px] text-[#4F6F52]">{loginMessage}</p>}
   </section>}
 
-  {(tab==='providers'||tab==='local')&&<section className="rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-5 shadow-[0_1px_2px_rgba(36,33,29,.04)]">
-   {tab==='providers'&&<div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="m-0 text-[14px] font-semibold text-[#3A342D]">등록된 API 연결</h2><span className="text-[11px] text-[#7C7469]">{visibleProviders.length}개 연결</span></div>}
+  {(tab==='providers'||tab==='local')&&<section className="rounded-2xl border border-divider bg-surface p-5 shadow-[0_1px_2px_rgba(36,33,29,.04)]">
+   {tab==='providers'&&<div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="m-0 text-[14px] font-semibold text-[#3A342D]">연결된 AI</h2><span className="text-[11px] text-muted">{visibleProviders.length}개 연결</span></div>}
 
-   {visibleProviders.length>0&&<details ref={providerList} className="mb-4 rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] p-3" open><summary className="cursor-pointer text-[12px] font-semibold text-[#3A342D]">{t('models.registeredList',{count:visibleProviders.length})}</summary><div className="mt-2 max-h-[320px] divide-y divide-[#EFE9DF] overflow-auto">{visibleProviders.map(p=><div key={p.id} className="flex flex-wrap items-center gap-3 py-2.5"><span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#F3EEE5] text-[#C96442]">{p.local?<HardDrive size={15}/>:p.kind==='codex'?<Sparkles size={15}/>:<Cloud size={15}/>}</span><div className="min-w-0 flex-1"><div className="text-[12px] font-semibold text-[#3A342D]">{p.name}{p.kind==='codex'&&<span className="ml-2 rounded bg-[#E9E1F5] px-1.5 py-0.5 text-[9px] font-bold text-[#6B4FA0]">OAuth</span>}{(p.reflection ?? p.learning)&&<span className="ml-2 rounded bg-[#FBE7D8] px-1.5 py-0.5 text-[9px] font-bold text-[#A94E30]">{t('models.review')}</span>}{p.kind!=='cli'&&(!p.local||p.integration==='freellmapi')&&p.hasKey===false&&<span className="ml-2 rounded bg-[#EDE8DE] px-1.5 py-0.5 text-[9px] text-[#8A8176]">{t('models.needKey')}</span>}{!p.enabled&&<span className="ml-2 text-[10px] text-[#A79C8E]">{t('models.disabled')}</span>}</div><div className="mt-0.5 break-all text-[11px] text-[#8A8176]">{p.baseUrl}</div>{p.model&&<div className="mt-0.5 text-[10px] text-[#9C9388]">{t('models.defaultModel')} · {p.model}</div>}{p.requestsPerMinute?<div className="mt-0.5 text-[10px] text-[#9C9388]">{t('models.perMinute',{count:p.requestsPerMinute})}</div>:null}{counts[p.id]?.error&&<div className="mt-1 text-[11px] text-rose-600">{counts[p.id].error}</div>}{counts[p.id]?.info&&<div className="mt-1 text-[11px] text-[#7C7469]">{counts[p.id].info}</div>}{counts[p.id]&&!counts[p.id].busy&&!counts[p.id].error&&!counts[p.id].list.length&&<div className="mt-1 text-[11px] text-[#8A8176]">{t('models.emptyList')}</div>}{(counts[p.id]?.list.length??0)>0&&<div className="mt-1 text-[10px] text-emerald-700">{t('models.recognized',{count:counts[p.id].list.length})} · {counts[p.id].list.slice(0,2).join(', ')}</div>}</div><Button className="rounded-md px-2 py-1 text-[11px] text-[#C96442] hover:bg-[#FBF1EC]" type="button" disabled={counts[p.id]?.busy} onClick={()=>void probe(p)}>{counts[p.id]?.busy?t('models.checking'):t('models.checkModels')}</Button>{savedId===p.id&&<span role="status" className="text-[11px] text-emerald-700">{t('models.saved')}</span>}{p.enabled!==false&&<a className="text-[11px] font-semibold text-[#C96442] hover:underline" href={'#/chat?provider='+encodeURIComponent(p.id)}>{t('models.chatSelect')}</a>}<Button className="rounded-md p-2 text-[#8A8176] hover:bg-[#F3EEE5]" type="button" onClick={()=>p.kind==='cli'?setTab('oauth'):open(p)} aria-label={t('models.dlg.settingsAria',{name:p.name})}><Settings2 size={15}/></Button></div>)}</div></details>}
+   {visibleProviders.length>0&&<details ref={providerList} className="mb-4 rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] p-3" open><summary className="cursor-pointer text-[12px] font-semibold text-[#3A342D]">{t('models.registeredList',{count:visibleProviders.length})}</summary><div className="mt-2 max-h-[320px] divide-y divide-[#EFE9DF] overflow-auto">{visibleProviders.map(p=><div key={p.id} className="flex flex-wrap items-center gap-3 py-2.5"><span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#F3EEE5] text-brand">{p.local?<HardDrive size={15}/>:p.kind==='codex'?<Sparkles size={15}/>:<Cloud size={15}/>}</span><div className="min-w-0 flex-1"><div className="text-[12px] font-semibold text-[#3A342D]">{p.name}{p.kind==='codex'&&<span className="ml-2 rounded bg-[#E9E1F5] px-1.5 py-0.5 text-[9px] font-bold text-[#6B4FA0]">OAuth</span>}{(p.reflection ?? p.learning)&&<span className="ml-2 rounded bg-[#FBE7D8] px-1.5 py-0.5 text-[9px] font-bold text-brand-hover">{t('models.review')}</span>}{p.kind!=='cli'&&(!p.local||p.integration==='freellmapi')&&p.hasKey===false&&<span className="ml-2 rounded bg-[#EDE8DE] px-1.5 py-0.5 text-[9px] text-[#8A8176]">{t('models.needKey')}</span>}{p.capabilities?.vision===true&&<span className="ml-2 rounded bg-[#E4EFE4] px-1.5 py-0.5 text-[9px] font-bold text-[#4F6F52]">{t('models.visionBadge')}</span>}{!p.enabled&&<span className="ml-2 text-[10px] text-[#A79C8E]">{t('models.disabled')}</span>}</div>{p.model&&<div className="mt-0.5 text-[10px] text-[#9C9388]">{t('models.defaultModel')} · {p.model}</div>}{p.requestsPerMinute?<div className="mt-0.5 text-[10px] text-[#9C9388]">{t('models.perMinute',{count:p.requestsPerMinute})}</div>:null}{counts[p.id]?.error&&<div className="mt-1 text-[11px] text-rose-600">{counts[p.id].error}</div>}{counts[p.id]?.info&&<div className="mt-1 text-[11px] text-muted">{counts[p.id].info}</div>}{counts[p.id]&&!counts[p.id].busy&&!counts[p.id].error&&!counts[p.id].list.length&&<div className="mt-1 text-[11px] text-[#8A8176]">{t('models.emptyList')}</div>}{(counts[p.id]?.list.length??0)>0&&<div className="mt-1 text-[10px] text-emerald-700">{t('models.recognized',{count:counts[p.id].list.length})} · {counts[p.id].list.slice(0,2).join(', ')}</div>}</div><Button className="rounded-md px-2 py-1 text-[11px] text-brand hover:bg-[#FBF1EC]" type="button" disabled={counts[p.id]?.busy} onClick={()=>void probe(p)}>{counts[p.id]?.busy?t('models.checking'):t('models.checkModels')}</Button>{savedId===p.id&&<span role="status" className="text-[11px] text-emerald-700">{t('models.saved')}</span>}{p.enabled!==false&&<a className="text-[11px] font-semibold text-brand hover:underline" href={'#/chat?provider='+encodeURIComponent(p.id)}>{t('models.chatSelect')}</a>}<Button className="rounded-md p-2 text-[#8A8176] hover:bg-[#F3EEE5]" type="button" onClick={()=>p.kind==='cli'?setTab('oauth'):open(p)} aria-label={t('models.dlg.settingsAria',{name:p.name})}><Settings2 size={15}/></Button></div>)}</div></details>}
 
    <div className="mb-2 text-[11px] text-[#8A8176]">{tab==='local'?'로컬 실행기 연결':'연결 가능한 업체'} · {visiblePresets.length}개</div>
-   <div className="grid max-h-[460px] grid-cols-1 gap-2 overflow-auto sm:grid-cols-2 xl:grid-cols-3">{visiblePresets.map(preset=>{const existing=providers.value.find(p=>sameProvider(p,preset));const needsKey=Boolean(existing&&!preset.free&&(!preset.local||preset.integration==='freellmapi')&&existing.hasKey===false);return <div key={preset.name} className="flex min-w-0 flex-col gap-2 rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] px-3 py-3"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><strong className="block truncate text-[12px] text-[#3A342D]">{preset.name}</strong><small className="block truncate text-[10px] text-[#A79C8E]">{preset.baseUrl.replace(/^https?:\/\//,'')}</small></div><span className={'shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold '+(preset.category==='free'?'bg-emerald-50 text-emerald-700':preset.category==='local'?'bg-[#E9E1F5] text-[#6B4FA0]':'bg-[#EDE8DE] text-[#8A8176]')}>{preset.category==='free'&&preset.free?t('models.filter.free'):preset.category==='local'?t('models.filter.local'):t('models.filter.cloud')}</span></div><div className="flex items-center justify-between gap-2"><small className="min-w-0 truncate text-[10px] text-[#A79C8E]">{existing?(needsKey?t('models.needKey'):existing.enabled===false?t('models.off'):t('models.registered')):(preset.free?t('models.freeProvider'):preset.integration==='freellmapi'?t('models.integrationKey'):preset.local?t('models.local'):t('models.needKey'))}</small><Button variant={existing?'secondary':'primary'} onClick={()=>existing?open(existing):openPreset(preset)} className="!px-2.5 !py-1 !text-[11px]">{existing?(needsKey?t('models.keyInput'):t('models.settings')):t('models.register')}</Button></div></div>})}</div>
+   <div className="grid max-h-[460px] grid-cols-1 gap-2 overflow-auto sm:grid-cols-2 xl:grid-cols-3">{visiblePresets.map(preset=>{const existing=providers.value.find(p=>sameProvider(p,preset));const needsKey=Boolean(existing&&!preset.free&&(!preset.local||preset.integration==='freellmapi')&&existing.hasKey===false);return <div key={preset.name} className="flex min-w-0 flex-col gap-2 rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] px-3 py-3"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><strong className="block truncate text-[12px] text-[#3A342D]">{preset.name}</strong></div><span className={'shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold '+(preset.category==='free'?'bg-emerald-50 text-emerald-700':preset.category==='local'?'bg-[#E9E1F5] text-[#6B4FA0]':'bg-[#EDE8DE] text-[#8A8176]')}>{preset.category==='free'&&preset.free?t('models.filter.free'):preset.category==='local'?t('models.filter.local'):t('models.filter.cloud')}</span></div><div className="flex items-center justify-between gap-2"><small className="min-w-0 truncate text-[10px] text-[#A79C8E]">{existing?(updatedProviderEndpoint(existing)?t('models.endpointOutdated'):needsKey?t('models.needKey'):existing.enabled===false?t('models.off'):t('models.registered')):(preset.free?t('models.freeProvider'):preset.integration==='freellmapi'?t('models.integrationKey'):preset.local?t('models.local'):t('models.needKey'))}</small><Button variant={existing?'secondary':'primary'} onClick={()=>existing?open(existing):openPreset(preset)} className="!px-2.5 !py-1 !text-[11px]">{existing?(needsKey?t('models.keyInput'):t('models.settings')):t('models.register')}</Button></div></div>})}</div>
    {!visiblePresets.length&&<p className="py-8 text-center text-[12px] text-[#9C9388]">{t('models.noPreset')}</p>}
   </section>}
   {tab==='local'&&<div className="mt-5"><ModelExplorer initialView="installed"/></div>}
   {tab==='huggingface'&&<div className="mt-2"><ModelExplorer key="huggingface-browser" initialView="search" hideNavigation/></div>}
 
   {removedName&&<p role="status" className="mb-4 mt-4 text-[12px] text-emerald-700">{t('models.dlg.disconnected',{name:removedName})}</p>}
-  {!modal&&<div className="mt-4"><Notice message={error||providers.error||(tab==='free'?freeCatalog.error:tab==='oauth'?cli.error:'')}/></div>}
+  {!modal&&<div className="mt-4"><Notice message={error||providers.error}/></div>}
   {modal&&<DialogBackdrop onDismiss={close}><DialogPanel size="default">
    <div className="flex items-center justify-between border-b border-[#EFE9DF] p-4"><h2 className="text-[15px] font-bold">{presetMode&&!edit?name+' '+t('models.editConnection'):edit?t('models.editConnection'):t('models.addConnection')}</h2><Button size="icon" variant="ghost" aria-label={t('models.close')} onClick={close} disabled={saving}><X size={16}/></Button></div>
    <div className="grid gap-3 p-4">
+    {edit&&updatedProviderEndpoint(edit)&&<p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">{t('models.endpointMigrated')}{edit.name==='Hyperbolic'?' '+t('models.endpointNewKey'):''}</p>}
     {presetMode&&!edit?<>
      <div className="rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] p-3">
       <strong className="block text-[13px] text-[#3A342D]">{name}</strong>
-      {integration!=='freellmapi'&&<div className="mt-1 break-all text-[11px] text-[#8A8176]">{baseUrl}</div>}
+      <p className="mt-1 text-xs text-muted">{t('connect.keyPrivacy')}</p>
      </div>
      {integration==='freellmapi'&&<FormField label={t('models.dlg.freeServer')}><TextInput value={baseUrl} onChange={e=>setBaseUrl(e.target.value)}/></FormField>}
      {baseUrl.includes('ACCOUNT_ID')&&<FormField label={t('models.dlg.accountId')} hint={t('models.dlg.accountIdHint')}><TextInput value={accountId} onChange={e=>setAccountId(e.target.value)} placeholder="a1b2c3d4e5f6..."/></FormField>}
-     {(baseUrl.includes('ACCOUNT_ID')||baseUrl.includes('cloudflare.com'))&&<a className="text-[11px] font-semibold text-[#C96442] hover:underline" href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">{t('models.dlg.createCfToken')}</a>}
+     {(baseUrl.includes('ACCOUNT_ID')||baseUrl.includes('cloudflare.com'))&&<a className="text-[11px] font-semibold text-brand hover:underline" href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noreferrer">{t('models.dlg.createCfToken')}</a>}
      {freePreset?<p className="text-[11px] leading-5 text-[#8A8176]">{t('models.freeNote')}</p>:<FormField label={integration==='freellmapi'?t('models.dlg.integrationKey'):local?t('models.dlg.apiKeyOptional'):t('models.dlg.apiKey')} hint={integration==='freellmapi'?t('models.dlg.integrationHint'):undefined}><TextInput autoFocus type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder={t('models.dlg.pasteKey')}/></FormField>}
     </>:<>
      <FormField label={t('models.dlg.connectionName')} hint={t('models.dlg.connectionNameHint')}><TextInput value={name} onChange={e=>setName(e.target.value)} placeholder={t('models.dlg.connectionNamePlaceholder')}/></FormField>
@@ -481,6 +481,8 @@ export function ModelHub(){
      <FormField label={t('chat.reasoningEffort')} hint="에이전트나 대화에서 별도로 지정하지 않았을 때 사용하는 기본값입니다."><ReasoningSelect value={defaultEffort} onChange={setDefaultEffort} model={editModels.value.find(item=>item.id===(defaultModel||edit?.model))} requireCatalog={kind==='codex'}/></FormField>
      {kind!=='codex'&&<FormField label={t('models.dlg.apiKey')}><TextInput type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder={edit?.hasKey?t('models.dlg.keepKey'):t('models.dlg.keyIfNeeded')}/></FormField>}
      <label className="flex items-center gap-2 text-[12px]"><TextInput type="checkbox" checked={local} onChange={e=>setLocal(e.target.checked)}/> {t('models.dlg.localServer')}</label>
+     <label className="flex items-center gap-2 text-[12px]"><TextInput type="checkbox" checked={vision} onChange={e=>setVision(e.target.checked)}/> {t('models.dlg.vision')}</label>
+     <p className="-mt-2 text-[11px] leading-5 text-[#8A8176]">{t('models.dlg.visionHint')}</p>
      {edit&&<details open={reflection||undefined} className="rounded-xl border border-[#F0DFD2] bg-[#FFF9F4] p-3">
       <summary className="cursor-pointer text-[12px]">{t('models.dlg.reflection')}</summary>
       <label className="my-2 flex items-center gap-2 text-[12px]"><TextInput type="checkbox" checked={reflection} onChange={e=>setReflection(e.target.checked)}/> {t('models.dlg.useReflection')}</label>
@@ -491,13 +493,14 @@ export function ModelHub(){
       </FormField>}
      </details>}
     </>}
+    <details className="rounded-xl border border-divider p-3"><summary className="cursor-pointer text-xs text-muted">{t('connect.advanced')}</summary><div className="mt-3 grid gap-3">
     {kind!=='codex'&&<FormField label="기본 모델 ID" hint="키를 등록한 후 제공자 모델 목록에서 선택하거나 ID를 직접 입력하세요.">
      <div className="grid gap-2">
       {edit?.hasKey&&baseUrl.trim()===edit.baseUrl&&kind===edit.kind&&<ModelPicker providerId={edit.id} value={defaultModel} onChange={setDefaultModel} className="w-full"/>}
       <TextInput value={defaultModel} onChange={e=>setDefaultModel(e.target.value)} placeholder={integration==='opencode-go'?'예: deepseek-v4.1-flash':t('models.dlg.modelIdPlaceholder')}/>
      </div>
     </FormField>}
-    <FormField label={t('models.dlg.rpm')} hint={t('models.dlg.rpmHint')}><TextInput type="number" min={0} max={10000} value={rpm} onChange={e=>setRpm(e.target.value)} placeholder="0"/></FormField>
+    <FormField label={t('models.dlg.rpm')} hint={t('models.dlg.rpmHint')}><TextInput type="number" min={0} max={10000} value={rpm} onChange={e=>setRpm(e.target.value)} placeholder="0"/></FormField></div></details>
     {error&&<Notice message={error}/>}
     {testResult&&<div className={'rounded-xl border px-3 py-2 text-[12px] '+(testResult.ok?'border-[#CFE0CF] bg-[#F4FAF3] text-[#4F6F52]':'border-[#EAD3CB] bg-[#FFF4F0] text-[#9A5B48]')}>{testResult.message}</div>}
    </div>

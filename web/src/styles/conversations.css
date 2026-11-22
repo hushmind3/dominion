@@ -1,0 +1,66 @@
+.page-chat > div{height:100dvh;min-height:0}
+
+/* Chat and groups retain their existing controls; the workspace menu opens over them. */
+.conversation-switch [aria-current]{background:#FFFDF9;color:#A94E30;box-shadow:0 1px 4px #3020100a}
+.chat-composer-options>div{min-width:0}.chat-permission svg{flex-shrink:0}
+@media(max-width:767px){
+ .chat-composer-options{gap:0!important;flex:1}.chat-permission{max-width:108px}.chat-reasoning{max-width:80px!important}.chat-agent{max-width:76px!important}.chat-composer-controls>div:last-child>span{display:none}
+}
+
+/* Both modes use the same always-visible toolbar switch, outside session lists. */
+.conversation-switch{display:flex;align-items:center;gap:3px;flex:0 0 auto;white-space:nowrap}
+.conversation-switch button{min-height:32px;padding:5px 9px;font-size:11px;gap:6px;border-radius:9px}
+.conversation-switch [aria-current]{background:#F7E8E1;color:#A94E30}
+@media(max-width:767px){.conversation-switch button{padding:4px 5px;font-size:10px;gap:3px}.conversation-switch button svg{width:14px;height:14px}}
+
+/* Distinct chat roles, scoped to the private Chat page (Room stays intact). */
+.page-chat .chat-transcript{gap:28px}
+.page-chat .chat-transcript--responding::after{
+ content:"";display:block;flex:0 0 auto;min-height:min(38vh,280px)
+}
+.page-chat .chat-message{width:100%;align-items:flex-start}
+.page-chat .chat-message--user{justify-content:flex-end}
+.page-chat .chat-message--user>.chat-message-body{
+ flex:0 1 auto;width:fit-content;max-width:min(78%,680px);display:flex;flex-direction:column;align-items:flex-end
+}
+.page-chat .chat-message--assistant>.chat-message-body{max-width:760px;min-width:0}
+.page-chat .chat-message-author{font-size:12px;line-height:1.4;letter-spacing:0;color:#6C6258}
+.page-chat .chat-message-content{font-family:var(--font-sans);font-size:16px;line-height:1.75;letter-spacing:-.012em;overflow-wrap:anywhere}
+.page-chat .chat-message-content--user{
+ width:fit-content;max-width:100%;padding:11px 17px;border:1px solid #E8E0D4;
+ border-radius:18px 18px 6px 18px;background:#F3EEE5;
+ white-space:pre-wrap;word-break:break-word;color:#342D25
+}
+.page-chat .chat-message-content--assistant{
+ width:100%;white-space:normal;word-break:break-word;color:#292622
+}
+.page-chat .chat-rich-text>:first-child{margin-top:0}
+.page-chat .chat-rich-text>:last-child{margin-bottom:0}
+.page-chat .chat-message--user .chat-message-author{text-align:right}
+.page-chat .chat-message--user a{align-self:flex-end}
+@media(max-width:767px){
+ .page-chat .chat-transcript{gap:24px;padding-left:14px;padding-right:14px}
+ .page-chat .chat-message--user>.chat-message-body{max-width:88%}
+ .page-chat .chat-message-content{font-size:15px;line-height:1.72}
+ .page-chat .chat-message-content--user{padding:10px 14px}
+ .page-chat .chat-message--assistant{gap:9px}
+ .page-chat .chat-message--assistant>div:first-child{width:30px;height:30px}
+}
+@media(prefers-reduced-motion:reduce){
+ .page-chat [data-chat-scroll]{scroll-behavior:auto}
+}
+
+/* One composer surface for direct and group conversations. */
+.conversation-composer-wrap{flex-shrink:0;padding:8px 16px max(8px,env(safe-area-inset-bottom));background:#FFFDF9}
+.conversation-composer{overflow:visible;border:1px solid #E1D9CC;border-radius:16px;background:#FFFDF9;box-shadow:0 8px 30px rgba(36,33,29,.08)}
+.conversation-composer-wrap>.conversation-composer{width:100%;max-width:860px;margin:0 auto}
+.conversation-composer:focus-within{border-color:#C96442;box-shadow:0 0 0 4px #C964421A,0 8px 30px #24211D14}
+.conversation-composer-input{display:block;width:100%;min-height:48px!important;max-height:180px;resize:none!important;border:0!important;border-radius:16px!important;background:#FFFDF9!important;padding:12px 20px 0!important;font-size:15px!important;line-height:28px!important;box-shadow:none!important;outline:none!important;color:#3A342D}
+.conversation-composer-input::placeholder{color:#A79C8E}
+.conversation-composer-controls{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 8px 8px}
+.conversation-composer-options{display:flex;align-items:center;min-width:0;gap:4px}
+.conversation-composer-options svg{flex-shrink:0}
+.conversation-composer-send{display:grid!important;place-items:center;width:36px;height:36px;min-height:36px!important;flex-shrink:0;border:1px solid #C96442!important;border-radius:999px!important;background:#C96442!important;padding:0!important;color:white!important}
+.conversation-composer-send:hover{background:#A94E30!important}.conversation-composer-send:disabled{opacity:.4}
+.conversation-recipients{max-width:140px;min-width:0}
+@media(max-width:767px){.conversation-composer-wrap{padding:6px 10px max(8px,env(safe-area-inset-bottom))}.conversation-composer-options{gap:0}.conversation-recipients{max-width:80px!important}.conversation-composer-controls{gap:4px}}

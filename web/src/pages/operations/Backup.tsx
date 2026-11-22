@@ -1,10 +1,10 @@
-import {useState} from 'react'
+import {useRef,useState} from 'react'
 import {Archive, Check, KeyRound, RefreshCw, RotateCcw, ShieldAlert, TriangleAlert} from 'lucide-react'
 import {post} from '../../api'
 import {Button, TextInput} from '../../components/Primitives'
 import {Action, Notice, Panel, StateTag, Subheading, useRemote} from '../../components/UI'
 import {formatDateTime, t} from '../../i18n'
-type Backup = {name: string; path: string; bytes: number; encrypted: boolean; attachmentsIncluded?: boolean; modifiedAt?: string}
+type Backup = {name: string; path: string; bytes: number; encrypted: boolean; modifiedAt?: string}
 type KeyStatus = {activeVersion?: number; versions?: number[]; error?: string}
 type SecretStatus = {previousKeys?: number; oldKeyFiles?: string[]; error?: string}
 type MaintenanceState = {maintenance: boolean}
@@ -27,23 +27,23 @@ export function BackupPanel() {
   const secretKey = useRemote<SecretStatus>('/api/system/secret-key', {})
   const maintenance = useRemote<MaintenanceState>('/api/system/maintenance', {maintenance: false})
   const [busy, setBusy] = useState('')
+  const operationInFlight = useRef(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
-  const [attachmentWarning,setAttachmentWarning] = useState('')
   const [selected, setSelected] = useState('')
   const [confirm, setConfirm] = useState(false)
   const [keepOld, setKeepOld] = useState(false)
   const active = maintenance.value.maintenance
-  const maintenanceKnown = !maintenance.loading && !maintenance.error
-  const backupKeyKnown = !backupKeys.loading && !backupKeys.error
-  const secretKeyKnown = !secretKey.loading && !secretKey.error
 
   const reload = async () => {
     await Promise.all([backups.reload(), backupKeys.reload(), secretKey.reload(), maintenance.reload()])
   }
 
   const run = async (name: string, task: () => Promise<void>) => {
-    if (busy) return
+    // Ref takes the lock synchronously, before a second click can run with
+    // a stale React render. Never double-submit restore or key rotation.
+    if (operationInFlight.current) return
+    operationInFlight.current = true
     setBusy(name)
     setError('')
     setMessage('')
@@ -52,17 +52,14 @@ export function BackupPanel() {
     } catch (cause) {
       setError((cause as Error).message)
     } finally {
+      operationInFlight.current = false
       setBusy('')
     }
   }
 
   const createBackup = () => run('create', async () => {
-    setAttachmentWarning('')
-    const result = await post<{ok: boolean; bytes: number; path: string; attachmentsIncluded?:boolean; currentAttachmentCount?:number; remote?: {attempted?: boolean; uploaded?: boolean; verified?: boolean; error?: string}}>('/api/system/backup', {})
+    const result = await post<{ok: boolean; bytes: number; path: string; remote?: {attempted?: boolean; uploaded?: boolean; verified?: boolean; error?: string}}>('/api/system/backup', {})
     await reload()
-    if(result.attachmentsIncluded===false && (result.currentAttachmentCount??0)>0){
-      setAttachmentWarning(t('ops.backup.attachmentsCurrentCount',{count:result.currentAttachmentCount??0}))
-    }
     const remote = result.remote
     setMessage(
       remote?.attempted
@@ -103,17 +100,12 @@ export function BackupPanel() {
   return <Panel className="min-w-0 p-5 xl:col-span-2">
     <Subheading title={t('ops.backup')} extra={<Archive size={19}/>}/>
     <p>{t('ops.backup.desc')}</p>
-    <Notice message={maintenance.error||backupKeys.error||secretKey.error||backups.error}/>
-    <div className="mt-2 flex items-start gap-2 rounded-xl border border-[#EED9CC] bg-[#F7E8E1] p-3 text-[11px] leading-5 text-[#7C5A48]" role="note">
-      <TriangleAlert size={15} className="mt-0.5 shrink-0"/>
-      <span>{t('ops.backup.attachmentsExcluded')}</span>
-    </div>
     <div className="mt-3 flex flex-wrap items-center gap-2">
       <Action onClick={createBackup} disabled={Boolean(busy)}>
         {busy === 'create' ? <RefreshCw size={16} className="animate-spin"/> : <Archive size={16}/>} {busy === 'create' ? t('ops.backup.creating') : t('ops.backup.create')}
       </Action>
-      {maintenanceKnown?<StateTag online={active}>{active ? t('ops.backup.maintenanceActive') : t('ops.backup.maintenanceInactive')}</StateTag>:<span role="status" className="text-[11px] text-[#8A8176]">{maintenance.loading?t('ops.loading'):t('ops.dataUnavailable')}</span>}
-      <Button variant="secondary" onClick={toggleMaintenance} disabled={!maintenanceKnown||Boolean(busy)}>
+      <StateTag online={active}>{active ? t('ops.backup.maintenanceActive') : t('ops.backup.maintenanceInactive')}</StateTag>
+      <Button variant="secondary" onClick={toggleMaintenance} disabled={Boolean(busy)}>
         <ShieldAlert size={16}/> {active ? t('ops.backup.maintenanceStop') : t('ops.backup.maintenanceStart')}
       </Button>
       <Button variant="ghost" onClick={() => void reload()} disabled={Boolean(busy)}>
@@ -124,20 +116,20 @@ export function BackupPanel() {
       <div className="rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] p-3">
         <div className="flex items-center justify-between gap-2">
           <strong className="text-[12px] text-[#3A342D]">{t('ops.backup.keys')}</strong>
-          <span className="text-[11px] text-[#8A8176]">{backupKeyKnown?t('ops.backup.activeVersion', {version: backupKeys.value.activeVersion ?? 1}):backupKeys.loading?t('ops.loading'):t('ops.dataUnavailable')}</span>
+          <span className="text-[11px] text-[#8A8176]">{t('ops.backup.activeVersion', {version: backupKeys.value.activeVersion ?? 1})}</span>
         </div>
-        <p className="mt-1 text-[11px] leading-5 text-[#8A8176]">{backupKeyKnown?t('ops.backup.keys.desc', {count: backupKeys.value.versions?.length ?? 1}):backupKeys.loading?t('ops.loading'):t('ops.dataUnavailable')}</p>
-        <Button variant="secondary" className="mt-2" onClick={rotateBackupKeys} disabled={!active||!maintenanceKnown||!backupKeyKnown||Boolean(busy)}>
+        <p className="mt-1 text-[11px] leading-5 text-[#8A8176]">{t('ops.backup.keys.desc', {count: backupKeys.value.versions?.length ?? 1})}</p>
+        <Button variant="secondary" className="mt-2" onClick={rotateBackupKeys} disabled={!active || Boolean(busy)}>
           <KeyRound size={15}/> {busy === 'backupKeys' ? t('ops.backup.rotating') : t('ops.backup.rotateKeys')}
         </Button>
       </div>
       <div className="rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] p-3">
         <div className="flex items-center justify-between gap-2">
           <strong className="text-[12px] text-[#3A342D]">{t('ops.backup.secret')}</strong>
-          <span className="text-[11px] text-[#8A8176]">{secretKeyKnown?t('ops.backup.previousKeys', {count: secretKey.value.previousKeys ?? 0}):secretKey.loading?t('ops.loading'):t('ops.dataUnavailable')}</span>
+          <span className="text-[11px] text-[#8A8176]">{t('ops.backup.previousKeys', {count: secretKey.value.previousKeys ?? 0})}</span>
         </div>
         <p className="mt-1 text-[11px] leading-5 text-[#8A8176]">{t('ops.backup.secret.desc')}</p>
-        <Button variant="secondary" className="mt-2" onClick={rotateSecretKey} disabled={!active||!maintenanceKnown||!secretKeyKnown||Boolean(busy)}>
+        <Button variant="secondary" className="mt-2" onClick={rotateSecretKey} disabled={!active || Boolean(busy)}>
           <KeyRound size={15}/> {busy === 'secretKey' ? t('ops.backup.rotating') : t('ops.backup.rotateSecret')}
         </Button>
       </div>
@@ -148,16 +140,15 @@ export function BackupPanel() {
     </label>
     {error && <Notice message={error}/>}
     {message && <div className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{message}</div>}
-    {attachmentWarning && <Notice message={attachmentWarning}/>} 
     <div className="mt-5 border-t border-[#EFE9DF] pt-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <strong className="text-[13px] text-[#3A342D]">{t('ops.backup.files')}</strong>
-        <span className="text-[10px] font-bold uppercase tracking-widest text-[#9C9388]">{backups.loading||backups.error?'—':backups.value.length} FILES</span>
+        <span className="text-[10px] font-bold uppercase tracking-widest text-[#9C9388]">{backups.value.length} FILES</span>
       </div>
-      {backups.loading?<p className="mt-2 text-[11px] text-[#9C9388]">{t('ops.loading')}</p>:backups.error?<p role="status" className="mt-2 text-[11px] text-[#9C9388]">{t('ops.dataUnavailable')}</p>:backups.value.length ? <div className="mt-2 grid gap-2">
+      {backups.value.length ? <div className="mt-2 grid gap-2">
         {backups.value.map(backup => <label key={backup.name} className={'flex min-w-0 flex-wrap items-center gap-3 rounded-xl border px-3 py-2 text-[11px] ' + (selected === backup.name ? 'border-[#C7B18F] bg-[#F2EADF]' : 'border-[#EFE9DF] bg-white')}>
           <TextInput type="radio" name="backup" disabled={!backup.encrypted} checked={selected === backup.name} onChange={() => { setSelected(backup.name); setConfirm(false) }}/>
-          <span className="min-w-0 flex-1"><strong className="block break-all text-[11px] text-[#3A342D]">{backup.name}</strong><small className="text-[10px] text-[#9C9388]">{formatBytes(backup.bytes)} · {backup.modifiedAt ? formatDateTime(backup.modifiedAt) : ''} · {backup.encrypted ? t('ops.backup.encrypted') : t('ops.backup.plain')} · {backup.attachmentsIncluded===false ? t('ops.backup.filesNotIncluded'):''}</small></span>
+          <span className="min-w-0 flex-1"><strong className="block break-all text-[11px] text-[#3A342D]">{backup.name}</strong><small className="text-[10px] text-[#9C9388]">{formatBytes(backup.bytes)} · {backup.modifiedAt ? formatDateTime(backup.modifiedAt) : ''} · {backup.encrypted ? t('ops.backup.encrypted') : t('ops.backup.plain')}</small></span>
         </label>)}
       </div> : <p className="mt-2 text-[11px] text-[#9C9388]">{t('ops.backup.noFiles')}</p>}
       <div className="mt-3 rounded-xl border border-[#EED9CC] bg-[#F7E8E1] p-3">

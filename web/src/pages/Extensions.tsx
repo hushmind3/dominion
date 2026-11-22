@@ -1,13 +1,13 @@
-import { DialogBackdrop, DialogPanel } from "../components/Dialog";
-import { SkillsPanel } from "./extensions/SkillsPanel";
-import { t, useLocale } from "../i18n";
+import {DialogBackdrop,DialogPanel} from "../components/Dialog";
+import {SkillsPanel} from "./extensions/SkillsPanel";
+import {t,useLocale} from "../i18n";
 import {
   Button,
   TextInput,
   TextArea,
   SelectInput,
 } from "../components/Primitives";
-import { useEffect, useState } from "react";
+import {useEffect,useState} from "react";
 import {
   Activity,
   ArrowDownToLine,
@@ -36,7 +36,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { del, get, post } from "../api";
+import {del,get,post} from "../api";
 import {
   Action,
   Empty,
@@ -339,31 +339,25 @@ function StatusLine({
 export type ExtensionTab='market'|'installed'|'plugins'|'skills'
 export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;embedded?:boolean}={}) {
   const loc = useLocale();
+  const [localTab, setTab] = useState<ExtensionTab>("market");
+  const tab = section ?? localTab;
   const mcp = useRemote<Mcp[]>("/api/mcp", []),
     skills = useRemote<Skill[]>("/api/skills", []),
-    presets = useRemote<any[]>("/api/mcp/presets", []);
+    presets = useRemote<any[]>(tab === "market" ? "/api/mcp/presets" : null, []);
   const catalogSkills = useRemote<{
     items: any[];
     total: number;
     updatedAt: string;
-  }>("/api/skill-catalog", { items: [], total: 0, updatedAt: "" }, false);
+  }>(tab === "plugins" ? "/api/skill-catalog" : null, { items: [], total: 0, updatedAt: "" }, false);
   const [repo, setRepo] = useState(""),
     [repoBusy, setRepoBusy] = useState(false),
-    [pluginRemote, setPluginRemote] = useState<any[]>([]),
-    [pluginRemoteLoading, setPluginRemoteLoading] = useState(false),
-    [pluginRemoteError, setPluginRemoteError] = useState(''),
-    [pluginSearchReload, setPluginSearchReload] = useState(0);
-  const [localTab, setTab] = useState<ExtensionTab>(
-      "market",
-    ),
-    [query, setQuery] = useState(""),
+    [mcpSaving, setMcpSaving] = useState(false);
+  const [query, setQuery] = useState(""),
     [catalog, setCatalog] = useState<RegistryItem[]>([]),
     [searching, setSearching] = useState(false),
     [installing, setInstalling] = useState(""),
     [error, setError] = useState(""),
     [message, setMessage] = useState("");
-  const tab=section??localTab;
-  const remoteError=tab==='installed'?mcp.error:tab==='skills'?skills.error:tab==='plugins'?catalogSkills.error:tab==='market'?presets.error||mcp.error:'';
   const [skillQuery, setSkillQuery] = useState(""),
     [skillCategory, setSkillCategory] = useState("all");
   const [pluginQuery, setPluginQuery] = useState(""),
@@ -518,19 +512,32 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
     await loadCatalog(query.trim());
   };
   const saveMcp = async () => {
-    if (!edit) return;
+    if (!edit || mcpSaving) return;
+    if (!edit.name?.trim() || (edit.transport === "http"
+      ? !/^https?:\/\//i.test(edit.url?.trim() || "")
+      : !edit.command?.trim())) {
+      setError(loc === "en"
+        ? "Enter a name and a valid HTTP address or command."
+        : "이름과 올바른 HTTP 주소 또는 실행 명령을 입력하세요.");
+      return;
+    }
+    setMcpSaving(true);
+    setError("");
     try {
       await post("/api/mcp", {
         ...edit,
-        args: argText
-          .split("\n")
-          .map((x) => x.trim())
-          .filter(Boolean),
+        name: edit.name.trim(),
+        url: edit.url?.trim(),
+        command: edit.command?.trim(),
+        args: argText.split("\n").map((x) => x.trim()).filter(Boolean),
       });
       setEdit(null);
-      mcp.reload();
+      await mcp.reload();
+      if (tab === "installed") await discover(true);
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setMcpSaving(false);
     }
   };
   const saveSkill = async () => {
@@ -585,31 +592,6 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
       setRepoBusy(false);
     }
   };
-  useEffect(() => {
-    const q = pluginQuery.trim();
-    if (q.length < 2) {
-      setPluginRemote([]);
-      setPluginRemoteError('');
-      setPluginRemoteLoading(false);
-      return;
-    }
-    let alive = true;
-    const timer = setTimeout(() => {
-      setPluginRemoteLoading(true);
-      setPluginRemoteError('');
-      get<any[]>("/api/mcp/catalog?q=" + encodeURIComponent(q))
-        .then((rows) => {
-          if (alive) setPluginRemote(rows || []);
-        })
-        .catch((e) => {
-          if (alive) {setPluginRemote([]);setPluginRemoteError((e as Error).message);}
-        }).finally(() => {if(alive)setPluginRemoteLoading(false);});
-    }, 350);
-    return () => {
-      alive = false;
-      clearTimeout(timer);
-    };
-  }, [pluginQuery,pluginSearchReload]);
   const discover = async (silent = false) => {
     try {
       setTools(await get("/api/mcp/discover"));
@@ -618,15 +600,16 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
       if (!silent) setError((e as Error).message);
     }
   };
+  // Active-tab only: do not run remote MCP discovery from the plugins/skills screens.
   useEffect(() => {
-    void discover(true);
+    if (tab === "installed") void discover(true);
   }, [tab]);
   useEffect(() => {
-    void loadCatalog();
-  }, []);
+    if (tab === "market") void loadCatalog();
+  }, [tab]);
   return (
     <div className={embedded?"min-w-0":"mx-auto w-full max-w-[1320px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8"}>
-      <Headline
+      {!embedded && <Headline
         eyebrow={t('ui.eyebrow.marketplace')}
         title={t('ext.title')}
         description={t('ext.description')}
@@ -647,9 +630,9 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
             <Plus size={17} /> {t('ext.addMcp')}
           </Action>
         }
-      />
-      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] px-4 py-3 text-[11px] text-[#5C544A]">
-        <StatusLine label={t('ext.tab.servers')} value={mcp.loading||mcp.error?'—':mcp.value.length} />
+      />}
+      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-divider bg-[#FAF7F1] px-4 py-3 text-[11px] text-[#5C544A]">
+        <StatusLine label={t('ext.tab.servers')} value={mcp.value.length} />
         <StatusLine
           label={t('ext.tab.tools')}
           value={tools.filter((t) => !t.error).length}
@@ -657,11 +640,13 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
         <StatusLine
           label={t('ext.tab.skills')}
           value={
-            skills.loading||skills.error?'—':skills.value.filter((s) => s.enabled).length + "/" + skills.value.length
+            skills.value.filter((s) => s.enabled).length +
+            "/" +
+            skills.value.length
           }
         />
       </div>
-      {!embedded&&<div className="mb-6 flex flex-wrap items-center gap-2 border-b border-[#E7E0D5] pb-3">
+      {!embedded&&<div className="mb-6 flex flex-wrap items-center gap-2 border-b border-divider pb-3">
         <Button
           variant={tab === "market" ? "primary" : "ghost"}
           onClick={() => setTab("market")}
@@ -678,7 +663,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
           variant={tab === "installed" ? "primary" : "ghost"}
           onClick={() => setTab("installed")}
         >
-          {t('ext.tab.installed')} <b>{mcp.loading||mcp.error?'—':mcp.value.length}</b>
+          {t('ext.tab.installed')} <b>{mcp.value.length}</b>
         </Button>
         <Button
           variant={tab === "skills" ? "primary" : "ghost"}
@@ -686,11 +671,11 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
         >
           <BookOpenText size={17} /> {t('ext.tab.skills')}{" "}
           <b>
-            {skills.loading||skills.error?'—':`${skills.value.filter((s) => s.enabled).length}/${skills.value.length}`}
+            {skills.value.filter((s) => s.enabled).length}/{skills.value.length}
           </b>
         </Button>
       </div>}
-      {(error||remoteError) && <Notice message={error||remoteError} />}
+      <Notice message={error||mcp.error||skills.error||presets.error||catalogSkills.error} retrying={mcp.refreshing||skills.refreshing||presets.refreshing||catalogSkills.refreshing} onRetry={()=>{void Promise.all([mcp.reload(),skills.reload(),presets.reload(),catalogSkills.reload()]);if(tab==='market')void loadCatalog();if(tab==='installed')void discover(true)}}/>
       {message && (
         <div className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
           <Check size={16} />
@@ -719,7 +704,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
             />
           </div>
           <Panel className="min-w-0 p-5">
-            <div className="flex min-w-0 items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] px-3 py-2">
+            <div className="flex min-w-0 items-center gap-2 rounded-xl border border-divider bg-surface px-3 py-2">
               <Search size={18} />
               <TextInput
                 value={query}
@@ -731,37 +716,26 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                 {searching ? t('ext.searching') : t('ext.search')}
               </Action>
             </div>
-            <div className="rounded-xl bg-[#FAF7F1] p-3 text-xs leading-5 text-[#7C7469]">
+            <div className="rounded-xl bg-[#FAF7F1] p-3 text-xs leading-5 text-muted">
               {t('ext.registryNote')}
             </div>
             <div className="registry-results">
               {catalog.map((x) => (
                 <div
-                  className="flex min-w-0 items-start gap-3 rounded-xl border border-[#E7E0D5] bg-white p-4 hover:border-[#E6C9B8]"
+                  className="flex min-w-0 flex-wrap items-start gap-3 rounded-xl border border-divider bg-white p-4 hover:border-[#E6C9B8]"
                   key={x.name}
                 >
-                  <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-[#F7E8E1] text-[#C96442]">
+                  <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-[#F7E8E1] text-brand">
                     <Server size={19} />
                   </span>
-                  <div>
-                    <strong>{x.name}</strong>
-                    <p>{x.description || "MCP server"}</p>
-                    <small>{x.packageName || x.url || t('ext.noInstallInfo')}</small>
+                  <div className="min-w-0 flex-1">
+                    <strong className="block break-words text-sm">{x.name}</strong>
+                    <p className="mt-1 break-words text-xs leading-5 text-muted">{x.description || "MCP server"}</p>
+                    <small className="mt-1 block break-all text-[11px] text-[#8A8176]">{x.packageName || x.url || t('ext.noInstallInfo')}</small>
                   </div>
                   {(x.packageName || x.url) &&
                     (mcp.value.some((r: any) => r.name === x.name) ? (
-                      <Button
-                        variant="secondary"
-                        className="shrink-0 whitespace-nowrap"
-                        onClick={async () => {
-                          const rec = mcp.value.find((r: any) => r.name === x.name);
-                          if (!rec) return;
-                          await del("/api/mcp/" + rec.id);
-                          await mcp.reload();
-                        }}
-                      >
-                        {t('ext.cancel')}
-                      </Button>
+                      <StateTag online>{t('ext.registeredCheck')}</StateTag>
                     ) : (
                       <Button
                         variant="secondary"
@@ -780,7 +754,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                     ))}
                 </div>
               ))}
-              {!catalog.length && (
+              {!catalog.length && !searching && (
                 <Empty
                   icon={Compass}
                   title={t('ext.emptySearch')}
@@ -789,221 +763,11 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
               )}
             </div>
           </Panel>
-        </>
-      )}
-      {tab === "plugins" && (
-        <>
-          <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <h3 className="m-0 text-[15px] font-bold text-[#24211D]">
-                {t('ext.pluginSkillsTitle')}
-              </h3>
-              <p className="mt-1 text-[11px] text-[#8A8176]">
-                {t('ext.pluginSkillsDesc')}{" "}
-                {t('ext.foundCount', { count: catalogSkills.value.total })} ·{" "}
-                {catalogSkills.value.updatedAt
-                  ? new Date(catalogSkills.value.updatedAt).toLocaleTimeString(loc === 'en' ? 'en-US' : 'ko-KR')
-                  : t('ext.reading')}
-              </p>
-            </div>
-            <Button
-              variant="secondary"
-              onClick={() => void catalogSkills.reload()}
-            >
-              <RefreshCw size={14} /> {t('ext.refresh')}
-            </Button>
-          </div>
-          <div className="mb-3 flex flex-wrap items-center gap-1.5">
-            {catalogSources.map((source) => (
-              <Button
-                key={source}
-                variant={catalogSource === source ? "primary" : "ghost"}
-                onClick={() => setCatalogSource(source)}
-                className="!px-3 !py-1.5 !text-[12px]"
-              >
-                {source === "all" ? t('ext.allSources') : source}
-              </Button>
-            ))}
-          </div>
-          <div className="mb-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_220px]">
-            <div className="flex items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] px-3 py-2">
-              <Search size={17} className="text-[#A79C8E]" />
-              <TextInput
-                value={catalogQuery}
-                onChange={(e) => setCatalogQuery(e.target.value)}
-                placeholder={t('ext.pluginSearch')}
-              />
-            </div>
-            <SelectInput
-              value={catalogCategory}
-              onChange={(e) => setCatalogCategory(e.target.value)}
-            >
-              <option value="all">{t('ext.allCategories')}</option>
-              {catalogCategories
-                .filter((category) => category !== "all")
-                .map((category) => (
-                  <option key={category} value={category}>
-                    {category}
-                  </option>
-                ))}
-            </SelectInput>
-          </div>
-          <div className="mb-3 max-h-[440px] overflow-y-auto rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9]">
-            {visibleCatalog.map((item) => {
-              const installed = skills.value.some(
-                (skill) => skill.name === item.name,
-              );
-              return (
-                <div
-                  key={item.id}
-                  className="flex flex-wrap items-center justify-between gap-3 border-b border-[#EFE9DF] px-4 py-3 last:border-0"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <strong className="text-[12px] text-[#3A342D]">
-                        {item.name}
-                      </strong>
-                      <span className="rounded bg-[#F3EEE5] px-1.5 py-0.5 text-[10px] font-semibold text-[#7C7469]">
-                        {item.source}
-                      </span>
-                      <span className="text-[10px] text-[#A79C8E]">
-                        {item.category}
-                      </span>
-                    </div>
-                    <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-[#7C7469]">
-                      {item.description}
-                    </p>
-                    {!item.available && (
-                      <small className="mt-1 block text-[10px] text-amber-700">
-                        {t('ext.requiresBinary', { list: (item.requires || []).join(', ') })}
-                      </small>
-                    )}
-                  </div>
-                  <div className="shrink-0">
-                    {installed ? (
-                      <Button
-                        variant="secondary"
-                        className="shrink-0 whitespace-nowrap"
-                        onClick={async () => {
-                          const target = skills.value.find(
-                            (x) => x.name === item.name,
-                          );
-                          if (!target) return;
-                          try {
-                            await del("/api/skills/" + target.id);
-                            await skills.reload();
-                            setMessage(t('ext.cancelled', { name: item.name }));
-                          } catch (e) {
-                            setError((e as Error).message);
-                          }
-                        }}
-                      >
-                        {t('ext.cancel')}
-                      </Button>
-                    ) : !item.available ? (
-                      <span className="rounded-md bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-700">
-                        {t('ext.requiredTool')}
-                      </span>
-                    ) : (
-                      <Button
-                        variant="secondary"
-                        disabled={importing === item.id}
-                        onClick={() => void importCatalogSkill(item)}
-                      >
-                        {importing === item.id ? t('ext.installing') : t('ext.install')}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-            {!visibleCatalog.length && (catalogSkills.loading?<p className="p-5 text-center text-[12px] text-[#8A8176]">{t('ext.reading')}</p>:catalogSkills.error?<p role="status" className="p-5 text-center text-[12px] text-[#8A8176]">{t('ext.catalogUnavailable')}</p>:(
-              <Empty
-                icon={BookOpenText}
-                title={t('ext.catalogEmpty')}
-                description={t('ext.catalogHint')}
-              />
-            ))}
-          </div>
-          <div className="mb-6 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#8A8176]">
-            <span>
-              {t('ext.showing', { visible: visibleCatalog.length, total: filteredCatalog.length })}
-            </span>
-            {visibleCatalog.length < filteredCatalog.length && (
-              <Button
-                variant="secondary"
-                onClick={() => setCatalogLimit((limit) => limit + 30)}
-              >
-                {t('ext.more')}
-              </Button>
-            )}
-          </div>
-          <div className="mb-4">
-            <Subheading
-              title={t('ext.pluginResults')}
-              extra={
-                <span className="text-[11px] text-[#8A8176]">
-                  {pluginRemoteLoading||pluginRemoteError?'—':t('ext.count', { count: pluginRemote.length })}
-                </span>
-              }
-            />
-            {pluginRemoteLoading ? (
-              <p role="status" className="mt-2 text-[11px] text-[#8A8176]">{t('ext.pluginLoading')}</p>
-            ) : pluginRemoteError ? (
-              <div role="alert" className="mt-2 flex items-center justify-between gap-3 text-[11px] text-rose-700"><span>{t('ext.pluginUnavailable')}</span><Button variant="bare" type="button" className="underline" onClick={()=>setPluginSearchReload(value=>value+1)}>{t('ext.pluginRetry')}</Button></div>
-            ) : pluginRemote.length ? (
-              <div className="mt-2 grid gap-2">
-                {pluginRemote.map((x: any) => (
-                  <div
-                    key={x.name}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#E7E0D5] bg-white p-3"
-                  >
-                    <div className="min-w-0">
-                      <strong className="block truncate text-[12px] text-[#3A342D]">
-                        {x.name}
-                      </strong>
-                      <small className="text-[10px] text-[#8A8176]">
-                        {(x.description || "").slice(0, 90)}
-                      </small>
-                    </div>
-                    {mcp.value.some((r: any) => r.name === x.name) ? (
-                      <Button
-                        variant="secondary"
-                        className="shrink-0 whitespace-nowrap"
-                        onClick={async () => {
-                          const rec = mcp.value.find((r: any) => r.name === x.name);
-                          if (!rec) return;
-                          await del("/api/mcp/" + rec.id);
-                          await mcp.reload();
-                        }}
-                      >
-                        {t('ext.cancel')}
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="secondary"
-                        onClick={() =>
-                          void install({
-                            name: x.name,
-                            transport: x.packageName ? "stdio" : "http",
-                            command: "npx",
-                            args: x.packageName ? ["-y", x.packageName] : [],
-                            endpoint: x.url,
-                          })
-                        }
-                      >
-                        {t('ext.install')}
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="mt-2 text-[11px] text-[#8A8176]">
-                {pluginQuery.trim().length<2?t('ext.remoteHint'):t('ext.pluginNoResults')}
-              </p>
-            )}
-          </div>
+          <details className="mt-5 rounded-xl border border-divider bg-surface">
+            <summary className="cursor-pointer px-4 py-3 text-[13px] font-semibold text-[#3A342D]">
+              {loc==='en'?'Browse curated MCP server examples':'추천 MCP 서버 보기'} · {presets.value.length+featured.length}
+            </summary>
+            <div className="border-t border-divider p-4">
           <div className="mb-4 flex flex-wrap items-center gap-1.5">
             {pluginCategories.map((category) => (
               <Button
@@ -1016,7 +780,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
               </Button>
             ))}
           </div>
-          <div className="mb-5 flex items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] px-3 py-2">
+          <div className="mb-5 flex items-center gap-2 rounded-xl border border-divider bg-surface px-3 py-2">
             <Search size={17} className="text-[#A79C8E]" />
             <TextInput
               value={pluginQuery}
@@ -1025,7 +789,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
             />
           </div>
           <Subheading
-            title={t('ext.recommendedPlugins')}
+            title={loc==='en'?'Recommended MCP servers':'추천 MCP 서버'}
             extra={
               <span className="text-[11px] text-[#8A8176]">
                 {t('ext.count', { count: filteredPresets.length })}
@@ -1044,7 +808,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                   className="flex min-w-0 flex-col gap-3 p-5"
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]">
+                    <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-brand">
                       <PackagePlus size={21} />
                     </div>
                     <StateTag online={Boolean(record)}>
@@ -1096,10 +860,10 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
             })}
           </div>
           <Subheading
-            title={t('ext.recommendedTools')}
+            title={loc==='en'?'Featured MCP connections':'주요 MCP 연결'}
             extra={
               <span className="text-[10px] font-bold uppercase tracking-widest text-[#9C9388]">
-                VERIFIED SOURCES
+                CURATED EXAMPLES
               </span>
             }
           />
@@ -1112,7 +876,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
               ).length;
               return (
                 <Panel key={x.name} className="flex min-w-0 flex-col gap-3 p-5">
-                  <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]">
+                  <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-brand">
                     <Icon size={24} />
                   </div>
                   <h3>{x.name}</h3>
@@ -1151,6 +915,158 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
               );
             })}
           </div>
+
+            </div>
+          </details>
+        </>
+      )}
+      {tab === "plugins" && (
+        <>
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h3 className="m-0 text-[15px] font-bold text-ink">
+                {t('ext.pluginSkillsTitle')}
+              </h3>
+              <p className="mt-1 text-[11px] text-[#8A8176]">
+                {t('ext.pluginSkillsDesc')}{" "}
+                {t('ext.foundCount', { count: catalogSkills.value.total })} ·{" "}
+                {catalogSkills.value.updatedAt
+                  ? new Date(catalogSkills.value.updatedAt).toLocaleTimeString(loc === 'en' ? 'en-US' : 'ko-KR')
+                  : t('ext.reading')}
+              </p>
+            </div>
+            <Button
+              variant="secondary"
+              onClick={() => void catalogSkills.reload()}
+            >
+              <RefreshCw size={14} /> {t('ext.refresh')}
+            </Button>
+          </div>
+          <div className="mb-3 flex flex-wrap items-center gap-1.5">
+            {catalogSources.map((source) => (
+              <Button
+                key={source}
+                variant={catalogSource === source ? "primary" : "ghost"}
+                onClick={() => setCatalogSource(source)}
+                className="!px-3 !py-1.5 !text-[12px]"
+              >
+                {source === "all" ? t('ext.allSources') : source}
+              </Button>
+            ))}
+          </div>
+          <div className="mb-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_220px]">
+            <div className="flex items-center gap-2 rounded-xl border border-divider bg-surface px-3 py-2">
+              <Search size={17} className="text-[#A79C8E]" />
+              <TextInput
+                value={catalogQuery}
+                onChange={(e) => setCatalogQuery(e.target.value)}
+                placeholder={t('ext.pluginSearch')}
+              />
+            </div>
+            <SelectInput
+              value={catalogCategory}
+              onChange={(e) => setCatalogCategory(e.target.value)}
+            >
+              <option value="all">{t('ext.allCategories')}</option>
+              {catalogCategories
+                .filter((category) => category !== "all")
+                .map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+            </SelectInput>
+          </div>
+          <div className="mb-3 max-h-[440px] overflow-y-auto rounded-2xl border border-divider bg-surface">
+            {visibleCatalog.map((item) => {
+              const installed = skills.value.some(
+                (skill) => skill.name === item.name,
+              );
+              return (
+                <div
+                  key={item.id}
+                  className="flex flex-wrap items-center justify-between gap-3 border-b border-[#EFE9DF] px-4 py-3 last:border-0"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <strong className="text-[12px] text-[#3A342D]">
+                        {item.name}
+                      </strong>
+                      <span className="rounded bg-[#F3EEE5] px-1.5 py-0.5 text-[10px] font-semibold text-muted">
+                        {item.source}
+                      </span>
+                      <span className="text-[10px] text-[#A79C8E]">
+                        {item.category}
+                      </span>
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-muted">
+                      {item.description}
+                    </p>
+                    {!item.available && (
+                      <small className="mt-1 block text-[10px] text-amber-700">
+                        {t('ext.requiresBinary', { list: (item.requires || []).join(', ') })}
+                      </small>
+                    )}
+                  </div>
+                  <div className="shrink-0">
+                    {installed ? (
+                      <Button
+                        variant="secondary"
+                        className="shrink-0 whitespace-nowrap"
+                        onClick={async () => {
+                          const target = skills.value.find(
+                            (x) => x.name === item.name,
+                          );
+                          if (!target) return;
+                          try {
+                            await del("/api/skills/" + target.id);
+                            await skills.reload();
+                            setMessage(t('ext.cancelled', { name: item.name }));
+                          } catch (e) {
+                            setError((e as Error).message);
+                          }
+                        }}
+                      >
+                        {t('ext.cancel')}
+                      </Button>
+                    ) : !item.available ? (
+                      <span className="rounded-md bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-700">
+                        {t('ext.requiredTool')}
+                      </span>
+                    ) : (
+                      <Button
+                        variant="secondary"
+                        disabled={importing === item.id}
+                        onClick={() => void importCatalogSkill(item)}
+                      >
+                        {importing === item.id ? t('ext.installing') : t('ext.install')}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            {!visibleCatalog.length && (
+              <Empty
+                icon={BookOpenText}
+                title={t('ext.catalogEmpty')}
+                description={t('ext.catalogHint')}
+              />
+            )}
+          </div>
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-2 text-[11px] text-[#8A8176]">
+            <span>
+              {t('ext.showing', { visible: visibleCatalog.length, total: filteredCatalog.length })}
+            </span>
+            {visibleCatalog.length < filteredCatalog.length && (
+              <Button
+                variant="secondary"
+                onClick={() => setCatalogLimit((limit) => limit + 30)}
+              >
+                {t('ext.more')}
+              </Button>
+            )}
+          </div>
         </>
       )}
       {tab === "installed" && (
@@ -1158,38 +1074,46 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
           <Subheading
             title={t('ext.connectedServers')}
             extra={
-              <Action variant="secondary" onClick={discover}>
-                <Activity size={16} /> {t('ext.toolSearch')}
-              </Action>
+              <div className="flex flex-wrap gap-2">
+                <Action variant="secondary" onClick={() => {
+                  setEdit({name: "", transport: "stdio", command: "npx", url: "", enabled: true});
+                  setArgText("");
+                }}><Plus size={16}/>{t('ext.addMcp')}</Action>
+                <Action variant="secondary" onClick={() => void discover()}>
+                  <Activity size={16}/>{t('ext.toolSearch')}
+                </Action>
+              </div>
             }
           />
           <div className="flex min-w-0 flex-col gap-3">
             {mcp.value.map((x) => (
               <Panel
                 key={x.id}
-                className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E7E0D5] p-4"
+                className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-xl border border-divider p-4"
               >
-                <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]">
+                <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-brand">
                   <Blocks size={21} />
                 </div>
-                <div>
-                  <strong>{x.name}</strong>
-                  <p>
-                    {x.transport === "stdio"
-                      ? x.command + " " + (x.args || []).join(" ")
-                      : x.url}
+                <div className="min-w-0 flex-1">
+                  <strong className="block break-words text-sm">{x.name}</strong>
+                  <p className="mt-1 break-all text-xs leading-5 text-muted">
+                    {x.transport === "stdio" ? x.command + " " + (x.args || []).join(" ") : x.url}
                   </p>
+                  <small className="mt-1 block text-[11px] text-[#8A8176]">
+                    {x.transport.toUpperCase()} · {x.enabled ? t('conn.enable') : t('conn.status.disabled')}
+                  </small>
                 </div>
                 <StateTag
-                  online={Boolean(
+                  online={x.enabled && Boolean(
                     tools.find((t) => t.mcpId === x.id && !t.error),
                   )}
                 >
                   {(() => {
                     const own = tools.filter((t) => t.mcpId === x.id);
                     const ok = own.filter((t) => !t.error).length;
-                    if (ok) return t('ext.connectedTools', { count: ok });
+                    if (!x.enabled) return t('conn.status.disabled');
                     if (own.some((t) => t.error)) return t('ext.connectionFailed');
+                    if (ok) return t('ext.connectedTools', { count: ok });
                     return tools.length ? t('ext.checkConnection') : t('ext.checking');
                   })()}
                 </StateTag>
@@ -1197,6 +1121,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                   size="icon"
                   variant="ghost"
                   title={t('ext.settings')}
+                  aria-label={t('ext.settings') + ' ' + x.name}
                   onClick={() => {
                     setEdit(x);
                     setArgText((x.args || []).join("\n"));
@@ -1208,10 +1133,18 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                   size="icon"
                   variant="ghost"
                   title={t('ext.remove')}
+                  aria-label={t('ext.remove') + ' ' + x.name}
                   onClick={async () => {
                     if (confirm(t('ext.confirmRemove'))) {
-                      await del("/api/mcp/" + x.id);
-                      mcp.reload();
+                      try {
+                        setError("");
+                        await del("/api/mcp/" + x.id);
+                        await mcp.reload();
+                        setTools(previous => previous.filter(tool => tool.mcpId !== x.id));
+                        setMessage(t('ext.cancelled', {name: x.name}));
+                      } catch (e) {
+                        setError((e as Error).message);
+                      }
                     }
                   }}
                 >
@@ -1219,7 +1152,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                 </Button>
               </Panel>
             ))}
-            {!mcp.value.length && (mcp.loading?<p className="p-5 text-center text-[12px] text-[#8A8176]">{t('ext.serversLoading')}</p>:mcp.error?<p role="status" className="p-5 text-center text-[12px] text-[#8A8176]">{t('ext.serversUnavailable')}</p>:(
+            {!mcp.value.length && (
               <Panel>
                 <Empty
                   icon={Blocks}
@@ -1227,7 +1160,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                   description={t('ext.noServersDesc')}
                 />
               </Panel>
-            ))}
+            )}
           </div>
           {tools.length > 0 && (
             <Panel className="grid gap-3">
@@ -1238,7 +1171,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
               {tools.map((t) => (
                 <div
                   key={t.name + t.mcpId}
-                  className="overflow-auto rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-4 text-xs leading-6"
+                  className="overflow-auto rounded-xl border border-divider bg-[#FAF7F1] p-4 text-xs leading-6"
                 >
                   <Code2 size={16} />
                   <strong>{t.name}</strong>
@@ -1334,7 +1267,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
               <Action variant="secondary" onClick={() => setEdit(null)}>
                 {t('ext.cancel')}
               </Action>
-              <Action onClick={saveMcp}>
+              <Action onClick={saveMcp} disabled={mcpSaving || !edit.name?.trim()}>
                 <Check size={16} /> {t('ext.save')}
               </Action>
             </div>

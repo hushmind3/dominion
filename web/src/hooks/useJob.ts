@@ -1,5 +1,5 @@
 import {useEffect} from 'react'
-import {useRemote} from '../components/UI'
+import {useRemote} from './useRemote'
 
 export type JobState = {id: string; status: string; error?: string}
 export const jobFinished = (status?: string) =>

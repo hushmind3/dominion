@@ -8,6 +8,7 @@ type Row={key:string;title:string;subtitle?:string;tags:string[];facts:[string,s
 const sources=[
  {label:'경험',endpoint:'/api/experience'},
  {label:'개선안',endpoint:'/api/improvements'},
+ {label:'알고리즘',endpoint:'/api/algorithms'},
 ] as const
 const str=(value:any)=>typeof value==='string'?value:typeof value==='number'?String(value):''
 const count=(value:any)=>typeof value==='number'?value:undefined
@@ -61,10 +62,35 @@ const improvement=(rec:Rec,index:number):Row=>({
  ]),
  raw:rec,
 })
+const algorithm=(rec:Rec,index:number,kind:Rec):Row=>{
+ const stats:Rec=rec.stats??{}
+ const adopted=kind.active?.id&&kind.active.id===rec.id
+ return {
+  key:str(rec.id)||`algorithm-${index}`,
+  title:str(rec.name)||str(rec.variant)||str(rec.id)||'알고리즘',
+  subtitle:str(kind.label)||str(rec.kind),
+  tags:[adopted?'채택됨':str(rec.status),str(rec.source),str(rec.implementation)].filter(Boolean),
+  facts:facts([
+   ['종류',str(rec.kind)],
+   ['구현',str(rec.implementation)],
+   ['성공률',rate(stats.successes,stats.uses)],
+   ['실패',count(stats.failures)!==undefined?`${count(stats.failures)}회`:''],
+   ['관측 에이전트',count(stats.agents)!==undefined?`${count(stats.agents)}명`:''],
+   ['최근 사용',when(stats.lastUsedAt)],
+   ['파라미터',rec.parameters?JSON.stringify(rec.parameters):''],
+  ]),
+  raw:{...rec,kindLabel:kind.label,adopted},
+ }
+}
 const normalize=(source:number,data:any):Row[]=>{
  if(!data)return []
- const records:Rec[]=Array.isArray(data)?data:Array.isArray(data.items)?data.items:[]
- return records.map((rec,index)=>source===0?experience(rec,index):improvement(rec,index))
+ if(source===2){
+  const kinds:Rec[]=Array.isArray(data.kinds)?data.kinds:[]
+  return kinds.flatMap((kind,kindIndex)=>(Array.isArray(kind.algorithms)?kind.algorithms:[]).map((rec:Rec,index:number)=>algorithm(rec,kindIndex*1000+index,kind)))
+ }
+ const records:Rec[]=Array.isArray(data)?data:Array.isArray(data.items)?data.items:null
+ if(!records)return [fallback(data,0)]
+ return records.map((rec,index)=>source===0?experience(rec,index):source===1?improvement(rec,index):fallback(rec,index))
 }
 
 export function LearningRecords(){
@@ -76,8 +102,8 @@ export function LearningRecords(){
   <div className="flex flex-wrap gap-2">{sources.map((item,i)=><Button key={item.label} variant={source===i?'primary':'ghost'} onClick={()=>{setSource(i);setLimit(20)}}>{item.label}</Button>)}</div>
   <Notice message={data.error}/>
   {data.loading?<p>기록을 불러오는 중…</p>:!data.error&&!rows.length?<p>저장된 기록이 없습니다.</p>:rows.slice(0,limit).map(row=><details key={row.key} className="rounded-lg border border-[#EFE9DF] p-2">
-   <summary className="cursor-pointer text-sm"><strong>{row.title}</strong>{row.subtitle&&<span className="text-[#7C7469]"> · {row.subtitle}</span>}{row.tags.map(tag=><span key={tag} className="ml-2 rounded bg-[#F7E8E1] px-1.5 py-0.5 text-[10px] font-semibold text-[#A94E30]">{tag}</span>)}</summary>
-   {row.facts.length>0&&<dl className="mt-2 grid grid-cols-1 gap-1 text-xs sm:grid-cols-[9rem_minmax(0,1fr)]">{row.facts.map(([label,value])=><div key={label} className="contents"><dt className="font-semibold text-[#7C7469]">{label}</dt><dd className="break-all text-[#4A443C]">{value}</dd></div>)}</dl>}
+   <summary className="cursor-pointer text-sm"><strong>{row.title}</strong>{row.subtitle&&<span className="text-muted"> · {row.subtitle}</span>}{row.tags.map(tag=><span key={tag} className="ml-2 rounded bg-[#F7E8E1] px-1.5 py-0.5 text-[10px] font-semibold text-brand-hover">{tag}</span>)}</summary>
+   {row.facts.length>0&&<dl className="mt-2 grid grid-cols-1 gap-1 text-xs sm:grid-cols-[9rem_minmax(0,1fr)]">{row.facts.map(([label,value])=><div key={label} className="contents"><dt className="font-semibold text-muted">{label}</dt><dd className="break-all text-[#4A443C]">{value}</dd></div>)}</dl>}
    <details className="mt-2 text-xs text-[#5C544A]"><summary className="cursor-pointer">원본 JSON</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(row.raw,null,2)}</pre></details>
   </details>)}
   {rows.length>limit&&<Button variant="secondary" onClick={()=>setLimit(n=>n+20)}>더 보기</Button>}

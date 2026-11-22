@@ -42,52 +42,26 @@ test('merge collapses rapid SSE bursts while unknown events do not cause full re
  assert.deepEqual(classifyRefreshEvent({type:'unrecognized'}).targets,[])
 })
 
-test('versioned durable run state feeds existing UI surfaces without an extra menu',()=>{
- const job=classifyRefreshEvent({type:'run_state',runKind:'job',runId:'job-1',eventSeq:17,schemaVersion:1})
- assert.ok(matchesRefreshTarget('/api/jobs/job-1',job.targets))
- assert.equal(matchesRefreshTarget('/api/providers',job.targets),false)
- const execution=classifyRefreshEvent({type:'run_state',runKind:'execution',runId:'ex-1',eventSeq:18,schemaVersion:1})
- assert.ok(matchesRefreshTarget('/api/executions',execution.targets))
- assert.equal(matchesRefreshTarget('/api/jobs',execution.targets),false)
- const room=classifyRefreshEvent({type:'run_state',runKind:'room_work_assignment',runId:'a',eventSeq:19,schemaVersion:1})
- assert.ok(matchesRefreshTarget('/api/rooms',room.targets))
- const old=classifyRefreshEvent({type:'run_state',runKind:'job',runId:'old',eventSeq:17,schemaVersion:0})
- assert.deepEqual(old.targets,[])
+test('permission and extension policy events refresh only their owner controls',()=>{
+ const permission=classifyRefreshEvent({type:'record',kind:'policy',record:{id:'default'}})
+ assert.deepEqual(permission.targets,['/api/policy'])
+ assert.equal(matchesRefreshTarget('/api/policy',permission.targets),true)
+ assert.equal(matchesRefreshTarget('/api/extensions/runtime',permission.targets),false)
+ const extension=classifyRefreshEvent({type:'record',kind:'extension_policy',record:{id:'default'}})
+ assert.ok(matchesRefreshTarget('/api/extensions/runtime',extension.targets))
+ assert.ok(matchesRefreshTarget('/api/tools',extension.targets))
+ assert.equal(matchesRefreshTarget('/api/policy',extension.targets),false)
 })
 
-test('durable Task Team worker updates the existing execution surface',()=>{
- const work=classifyRefreshEvent({type:'run_state',schemaVersion:1,eventSeq:42,
-   runKind:'task_team_work',runId:'worker-1'})
- assert.ok(matchesRefreshTarget('/api/executions',work.targets))
- assert.equal(matchesRefreshTarget('/api/providers',work.targets),false)
- const row=classifyRefreshEvent({type:'record',kind:'task_team_work',
-   record:{id:'worker-1',executionId:'exec-1'}})
- assert.ok(matchesRefreshTarget('/api/executions',row.targets))
-})
-
-test('managed Team and remote Worker receipts refresh only the existing activity panel',()=>{
- for(const kind of ['managed_team','managed_team_task','remote_task','remote_worker']){
-  const changed=classifyRefreshEvent({type:'record',kind,record:{id:'r-1'}})
-  assert.ok(matchesRefreshTarget('/api/activity/teams',changed.targets),kind)
-  assert.equal(matchesRefreshTarget('/api/providers',changed.targets),false)
- }
- const typed=classifyRefreshEvent({type:'run_state',runKind:'remote_task',
-  schemaVersion:1,eventSeq:49,runId:'rt-1'})
- assert.ok(matchesRefreshTarget('/api/activity/teams',typed.targets))
- assert.equal(matchesRefreshTarget('/api/jobs',typed.targets),false)
-})
-
-test('expired event replay forces a single full resync, including active Rooms',()=>{
- const normal=classifyRefreshEvent({type:'message',message:{session_id:'s1'}})
- const gap=classifyRefreshEvent({type:'event_gap',seq:1999,resyncRequired:true})
- assert.equal(gap.resync,true)
- assert.equal(matchesRefreshTarget('/api/sessions/s2/messages',gap.targets),true)
- assert.equal(matchesRefreshTarget('/api/providers',gap.targets),true)
- assert.equal(matchesRoomRefresh(gap,'any-room','other-session'),true)
- const merged=mergeRefreshScopes(mergeRefreshScopes(emptyRefreshScope(),normal),gap)
- assert.deepEqual(merged.targets,['*'])
- assert.equal(merged.resync,true)
- assert.equal(matchesRoomRefresh(merged,'another-room'),true)
- assert.deepEqual(classifyRefreshEvent({type:'event_gap',resyncRequired:false}).targets,[])
- assert.deepEqual(classifyRefreshEvent({type:'future_event_type'}).targets,[])
+test('worker changes refresh only their own Team detail snapshot',()=>{
+ const changed=classifyRefreshEvent({type:'record',kind:'job',record:{
+  id:'worker-1',kind:'prompt',input:{parentSessionId:'owner',teamJobId:'team:alpha'}
+ }})
+ assert.ok(matchesRefreshTarget('/api/jobs/team%3Aalpha/team-steps',changed.targets))
+ assert.equal(matchesRefreshTarget('/api/jobs/team%3Abeta/team-steps',changed.targets),false)
+ assert.ok(matchesRefreshTarget('/api/jobs?sessionId=owner',changed.targets))
+ const root=classifyRefreshEvent({type:'record',kind:'job',record:{
+  id:'team:alpha',kind:'team',input:{sessionId:'owner'}
+ }})
+ assert.ok(matchesRefreshTarget('/api/jobs/team%3Aalpha/team-steps',root.targets))
 })
