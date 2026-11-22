@@ -319,11 +319,25 @@ fn duplicate_client_turn_id_cannot_repeat_a_real_agent_file_write() {
     assert!(first.contains("assistant_saved"),"{first}");
     assert_eq!(std::fs::read_to_string(app._root.join("single-write.txt")).unwrap(),"created-once");
     let calls_before=requests.lock().unwrap().len();
-    assert!(calls_before>=2);
+    assert!(calls_before>=1,"file writes must originate from a real model request");
+    // One verified native write receipt, regardless of whether the model
+    // requires a second explanatory round after applying the tool.
+    let executions_before=app.get("/api/executions");
+    let run_id=executions_before.as_array().unwrap().iter()
+        .find(|run|run["sessionId"]==id)
+        .and_then(|run|run["id"].as_str())
+        .expect("a native execution for the owner session").to_string();
+    let operations_before=app.get(&format!("/api/executions/{run_id}/operations"));
+    let writes=operations_before.as_array().unwrap().iter()
+        .filter(|op|op["tool"]=="workspace_write").collect::<Vec<_>>();
+    assert_eq!(writes.len(),1,"one durable workspace-write effect");
+    assert_eq!(writes[0]["status"],"completed");
     let duplicate=app.chat(&body);
     assert!(duplicate.contains("동일한 요청이 이미 저장되었습니다"),"{duplicate}");
     assert!(!duplicate.contains("assistant_saved"),"{duplicate}");
     assert_eq!(requests.lock().unwrap().len(),calls_before);
+    assert_eq!(app.get("/api/executions"),executions_before);
+    assert_eq!(app.get(&format!("/api/executions/{run_id}/operations")),operations_before);
     assert_eq!(std::fs::read_to_string(app._root.join("single-write.txt")).unwrap(),"created-once");
 }
 
