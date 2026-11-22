@@ -20,6 +20,37 @@ fn continuation_query(query:&str)->bool{
       .iter().any(|word|q.contains(word))
 }
 
+
+    /// Only an explicit *work continuation* can revive an older owner goal.
+    /// A question about "next week" or "that result" must not silently
+    /// inherit authority from an unrelated previous tool task.
+    pub(super) fn explicit_work_continuation(query:&str)->bool{
+        let q=query.trim().to_lowercase();
+        if q.is_empty() || q.chars().count()>80{return false;}
+        let english=q.trim_end_matches(|c:char|matches!(c,'.'|'!'|'?'|' '));
+        if ["continue","resume","next","next step","next task",
+            "go on","keep going","same task"].contains(&english)
+            ||english.starts_with("continue ")
+            ||english.starts_with("resume ")
+            ||english.starts_with("please continue")
+            ||english.starts_with("please resume")
+            ||english.starts_with("keep going ")
+            ||english.ends_with(" continue")
+            ||english.ends_with(" resume"){
+            return true;
+        }
+        let compact=q.chars().filter(|c|c.is_alphanumeric()).collect::<String>();
+        if ["이어서","계속","마저","다음","다음단계","다음작업"].contains(&compact.as_str()){
+            return true;
+        }
+        let command=["해","해줘","해라","해주세요","하세요",
+            "진행","진행해","진행해주세요","진행하자",
+            "작업해","개발해","수정해","마무리해","이어가","이어가줘"]
+            .iter().any(|ending|compact.ends_with(ending));
+        command && (["이어서","계속","마저"].iter().any(|word|compact.contains(word))
+            ||compact.contains("다음단계") ||compact.contains("다음작업"))
+    }
+
 fn owner_terms(text:&str)->Vec<String>{
     text.to_lowercase()
         .split(|c:char|!(c.is_alphanumeric()||matches!(c,'가'..='힣')))
@@ -145,7 +176,7 @@ pub(super) fn requires_source_reader(history:&[Value])->bool{
 pub(super) fn restore_owner_goal(
     mut focused:Vec<Value>,query:&str,stored:&[Value],can_reopen:bool,
 )->Vec<Value>{
-    if !continuation_query(query){return focused;}
+    if !explicit_work_continuation(query){return focused;}
     let source=stored.iter().rev()
         .filter(|row|row["role"]=="user")
         .take(16)
@@ -181,6 +212,31 @@ mod tests{
             "arguments":"{\"url\":\"https://example.com\"}"}}]}),
             json!({"role":"tool","tool_call_id":id,"content":content})]
     }
+
+    #[test]
+    fn explicit_work_resume_is_not_a_generic_reference_or_calendar_question(){
+        for query in ["서브2 이어서해","그거 계속 진행해주세요",
+            "다음 단계 진행해","please continue","keep going","마저 해줘"]{
+            assert!(explicit_work_continuation(query),"expected resume: {query}");
+        }
+        for query in ["다음 주 날씨 알려줘","다음 버전 이름이 뭐야?",
+            "그거 어디 있어?","계속 오류 나는데 왜?","next.js 설치 방법",
+            "continuously failing","다음 단계가 뭐야?"]{
+            assert!(!explicit_work_continuation(query),"unexpected resume: {query}");
+        }
+    }
+
+    #[test]
+    fn generic_next_question_never_restores_unrelated_tool_goal(){
+        let stored=vec![json!({"id":"old","role":"user",
+            "content":"이전 저장소를 수정하고 배포해"})];
+        let current=vec![json!({"role":"user","content":"다음 주 날씨 알려줘"})];
+        assert_eq!(restore_owner_goal(current.clone(),"다음 주 날씨 알려줘",
+            &stored,true),current);
+        let resumed=restore_owner_goal(current,"이어서해",&stored,true);
+        assert_eq!(resumed[0]["_dominion_frame"],"old");
+    }
+
     #[test]
     fn explicit_filename_reopens_old_attachment_content_even_after_many_other_turns() {
         let source=json!({"role":"user","_dominion_frame":"old-1",

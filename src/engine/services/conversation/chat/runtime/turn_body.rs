@@ -169,9 +169,9 @@ pub(super) async fn run_turn_body(
         )?;
         let history_messages=super::super::context_window::focus(history_messages,&request.input,false,
             request.tools_enabled && request.tools_execution_enabled);
-        let history_messages=if request.input.chars().count()<=80
-            && ["이어서","계속","그거","다음","마저","continue","next"]
-                .iter().any(|word|request.input.to_lowercase().contains(word)){
+        let history_messages=if super::super::context_window::explicit_work_continuation(
+            &request.input,
+        ){
             let recorded=state.store.try_recent_user_messages(session_id,16)
                 .map_err(|error|format!("작업 원문을 복구할 수 없습니다: {error}"))?;
             super::super::context_window::restore_owner_goal(
