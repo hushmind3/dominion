@@ -3,7 +3,6 @@ import {matchesRoomRefresh,type RefreshScope} from '../refreshEvents'
 import {ExecutionPermissions} from '../components/ExecutionPermissions'
 import {createPortal} from 'react-dom'
 import {useAnchoredPanel} from '../hooks/useAnchoredPanel'
-import {ConversationSwitch} from '../components/WorkspaceShell'
 import {TokenUsage} from '../components/TokenUsage'
 import {useOwnerProfile} from '../components/OwnerProfile'
 import {statusLabel} from '../components/StatusPill'
@@ -52,7 +51,7 @@ function Avatar({agent,name,owner=false,size='normal',index=0}:{agent?:Agent;nam
  </span>
 }
 
-export function RoomsPage({openSession,openSettings,switchMode,active:visibleView=true}:{openSession:(id:string)=>void;openSettings:()=>void;switchMode:(mode:'chat'|'rooms')=>void;active?:boolean}){
+export function RoomsPage({openSession,openSettings,active:visibleView=true}:{openSession:(id:string)=>void;openSettings:()=>void;active?:boolean}){
  useLocale()
  const rooms=useRemote<RoomConfig[]>('/api/rooms',[],visibleView)
  const agents=useRemote<Agent[]>('/api/agents',[],visibleView)
@@ -102,10 +101,9 @@ export function RoomsPage({openSession,openSettings,switchMode,active:visibleVie
    </div>
    <div className="room-list-footer"><Button variant="ghost" onClick={openSettings} className="w-full !justify-start gap-2 !text-xs" aria-label={t('nav.settings')}><Settings size={17}/>{t('nav.settings')}</Button></div>
   </aside>
-  {current?<RoomConversation key={current.id} room={current} openSettings={openSettings} visibleView={visibleView} switchMode={switchMode} agents={agents.value} providers={providers.value} openList={()=>setShowList(v=>!v)} showList={showList} openSession={openSession} onSaved={async()=>{await rooms.reload();refresh()}} onRemoved={async()=>{setSelected('');await rooms.reload()}}/>:<div className="room-welcome flex min-h-0 min-w-0 flex-1 flex-col bg-canvas">
+  {current?<RoomConversation key={current.id} room={current} openSettings={openSettings} visibleView={visibleView} agents={agents.value} providers={providers.value} openList={()=>setShowList(v=>!v)} showList={showList} openSession={openSession} onSaved={async()=>{await rooms.reload();refresh()}} onRemoved={async()=>{setSelected('');await rooms.reload()}}/>:<div className="room-welcome flex min-h-0 min-w-0 flex-1 flex-col bg-canvas">
    <header className="room-empty-header flex min-h-14 shrink-0 items-center gap-2 border-b border-divider bg-surface px-3 sm:px-5">
     <Button variant="ghost" size="icon" aria-label={t('rooms.listExpand')} onClick={()=>setShowList(value=>!value)}><Menu size={18}/></Button>
-    <ConversationSwitch mode="rooms" onChange={switchMode}/>
     <Button variant="ghost" size="icon" className="conversation-settings ml-auto" aria-label={t('nav.settings')} onClick={openSettings}><Settings size={18}/></Button>
    </header>
    <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col items-start justify-center gap-3 px-6 py-10 text-ink sm:px-10">
@@ -183,7 +181,7 @@ function RoomModelPicker({value,onChange,providers,disabled=false}:{value:RoomMo
  </div>
 }
 
-function RoomConversation({room,agents,providers,openList,showList,openSession,onSaved,onRemoved,switchMode,visibleView,openSettings}:{openSettings:()=>void;switchMode:(mode:'chat'|'rooms')=>void;visibleView:boolean;room:RoomConfig;agents:Agent[];providers:Provider[];openList:()=>void;showList:boolean;openSession:(id:string)=>void;onSaved:()=>Promise<void>;onRemoved:()=>Promise<void>}){
+function RoomConversation({room,agents,providers,openList,showList,openSession,onSaved,onRemoved,visibleView,openSettings}:{openSettings:()=>void;visibleView:boolean;room:RoomConfig;agents:Agent[];providers:Provider[];openList:()=>void;showList:boolean;openSession:(id:string)=>void;onSaved:()=>Promise<void>;onRemoved:()=>Promise<void>}){
  useLocale()
  const [messages,setMessages]=useState<ChatMessage[]>([]),[feed,setFeed]=useState<FeedState>(initialFeed)
  const messageUsageTotal=useMemo(()=>messages.reduce((sum,message)=>sum+(Number(message.metadata?.usage?.totalTokens)||0),0),[messages])
@@ -384,7 +382,7 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
  const status=running?'running':feed.status||current.status||'idle'
  return <div className={'room-conversation '+(inspector?'has-inspector':'')}>
   <section className="room-main" aria-label={t('rooms.headerAria',{name:current.name})}>
-   <header className="room-header"><Button variant="bare" className="room-list-toggle" aria-label={showList?t('rooms.listCollapse'):t('rooms.listExpand')} onClick={openList}><Menu size={18}/></Button><ConversationSwitch mode="rooms" onChange={switchMode}/><div className="room-header-icon" title={current.name}><Hash size={22}/></div><div className="room-header-copy"><h1>{current.name}</h1><p>{current.topic||t('rooms.topicFallback')}</p></div><div className="room-presence"><div className="room-avatar-stack"><Avatar owner size="small"/>{roster.map((agent,index)=><Avatar key={agent.id} agent={agent} size="small" index={index}/>)}</div><span><strong>{current.ownerName||t('rooms.me')}</strong>{t('rooms.withAgents',{count:roster.length})}</span><span className="room-presence-dot">·</span><span>{t(modes[mode].label)}</span><span className={'room-status '+(running?'is-running':'')}>{running&&<i/>}{labels[status]?t(labels[status]):status}</span></div><span className="room-header-usage" aria-label={t('usage.sessionTotal',{count:usageTotal.toLocaleString()})}>{t('usage.sessionTotal',{count:usageTotal.toLocaleString()})}</span><Button size="sm" variant="ghost" className="room-roster-toggle" title={t('rooms.sharedKnowledge')} aria-label={t('rooms.sharedKnowledge')} onClick={()=>void openKnowledge()} aria-haspopup="dialog"><BookOpenText size={16}/><span>{t('rooms.sharedKnowledge')}</span><b>{knowledge.length||0}</b></Button><Button size="sm" variant="ghost" className="room-roster-toggle" title={t('rooms.systemPromptHint')} aria-label={t('rooms.systemPrompt')} onClick={()=>void openPrompt()}><FileText size={16}/><span>{t('rooms.systemPrompt')}</span></Button><Button size="sm" variant="ghost" className="room-roster-toggle" title={t('rooms.resetHint')} aria-label={t('rooms.reset')} onClick={()=>void reset()} disabled={stopping}><RotateCcw size={16}/><span>{t('rooms.reset')}</span></Button><Button size="icon" variant="ghost" className="conversation-settings" title={t('nav.settings')} aria-label={t('nav.settings')} onClick={openSettings}><Settings size={18}/></Button></header>
+   <header className="room-header"><Button variant="bare" className="room-list-toggle" aria-label={showList?t('rooms.listCollapse'):t('rooms.listExpand')} onClick={openList}><Menu size={18}/></Button><div className="room-header-icon" title={current.name}><Hash size={22}/></div><div className="room-header-copy"><h1>{current.name}</h1><p>{current.topic||t('rooms.topicFallback')}</p></div><div className="room-presence"><div className="room-avatar-stack"><Avatar owner size="small"/>{roster.map((agent,index)=><Avatar key={agent.id} agent={agent} size="small" index={index}/>)}</div><span><strong>{current.ownerName||t('rooms.me')}</strong>{t('rooms.withAgents',{count:roster.length})}</span><span className="room-presence-dot">·</span><span>{t(modes[mode].label)}</span><span className={'room-status '+(running?'is-running':'')}>{running&&<i/>}{labels[status]?t(labels[status]):status}</span></div><span className="room-header-usage" aria-label={t('usage.sessionTotal',{count:usageTotal.toLocaleString()})}>{t('usage.sessionTotal',{count:usageTotal.toLocaleString()})}</span><Button size="sm" variant="ghost" className="room-roster-toggle" title={t('rooms.sharedKnowledge')} aria-label={t('rooms.sharedKnowledge')} onClick={()=>void openKnowledge()} aria-haspopup="dialog"><BookOpenText size={16}/><span>{t('rooms.sharedKnowledge')}</span><b>{knowledge.length||0}</b></Button><Button size="sm" variant="ghost" className="room-roster-toggle" title={t('rooms.systemPromptHint')} aria-label={t('rooms.systemPrompt')} onClick={()=>void openPrompt()}><FileText size={16}/><span>{t('rooms.systemPrompt')}</span></Button><Button size="sm" variant="ghost" className="room-roster-toggle" title={t('rooms.resetHint')} aria-label={t('rooms.reset')} onClick={()=>void reset()} disabled={stopping}><RotateCcw size={16}/><span>{t('rooms.reset')}</span></Button><Button size="icon" variant="ghost" className="conversation-settings" title={t('nav.settings')} aria-label={t('nav.settings')} onClick={openSettings}><Settings size={18}/></Button></header>
 
 
    <div className="room-scroll" ref={scrollRef} onScroll={onScroll} role="log" aria-label={t('rooms.logAria')} aria-busy={loading}>

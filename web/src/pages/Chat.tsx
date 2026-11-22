@@ -1,6 +1,5 @@
 import {ConversationSettings} from '../components/ConversationSettings'
 import {ExecutionPermissions} from '../components/ExecutionPermissions'
-import {ConversationSwitch} from '../components/WorkspaceShell'
 import {ChatSessionInspector} from '../components/ChatSessionInspector'
 import {ChatMessageRow} from '../components/ChatMessageRow'
 import {TokenUsage} from '../components/TokenUsage'
@@ -35,7 +34,7 @@ const formatBytes=(bytes:number)=>{
  return gb>=1?gb.toFixed(1)+' GB':Math.max(0,Math.round(Number(bytes||0)/1024/1024))+' MB'
 }
 const isPrivateChatSession=(session:ChatSession)=>!session.roomId&&!session.channelContext&&session.kind!=='room'&&session.kind!=='channel'
-export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,onSession,openModels,openSettings,switchMode,active=true}:{sessionId?:string;initialAgent?:string;initialProvider?:string;initialModel?:string;onSession:(x:string|undefined)=>void;openModels:()=>void;openSettings:()=>void;switchMode:(mode:'chat'|'rooms')=>void;active?:boolean}){
+export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,onSession,openModels,openSettings,active=true}:{sessionId?:string;initialAgent?:string;initialProvider?:string;initialModel?:string;onSession:(x:string|undefined)=>void;openModels:()=>void;openSettings:()=>void;active?:boolean}){
  const loc=useLocale()
  const sessions=useRemote<ChatSession[]>('/api/sessions',[],active);
  const agents=useRemote<Agent[]>('/api/agents',[],active);
@@ -503,7 +502,6 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    <header className="chat-header relative z-20 grid shrink-0 grid-cols-[2rem_2rem_minmax(0,1fr)_auto] grid-rows-[2.5rem_2.25rem] items-center gap-x-1 border-b border-divider bg-surface px-2 py-1 sm:flex sm:h-14 sm:gap-2 sm:px-4">
     <Button size="icon" variant="ghost" onClick={()=>setShowHistory(x=>!x)} title={showHistory?t('chat.listCollapse'):t('chat.listExpand')} aria-label={showHistory?t('chat.listCollapse'):t('chat.listExpand')} aria-expanded={showHistory} aria-controls="chat-history"><Menu size={18}/></Button>
     <Button size="icon" variant="ghost" className="chat-new-session" onClick={resetLocal} title={t('chat.newChat')} aria-label={t('chat.newChat')}><Plus size={18}/></Button>
-    <div className="col-start-3 row-start-1 min-w-0 sm:contents"><ConversationSwitch mode="chat" onChange={switchMode}/></div>
     <div className="col-span-4 row-start-2 flex min-w-0 items-center gap-1.5 border-t border-divider sm:flex-1 sm:border-0">
      <div className="chat-model-controls relative flex min-w-0 items-center gap-1">
       <SelectInput aria-label={t('chat.selectProvider')} title={selectedProvider?.name||t('chat.autoProvider')} value={manual?.providerId??''} onChange={e=>{if(e.target.value)setRoute(e.target.value,'');else{setOverride(undefined);if(initialProvider)onSession(undefined)}}} className="!w-[124px] !pl-1.5 !border-0 !bg-transparent !py-1 !pr-6 !text-[12px]"><option value="">{t('chat.autoProvider')}</option>{providers.value.filter(p=>p.enabled).map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</SelectInput>

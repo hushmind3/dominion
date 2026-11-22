@@ -176,14 +176,13 @@ export default function App(){
        onSession={id=>{
         setChatRoute(previous=>({...previous,session:id}))
         if(locationState().page==='chat')navigate('chat',id)
-       }} openModels={()=>navigate('models')} openSettings={()=>navigate('settings')}
-       switchMode={switchMode}/>
+       }} openModels={()=>navigate('models')} openSettings={()=>navigate('settings')}/>
      </Suspense></PageLoadBoundary>
     </div>}
     {visited.rooms&&<div hidden={mode!=='rooms'} className="h-full page-rooms">
      <PageLoadBoundary><Suspense fallback={<div role="status" className="p-8 text-sm">Room 불러오는 중…</div>}>
       <RoomsPage active={mode==='rooms'&&!settingsOpen} openSession={id=>navigate('chat',id)}
-       openSettings={()=>navigate('settings')} switchMode={switchMode}/>
+       openSettings={()=>navigate('settings')}/>
      </Suspense></PageLoadBoundary>
     </div>}
    </main>
