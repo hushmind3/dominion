@@ -70,16 +70,6 @@ export function NativeRunNavigator({runs,selectedId,onSelect,onRefresh,en}:{
    <input value={query} onChange={e=>setQuery(e.target.value)}
     placeholder={en?'Search work or run ID':'작업·실행 ID 검색'}/>
   </label>
-  {runs.length>0&&<label className="native-run-quick">
-   <span>{en?'Jump to saved run':'저장 작업 바로 선택'}</span>
-   <select id="sdk-history" aria-label={en?'Previous tasks':'이전 자동 작업'}
-    value={selectedId||''} onChange={event=>onSelect(event.target.value)}>
-    {!selectedId&&<option value="">{en?'Choose a run':'작업 선택'}</option>}
-    {runs.map(item=><option key={item.id} value={item.id}>
-     {item.status} · {item.instruction.slice(0,75)}
-    </option>)}
-   </select>
-  </label>}
   <div className="native-run-list" role="list">
    {visible.map((item,index)=>{
     const focused=item.id===selectedId
