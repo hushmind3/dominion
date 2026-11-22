@@ -68,7 +68,7 @@ test('global permission toggles serialize writes and reflect only confirmed back
  assert.match(operations,/refresh\('\/api\/policy'\)/)
  assert.match(operations,/await policy\.reload\(\)/)
  assert.match(operations,/disabled=\{policySaving\|\|policy\.loading\|\|Boolean\(policy\.error\)/)
- assert.match(operations,/\(error\|\|policy\.error\)&&<Notice/)
+ assert.match(operations,/Notice message=\{error\|\|policy\.error/)
 })
 
 test('global policy and extension switches track server policy updates across screens',()=>{
@@ -120,7 +120,7 @@ test('nine-agent group exposes a real Team launch, permission gate, and persiste
  const launcher=source('src/components/RoomTeamLauncher.tsx')
  const routes=source('../src/api/routes/conversations.rs')
  const roomApi=source('../src/api/rooms.rs')
- assert.match(rooms,/aria-label="Team 작업"/)
+ assert.match(rooms,/label:t\('rooms\.taskAction'\)/)
  assert.match(rooms,/<RoomTeamLauncher roomId=\{room\.id\}/)
  assert.match(rooms,/toolsEnabled=\{current\.toolsEnabled===true\}/)
  assert.match(launcher,/clientRequestId:id/)
@@ -138,7 +138,7 @@ test('nine-agent group exposes a real Team launch, permission gate, and persiste
  assert.match(launcher,/localStorage\.removeItem\(pendingKey\(roomId\)\)/)
  assert.match(roomApi,/Duration::minutes\(15\)/)
  assert.match(launcher,/status==='uncertain'/)
- assert.match(rooms,/className="room-team-trigger/)
+ assert.match(rooms,/<RoomActions active=\{visibleView\}/)
  assert.match(jobs,/initiallyOpen=\{Boolean\(filterSessionId\)&&index===0\}/)
  assert.match(roomApi,/StatusCode::FORBIDDEN/)
 })
@@ -165,7 +165,7 @@ test('group collaboration uses readable modal workflow instead of shrinking chat
  assert.match(workflow,/setInterval\(/)
  assert.match(style,/\.room-team-dialog-header/)
  assert.match(style,/\.room-team-agent-chip/)
- assert.match(style,/\.room-team-trigger:focus-visible/)
+ assert.match(style,/\.room-team-dialog button:focus-visible/)
 })
 
 test('shared chat settings and permissions keep visible labels and true controls',()=>{
@@ -209,10 +209,10 @@ test('team outcomes prioritize saved agent answers over raw receipts',()=>{
 
 test('room configuration keeps recognizable icons and usable roster hit targets',()=>{
  const style=source('src/pages/Rooms.css')
- assert.match(rooms,/group-settings-trigger !min-h-9/)
- assert.match(rooms,/<Settings2 size=\{16\}\/><span className="hidden sm:inline">/)
+ assert.match(style,/\.group-settings-trigger\{/)
+ assert.match(rooms,/label:t\('rooms\.editParticipants'\)/)
  assert.doesNotMatch(rooms,/<Network size=\{14\}\/><span className="hidden sm:inline">/)
- assert.match(style,/\.room-inspector\{width:332px/)
+ assert.match(style,/\.group-settings-trigger\{/)
  assert.match(style,/\.room-roster-option input\{width:16px;height:16px\}/)
  assert.match(style,/\.room-roster-option strong\{font-size:12px\}/)
  assert.match(style,/\.room-settings-form input:not\(\[type=checkbox\]\)/)
@@ -272,7 +272,7 @@ test('private chat offers agent-free model conversation while preserving explici
   assert.match(chat,/agentId:agentMode\?agentId:undefined/)
   assert.match(chat,/toolsEnabled:agentMode&&toolsEnabled/)
   assert.match(chat,/autoLearning:agentMode&&autoLearn/)
-  assert.match(chat,/\{agentMode&&<ExecutionPermissions/)
+  assert.match(chat,/<ExecutionPermissionsSetting\/>/)
   assert.match(chat,/optionsBusy=\{!agentMode\}/)
   assert.match(api,/directChat\?: boolean/)
   assert.match(request,/direct_chat: bool/)
