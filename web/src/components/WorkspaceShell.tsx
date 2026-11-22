@@ -35,14 +35,14 @@ export function WorkspaceTopBar({page,online,running,pending,onNavigate,onSearch
   return <button key={id} type="button" aria-current={active ? 'page' : undefined}
    onClick={() => { setMoreOpen(false); onNavigate(id) }}
    className={'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12.5px] transition-colors '+
-    (active ? 'bg-canvas font-semibold text-ink' : 'text-ink hover:bg-canvas')}>
+    (active ? 'bg-brand-soft font-semibold text-brand' : 'text-ink hover:bg-canvas')}>
    <Icon size={16} className="text-muted"/>{t(entry.label)}
   </button>
  }
  return <header className="relative flex h-14 shrink-0 items-center gap-2 border-b border-divider bg-surface px-2 sm:px-3">
   <button type="button" onClick={() => onNavigate('home')} aria-label="DOMINION"
    className="flex shrink-0 items-center gap-2 rounded-lg px-1.5 py-1 transition-colors hover:bg-canvas">
-   <span className="grid size-7 place-items-center rounded-lg bg-ink text-[11px] font-black text-white">D</span>
+   <span className="grid size-7 place-items-center rounded-lg bg-brand text-[11px] font-black text-white">D</span>
    <strong className="hidden text-[12px] font-semibold tracking-[.12em] text-ink lg:block">DOMINION</strong>
   </button>
   <nav aria-label={t('shell.mainNav')} className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto [scrollbar-width:none]">
@@ -54,7 +54,7 @@ export function WorkspaceTopBar({page,online,running,pending,onNavigate,onSearch
     return <button key={id} type="button" aria-current={active ? 'page' : undefined}
      title={t(item.label)} onClick={() => onNavigate(id)}
      className={'inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-3 text-[13px] transition-colors '+
-      (active ? 'bg-canvas font-semibold text-ink' : 'text-muted hover:bg-canvas hover:text-ink')}>
+      (active ? 'bg-brand-soft font-semibold text-brand' : 'text-muted hover:bg-canvas hover:text-ink')}>
      <Icon size={17}/><span className="hidden sm:inline">{t(item.label)}</span>
     </button>
    })}

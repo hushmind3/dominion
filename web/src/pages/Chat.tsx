@@ -507,8 +507,6 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
       <SelectInput aria-label={t('chat.selectProvider')} title={selectedProvider?.name||t('chat.autoProvider')} value={manual?.providerId??''} onChange={e=>{if(e.target.value)setRoute(e.target.value,'');else{setOverride(undefined);if(initialProvider)onSession(undefined)}}} className="!w-[124px] !pl-1.5 !border-0 !bg-transparent !py-1 !pr-6 !text-[12px]"><option value="">{t('chat.autoProvider')}</option>{providers.value.filter(p=>p.enabled).map(p=><option value={p.id} key={p.id}>{p.name}</option>)}</SelectInput>
       <span className="text-divider">/</span>
       <ModelPicker providerId={providerId} value={model} catalogue={catalogue} onChange={value=>setRoute(providerId,value)} placeholder={providerId?t('chat.modelPick'):t('chat.connectApi')} className="!h-7 !w-[220px] !border-0 !bg-transparent !py-1 !pl-1.5 !pr-2 !text-[11px] !font-semibold" ariaLabel={t('chat.modelPick')}/>
-      <Button variant="ghost" size="sm" ref={modelPanel.trigger} onClick={openModelMenu} title={t('chat.localModel')} className="ml-auto !hidden sm:!inline-flex !border !border-divider !bg-white !text-muted hover:!bg-canvas" aria-label={t('chat.localModel')} aria-expanded={modelMenu}><HardDrive size={14}/><span className="hidden lg:inline">{t('chat.localModel')}</span><ChevronDown size={12}/></Button>
-      <Button variant="ghost" size="sm" title={t('chat.unload')} aria-label={t('chat.unload')} onClick={()=>void unloadModel()} disabled={unloading||runtime.status!=='ready'} className="!hidden sm:!inline-flex !border !border-divider !bg-white !text-muted hover:!bg-canvas disabled:opacity-40"><Power size={14}/><span className="hidden xl:inline">{unloading?t('chat.unloading'):t('chat.unload')}</span></Button>
       {modelMenu&&modelPanel.position&&createPortal(
        <div ref={modelPanel.panel} style={modelPanel.position} className="z-[80] overflow-y-auto overscroll-contain rounded-2xl border border-divider bg-surface shadow-[0_18px_50px_rgba(36,33,29,.14)]">
         <div className="flex items-center justify-between gap-2 border-b border-divider px-3 py-2.5"><div className="min-w-0"><strong className="text-[12px] text-ink">{t('chat.localModel')}</strong><p className="truncate text-[10px] text-muted">{runtime.status==='ready'?t('chat.running')+' · '+(runtime.name||''):runtime.status==='loading'?t('chat.loadingModel'):t('chat.noLocal')}</p></div><Button size="icon" variant="ghost" title={t('models.refresh')} onClick={()=>void loadModelMenu()}><RefreshCw size={15}/></Button></div>
@@ -530,14 +528,13 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      <Button size="icon" variant="ghost" aria-expanded={showInspector} aria-controls="chat-session-inspector"
       title={loc==='en'?'Session details':'대화 정보 패널'} aria-label={loc==='en'?'Session details':'대화 정보 패널'}
       onClick={()=>setShowInspector(value=>!value)}><PanelRight size={18}/></Button>
-     <Button size="icon" variant="ghost" className="!hidden sm:!inline-flex" title={t('chat.modelManage')} aria-label={t('chat.modelManage')} onClick={openModels}><Cpu size={18}/></Button>
      <Button size="icon" variant="ghost" className="conversation-settings !hidden sm:!inline-flex" title={t('nav.settings')} aria-label={t('nav.settings')} onClick={openSettings}><Settings size={18}/></Button>
     </div>
    </header>
    <div ref={scrollRef} onScroll={onScroll} data-chat-scroll className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{!messages.length&&!(busy&&viewingTurn)?<div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col justify-center px-5 py-8">
     <div className="chat-welcome my-auto flex w-full flex-col items-start gap-2 py-5 text-ink">
      <span className="chat-welcome-mark mb-3 grid size-11 place-items-center rounded-xl border border-divider bg-surface text-muted" aria-hidden="true"><Sparkles size={22}/></span>
-     <h1 className="text-2xl font-semibold tracking-tight text-ink">{t('chat.newChatHeading')}</h1>
+     <h1 className="!text-[26px] font-semibold tracking-[-0.03em] text-ink">{t('chat.newChatHeading')}</h1>
      <p className="text-sm text-muted">{t('chat.newChatDesc')}</p>
      <div className="chat-welcome-examples mt-6 w-full">
       <p className="mb-2 text-[10px] font-semibold uppercase tracking-[.14em] text-muted">{t('chat.examples')}</p>

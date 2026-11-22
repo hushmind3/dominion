@@ -3,27 +3,27 @@
  --font-sans: "Pretendard Variable", Pretendard, Inter, SUIT, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
  /* One light surface stack. Values live only here; components consume the
     utilities (bg-surface, text-ink, border-divider) and never re-declare them. */
- /* Light, but never gray. A violet-tinted canvas, white cards and one strong
-    indigo accent; teal and amber are reserved for state, not decoration. */
- --color-canvas: #f3f1ff;
+ /* Warm paper, one blue accent, no decoration for its own sake.
+    White cards sit on #faf9f7; every border is a hairline. */
+ --color-canvas: #faf9f7;
  --color-surface: #ffffff;
- --color-ink: #1a1a3c;
- --color-muted: #5d5f86;
- --color-divider: #e2defa;
- --color-brand: #5146e5;
- --color-brand-hover: #4035c9;
- --color-brand-soft: #e9e6ff;
+ --color-ink: #17140f;
+ --color-muted: #615c53;
+ --color-divider: #ebe6de;
+ --color-brand: #3355ff;
+ --color-brand-hover: #2445e6;
+ --color-brand-soft: #eef1ff;
  --color-accent: #0f8f8a;
  --color-accent-soft: #dcf5f2;
- --color-warm: #d97706;
- --color-warm-soft: #fdf0dc;
+ --color-warm: #c2740d;
+ --color-warm-soft: #fdf3e3;
  --color-workspace-sidebar: #ffffff;
- --color-workspace-sidebar-text: #1a1a3c;
- --color-workspace-line: #e2defa;
- --color-workspace-hover: #f3f1ff;
- --color-workspace-selected: #1a1a3c;
- --color-workspace-muted: #5d5f86;
- --color-workspace-accent: #5146e5;
+ --color-workspace-sidebar-text: #17140f;
+ --color-workspace-line: #ebe6de;
+ --color-workspace-hover: #faf9f7;
+ --color-workspace-selected: #17140f;
+ --color-workspace-muted: #615c53;
+ --color-workspace-accent: #3355ff;
  --radius-panel: 1rem;
  --radius-control: .65rem;
  --shadow-panel: 0 1px 2px rgb(17 19 24 / .04), 0 8px 24px rgb(17 19 24 / .05);
@@ -154,27 +154,27 @@
  color:var(--color-muted);
 }
 .chat-transcript .chat-message-text{
- font-size:15px;
+ font-size:16px;
  font-weight:400;
- line-height:1.75;
- letter-spacing:-.01em;
+ line-height:1.72;
+ letter-spacing:-.005em;
  overflow-wrap:anywhere;
  word-break:normal;
 }
 .chat-transcript .chat-message-text--user{
- padding:11px 16px;
+ padding:12px 18px;
  border-radius:18px 18px 4px 18px;
  background:var(--color-brand);
  color:#fff;
- line-height:1.65;
- box-shadow:0 6px 18px rgb(81 70 229 / .22);
+ line-height:1.7;
+ box-shadow:0 8px 22px rgb(51 85 255 / .18);
 }
 .chat-transcript .chat-message-text--assistant{
  color:var(--color-ink);
 }
 @media(max-width:767px){
  .chat-transcript .chat-message--user .chat-message-inner{max-width:90%}
- .chat-transcript .chat-message-text{font-size:14.5px;line-height:1.7}
+ .chat-transcript .chat-message-text{font-size:15.5px;line-height:1.7}
  .chat-transcript .chat-message-text--user{padding:11px 15px}
 }
 

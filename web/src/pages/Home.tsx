@@ -43,9 +43,9 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
      recentEmpty:'아직 작업이 없습니다. 필요한 일을 적어서 시작해 보세요.',
      start:'대화 시작',
     }
- return <PageContainer className="!max-w-[900px] !py-10 sm:!py-14">
+ return <PageContainer className="!max-w-[860px] !py-12 sm:!py-20">
   <header className="min-w-0">
-   <h1 className="m-0 text-[28px] font-semibold leading-tight tracking-[-0.035em] text-ink sm:text-[32px]">{copy.greeting}</h1>
+   <h1 className="m-0 text-[30px] font-semibold leading-[1.25] tracking-[-0.04em] text-ink sm:text-[36px]">{copy.greeting}</h1>
    <p className="mt-2 max-w-xl text-[13px] leading-6 text-muted">{copy.lead}</p>
   </header>
   {enabledProviders.length===0&&<section role="status" className="mt-6 flex flex-wrap items-center gap-3 rounded-xl border border-divider bg-surface px-4 py-3">
