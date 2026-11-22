@@ -14,11 +14,11 @@ type Props={
 export function ChatSessionSidebar({open,sessions,current,loading,error,query,onQuery,
  deletingSessionId,activeTurnSessionId,streaming,onSelect,onDelete,onNewChat,onSettings}:Props){
  const matches=sessions.filter(s=>!s.roomId && s.title.toLocaleLowerCase('ko').includes(query.trim().toLocaleLowerCase('ko')))
- return <aside aria-label="대화 목록" className={'flex min-h-0 w-64 shrink-0 flex-col overflow-hidden border-r border-divider bg-canvas text-ink '+(open?'absolute inset-y-0 left-0 z-30 shadow-xl md:relative md:z-auto md:shadow-none':'hidden')}>
+ return <aside aria-label="대화 목록" className={'min-h-0 w-64 shrink-0 flex-col overflow-hidden border-r border-divider bg-canvas text-ink '+(open?'absolute inset-y-0 left-0 z-30 flex shadow-xl md:relative md:z-auto md:shadow-none':'hidden')}>
   <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-5">
    <div className="min-w-0"><span className="block text-sm font-bold text-ink">{t('chat.recent')}</span>
     <small className="mt-0.5 block text-xs text-muted">{loading||error?'—':sessions.filter(s=>!s.roomId).length}</small></div>
-   <Button variant="ghost" size="icon" onClick={onNewChat} title={t('chat.newChat')} aria-label={t('chat.newChat')}><Plus size={18}/></Button>
+
   </div>
   <Button type="button" variant="primary" onClick={onNewChat} className="mx-3 mb-3 !justify-center"><Plus size={15}/>{t('chat.newChat')}</Button>
   <label className="mx-3 mb-3 flex min-h-9 items-center gap-2 rounded-lg border border-divider bg-surface px-2.5 focus-within:border-brand">
