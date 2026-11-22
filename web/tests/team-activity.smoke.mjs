@@ -282,7 +282,9 @@ try{
   await modelAreas.getByRole('button',{name:'Cloud·업체'}).click();
   assert.equal(await page.getByRole('navigation',{name:'모델 상세'}).getByRole('button').count(),2);
   await page.goto(address+'/#/memory',{waitUntil:'domcontentloaded'});
-  const memoryDraft=page.locator('textarea').first();
+  // The Chat textarea remains mounted behind Settings. Test the active
+  // Memory composer, not whichever textarea happens to mount first.
+  const memoryDraft=page.locator('.workspace-settings-content textarea').first();
   await memoryDraft.waitFor({timeout:10000});
   await memoryDraft.fill('아직 저장하지 않은 기억 초안');
   await page.goto(address+'/#/agents',{waitUntil:'domcontentloaded'});
