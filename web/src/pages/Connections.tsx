@@ -2,7 +2,7 @@ import {DialogBackdrop,DialogPanel} from '../components/Dialog'
 import {StatusPill} from '../components/StatusPill'
 import {Button,TextInput,SelectInput} from '../components/Primitives'
 import {useEffect,useMemo,useState} from 'react'
-import {Activity,Blocks,BookOpenText,PackagePlus,Sparkles,Server,ArrowRight,Check,ChevronRight,Cloud,ExternalLink,Filter,Globe2,Github,KeyRound,Link2,LockKeyhole,MessageCircle,Plus,RadioTower,Search,Send,Settings2,ShieldCheck,Trash2,UsersRound,X} from 'lucide-react'
+import {Activity,Blocks,BookOpenText,PackagePlus,Sparkles,Server,ArrowRight,Check,ChevronRight,Cloud,ExternalLink,Filter,Globe2,Github,KeyRound,Link2,LoaderCircle,LockKeyhole,MessageCircle,Plus,RadioTower,Search,Send,Settings2,ShieldCheck,Trash2,UsersRound,X} from 'lucide-react'
 import {del,openOAuth,post} from '../api'
 import {Action,FormField,Headline,Notice,Panel,StateTag,Subheading,useRemote} from '../components/UI'
 import {t,useLocale,type LocaleKey} from '../i18n'
@@ -34,12 +34,22 @@ export function ConnectionsPage(){
  const [error,setError]=useState(''),[info,setInfo]=useState(''),[probe,setProbe]=useState<Record<string,string>>({}),[saving,setSaving]=useState(false);
  const [oauthEditor,setOauthEditor]=useState<{id:string;clientId:string;clientSecret:string}|null>(null);
  const [oauthSaving,setOauthSaving]=useState(false),[oauthError,setOauthError]=useState('');
+ const [refreshing,setRefreshing]=useState(false);
  const channelIcons:Record<string,typeof MessageCircle>={discord:MessageCircle,telegram:Send,slack:Blocks,whatsapp:MessageCircle,signal:ShieldCheck,teams:UsersRound,matrix:Blocks,webhook:Link2};
  const installed=useMemo(()=>new Set(channels.value.map(x=>x.kind)),[channels.value]);
  const filtered=useMemo(()=>[...new Map(registry.value.filter(x=>(category==='all'||x.category===category)&&[x.name,x.id,x.description].join(' ').toLowerCase().includes(query.toLowerCase())).map(x=>[x.id.toLowerCase(),x])).values()].sort((a,b)=>Number(b.available)-Number(a.available)||a.name.localeCompare(b.name)),[registry.value,category,query]);
  const online=channels.value.filter(c=>active(c.status)).length;
  const outbound=channels.value.filter(c=>c.status==='outbound_ready').length;
  const ready=registry.value.filter(x=>x.available).length;
+ const failedSources=[registry,channels].filter(source=>source.error);
+ const refreshChannels=async()=>{
+  if(refreshing)return;
+  setRefreshing(true);
+  await Promise.allSettled([registry.reload(),channels.reload()]);
+  setRefreshing(false);
+ };
+ const countDisplay=(source:{loading:boolean;error:string},value:number)=>
+  source.loading||refreshing?'…':source.error?'—':String(value);
  const openEditor=(entry:ChannelEntry,existing?:Channel)=>{
   if(!entry.available)return;
   const record:any=existing?{...existing}:{name:entry.name,kind:entry.id,enabled:false,syncRoomMessages:entry.mode==='outbound',mentionOnly:true,roomId:'',roomPolicy:'all_or_named',agentId:'',providerId:'',model:''};
@@ -78,7 +88,7 @@ export function ConnectionsPage(){
   }catch(e){setOauthError((e as Error).message)}finally{setOauthSaving(false)}
  }
  const tabs=[{id:'channels',label:t('conn.tab.channels'),icon:RadioTower},{id:'quick-connect',label:t('conn.tab.quickConnect'),icon:Link2},{id:'accounts',label:t('conn.tab.accounts'),icon:KeyRound},{id:'market',label:'MCP 마켓',icon:Blocks},{id:'installed',label:t('ext.tab.installed'),icon:Server},{id:'skills',label:t('ext.tab.skills'),icon:BookOpenText},{id:'plugins',label:t('ext.tab.plugins'),icon:PackagePlus},{id:'capabilities',label:'역량 마켓',icon:Sparkles}] as const
- const pageHeader=<div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h1 className="m-0 text-[19px] font-bold text-[#24211D]">{t('conn.title')}</h1><p className="mt-1 text-[12px] text-[#7C7469]">{t('conn.description')}</p></div>{section==='channels'&&<Button type="button" variant="secondary" onClick={()=>{void registry.reload();void channels.reload()}}><Activity size={15}/> {t('conn.refresh')}</Button>}</div>
+ const pageHeader=<div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h1 className="m-0 text-[19px] font-bold text-[#24211D]">{t('conn.title')}</h1><p className="mt-1 text-[12px] text-[#7C7469]">{t('conn.description')}</p></div>{section==='channels'&&<Button type="button" variant="secondary" disabled={refreshing} onClick={()=>void refreshChannels()}>{refreshing?<LoaderCircle size={15} className="animate-spin"/>:<Activity size={15}/>} {t('conn.refresh')}</Button>}</div>
  const sectionTabs=<nav className="connection-tabs" aria-label="연결 및 확장 기능">{tabs.map(({id,label,icon:Icon})=><Button key={id} variant="bare" aria-current={section===id?'page':undefined} onClick={()=>setSection(id)}><Icon size={15}/>{label}</Button>)}</nav>
  if(section!=='channels'&&section!=='accounts'&&section!=='quick-connect')return <div className="mx-auto w-full max-w-[1320px] px-4 py-3 sm:px-6">{pageHeader}{sectionTabs}{section==='capabilities'?<CapabilitiesPage navigate={page=>setSection(page==='extensions'?'market':'channels')}/>:<ExtensionsPage section={section} embedded/>}</div>
  return <div className="mx-auto w-full max-w-[1320px] px-4 py-3 sm:px-6">
@@ -87,17 +97,17 @@ export function ConnectionsPage(){
   {section==='quick-connect'&&<ConnectedAccounts/>}
   {section==='channels'&&<>
   <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-   <div className="flex items-center gap-4 rounded-xl border border-[#E7E0D5] bg-white p-5 shadow-sm"><span className="grid size-12 place-items-center rounded-xl bg-[#F3EEE5] text-[#7C7469]"><Globe2 size={20}/></span><div><small className="block text-[11px] text-[#8A8176]">{t('conn.platforms')}</small><strong className="mt-0.5 block text-[19px] font-bold leading-none text-[#24211D]">{registry.value.length}</strong></div></div>
-   <div className="flex items-center gap-4 rounded-xl border border-[#E7E0D5] bg-white p-5 shadow-sm"><span className="grid size-12 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]"><RadioTower size={20}/></span><div><small className="block text-[11px] text-[#8A8176]">{t('conn.code')}</small><strong className="mt-0.5 block text-[19px] font-bold leading-none text-[#24211D]">{ready}</strong></div></div>
-   <div className="flex items-center gap-4 rounded-xl border border-[#E7E0D5] bg-white p-5 shadow-sm"><span className="grid size-12 place-items-center rounded-xl bg-teal-50 text-teal-600"><Check size={20}/></span><div><small className="block text-[11px] text-[#8A8176]">{t('conn.connected')}</small><strong className="mt-0.5 block text-[19px] font-bold leading-none text-[#24211D]">{online}</strong></div></div>
-   <div className="flex items-center gap-4 rounded-xl border border-[#E7E0D5] bg-white p-5 shadow-sm"><span className="grid size-12 place-items-center rounded-xl bg-[#F3EEE5] text-[#7C7469]"><Send size={20}/></span><div><small className="block text-[11px] text-[#8A8176]">{t('conn.outbound')}</small><strong className="mt-0.5 block text-[19px] font-bold leading-none text-[#24211D]">{outbound}</strong></div></div>
+   <div className="flex items-center gap-4 rounded-xl border border-[#E7E0D5] bg-white p-5 shadow-sm"><span className="grid size-12 place-items-center rounded-xl bg-[#F3EEE5] text-[#7C7469]"><Globe2 size={20}/></span><div><small className="block text-[11px] text-[#8A8176]">{t('conn.platforms')}</small><strong className="mt-0.5 block text-[19px] font-bold leading-none text-[#24211D]">{countDisplay(registry,registry.value.length)}</strong></div></div>
+   <div className="flex items-center gap-4 rounded-xl border border-[#E7E0D5] bg-white p-5 shadow-sm"><span className="grid size-12 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]"><RadioTower size={20}/></span><div><small className="block text-[11px] text-[#8A8176]">{t('conn.code')}</small><strong className="mt-0.5 block text-[19px] font-bold leading-none text-[#24211D]">{countDisplay(registry,ready)}</strong></div></div>
+   <div className="flex items-center gap-4 rounded-xl border border-[#E7E0D5] bg-white p-5 shadow-sm"><span className="grid size-12 place-items-center rounded-xl bg-teal-50 text-teal-600"><Check size={20}/></span><div><small className="block text-[11px] text-[#8A8176]">{t('conn.connected')}</small><strong className="mt-0.5 block text-[19px] font-bold leading-none text-[#24211D]">{countDisplay(channels,online)}</strong></div></div>
+   <div className="flex items-center gap-4 rounded-xl border border-[#E7E0D5] bg-white p-5 shadow-sm"><span className="grid size-12 place-items-center rounded-xl bg-[#F3EEE5] text-[#7C7469]"><Send size={20}/></span><div><small className="block text-[11px] text-[#8A8176]">{t('conn.outbound')}</small><strong className="mt-0.5 block text-[19px] font-bold leading-none text-[#24211D]">{countDisplay(channels,outbound)}</strong></div></div>
   </div>
   </>}
   {error&&<Notice message={error}/>}
   {info&&<div className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{info}</div>}
   {section==='channels'&&<>
    <div className="mb-5 flex flex-wrap items-center gap-3"><div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-[#E7E0D5] bg-white px-3 py-2"><Search size={17}/><TextInput value={query} onChange={e=>setQuery(e.target.value)} placeholder={t('conn.search')}/></div><div className="flex flex-wrap items-center gap-2"><Filter size={15}/>{groups.map(g=><Button variant={category===g.id?'primary':'ghost'} onClick={()=>setCategory(g.id)} key={g.id}>{t(g.name)}</Button>)}</div></div>
-   {registry.error&&<Notice message={registry.error}/>}
+   {failedSources.length>0&&<div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-900"><span>{t('conn.dataUnavailable')}</span><Button type="button" variant="secondary" size="sm" disabled={refreshing} onClick={()=>void refreshChannels()}>{refreshing?<LoaderCircle size={13} className="animate-spin"/>:null}{refreshing?t('conn.refreshing'):t('conn.retry')}</Button></div>}
    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
     {filtered.map(entry=>{const bindings=channels.value.filter(c=>c.kind===entry.id);const ChannelIcon=channelIcons[entry.id.toLowerCase()]||MessageCircle;return <Panel key={entry.id} className="flex min-w-0 flex-col gap-3 rounded-xl border border-[#E7E0D5] bg-white p-5 shadow-sm">
      <div className="flex items-start justify-between gap-3"><div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]"><ChannelIcon size={23}/></div><StatusPill status={entry.available?'available':'planned'}>{entry.available?t('conn.available'):t('conn.unavailable')}</StatusPill></div>
@@ -107,7 +117,7 @@ export function ConnectionsPage(){
      <div className="mt-auto flex flex-wrap items-center justify-between gap-3 border-t border-[#EFE9DF] pt-3"><a href={entry.docs} target="_blank" rel="noreferrer">{t('conn.docs')} <ExternalLink size={13}/></a>{entry.available?<Button onClick={()=>openEditor(entry)}><Plus size={15}/> {bindings.length?t('conn.addAccount'):t('conn.setup')}</Button>:<span className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">{t('conn.noCode')}</span>}</div>
     </Panel>})}
    </div>
-   {!filtered.length&&<Panel><div className="flex min-h-40 flex-col items-center justify-center gap-2 p-5 text-center text-[#7C7469]">{t('conn.noResults')}</div></Panel>}
+   {!filtered.length&&<Panel><div className="flex min-h-40 flex-col items-center justify-center gap-2 p-5 text-center text-[#7C7469]">{registry.loading||refreshing?t('conn.loading'):registry.error?t('conn.dataUnavailable'):t('conn.noResults')}</div></Panel>}
    <Panel className="flex min-w-0 items-start gap-3 rounded-xl border border-[#EED9CC] bg-[#F7E8E1] p-4 text-sm leading-6"><div className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#F1DCCF] text-[#A94E30]"><ShieldCheck size={21}/></div><div><strong>{t('conn.noteTitle')}</strong><p>{t('conn.note')}</p></div></Panel>
   </>}
   {section==='accounts'&&<>
