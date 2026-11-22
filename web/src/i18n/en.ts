@@ -609,6 +609,7 @@ const en: Record<LocaleKey, string> = {
   'chat.showRecent': 'Show recent',
   'chat.archiveSession': 'Archive conversation',
   'chat.restoreSession': 'Restore conversation',
+  'chat.archiveWait': 'Wait for this conversation to finish before changing its archive state.',
   'chat.sessionArchived': 'Conversation archived.',
   'chat.sessionRestored': 'Conversation restored.',
   'chat.noArchived': 'No archived conversations.',

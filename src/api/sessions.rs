@@ -218,15 +218,12 @@ pub async fn archive_session(
     let Some(archived) = body["archived"].as_bool() else {
         return error(StatusCode::BAD_REQUEST, "archived:true/false가 필요합니다.");
     };
-    let Some(session) = state.store.get("session", &id) else {
-        return error(StatusCode::NOT_FOUND, "세션을 찾을 수 없습니다.");
+    // Serialize archive changes with chat turns and other private-session
+    // mutations, or a stale turn snapshot could overwrite the archive flag.
+    let (_guard, _session) = match lock_private_session(&state, &id) {
+        Ok(locked) => locked,
+        Err(response) => return response,
     };
-    if session["roomId"].is_string() || session["channelContext"].is_object() {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "그룹과 외부 채널은 각 대화 화면에서 관리하세요.",
-        );
-    }
     let saved=state.store.patch_if("session",&id,"id",&json!(id),&json!({"archived":archived,"archivedAt":if archived{json!(chrono::Utc::now().to_rfc3339())}else{Value::Null}}));
     match saved {
         Some(saved) => {

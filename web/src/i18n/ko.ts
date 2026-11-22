@@ -608,6 +608,7 @@ const ko = {
   'chat.showRecent': '최근 대화 보기',
   'chat.archiveSession': '대화 보관',
   'chat.restoreSession': '대화 복원',
+  'chat.archiveWait': '대화가 끝난 뒤 보관 상태를 변경할 수 있습니다.',
   'chat.sessionArchived': '대화를 보관했습니다.',
   'chat.sessionRestored': '대화를 복원했습니다.',
   'chat.noArchived': '보관된 대화가 없습니다.',
