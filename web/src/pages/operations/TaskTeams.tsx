@@ -316,7 +316,7 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
          <option value="native">DOMINION Rust</option>
          <option value="codex">Codex</option><option value="claude">Claude Code</option>
          <option value="qwen">Qwen Code</option>
-         <option value="remote">{t('원격 장치 · 텍스트 추론','Remote device · text inference')}</option>
+         <option value="remote">{t('원격 장치 · 원격 AI','Remote device · remote AI')}</option>
         </select></label>
        <label className="grid gap-1 text-[11px]">{t('작업공간','Workspace')}
         <select className={field} value={step.isolation}

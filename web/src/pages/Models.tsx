@@ -57,10 +57,10 @@ const providerPresets:ProviderPreset[]=[
  // Local runtimes and localhost proxies.
  {name:'Ollama',baseUrl:'http://127.0.0.1:11434/v1',kind:'ollama',local:true,category:'local',auth:'none'},
  {name:'LM Studio',baseUrl:'http://127.0.0.1:1234/v1',kind:'openai',local:true,category:'local',auth:'none'},
- {name:'llama.cpp',baseUrl:'http://127.0.0.1:8080/v1',kind:'openai',local:true,category:'local',auth:'none'},
- {name:'vLLM',baseUrl:'http://127.0.0.1:8000/v1',kind:'openai',local:true,category:'local',auth:'none'},
- {name:'MLX',baseUrl:'http://127.0.0.1:8081/v1',kind:'openai',local:true,category:'local',auth:'none'},
- {name:'LiteLLM',baseUrl:'http://127.0.0.1:4000/v1',kind:'openai',local:true,category:'local',auth:'none'},
+ {name:'llama.cpp (기본 실행)',baseUrl:'http://127.0.0.1:8080/v1',kind:'openai',local:true,category:'local',auth:'none'},
+ {name:'vLLM (서버 실행)',baseUrl:'http://127.0.0.1:8000/v1',kind:'openai',local:true,category:'local',auth:'none'},
+ {name:'MLX (Apple 기기)',baseUrl:'http://127.0.0.1:8081/v1',kind:'openai',local:true,category:'local',auth:'none'},
+ {name:'LiteLLM (여러 AI 묶기)',baseUrl:'http://127.0.0.1:4000/v1',kind:'openai',local:true,category:'local',auth:'none'},
  opencodeGoPreset
 ]
 

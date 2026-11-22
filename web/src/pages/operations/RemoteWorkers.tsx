@@ -102,7 +102,7 @@ export function RemoteWorkersPanel({onAvailability}:{
     <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-canvas text-[#976D4C]">
      <Cpu size={17}/></div>
     <div className="min-w-0">
-     <strong className="block text-[13px]">{t('원격 장치 · 추론 워커','Remote devices · inference workers')}</strong>
+     <strong className="block text-[13px]">{t('원격 장치 · 원격 AI','Remote devices · remote AI')}</strong>
      <p className="text-[11px] text-muted">{!loaded?t('연결 상태 조회 중','Checking connections'):
       !enabled?t('기능 비활성','Feature disabled'):
       t('온라인 '+online+'대 / 등록 '+workers.length+'대','Online '+online+' / registered '+workers.length)}</p>
@@ -152,7 +152,7 @@ export function RemoteWorkersPanel({onAvailability}:{
     </div>
     <div className="rounded-xl border border-divider bg-surface p-3">
      <label className="block text-[12px] font-semibold" htmlFor="remote-task-prompt">
-      {t('원격 장치에 텍스트 추론 요청','Send text reasoning to a remote device')}</label>
+      {t('원격 장치에 질문 보내기','Send a question to a remote device')}</label>
      <textarea id="remote-task-prompt" className={'mt-2 '+control} rows={3}
       maxLength={16384} value={prompt} onChange={e=>setPrompt(e.target.value)}
       placeholder={t('원격 모델에 맡길 분석 또는 요약을 입력하세요.','Describe the reasoning or summary to delegate.')}/>
