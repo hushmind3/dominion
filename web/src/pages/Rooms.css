@@ -85,3 +85,94 @@
 .room-header>.conversation-settings{width:28px;height:32px;flex-shrink:0;color:#5C544A}.room-empty-header>.conversation-settings{margin-left:auto}.room-list-toggle{flex-shrink:0;padding:5px}
 
 .group-settings-trigger{flex-shrink:0}
+
+
+/* Sub3 Room workbench: conversation, status navigator and owner inspector. */
+.rooms-app{background:#f1f3f0}
+.room-list{
+ width:252px;flex-basis:252px;
+ border-color:#304849;
+ background:#1e2b2c;
+}
+.room-list-title{padding:23px 18px 18px}
+#root .room-list-title h2{color:#f3f8f5!important}
+.room-list-title button{color:#d9e8df}
+.room-list-title button:hover{background:#3b5551;color:white}
+.room-list .room-eyebrow{color:#91aaa8}
+.room-list-search{padding:0 12px 16px}
+.room-list-search input{
+ width:100%;min-height:40px;
+ border:1px solid #415957;
+ background:#2c4240;
+ color:#f4faf6;
+}
+.room-list-search input::placeholder{color:#a9bfba}
+.room-list-filters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-top:11px}
+.room-list-filter{
+ display:flex;justify-content:center;align-items:center;gap:5px;
+ min-height:35px;min-width:0;padding:4px 5px;
+ border:1px solid #3a5150!important;border-radius:8px!important;
+ background:transparent!important;color:#c2d3cd!important;
+ font-size:10px!important;font-weight:600;
+ white-space:nowrap;
+}
+.room-list-filter span{
+ font-variant-numeric:tabular-nums;
+ color:#a9bdb9;font-size:9px;
+}
+.room-list-filter:hover,.room-list-filter.is-active{
+ background:#3b5551!important;color:white!important;
+ border-color:#6a877d!important;
+}
+.room-list-filter.is-active span{color:#f2d3bb}
+.room-list-items{padding:0 9px}
+.room-list-item{color:#c3d4cf;border-radius:11px;padding:12px 10px}
+.room-list-item:hover{background:#304643}
+.room-list-item.is-selected{
+ background:#3b5551;border-color:#607b72;
+ box-shadow:inset 3px 0 #e5a57a;
+}
+.room-list-icon{color:#d3e1d9;background:#344e4a}
+.room-list-item.is-selected .room-list-icon{color:#fff3e6;background:#806452}
+.room-list-copy strong{color:#e8f1eb;font-size:12px}
+.room-list-copy small{color:#b2c4bc}
+.room-list-meta{color:#9bb4ad}
+.room-list-footer{border-color:#344b48}
+.room-list-footer button{color:#d8e6dd!important}
+.room-list-footer button:hover{background:#38514d!important}
+.room-list-empty{color:#b5c8c0}
+.room-header{
+ padding:18px 24px 15px;
+ background:rgba(255,255,255,.9);
+}
+.room-header h1{color:#263936!important}
+.room-header-icon{color:#a45f42;background:#fff4ed;border-color:#ead8cb}
+.room-presence{
+ padding:0 24px 15px;background:white;
+ border-color:#e5ebe5;
+}
+.room-main{background:#fcfdfa}
+.room-scroll{padding:24px clamp(16px,3vw,38px) 16px}
+.room-message{margin-bottom:30px;gap:14px}
+.room-message-byline strong{font-size:12px;color:#324340}
+.room-message-text{font-size:14px;line-height:1.85;color:#35443e}
+.room-message-owner .room-message-text{
+ background:#edf3ed;border-color:#dce8dd;
+ color:#273b34;border-radius:15px 15px 4px 15px;
+}
+.room-inspector{width:300px;flex-basis:300px;background:#f1f4ef;border-color:#dce5dc}
+.room-inspector-title{padding-top:20px}
+.room-owner-card{border-color:#dce5dc}
+.room-activity{background:#fbfefa;border-color:#d2e0d5}
+.room-activity-title{background:#edf3ed;border-color:#dae7dc}
+@media(max-width:767px){
+ .room-list{width:min(290px,90vw);flex-basis:auto}
+ .room-header{padding:13px 12px}
+ .room-presence{padding:0 12px 12px}
+ .room-scroll{padding:16px 12px 12px}
+ .room-list-item{min-height:60px}
+ .room-inspector{background:#f1f4ef}
+}
+@media(prefers-reduced-motion:reduce){
+ .room-list-item,.room-list-filter{transition:none}
+}
