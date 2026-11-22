@@ -18,11 +18,11 @@ const active=(s:string)=>s==='running'
 function ToolHistory({id}:{id:string}){
  const log=useRemote<Operation[]>('/api/executions/'+id+'/operations',[])
  return <div className="mt-3 max-h-44 space-y-2 overflow-y-auto">
-  {log.value.map(o=><div key={o.id} className="flex items-center gap-2 rounded-lg bg-[#FAF7F1] px-3 py-2 text-xs">
+  {log.loading?<p role="status" className="text-xs text-[#9C9388]">{t('ops.loading')}</p>:log.error?<p role="status" className="text-xs text-[#9C9388]">{t('ops.dataUnavailable')}</p>:log.value.map(o=><div key={o.id} className="flex items-center gap-2 rounded-lg bg-[#FAF7F1] px-3 py-2 text-xs">
    <Terminal size={13} className="shrink-0 text-[#7C7469]"/><span className="min-w-0 flex-1 truncate">{o.tool}</span>
    <span className="text-[#7C7469]">{o.status}</span>
   </div>)}
-  {!log.value.length&&<p className="text-xs text-[#9C9388]">{t('em.noTools')}</p>}
+  {!log.loading&&!log.error&&!log.value.length&&<p className="text-xs text-[#9C9388]">{t('em.noTools')}</p>}
  </div>
 }
 export function ExecutionMonitor(){
@@ -56,7 +56,7 @@ export function ExecutionMonitor(){
   <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E7E0D5] px-5 py-4">
    <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-[#24211D] text-white"><Activity size={20}/></span>
     <div><h2 className="m-0 text-lg font-bold text-[#24211D]">{t('em.title')}</h2><p className="m-0 text-xs text-[#7C7469]">{t('em.subtitle')}</p></div></div>
-   <div className="flex items-center gap-3"><span className="text-xs font-semibold text-[#5C544A]">{t('em.count',{count})}</span>
+   <div className="flex items-center gap-3"><span className="text-xs font-semibold text-[#5C544A]">{runs.loading||runs.error?'—':t('em.count',{count})}</span>
     <Button size="sm" variant="ghost" onClick={()=>void runs.reload()}><RefreshCw size={14}/> {t('em.refresh')}</Button></div>
   </div>
   <div className="border-b border-[#E7E0D5] p-5">
@@ -64,7 +64,9 @@ export function ExecutionMonitor(){
    <TextArea rows={3} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder={t('em.placeholder')}/>
    <div className="mt-3 flex flex-wrap items-center gap-2">
     <SelectInput value={executorId} onChange={e=>setAgentChoice(e.target.value)} aria-label={t('em.agentAria')}>
-     {!availableAgents.length&&<option value="">{t('em.noAgents')}</option>}
+     {agents.loading&&<option value="">{t('ops.loading')}</option>}
+     {agents.error&&<option value="">{t('ops.dataUnavailable')}</option>}
+     {!agents.loading&&!agents.error&&!availableAgents.length&&<option value="">{t('em.noAgents')}</option>}
      {availableAgents.map(a=><option key={a.id} value={a.id}>{a.name} · {a.model}</option>)}
     </SelectInput>
     <Button variant="primary" disabled={busy||!executorId||!prompt.trim()} onClick={()=>void execute()}><Play size={15}/> {t('em.run')}</Button>
@@ -79,10 +81,12 @@ export function ExecutionMonitor(){
        <small className="block truncate text-[11px] text-[#7C7469]">{r.sessionId}</small></span>
       <span className="shrink-0 text-xs font-medium text-[#5C544A]">{labels[r.status]?t(labels[r.status]):r.status}</span>
     </Button>)}
-    {!runs.value.length&&<p className="py-8 text-center text-sm text-[#7C7469]">{t('em.empty')}</p>}
+    {runs.loading&&<p role="status" className="py-8 text-center text-sm text-[#7C7469]">{t('ops.loading')}</p>}
+    {runs.error&&<p role="status" className="py-8 text-center text-sm text-[#7C7469]">{t('ops.dataUnavailable')}</p>}
+    {!runs.loading&&!runs.error&&!runs.value.length&&<p className="py-8 text-center text-sm text-[#7C7469]">{t('em.empty')}</p>}
    </div>
    <div className="min-w-0 border-t border-[#E7E0D5] pt-4 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
-    {current?<><div className="flex items-center justify-between gap-2"><h3 className="m-0 text-sm font-bold text-[#3A342D]">{t('em.detail')}</h3>
+    {runs.loading?<p role="status" className="text-sm text-[#7C7469]">{t('ops.loading')}</p>:runs.error?<p role="status" className="text-sm text-[#7C7469]">{t('ops.dataUnavailable')}</p>:current?<><div className="flex items-center justify-between gap-2"><h3 className="m-0 text-sm font-bold text-[#3A342D]">{t('em.detail')}</h3>
      <span className="text-xs font-semibold text-[#5C544A]">{labels[current.status]?t(labels[current.status]):current.status}</span></div>
      <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg bg-[#FAF7F1] p-3 text-center">
       <div><strong className="block text-lg">{current.modelCalls||0}</strong><small className="text-[10px]">{t('em.modelCalls')}</small></div>
