@@ -167,10 +167,10 @@ try{
   await page.goto(address+'/#/activity',{waitUntil:'domcontentloaded'});
   // Team search surfaces blocked Writer/Worker DAG without a long scroll.
   await page.getByRole('textbox',{name:'팀·Worker 검색'}).fill('researcher');
-  assert.ok(await page.getByText('Team m-fixture',{exact:false}).first().isVisible());
+  assert.ok(await page.getByText('팀 m-fixture',{exact:false}).first().isVisible());
   await page.getByRole('textbox',{name:'팀·Worker 검색'}).fill('');
   await page.getByRole('combobox',{name:'팀 상태 필터'}).selectOption('attention');
-  assert.equal(await page.getByRole('button',{name:/Team m-fixture/}).count(),1);
+  assert.equal(await page.getByRole('button',{name:/팀 m-fixture/}).count(),1);
   await page.getByRole('combobox',{name:'팀 상태 필터'}).selectOption('all');
 
   await page.getByText('저장된 Lead 작업',{exact:false}).first()
