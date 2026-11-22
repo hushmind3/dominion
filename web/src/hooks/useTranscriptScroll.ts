@@ -15,18 +15,27 @@ export function useTranscriptScroll(scope: string | undefined, revision: string,
  useLayoutEffect(() => {
   const el = scrollRef.current
   if (!el) return
-  const observer = new ResizeObserver(() => {
-   if (following.current) el.scrollTop = el.scrollHeight
-  })
+  const follow = () => { if (following.current) el.scrollTop = el.scrollHeight }
+  const observer = new ResizeObserver(follow)
   observer.observe(el)
-  return () => observer.disconnect()
- }, [])
+  // The viewport stays a fixed height while its transcript grows. Watching
+  // just the scroller misses those additions, especially before the first
+  // model token or after a code/table block changes height.
+  if (el.firstElementChild) observer.observe(el.firstElementChild)
+  const children = new MutationObserver(() => {
+   if (el.firstElementChild) observer.observe(el.firstElementChild)
+   follow()
+  })
+  children.observe(el, {childList:true})
+  return () => { observer.disconnect();children.disconnect() }
+ }, [scope])
 
  function onScroll() {
   const el = scrollRef.current
   if (!el) return
-  following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100
-  if (following.current) onMore?.(false)
+  const moreBelow = el.scrollHeight - el.scrollTop - el.clientHeight >= 100
+  following.current = !moreBelow
+  onMore?.(moreBelow)
  }
 
  function jumpDown() {

@@ -172,12 +172,12 @@ export function ContextMenu() {
   rows.push({ label: t('ctx.print'), run: () => { window.print(); setCtx(null); } });
 
   const item =
-    "block w-full whitespace-nowrap rounded-md px-3 py-1.5 text-left text-[12px] text-ink hover:bg-canvas";
+    "block w-full whitespace-nowrap rounded-md px-3 py-1.5 text-left text-[12px] text-[#3A342D] hover:bg-[#F7F2EA]";
   const height = rows.reduce((sum, row) => sum + (row === "sep" ? 9 : 28), 0) + 10;
 
   return (
     <div
-      className="fixed z-[9999] min-w-[190px] rounded-xl border border-divider bg-white p-1 text-ink shadow-xl"
+      className="fixed z-[9999] min-w-[190px] rounded-xl border border-divider bg-white p-1 text-[#3A342D] shadow-xl"
       style={{
         left: Math.max(0, Math.min(ctx.x, window.innerWidth - 210)),
         top: Math.max(0, Math.min(ctx.y, window.innerHeight - height - 8)),
@@ -188,7 +188,7 @@ export function ContextMenu() {
     >
       {rows.map((row, index) =>
         row === "sep" ? (
-          <div key={"sep" + index} className="my-1 h-px bg-divider" />
+          <div key={"sep" + index} className="my-1 h-px bg-[#EFE9DF]" />
         ) : (
           <button key={row.label + index} type="button" className={item} onClick={row.run}>
             {row.label}

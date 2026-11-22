@@ -1,29 +1,46 @@
-import {useCallback,useState,type SetStateAction} from 'react'
+import {useLayoutEffect,useRef,useState,type Dispatch,type SetStateAction} from 'react'
 
-// Drafts are isolated per conversation and per browser tab. An unsent owner
-// message must never silently move to another chat when the history changes.
-const PREFIX='dominion.chat.draft:'
-const keyOf=(sessionId?:string)=>PREFIX+(sessionId||'new')
-const read=(key:string)=>{try{return sessionStorage.getItem(key)||''}catch{return ''}}
-const write=(key:string,value:string)=>{
- try {
-  if(value)sessionStorage.setItem(key,value)
-  else sessionStorage.removeItem(key)
- } catch {
-  // Private browsing/storage restrictions must not prevent chatting.
- }
-}
+/**
+ * Keep unsent text attached to its conversation, not to the currently visible
+ * textarea. An in-memory map avoids copying private drafts to local storage.
+ */
+export function useChatDraft(scope:string|undefined):[
+ string, Dispatch<SetStateAction<string>>, (sessionId:string,submitted:string)=>void
+] {
+ const key=scope??''
+ const drafts=useRef(new Map<string,string>())
+ const activeScope=useRef(key)
+ const latest=useRef('')
+ const migration=useRef<string|undefined>(undefined)
+ const [value,updateValue]=useState('')
 
-export function useChatDraft(sessionId?:string):[string,(next:SetStateAction<string>)=>void]{
- const key=keyOf(sessionId)
- const [current,setCurrent]=useState<{key:string;text:string}>(()=>({key,text:read(key)}))
- // Derive from scope in render; switching sessions never flashes the
- // previous session's unsent text even before an effect can run.
- const input=current.key===key?current.text:read(key)
- const setInput=useCallback((next:SetStateAction<string>)=>{
-  const value=typeof next==='function'?next(read(key)):next
-  write(key,value)
-  setCurrent({key,text:value})
+ useLayoutEffect(()=>{
+  if(activeScope.current===key)return
+  const from=activeScope.current
+  activeScope.current=key
+  const restored=drafts.current.get(key)??''
+  if(from===''&&migration.current===key){
+   // Sending the first turn adopted the unsent follow-up into its new session.
+   drafts.current.delete('')
+   migration.current=undefined
+  }
+  latest.current=restored
+  updateValue(restored)
  },[key])
- return [input,setInput]
+
+ const setDraft:Dispatch<SetStateAction<string>>=update=>{
+  const next=typeof update==='function'?update(latest.current):update
+  latest.current=next
+  drafts.current.set(activeScope.current,next)
+  updateValue(next)
+ }
+
+ const adoptNewSession=(sessionId:string,submitted:string)=>{
+  if(activeScope.current!=='')return
+  const remainder=latest.current.trim()===submitted?'':latest.current
+  drafts.current.set(sessionId,remainder)
+  migration.current=sessionId
+ }
+
+ return [value,setDraft,adoptNewSession]
 }

@@ -1,34 +1,33 @@
 import {useEffect,useState} from 'react'
-import {BookOpenText, Check, Pencil, Plus, Trash2, X} from 'lucide-react'
-import {del, post, type Agent} from '../api'
-import {Button, TextInput, TextArea, SelectInput} from '../components/Primitives'
-import {Action, FormField, Headline, Notice, Panel, Subheading, useRemote,PAGE_FRAME} from '../components/UI'
+import {BookOpenText,Check,Pencil,Plus,Trash2} from 'lucide-react'
+import {del,post,type Agent} from '../api'
+import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
+import {Action,FormField,Headline,Notice,Panel,Subheading,useRemote} from '../components/UI'
 import {LearningRecords} from './memory/LearningRecords'
-import {formatDateTime,t,useLocale,type LocaleKey} from '../i18n'
+import {t,useLocale,type LocaleKey} from '../i18n'
 import {GrowthDashboard} from './memory/Growth'
+import {SystemPromptPanel} from './memory/SystemPromptPanel'
 
 type Memory={
  id:string;text:string;scope?:string;agentId?:string;sessionId?:string;partitionKey?:string;
  status?:string;retrievalEligible:boolean;source?:string;createdAt?:string;lastUsedAt?:string;
  importance?:number;verification?:string;sourceMessageIds?:string[];evidenceQuote?:string;
- forgetReason?:string;archiveReason?:string;expiresAt?:string;editedAt?:string;
- editHistory?:{text:string;editedAt:string;by?:string}[];
+ forgetReason?:string;archiveReason?:string;expiresAt?:string;
 }
 const statusLabels:Record<string,LocaleKey>={active:'memory.status.active',archived:'memory.status.archived',superseded:'memory.status.superseded',deleted:'memory.status.deleted',draft:'memory.status.draft',excluded:'memory.status.excluded'}
 const sourceLabels:Record<string,LocaleKey>={user:'memory.source.user',learn:'memory.source.learn',agent:'memory.source.agent',reflect:'memory.source.reflect',compression:'memory.source.compression'}
-const MEMORY_TEXT_LIMIT=16_000
-const memoryTextLength=(value:string)=>Array.from(value).length
-const displayTime=(time?:string)=>time&&Number.isFinite(Date.parse(time))?formatDateTime(time):t('memory.time.none')
+const displayTime=(time?:string)=>time&&Number.isFinite(Date.parse(time))?new Date(time).toLocaleString():t('memory.time.none')
 const statusOf=(memory:Memory)=>memory.retrievalEligible?'active':memory.status&&memory.status!=='active'?memory.status:'excluded'
 
 export function MemoryPage(){
  const locale=useLocale()
+ const [tab,setTab]=useState<'memories'|'systemPrompt'>('memories')
  const memories=useRemote<Memory[]>('/api/memories',[])
  const agents=useRemote<Agent[]>('/api/agents',[])
  const [query,setQuery]=useState(''),[text,setText]=useState(''),[scope,setScope]=useState('shared')
  const [status,setStatus]=useState('active'),[owner,setOwner]=useState('all')
  const [error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false)
- const [editing,setEditing]=useState<{id:string;text:string;expectedText:string;correction:boolean}|null>(null)
+ const [editingId,setEditingId]=useState(''),[editText,setEditText]=useState('')
  const [showRecords,setShowRecords]=useState(false)
  const [visibleLimit,setVisibleLimit]=useState(40)
  useEffect(()=>setVisibleLimit(40),[query,status,owner])
@@ -53,55 +52,47 @@ export function MemoryPage(){
    &&[m.text,ownerName(m),m.source].join(' ').toLowerCase().includes(query.trim().toLowerCase())
  })
  const save=async()=>{
-  if(!text.trim()||memoryTextLength(text.trim())>MEMORY_TEXT_LIMIT||busy)return
+  if(!text.trim()||busy)return
   setBusy(true);setError('');setNotice('')
   try{
    await post('/api/memories',{text:text.trim(),status:'active',source:'user',...(scope==='shared'?{scope}:{scope:'agent',agentId:scope})})
    setText('');setNotice(t('memory.saved'));setStatus('active');setOwner('all');await memories.reload()
   }catch(e){setError((e as Error).message)}finally{setBusy(false)}
  }
- const saveEdit=async()=>{
-  if(!editing||busy||!editing.text.trim()||memoryTextLength(editing.text.trim())>MEMORY_TEXT_LIMIT||editing.text.trim()===editing.expectedText)return
+ const correct=async(id:string)=>{
+  if(busy||!editText.trim())return
   setBusy(true);setError('');setNotice('')
   try{
-   await post('/api/memories/'+encodeURIComponent(editing.id)+(editing.correction?'/correct':'/edit'),{
-    text:editing.text.trim(),expectedText:editing.expectedText
-   })
+   await post('/api/memories/'+encodeURIComponent(id)+'/correct',{text:editText.trim()})
+   setEditingId('');setEditText('')
+   setNotice(t('memory.updated'))
    await memories.reload()
-   setEditing(null);setNotice(t(editing.correction?'memory.corrected':'memory.edited'))
-  }catch(e){setError((e as Error).message)}
-  finally{setBusy(false)}
+  }catch(e){setError((e as Error).message)}finally{setBusy(false)}
  }
  const drop=async(id:string)=>{
   if(busy||!confirm(t('memory.delete')+'?'))return
   setBusy(true);setError('');setNotice('')
-  try{await del('/api/memories/'+encodeURIComponent(id));if(editing?.id===id)setEditing(null);await memories.reload()}catch(e){setError((e as Error).message)}finally{setBusy(false)}
+  try{await del('/api/memories/'+encodeURIComponent(id));await memories.reload()}catch(e){setError((e as Error).message)}finally{setBusy(false)}
  }
- const statusOverview=[
-  {id:'all',ko:'전체 기억',english:'All memories',count:memories.value.length},
-  {id:'active',ko:'검색 가능',english:'Retrievable',count:memories.value.filter(m=>statusOf(m)==='active').length},
-  {id:'archived',ko:'보관',english:'Archived',count:memories.value.filter(m=>statusOf(m)==='archived').length},
-  {id:'excluded',ko:'검색 제외',english:'Excluded',count:memories.value.filter(m=>statusOf(m)==='excluded').length},
- ]
- return <div className={PAGE_FRAME}>
-  <Headline title={t('memory.title')} description={t('memory.description')}/>
-  <div className="mb-5 grid grid-cols-2 gap-2 md:grid-cols-4" role="group" aria-label={locale==='en'?'Memory filters':'기억 상태 필터'}>
-   {statusOverview.map(item=><button key={item.id} type="button" onClick={()=>setStatus(item.id)}
-    aria-pressed={status===item.id}
-    className={'min-w-0 rounded-xl border p-4 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 '+
-     (status===item.id?'border-[#B18A6E] bg-[#FAF1E8]':'border-divider bg-white hover:bg-canvas')}>
-    <strong className="block text-[23px] font-bold tabular-nums text-[#304036]">{item.count}</strong>
-    <span className="mt-1 block text-[11px] text-[#7F746A]">{locale==='en'?item.english:item.ko}</span>
-   </button>)}
-  </div>
-  <Notice message={error||memories.error||agents.error}/>
+ return <div className="mx-auto w-full max-w-[1320px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8">
+  <Headline eyebrow={t('ui.eyebrow.memory')} title={t('memory.title')} description={t('memory.description')}/>
+  <Notice message={error||memories.error||agents.error} retrying={memories.refreshing||agents.refreshing} onRetry={!error?()=>{void memories.reload();void agents.reload()}:undefined}/>
   {notice&&<div role="status" className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{notice}</div>}
+  <div role="tablist" aria-label={locale==='en'?'Memory settings':'메모리 설정'} className="mb-5 flex flex-wrap gap-2 border-b border-divider pb-3">
+   <button type="button" role="tab" aria-selected={tab==='memories'} onClick={()=>setTab('memories')}
+    className={'rounded-lg px-4 py-2 text-sm font-semibold '+(tab==='memories'?'bg-[#A4583E] text-white':'bg-[#F7F1E6] text-[#675C51] hover:bg-[#EEE5D9]')}>
+    {locale==='en'?'Memories':'기억'}
+   </button>
+   <button type="button" role="tab" aria-selected={tab==='systemPrompt'} onClick={()=>setTab('systemPrompt')}
+    className={'rounded-lg px-4 py-2 text-sm font-semibold '+(tab==='systemPrompt'?'bg-[#A4583E] text-white':'bg-[#F7F1E6] text-[#675C51] hover:bg-[#EEE5D9]')}>
+    {locale==='en'?'Reply instructions':'답변 방식'}
+   </button>
+  </div>
+  {tab==='systemPrompt'?<SystemPromptPanel/>:<>
   <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-   <Panel className="min-w-0 p-5 xl:sticky xl:top-4">
-    <Subheading title={t('memory.new')} extra={<Action disabled={busy||!text.trim()||memoryTextLength(text.trim())>MEMORY_TEXT_LIMIT} onClick={save}><Plus size={16}/> {t('memory.save')}</Action>}/>
-    <FormField label={t('memory.content')}><TextArea rows={6} maxLength={MEMORY_TEXT_LIMIT*2} value={text} onChange={e=>setText(e.target.value)}/>
-     <p className={'mt-1 text-right text-[10px] '+(memoryTextLength(text.trim())>MEMORY_TEXT_LIMIT?'text-rose-600':'text-muted')}>
-      {t('memory.charCount',{count:memoryTextLength(text.trim()),max:MEMORY_TEXT_LIMIT})}</p></FormField>
+   <Panel className="min-w-0 p-5">
+    <Subheading title={t('memory.new')} extra={<Action disabled={busy||!text.trim()} onClick={save}><Plus size={16}/> {t('memory.save')}</Action>}/>
+    <FormField label={t('memory.content')}><TextArea rows={6} value={text} onChange={e=>setText(e.target.value)}/></FormField>
     <FormField label={t('memory.scope')}><SelectInput value={scope} onChange={e=>setScope(e.target.value)}><option value="shared">{t('memory.scope.shared')}</option>{agents.value.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</SelectInput></FormField>
     <p className="mt-4 text-sm text-muted">{t('memory.note')}</p>
    </Panel>
@@ -113,22 +104,17 @@ export function MemoryPage(){
      <SelectInput aria-label={t('memory.scopeAria')} value={owner} onChange={e=>setOwner(e.target.value)}><option value="all">{t('memory.owner.all')}</option><option value="shared">{t('memory.owner.shared')}</option><option value="session">{t('memory.owner.session')}</option>{owners.map(id=><option key={id} value={id}>{agentNames.get(id)??id}</option>)}</SelectInput>
     </div>
     <div className="flex flex-col gap-3">{filtered.slice(0,visibleLimit).map(m=><Panel key={m.id} className="min-w-0 p-4">
-     <div className="mb-2 flex flex-wrap items-center gap-2"><BookOpenText size={18}/><strong>{ownerName(m)}</strong><span className="text-xs text-muted">{t(statusLabels[statusOf(m)] ?? 'memory.status.excluded')}</span>{m.status==='active'&&['user','learn','agent','reflect'].includes(m.source??'user')&&<Button size="icon" variant="ghost" className="ml-auto" disabled={busy} onClick={()=>{setEditing({id:m.id,text:m.text,expectedText:m.text,correction:m.source!=='user'});setError('');setNotice('')}} aria-label={t(m.source==='user'?'memory.edit':'memory.correct')}><Pencil size={16}/></Button>}<Button size="icon" variant="ghost" className="ml-auto" disabled={busy} onClick={()=>void drop(m.id)} aria-label={t('memory.delete')}><Trash2 size={16}/></Button></div>
-     {editing?.id===m.id?<div className="grid gap-2">
-      <TextArea rows={5} maxLength={MEMORY_TEXT_LIMIT*2} aria-label={t(editing.correction?'memory.correct':'memory.edit')} value={editing.text} disabled={busy} onChange={e=>setEditing(previous=>previous&&previous.id===m.id?{...previous,text:e.target.value}:previous)}/>
-      <p className={'text-right text-[10px] '+(memoryTextLength(editing.text.trim())>MEMORY_TEXT_LIMIT?'text-rose-600':'text-muted')}>
-       {t('memory.charCount',{count:memoryTextLength(editing.text.trim()),max:MEMORY_TEXT_LIMIT})}</p>
-      {editing.correction&&<p className="text-xs leading-5 text-muted">{t('memory.correctionNotice')}</p>}
-      <div className="flex flex-wrap gap-2">
-       <Button variant="primary" disabled={busy||!editing.text.trim()||memoryTextLength(editing.text.trim())>MEMORY_TEXT_LIMIT||editing.text.trim()===editing.expectedText} onClick={()=>void saveEdit()}><Check size={15}/>{t('memory.save')}</Button>
-       <Button variant="ghost" disabled={busy} onClick={()=>setEditing(null)}><X size={15}/>{t('memory.cancel')}</Button>
-      </div>
+     <div className="mb-2 flex flex-wrap items-center gap-2"><BookOpenText size={18}/><strong>{ownerName(m)}</strong><span className="text-xs text-muted">{t(statusLabels[statusOf(m)] ?? 'memory.status.excluded')}</span>{statusOf(m)==='active'&&<Button type="button" size="icon" variant="ghost" className="ml-auto" disabled={busy} onClick={()=>{setEditingId(m.id);setEditText(m.text);setError('')}} aria-label={t('memory.edit')}><Pencil size={16}/></Button>}<Button size="icon" variant="ghost" className={statusOf(m)==='active'?'':'ml-auto'} disabled={busy} onClick={()=>void drop(m.id)} aria-label={t('memory.delete')}><Trash2 size={16}/></Button></div>
+     {editingId===m.id?<div className="grid gap-2">
+      <TextArea rows={4} aria-label={t('memory.edit')} value={editText} onChange={event=>setEditText(event.target.value)}/>
+      <p className="text-[11px] text-[#8A8176]">{t('memory.editNote')}</p>
+      <div className="flex flex-wrap gap-2"><Button type="button" variant="primary" disabled={busy||!editText.trim()||editText.trim()===m.text.trim()} onClick={()=>void correct(m.id)}><Check size={14}/> {t('memory.update')}</Button><Button type="button" variant="ghost" disabled={busy} onClick={()=>{setEditingId('');setEditText('')}}>{t('memory.cancel')}</Button></div>
      </div>:<p className="whitespace-pre-wrap">{m.text}</p>}
      <div className="mt-2 flex flex-wrap gap-x-3 text-xs text-muted"><span>{t('memory.source')} {sourceLabels[m.source??'user']?t(sourceLabels[m.source??'user'] as LocaleKey):m.source}</span><span>{t('memory.importance')} {typeof m.importance==='number'?m.importance.toFixed(2):t('memory.time.none')}</span><span>{t('memory.lastUsed')} {displayTime(m.lastUsedAt)}</span></div>
-     <details className="mt-2 text-xs text-muted"><summary className="cursor-pointer">{t('memory.evidence')}</summary><div className="mt-2 grid gap-1 break-all"><span>{t('memory.created')} {displayTime(m.createdAt)}</span><span>{t('memory.verification')} {m.verification==='source_quote'?t('memory.verification.sourceQuote'):m.verification||t('memory.time.none')}</span>{m.partitionKey&&<span>{t('memory.workspace')} {m.partitionKey}</span>}{m.sessionId&&<span>{t('memory.sessionId')} {m.sessionId}</span>}{m.sourceMessageIds?.length?<span>{t('memory.sourceMessages')} {m.sourceMessageIds.join(', ')}</span>:null}{m.evidenceQuote&&<blockquote>{m.evidenceQuote}</blockquote>}{m.archiveReason||m.forgetReason?<span>{t('memory.archiveReason')} {m.archiveReason??m.forgetReason}</span>:null}{m.expiresAt&&<span>{t('memory.expires')} {displayTime(m.expiresAt)}</span>}{m.editedAt&&<span>{t('memory.editedAt')} {displayTime(m.editedAt)}</span>}{m.editHistory?.length?<details><summary className="cursor-pointer">{t('memory.previousVersions')} ({m.editHistory.length})</summary>{m.editHistory.map((previous,index)=><div key={index} className="mt-2 whitespace-pre-wrap border-l-2 border-divider pl-2"><small>{displayTime(previous.editedAt)}</small><div>{previous.text}</div></div>)}</details>:null}</div></details>
+     <details className="mt-2 text-xs text-[#5C544A]"><summary className="cursor-pointer">{t('memory.evidence')}</summary><div className="mt-2 grid gap-1 break-all"><span>{t('memory.created')} {displayTime(m.createdAt)}</span><span>{t('memory.verification')} {m.verification==='source_quote'?t('memory.verification.sourceQuote'):m.verification||t('memory.time.none')}</span>{m.partitionKey&&<span>{t('memory.workspace')} {m.partitionKey}</span>}{m.sessionId&&<span>{t('memory.sessionId')} {m.sessionId}</span>}{m.sourceMessageIds?.length?<span>{t('memory.sourceMessages')} {m.sourceMessageIds.join(', ')}</span>:null}{m.evidenceQuote&&<blockquote>{m.evidenceQuote}</blockquote>}{m.archiveReason||m.forgetReason?<span>{t('memory.archiveReason')} {m.archiveReason??m.forgetReason}</span>:null}{m.expiresAt&&<span>{t('memory.expires')} {displayTime(m.expiresAt)}</span>}</div></details>
     </Panel>)}</div>
     {filtered.length>visibleLimit&&<Button variant="secondary" className="w-full" onClick={()=>setVisibleLimit(value=>value+40)}>{t('memory.showMore',{count:filtered.length-visibleLimit})}</Button>}
-    {!filtered.length&&<Panel className="p-6 text-center text-sm text-muted">{memories.loading?t('memory.loading'):t('memory.empty')}</Panel>}
+    {!memories.error&&!filtered.length&&<Panel className="p-6 text-center text-sm text-muted">{memories.loading?t('memory.loading'):t('memory.empty')}</Panel>}
    </div>
   </div>
   <details className="mt-6 rounded-xl border border-divider bg-surface p-4" onToggle={event=>setShowRecords(event.currentTarget.open)}>
@@ -139,5 +125,6 @@ export function MemoryPage(){
    <summary className="cursor-pointer font-semibold">{t('memory.growth')}</summary>
    <GrowthDashboard/>
   </details>
+  </>}
  </div>
 }

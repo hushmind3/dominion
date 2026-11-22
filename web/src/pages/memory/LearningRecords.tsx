@@ -1,25 +1,16 @@
-import {formatDateTime,t,type LocaleKey} from '../../i18n'
+import {formatDateTime} from '../../i18n'
 import {useState} from 'react'
 import {Button} from '../../components/Primitives'
 import {Notice,useRemote} from '../../components/UI'
-import {statusLabel} from '../../components/StatusPill'
 
 type Rec=Record<string,any>
 type Row={key:string;title:string;subtitle?:string;tags:string[];facts:[string,string][];raw:Rec}
 const sources=[
  {label:'경험',endpoint:'/api/experience'},
+ {label:'개선안',endpoint:'/api/improvements'},
  {label:'알고리즘',endpoint:'/api/algorithms'},
 ] as const
 const str=(value:any)=>typeof value==='string'?value:typeof value==='number'?String(value):''
-const tagLabel=(value:string)=>{
- const labels:Record<string,LocaleKey>={
-  global:'learningRecords.scope.global',shared:'learningRecords.scope.shared',
-  agent:'learningRecords.scope.agent',builtin:'learningRecords.source.builtin',
-  user:'learningRecords.source.user',owner:'learningRecords.source.owner',
-  usage_rebuild:'learningRecords.source.usageRebuild',
- }
- return labels[value]?t(labels[value]):statusLabel(value)||value
-}
 const count=(value:any)=>typeof value==='number'?value:undefined
 const list=(value:any)=>Array.isArray(value)?value.map(str).filter(Boolean):[]
 const facts=(items:[string,string][])=>items.filter(([,value])=>!!value) as [string,string][]
@@ -33,11 +24,18 @@ const when=(value:any)=>{
  const text=str(value)
  return text&&Number.isFinite(Date.parse(text))?formatDateTime(text):text
 }
+const fallback=(rec:Rec,index:number):Row=>({
+ key:str(rec.id)||String(index),
+ title:str(rec.name)||str(rec.title)||str(rec.text)||str(rec.lesson)||str(rec.id)||'기록',
+ tags:[str(rec.status),str(rec.kind)].filter(Boolean),
+ facts:Object.entries(rec).filter(([,value])=>['string','number','boolean'].includes(typeof value)).slice(0,8).map(([key,value])=>[key,String(value)] as [string,string]),
+ raw:rec,
+})
 const experience=(rec:Rec,index:number):Row=>({
  key:str(rec.id)||`experience-${index}`,
  title:str(rec.lesson)||str(rec.request)||str(rec.id)||'경험',
  subtitle:str(rec.request)&&str(rec.request)!==str(rec.lesson)?str(rec.request):undefined,
- tags:[str(rec.outcome),str(rec.status),tagLabel(str(rec.scope))].filter(Boolean),
+ tags:[str(rec.outcome),str(rec.status),str(rec.scope)].filter(Boolean),
  facts:facts([
   ['피할 점',str(rec.avoid)],
   ['도구',list(rec.tools).join(', ')],
@@ -49,6 +47,21 @@ const experience=(rec:Rec,index:number):Row=>({
  ]),
  raw:rec,
 })
+const improvement=(rec:Rec,index:number):Row=>({
+ key:str(rec.id)||`improvement-${index}`,
+ title:str(rec.text)||str(rec.rationale)||str(rec.id)||'개선안',
+ tags:[str(rec.kind),str(rec.status),str(rec.evidenceGrade),str(rec.rollout)].filter(Boolean),
+ facts:facts([
+  ['근거',str(rec.rationale)],
+  ['성공률',rate(rec.successes,rec.uses)],
+  ['실패',count(rec.failures)!==undefined?`${count(rec.failures)}회`:''],
+  ['기준 성공률',typeof rec.baselineSuccess==='number'?`${Math.round(rec.baselineSuccess*100)}%`:''],
+  ['최근 관측',when(rec.lastObservedAt)],
+  ['롤백 시각',when(rec.rolledBackAt)],
+  ['사유',str(rec.reason)],
+ ]),
+ raw:rec,
+})
 const algorithm=(rec:Rec,index:number,kind:Rec):Row=>{
  const stats:Rec=rec.stats??{}
  const adopted=kind.active?.id&&kind.active.id===rec.id
@@ -56,8 +69,7 @@ const algorithm=(rec:Rec,index:number,kind:Rec):Row=>{
   key:str(rec.id)||`algorithm-${index}`,
   title:str(rec.name)||str(rec.variant)||str(rec.id)||'알고리즘',
   subtitle:str(kind.label)||str(rec.kind),
-  tags:[adopted?t('learningRecords.adopted'):tagLabel(str(rec.status)),
-   tagLabel(str(rec.source)),str(rec.implementation)].filter(Boolean),
+  tags:[adopted?'채택됨':str(rec.status),str(rec.source),str(rec.implementation)].filter(Boolean),
   facts:facts([
    ['종류',str(rec.kind)],
    ['구현',str(rec.implementation)],
@@ -72,13 +84,13 @@ const algorithm=(rec:Rec,index:number,kind:Rec):Row=>{
 }
 const normalize=(source:number,data:any):Row[]=>{
  if(!data)return []
- if(source===1){
+ if(source===2){
   const kinds:Rec[]=Array.isArray(data.kinds)?data.kinds:[]
-  return kinds.flatMap((kind,kindIndex)=>(Array.isArray(kind.algorithms)?kind.algorithms:[])
-   .map((rec:Rec,index:number)=>algorithm(rec,kindIndex*1000+index,kind)))
+  return kinds.flatMap((kind,kindIndex)=>(Array.isArray(kind.algorithms)?kind.algorithms:[]).map((rec:Rec,index:number)=>algorithm(rec,kindIndex*1000+index,kind)))
  }
- const rows:Rec[]=Array.isArray(data)?data:Array.isArray(data.items)?data.items:[]
- return rows.map(experience)
+ const records:Rec[]=Array.isArray(data)?data:Array.isArray(data.items)?data.items:null
+ if(!records)return [fallback(data,0)]
+ return records.map((rec,index)=>source===0?experience(rec,index):source===1?improvement(rec,index):fallback(rec,index))
 }
 
 export function LearningRecords(){
@@ -89,10 +101,10 @@ export function LearningRecords(){
  return <div className="mt-3 grid gap-2">
   <div className="flex flex-wrap gap-2">{sources.map((item,i)=><Button key={item.label} variant={source===i?'primary':'ghost'} onClick={()=>{setSource(i);setLimit(20)}}>{item.label}</Button>)}</div>
   <Notice message={data.error}/>
-  {data.loading?<p>기록을 불러오는 중…</p>:!data.error&&!rows.length?<p>저장된 기록이 없습니다.</p>:rows.slice(0,limit).map(row=><details key={row.key} className="rounded-lg border border-divider p-2">
-   <summary className="cursor-pointer text-sm"><strong>{row.title}</strong>{row.subtitle&&<span className="text-muted"> · {row.subtitle}</span>}{row.tags.map(tag=><span key={tag} className="ml-2 rounded bg-brand-soft px-1.5 py-0.5 text-[10px] font-semibold text-brand-hover">{tag}</span>)}</summary>
-   {row.facts.length>0&&<dl className="mt-2 grid grid-cols-1 gap-1 text-xs sm:grid-cols-[9rem_minmax(0,1fr)]">{row.facts.map(([label,value])=><div key={label} className="contents"><dt className="font-semibold text-muted">{label}</dt><dd className="break-all text-ink">{value}</dd></div>)}</dl>}
-   <details className="mt-2 text-xs text-muted"><summary className="cursor-pointer">원본 JSON</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(row.raw,null,2)}</pre></details>
+  {data.loading?<p>기록을 불러오는 중…</p>:!data.error&&!rows.length?<p>저장된 기록이 없습니다.</p>:rows.slice(0,limit).map(row=><details key={row.key} className="rounded-lg border border-[#EFE9DF] p-2">
+   <summary className="cursor-pointer text-sm"><strong>{row.title}</strong>{row.subtitle&&<span className="text-muted"> · {row.subtitle}</span>}{row.tags.map(tag=><span key={tag} className="ml-2 rounded bg-[#F7E8E1] px-1.5 py-0.5 text-[10px] font-semibold text-brand-hover">{tag}</span>)}</summary>
+   {row.facts.length>0&&<dl className="mt-2 grid grid-cols-1 gap-1 text-xs sm:grid-cols-[9rem_minmax(0,1fr)]">{row.facts.map(([label,value])=><div key={label} className="contents"><dt className="font-semibold text-muted">{label}</dt><dd className="break-all text-[#4A443C]">{value}</dd></div>)}</dl>}
+   <details className="mt-2 text-xs text-[#5C544A]"><summary className="cursor-pointer">원본 JSON</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(row.raw,null,2)}</pre></details>
   </details>)}
   {rows.length>limit&&<Button variant="secondary" onClick={()=>setLimit(n=>n+20)}>더 보기</Button>}
  </div>

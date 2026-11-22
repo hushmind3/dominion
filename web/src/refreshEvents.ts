@@ -27,62 +27,32 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
    case 'session':add('/api/sessions');break
    case 'message':add('/api/sessions');if(session)add('/api/sessions/'+encoded(session)+'/messages');break
    case 'room':add('/api/rooms');if(id){rooms.add(id);add('/api/rooms/'+encoded(id)+'/state')}break
-   case 'room_state':if(room)add('/api/rooms/'+encoded(room)+'/state');break
-   case 'room_knowledge':if(room)add('/api/rooms/'+encoded(room)+'/knowledge');break
    case 'agent':add('/api/agents');break
-   case 'agent_growth':{
-    add('/api/synergy')
-    const agentId=field(row,'agentId')
-    if(agentId)add('/api/agents/'+encoded(agentId)+'/growth')
+   case 'provider':add('/api/providers');if(id)add('/api/providers/'+encoded(id)+'/models');break
+   case 'policy':add('/api/policy');break
+   case 'extension_policy':add('/api/extensions/runtime','/api/tools');break
+   case 'job':
+    add('/api/jobs')
+    if(id)add('/api/jobs/'+encoded(id))
+    // Native Team views subscribe to their frozen DAG rather than the
+    // bounded session overview. Only the affected Team is invalidated.
+    const teamId=field(input,'teamJobId')||
+     (field(row,'kind')==='team'?id:undefined)
+    if(teamId)add('/api/jobs/'+encoded(teamId)+'/team-steps')
     break
-   }
-   case 'provider':add('/api/providers');break
-   case 'algorithm':case 'algorithm_stat':case 'algorithm_usage':
-    add('/api/algorithms','/api/synergy');break
-   case 'job':{
-    add('/api/jobs');if(id)add('/api/jobs/'+encoded(id))
-    const parentRunId=field(input,'parentRunId')
-    if(field(row,'kind')==='team'){
-     add('/api/task-teams')
-     if(id)add('/api/task-teams/'+encoded(id))
-    }else if(parentRunId){
-     add('/api/task-teams','/api/task-teams/'+encoded(parentRunId))
-    }
-    break
-   }
-   case 'dev_job':if(id)add('/api/dev/jobs/'+encoded(id));break
-   case 'remote_task':add('/api/remote/tasks');if(id)add('/api/remote/tasks/'+encoded(id));break
    case 'execution':add('/api/executions');break
-   case 'execution_operation':{
+   case 'execution_operation':
     add('/api/executions')
-    const runId=field(row,'runId')
-    if(runId)add('/api/executions/'+encoded(runId)+'/operations')
+    const executionId=field(row,'executionId')
+    if(executionId)add('/api/executions/'+encoded(executionId)+'/operations')
     break
-   }
    case 'approval':add('/api/approvals');break
    case 'mcp':add('/api/mcp','/api/mcp/discover');break
    case 'skill':add('/api/skills');break
    case 'channel':add('/api/channels');break
-   case 'channel_outbox':{
-    add('/api/channels')
-    const bindingId=field(row,'bindingId')||field(row,'channelId')
-    if(bindingId)add('/api/channels/'+encoded(bindingId)+'/delivery/reviews')
-    break
-   }
-   case 'experience_principle':case 'experience_rule':
-    add('/api/transfer','/api/synergy');break
-   case 'policy':add('/api/policy');break
-   case 'owner_profile':add('/api/settings/owner-profile');break
-   case 'assistant_settings':add('/api/settings/assistant');break
    case 'oauth_config':case 'oauth_connection':add('/api/oauth/providers','/api/oauth/connections');break
    case 'sdk_run':add('/api/sdk/runs');if(id)add('/api/sdk/runs/'+encoded(id));break
-   case 'memory':add('/api/memories','/api/memory/overview','/api/memory/*');break
-   case 'experience':{
-    add('/api/experience','/api/transfer','/api/synergy')
-    const agentId=field(row,'agentId')
-    if(agentId)add('/api/agents/'+encoded(agentId)+'/growth')
-    break
-   }
+   case 'memory':case 'experience':add('/api/memory/*');break
    default:
     if(event.kind?.startsWith('model_'))add('/api/model-library/*')
     break

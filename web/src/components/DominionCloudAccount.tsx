@@ -1,4 +1,6 @@
-import {useEffect,useRef,useState} from 'react'
+import {useCallback,useEffect,useRef,useState} from 'react'
+import {CloudEmailLogin} from './CloudEmailLogin'
+import {decodeNativeGoogleFlight,encodeNativeGoogleFlight} from '../utils/cloudAuthFlight'
 import {get,post} from '../api'
 
 type GoogleResponse={credential:string}
@@ -20,6 +22,10 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
  const button=useRef<HTMLDivElement>(null)
  const [token,setToken]=useState(()=>sessionStorage.getItem('dominion_cloud_session')||'')
  const [showLoginOptions,setShowLoginOptions]=useState(false)
+ const [googleClientId,setGoogleClientId]=useState(clientId)
+ const [desktopClientId,setDesktopClientId]=useState('')
+ const [emailReady,setEmailReady]=useState(false)
+ const [nativeFlow,setNativeFlow]=useState(()=>decodeNativeGoogleFlight(sessionStorage.getItem('dominion_cloud_google_native_flight')))
  const [billing,setBilling]=useState<Billing|null>(null)
  const [identity,setIdentity]=useState<IdentityStatus|null>(null)
  const [identityBusy,setIdentityBusy]=useState(false)
@@ -55,24 +61,72 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
  const [routerMessage,setRouterMessage]=useState('')
  const [routerModels,setRouterModels]=useState<RemoteModel[]>([])
  const [routerSearch,setRouterSearch]=useState('')
- async function openSocialLogin(provider:'kakao'|'naver'){
-  if(!cloudUrl)return
-  const popup=window.open(cloudUrl+'/v1/auth/'+provider+'/start','dominion-'+provider,'width=520,height=720')
-  if(!popup)setMessage('브라우저에서 로그인 팝업을 허용해 주세요.')
- }
+ // All sign-in methods share one session persistence and hydration path.
+ // Keep this callback stable: email polling must not restart on parent rerenders.
+ const completeLogin=useCallback(async(session:string,method:'google'|'email')=>{
+  sessionStorage.setItem('dominion_cloud_session',session)
+  setToken(session);setShowLoginOptions(false)
+  setMessage(method==='google'?'Google 계정으로 로그인했습니다.':'이메일 확인으로 로그인했습니다.')
+  try{await Promise.all([fetchModels(session),loadBilling(session)])}
+  catch(error){setMessage('로그인은 완료됐지만 Cloud 정보 조회에 실패했습니다: '+(error as Error).message)}
+ },[])
+ const emailLoginComplete=useCallback(async(session:string)=>completeLogin(session,'email'),[completeLogin])
  useEffect(()=>{
   if(!cloudUrl)return
-  const listener=(event:MessageEvent)=>{
-   if(event.origin!==new URL(cloudUrl).origin||event.data?.type!=='dominion-oauth-session')return
-   const session=event.data.token
-   if(typeof session!=='string'||!/^[A-Za-z0-9_-]{32,}$/.test(session))return
-   sessionStorage.setItem('dominion_cloud_session',session)
-   setToken(session);setShowLoginOptions(false);setMessage(event.data.provider==='kakao'?'카카오 로그인 완료':'네이버 로그인 완료')
-   void Promise.all([fetchModels(session),loadBilling(session)]).catch(e=>setMessage((e as Error).message))
-  }
-  window.addEventListener('message',listener)
-  return()=>window.removeEventListener('message',listener)
+  const controller=new AbortController()
+  void fetch(cloudUrl+'/v1/public-config',{signal:controller.signal})
+   .then(async response=>{
+    const data=await response.json().catch(()=>({})) as {google_client_id?:string|null;google_desktop_client_id?:string|null;providers?:{email?:boolean};error?:string}
+    if(!response.ok)throw Error(data.error||'로그인 서버에 연결하지 못했습니다.')
+    if(!controller.signal.aborted){
+     if(typeof data.google_client_id==='string')setGoogleClientId(data.google_client_id)
+     if(typeof data.google_desktop_client_id==='string')setDesktopClientId(data.google_desktop_client_id)
+     setEmailReady(Boolean(data.providers?.email))
+     if(!data.google_client_id&&!data.google_desktop_client_id&&!data.providers?.email)setMessage('로그인 제공자 설정이 아직 완료되지 않았습니다.')
+    }
+   })
+   .catch(error=>{if(!controller.signal.aborted)setMessage('Google 로그인 설정 조회 실패: '+(error as Error).message)})
+  return()=>controller.abort()
  },[])
+ const desktopGoogleReady=Boolean(desktopClientId&&['127.0.0.1','localhost'].includes(window.location.hostname))
+ async function startNativeGoogle(){
+  if(!desktopGoogleReady||nativeFlow||busy)return
+  setBusy(true);setMessage('')
+  try{
+   const started=await post<{id:string;status:string}>('/api/cloud-auth/google/start',{})
+   if(!started.id||started.status!=='waiting')throw Error('Google 브라우저 인증을 시작하지 못했습니다.')
+   sessionStorage.setItem('dominion_cloud_google_native_flight',encodeNativeGoogleFlight(started.id))
+   setNativeFlow(started.id)
+   setMessage('브라우저에서 Google 계정을 선택하세요. 인증 후 DOMINION으로 돌아옵니다.')
+  }catch(error){setMessage((error as Error).message)}finally{setBusy(false)}
+ }
+ useEffect(()=>{
+  if(!nativeFlow)return
+  let active=true
+  const run=async()=>{
+   for(let tries=0;tries<300&&active;tries++){
+    await new Promise(resolve=>setTimeout(resolve,1000))
+    if(!active)return
+    let response:{status:string;token?:string;error?:string}
+    try{response=await get('/api/cloud-auth/google/status?id='+encodeURIComponent(nativeFlow))}
+    catch(error){
+     // Switching to the mail app or restarting the UI can briefly interrupt polling.
+     if([404,410].includes(Number((error as {status?:number}).status)))throw error
+     continue
+    }
+    if(response.status==='waiting'||response.status==='processing')continue
+    if(response.status!=='done'||!response.token)throw Error(response.error||'Google 인증을 완료하지 못했습니다.')
+    await completeLogin(response.token,'google')
+    sessionStorage.removeItem('dominion_cloud_google_native_flight')
+    setNativeFlow('')
+    void post('/api/cloud-auth/google/ack',{id:nativeFlow}).catch(()=>{})
+    return
+   }
+   if(active)throw Error('Google 인증 시간이 만료됐습니다. 다시 시도하세요.')
+  }
+  void run().catch(error=>{if(active){sessionStorage.removeItem('dominion_cloud_google_native_flight');setMessage((error as Error).message);setNativeFlow('')}})
+  return()=>{active=false}
+ },[nativeFlow,completeLogin])
  async function loadBilling(session:string){
   const response=await fetch(cloudUrl+'/v1/billing',{headers:{Authorization:'Bearer '+session}})
   if(!response.ok)throw Error('구독 정보를 불러오지 못했습니다.')
@@ -146,29 +200,34 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   setSelected(previous=>unique.some(m=>m.id===previous)?previous:(unique[0]?.id||''))
  }
  useEffect(()=>{
-  if(!cloudUrl||!clientId||!button.current)return
+  if(!showLoginOptions||desktopGoogleReady||!cloudUrl||!googleClientId||!button.current)return
   let active=true
-  const script=document.createElement('script')
-  script.src='https://accounts.google.com/gsi/client'
-  script.async=true
-  script.onload=()=>{
+  const initialize=()=>{
    if(!active||!button.current||!window.google)return
-   window.google.accounts.id.initialize({client_id:clientId,callback:async({credential})=>{
+   button.current.replaceChildren()
+   window.google.accounts.id.initialize({client_id:googleClientId,callback:async({credential})=>{
     setBusy(true);setMessage('')
     try{
      const response=await fetch(cloudUrl+'/v1/auth/google',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({credential})})
-     if(!response.ok)throw Error('도미니언 로그인 실패')
+     if(!response.ok){
+      const error=await response.json().catch(()=>({})) as {error?:string}
+      throw Error(error.error||'Google 계정 인증에 실패했습니다.')
+     }
      const data=await response.json() as {token:string}
-     await Promise.all([fetchModels(data.token),loadBilling(data.token)])
-     sessionStorage.setItem('dominion_cloud_session',data.token)
-     setToken(data.token);setShowLoginOptions(false);setMessage('도미니언 계정으로 연결됐습니다.')
+     await completeLogin(data.token,'google')
     }catch(error){setMessage((error as Error).message)}finally{setBusy(false)}
    }})
    window.google.accounts.id.renderButton(button.current,{theme:'outline',size:'large',text:'signin_with',width:240})
   }
+  if(window.google){initialize();return()=>{active=false}}
+  const script=document.createElement('script')
+  script.src='https://accounts.google.com/gsi/client'
+  script.async=true
+  script.onload=initialize
+  script.onerror=()=>{if(active)setMessage('Google 로그인 창을 불러오지 못했습니다. 네트워크나 차단 설정을 확인해 주세요.')}
   document.head.appendChild(script)
   return()=>{active=false;script.remove()}
- },[])
+ },[showLoginOptions,googleClientId,desktopGoogleReady,completeLogin])
  function logout(){
   sessionStorage.removeItem('dominion_cloud_session');setIdentity(null);setBilling(null);setToken('');setModels([]);setSelected('');setModelSearch('');setMessage('DOMINION Cloud에서 로그아웃했습니다.');
   window.google?.accounts.id.disableAutoSelect?.()
@@ -347,9 +406,14 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
      <div className="flex items-center justify-between gap-3"><strong className="text-base">DOMINION 가입 · 로그인</strong><button type="button" onClick={()=>setShowLoginOptions(false)} aria-label="닫기" className="rounded-lg border px-3 py-1">닫기</button></div>
      <p className="my-3 text-[12px] text-muted">처음 인증하면 자동 가입됩니다. 로그인 없이도 로컬 모델과 개인 API를 사용할 수 있습니다.</p>
      <div className="flex flex-col items-start gap-3">
-      {clientId&&<div ref={button}/>}
-      <button type="button" onClick={()=>void openSocialLogin('kakao')} className="w-full rounded-lg bg-[#FEE500] px-4 py-2 text-[12px] font-semibold text-[#191919]">카카오로 계속하기</button>
-      <button type="button" onClick={()=>void openSocialLogin('naver')} className="w-full rounded-lg bg-[#03C75A] px-4 py-2 text-[12px] font-semibold text-white">네이버로 계속하기</button>
+      {desktopGoogleReady?
+       <button type="button" onClick={()=>void startNativeGoogle()} disabled={busy||Boolean(nativeFlow)} className="w-full rounded-lg border border-[#DADCE0] bg-white px-4 py-3 text-[13px] font-semibold text-[#1F1F1F] disabled:opacity-60">
+        {nativeFlow?'Google 인증 완료를 기다리는 중…':'Google로 계속하기'}
+       </button>
+       :googleClientId?<div ref={button} aria-label="Google 계정으로 계속하기"/>:<button type="button" disabled className="w-full rounded-lg border px-4 py-2 text-[12px] opacity-60">Google로 계속하기 · 설정 확인 중</button>}
+      <p className="text-[11px] text-muted">Google 계정으로 가입하고 로그인합니다. 비밀번호는 DOMINION에 입력하지 않습니다.</p>
+      {emailReady&&<CloudEmailLogin cloudUrl={cloudUrl} onSuccess={emailLoginComplete}/>}
+      {message&&<p role="status" className="text-[12px] text-[#9A3C29]">{message}</p>}
      </div>
     </div>
    </div>}
@@ -411,8 +475,8 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
      {visibleModels.map(m=><option key={m.id} value={m.id}>{m.name||m.id} · {m.id}</option>)}
     </select>:<p className="mt-2 text-[11px] text-muted">검색된 모델이 없습니다.</p>}
     {filteredModels.length>100&&<p className="mt-1 text-[11px] text-muted">처음 100개만 표시합니다. 검색어로 모델을 좁혀 주세요.</p>}
-    {catalogModels.find(m=>m.id===catalogModel)&&<p className="mt-2 break-all text-[11px] leading-5 text-muted">모델 ID: {catalogModel}{catalogModels.find(m=>m.id===catalogModel)?.context?' · 컨텍스트 '+catalogModels.find(m=>m.id===catalogModel)?.context?.toLocaleString()+' 토큰':''}{catalogModels.find(m=>m.id===catalogModel)?.reasoning===true?' · 추론 지원':''}{catalogModels.find(m=>m.id===catalogModel)?.toolCall===true?' · 도구 호출 지원':''}</p>}
-    <div className="mt-3 flex flex-wrap gap-2 border-t border-divider pt-3">
+    {catalogModels.find(m=>m.id===catalogModel)&&<p className="mt-2 break-all text-[11px] leading-5 text-[#5C544A]">모델 ID: {catalogModel}{catalogModels.find(m=>m.id===catalogModel)?.context?' · 컨텍스트 '+catalogModels.find(m=>m.id===catalogModel)?.context?.toLocaleString()+' 토큰':''}{catalogModels.find(m=>m.id===catalogModel)?.reasoning===true?' · 추론 지원':''}{catalogModels.find(m=>m.id===catalogModel)?.toolCall===true?' · 도구 호출 지원':''}</p>}
+    <div className="mt-3 flex flex-wrap gap-2 border-t border-[#EFE9DF] pt-3">
      <input type="password" autoComplete="off" aria-label="업체 API 키 (등록 시에만 필요)" value={catalogKey} onChange={e=>setCatalogKey(e.target.value)} placeholder="채팅 등록용 API 키 (조회에는 불필요)" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
      <button type="button" disabled={catalogBusy||!visibleModels.some(m=>m.id===catalogModel)} onClick={()=>void saveCatalogModel()} className="rounded-lg bg-brand px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">선택 모델 채팅 등록</button>
      <button type="button" disabled={catalogBusy} onClick={()=>void importCatalogModels()} className="rounded-lg border px-3 py-2 text-[12px] disabled:opacity-50">전체 등록</button>
@@ -432,10 +496,10 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
     <button type="button" disabled={routerBusy} onClick={()=>void browseOpenRouterFree()} className="rounded-lg border px-3 py-2 text-[12px] disabled:opacity-50">{routerBusy?'조회 중…':'무료 모델 조회 (키 불필요)'}</button>
     <input aria-label="OpenRouter 무료 모델 검색" value={routerSearch} onChange={e=>setRouterSearch(e.target.value)} placeholder="무료 모델 이름 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
    </div>
-   {routerModels.length>0&&<div className="mt-2 max-h-48 overflow-y-auto rounded-lg border bg-white px-3 py-2 text-[11px] text-muted">
+   {routerModels.length>0&&<div className="mt-2 max-h-48 overflow-y-auto rounded-lg border bg-white px-3 py-2 text-[11px] text-[#5C544A]">
     <strong>공개 무료 모델 · {filteredRouterModels.length} / {routerModels.length}개</strong>
-    {filteredRouterModels.slice(0,60).map(m=><button type="button" key={m.id} aria-pressed={routerSelected===m.id} onClick={()=>{setRouterSelected(m.id);setRegistered(null)}} className={'block w-full border-b border-divider px-1 py-1.5 text-left hover:bg-canvas '+(routerSelected===m.id?'bg-brand-soft':'')}><span className="font-semibold">{m.name||m.id}</span><span className="ml-2 break-all text-muted">{m.id}</span>{m.context?' · '+m.context.toLocaleString()+' 토큰':''}</button>)}
-    {filteredRouterModels.length>60&&<p className="mt-2 text-muted">처음 60개만 표시합니다. 검색어로 좁혀 주세요.</p>}
+    {filteredRouterModels.slice(0,60).map(m=><button type="button" key={m.id} aria-pressed={routerSelected===m.id} onClick={()=>{setRouterSelected(m.id);setRegistered(null)}} className={'block w-full border-b border-[#EFE9DF] px-1 py-1.5 text-left hover:bg-[#FAF7F1] '+(routerSelected===m.id?'bg-[#F7E8E1]':'')}><span className="font-semibold">{m.name||m.id}</span><span className="ml-2 break-all text-[#8A8176]">{m.id}</span>{m.context?' · '+m.context.toLocaleString()+' 토큰':''}</button>)}
+    {filteredRouterModels.length>60&&<p className="mt-2 text-[#8A8176]">처음 60개만 표시합니다. 검색어로 좁혀 주세요.</p>}
    </div>}
    <div className="mt-2 flex flex-wrap gap-2">
     <input type="password" autoComplete="off" aria-label="OpenRouter API 키 (등록 시에만 필요)" value={routerKey} onChange={e=>setRouterKey(e.target.value)} placeholder="채팅 등록용 API 키" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>

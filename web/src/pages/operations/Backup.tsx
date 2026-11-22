@@ -1,4 +1,4 @@
-import {useState} from 'react'
+import {useRef,useState} from 'react'
 import {Archive, Check, KeyRound, RefreshCw, RotateCcw, ShieldAlert, TriangleAlert} from 'lucide-react'
 import {post} from '../../api'
 import {Button, TextInput} from '../../components/Primitives'
@@ -27,6 +27,7 @@ export function BackupPanel() {
   const secretKey = useRemote<SecretStatus>('/api/system/secret-key', {})
   const maintenance = useRemote<MaintenanceState>('/api/system/maintenance', {maintenance: false})
   const [busy, setBusy] = useState('')
+  const operationInFlight = useRef(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [selected, setSelected] = useState('')
@@ -39,7 +40,10 @@ export function BackupPanel() {
   }
 
   const run = async (name: string, task: () => Promise<void>) => {
-    if (busy) return
+    // Ref takes the lock synchronously, before a second click can run with
+    // a stale React render. Never double-submit restore or key rotation.
+    if (operationInFlight.current) return
+    operationInFlight.current = true
     setBusy(name)
     setError('')
     setMessage('')
@@ -48,6 +52,7 @@ export function BackupPanel() {
     } catch (cause) {
       setError((cause as Error).message)
     } finally {
+      operationInFlight.current = false
       setBusy('')
     }
   }
@@ -108,47 +113,47 @@ export function BackupPanel() {
       </Button>
     </div>
     <div className="mt-4 grid gap-3 sm:grid-cols-2">
-      <div className="rounded-xl border border-divider bg-canvas p-3">
+      <div className="rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] p-3">
         <div className="flex items-center justify-between gap-2">
-          <strong className="text-[12px] text-ink">{t('ops.backup.keys')}</strong>
-          <span className="text-[11px] text-muted">{t('ops.backup.activeVersion', {version: backupKeys.value.activeVersion ?? 1})}</span>
+          <strong className="text-[12px] text-[#3A342D]">{t('ops.backup.keys')}</strong>
+          <span className="text-[11px] text-[#8A8176]">{t('ops.backup.activeVersion', {version: backupKeys.value.activeVersion ?? 1})}</span>
         </div>
-        <p className="mt-1 text-[11px] leading-5 text-muted">{t('ops.backup.keys.desc', {count: backupKeys.value.versions?.length ?? 1})}</p>
+        <p className="mt-1 text-[11px] leading-5 text-[#8A8176]">{t('ops.backup.keys.desc', {count: backupKeys.value.versions?.length ?? 1})}</p>
         <Button variant="secondary" className="mt-2" onClick={rotateBackupKeys} disabled={!active || Boolean(busy)}>
           <KeyRound size={15}/> {busy === 'backupKeys' ? t('ops.backup.rotating') : t('ops.backup.rotateKeys')}
         </Button>
       </div>
-      <div className="rounded-xl border border-divider bg-canvas p-3">
+      <div className="rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] p-3">
         <div className="flex items-center justify-between gap-2">
-          <strong className="text-[12px] text-ink">{t('ops.backup.secret')}</strong>
-          <span className="text-[11px] text-muted">{t('ops.backup.previousKeys', {count: secretKey.value.previousKeys ?? 0})}</span>
+          <strong className="text-[12px] text-[#3A342D]">{t('ops.backup.secret')}</strong>
+          <span className="text-[11px] text-[#8A8176]">{t('ops.backup.previousKeys', {count: secretKey.value.previousKeys ?? 0})}</span>
         </div>
-        <p className="mt-1 text-[11px] leading-5 text-muted">{t('ops.backup.secret.desc')}</p>
+        <p className="mt-1 text-[11px] leading-5 text-[#8A8176]">{t('ops.backup.secret.desc')}</p>
         <Button variant="secondary" className="mt-2" onClick={rotateSecretKey} disabled={!active || Boolean(busy)}>
           <KeyRound size={15}/> {busy === 'secretKey' ? t('ops.backup.rotating') : t('ops.backup.rotateSecret')}
         </Button>
       </div>
     </div>
-    <label className="mt-3 flex items-center gap-2 text-[11px] text-muted">
+    <label className="mt-3 flex items-center gap-2 text-[11px] text-[#5C544A]">
       <TextInput type="checkbox" checked={keepOld} onChange={event => setKeepOld(event.target.checked)}/>
       {t('ops.backup.keepOld')}
     </label>
     {error && <Notice message={error}/>}
     {message && <div className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{message}</div>}
-    <div className="mt-5 border-t border-divider pt-4">
+    <div className="mt-5 border-t border-[#EFE9DF] pt-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <strong className="text-[13px] text-ink">{t('ops.backup.files')}</strong>
-        <span className="text-[11px] text-muted">{backups.value.length}개</span>
+        <strong className="text-[13px] text-[#3A342D]">{t('ops.backup.files')}</strong>
+        <span className="text-[10px] font-bold uppercase tracking-widest text-[#9C9388]">{backups.value.length} FILES</span>
       </div>
       {backups.value.length ? <div className="mt-2 grid gap-2">
-        {backups.value.map(backup => <label key={backup.name} className={'flex min-w-0 flex-wrap items-center gap-3 rounded-xl border px-3 py-2 text-[11px] ' + (selected === backup.name ? 'border-brand bg-[#F2EADF]' : 'border-divider bg-white')}>
+        {backups.value.map(backup => <label key={backup.name} className={'flex min-w-0 flex-wrap items-center gap-3 rounded-xl border px-3 py-2 text-[11px] ' + (selected === backup.name ? 'border-[#C7B18F] bg-[#F2EADF]' : 'border-[#EFE9DF] bg-white')}>
           <TextInput type="radio" name="backup" disabled={!backup.encrypted} checked={selected === backup.name} onChange={() => { setSelected(backup.name); setConfirm(false) }}/>
-          <span className="min-w-0 flex-1"><strong className="block truncate text-[12px] text-ink" title={backup.name}>{backup.modifiedAt ? formatDateTime(backup.modifiedAt) + ' 백업' : '백업'}</strong><small className="text-[10px] text-muted">{formatBytes(backup.bytes)} · {backup.encrypted ? t('ops.backup.encrypted') : t('ops.backup.plain')}</small></span>
+          <span className="min-w-0 flex-1"><strong className="block break-all text-[11px] text-[#3A342D]">{backup.name}</strong><small className="text-[10px] text-[#9C9388]">{formatBytes(backup.bytes)} · {backup.modifiedAt ? formatDateTime(backup.modifiedAt) : ''} · {backup.encrypted ? t('ops.backup.encrypted') : t('ops.backup.plain')}</small></span>
         </label>)}
-      </div> : <p className="mt-2 text-[11px] text-muted">{t('ops.backup.noFiles')}</p>}
-      <div className="mt-3 rounded-xl border border-divider bg-brand-soft p-3">
+      </div> : <p className="mt-2 text-[11px] text-[#9C9388]">{t('ops.backup.noFiles')}</p>}
+      <div className="mt-3 rounded-xl border border-[#EED9CC] bg-[#F7E8E1] p-3">
         <div className="flex items-start gap-2 text-[11px] leading-5 text-[#7C5A48]"><TriangleAlert size={15} className="mt-0.5 shrink-0"/><span>{t('ops.backup.restoreWarning')}</span></div>
-        <label className="mt-2 flex items-center gap-2 text-[11px] text-muted">
+        <label className="mt-2 flex items-center gap-2 text-[11px] text-[#5C544A]">
           <TextInput type="checkbox" checked={confirm} disabled={!selected || !active} onChange={event => setConfirm(event.target.checked)}/>
           {t('ops.backup.restoreConfirm')}
         </label>

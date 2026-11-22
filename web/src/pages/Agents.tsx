@@ -1,12 +1,12 @@
-import { DialogBackdrop, DialogPanel } from "../components/Dialog";
-import { StatusPill } from "../components/StatusPill";
+import {DialogBackdrop,DialogPanel} from "../components/Dialog";
+
 import {
   Button,
   TextInput,
   TextArea,
   SelectInput,
 } from "../components/Primitives";
-import { useEffect, useState } from "react";
+import {useEffect,useState} from "react";
 import {
   Activity,
   ArrowRight,
@@ -16,7 +16,6 @@ import {
   CirclePlus,
   Clock3,
   Edit3,
-  Eye,
   FolderInput,
   LoaderCircle,
   MessageSquare,
@@ -29,34 +28,22 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
-import { Agent, Provider, Room, del, get, post } from "../api";
-import { ModelPicker } from "../components/ModelPicker";
-import { ReasoningSelect } from "../components/ReasoningSelect";
-import { useProviderModels } from "../hooks/useProviderModels";
+import {Agent,Provider,del,get,post} from "../api";
+import {ModelPicker} from "../components/ModelPicker";
+import {ReasoningSelect} from "../components/ReasoningSelect";
+import {useProviderModels} from "../hooks/useProviderModels";
 import {
   Action,
   Empty,
   FormField,
   Headline,
   Notice,
-  PAGE_FRAME,
   Panel,
   Subheading,
   refresh,
   useRemote,
 } from "../components/UI";
-import { t, useLocale } from "../i18n";
-// Preserve an in-progress persona form across navigation/refresh in this tab.
-const AGENT_DRAFT_KEY='dominion.agent.unsavedEditor'
-const readAgentDraft=():Partial<Agent>|null=>{
- try{
-  const source=sessionStorage.getItem(AGENT_DRAFT_KEY)
-  if(!source||source.length>120_000)return null
-  const parsed=JSON.parse(source)
-  return parsed&&typeof parsed==='object'&&!Array.isArray(parsed)
-   &&typeof parsed.name==='string'?parsed as Partial<Agent>:null
- }catch{return null}
-}
+import {t,useLocale} from "../i18n";
 const accents = [
   "#5979e8",
   "#9067d9",
@@ -66,15 +53,12 @@ const accents = [
   "#6d8b9f",
 ];
 export function AgentsPage() {
-  const locale=useLocale();
+  useLocale();
   const agents = useRemote<Agent[]>("/api/agents", []),
     providers = useRemote<Provider[]>("/api/providers", []);
-  const [edit, setEdit] = useState<Partial<Agent> | null>(readAgentDraft),
+  const [edit, setEdit] = useState<Partial<Agent> | null>(null),
     [error, setError] = useState(""), [saving, setSaving] = useState(false);
   const [showPersonaImport,setShowPersonaImport]=useState(false);
-  const [agentSearch,setAgentSearch]=useState('');
-  const [agentFilter,setAgentFilter]=useState<'all'|'configured'|'unconfigured'>('all');
-  const [selectedId,setSelectedId]=useState('');
   const [bulk, setBulk] = useState(false),
     [selected, setSelected] = useState<string[]>([]),
     [bulkProvider, setBulkProvider] = useState(""),
@@ -82,28 +66,7 @@ export function AgentsPage() {
     [bulkEffort, setBulkEffort] = useState(""),
     [bulkBusy, setBulkBusy] = useState(false),
     [bulkNotice, setBulkNotice] = useState("");
-  useEffect(()=>{
-    try{
-      if(edit){
-        const encoded=JSON.stringify(edit)
-        if(encoded.length<=120_000)sessionStorage.setItem(AGENT_DRAFT_KEY,encoded)
-      }else sessionStorage.removeItem(AGENT_DRAFT_KEY)
-    }catch{/* Storage disabled/full must not block editing. */}
-  },[edit])
   const enabledProviders = providers.value.filter(p => p.enabled !== false);
-  const configuredAgents=agents.value.filter(agent=>Boolean(agent.providerId)&&
-   enabledProviders.some(provider=>provider.id===agent.providerId));
-  const visibleAgents=agents.value.filter(agent=>{
-   const configured=configuredAgents.some(candidate=>candidate.id===agent.id);
-   if(agentFilter==='configured'&&!configured)return false;
-   if(agentFilter==='unconfigured'&&configured)return false;
-   const needle=agentSearch.trim().toLocaleLowerCase();
-   if(!needle)return true;
-   const providerName=providers.value.find(provider=>provider.id===agent.providerId)?.name||'';
-   return [agent.name,agent.description,agent.role,providerName,agent.model]
-    .some(value=>String(value||'').toLocaleLowerCase().includes(needle));
-  });
-  const selectedAgent=visibleAgents.find(agent=>agent.id===selectedId)??visibleAgents[0];
   const editProvider = enabledProviders.find(p => p.id === edit?.providerId);
   const editModels = useProviderModels(edit?.providerId || "");
   const bulkModels = useProviderModels(bulk ? bulkProvider : "");
@@ -156,8 +119,9 @@ export function AgentsPage() {
     }
   };
   return (
-    <div className={PAGE_FRAME}>
+    <div className="mx-auto w-full max-w-[1320px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8">
       <Headline
+        eyebrow={t('ui.eyebrow.agents')}
         title={t('agents.title')}
         description={t('agents.description')}
         actions={
@@ -194,32 +158,8 @@ export function AgentsPage() {
           </>
         }
       />
-      <div className="mb-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,1.4fr)]">
-       <div className="grid grid-cols-3 gap-2" role="group" aria-label="Agent roster filters">
-        {([
-         {id:'all',ko:'전체',english:'All',count:agents.value.length},
-         {id:'configured',ko:'모델 지정',english:'Configured',count:configuredAgents.length},
-         {id:'unconfigured',ko:'설정 필요',english:'Needs setup',count:agents.value.length-configuredAgents.length},
-        ] as const).map(filter=><button key={filter.id} type="button"
-         aria-pressed={agentFilter===filter.id} onClick={()=>setAgentFilter(filter.id)}
-         className={'min-w-0 rounded-xl border p-3 text-left '+(agentFilter===filter.id?
-          'border-[var(--color-brand)] bg-[var(--color-brand-soft)]':'border-divider bg-white hover:bg-canvas')}>
-         <strong className="block text-[22px] font-bold tabular-nums text-[var(--color-ink)]">{filter.count}</strong>
-         <span className="block text-[10px] text-[var(--color-muted)]">{locale==='en'?filter.english:filter.ko}</span>
-        </button>)}
-       </div>
-       <label className="flex min-w-0 items-center gap-3 rounded-xl border border-divider bg-white px-4 py-2">
-        <span className="min-w-0 flex-1">
-         <span className="block text-[11px] font-semibold">{locale==='en'?'Find an agent':'에이전트 검색'}</span>
-         <input type="search" value={agentSearch} onChange={event=>setAgentSearch(event.target.value)}
-          placeholder={locale==='en'?'Name, role, model, provider':'이름 · 역할 · 모델 · 제공자'}
-          className="mt-1 min-h-9 w-full border-none bg-transparent text-[12px] outline-none"/>
-        </span>
-        <span className="text-[11px] font-medium tabular-nums text-[var(--color-muted)]">{visibleAgents.length}/{agents.value.length}</span>
-       </label>
-      </div>
-      <div className="mb-5 flex items-center gap-4 rounded-xl border border-divider bg-brand-soft p-5">
-        <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand">
+      <div className="mb-5 flex items-center gap-4 rounded-xl border border-[#EED9CC] bg-[#F7E8E1] p-5">
+        <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-[#F1DCCF] text-brand">
           <BrainCircuit size={22} />
         </div>
         <div>
@@ -240,7 +180,7 @@ export function AgentsPage() {
           <Subheading
             title={t('agents.bulk.title')}
             extra={
-              <span className="text-[10px] font-bold uppercase tracking-widest text-muted">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-[#9C9388]">
                 {t('agents.selectedCount', { total: agents.value.length, selected: selected.length })}
               </span>
             }
@@ -310,10 +250,8 @@ export function AgentsPage() {
           </div>
         </Panel>
       )}
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-       <div className="min-w-0">
-        <div className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 2xl:grid-cols-3">
-        {visibleAgents.map((a, i) => (
+      <div className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {agents.value.map((a, i) => (
           <Panel className="flex min-w-0 flex-col gap-3 p-5" key={a.id}>
             <div className="flex items-start justify-between gap-3">
               <div
@@ -343,9 +281,6 @@ export function AgentsPage() {
                     />
                   </label>
                 )}
-                <Button size="icon" variant="ghost" aria-label={a.name + ' ' + (locale==='en'?'details':'상세')} onClick={() => setSelectedId(a.id)}>
-                  <Eye size={16} />
-                </Button>
                 <Button
                   size="icon"
                   variant="ghost"
@@ -376,10 +311,10 @@ export function AgentsPage() {
               </div>
             </div>
             <h3>{a.name}</h3>
-            {a.role&&<span className="text-[11px] font-semibold text-[var(--color-muted)]">{String(a.role)}</span>}
+            {a.role&&<span className="text-[11px] font-semibold text-[#9B8064]">{String(a.role)}</span>}
             <p className="line-clamp-2" title={a.description || ""}>{a.description || t('agents.noDescription')}</p>
-            <div className="my-2 h-px bg-canvas" />
-            <div className="mt-auto flex flex-col gap-1 border-t border-divider pt-3 text-xs text-muted">
+            <div className="my-2 h-px bg-[#F3EEE5]" />
+            <div className="mt-auto flex flex-col gap-1 border-t border-[#EFE9DF] pt-3 text-xs text-muted">
               <span>
                 <Sparkles size={15} />{" "}
                 {providers.value.find((p) => p.id === a.providerId)?.name ||
@@ -390,40 +325,13 @@ export function AgentsPage() {
             </div>
           </Panel>
         ))}
-       </div>
-       {!visibleAgents.length&&!agents.loading&&<div className="rounded-xl border border-dashed border-divider bg-surface p-8 text-center text-[12px] text-muted">
-        {locale==='en'?'No agents match the current filters.':'현재 조건에 맞는 에이전트가 없습니다.'}
-       </div>}
       </div>
-      {selectedAgent&&<aside className="min-w-0 xl:sticky xl:top-4 xl:self-start">
-       <Panel className="flex min-w-0 flex-col gap-4 p-5">
-        <div className="flex items-start gap-3">
-         <span className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl text-white" style={{background:selectedAgent.color||'var(--color-brand)'}}>
-          {(selectedAgent.avatar||selectedAgent.avatarUrl)?<img src={String(selectedAgent.avatar||selectedAgent.avatarUrl)} alt="" className="size-12 object-cover"/>:<Bot size={24}/>}
-         </span>
-         <div className="min-w-0 flex-1"><h2 className="truncate text-[15px] font-semibold text-ink">{selectedAgent.name}</h2><p className="mt-0.5 text-[11px] text-muted">{selectedAgent.description||t('agents.noDescription')}</p></div>
-        </div>
-        <div className="grid gap-2 rounded-lg bg-canvas p-3 text-[11px]">
-         <div className="flex items-center justify-between gap-3"><span className="text-muted">{t('agents.api')}</span><strong className="min-w-0 truncate text-ink">{providers.value.find(p=>p.id===selectedAgent.providerId)?.name||t('agents.modelInChat')}</strong></div>
-         <div className="flex items-center justify-between gap-3"><span className="text-muted">{locale==='en'?'Model':'모델'}</span><strong className="min-w-0 truncate text-ink">{selectedAgent.model||enabledProviders.find(p=>p.id===selectedAgent.providerId)?.model||t('agents.modelNeeded')}</strong></div>
-        </div>
-        <details className="rounded-lg border border-divider p-3 text-[11px] text-muted">
-         <summary className="cursor-pointer font-semibold text-ink">{locale==='en'?'Instructions':'지시문'}</summary>
-         <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap font-sans text-[10px] leading-5">{selectedAgent.systemPrompt||(locale==='en'?'No instructions':'지시문 없음')}</pre>
-        </details>
-        <div className="flex flex-wrap gap-2">
-         <Button size="sm" onClick={()=>{setError('');setEdit({...selectedAgent})}}><Edit3 size={14}/>{t('agents.editShort')}</Button>
-         <a href={'#/chat?agent='+encodeURIComponent(selectedAgent.id)} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-divider bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink hover:bg-canvas">{t('agents.chatWith')}<ArrowRight size={13}/></a>
-        </div>
-       </Panel>
-      </aside>}
-      </div>
-      {!edit && <Notice message={error || agents.error || providers.error} />}
+      {!edit && <Notice message={error || agents.error || providers.error} retrying={agents.refreshing||providers.refreshing} onRetry={!error?()=>{void agents.reload();void providers.reload()}:undefined}/>}
       {showPersonaImport&&<PersonaImportDialog agents={agents.value} onClose={()=>setShowPersonaImport(false)} onImported={async(count)=>{await agents.reload();refresh();setBulkNotice(t('agents.personaImported', { count }))}}/>}
       {edit && (
         <DialogBackdrop onDismiss={closeEditor}>
           <DialogPanel size="wide">
-            <div className="flex items-center justify-between border-b border-divider p-5">
+            <div className="flex items-center justify-between border-b border-[#EFE9DF] p-5">
               <div>
                 <small>{t('agents.roleAndModel')}</small>
                 <h2>{edit.id ? t('agents.edit') : t('agents.new')}</h2>
@@ -511,14 +419,14 @@ export function AgentsPage() {
               </FormField>
               <FormField label={t('agents.avatar')} hint={t('agents.imageHint')}>
                 <div className="flex items-center gap-3">
-                  <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-xl border border-divider bg-canvas">
+                  <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-xl border border-divider bg-[#FAF7F1]">
                     {(edit.avatar || edit.avatarUrl) ? (
                       <img src={String(edit.avatar || edit.avatarUrl)} alt="" className="size-14 object-cover" />
                     ) : (
                       <Bot size={22} className="text-brand" />
                     )}
                   </div>
-                  <label className="cursor-pointer rounded-xl border border-divider bg-surface px-3 py-2 text-[12px] font-semibold text-ink hover:bg-canvas">
+                  <label className="cursor-pointer rounded-xl border border-[#E1D9CC] bg-surface px-3 py-2 text-[12px] font-semibold text-[#3A342D] hover:bg-[#F7F2EA]">
                     {t('agents.imagePick')}
                     <input
                       type="file"
@@ -561,7 +469,7 @@ export function AgentsPage() {
               </FormField>
               <Notice message={error}/>
             </div>
-            <div className="flex flex-wrap justify-end gap-2 border-t border-divider p-5">
+            <div className="flex flex-wrap justify-end gap-2 border-t border-[#EFE9DF] p-5">
               <Action variant="secondary" onClick={closeEditor} disabled={saving}>
                 {t('agents.cancel')}
               </Action>
@@ -587,5 +495,5 @@ function PersonaImportDialog({agents,onClose,onImported}:{agents:Agent[];onClose
   try{const result=await post<{imported:number;skipped:number;errors:{sourceProfile:string;error:string}[]}>('/api/personas/import',{apply:true,profileIds:selected,...(refreshIdentity?{refreshIdentity:true}:{})});await onImported(result.imported);if(result.errors.length)setError(result.errors.map(item=>item.sourceProfile+': '+item.error).join(' · '));else onClose()}
   catch(e){setError((e as Error).message)}finally{setBusy(false)}
  }
- return <DialogBackdrop onDismiss={()=>{if(!busy)onClose()}}><DialogPanel size="wide" aria-label={t('agents.import')}><div className="flex items-center justify-between border-b border-divider p-5"><div><small className="text-[10px] tracking-widest text-[#A2937F]">{t('ui.label.personas')}</small><h2 className="mt-1 font-bold">{t('agents.persona.title')}</h2></div><Button size="icon" variant="ghost" aria-label={t('agents.close')} disabled={busy} onClick={onClose}><X size={18}/></Button></div><div className="grid gap-4 p-5"><p className="text-[12px] text-[#8F7D65]">{t('agents.persona.desc')}</p>{loading?<div className="flex items-center justify-center gap-2 py-10 text-[#A2937F]"><LoaderCircle size={17} className="animate-spin"/> {t('agents.persona.loading')}</div>:<><div className="flex items-center justify-between text-[11px] text-[#9A866A]"><span>{t('agents.persona.found', { count: profiles.length, selected: selected.length })}</span><button className="underline underline-offset-2" disabled={busy||!available.length} onClick={()=>setSelected(selected.length===available.length?[]:available.map(profile=>profile.sourceProfile))}>{selected.length===available.length?t('agents.persona.clear'):t('agents.persona.selectAll')}</button></div><div className="grid max-h-[48vh] gap-3 overflow-auto sm:grid-cols-2">{profiles.map((profile,index)=>{const agent=agents.find(item=>item.id===profile.id);const enabled=profile.available&&(!profile.exists||refreshIdentity);const checked=selected.includes(profile.sourceProfile);return <div className={'rounded-xl border p-3 '+(checked?'border-[#D1B894] bg-[#FBF4E8]':'border-divider bg-[#FFFCF7]')} key={profile.sourceProfile}><label className="flex cursor-pointer items-center gap-3"><input type="checkbox" className="accent-[#AA8B63]" checked={checked} disabled={busy||!enabled} onChange={()=>setSelected(previous=>checked?previous.filter(id=>id!==profile.sourceProfile):[...previous,profile.sourceProfile])}/><span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-xl text-[13px] font-semibold text-white" style={{background:agent?.color||accents[index%accents.length]}}>{(agent?.avatar||agent?.avatarUrl)?<img src={String(agent.avatar||agent.avatarUrl)} alt="" className="size-10 object-cover"/>:profile.name.slice(0,1)}</span><span className="min-w-0 flex-1"><strong className="block text-[12px] text-[#776249]">{profile.name}</strong><small className="block text-[10px] text-[#AC987A]">{profile.role||profile.description}</small></span>{profile.exists&&<span className="rounded bg-divider px-1.5 py-0.5 text-[9px] text-[#9D8D74]">{t('agents.persona.imported')}</span>}</label><div className="mt-3 flex gap-2 text-[9px] text-[#B2A087]"><span>{profile.hasAvatar?t('agents.persona.avatar'):t('agents.persona.defaultAvatar')}</span><span>·</span><span>{t('agents.persona.mine')}</span></div>{profile.personaPreview&&<details className="mt-2 text-[10px] text-[#9F896B]"><summary className="cursor-pointer">{t('agents.persona.preview')}</summary><pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-[#F4EDE1] p-3 font-sans text-[10px] leading-6 text-[#A18C6E]">{profile.personaPreview}</pre></details>}{profile.error&&<p className="mt-2 text-[10px] text-rose-600">{profile.error}</p>}</div>})}</div>{!profiles.length&&<p className="py-7 text-center text-[12px] text-[#A2937F]">{t('agents.persona.none')}</p>}<label className="flex items-start gap-2 text-[11px] text-[#9A866A]"><input type="checkbox" className="mt-1 accent-[#AA8B63]" checked={refreshIdentity} disabled={busy} onChange={e=>{setRefreshIdentity(e.target.checked);if(!e.target.checked)setSelected(previous=>previous.filter(id=>!profiles.find(profile=>profile.sourceProfile===id)?.exists))}}/><span>{t('agents.persona.refresh')}<small className="mt-1 block text-[10px] text-[#B3A187]">{t('agents.persona.refreshHint')}</small></span></label></>}<Notice message={error}/></div><div className="flex items-center justify-end gap-2 border-t border-divider p-5"><Button variant="ghost" disabled={busy} onClick={onClose}>{t('agents.close')}</Button><Button variant="primary" disabled={loading||busy||!selected.length} onClick={()=>void apply()}>{busy?<LoaderCircle size={15} className="animate-spin"/>:<FolderInput size={15}/>} {t('agents.persona.apply', { count: selected.length })}</Button></div></DialogPanel></DialogBackdrop>
+ return <DialogBackdrop onDismiss={()=>{if(!busy)onClose()}}><DialogPanel size="wide" aria-label={t('agents.import')}><div className="flex items-center justify-between border-b border-[#EFE9DF] p-5"><div><small className="text-[10px] tracking-widest text-[#A2937F]">{t('ui.label.personas')}</small><h2 className="mt-1 font-bold">{t('agents.persona.title')}</h2></div><Button size="icon" variant="ghost" aria-label={t('agents.close')} disabled={busy} onClick={onClose}><X size={18}/></Button></div><div className="grid gap-4 p-5"><p className="text-[12px] text-[#8F7D65]">{t('agents.persona.desc')}</p>{loading?<div className="flex items-center justify-center gap-2 py-10 text-[#A2937F]"><LoaderCircle size={17} className="animate-spin"/> {t('agents.persona.loading')}</div>:<><div className="flex items-center justify-between text-[11px] text-[#9A866A]"><span>{t('agents.persona.found', { count: profiles.length, selected: selected.length })}</span><button className="underline underline-offset-2" disabled={busy||!available.length} onClick={()=>setSelected(selected.length===available.length?[]:available.map(profile=>profile.sourceProfile))}>{selected.length===available.length?t('agents.persona.clear'):t('agents.persona.selectAll')}</button></div><div className="grid max-h-[48vh] gap-3 overflow-auto sm:grid-cols-2">{profiles.map((profile,index)=>{const agent=agents.find(item=>item.id===profile.id);const enabled=profile.available&&(!profile.exists||refreshIdentity);const checked=selected.includes(profile.sourceProfile);return <div className={'rounded-xl border p-3 '+(checked?'border-[#D1B894] bg-[#FBF4E8]':'border-divider bg-[#FFFCF7]')} key={profile.sourceProfile}><label className="flex cursor-pointer items-center gap-3"><input type="checkbox" className="accent-[#AA8B63]" checked={checked} disabled={busy||!enabled} onChange={()=>setSelected(previous=>checked?previous.filter(id=>id!==profile.sourceProfile):[...previous,profile.sourceProfile])}/><span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-xl text-[13px] font-semibold text-white" style={{background:agent?.color||accents[index%accents.length]}}>{(agent?.avatar||agent?.avatarUrl)?<img src={String(agent.avatar||agent.avatarUrl)} alt="" className="size-10 object-cover"/>:profile.name.slice(0,1)}</span><span className="min-w-0 flex-1"><strong className="block text-[12px] text-[#776249]">{profile.name}</strong><small className="block text-[10px] text-[#AC987A]">{profile.role||profile.description}</small></span>{profile.exists&&<span className="rounded bg-[#EDE8DE] px-1.5 py-0.5 text-[9px] text-[#9D8D74]">{t('agents.persona.imported')}</span>}</label><div className="mt-3 flex gap-2 text-[9px] text-[#B2A087]"><span>{profile.hasAvatar?t('agents.persona.avatar'):t('agents.persona.defaultAvatar')}</span><span>·</span><span>{t('agents.persona.mine')}</span></div>{profile.personaPreview&&<details className="mt-2 text-[10px] text-[#9F896B]"><summary className="cursor-pointer">{t('agents.persona.preview')}</summary><pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-[#F4EDE1] p-3 font-sans text-[10px] leading-6 text-[#A18C6E]">{profile.personaPreview}</pre></details>}{profile.error&&<p className="mt-2 text-[10px] text-rose-600">{profile.error}</p>}</div>})}</div>{!profiles.length&&<p className="py-7 text-center text-[12px] text-[#A2937F]">{t('agents.persona.none')}</p>}<label className="flex items-start gap-2 text-[11px] text-[#9A866A]"><input type="checkbox" className="mt-1 accent-[#AA8B63]" checked={refreshIdentity} disabled={busy} onChange={e=>{setRefreshIdentity(e.target.checked);if(!e.target.checked)setSelected(previous=>previous.filter(id=>!profiles.find(profile=>profile.sourceProfile===id)?.exists))}}/><span>{t('agents.persona.refresh')}<small className="mt-1 block text-[10px] text-[#B3A187]">{t('agents.persona.refreshHint')}</small></span></label></>}<Notice message={error}/></div><div className="flex items-center justify-end gap-2 border-t border-[#EFE9DF] p-5"><Button variant="ghost" disabled={busy} onClick={onClose}>{t('agents.close')}</Button><Button variant="primary" disabled={loading||busy||!selected.length} onClick={()=>void apply()}>{busy?<LoaderCircle size={15} className="animate-spin"/>:<FolderInput size={15}/>} {t('agents.persona.apply', { count: selected.length })}</Button></div></DialogPanel></DialogBackdrop>
 }

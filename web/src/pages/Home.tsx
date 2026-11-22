@@ -1,81 +1,69 @@
-import {ArrowRight, ChevronRight, Clock3} from 'lucide-react'
-import {Button, PageContainer} from '../components/Primitives'
+import {useState} from 'react'
+import {Activity,ArrowRight,Bot,CheckCircle2,Cpu,FolderOpen,MessageSquare,Play,RadioTower,Workflow} from 'lucide-react'
+import {Button,PageContainer} from '../components/Primitives'
+import {ExecutionMonitor} from '../components/ExecutionMonitor'
 import {NativeAgentPanel} from '../components/NativeAgentPanel'
 import {useRemote} from '../components/UI'
 import {StatusPill} from '../components/StatusPill'
-import {t, useLocale, formatDateTime} from '../i18n'
-import type {ChatSession, Provider} from '../api'
+import {t,useLocale,formatDateTime,jobKindLabel} from '../i18n'
+import type {Agent,ChatSession,Provider} from '../api'
 type Destination='chat'|'models'|'agents'|'rooms'|'connections'|'memory'|'activity'
-export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
- const locale=useLocale()
+export function HomePage({navigate}:{navigate:(page:Destination,sessionId?:string)=>void}){
+ const [advanced,setAdvanced]=useState(false)
+ useLocale()
  const sessions=useRemote<ChatSession[]>('/api/sessions',[])
  const providers=useRemote<Provider[]>('/api/providers',[])
+ const agents=useRemote<Agent[]>('/api/agents',[])
  const jobs=useRemote<any[]>('/api/jobs',[])
- const enabledProviders=providers.value.filter(p=>p.enabled)
- const privateSessions=sessions.value.filter(s=>!s.roomId&&!s.channelContext
-  &&s.kind!=='room'&&s.kind!=='channel'&&!s.archived)
- const recent=[...jobs.value]
-  .sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')))
-  .slice(0,5)
- const attention=jobs.value.filter(j=>['awaiting_approval','needs_review'].includes(j.status))
- const copy=locale==='en'
-  ? {
-     greeting:'What can I do for you?',
-     lead:'Describe the job in your own words. It runs in the background and reports back.',
-     noModel:'No AI is connected yet. Connect one to start.',
-     connect:'Connect AI',
-     review:'Needs your review',
-     reviewDesc:`${attention.length} task${attention.length>1?'s':''} waiting for approval`,
-     reviewAction:'Review',
-     recent:'Recent work',
-     recentEmpty:'Nothing here yet. Start with what you need.',
-     start:'Start a conversation',
-    }
-  : {
-     greeting:'무엇을 도와드릴까요?',
-     lead:'하고 싶은 일을 그대로 적어주세요. 알아서 진행하고 결과를 보여드립니다.',
-     noModel:'아직 AI가 연결되지 않았습니다. 연결하면 바로 시작할 수 있어요.',
-     connect:'AI 연결하기',
-     review:'확인이 필요해요',
-     reviewDesc:`승인을 기다리는 작업이 ${attention.length}개 있습니다`,
-     reviewAction:'확인하기',
-     recent:'최근 작업',
-     recentEmpty:'아직 작업이 없습니다. 필요한 일을 적어서 시작해 보세요.',
-     start:'대화 시작',
-    }
- return <PageContainer className="!max-w-[860px] !py-12 sm:!py-20">
-  <header className="min-w-0">
-   <h1 className="m-0 text-[30px] font-semibold leading-[1.25] tracking-[-0.04em] text-ink sm:text-[36px]">{copy.greeting}</h1>
-   <p className="mt-2 max-w-xl text-[13px] leading-6 text-muted">{copy.lead}</p>
-  </header>
-  {enabledProviders.length===0&&<section role="status" className="mt-6 flex flex-wrap items-center gap-3 rounded-xl border border-divider bg-surface px-4 py-3">
-   <span className="min-w-[180px] flex-1 text-[12px] text-muted">{copy.noModel}</span>
-   <Button type="button" variant="secondary" size="sm" onClick={()=>navigate('models')}>{copy.connect}<ArrowRight size={13}/></Button>
-  </section>}
-  {attention.length>0&&<section role="status" data-home-attention aria-label={copy.review} className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200/70 bg-amber-50 px-4 py-3">
-   <div className="min-w-[180px] flex-1"><strong className="block text-[12px] font-semibold text-amber-900">{copy.review}</strong><span className="text-[11px] text-amber-800/80">{copy.reviewDesc}</span></div>
-   <Button type="button" variant="ghost" size="sm" onClick={()=>navigate('activity')} className="!text-amber-900 hover:!bg-amber-100">{copy.reviewAction}<ArrowRight size={13}/></Button>
-  </section>}
-  <div className="mt-6"><NativeAgentPanel providers={providers.value}/></div>
-  <section aria-label={copy.recent} className="mt-10">
-   <div className="mb-2 flex items-center justify-between gap-3">
-    <h2 className="m-0 flex items-center gap-2 text-[13px] font-semibold text-ink"><Clock3 size={15} className="text-muted"/>{copy.recent}</h2>
-    <Button type="button" variant="ghost" size="sm" onClick={()=>navigate('activity')}>{locale==='en'?'See all':'전체 보기'}<ChevronRight size={13}/></Button>
-   </div>
-   {recent.length
-    ? <ul className="divide-y divide-divider overflow-hidden rounded-xl border border-divider bg-surface">
-      {recent.map(job=><li key={job.id} className="flex items-center gap-3 px-4 py-3">
-       <div className="min-w-0 flex-1">
-        <p className="truncate text-[12.5px] font-medium text-ink">{job.input?.goal||job.input?.prompt||job.kind||t('dashboard.jobFallback')}</p>
-        <p className="mt-0.5 truncate text-[11px] text-muted">{job.createdAt?formatDateTime(job.createdAt):''}</p>
-       </div>
-       <StatusPill status={job.status}/>
-      </li>)}
-     </ul>
-    : <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-divider bg-surface px-6 py-10 text-center">
-      <p className="m-0 text-[12px] text-muted">{copy.recentEmpty}</p>
-      <Button type="button" variant="secondary" size="sm" onClick={()=>navigate('chat')}>{copy.start}<ArrowRight size={13}/></Button>
-     </div>}
+ const channels=useRemote<any[]>('/api/channels',[])
+ const runtime=useRemote<any>('/api/model-library/runtime',{status:'idle'})
+ const enabledProviders=providers.value.filter(p=>p.enabled!==false)
+ const authenticatedProviders=enabledProviders.filter((p:any)=>p.hasKey||p.local).length
+ const recentChats=[...sessions.value].filter(s=>!s.roomId)
+  .sort((a,b)=>String(b.updatedAt||b.createdAt||'').localeCompare(String(a.updatedAt||a.createdAt||''))).slice(0,4)
+ const dashboardError=[sessions.error,providers.error,agents.error,jobs.error,channels.error,runtime.error].find(Boolean)
+ const dashboardLoading=[sessions,providers,agents,jobs,channels,runtime].some(item=>item.loading)
+ const reloadDashboard=()=>void Promise.all([sessions.reload(),providers.reload(),agents.reload(),jobs.reload(),channels.reload(),runtime.reload()]);
+ const recent=[...jobs.value].sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,6)
+ const busy=jobs.value.filter(j=>['queued','running','planning','reviewing','repairing'].includes(j.status)).length
+ const metrics=[
+  {name:'dashboard.metric.chat',value:sessions.value.length,icon:MessageSquare,page:'chat' as const},
+  {name:'dashboard.metric.providers',value:enabledProviders.length,icon:Cpu,page:'models' as const},
+  {name:'dashboard.metric.agents',value:agents.value.length,icon:Bot,page:'agents' as const},
+  {name:'dashboard.metric.jobs',value:busy,icon:Activity,page:'activity' as const}
+ ]
+ const shortcuts=[
+  {title:'dashboard.shortcut.chat',desc:'dashboard.shortcut.chat.desc',icon:MessageSquare,page:'chat' as const},
+  {title:'dashboard.shortcut.models',desc:'dashboard.shortcut.models.desc',icon:Cpu,page:'models' as const},
+  {title:'dashboard.shortcut.agents',desc:'dashboard.shortcut.agents.desc',icon:Bot,page:'agents' as const}
+ ]
+ return <PageContainer className="!max-w-[1200px] !py-5">
+  <div className="mb-5 flex flex-wrap items-end justify-between gap-3"><div><h1 className="m-0 text-[19px] font-bold tracking-tight">{t('dashboard.title')}</h1><p className="mt-1 text-[12px] text-muted">{t('dashboard.subtitle')}</p></div><Button type="button" variant="primary" onClick={()=>navigate('chat')} className="flex h-8 items-center gap-2 rounded-lg px-3 text-[11px] font-semibold"><MessageSquare size={14}/> {t('dashboard.openChat')} <ArrowRight size={13}/></Button></div>
+  {dashboardError&&<div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[12px] text-rose-700"><span>{t('dashboard.loadError')} {dashboardError}</span><Button type="button" onClick={reloadDashboard} className="rounded-lg border border-rose-200 px-3 py-1.5 text-[12px] font-semibold hover:bg-white">{t('dashboard.reload')}</Button></div>}
+  {dashboardLoading&&!dashboardError&&<p role="status" className="mb-3 text-[11px] text-[#8A8176]">{t('dashboard.loading')}</p>}
+  <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{metrics.map(m=>{const Icon=m.icon;return <Button type="button" key={m.name} onClick={()=>navigate(m.page)} className="flex min-h-24 flex-col items-start rounded-xl border border-divider bg-white p-4 text-left transition-colors hover:border-[#D8CFC2]"><span className="flex w-full items-center justify-between text-[11px] text-muted">{t(m.name as any)}<Icon size={16} className="text-[#A79C8E]"/></span><strong className="mt-4 text-[23px] font-bold leading-none tabular-nums text-ink">{m.value}</strong></Button>})}</div>
+  <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(270px,.72fr)]">
+   <section className="rounded-xl border border-divider bg-white">
+    <div className="border-b border-[#F0EAE1] px-4 py-3"><h2 className="text-[13px] font-bold">{t('dashboard.runNow')}</h2><p className="mt-1 text-[11px] text-[#8A8176]">{t('dashboard.runNow.desc')}</p></div>
+    <div className="grid grid-cols-1 gap-0 sm:grid-cols-2">{shortcuts.map(s=>{const Icon=s.icon;return <Button type="button" key={s.title} onClick={()=>navigate(s.page)} className="group flex items-center gap-3 border-b border-[#f0f2f5] px-4 py-4 text-left hover:bg-[#FAF7F1] sm:odd:border-r"><span className="grid size-9 place-items-center rounded-lg bg-[#FAF7F1] text-brand-hover"><Icon size={17}/></span><span className="min-w-0 flex-1"><span className="block text-[12px] font-semibold">{t(s.title as any)}</span><small className="mt-1 block text-[11px] text-[#9C9388]">{t(s.desc as any)}</small></span><ArrowRight size={14} className="text-[#D8CFC2] group-hover:text-brand"/></Button>})}</div>
+   </section>
+   <section className="rounded-xl border border-divider bg-white">
+    <div className="border-b border-[#F0EAE1] px-4 py-3"><h2 className="text-[13px] font-bold">{t('dashboard.connections')}</h2></div>
+    <div className="divide-y divide-[#f0f2f5] px-4">
+     <Button onClick={()=>navigate('models')} className="flex w-full items-center gap-3 py-3 text-left text-[12px]"><Cpu size={16} className="text-[#8A8176]"/><span className="flex-1">{t('dashboard.providers')}</span><span className="text-[11px] text-[#8A8176]">{t('dashboard.providers.count',{count:enabledProviders.length,ready:authenticatedProviders})}</span><ArrowRight size={13}/></Button>
+     <Button onClick={()=>navigate('models')} className="flex w-full items-center gap-3 py-3 text-left text-[12px]"><Cpu size={16} className="text-[#8A8176]"/><span className="flex-1">{t('dashboard.local')}</span><span className="text-[11px] text-[#8A8176]">{runtime.value.status==='ready'?t('dashboard.local.ready',{engine:runtime.value.engine||'ready'}):t('dashboard.local.idle')}</span><ArrowRight size={13}/></Button>
+     <Button onClick={()=>navigate('connections')} className="flex w-full items-center gap-3 py-3 text-left text-[12px]"><RadioTower size={16} className="text-[#8A8176]"/><span className="flex-1">{t('dashboard.channels')}</span><span className="text-[11px] text-[#8A8176]">{t('dashboard.channels.count',{count:channels.value.length})}</span><ArrowRight size={13}/></Button>
+     <Button onClick={()=>navigate('agents')} className="flex w-full items-center gap-3 py-3 text-left text-[12px]"><Bot size={16} className="text-[#8A8176]"/><span className="flex-1">{t('dashboard.agents')}</span><span className="text-[11px] text-[#8A8176]">{t('dashboard.agents.count',{count:agents.value.length})}</span><ArrowRight size={13}/></Button>
+    </div>
+    <div className="m-4 mt-2 flex items-center gap-2 rounded-lg bg-[#F7F2EA] px-3 py-2 text-[11px] text-muted"><CheckCircle2 size={14}/> {t('dashboard.note')}</div>
+   </section>
+  </div>
+  {recentChats.length>0&&<section className="mt-4 rounded-xl border border-divider bg-white"><div className="border-b border-[#F0EAE1] px-4 py-3"><h2 className="text-[13px] font-bold">{t('dashboard.recentChats')}</h2><p className="mt-1 text-[11px] text-[#8A8176]">{t('dashboard.recentChats.desc')}</p></div><div className="grid gap-1 p-2 sm:grid-cols-2">{recentChats.map(chat=><Button key={chat.id} type="button" onClick={()=>navigate('chat',chat.id)} className="flex min-w-0 items-center gap-3 rounded-lg px-3 py-3 text-left hover:bg-[#FAF7F1]"><MessageSquare size={16} className="shrink-0 text-brand-hover"/><span className="min-w-0 flex-1 truncate text-[12px] font-semibold">{chat.title||t('chat.sessionTitle')}</span><ArrowRight size={14} className="shrink-0 text-[#A79C8E]"/></Button>)}</div></section>}
+  <details className="mt-5 rounded-xl border border-divider bg-surface p-4" onToggle={event=>setAdvanced(event.currentTarget.open)}><summary className="cursor-pointer text-xs text-muted">{t('workspace.advancedTools')}</summary>{advanced&&<><NativeAgentPanel providers={providers.value}/><ExecutionMonitor/></>}</details>
+  <section className="mt-4 rounded-xl border border-divider bg-white">
+   <div className="flex items-center justify-between border-b border-[#F0EAE1] px-4 py-3"><h2 className="text-[13px] font-bold">{t('dashboard.recent')}</h2><Button type="button" onClick={()=>navigate('activity')} className="flex items-center gap-1 text-[11px] font-medium text-brand">{t('dashboard.recent.all')} <ArrowRight size={13}/></Button></div>
+   {recent.length?<div className="divide-y divide-[#F0EAE1]">{recent.map(job=><div key={job.id} className="flex items-center gap-3 px-4 py-3"><Workflow size={15} className="text-[#A79C8E]"/><div className="min-w-0 flex-1"><div className="truncate text-[12px] font-semibold">{job.input?.goal||job.input?.prompt||job.kind||t('dashboard.jobFallback')}</div><div className="mt-1 text-[10px] text-[#9C9388]">{jobKindLabel(job.kind)} · {job.createdAt?formatDateTime(job.createdAt):''}</div></div><StatusPill status={job.status} /></div>)}</div>:<div className="flex h-32 items-center justify-center text-[12px] text-[#9C9388]">{t('dashboard.recent.empty')}</div>}
   </section>
+
  </PageContainer>
 }

@@ -1,106 +1,120 @@
-import {createElement, type ReactNode} from 'react'
+import {useMemo,type ReactNode} from 'react'
 
-// Safe, dependency-free display of common AI Markdown. Never render model HTML.
-// Streamed unfinished code fences remain readable until the closing chunk.
-const safeHref=(value:string)=>/^(https?:\/\/|mailto:)/i.test(value)?value:undefined
-const INLINE=/\[([^\]\n]+)\]\(([^)\s]+)\)|`([^`\n]+)`|\*\*([^*\n]+)\*\*|~~([^~\n]+)~~|\*([^*\n]+)\*/g
-
-function inline(text:string,key:string):ReactNode[]{
+// Render an intentionally bounded subset of Markdown without HTML injection,
+// external dependencies or a separate renderer for streamed content.
+function inlineParts(text:string):ReactNode[]{
+ const pattern=/(\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\))/g
  const parts:ReactNode[]=[]
- let cursor=0
- for(const match of text.matchAll(INLINE)){
-  const at=match.index??0
-  if(at>cursor)parts.push(text.slice(cursor,at))
-  const id=`${key}-${at}`
-  if(match[1]!==undefined){
-   const href=safeHref(match[2])
-   parts.push(href?<a key={id} href={href} target="_blank" rel="noopener noreferrer">{match[1]}</a>:match[0])
-  }else if(match[3]!==undefined)parts.push(<code key={id}>{match[3]}</code>)
-  else if(match[4]!==undefined)parts.push(<strong key={id}>{inline(match[4],id)}</strong>)
-  else if(match[5]!==undefined)parts.push(<del key={id}>{inline(match[5],id)}</del>)
-  else if(match[6]!==undefined)parts.push(<em key={id}>{inline(match[6],id)}</em>)
-  cursor=at+match[0].length
+ let last=0
+ for(const match of text.matchAll(pattern)){
+  const index=match.index??last
+  if(index>last)parts.push(text.slice(last,index))
+  const token=match[0]
+  if(token.startsWith('**')){
+   parts.push(<strong key={index} className="font-semibold text-[#292622]">{token.slice(2,-2)}</strong>)
+  }else if(token.startsWith('`')){
+   parts.push(<code key={index} className="rounded-md bg-[#F1EBE2] px-1.5 py-0.5 font-mono text-[.9em]">{token.slice(1,-1)}</code>)
+  }else{
+   const separator=token.indexOf('](')
+   const label=token.slice(1,separator)
+   const href=token.slice(separator+2,-1)
+   parts.push(<a key={index} href={href} target="_blank" rel="noopener noreferrer" className="underline decoration-[#BA8D7D] underline-offset-2 hover:text-brand-hover">{label}</a>)
+  }
+  last=index+token.length
  }
- if(cursor<text.length)parts.push(text.slice(cursor))
+ if(last<text.length)parts.push(text.slice(last))
  return parts
 }
-const heading=(line:string)=>/^(#{1,6})\s+(.+)$/.exec(line)
-const listItem=(line:string)=>/^\s{0,3}([-*+]|\d+[.)])\s+(.+)$/.exec(line)
-const isFence=(line:string)=>/^\s{0,3}```/.test(line)
-const isRule=(line:string)=>/^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)
-const isQuote=(line:string)=>/^\s{0,3}>\s?/.test(line)
-const isTableSeparator=(line:string)=>/^\s*\|?\s*:?-{3,}:?(?:\s*\|\s*:?-{3,}:?)*\s*\|?\s*$/.test(line)
-const cells=(line:string)=>line.trim().replace(/^\||\|$/g,'').split('|').map(part=>part.trim())
-const isTable=(lines:string[],i:number)=>i+1<lines.length&&lines[i].includes('|')&&isTableSeparator(lines[i+1])
-const blockStart=(lines:string[],i:number)=>!!(
- heading(lines[i])||listItem(lines[i])||isFence(lines[i])||isRule(lines[i])||
- isQuote(lines[i])||isTable(lines,i)
-)
 
-export function ChatRichText({content}:{content:string}){
- const lines=content.replace(/\r\n?/g,'\n').split('\n')
+function pipeCells(line:string):string[]{
+ return line.trim().replace(/^\||\|$/g,'').split('|').map(cell=>cell.trim())
+}
+
+function isTableDivider(line:string):boolean {
+ const cells=pipeCells(line)
+ return cells.length>1&&cells.every(cell=>/^:?-{3,}:?$/.test(cell))
+}
+
+function renderBlocks(text:string):ReactNode[]{
+ const lines=text.replace(/\r\n?/g,'\n').split('\n')
  const blocks:ReactNode[]=[]
+ const isBlock=(line:string,index:number)=>
+  /^\s*```|^#{1,4}\s+|^>\s?|^\s*(?:[-*]|\d+[.)])\s+/.test(line)
+  || /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)
+  || (index+1<lines.length&&line.includes('|')&&isTableDivider(lines[index+1]))
  let i=0
  while(i<lines.length){
-  const start=i,line=lines[i]
+  const line=lines[i]
   if(!line.trim()){i++;continue}
-  if(isFence(line)){
-   const language=line.trim().slice(3).trim().split(/\s/)[0]
+  const code=line.match(/^\s*```([^\s`]*)\s*$/)
+  if(code){
    i++
-   const code:string[]=[]
-   while(i<lines.length&&!isFence(lines[i]))code.push(lines[i++])
+   const body:string[]=[]
+   while(i<lines.length&&!/^\s*```\s*$/.test(lines[i]))body.push(lines[i++])
    if(i<lines.length)i++
-   blocks.push(<div className="chat-code" key={start}>
-    {language&&<div className="chat-code-language">{language}</div>}
-    <pre><code>{code.join('\n')}</code></pre>
+   blocks.push(<div key={blocks.length} className="my-3 overflow-hidden rounded-xl border border-[#363A44] bg-[#23272F]">
+    {code[1]&&<div className="border-b border-white/10 px-4 py-1.5 text-[11px] font-medium text-[#D1D5DB]">{code[1]}</div>}
+    <pre className="max-w-full overflow-x-auto p-4 text-[13px] leading-6 text-[#F5F5F5]"><code className="font-mono whitespace-pre">{body.join('\n')}</code></pre>
    </div>)
    continue
   }
-  const h=heading(line)
-  if(h){
-   const level=h[1].length
-   blocks.push(createElement(`h${level}`,{key:start},inline(h[2],`h${start}`)))
+  if(i+1<lines.length&&line.includes('|')&&isTableDivider(lines[i+1])){
+   const headers=pipeCells(line)
+   i+=2
+   const rows:string[][]=[]
+   while(i<lines.length&&lines[i].trim()&&lines[i].includes('|')){
+    rows.push(pipeCells(lines[i++]))
+   }
+   blocks.push(<div key={blocks.length} className="my-4 max-w-full overflow-x-auto rounded-xl border border-[#E3DBD0]">
+    <table className="w-full min-w-[360px] border-collapse text-left text-[14px] leading-6">
+     <thead className="bg-[#F5F0E8]"><tr>{headers.map((cell,j)=><th key={j} scope="col" className="border-b border-[#E3DBD0] px-3 py-2 font-semibold text-[#3A342D]">{inlineParts(cell)}</th>)}</tr></thead>
+     <tbody>{rows.map((row,j)=><tr key={j} className="even:bg-[#FAF8F3]">{headers.map((_,k)=><td key={k} className="border-b border-[#EEE8DF] px-3 py-2 align-top">{inlineParts(row[k]||'')}</td>)}</tr>)}</tbody>
+    </table>
+   </div>)
+   continue
+  }
+  if(/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)){
+   blocks.push(<hr key={blocks.length} className="my-5 border-0 border-t border-[#E3DBD0]"/>)
    i++;continue
   }
-  if(isRule(line)){blocks.push(<hr key={start}/>);i++;continue}
-  if(isTable(lines,i)){
-   const columns=cells(line)
-   i+=2
-   const body:string[][]=[]
-   while(i<lines.length&&lines[i].includes('|')&&lines[i].trim())body.push(cells(lines[i++]))
-   blocks.push(<div className="chat-table-scroll" key={start}><table><thead><tr>{columns.map((column,j)=><th key={j}>{inline(column,`t${start}-${j}`)}</th>)}</tr></thead>
-    <tbody>{body.map((row,r)=><tr key={r}>{columns.map((_,c)=><td key={c}>{inline(row[c]||'',`t${start}-${r}-${c}`)}</td>)}</tr>)}</tbody>
-   </table></div>)
-   continue
+  const heading=line.match(/^(#{1,4})\s+(.+)$/)
+  if(heading){
+   const level=heading[1].length
+   const cls=level===1?'text-[22px] font-bold':level===2?'text-[19px] font-bold':level===3?'text-[17px] font-semibold':'text-[16px] font-semibold'
+   blocks.push(<div key={blocks.length} role="heading" aria-level={level} className={'mb-2 mt-4 leading-snug text-[#292622] '+cls}>{inlineParts(heading[2])}</div>)
+   i++;continue
   }
-  if(isQuote(line)){
+  if(/^>\s?/.test(line)){
    const quoted:string[]=[]
-   while(i<lines.length&&isQuote(lines[i]))quoted.push(lines[i++].replace(/^\s{0,3}>\s?/,''))
-   blocks.push(<blockquote key={start}>{quoted.map((value,j)=><p key={j}>{inline(value,`q${start}-${j}`)}</p>)}</blockquote>)
+   while(i<lines.length&&/^>\s?/.test(lines[i]))quoted.push(lines[i++].replace(/^>\s?/,''))
+   blocks.push(<blockquote key={blocks.length} className="my-3 border-l-[3px] border-[#C9B5A6] bg-[#FAF7F1] py-2 pl-3 pr-2 text-[#61584E] whitespace-pre-wrap">{inlineParts(quoted.join('\n'))}</blockquote>)
    continue
   }
-  const item=listItem(line)
-  if(item){
-   const ordered=/^\d/.test(item[1])
-   const items:string[]=[]
+  const bullet=line.match(/^\s*([-*]|\d+[.)])\s+(.+)$/)
+  if(bullet){
+   const ordered=/^\d/.test(bullet[1])
+   const items:ReactNode[]=[]
+   const listPattern=ordered?/^\s*\d+[.)]\s+(.+)$/:/^\s*[-*]\s+(.+)$/
    while(i<lines.length){
-    const row=listItem(lines[i]);if(!row||/^\d/.test(row[1])!==ordered)break
-    items.push(row[2]);i++
+    const item=lines[i].match(listPattern)
+    if(!item)break
+    items.push(<li key={items.length} className="pl-1">{inlineParts(item[1])}</li>)
+    i++
    }
-   const children=items.map((value,j)=>{
-    const task=/^\[([ xX])\]\s+(.+)$/.exec(value)
-    return <li key={j} className={task?'chat-task-item':undefined}>
-     {task?<><input type="checkbox" disabled checked={task[1].toLowerCase()==='x'}
-      aria-label={task[1].toLowerCase()==='x'?'Completed':'Not completed'}/>
-      <span>{inline(task[2],`l${start}-${j}`)}</span></>:inline(value,`l${start}-${j}`)}
-    </li>
-   })
-   blocks.push(ordered?<ol key={start}>{children}</ol>:<ul key={start}>{children}</ul>)
+   blocks.push(ordered
+    ?<ol key={blocks.length} className="my-3 list-decimal space-y-1 pl-6">{items}</ol>
+    :<ul key={blocks.length} className="my-3 list-disc space-y-1 pl-6">{items}</ul>)
    continue
   }
-  const paragraph=[line];i++
-  while(i<lines.length&&lines[i].trim()&&!blockStart(lines,i))paragraph.push(lines[i++])
-  blocks.push(<p key={start}>{inline(paragraph.join('\n'),`p${start}`)}</p>)
+  const paragraph:string[]=[line]
+  i++
+  while(i<lines.length&&lines[i].trim()&&!isBlock(lines[i],i))paragraph.push(lines[i++])
+  blocks.push(<p key={blocks.length} className="my-2 whitespace-pre-wrap">{inlineParts(paragraph.join('\n'))}</p>)
  }
- return <div className="chat-richtext">{blocks}</div>
+ return blocks
+}
+
+export function ChatRichText({text}:{text:string}){
+ const blocks=useMemo(()=>renderBlocks(text),[text])
+ return <div className="chat-rich-text">{blocks}</div>
 }
