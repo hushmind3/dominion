@@ -271,7 +271,13 @@ try{
    throw new Error('Model route failed to render: '+page.url()+' '+body.slice(0,1800)+
     ' runtimeErrors='+JSON.stringify(errors),{cause:error});
   }
-  await modelAreas.getByRole('button',{name:'모델 찾아보기'}).click();
+  try{
+   await modelAreas.getByRole('button',{name:'모델 찾아보기'}).click({timeout:7000});
+  }catch(error){
+   const body=await page.locator('body').innerText();
+   throw new Error('Model discovery click lost its UI: '+page.url()+
+    ' pageText='+body.slice(0,1800)+' ReactErrors='+JSON.stringify(errors),{cause:error});
+  }
   assert.equal(await page.getByRole('navigation',{name:'모델 상세'}).getByRole('button').count(),3);
   await modelAreas.getByRole('button',{name:'Cloud·업체'}).click();
   assert.equal(await page.getByRole('navigation',{name:'모델 상세'}).getByRole('button').count(),2);
