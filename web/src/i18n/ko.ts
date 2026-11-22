@@ -1224,6 +1224,8 @@ const ko = {
   'evt.execution.started': '실행 시작',
   'evt.execution.finished': '실행 종료',
   'growth.verifiedRuns': '검증된 실행',
+  'growth.loading': '서버에서 성장 데이터를 불러오는 중…',
+  'growth.unavailable': '성장 데이터를 서버에서 불러오지 못했습니다.',
   'growth.activePrinciples': '활성 원리',
   'growth.sharedRules': '공유 규칙',
   'growth.modelCalls': '모델 호출',

@@ -32,18 +32,20 @@ export function GrowthDashboard(){
  const calls=number(usage.value.calls)
  const tokens=number(usage.value.totalTokens)
  const groups=(usage.value.groups||[]).slice(0,10)
+ const countValue=(source:{loading:boolean;error:string},value:number)=>source.loading||source.error?'—':String(value)
+ const sourceMessage=(source:{loading:boolean;error:string})=>source.loading?t('growth.loading'):source.error?t('growth.unavailable'):''
  return <div className="mt-3 grid gap-4">
   <Notice message={synergy.error||usage.error||transfer.error}/>
   <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-   <div className="rounded-xl border border-[#EFE9DF] bg-white p-3"><small className="text-[10px] font-semibold text-[#8A8176]">{t('growth.verifiedRuns')}</small><strong className="block text-lg">{rated}</strong></div>
-   <div className="rounded-xl border border-[#EFE9DF] bg-white p-3"><small className="text-[10px] font-semibold text-[#8A8176]">{t('growth.activePrinciples')}</small><strong className="block text-lg">{activePrinciples}</strong></div>
-   <div className="rounded-xl border border-[#EFE9DF] bg-white p-3"><small className="text-[10px] font-semibold text-[#8A8176]">{t('growth.sharedRules')}</small><strong className="block text-lg">{rules.length}</strong></div>
-   <div className="rounded-xl border border-[#EFE9DF] bg-white p-3"><small className="text-[10px] font-semibold text-[#8A8176]">{t('growth.modelCalls')}</small><strong className="block text-lg">{calls}</strong><small className="text-[10px] text-[#9C9388]">{tokens.toLocaleString()} {t('growth.tokens')}</small></div>
+   <div className="rounded-xl border border-[#EFE9DF] bg-white p-3"><small className="text-[10px] font-semibold text-[#8A8176]">{t('growth.verifiedRuns')}</small><strong className="block text-lg">{countValue(synergy,rated)}</strong></div>
+   <div className="rounded-xl border border-[#EFE9DF] bg-white p-3"><small className="text-[10px] font-semibold text-[#8A8176]">{t('growth.activePrinciples')}</small><strong className="block text-lg">{countValue(transfer,activePrinciples)}</strong></div>
+   <div className="rounded-xl border border-[#EFE9DF] bg-white p-3"><small className="text-[10px] font-semibold text-[#8A8176]">{t('growth.sharedRules')}</small><strong className="block text-lg">{countValue(transfer,rules.length)}</strong></div>
+   <div className="rounded-xl border border-[#EFE9DF] bg-white p-3"><small className="text-[10px] font-semibold text-[#8A8176]">{t('growth.modelCalls')}</small><strong className="block text-lg">{countValue(usage,calls)}</strong><small className="text-[10px] text-[#9C9388]">{countValue(usage,tokens)} {t('growth.tokens')}</small></div>
   </div>
 
   <Panel className="min-w-0 p-4">
    <Subheading title={t('growth.observedGrowth')} extra={<span className="text-[10px] text-[#9C9388]">{t('ui.label.verifiedRuns')}</span>}/>
-   {!agents.length?<p className="text-sm text-[#7C7469]">{t('growth.noRuns')}</p>:<div className="grid gap-2">{agents.slice(0,10).map(agent=>{
+   {sourceMessage(synergy)?<p role="status" className="text-sm text-[#7C7469]">{sourceMessage(synergy)}</p>:!agents.length?<p className="text-sm text-[#7C7469]">{t('growth.noRuns')}</p>:<div className="grid gap-2">{agents.slice(0,10).map(agent=>{
     const growth=agent.growth||{}
     const failures=Object.entries(growth.toolFailures||{}).sort((a,b)=>number(b[1])-number(a[1])).slice(0,3)
     const guidance=(growth.guidance||[])[0]
@@ -57,12 +59,12 @@ export function GrowthDashboard(){
 
   <Panel className="min-w-0 p-4">
    <Subheading title={t('growth.modelUsage')} extra={<span className="text-[10px] text-[#9C9388]">{t('ui.label.apiLocal')}</span>}/>
-   {!groups.length?<p className="text-sm text-[#7C7469]">{t('growth.noCalls')}</p>:<div className="grid gap-1 text-[11px]">{groups.map((group,index)=><div className="grid grid-cols-[1fr_auto_auto] gap-2 rounded-lg border border-[#EFE9DF] px-3 py-2" key={index}><span className="break-all font-semibold text-[#4A443C]">{label(group.model,t('growth.modelUnknown'))}</span><span className="text-[#7C7469]">{label(group.purpose,t('growth.purposeOther'))} · {t('growth.calls',{count:number(group.calls)})}</span><span className="text-[#7C7469]">{number(group.totalTokens).toLocaleString()} {t('growth.tokens')}</span></div>)}</div>}
+   {sourceMessage(usage)?<p role="status" className="text-sm text-[#7C7469]">{sourceMessage(usage)}</p>:!groups.length?<p className="text-sm text-[#7C7469]">{t('growth.noCalls')}</p>:<div className="grid gap-1 text-[11px]">{groups.map((group,index)=><div className="grid grid-cols-[1fr_auto_auto] gap-2 rounded-lg border border-[#EFE9DF] px-3 py-2" key={index}><span className="break-all font-semibold text-[#4A443C]">{label(group.model,t('growth.modelUnknown'))}</span><span className="text-[#7C7469]">{label(group.purpose,t('growth.purposeOther'))} · {t('growth.calls',{count:number(group.calls)})}</span><span className="text-[#7C7469]">{number(group.totalTokens).toLocaleString()} {t('growth.tokens')}</span></div>)}</div>}
   </Panel>
 
   <Panel className="min-w-0 p-4">
    <Subheading title={t('growth.transfer')} extra={<span className="text-[10px] text-[#9C9388]">{t('ui.label.provenance')}</span>}/>
-   {!principles.length&&!rules.length?<p className="text-sm text-[#7C7469]">{t('growth.noPrinciples')}</p>:<div className="grid gap-2">
+   {sourceMessage(transfer)?<p role="status" className="text-sm text-[#7C7469]">{sourceMessage(transfer)}</p>:!principles.length&&!rules.length?<p className="text-sm text-[#7C7469]">{t('growth.noPrinciples')}</p>:<div className="grid gap-2">
     {principles.slice(0,6).map(principle=><div className="rounded-lg border border-[#EFE9DF] p-3" key={principle.id}>
      <div className="flex flex-wrap gap-2 text-[11px]"><strong>{label(principle.kind,t('growth.principle'))}</strong><span className="text-[#7C7469]">{label(principle.status)} · {t('growth.confidence',{value:percent(principle.confidence)})}</span><span className="ml-auto rounded bg-[#F7E8E1] px-1.5 py-0.5 text-[10px] text-[#A94E30]">{t('growth.cases',{count:number((principle.supportingCases||[]).length)})}</span></div>
      <p className="mt-1 text-[12px] text-[#4A443C]">{label(principle.principle)}</p>
@@ -78,7 +80,7 @@ export function GrowthDashboard(){
 
   <Panel className="min-w-0 p-4">
    <Subheading title={t('growth.usageLog')} extra={<span className="text-[10px] text-[#9C9388]">{usages.length}</span>}/>
-   {!usages.length?<p className="text-sm text-[#7C7469]">{t('growth.none')}</p>:<div className="grid gap-1">{usages.slice(0,8).map((usage:any)=><div className="rounded-lg border border-[#EFE9DF] px-3 py-2 text-[11px]" key={usage.id}>
+   {sourceMessage(transfer)?<p role="status" className="text-sm text-[#7C7469]">{sourceMessage(transfer)}</p>:!usages.length?<p className="text-sm text-[#7C7469]">{t('growth.none')}</p>:<div className="grid gap-1">{usages.slice(0,8).map((usage:any)=><div className="rounded-lg border border-[#EFE9DF] px-3 py-2 text-[11px]" key={usage.id}>
     <div className="flex flex-wrap items-center gap-2"><strong className="min-w-0 flex-1 truncate">{label(usage.principle,t('growth.principle'))}</strong><span className="rounded bg-[#F7E8E1] px-1.5 py-0.5 text-[10px] text-[#A94E30]">{statusLabel(usage.outcome||usage.status)||t('growth.none')}</span></div>
     <p className="mt-1 text-[10px] text-[#8A8176]">{t('growth.usageReused',{model:label(usage.model,t('growth.modelUnknown'))})} · {t('growth.usageContributed',{models:(usage.contributingModels||[]).join(', ')||t('growth.none')})} · {t('growth.usageAgent',{agent:label(usage.agentId,t('growth.none'))})}</p>
     <p className="text-[10px] text-[#9C9388]">{formatDateTime(usage.execution?.startedAt||usage.createdAt)}</p>

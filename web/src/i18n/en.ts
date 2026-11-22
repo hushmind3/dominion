@@ -1225,6 +1225,8 @@ const en: Record<LocaleKey, string> = {
   'evt.execution.started': 'Execution started',
   'evt.execution.finished': 'Execution finished',
   'growth.verifiedRuns': 'Verified runs',
+  'growth.loading': 'Loading growth data from the server…',
+  'growth.unavailable': 'Could not load growth data from the server.',
   'growth.activePrinciples': 'Active principles',
   'growth.sharedRules': 'Shared rules',
   'growth.modelCalls': 'Model calls',
