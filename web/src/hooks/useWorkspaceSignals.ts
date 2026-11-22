@@ -3,7 +3,7 @@
 import {useEffect,useState,type Dispatch,type SetStateAction} from 'react'
 import {get} from '../api'
 import {classifyRefreshEvent,emptyRefreshScope,mergeRefreshScopes} from '../refreshEvents'
-import type {PageId} from '../components/WorkspaceShell'
+import type {PageId} from '../navigation'
 
 export function useWorkspaceSignals(
  navigate:(target:PageId,sessionId?:string)=>void,

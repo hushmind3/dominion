@@ -2,7 +2,8 @@ import { ContextMenu } from './components/ContextMenu'
 import {OwnerProfileProvider} from './components/OwnerProfile'
 import {Component,lazy,Suspense,useCallback,useEffect,useLayoutEffect,useState,type ReactNode} from 'react'
 import {useWorkspaceSignals} from './hooks/useWorkspaceSignals'
-import {WorkspaceSidebar,SettingsHeader,navigation,type PageId} from './components/WorkspaceShell'
+import {WorkspaceSidebar,SettingsHeader} from './components/WorkspaceShell'
+import {isPageId,type PageId} from './navigation'
 import {WorkspaceSearch} from './components/WorkspaceSearch'
 const HomePage=lazy(()=>import('./pages/Home').then(module=>({default:module.HomePage})))
 const CapabilitiesPage=lazy(()=>import('./pages/Capabilities').then(module=>({default:module.CapabilitiesPage})))
@@ -89,7 +90,7 @@ class PageLoadBoundary extends Component<{children:ReactNode},{failed:boolean}>{
 function locationState(){
  const raw=window.location.hash.replace(/^#\/?/,'')
  const [name,query]=raw.split('?')
- const valid=['extensions','capabilities'].includes(name)||navigation.some(group=>group.items.some(item=>item.id===name))
+ const valid=isPageId(name)
  const params=new URLSearchParams(query)
  return {page:(valid?name:'chat') as PageId,session:params.get('session')||undefined,
   agent:params.get('agent')||undefined,provider:params.get('provider')||undefined,model:params.get('model')||undefined}

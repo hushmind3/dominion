@@ -1,7 +1,7 @@
 import {useState,type KeyboardEvent} from 'react'
 import {ArrowRight,Search} from 'lucide-react'
 import {DialogBackdrop,DialogPanel} from './Dialog'
-import {navigation,type PageId} from './WorkspaceShell'
+import {navigation,type PageId} from '../navigation'
 import {t,useLocale} from '../i18n'
 
 // All existing destinations, not an extra navigation level. The same
