@@ -2,7 +2,7 @@
 // switches are saved separately by /api/rooms and never use these keys.
 export type ConversationToggle='showReasoning'|'thinkingEnabled'|'toolsEnabled'|'autoLearn'
 const defaults:Record<ConversationToggle,boolean>={
- showReasoning:false,thinkingEnabled:true,toolsEnabled:true,autoLearn:false,
+ showReasoning:true,thinkingEnabled:true,toolsEnabled:true,autoLearn:false,
 }
 export const conversationPreferenceEvent='dominion-conversation-preference-changed'
 export const conversationToggleKey=(name:ConversationToggle)=>'dominion.chat.pref.'+name

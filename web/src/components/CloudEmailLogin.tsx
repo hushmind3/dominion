@@ -72,18 +72,18 @@ export function CloudEmailLogin({cloudUrl,onSuccess}:{cloudUrl:string;onSuccess:
   void poll()
   return()=>{active=false;if(timer)clearTimeout(timer)}
  },[flight,cloudUrl,onSuccess])
- return <div className="w-full space-y-2 border-t border-divider pt-3">
+ return <div className="w-full space-y-2 border-t border-[#E7E0D5] pt-3">
   <label htmlFor="dominion-email-login" className="block text-[12px] font-semibold">이메일로 로그인</label>
   <form onSubmit={event=>{event.preventDefault();void requestEmail()}} className="flex gap-2">
    <input id="dominion-email-login" type="email" autoComplete="email" required disabled={busy||Boolean(flight)}
     value={email} onChange={event=>setEmail(event.target.value)} placeholder="이메일 주소"
-    className="min-w-0 flex-1 rounded-lg border border-divider px-3 py-2 text-[12px]"/>
-   <button type="submit" disabled={busy||Boolean(flight)} className="rounded-lg bg-brand px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-60">
+    className="min-w-0 flex-1 rounded-lg border border-[#E7E0D5] px-3 py-2 text-[12px]"/>
+   <button type="submit" disabled={busy||Boolean(flight)} className="rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-60">
     {busy?'발송 중…':flight?'확인 대기 중':'인증 메일 보내기'}
    </button>
   </form>
   {flight&&<button type="button" className="text-[12px] underline" onClick={reset}>다른 이메일로 다시 시도</button>}
-  {message&&<p role="status" className="text-[12px] text-muted">{message}</p>}
-  <p className="text-[11px] text-muted">이메일의 확인 버튼을 누르면 이 화면에서 자동 로그인됩니다. 링크는 10분간 유효합니다.</p>
+  {message&&<p role="status" className="text-[12px] text-[#7C7469]">{message}</p>}
+  <p className="text-[11px] text-[#7C7469]">이메일의 확인 버튼을 누르면 이 화면에서 자동 로그인됩니다. 링크는 10분간 유효합니다.</p>
  </div>
 }

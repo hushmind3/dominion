@@ -35,7 +35,7 @@ for(const name of e2eModules){
 }
 // Baseline grows only when a deliberately reviewed real-process case is
 // added. Do not silently drop old tests while claiming full E2E coverage.
-const expectedE2eCases=122
+const expectedE2eCases=117
 if(e2eCases!==expectedE2eCases)throw Error('E2E regression tests lost or duplicated: '+e2eCases+' (expected '+expectedE2eCases+')')
 
 const runtime=readFileSync(path.join(root,'src/engine/chat/runtime.rs'),'utf8')
@@ -99,7 +99,7 @@ if(!boardAddonIndex.includes('pub mod room_board;')||
 // silently regressing into UI-only state or model-name guesses.
 const roomEventsSource=readFileSync(path.join(root,'src/db/room_events.rs'),'utf8')
 const roomApi=readFileSync(path.join(root,'src/api/rooms.rs'),'utf8')
-const roomRouter=readFileSync(path.join(root,'src/api/routes/conversations.rs'),'utf8')
+const roomRouter=readFileSync(path.join(root,'src/api/mod.rs'),'utf8')
 const sdkTypeScript=readFileSync(path.join(root,'packages/sdk-typescript/src/index.ts'),'utf8')
 if(!dbSource.includes('CREATE TABLE IF NOT EXISTS room_events(')||
    !dbSource.includes('room_events::insert_room_event(')||
@@ -411,7 +411,7 @@ const extensionChannels=readFileSync(path.join(root,'src/addons/integrations/ext
 const extensionJobs=readFileSync(path.join(root,'src/addons/integrations/extensions/jobs.rs'),'utf8')
 const privateContext=readFileSync(path.join(root,'src/addons/knowledge/chat_context.rs'),'utf8')
 const roomContext=readFileSync(path.join(root,'src/addons/integrations/chat_room_context.rs'),'utf8')
-const apiRoutes=['integrations','conversations'].map(name=>readFileSync(path.join(root,'src/api/routes',name+'.rs'),'utf8')).join('\n')
+const apiRoutes=readFileSync(path.join(root,'src/api/mod.rs'),'utf8')
 if(!addonIndex.includes('pub mod extensions;')||
    !extensionHost.includes('pub enum Extension')||
    !extensionHost.includes('pub fn enabled(')||

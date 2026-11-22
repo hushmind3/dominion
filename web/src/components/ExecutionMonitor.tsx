@@ -19,8 +19,8 @@ function ToolHistory({id}:{id:string}){
  const log=useRemote<Operation[]>('/api/executions/'+id+'/operations',[])
  return <div className="mt-3 max-h-44 space-y-2 overflow-y-auto">
   {log.value.map(o=><div key={o.id} className="flex items-center gap-2 rounded-lg bg-[#FAF7F1] px-3 py-2 text-xs">
-   <Terminal size={13} className="shrink-0 text-muted"/><span className="min-w-0 flex-1 truncate">{o.tool}</span>
-   <span className="text-muted">{o.status}</span>
+   <Terminal size={13} className="shrink-0 text-[#7C7469]"/><span className="min-w-0 flex-1 truncate">{o.tool}</span>
+   <span className="text-[#7C7469]">{o.status}</span>
   </div>)}
   {!log.value.length&&<p className="text-xs text-[#9C9388]">{t('em.noTools')}</p>}
  </div>
@@ -53,13 +53,13 @@ export function ExecutionMonitor(){
   finally{setBusy(false)}
  }
  return <Panel className="mb-8 overflow-hidden">
-  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-divider px-5 py-4">
-   <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-ink text-white"><Activity size={20}/></span>
-    <div><h2 className="m-0 text-lg font-bold text-ink">{t('em.title')}</h2><p className="m-0 text-xs text-muted">{t('em.subtitle')}</p></div></div>
+  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E7E0D5] px-5 py-4">
+   <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-[#24211D] text-white"><Activity size={20}/></span>
+    <div><h2 className="m-0 text-lg font-bold text-[#24211D]">{t('em.title')}</h2><p className="m-0 text-xs text-[#7C7469]">{t('em.subtitle')}</p></div></div>
    <div className="flex items-center gap-3"><span className="text-xs font-semibold text-[#5C544A]">{t('em.count',{count})}</span>
     <Button size="sm" variant="ghost" onClick={()=>void runs.reload()}><RefreshCw size={14}/> {t('em.refresh')}</Button></div>
   </div>
-  <div className="border-b border-divider p-5">
+  <div className="border-b border-[#E7E0D5] p-5">
    <label className="mb-2 block text-sm font-semibold text-[#3A342D]">{t('em.instruction')}</label>
    <TextArea rows={3} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder={t('em.placeholder')}/>
    <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -74,14 +74,14 @@ export function ExecutionMonitor(){
   <div className="grid min-w-0 gap-4 p-5 lg:grid-cols-2">
    <div className="max-h-64 space-y-2 overflow-y-auto">
     {runs.value.map(r=><Button key={r.id} variant="ghost" onClick={()=>setSelected(r.id)}
-     className={'!flex !w-full !items-center !justify-between !gap-2 !rounded-lg !border !px-3 !py-3 !text-left '+(current?.id===r.id?'!border-blue-300 !bg-[#F7E8E1]':'!border-divider')}>
+     className={'!flex !w-full !items-center !justify-between !gap-2 !rounded-lg !border !px-3 !py-3 !text-left '+(current?.id===r.id?'!border-blue-300 !bg-[#F7E8E1]':'!border-[#E7E0D5]')}>
       <span className="min-w-0"><strong className="block truncate text-xs text-[#3A342D]">{r.model}</strong>
-       <small className="block truncate text-[11px] text-muted">{r.sessionId}</small></span>
+       <small className="block truncate text-[11px] text-[#7C7469]">{r.sessionId}</small></span>
       <span className="shrink-0 text-xs font-medium text-[#5C544A]">{labels[r.status]?t(labels[r.status]):r.status}</span>
     </Button>)}
-    {!runs.value.length&&<p className="py-8 text-center text-sm text-muted">{t('em.empty')}</p>}
+    {!runs.value.length&&<p className="py-8 text-center text-sm text-[#7C7469]">{t('em.empty')}</p>}
    </div>
-   <div className="min-w-0 border-t border-divider pt-4 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
+   <div className="min-w-0 border-t border-[#E7E0D5] pt-4 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
     {current?<><div className="flex items-center justify-between gap-2"><h3 className="m-0 text-sm font-bold text-[#3A342D]">{t('em.detail')}</h3>
      <span className="text-xs font-semibold text-[#5C544A]">{labels[current.status]?t(labels[current.status]):current.status}</span></div>
      <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg bg-[#FAF7F1] p-3 text-center">
@@ -89,11 +89,11 @@ export function ExecutionMonitor(){
       <div><strong className="block text-lg">{current.toolCalls||0}</strong><small className="text-[10px]">{t('em.toolCalls')}</small></div>
       <div><strong className="block text-lg">{current.tokens||0}</strong><small className="text-[10px]">{t('em.tokens')}</small></div>
      </div>
-     <p className="mt-3 flex items-center gap-2 text-xs text-muted"><Clock3 size={13}/>{current.startedAt?.replace('T',' ').slice(0,19)} UTC</p>
+     <p className="mt-3 flex items-center gap-2 text-xs text-[#7C7469]"><Clock3 size={13}/>{current.startedAt?.replace('T',' ').slice(0,19)} UTC</p>
      {current.reason&&<p role="alert" className="mt-2 break-words rounded-lg bg-amber-50 p-3 text-xs text-amber-800">{translateError(current.reason)}</p>}
      {active(current.status)&&<Button variant="danger" disabled={busy} onClick={()=>void cancel()}><Square size={14}/> {t('em.cancel')}</Button>}
      <ToolHistory key={current.id} id={current.id}/>
-    </>:<p className="text-sm text-muted">{t('em.idle')}</p>}
+    </>:<p className="text-sm text-[#7C7469]">{t('em.idle')}</p>}
    </div>
   </div>
   {error&&<p role="alert" className="px-5 pb-4 text-xs text-rose-600">{translateError(error)}</p>}

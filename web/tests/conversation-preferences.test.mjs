@@ -12,7 +12,7 @@ const chat=readFileSync(root+'src/pages/Chat.tsx','utf8')
 const rooms=readFileSync(root+'src/pages/Rooms.tsx','utf8')
 const shared=readFileSync(root+'src/components/ConversationSettings.tsx','utf8')
 const hook=readFileSync(root+'src/hooks/usePersistentConversationPreference.ts','utf8')
-const recovery=readFileSync(root+'src/components/PageLoadBoundary.tsx','utf8')
+const app=readFileSync(root+'src/App.tsx','utf8')
 
 function storageFixture(){
  const data=new Map()
@@ -27,7 +27,7 @@ function storageFixture(){
 
 test('all private chat toggles survive read-back, including explicit false',()=>{
  storageFixture()
- const defaults={showReasoning:false,thinkingEnabled:true,toolsEnabled:true,autoLearn:false}
+ const defaults={showReasoning:true,thinkingEnabled:true,toolsEnabled:true,autoLearn:false}
  for(const [name,fallback] of Object.entries(defaults)){
   assert.equal(readConversationToggle(name),fallback)
   assert.equal(writeConversationToggle(name,false),true)
@@ -43,7 +43,7 @@ test('bad storage and unsupported values fail safely without enabling learning',
  data.set(conversationToggleKey('autoLearn'),'invalid')
  assert.equal(readConversationToggle('autoLearn'),false)
  data.set(conversationToggleKey('showReasoning'),'invalid')
- assert.equal(readConversationToggle('showReasoning'),false)
+ assert.equal(readConversationToggle('showReasoning'),true)
  data.set(conversationEffortKey,'<invalid>')
  assert.equal(readConversationEffort(),'')
  assert.equal(writeConversationEffort('<invalid>'),false)
@@ -81,8 +81,7 @@ test('both screens bind persisted display/thinking controls and chat wire uses e
  assert.match(chat,/usePersistentReasoningEffort\(\)/)
  assert.match(rooms,/usePersistentReasoningEffort\(\)/)
  assert.match(chat,/reasoningEffort:effectiveReasoningEffort\|\|undefined/)
- assert.match(chat,/toolsEnabled:agentMode&&toolsEnabled,toolsExecutionEnabled:agentMode&&toolsEnabled,autoLearning:agentMode&&autoLearn/)
- assert.match(chat,/sessionId:id,clientTurnId,agentId:agentMode\?agentId:undefined,directChat:!agentMode/)
+ assert.match(chat,/toolsEnabled,toolsExecutionEnabled:toolsEnabled,autoLearning:autoLearn/)
  assert.match(chat,/effectiveThinkingEnabled=!canDisableThinking\|\|thinkingEnabled/)
  assert.match(rooms,/changeRoomOption\('toolsEnabled',value\)/)
  assert.match(rooms,/changeRoomOption\('autoLearning',value\)/)
@@ -90,7 +89,7 @@ test('both screens bind persisted display/thinking controls and chat wire uses e
  assert.match(shared,/onChange=\{e=>setReasoningKo\(e\.target\.checked\)\}/)
  assert.match(chat,/usePersistentKoreanReasoning\(\)/)
  assert.match(rooms,/usePersistentKoreanReasoning\(\)/)
- assert.match(recovery,/reloadUpdatedUi\(\)/)
+ assert.match(app,/reloadUpdatedUi\(\)/)
  assert.doesNotMatch(chat,/\[toolsEnabled,setToolsEnabled\]=useState\(true\)/)
 })
 

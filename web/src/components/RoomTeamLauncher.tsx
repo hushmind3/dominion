@@ -89,7 +89,7 @@ export function RoomTeamLauncher({roomId,sessionId,participantCount,agents,tools
      {en?participantCount+' members':participantCount+'명 참여'}
     </span>
    </div>
-   <p className="mt-1 text-[12px] leading-5 text-muted">{en
+   <p className="mt-1 text-[12px] leading-5 text-[#7C7469]">{en
     ?'The lead picks suitable agents from your existing room. Not all members are automatically assigned.'
     :'현재 그룹의 AI 중 작업에 맞는 멤버가 배정됩니다. 9명 모두가 반드시 실행되는 것은 아닙니다.'}</p>
    <div className="room-team-agent-list">
@@ -100,7 +100,7 @@ export function RoomTeamLauncher({roomId,sessionId,participantCount,agents,tools
    <div className="flex items-center gap-3">
     <span className="room-team-section-number">1</span>
     <div><h3 className="text-[15px] font-bold">{en?'Describe the result you want':'어떤 일을 맡길까요?'}</h3>
-     <p className="text-[12px] text-muted">{en?'Say what should be done and what a successful result looks like.':'해야 할 일과 원하는 최종 결과를 적어주세요.'}</p>
+     <p className="text-[12px] text-[#7C7469]">{en?'Say what should be done and what a successful result looks like.':'해야 할 일과 원하는 최종 결과를 적어주세요.'}</p>
     </div>
    </div>
    {!toolsEnabled&&<div className="room-team-permission" role="status">
@@ -159,7 +159,7 @@ export function RoomTeamLauncher({roomId,sessionId,participantCount,agents,tools
     <div className="flex items-center gap-3">
      <span className="room-team-section-number">2</span>
      <div><h3 className="text-[15px] font-bold">{en?'Progress and results':'진행 상황과 결과'}</h3>
-      <p className="text-[12px] text-muted">{en?'Each agent’s work appears below as it is recorded.':'AI별 진행 단계와 실제 결과를 여기서 확인합니다.'}</p>
+      <p className="text-[12px] text-[#7C7469]">{en?'Each agent’s work appears below as it is recorded.':'AI별 진행 단계와 실제 결과를 여기서 확인합니다.'}</p>
      </div>
     </div>
     {launchId&&<Button size="sm" variant="secondary" className="!min-h-9 !text-[12px]" onClick={()=>void launch.reload()} disabled={launch.loading}>
@@ -181,7 +181,7 @@ export function RoomTeamLauncher({roomId,sessionId,participantCount,agents,tools
      {launch.value.status==='uncertain'&&<p className="mt-1 text-[12px]">{en?'Review the previous call before trying a new request.':'새 작업을 시작하기 전에 이전 호출의 상태와 비용을 확인하세요.'}</p>}
     </div>
    </div>}
-   {launchId&&launch.loading&&<p role="status" className="flex items-center gap-2 text-[12px] text-muted">
+   {launchId&&launch.loading&&<p role="status" className="flex items-center gap-2 text-[12px] text-[#7C7469]">
     <LoaderCircle size={15} className="animate-spin"/>{en?'Loading saved task…':'저장된 작업 상태 불러오는 중…'}
    </p>}
    <TeamWorkflowPanel filterSessionId={sessionId} agentNames={Object.fromEntries(agents.map(a=>[a.id,a.name]))}/>

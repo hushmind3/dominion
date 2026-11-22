@@ -108,8 +108,8 @@ the provider-independent strategy port, optional decisions and ownership rules.
 | Group state, memory and provider continuity | [rooms](src/addons/integrations/rooms.rs), [room context](src/addons/integrations/chat_room_context.rs), [continuity](src/engine/chat/continuity.rs) |
 | Durable RoomEvent / per-agent read cursor | [RoomEvent journal](src/db/room_events.rs), [per-agent cursor](src/db/room_cursor.rs), [room replay API](src/api/rooms.rs) |
 | Endpoint/model capability gate | [capability contract](src/addons/integrations/model_capabilities.rs), [gateway](src/addons/integrations/gateway.rs) |
-| Local API, durable records | [HTTP router](src/api/mod.rs), [product routes](src/api/routes/mod.rs), [HTTP policy](src/api/http_policy.rs), [SQLite store](src/db.rs) |
-| React interface | [App](web/src/App.tsx), [workspace shell](web/src/components/WorkspaceShell.tsx), [experience boundaries](docs/WORKSPACE-UX-BOUNDARIES.md) |
+| Local API, durable records | [HTTP router](src/api/mod.rs), [SQLite store](src/db.rs) |
+| React interface | [App](web/src/App.tsx), [workspace shell](web/src/components/WorkspaceShell.tsx) |
 | Native desktop | [Tauri configuration](src-tauri/tauri.conf.json), [build script](scripts/build-desktop.mjs) |
 | TypeScript SDK | [SDK client](packages/sdk-typescript/src/index.ts) |
 

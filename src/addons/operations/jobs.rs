@@ -682,7 +682,6 @@ pub(crate) async fn run_prompt(context: &JobContext, job: &Value) -> Result<Valu
     }
     context.checkpoint(json!({"sessionId":session_id,"promptState":{"inFlight":true}}))?;
     let request = TurnRequest {
-        client_turn_id: None, direct_chat: false,
         session_id: Some(session_id.clone()), input: goal,
         agent_id: input["agentId"].as_str().map(str::to_string),
         provider_id: input["providerId"].as_str().map(str::to_string),
@@ -779,7 +778,6 @@ async fn run_resume(context: &JobContext, job: &Value) -> Result<Value, String> 
     }
     context.checkpoint(json!({"sessionId":session_id,"promptState":{"inFlight":true}}))?;
     let request = TurnRequest {
-        client_turn_id: None, direct_chat: false,
         session_id: Some(session_id.clone()),
         input: prompt,
         attachment_ids: Vec::new(),

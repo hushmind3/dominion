@@ -1,9 +1,7 @@
-import {createContext,useCallback,useContext,useEffect,useMemo,useRef,useState,type ReactNode} from 'react'
+import {createContext,useContext,useEffect,useState,type ReactNode} from 'react'
 import {Check,ImagePlus,LoaderCircle,Pencil,UserRound,X} from 'lucide-react'
 import {get,post} from '../api'
 import {Button,TextInput} from './Primitives'
-import {createPortal} from 'react-dom'
-import {useAnchoredPanel} from '../hooks/useAnchoredPanel'
 
 export type OwnerProfile={id?:string;name:string;avatar:string;updatedAt?:string|null}
 export const defaultOwnerProfile:OwnerProfile={name:'나',avatar:''}
@@ -14,27 +12,17 @@ const OwnerProfileContext=createContext<OwnerProfileState>({
 })
 export const useOwnerProfile=()=>useContext(OwnerProfileContext)
 export function OwnerProfileProvider({children}:{children:ReactNode}){
- const [profile,updateProfile]=useState<OwnerProfile>(defaultOwnerProfile)
- const revision=useRef(0)
- const setProfile=useCallback((next:OwnerProfile)=>{revision.current+=1;updateProfile(next)},[])
+ const [profile,setProfile]=useState<OwnerProfile>(defaultOwnerProfile)
  useEffect(()=>{
   let live=true
-  let request:AbortController|undefined
-  const load=()=>{
-   request?.abort()
-   const controller=new AbortController()
-   request=controller
-   const startedAt=revision.current
-   void get<OwnerProfile>('/api/settings/owner-profile',controller.signal)
-    .then(value=>{if(live&&!controller.signal.aborted&&revision.current===startedAt)updateProfile(value)}).catch(()=>{})
-  }
+  const load=()=>{void get<OwnerProfile>('/api/settings/owner-profile')
+   .then(value=>{if(live)setProfile(value)}).catch(()=>{})}
   load()
   const onFocus=()=>{if(document.visibilityState==='visible')load()}
   window.addEventListener('focus',onFocus)
-  return()=>{live=false;request?.abort();window.removeEventListener('focus',onFocus)}
+  return()=>{live=false;window.removeEventListener('focus',onFocus)}
  },[])
- const value=useMemo(()=>({profile,setProfile}),[profile,setProfile])
- return <OwnerProfileContext.Provider value={value}>{children}</OwnerProfileContext.Provider>
+ return <OwnerProfileContext.Provider value={{profile,setProfile}}>{children}</OwnerProfileContext.Provider>
 }
 
 /** One owner identity, shared by the workspace, chats and multi-agent rooms. */
@@ -44,14 +32,12 @@ export function OwnerAvatar({profile,size='normal',className=''}:{profile:OwnerP
  </span>
 }
 
-export function OwnerProfileEditor({compact=false,active=true}:{compact?:boolean;active?:boolean}){
+export function OwnerProfileEditor({compact=false}:{compact?:boolean}){
  const {profile,setProfile}=useOwnerProfile()
  const [open,setOpen]=useState(false),[name,setName]=useState(profile.name),[avatar,setAvatar]=useState(profile.avatar)
  const [working,setWorking]=useState(false),[error,setError]=useState('')
  useEffect(()=>{if(!open){setName(profile.name);setAvatar(profile.avatar)}},[profile,open])
  const close=()=>{setOpen(false);setError('')}
- const panel=useAnchoredPanel(open&&active,close,320,'top')
- useEffect(()=>{if(!active)close()},[active])
  const save=async()=>{
   if(!name.trim()){setError('표시할 이름을 입력하세요.');return}
   setWorking(true);setError('')
@@ -70,27 +56,27 @@ export function OwnerProfileEditor({compact=false,active=true}:{compact?:boolean
   reader.readAsDataURL(file)
  }
  return <div className={compact?'relative shrink-0':'relative shrink-0 border-t border-[#E0D8CC] p-3'}>
-  <Button ref={panel.trigger} variant="bare" type="button" onClick={()=>setOpen(x=>!x)} aria-expanded={open} aria-haspopup="dialog" aria-label="내 프로필 편집" title="내 프로필"
+  <Button variant="bare" type="button" onClick={()=>setOpen(x=>!x)} aria-expanded={open} aria-label="내 프로필 편집" title="내 프로필"
    className={compact?'flex items-center rounded-xl p-1 hover:bg-[#F3EEE5]':'group flex w-full items-center gap-2.5 rounded-xl px-2 py-2 text-left hover:bg-[#E8E0D3]'}>
    <OwnerAvatar profile={profile} size={compact?'small':'normal'}/>
    {!compact&&<><span className="min-w-0 flex-1"><strong className="block truncate text-[12px] text-[#3A342D]">{profile.name}</strong><small className="block text-[10px] text-[#8A8176]">내 프로필</small></span>
-   <Pencil size={13} className="text-[#998B7B] group-hover:text-brand-hover"/></>}
+   <Pencil size={13} className="text-[#998B7B] group-hover:text-[#A94E30]"/></>}
   </Button>
-  {open&&active&&panel.position&&createPortal(<div ref={panel.panel} style={panel.position} role="dialog" aria-label="내 프로필" className="z-[90] overflow-y-auto overscroll-contain rounded-2xl border border-[#E7D8C7] bg-surface p-4 shadow-[0_18px_56px_rgba(43,36,29,.2)]">
+  {open&&<div role="dialog" aria-label="내 프로필" className={'absolute z-[70] w-[min(304px,calc(100vw-24px))] rounded-2xl border border-[#E7D8C7] bg-[#FFFDF9] p-4 shadow-[0_18px_56px_rgba(43,36,29,.2)] '+(compact?'right-0 top-full mt-2':'bottom-full left-3')}>
    <div className="mb-3 flex items-center justify-between"><strong className="text-[13px] text-[#3A342D]">내 프로필</strong><Button type="button" variant="bare" aria-label="닫기" onClick={close} className="rounded-lg p-1 hover:bg-[#F3EEE5]"><X size={16}/></Button></div>
    <div className="mb-3 flex items-center gap-3">
     <OwnerAvatar profile={{name,avatar}} className="!size-14"/>
-    <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-divider bg-white px-2.5 py-2 text-[11px] font-semibold hover:bg-[#FAF7F1]"><ImagePlus size={14}/> 이미지 변경
+    <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#E7E0D5] bg-white px-2.5 py-2 text-[11px] font-semibold hover:bg-[#FAF7F1]"><ImagePlus size={14}/> 이미지 변경
      <input type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" onChange={e=>{upload(e.target.files?.[0]);e.target.value=''}}/>
     </label>
-    {avatar&&<Button type="button" variant="bare" onClick={()=>setAvatar('')} className="text-[11px] text-brand-hover">제거</Button>}
+    {avatar&&<Button type="button" variant="bare" onClick={()=>setAvatar('')} className="text-[11px] text-[#A94E30]">제거</Button>}
    </div>
    <label className="block text-[11px] font-semibold text-[#6D6052]">표시 이름</label>
-   <TextInput aria-label="표시 이름" value={name} maxLength={60} onChange={e=>setName(e.target.value)} className="mt-1 w-full" onKeyDown={e=>{if(e.key==='Enter'&&!e.nativeEvent.isComposing)void save()}}/>
+   <TextInput value={name} maxLength={60} onChange={e=>setName(e.target.value)} className="mt-1 w-full" onKeyDown={e=>{if(e.key==='Enter')void save()}}/>
    {error&&<p role="alert" className="mt-2 text-[11px] text-rose-600">{error}</p>}
    <Button type="button" variant="primary" onClick={()=>void save()} disabled={working||!name.trim()} className="mt-3 flex w-full items-center justify-center gap-1.5">
     {working?<LoaderCircle size={14} className="animate-spin"/>:<Check size={14}/>} 저장
    </Button>
-  </div>,panel.trigger.current?.closest('[role="dialog"][aria-modal="true"]')||document.body)}
+  </div>}
  </div>
 }
