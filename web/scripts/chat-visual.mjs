@@ -108,6 +108,13 @@ try{
   await page.getByText('참고한 기억 1개',{exact:true}).click()
   await page.getByText('지하철을 선호합니다.',{exact:true}).waitFor()
   if(width===1440){
+   // An uncluttered conversation is the default; history remains one click away.
+   const historyToggle=page.locator('.chat-header button[aria-controls="chat-history"]')
+   assert.equal(await historyToggle.getAttribute('aria-expanded'),'false',
+    'Fresh desktop chat must start with its history collapsed')
+   await historyToggle.click()
+   assert.equal(await historyToggle.getAttribute('aria-expanded'),'true',
+    'Conversation history must remain accessible on demand')
    const search=page.getByRole('textbox',{name:'대화 제목 검색'})
    assert.equal(await page.locator('.chat-history-entry').count(),2)
    await search.fill('초안 분리')
@@ -117,6 +124,9 @@ try{
    assert.equal(await page.locator('.chat-history-entry').count(),0)
    await search.fill('')
    assert.equal(await page.locator('.chat-history-entry').count(),2)
+   await historyToggle.click()
+   assert.equal(await historyToggle.getAttribute('aria-expanded'),'false',
+    'History closes without losing the current conversation')
   }
   assert.equal(await page.locator('[data-role="assistant"] .chat-richtext strong').first().textContent(),'굵은 글씨')
   assert.equal(await page.locator('[data-role="assistant"] .chat-richtext table tbody tr td').last().textContent(),'1')
