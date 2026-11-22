@@ -2,6 +2,7 @@ import {Activity,ArrowRight,Bot,CheckCircle2,Cpu,FolderOpen,LoaderCircle,Message
 import {useState} from 'react'
 import {Button,PageContainer} from '../components/Primitives'
 import {ExecutionMonitor} from '../components/ExecutionMonitor'
+import {WorkQueue} from '../components/WorkQueue'
 import {NativeAgentPanel} from '../components/NativeAgentPanel'
 import {useRemote} from '../components/UI'
 import {StatusPill} from '../components/StatusPill'
@@ -29,7 +30,6 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
   source.loading?t('dashboard.loading'):source.error?t('dashboard.unavailable'):format()
  const enabledProviders=providers.value.filter(p=>p.enabled)
  const authenticatedProviders=enabledProviders.filter((p:any)=>p.hasKey||p.local).length
- const recent=[...jobs.value].sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,6)
  const busy=jobs.value.filter(j=>['queued','running','planning','reviewing','repairing'].includes(j.status)).length
  const metrics=[
   {name:'dashboard.metric.chat',value:sessions.value.length,source:sessions,icon:MessageSquare,page:'chat' as const},
@@ -65,7 +65,8 @@ export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
   <NativeAgentPanel providers={providers.value}/>
   <section className="mt-4 rounded-xl border border-[#E7E0D5] bg-white">
    <div className="flex items-center justify-between border-b border-[#F0EAE1] px-4 py-3"><h2 className="text-[13px] font-bold">{t('dashboard.recent')}</h2><Button type="button" onClick={()=>navigate('activity')} className="flex items-center gap-1 text-[11px] font-medium text-[#C96442]">{t('dashboard.recent.all')} <ArrowRight size={13}/></Button></div>
-   {jobs.loading?<div className="space-y-3 p-4" aria-label={t('dashboard.loading')}>{[0,1,2].map(row=><div key={row} className="flex items-center gap-3"><span className="size-8 animate-pulse rounded-lg bg-[#F3EEE5]"/><span className="h-3 flex-1 animate-pulse rounded bg-[#F3EEE5]"/><span className="h-5 w-16 animate-pulse rounded bg-[#F3EEE5]"/></div>)}</div>:jobs.error?<div className="flex min-h-28 items-center justify-center px-4 text-center text-[12px] text-[#8A8176]">{t('dashboard.recent.unavailable')}</div>:recent.length?<div className="divide-y divide-[#F0EAE1]">{recent.map(job=><div key={job.id} className="flex items-center gap-3 px-4 py-3"><Workflow size={15} className="text-[#A79C8E]"/><div className="min-w-0 flex-1"><div className="truncate text-[12px] font-semibold">{job.input?.goal||job.input?.prompt||job.kind||t('dashboard.jobFallback')}</div><div className="mt-1 text-[10px] text-[#9C9388]">{jobKindLabel(job.kind)} · {job.createdAt?formatDateTime(job.createdAt):''}</div></div><StatusPill status={job.status} /></div>)}</div>:<div className="flex h-32 items-center justify-center text-[12px] text-[#9C9388]">{t('dashboard.recent.empty')}</div>}
+   <WorkQueue jobs={jobs.value} loading={jobs.loading} error={jobs.error}
+    compact onRefresh={()=>void jobs.reload()} onOpenActivity={()=>navigate('activity')}/>
   </section>
   <div className="mt-4"><ExecutionMonitor/></div>
  </PageContainer>
