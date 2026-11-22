@@ -10,6 +10,8 @@ const ko = {
   'nav.models': '모델 관리',
   'nav.agents': '에이전트',
   'nav.connections': '연결 · 채널',
+  'nav.capabilities': '역량 마켓',
+  'nav.extensions': '확장',
   'nav.memory': '메모리',
   'nav.activity': '실행 기록',
   'nav.settings': '설정',

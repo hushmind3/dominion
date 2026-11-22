@@ -21,6 +21,13 @@ export const pageIds: readonly PageId[] = [
   'capabilities','extensions','connections','activity','settings',
 ]
 
+export const pageLabels: Record<PageId, LocaleKey> = {
+  home:'nav.home', chat:'nav.chat', models:'nav.models', agents:'nav.agents',
+  rooms:'nav.rooms', memory:'nav.memory', capabilities:'nav.capabilities',
+  extensions:'nav.extensions', connections:'nav.connections',
+  activity:'nav.activity', settings:'nav.settings',
+}
+
 export function isPageId(value: string): value is PageId {
   return (pageIds as readonly string[]).includes(value)
 }

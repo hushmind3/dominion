@@ -2,7 +2,7 @@ import {OwnerProfileEditor} from './OwnerProfile'
 import {MessageSquare,Search,Settings,UsersRound} from 'lucide-react'
 import {Button} from './Primitives'
 import {t,useLocale} from '../i18n'
-import {navigationItems,type PageId} from '../navigation'
+import {navigationItems,pageLabels,type PageId} from '../navigation'
 
 /** Primary surfaces stay visible as tabs; every other page lives in ⌘K. */
 const primary: PageId[] = ['home', 'chat', 'rooms', 'models', 'agents']
@@ -59,7 +59,7 @@ export function SettingsHeader({page,online,build,onClose}:{
   <SelectedIcon size={17} className="text-muted"/>
   <div className="min-w-0 flex-1">
    <p className="text-[10px] font-semibold uppercase tracking-[.14em] text-muted">DOMINION / {locale === 'en' ? 'Workspace' : '워크스페이스'}</p>
-   <h1 className="mt-0.5 truncate text-[14px] font-semibold text-ink">{selected ? t(selected.label) : t('nav.settings')}</h1>
+   <h1 className="mt-0.5 truncate text-[14px] font-semibold text-ink">{t(pageLabels[page])}</h1>
   </div>
   <span className={'hidden items-center gap-1.5 text-[11px] sm:inline-flex '+(online ? 'text-emerald-700' : 'text-rose-600')}>
    <i className={'size-1.5 rounded-full '+(online ? 'bg-emerald-500' : 'bg-rose-500')}/>{online ? t('shell.connected') : t('shell.disconnected')}

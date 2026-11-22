@@ -11,6 +11,8 @@ const en: Record<LocaleKey, string> = {
   'nav.models': 'Models',
   'nav.agents': 'Agents',
   'nav.connections': 'Connections',
+  'nav.capabilities': 'Capabilities',
+  'nav.extensions': 'Extensions',
   'nav.memory': 'Memory',
   'nav.activity': 'Activity',
   'nav.settings': 'Settings',
