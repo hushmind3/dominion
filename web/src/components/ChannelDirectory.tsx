@@ -151,7 +151,6 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
        <div className="grid gap-0 lg:grid-cols-[1.15fr_.85fr]">
         <div className="relative overflow-hidden px-6 py-10 sm:px-10 sm:py-14">
          <div aria-hidden className="pointer-events-none absolute -right-20 -top-28 size-72 rounded-full border-[35px] border-[#FAF1EB]"/>
-         <p className="relative mb-3 text-[11px] font-bold uppercase tracking-[.18em] text-[#BD6D4C]">CHANNEL WORKSPACE</p>
          <h3 className="relative max-w-lg text-[27px] font-bold leading-tight tracking-[-.035em] text-[#312923] sm:text-[32px]">{t('conn.emptyTitle')}</h3>
          <p className="relative mt-3 max-w-md text-[13px] leading-6 text-[#83766A]">{t('conn.emptyDescription')}</p>
          <Button variant="primary" className="relative mt-6" onClick={showAdd}>{t('conn.addChannel')}<ArrowRight size={16}/></Button>

@@ -158,7 +158,6 @@ export function AgentsPage() {
   return (
     <div className={PAGE_FRAME}>
       <Headline
-        eyebrow={t('ui.eyebrow.agents')}
         title={t('agents.title')}
         description={t('agents.description')}
         actions={

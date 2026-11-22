@@ -373,28 +373,17 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const toolReceiptsOmitted=run?.checkpoint?.toolReceiptsOmitted??0
  const loadedReceipts=olderReceipts?.runId===run?.id&&
   olderReceipts?.boundary===toolReceiptsOmitted?olderReceipts:null
- return <section className="native-command-center mx-auto mb-5 w-full max-w-5xl overflow-hidden rounded-xl border border-divider bg-surface text-ink shadow-sm" aria-label={en?'Autonomous work studio':'자동 작업 스튜디오'}>
-  <header className="native-command-header flex min-h-14 items-center justify-between gap-3 border-b border-divider px-4 py-3 sm:px-6">
-   <div className="native-command-header-copy flex min-w-0 items-center gap-3">
-    <span className="native-command-kicker text-[10px] font-semibold tracking-wide text-muted">DOMINION / CODE</span>
-    <h2 className="text-sm font-semibold text-ink">{en?'Work':'자동 작업'}</h2>
-   </div>
-   <div className="native-command-header-actions ml-auto flex shrink-0 items-center gap-2">
-    {runs.some(item=>['awaiting_approval','in_doubt','needs_review','interrupted'].includes(item.status))&&
-     <button type="button" className="native-attention-link inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-xs text-amber-700 hover:bg-amber-50" onClick={()=>setHistoryOpen(true)}>
-      <ShieldAlert size={14}/>{en?'Review required':'확인할 작업'} <b>{runs.filter(item=>['awaiting_approval','in_doubt','needs_review','interrupted'].includes(item.status)).length}</b>
-     </button>}
-    <button type="button" className="native-history-toggle inline-flex min-h-9 items-center gap-2 rounded-lg border border-divider bg-surface px-3 text-xs text-muted hover:bg-canvas hover:text-ink" onClick={()=>setHistoryOpen(v=>!v)}
-     aria-expanded={historyOpen} aria-controls="native-run-history">
-     {historyOpen?<PanelLeftClose size={16}/>:<PanelLeftOpen size={16}/>}
-     {en?'History':'작업 이력'} <span>{runs.length}</span>
+ return <section className="native-command-center mx-auto mb-5 w-full max-w-5xl overflow-hidden rounded-xl border border-divider bg-surface text-ink shadow-sm" aria-label={en?'Task input':'작업 입력'}>
+  {runs.some(item=>['awaiting_approval','in_doubt','needs_review','interrupted'].includes(item.status))&&
+   <header className="native-command-header flex min-h-12 items-center justify-end gap-3 border-b border-divider px-4 py-2 sm:px-6">
+    <button type="button" className="native-attention-link inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-xs text-amber-700 hover:bg-amber-50" onClick={()=>setHistoryOpen(true)}>
+     <ShieldAlert size={14}/>{en?'Review required':'확인할 작업'} <b>{runs.filter(item=>['awaiting_approval','in_doubt','needs_review','interrupted'].includes(item.status)).length}</b>
     </button>
-   </div>
-  </header>
+   </header>}
   <div className={'native-command-grid grid min-w-0 '+(historyOpen?'has-history lg:grid-cols-[minmax(0,1fr)_16rem]':'grid-cols-1')}>
    <div className="native-command-main min-w-0">
     <div className="native-command-compose flex min-w-0 flex-col gap-3 px-4 pb-5 pt-6 sm:px-7">
-   <label className="native-command-step text-xs font-medium text-ink" htmlFor="sdk-goal">{en?'What would you like done?':'무엇을 해드릴까요?'}</label>
+   <label className="native-command-step text-xs font-medium text-ink" htmlFor="sdk-goal">{en?'Your request':'요청 내용'}</label>
    <textarea id="sdk-goal" value={instruction} onChange={e=>editInstruction(e.target.value)}
     rows={3} maxLength={64000}
     placeholder={en?'Describe a task, such as inspecting a project or fixing an issue.':'프로젝트를 분석하거나 문제를 해결하는 등 필요한 작업을 적어주세요.'}

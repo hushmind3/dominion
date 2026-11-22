@@ -621,7 +621,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
     <div className={embedded?"min-w-0":PAGE_FRAME}>
       <Headline
         eyebrow={embedded?undefined:t('ui.eyebrow.marketplace')}
-        title={embedded?(tab==='market'?'MCP 마켓':tab==='installed'?t('ext.installedTitle'):tab==='plugins'?t('ext.tab.plugins'):t('ext.tab.skills')):t('ext.title')}
+        title={embedded?(tab==='market'?'도구 추가':tab==='installed'?t('ext.installedTitle'):tab==='plugins'?t('ext.tab.plugins'):t('ext.tab.skills')):t('ext.title')}
         description={embedded?(tab==='market'?t('ext.marketDescription'):tab==='installed'?t('ext.installedDescription'):tab==='plugins'?t('ext.pluginsDescription'):t('ext.skillsDescription')):t('ext.description')}
         actions={(tab==='market'||tab==='installed')?
           <Action

@@ -1,4 +1,4 @@
-import {Activity,BookOpenText,Bot,Cpu,House,MessageSquare,RadioTower,Settings2,UsersRound} from 'lucide-react'
+import {Activity,Blocks,BookOpenText,Bot,Cpu,House,MessageSquare,RadioTower,Settings2,Sparkles,UsersRound} from 'lucide-react'
 import type {LocaleKey} from './i18n'
 
 /** Every route the shell can render. Chat and rooms are full-canvas trees;
@@ -46,6 +46,8 @@ export const navigation: NavGroup[] = [
   ]},
   {title:'nav.group.extensions',items:[
     {id:'connections',label:'nav.connections',icon:RadioTower},
+    {id:'extensions',label:'nav.extensions',icon:Blocks},
+    {id:'capabilities',label:'nav.capabilities',icon:Sparkles},
     {id:'memory',label:'nav.memory',icon:BookOpenText},
   ]},
   {title:'nav.group.operations',items:[

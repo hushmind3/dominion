@@ -115,7 +115,7 @@ export function ConnectionsPage(){
    setOauthEditor(null)
   }catch(e){setOauthError((e as Error).message)}finally{setOauthSaving(false)}
  }
- const tabs=[{id:'channels',label:t('conn.tab.channels'),icon:RadioTower},{id:'quick-connect',label:t('conn.tab.quickConnect'),icon:Link2},{id:'accounts',label:t('conn.tab.accounts'),icon:KeyRound},{id:'market',label:'MCP 마켓',icon:Blocks},{id:'installed',label:t('ext.tab.installed'),icon:Server},{id:'skills',label:t('ext.tab.skills'),icon:BookOpenText},{id:'plugins',label:t('ext.tab.plugins'),icon:PackagePlus},{id:'capabilities',label:'역량 마켓',icon:Sparkles}] as const
+ const tabs=[{id:'channels',label:t('conn.tab.channels'),icon:RadioTower},{id:'quick-connect',label:t('conn.tab.quickConnect'),icon:Link2},{id:'accounts',label:t('conn.tab.accounts'),icon:KeyRound},{id:'market',label:'도구 추가',icon:Blocks},{id:'installed',label:t('ext.tab.installed'),icon:Server},{id:'skills',label:t('ext.tab.skills'),icon:BookOpenText},{id:'plugins',label:t('ext.tab.plugins'),icon:PackagePlus},{id:'capabilities',label:'기능 찾기',icon:Sparkles}] as const
  const pageHeader=<header className="mb-2 flex flex-wrap items-center justify-between gap-3 sm:mb-5 sm:items-end">
   <div className="min-w-0">
    <h1 className="m-0 text-[21px] font-bold tracking-[-.035em] text-[var(--color-ink)] sm:text-[26px]">{t('conn.title')}</h1>

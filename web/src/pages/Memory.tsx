@@ -84,7 +84,7 @@ export function MemoryPage(){
   {id:'excluded',ko:'검색 제외',english:'Excluded',count:memories.value.filter(m=>statusOf(m)==='excluded').length},
  ]
  return <div className={PAGE_FRAME}>
-  <Headline eyebrow={t('ui.eyebrow.memory')} title={t('memory.title')} description={t('memory.description')}/>
+  <Headline title={t('memory.title')} description={t('memory.description')}/>
   <div className="mb-5 grid grid-cols-2 gap-2 md:grid-cols-4" role="group" aria-label={locale==='en'?'Memory filters':'기억 상태 필터'}>
    {statusOverview.map(item=><button key={item.id} type="button" onClick={()=>setStatus(item.id)}
     aria-pressed={status===item.id}
