@@ -73,7 +73,8 @@ test('optional program and policy modules are no longer part of runtime core',()
 
 test('no UI navigation changes or SDK API removal from core refactor',()=>{
  assert.match(source('src/lib.rs'),/pub mod sdk;/);
- assert.match(source('web/src/components/WorkspaceShell.tsx'),/id:'connections'/);
+ assert.match(source('web/src/workspacePages.tsx'),/connections:\s*\{/);
+ assert.match(source('web/src/components/WorkspaceShell.tsx'),/settingsPages\[id\]/);
  assert.match(source('src/api/addons.rs'),/\/api\/mcp\/catalog/);
 });
 test('only language execution and approval endpoints remain in HTTP core',()=>{
@@ -82,7 +83,8 @@ test('only language execution and approval endpoints remain in HTTP core',()=>{
  const expected=['/api/health','/api/events','/api/chat','/api/sdk/runs',
  '/api/sdk/runs/:id','/api/sdk/runs/:id/cancel',
  '/api/sdk/runs/:id/approve','/api/sdk/runs/:id/resume',
- '/api/sdk/runs/:id/reconcile','/api/executions/:id/operations',
+ '/api/sdk/runs/:id/reconcile','/api/sdk/runs/:id/steer',
+ '/api/executions/:id/operations',
  '/api/approvals'];
  assert.deepEqual(only,expected);
  assert.match(api,/router=router\.merge\(surfaces::routes\(\)\)/);
