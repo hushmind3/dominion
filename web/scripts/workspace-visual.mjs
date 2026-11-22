@@ -285,6 +285,18 @@ try{
  await oldSdkList
  assert.equal(await page.locator('#sdk-history').inputValue(),'sdk-ux-1',
   'stale initial history must not deselect the newly created job')
+ assert.equal(await page.locator('.native-command-main').count(),1,
+  'Native workspace must use a single focused composer/results column')
+ assert.equal(await page.locator('.native-command-history').count(),0,
+  'Run history must stay hidden until requested')
+ await page.locator('.native-history-toggle').click()
+ await page.locator('#native-run-history').waitFor({state:'visible',timeout:8000})
+ assert.equal(await page.locator('.native-history-toggle').getAttribute('aria-expanded'),'true',
+  'History affordance should expose its actual expanded state')
+ assert.ok(await page.locator('#native-run-history .native-run-item').count()>0,
+  'Stored runs must be selectable from the optional history')
+ await page.locator('.native-history-toggle').click()
+ await page.locator('#native-run-history').waitFor({state:'detached',timeout:8000})
  await screenshot(page,'1440-agent-run.png')
  // A user can inspect provisional model text during a live native run,
  // without mistaking it for a settled answer or seeing tool arguments.
