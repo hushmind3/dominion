@@ -749,6 +749,7 @@ const ko = {
   'st.completed': '완료',
   'st.failed': '실패',
   'st.needs_review': '검토 필요',
+  'st.awaiting_approval': '승인 대기',
   'st.budget_exceeded': '예산 초과',
   'st.cancelled': '취소',
   'st.pending': '대기',

@@ -750,6 +750,7 @@ const en: Record<LocaleKey, string> = {
   'st.completed': 'Completed',
   'st.failed': 'Failed',
   'st.needs_review': 'Needs review',
+  'st.awaiting_approval': 'Awaiting approval',
   'st.budget_exceeded': 'Budget exceeded',
   'st.cancelled': 'Cancelled',
   'st.pending': 'Pending',
