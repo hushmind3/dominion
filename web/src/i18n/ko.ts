@@ -72,6 +72,7 @@ const ko = {
   'memory.previousVersions': '이전 내용',
   'memory.save': '기억 저장',
   'memory.content': '저장할 내용',
+  'memory.charCount': '{count} / {max}자',
   'memory.scope': '적용 범위',
   'memory.scope.shared': '현재 작업 공간에 공유',
   'memory.note': '수동으로 저장한 기억과 학습으로 추출한 기억은 출처에서 구별할 수 있습니다.',

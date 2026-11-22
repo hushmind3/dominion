@@ -16,6 +16,8 @@ type Memory={
 }
 const statusLabels:Record<string,LocaleKey>={active:'memory.status.active',archived:'memory.status.archived',superseded:'memory.status.superseded',deleted:'memory.status.deleted',draft:'memory.status.draft',excluded:'memory.status.excluded'}
 const sourceLabels:Record<string,LocaleKey>={user:'memory.source.user',learn:'memory.source.learn',agent:'memory.source.agent',reflect:'memory.source.reflect',compression:'memory.source.compression'}
+const MEMORY_TEXT_LIMIT=16_000
+const memoryTextLength=(value:string)=>Array.from(value).length
 const displayTime=(time?:string)=>time&&Number.isFinite(Date.parse(time))?new Date(time).toLocaleString():t('memory.time.none')
 const statusOf=(memory:Memory)=>memory.retrievalEligible?'active':memory.status&&memory.status!=='active'?memory.status:'excluded'
 
@@ -51,7 +53,7 @@ export function MemoryPage(){
    &&[m.text,ownerName(m),m.source].join(' ').toLowerCase().includes(query.trim().toLowerCase())
  })
  const save=async()=>{
-  if(!text.trim()||busy)return
+  if(!text.trim()||memoryTextLength(text.trim())>MEMORY_TEXT_LIMIT||busy)return
   setBusy(true);setError('');setNotice('')
   try{
    await post('/api/memories',{text:text.trim(),status:'active',source:'user',...(scope==='shared'?{scope}:{scope:'agent',agentId:scope})})
@@ -59,7 +61,7 @@ export function MemoryPage(){
   }catch(e){setError((e as Error).message)}finally{setBusy(false)}
  }
  const saveEdit=async()=>{
-  if(!editing||busy||!editing.text.trim()||editing.text.trim()===editing.expectedText)return
+  if(!editing||busy||!editing.text.trim()||memoryTextLength(editing.text.trim())>MEMORY_TEXT_LIMIT||editing.text.trim()===editing.expectedText)return
   setBusy(true);setError('');setNotice('')
   try{
    await post('/api/memories/'+encodeURIComponent(editing.id)+(editing.correction?'/correct':'/edit'),{
@@ -81,8 +83,10 @@ export function MemoryPage(){
   {notice&&<div role="status" className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{notice}</div>}
   <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
    <Panel className="min-w-0 p-5">
-    <Subheading title={t('memory.new')} extra={<Action disabled={busy||!text.trim()} onClick={save}><Plus size={16}/> {t('memory.save')}</Action>}/>
-    <FormField label={t('memory.content')}><TextArea rows={6} value={text} onChange={e=>setText(e.target.value)}/></FormField>
+    <Subheading title={t('memory.new')} extra={<Action disabled={busy||!text.trim()||memoryTextLength(text.trim())>MEMORY_TEXT_LIMIT} onClick={save}><Plus size={16}/> {t('memory.save')}</Action>}/>
+    <FormField label={t('memory.content')}><TextArea rows={6} maxLength={MEMORY_TEXT_LIMIT*2} value={text} onChange={e=>setText(e.target.value)}/>
+     <p className={'mt-1 text-right text-[10px] '+(memoryTextLength(text.trim())>MEMORY_TEXT_LIMIT?'text-rose-600':'text-[#9C9388]')}>
+      {t('memory.charCount',{count:memoryTextLength(text.trim()),max:MEMORY_TEXT_LIMIT})}</p></FormField>
     <FormField label={t('memory.scope')}><SelectInput value={scope} onChange={e=>setScope(e.target.value)}><option value="shared">{t('memory.scope.shared')}</option>{agents.value.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</SelectInput></FormField>
     <p className="mt-4 text-sm text-[#7C7469]">{t('memory.note')}</p>
    </Panel>
@@ -96,10 +100,12 @@ export function MemoryPage(){
     <div className="flex flex-col gap-3">{filtered.slice(0,visibleLimit).map(m=><Panel key={m.id} className="min-w-0 p-4">
      <div className="mb-2 flex flex-wrap items-center gap-2"><BookOpenText size={18}/><strong>{ownerName(m)}</strong><span className="text-xs text-[#7C7469]">{t(statusLabels[statusOf(m)] ?? 'memory.status.excluded')}</span>{m.status==='active'&&['user','learn','agent','reflect'].includes(m.source??'user')&&<Button size="icon" variant="ghost" className="ml-auto" disabled={busy} onClick={()=>{setEditing({id:m.id,text:m.text,expectedText:m.text,correction:m.source!=='user'});setError('');setNotice('')}} aria-label={t(m.source==='user'?'memory.edit':'memory.correct')}><Pencil size={16}/></Button>}<Button size="icon" variant="ghost" className="ml-auto" disabled={busy} onClick={()=>void drop(m.id)} aria-label={t('memory.delete')}><Trash2 size={16}/></Button></div>
      {editing?.id===m.id?<div className="grid gap-2">
-      <TextArea rows={5} aria-label={t(editing.correction?'memory.correct':'memory.edit')} value={editing.text} disabled={busy} onChange={e=>setEditing(previous=>previous&&previous.id===m.id?{...previous,text:e.target.value}:previous)}/>
+      <TextArea rows={5} maxLength={MEMORY_TEXT_LIMIT*2} aria-label={t(editing.correction?'memory.correct':'memory.edit')} value={editing.text} disabled={busy} onChange={e=>setEditing(previous=>previous&&previous.id===m.id?{...previous,text:e.target.value}:previous)}/>
+      <p className={'text-right text-[10px] '+(memoryTextLength(editing.text.trim())>MEMORY_TEXT_LIMIT?'text-rose-600':'text-[#9C9388]')}>
+       {t('memory.charCount',{count:memoryTextLength(editing.text.trim()),max:MEMORY_TEXT_LIMIT})}</p>
       {editing.correction&&<p className="text-xs leading-5 text-[#7C7469]">{t('memory.correctionNotice')}</p>}
       <div className="flex flex-wrap gap-2">
-       <Button variant="primary" disabled={busy||!editing.text.trim()||editing.text.trim()===editing.expectedText} onClick={()=>void saveEdit()}><Check size={15}/>{t('memory.save')}</Button>
+       <Button variant="primary" disabled={busy||!editing.text.trim()||memoryTextLength(editing.text.trim())>MEMORY_TEXT_LIMIT||editing.text.trim()===editing.expectedText} onClick={()=>void saveEdit()}><Check size={15}/>{t('memory.save')}</Button>
        <Button variant="ghost" disabled={busy} onClick={()=>setEditing(null)}><X size={15}/>{t('memory.cancel')}</Button>
       </div>
      </div>:<p className="whitespace-pre-wrap">{m.text}</p>}

@@ -73,6 +73,7 @@ const en: Record<LocaleKey, string> = {
   'memory.previousVersions': 'Previous versions',
   'memory.save': 'Save memory',
   'memory.content': 'Content',
+  'memory.charCount': '{count} / {max} characters',
   'memory.scope': 'Scope',
   'memory.scope.shared': 'Share with current workspace',
   'memory.note': 'Manually saved memories and memories extracted by learning are distinguished by source.',
