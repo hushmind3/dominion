@@ -245,8 +245,11 @@ try{
  // Click the genuine sidebar buttons, not only hash routes.
  for(let i=1;i<pages.length;i++){
   const buttons=page.locator('.workspace-settings>aside nav button')
-  assert.equal(await buttons.count(),7,'The existing seven settings menu items stay intact')
-  await buttons.nth(i).click()
+  const sidebarOrder=['home','chat','rooms','models','agents','connections','memory','activity','settings']
+  assert.equal(await buttons.count(),sidebarOrder.length,'Every workspace destination remains available in the new sidebar')
+  const destination=sidebarOrder.indexOf(pages[i])
+  assert.ok(destination>=0,'Expected workspace destination is missing')
+  await buttons.nth(destination).click()
   await page.waitForFunction(name=>location.hash==='#/'+name,pages[i])
   await waitScreen(page)
   await overflow(page,pages[i],1440)
@@ -258,7 +261,7 @@ try{
  await screenshot(page,'1440-settings-expanded.png')
  await page.keyboard.press('Tab')
  assert.ok(await page.evaluate(()=>Boolean(document.activeElement?.closest('.workspace-settings'))),
-  'Keyboard focus must stay inside settings dialog')
+  'Keyboard focus must remain in the active routed workspace')
  // Native agent strategy and budget are part of the actual POST.
  // A stale initial empty list must never displace a newly created task.
  holdNextSdkList=true
@@ -543,7 +546,7 @@ try{
   assert.ok(a&&b&&b.x>=a.x-4&&b.x+b.width<=a.x+a.width+4,
    'Selected navigation must be visible at '+viewport.width)
  }
- // Main chat and Room pages are not settings overlays.
+ // Chat and Room remain distinct routes outside the full-page workspace.
  for(const route of ['chat','rooms']){
   await page.goto(base+'/#/'+route,{waitUntil:'domcontentloaded'})
   await page.waitForTimeout(500)
