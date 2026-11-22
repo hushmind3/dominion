@@ -3,6 +3,7 @@ mod response;
 mod tests;
 pub mod translation;
 pub mod algorithms;
+pub mod cloud_auth;
 pub mod settings;
 pub mod executions;
 pub mod runs;
@@ -55,6 +56,10 @@ pub fn router(state: AppState) -> Router {
     let mut router = Router::new()
         // core
         .route("/api/health", get(system::health))
+        .route("/api/cloud-auth/google/start", post(cloud_auth::start))
+        .route("/api/cloud-auth/google/status", get(cloud_auth::status))
+        .route("/api/cloud-auth/google/ack", post(cloud_auth::acknowledge))
+        .route("/api/cloud-auth/google/callback", get(cloud_auth::callback))
         .route("/api/status", get(system::status))
         .route(
             "/api/settings/assistant",

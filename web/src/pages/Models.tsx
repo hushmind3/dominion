@@ -350,6 +350,7 @@ export function ModelHub(){
  const tabs:Array<{id:Tab;label:string;count?:number}>= [
   {id:'providers',label:t('models.simple.mine'),count:providers.value.filter(p=>!p.local).length},
   {id:'connect',label:t('models.simple.connect')},
+  {id:'cloud',label:t('models.simple.cloud')},
   {id:'local',label:t('models.simple.local')},
  ]
  const moreTabs:Array<{id:Tab;label:string}>= [
