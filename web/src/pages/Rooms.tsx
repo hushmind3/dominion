@@ -40,6 +40,7 @@ const labels:Record<string,LocaleKey>={queued:'rooms.st.waiting',running:'rooms.
 const modes:Record<RoutingMode,{label:LocaleKey;description:LocaleKey}>={discussion:{label:'rooms.mode.discussion.label',description:'rooms.mode.discussion.desc'},round_robin:{label:'rooms.mode.round_robin.label',description:'rooms.mode.round_robin.desc'},mentioned:{label:'rooms.mode.mentioned.label',description:'rooms.mode.mentioned.desc'}}
 const palette=['#668373','#9A745F','#6D7FA4','#967AA0','#B18C47','#6C9297','#AB7180','#7A8456','#8B7B69']
 const active=(status?:string)=>status==='queued'||status==='running'
+const roomAttention=(status?:string)=>['needs_review','failed','interrupted'].includes(status||'')
 const stamp=(value?:string)=>{if(!value)return '';const normalized=value.includes('T')?value:value.replace(' ','T')+'Z';const date=new Date(normalized);return Number.isNaN(date.getTime())?'':date.toLocaleTimeString(getLocale()==='en'?'en-US':'ko-KR',{hour:'2-digit',minute:'2-digit'})}
 /** Mirrors the host's stable roster-index model_pool routing. The display
  * projects configured routing; actual model evidence is shown per reply. */
@@ -83,6 +84,7 @@ export function RoomsPage({openSession,openSettings,switchMode,active:visibleVie
  useEffect(()=>{if(!visibleView)setShowList(false)},[visibleView])
  const [creating,setCreating]=useState<RoomDraft|null>(null)
  const [saving,setSaving]=useState(false),[error,setError]=useState(''),[query,setQuery]=useState('')
+ const [roomFilter,setRoomFilter]=useState<'all'|'running'|'attention'>('all')
  const current=rooms.value.find(room=>room.id===selected)
  useEffect(()=>{if(rooms.loading)return;if(!rooms.value.some(room=>room.id===selected))setSelected(rooms.value[0]?.id||'')},[rooms.value,rooms.loading,selected])
  useEffect(()=>{try{if(selected)localStorage.setItem('dominion.room.selected',selected)}catch{}},[selected])
@@ -92,14 +94,34 @@ export function RoomsPage({openSession,openSettings,switchMode,active:visibleVie
   try{const created=await post<RoomConfig>('/api/rooms',creating);await rooms.reload();setSelected(created.id);setCreating(null);if(window.innerWidth<840)setShowList(false);refresh()}
   catch(e){setError((e as Error).message)}finally{setSaving(false)}
  }
- const filtered=rooms.value.filter(room=>(room.name+' '+(room.topic||'')).toLowerCase().includes(query.toLowerCase()))
+ const filtered=[...rooms.value].filter(room=>
+  (room.name+' '+(room.topic||'')).toLowerCase().includes(query.toLowerCase())
+  &&(roomFilter==='all'||roomFilter==='running'&&active(room.status)
+   ||roomFilter==='attention'&&roomAttention(room.status))
+ ).sort((a,b)=>Number(roomAttention(b.status))-Number(roomAttention(a.status))
+ const attentionCount=rooms.value.filter(room=>roomAttention(room.status)).length
  return <div className="rooms-app">
   {showList&&<Button variant="bare" className="room-list-scrim" aria-label={t('rooms.listClose')} onClick={()=>setShowList(false)}/>}
   <aside className={'room-list '+(showList?'room-list-open':'room-list-closed')} aria-label={t('rooms.listAria')}>
    <div className="room-list-title"><div><span className="room-eyebrow">{t('ui.label.yourCircle')}</span><h2>{t('rooms.listTitle')}</h2></div><Button size="icon" variant="ghost" title={t('rooms.new')} aria-label={t('rooms.newAria')} onClick={()=>{setCreating(draftOf());setError('')}}><Plus size={19}/></Button></div>
-   <div className="room-list-search"><TextInput aria-label={t('rooms.searchAria')} placeholder={t('rooms.search')} value={query} onChange={e=>setQuery(e.target.value)}/></div>
-   <div className="room-list-items">{filtered.map(room=><Button variant="bare" key={room.id} className={'room-list-item '+(selected===room.id?'is-selected':'')} onClick={()=>selectRoom(room.id)} aria-current={selected===room.id?'true':undefined}><span className="room-list-icon"><Hash size={18}/></span><span className="room-list-copy"><strong>{room.name}</strong><small>{room.topic||t('rooms.space')}</small><span className="room-list-meta">{t('rooms.me')} + {room.agentIds?.length||0}{t('rooms.people')}{room.status==='running'&&<i title={t('rooms.st.running')}/>}</span></span></Button>)}
-    {rooms.loading&&!filtered.length?<div className="room-list-empty">{t('rooms.loading')}</div>:rooms.error&&!filtered.length?<div role="status" className="room-list-empty">{t('rooms.loadFailed')}</div>:!filtered.length&&<div className="room-list-empty">{query?t('rooms.noSearch'):t('rooms.empty')}</div>}
+   <div className="room-list-search">
+    <TextInput aria-label={t('rooms.searchAria')} placeholder={t('rooms.search')} value={query} onChange={e=>setQuery(e.target.value)}/>
+    <div className="mt-2 flex items-center gap-2">
+     <SelectInput aria-label={getLocale()==='en'?'Filter rooms':'그룹대화 상태 필터'}
+      value={roomFilter} onChange={event=>setRoomFilter(event.target.value as 'all'|'running'|'attention')}
+      className="min-h-8 flex-1 bg-white py-1 text-[11px]">
+      <option value="all">{getLocale()==='en'?'All rooms':'전체 그룹대화'}</option>
+      <option value="running">{getLocale()==='en'?'In progress':'진행 중'}</option>
+      <option value="attention">{getLocale()==='en'?'Needs attention':'확인 필요'} {attentionCount>0?'('+attentionCount+')':''}</option>
+     </SelectInput>
+     <Button size="icon" variant="ghost" aria-label={getLocale()==='en'?'Refresh rooms':'그룹대화 다시 불러오기'}
+      onClick={()=>void rooms.reload()}><RefreshCw size={15}/></Button>
+    </div>
+    {rooms.error&&<p role="alert" className="mt-2 text-[11px] text-rose-700">{t('rooms.loadFailed')} · {getLocale()==='en'?'Cached room states may be outdated.':'표시된 상태가 이전 기록일 수 있습니다.'}</p>}
+   </div>
+   <div className="room-list-items">{filtered.map(room=><Button variant="bare" key={room.id} className={'room-list-item '+(selected===room.id?'is-selected':'')} onClick={()=>selectRoom(room.id)} aria-current={selected===room.id?'true':undefined}><span className="room-list-icon"><Hash size={18}/></span><span className="room-list-copy"><strong>{room.name}</strong><small>{room.topic||t('rooms.space')}</small><span className="room-list-meta">{t('rooms.me')} + {room.agentIds?.length||0}{t('rooms.people')}{room.status==='running'&&<i title={t('rooms.st.running')}/>}
+      {roomAttention(room.status)&&<span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900" role="status">{getLocale()==='en'?'Needs review':'확인 필요'}</span>}</span></span></Button>)}
+    {rooms.loading&&!filtered.length?<div className="room-list-empty">{t('rooms.loading')}</div>:rooms.error&&!filtered.length?<div role="status" className="room-list-empty">{t('rooms.loadFailed')}</div>:!filtered.length&&<div className="room-list-empty">{query||roomFilter!=='all'?t('rooms.noSearch'):t('rooms.empty')}</div>}
    </div>
    <div className="room-list-footer"><Button variant="ghost" onClick={openSettings} className="w-full !justify-start gap-2 !text-xs" aria-label={t('nav.settings')}><Settings size={17}/>{t('nav.settings')}</Button></div>
   </aside>
