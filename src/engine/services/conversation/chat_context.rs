@@ -3,6 +3,29 @@ use super::{TurnRequest, HISTORY_LIMIT};
 use crate::state::AppState;
 use serde_json::{json, Value};
 
+
+/// Optional owner-controlled *model text* for ordinary private chat.
+/// Agent-specific text wins over global, including an explicitly empty string.
+/// Permissions, tools, approvals and execution policies remain native Rust.
+pub(super) fn configured_private_prompt(
+    state:&AppState,agent_id:Option<&str>,
+)->(Option<String>,Option<&'static str>){
+    let agent=agent_id.and_then(|id|state.store.get("agent",id));
+    let global=state.store.get("assistant_settings","global");
+    resolve_private_prompt(agent.as_ref(),global.as_ref())
+}
+fn resolve_private_prompt(
+    agent:Option<&Value>,global:Option<&Value>,
+)->(Option<String>,Option<&'static str>){
+    if let Some(text)=agent.and_then(|x|x["systemPromptOverride"].as_str()){
+        return (Some(text.to_owned()),Some("agent"));
+    }
+    if let Some(text)=global.and_then(|x|x["systemPromptOverride"].as_str()){
+        return (Some(text.to_owned()),Some("global"));
+    }
+    (None,None)
+}
+
 /// One identity prefix per bot, shared by private chat, rooms and channels.
 /// Conversation-specific instructions follow this prefix, never precede it.
 pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec<Value>){
@@ -71,6 +94,11 @@ pub(super) fn lightweight_chat_prompt(state:&AppState,request:&TurnRequest)->Pro
     }
     if request.reasoning_language.as_deref()==Some("ko"){
         prompt.push_str("\n추론과 최종 답변은 다른 언어 요청이 없으면 한국어로 작성하십시오.");
+    }
+    if request.direct_chat {
+        if let (Some(custom),_)=configured_private_prompt(state,request.agent_id.as_deref()){
+            prompt=custom;
+        }
     }
     let watermark=crate::engine::memory::stable_id(&[&prompt]);
     PromptContext{prompt,dynamic_context:String::new(),
@@ -254,6 +282,12 @@ pub(super) fn system_prompt_with_manifest_at(
     if let Some(extra) = &request.system_override {
         prompt.push_str("\n\n");
         prompt.push_str(extra);
+    }
+    if request.direct_chat {
+        if let (Some(custom),_)=configured_private_prompt(state,request.agent_id.as_deref()){
+            prompt=custom;
+            source_instructions.clear();
+        }
     }
     items.push(json!({
         "kind": "system_prompt",
@@ -1339,5 +1373,20 @@ mod tests {
                 "source evidence is retained in SQLite, not silently removed");
         }
         let _=std::fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod private_prompt_compat_tests{
+    use super::*;
+    #[test]
+    fn agent_precedence_and_explicit_empty_text_are_preserved(){
+        let global=json!({"systemPromptOverride":"global"});
+        let agent=json!({"systemPromptOverride":""});
+        assert_eq!(resolve_private_prompt(Some(&agent),Some(&global)),
+            (Some(String::new()),Some("agent")));
+        assert_eq!(resolve_private_prompt(None,Some(&global)),
+            (Some("global".to_string()),Some("global")));
+        assert_eq!(resolve_private_prompt(None,Some(&json!({}))), (None,None));
     }
 }

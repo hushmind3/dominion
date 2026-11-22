@@ -56,6 +56,48 @@ pub(crate) fn system_prompt_preview(
     room_context::preview(state, room_id, agent_id, tools)
 }
 
+
+/// The consumer settings view uses Sub2's own compiler and memory scope.
+/// This is read-only: no model turn, native run or tool execution is started.
+pub(crate) fn private_system_prompt_preview(
+    state:&crate::state::AppState,session_id:Option<&str>,agent_id:Option<&str>,
+    input:&str,tools_enabled:bool,korean_reasoning:bool,
+)->Result<serde_json::Value,String>{
+    use serde_json::json;
+    if let Some(id)=agent_id{
+        if state.store.get("agent",id).is_none(){return Err("에이전트를 찾을 수 없습니다.".into());}
+    }
+    if let Some(id)=session_id{
+        let session=state.store.get("session",id).ok_or("대화를 찾을 수 없습니다.")?;
+        if session["roomId"].is_string(){return Err("그룹 세션은 별도 미리보기를 사용하세요.".into());}
+    }
+    let chosen=session_id.unwrap_or("__private_prompt_preview__");
+    let request=TurnRequest::from_value(&json!({
+        "input":input,"sessionId":chosen,"agentId":agent_id,
+        "conversationMode":"chat","toolsEnabled":tools_enabled,
+        "toolsExecutionEnabled":tools_enabled,
+        "reasoningLanguage":if korean_reasoning{"ko"}else{"en"},
+    }))?;
+    let compiled=context::system_prompt_with_manifest(state,&request,chosen,input,None);
+    let (own,scope)=context::configured_private_prompt(state,agent_id);
+    let agent_name=agent_id.and_then(|id|state.store.get("agent",id))
+        .and_then(|agent|agent["name"].as_str().map(str::to_owned));
+    let owner_enabled=state.store.get("assistant_settings","global")
+        .is_none_or(|s|s["enabled"]!=false);
+    let system_chars=compiled.prompt.chars().count();
+    let dynamic_context=format!("{}{}",compiled.source_instructions,compiled.dynamic_context);
+    let context_chars=dynamic_context.chars().count();
+    Ok(json!({
+        "systemPrompt":compiled.prompt,"dynamicContext":dynamic_context,
+        "systemChars":system_chars,"systemTokensEstimated":system_chars.div_ceil(4),
+        "contextChars":context_chars,"contextTokensEstimated":context_chars.div_ceil(4),
+        "agentId":agent_id,"agentName":agent_name,"ownerEnabled":owner_enabled,
+        "sampleInput":input,"sessionId":session_id,
+        "ownOverrideActive":own.is_some(),"ownOverrideText":own,
+        "effectiveOverrideScope":scope,
+    }))
+}
+
 /// Clean up old durable approvals at startup and in the maintenance loop.
 pub(crate) fn expire_stale_approvals(state: &crate::state::AppState) -> usize {
     approval::expire_stale_approvals(state)

@@ -8,6 +8,8 @@ pub(super) fn routes()->Router<AppState>{
             "/api/settings/assistant",
             get(settings::assistant_settings).post(settings::save_assistant_settings),
         )
+        .route("/api/settings/system-prompt/preview",get(settings::system_prompt_preview))
+        .route("/api/settings/system-prompt/override",post(settings::save_system_prompt_override))
         .route(
             "/api/settings/owner-profile",
             get(settings::owner_profile).post(settings::save_owner_profile),
