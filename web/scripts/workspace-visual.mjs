@@ -362,8 +362,8 @@ try{
      sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}]}}}
  await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
  await page.getByText('No verified result').waitFor({timeout:8000})
- await page.getByRole('button',{name:'실행 기록'}).click()
- assert.equal(await page.getByRole('button',{name:'실행 기록'}).getAttribute('aria-pressed'),'true')
+ await page.getByRole('navigation',{name:'작업 상세 보기'}).getByRole('button',{name:'실행 기록'}).click()
+ assert.equal(await page.getByRole('navigation',{name:'작업 상세 보기'}).getByRole('button',{name:'실행 기록'}).getAttribute('aria-pressed'),'true')
  // Long autonomous jobs retain more than four events. Owners must be able
  // to reopen earlier stages without a new menu or a fake progress timeline.
  sdkRuns[0].checkpoint.events=[
@@ -559,6 +559,13 @@ try{
   if(route==='chat'){
    assert.equal(await page.locator('.page-chat aside').first().isVisible(),false,
     'Desktop history drawer must collapse after resizing to mobile')
+   const sessionTrigger=page.getByRole('button',{name:'대화 정보 패널'})
+   await sessionTrigger.click()
+   await page.locator('#chat-session-inspector').waitFor({state:'visible',timeout:8000})
+   assert.equal(await sessionTrigger.getAttribute('aria-expanded'),'true',
+    'Chat inspector must expose its live open state')
+   await page.locator('#chat-session-inspector').getByRole('button',{name:'대화 정보 닫기'}).click()
+   await page.locator('#chat-session-inspector').waitFor({state:'detached',timeout:8000})
   }
   await overflow(page,route,320)
   await screenshot(page,'320-'+route+'.png')
