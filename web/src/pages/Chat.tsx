@@ -1,3 +1,4 @@
+import {explicitWebSearchRequested} from '../utils/webSearchIntent'
 import {ConversationRail} from '../components/chat/ConversationRail'
 import {useConversationSidebar} from '../hooks/useConversationSidebar'
 import type {CSSProperties} from 'react'
@@ -434,6 +435,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     sessionId:id,clientTurnId,requestId:clientTurnId,
     conversationMode:agentMode?'agent':'chat',
     agentId:agentMode?agentId:undefined,directChat:!agentMode,
+    webSearch:!agentMode&&explicitWebSearchRequested(text),
     providerId:agentMode?manual?.providerId:providerId,model:agentMode?manual?.model:model,input:text,
     toolsEnabled:agentMode&&toolsEnabled,toolsExecutionEnabled:agentMode&&toolsEnabled,autoLearning:agentMode&&autoLearn,attachmentIds,
     reasoningLanguage:reasoningKo?'ko':'original',reasoningEffort:effectiveReasoningEffort||undefined,thinking:selectedProvider?.kind==='codex'?(effectiveReasoningEffort==='none'?false:canDisableThinking?effectiveThinkingEnabled:undefined):effectiveThinkingEnabled,

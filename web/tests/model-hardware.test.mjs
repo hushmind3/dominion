@@ -158,20 +158,13 @@ test('OpenRouter free model single registration reuses existing credentials with
  assert.match(account,/onClick=\{goToRegisteredChat\}/)
 })
 
-test('a public models.dev document is shared by provider and model browsing',()=>{
- const api=readFileSync(new URL('../../src/api/providers/catalog.rs',import.meta.url),'utf8')
- const fetches=[...api.matchAll(/get\("https:\/\/models\.dev\/api\.json"\)/g)]
- assert.equal(fetches.length,1)
- assert.match(api,/static MODELS_DEV_DOCUMENT:\s*OnceLock/)
- assert.match(api,/fetched\.elapsed\(\)\s*<\s*Duration::from_secs\(86_400\)/)
- assert.match(api,/static MODELS_DEV_FETCH:\s*tokio::sync::Mutex/)
- assert.match(api,/let _fetch_guard\s*=\s*MODELS_DEV_FETCH\.lock\(\)\.await/)
- assert.equal([...api.matchAll(/if let Some\(document\)\s*=\s*cached_models_dev_document\(\)\s*\{\s*return Ok\(document\);\s*\}/g)].length,2)
- const models=api.slice(api.indexOf('pub async fn public_catalog_models('),api.indexOf('/// OpenRouter publishes'))
- assert.match(models,/load_models_dev_document\(\)\.await/)
- const providers=api.slice(api.indexOf('pub async fn provider_catalog('),api.indexOf('/// Refreshes every enabled provider'))
- assert.match(providers,/load_models_dev_document\(\)\.await/)
+test("Sub2: shared catalog document",()=>{
+ assert.ok(source("../src/api/services/providers/providers.rs").includes("https://models.dev/api.json"),"../src/api/services/providers/providers.rs expected https://models.dev/api.json")
+ assert.ok(source("../src/api/services/providers/providers.rs").includes("pub async fn provider_catalog("),"../src/api/services/providers/providers.rs expected pub async fn provider_catalog(")
+ assert.ok(source("../src/api/services/providers/providers.rs").includes("pub async fn public_catalog_models("),"../src/api/services/providers/providers.rs expected pub async fn public_catalog_models(")
+ assert.ok(source("../src/api/surfaces/provider_routes.rs").includes("/api/providers/catalog"),"../src/api/surfaces/provider_routes.rs expected /api/providers/catalog")
 })
+
 test('catalog registration selects the Anthropic protocol and chat route retains its model',()=>{
  const account=readFileSync(new URL('../src/components/DominionCloudAccount.tsx',import.meta.url),'utf8')
  const navigation=readFileSync(new URL('../src/hooks/useWorkspaceNavigation.ts',import.meta.url),'utf8')

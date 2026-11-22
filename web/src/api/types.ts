@@ -118,6 +118,7 @@ export type ChatRequest = {
   conversationMode?: 'chat' | 'agent'
   agentId?: string
   directChat?: boolean
+  webSearch?: boolean
   providerId?: string
   model?: string
   input: string
