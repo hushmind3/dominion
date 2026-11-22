@@ -17,33 +17,51 @@ export function WorkspaceSidebar({page,open,collapsed,online,running,pending,onN
  const navigationRef=useRef<HTMLElement>(null)
  useEffect(()=>{
   if(!settingsOnly)return
-  const current=navigationRef.current?.querySelector<HTMLElement>('[aria-current="page"]')
-  // The mobile navigation is horizontally scrollable; the selected page
-  // must not silently disappear behind the visible edge after a route change.
-  current?.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'})
+  navigationRef.current?.querySelector<HTMLElement>('[aria-current="page"]')
+   ?.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'})
  },[page,settingsOnly])
+ const compact=!navOpen
  return <>
-  {!settingsOnly&&open&&<Button variant="bare" type="button" className="fixed inset-0 z-40 bg-slate-900/40 min-[520px]:hidden" aria-label={t('shell.menuClose')} onClick={onClose}/>}
-  <aside aria-label={t('shell.mainNav')} className={(settingsOnly?'absolute inset-y-0 left-0 z-10 flex':'fixed inset-y-0 left-0 z-50 flex')+' w-[216px] flex-col border-r border-[#E0D8CC] bg-[#EFEAE1] text-[#4A443C] transition-[width,transform] duration-200 '+(settingsOnly&&!navOpen?'settings-nav-collapsed ':'')+(!settingsOnly?'max-[519px]:-translate-x-full ':'')+(collapsed?'min-[520px]:-translate-x-full ':'')+(open?'max-[519px]:translate-x-0':'')}>
-   <div className="flex h-16 shrink-0 items-center gap-3 border-b border-[#E0D8CC] px-5">
-    <div className="grid size-8 shrink-0 place-items-center rounded-xl bg-[#C96442] text-[17px] font-black text-white shadow-[0_4px_12px_rgba(201,100,66,.28)]">D</div>
-    <div className="min-w-0 flex-1 truncate text-[14px] font-extrabold tracking-[.14em] text-[#24211D]">DOMINION</div>
-    {settingsOnly&&onToggleNav&&<Button variant="ghost" size="icon" aria-label={navOpen?t('shell.hideMenu'):t('shell.showMenu')} aria-expanded={navOpen} onClick={onToggleNav}><Menu size={18}/></Button>}
+  {!settingsOnly&&open&&<Button variant="bare" type="button" className="fixed inset-0 z-40 bg-slate-950/50 md:hidden" aria-label={t('shell.menuClose')} onClick={onClose}/>}
+  <aside aria-label={t('shell.mainNav')} className={[
+   'z-30 flex min-h-0 min-w-0 flex-col border-workspace-line bg-workspace-sidebar text-workspace-sidebar-text',
+   'col-start-1 row-start-2 h-16 border-t md:col-start-1 md:row-start-1 md:h-full md:border-t-0 md:border-r',
+   'transition-[width] duration-150',
+   compact?'md:w-16':'md:w-56',
+   !settingsOnly&&!open?'max-md:hidden':'',
+   collapsed?'md:opacity-80':''
+  ].join(' ')}>
+   <div className={'hidden h-16 shrink-0 items-center gap-2 border-b border-workspace-line md:flex '+(compact?'justify-center px-1':'px-4')}>
+    <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-workspace-accent text-sm font-black text-workspace-sidebar">D</div>
+    {!compact&&<strong className="min-w-0 flex-1 truncate text-xs tracking-[.14em] text-white">DOMINION</strong>}
+    {settingsOnly&&onToggleNav&&<Button variant="ghost" size="icon" aria-label={navOpen?t('shell.hideMenu'):t('shell.showMenu')} aria-expanded={navOpen} onClick={onToggleNav}
+     className="!size-8 !shrink-0 !text-workspace-sidebar-text hover:!bg-workspace-selected hover:!text-white"><Menu size={17}/></Button>}
    </div>
-   {!settingsOnly&&<div className="px-3 pt-5"><Button variant="bare" type="button" onClick={onNewChat} className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-[#C96442] text-[12px] font-semibold text-white shadow-[0_6px_16px_rgba(201,100,66,.22)] transition-colors hover:bg-[#A94E30]"><Plus size={16}/> {t('shell.newChat')}</Button></div>}
-   <nav ref={navigationRef} aria-label={t('shell.mainNav')} className="mt-4 min-h-0 flex-1 overflow-y-auto px-2.5 pb-4">
-    {navigation.map(group=><section key={group.title} className="mt-5">
-     <h2 className="mb-2 px-3 text-[11px] font-semibold text-[#8A8176]">{t(group.title)}</h2>
-     {<div className="space-y-0.5">{group.items.map(item=>{const Icon=item.icon;const count=item.id==='activity'?running:item.id==='settings'?pending:0;return <Button variant="bare" key={item.id} type="button" aria-current={page===item.id?'page':undefined} title={t(item.label)} onClick={()=>onNavigate(item.id)}
-      className={'group flex h-9 w-full items-center gap-3 rounded-xl px-3 text-left text-[13px] transition-colors '+(page===item.id?'bg-[#FFFDF9] font-semibold text-[#24211D] shadow-[0_2px_8px_rgba(70,58,42,.07)]':'text-[#6F675D] hover:bg-[#E8E0D3] hover:text-[#24211D]')}>
-      <Icon size={15} strokeWidth={1.8}/><span className="min-w-0 flex-1">{t(item.label)}</span>{count>0&&<span className="text-[10px] font-semibold text-[#C96442]">{count}</span>}
-     </Button>})}</div>}
+   {!settingsOnly&&<div className="hidden p-3 md:block"><Button variant="bare" type="button" onClick={onNewChat} className="flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-workspace-accent text-xs font-semibold text-workspace-sidebar"><Plus size={16}/>{!compact&&t('shell.newChat')}</Button></div>}
+   <nav ref={navigationRef} aria-label={t('shell.mainNav')} className="flex min-h-0 min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden px-1.5 pb-0.5 pt-0.5 [scrollbar-width:none] md:mt-3 md:block md:overflow-x-hidden md:overflow-y-auto md:px-2 md:py-0 md:pb-5">
+    {navigation.map(group=><section key={group.title} className="contents md:mt-4 md:block">
+     <h2 className={'mb-2 hidden px-3 text-[10px] font-semibold text-workspace-muted md:block '+(compact?'md:sr-only':'')}>{t(group.title)}</h2>
+     <div className="contents md:block md:space-y-1">{group.items.map(item=>{
+      const Icon=item.icon
+      const count=item.id==='activity'?running:item.id==='settings'?pending:0
+      return <Button variant="bare" key={item.id} type="button" aria-current={page===item.id?'page':undefined} title={t(item.label)} onClick={()=>onNavigate(item.id)}
+       className={[
+        'group flex min-h-12 w-[68px] shrink-0 flex-col items-center justify-center gap-1 rounded-lg px-1 text-center text-[10px] leading-tight',
+        'transition-colors md:min-h-10 md:w-full md:flex-row md:justify-start md:gap-3 md:px-3 md:text-left md:text-xs',
+        compact?'md:justify-center md:px-0':'',
+        page===item.id?'bg-workspace-selected font-semibold text-white ring-1 ring-workspace-line':'text-workspace-sidebar-text hover:bg-workspace-hover hover:text-white'
+       ].join(' ')}>
+       <Icon size={17} strokeWidth={1.8} className="shrink-0"/>
+       <span className={'max-w-full truncate '+(compact?'md:sr-only':'md:min-w-0 md:flex-1')}>{t(item.label)}</span>
+       {count>0&&<span className={'rounded bg-workspace-accent px-1 text-[10px] font-semibold text-workspace-sidebar '+(compact?'md:sr-only':'hidden md:inline')}>{count}</span>}
+      </Button>
+     })}</div>
     </section>)}
    </nav>
-   <OwnerProfileEditor/>
-   <div className="flex h-14 shrink-0 items-center gap-2.5 border-t border-[#E0D8CC] px-5">
-    <span className={'size-2 rounded-full '+(online?'bg-emerald-500':'bg-rose-400')}/>
-    <span className="text-[11px] text-[#6F675D]">{online?t('shell.engineConnected'):t('shell.engineDisconnected')}</span>
+   <div className="hidden md:block"><OwnerProfileEditor/></div>
+   <div className={'hidden h-13 shrink-0 items-center gap-2 border-t border-workspace-line text-xs text-workspace-sidebar-text md:flex '+(compact?'justify-center':'px-4')}>
+    <span className={'size-2 shrink-0 rounded-full '+(online?'bg-emerald-400':'bg-rose-400')}/>
+    {!compact&&<span>{online?t('shell.engineConnected'):t('shell.engineDisconnected')}</span>}
    </div>
   </aside>
  </>
