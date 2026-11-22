@@ -50,3 +50,13 @@ test('every surface uses the shared plain-language mapping', () => {
   const models = read('src/pages/Models.tsx')
   assert.match(models, /plainError\(counts\[p\.id\]\.error\)/)
 })
+
+test('registry tools get a Korean one-line summary', () => {
+  const summary = read('src/lib/toolSummary.ts')
+  assert.match(summary, /export function koreanToolSummary/)
+  assert.match(summary, /GitHub 저장소/)
+  assert.match(summary, /웹 페이지를 열고 조작/)
+  assert.match(summary, /외부 서비스/)
+  const extensions = read('src/pages/Extensions.tsx')
+  assert.match(extensions, /koreanToolSummary\(x\.name, x\.description\)/)
+})

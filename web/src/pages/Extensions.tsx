@@ -1,6 +1,7 @@
 import { DialogBackdrop, DialogPanel } from "../components/Dialog";
 import { SkillsPanel } from "./extensions/SkillsPanel";
 import { t, useLocale } from "../i18n";
+import { koreanToolSummary } from "../lib/toolSummary";
 import {
   Button,
   TextInput,
@@ -745,8 +746,8 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                       <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-[var(--color-muted)]">{x.description}</p>
                     ) : (
                       <>
-                        <p className="mt-1 text-[12px] leading-5 text-[var(--color-muted)]">
-                          외부에서 제공하는 도구입니다. 설치 전에 무엇을 하는 도구인지 원문으로 확인하세요.
+                        <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-[var(--color-muted)]">
+                          {koreanToolSummary(x.name, x.description)}
                         </p>
                         {x.description && (
                           <details className="mt-1 text-[11px] text-[var(--color-muted)]">
