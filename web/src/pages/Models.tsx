@@ -346,7 +346,7 @@ export function ModelHub(){
  const overview=[
   {tab:'providers' as const,label:'등록한 제공자',english:'Configured providers',count:providers.value.length},
   {tab:'local' as const,label:'로컬 모델',english:'Local models',count:localProviders.length},
-  {tab:'oauth' as const,label:'인증 준비',english:'Credentials set',count:credentialReady.length},
+  {tab:'oauth' as const,label:'키·로컬 등록',english:'Keys or local',count:credentialReady.length},
   {tab:'free' as const,label:'무료 모델 조회',english:'Free catalog',count:freeCatalog.value.counts?.free||0},
  ]
  return <div className="mx-auto w-full max-w-[1480px] px-4 pt-2 pb-5 sm:px-6 lg:pt-3">
