@@ -1,4 +1,3 @@
-import {DialogBackdrop} from './components/Dialog'
 import { ContextMenu } from './components/ContextMenu'
 import {OwnerProfileProvider} from './components/OwnerProfile'
 import {Component,lazy,Suspense,useCallback,useEffect,useLayoutEffect,useState,type ReactNode} from 'react'
@@ -135,6 +134,17 @@ export default function App(){
  const switchMode=useCallback((next:'chat'|'rooms')=>{if(next==='chat')returnToChat();else navigate('rooms')},[returnToChat,navigate])
  const closeSettings=useCallback(()=>switchMode(mode),[switchMode,mode])
  useEffect(()=>{
+  if(!settingsOpen||searchOpen)return
+  const onEscape=(event:KeyboardEvent)=>{
+   if(event.key==='Escape'&&!(event.target instanceof HTMLInputElement)&&!(event.target instanceof HTMLTextAreaElement)){
+    event.preventDefault()
+    closeSettings()
+   }
+  }
+  window.addEventListener('keydown',onEscape)
+  return()=>window.removeEventListener('keydown',onEscape)
+ },[settingsOpen,searchOpen,closeSettings])
+ useEffect(()=>{
   const check=()=>{if(document.visibilityState==='visible')void checkForUpdatedUi()}
   window.addEventListener('focus',check)
   document.addEventListener('visibilitychange',check)
@@ -153,8 +163,8 @@ export default function App(){
    {visited.rooms&&<div hidden={mode!=='rooms'} className="h-full page-rooms"><PageLoadBoundary><Suspense fallback={<div role="status" className="p-8 text-sm text-[#7C7469]">대화 불러오는 중…</div>}><RoomsPage active={mode==='rooms'&&!settingsOpen} openSession={id=>navigate('chat',id)} openSettings={()=>navigate('settings')} switchMode={switchMode}/></Suspense></PageLoadBoundary></div>}
 
   </main>
-  {settingsOpen&&<DialogBackdrop onDismiss={closeSettings}><div role="dialog" aria-modal="true" aria-label="설정" className="workspace-settings relative h-[calc(100dvh-40px)] w-full max-w-[1440px] overflow-hidden rounded-2xl border border-[#E7E0D5] bg-[#F6F3EC] shadow-2xl">
-   <WorkspaceSidebar settingsOnly page={page} open collapsed={false} online={online} running={running} pending={pending} onNavigate={navigate} onNewChat={()=>navigate('chat')} onClose={closeSettings} navOpen={settingsNav} onToggleNav={toggleSettingsNav}/>
+  {settingsOpen&&<section aria-label="DOMINION workspace" inert={searchOpen} className="workspace-settings workspace-route fixed inset-0 z-30 w-full overflow-hidden bg-[#F6F3EC]">
+   <WorkspaceSidebar settingsOnly page={page} open collapsed={false} online={online} running={running} pending={pending} onNavigate={target=>target==='chat'?returnToChat():navigate(target)} onNewChat={returnToChat} onClose={closeSettings} navOpen={settingsNav} onToggleNav={toggleSettingsNav}/>
    <div className={'workspace-settings-main flex h-full min-w-0 flex-col '+(settingsNav?'ml-[216px]':'ml-14')}>
     <SettingsHeader page={page} online={online} build={engineBuild}
      onSearch={()=>setSearchOpen(true)} onClose={closeSettings}/>
@@ -171,7 +181,7 @@ export default function App(){
      </Suspense></PageLoadBoundary>
     </div>
    </div>
-  </div></DialogBackdrop>}
+  </section>}
   {searchOpen&&<WorkspaceSearch onNavigate={navigate} onDismiss={()=>setSearchOpen(false)}/>}
  </div></OwnerProfileProvider>
 }
