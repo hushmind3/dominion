@@ -91,7 +91,7 @@ export function ModelPicker({
         aria-expanded={visible}
         onClick={() => setOpen((current) => !current)}
         className={
-          'inline-flex min-w-0 items-center justify-between gap-2 rounded-lg border border-[#E1D9CC] bg-surface px-2.5 py-1.5 text-left text-[12px] text-[#3A342D] hover:border-[#D3C8B8] disabled:cursor-not-allowed disabled:opacity-50 ' +
+          'inline-flex min-w-0 items-center justify-between gap-2 rounded-lg border border-[#E1D9CC] bg-[#FFFDF9] px-2.5 py-1.5 text-left text-[12px] text-[#3A342D] hover:border-[#D3C8B8] disabled:cursor-not-allowed disabled:opacity-50 ' +
           className
         }
       >
@@ -172,7 +172,7 @@ export function ModelPicker({
                     onClick={() => choose(model.id)}
                     className={
                       'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] hover:bg-[#F7F2EA] ' +
-                      (index===active||model.id === value ? 'bg-[#FBF1EC] text-brand-hover' : 'text-[#3A342D]')
+                      (index===active||model.id === value ? 'bg-[#FBF1EC] text-[#A94E30]' : 'text-[#3A342D]')
                     }
                   >
                     <span className="min-w-0 flex-1 truncate">{model.id}</span>
@@ -202,7 +202,7 @@ export function ModelPicker({
 
             {!freeOnly && query.trim() && !models.some(model=>model.id===query.trim()) && (
               <button type="button" disabled={new TextEncoder().encode(query.trim()).length>256}
-                className="shrink-0 truncate border-t border-[#EFE9DF] px-3 py-2 text-left text-[11px] font-semibold text-brand-hover hover:bg-[#F7F2EA] disabled:opacity-50"
+                className="shrink-0 truncate border-t border-[#EFE9DF] px-3 py-2 text-left text-[11px] font-semibold text-[#A94E30] hover:bg-[#F7F2EA] disabled:opacity-50"
                 title={query.trim()} onClick={()=>choose(query.trim())}>
                 {t('picker.useId', { id: query.trim() })}
               </button>

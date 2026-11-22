@@ -18,7 +18,7 @@ function inlineParts(text:string):ReactNode[]{
    const separator=token.indexOf('](')
    const label=token.slice(1,separator)
    const href=token.slice(separator+2,-1)
-   parts.push(<a key={index} href={href} target="_blank" rel="noopener noreferrer" className="underline decoration-[#BA8D7D] underline-offset-2 hover:text-brand-hover">{label}</a>)
+   parts.push(<a key={index} href={href} target="_blank" rel="noopener noreferrer" className="underline decoration-[#BA8D7D] underline-offset-2 hover:text-[#A94E30]">{label}</a>)
   }
   last=index+token.length
  }

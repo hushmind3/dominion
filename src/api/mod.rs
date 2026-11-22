@@ -1,79 +1,383 @@
-pub mod agents;
+mod response;
+#[cfg(test)]
+mod tests;
 pub mod algorithms;
-pub mod approvals;
-pub mod attachments;
-pub mod benchmark;
+pub mod translation;
+pub mod settings;
+pub mod improvements;
+pub mod executions;
+pub mod tasks;
+pub mod experience;
+pub mod memory;
 pub mod browser;
-pub mod channels;
-pub mod chat;
+pub mod extensions;
+pub mod approvals;
+pub mod sessions;
+pub mod agents;
+pub mod sdk;
+pub mod providers;
 pub mod cli_oauth;
 pub mod cloud_auth;
+pub mod benchmark;
+pub mod experiments;
+pub mod chat;
+pub mod jobs;
+pub mod remote_workers;
+pub mod remote_registry;
+pub mod remote_artifacts;
+pub mod system;
+pub mod attachments;
+pub mod channels;
 pub mod collections;
 pub mod compat;
 pub mod dev;
-pub mod executions;
-pub mod experience;
-pub mod experiments;
-pub mod extensions;
 pub mod gateways;
-pub mod improvements;
-pub mod jobs;
-pub mod memory;
 pub mod models;
 pub mod oauth;
 pub mod personas;
-pub mod providers;
-pub mod remote_artifacts;
-pub mod remote_registry;
-pub mod remote_workers;
-mod response;
 pub mod rooms;
-pub mod sdk;
-pub mod sessions;
-pub mod settings;
-pub mod system;
-pub mod tasks;
-#[cfg(test)]
-mod tests;
-pub mod translation;
-
-mod http_policy;
-mod routes;
 
 use crate::state::AppState;
 use axum::{
-    extract::OriginalUri,
-    http::StatusCode,
-    middleware,
+    extract::{OriginalUri, Request, State},
+    http::{header, HeaderName, HeaderValue, Method, StatusCode},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::any,
+    routing::{any, get, post},
     Json, Router,
 };
 use serde_json::json;
-use tower_http::services::ServeDir;
+use tower_http::{cors::CorsLayer, services::ServeDir};
 
-/// Compose product routes before attaching the common transport and admission
-/// layers. Keep this order: owner-host admission also covers CORS preflights.
 pub fn router(state: AppState) -> Router {
+    let mut router = Router::new()
+        // core
+        .route("/api/health", get(system::health))
+        .route("/api/benchmark/strategies", post(benchmark::seed_strategy))
+        .route("/api/benchmark/experiments", post(benchmark::record_experiment))
+        .route("/api/benchmark/policies", post(benchmark::register_policy))
+        .route(
+            "/api/benchmark/policies/experiment",
+            post(benchmark::policy_experiment),
+        )
+        .route(
+            "/api/benchmark/policies/state",
+            post(benchmark::policy_state),
+        )
+        .route("/api/benchmark/policy-search", post(benchmark::policy_search))
+        .route("/api/benchmark/policy-patches", post(benchmark::register_patch))
+        .route(
+            "/api/benchmark/policy-patches/experiment",
+            post(benchmark::patch_experiment),
+        )
+        .route("/api/benchmark/identity", get(system::benchmark_identity))
+        .route("/api/status", get(system::status))
+        .route(
+            "/api/settings/assistant",
+            get(settings::assistant_settings).post(settings::save_assistant_settings),
+        )
+        .route("/api/settings/system-prompt/preview",get(settings::system_prompt_preview))
+        .route("/api/settings/system-prompt/override",post(settings::save_system_prompt_override))
+        .route(
+            "/api/settings/owner-profile",
+            get(settings::owner_profile).post(settings::save_owner_profile),
+        )
+        .route("/api/attachments", post(attachments::upload))
+        .route("/api/attachments/:id/content", get(attachments::content))
+        .route("/api/events", get(system::events))
+        .route("/api/model-usage", get(system::model_usage))
+        .route("/api/run-wakes", get(system::run_wakes))
+        .route("/api/experiment-requests", get(system::experiment_requests))
+        .route("/api/algorithms", get(algorithms::list).post(algorithms::register))
+        .route("/api/algorithms/evaluate", get(algorithms::evaluate))
+        .route("/api/algorithms/evaluations", get(algorithms::evaluations))
+        .route("/api/algorithms/generate", post(algorithms::generate))
+        .route("/api/algorithms/:id/activate", post(algorithms::activate))
+        .route("/api/algorithms/:id/disable", post(algorithms::disable))
+        .route("/api/experiment-requests/claim", post(experiments::claim))
+        .route(
+            "/api/experiment-requests/release-runner",
+            post(experiments::release_runner),
+        )
+        .route("/api/experiment-requests/:id/complete", post(experiments::complete))
+        .route("/api/experiment-requests/:id/release", post(experiments::release))
+        .route(
+            "/api/benchmark/experiment-requests",
+            post(experiments::enqueue),
+        )
+        .route("/api/policies", get(system::policies))
+        .route("/api/scheduler-runs", get(system::scheduler_runs))
+        .route("/api/policy-searches", get(system::policy_searches))
+        .route("/api/policy-patches", get(system::policy_patches))
+        .route("/api/system/backup", post(system::create_backup))
+        .route("/api/system/backup-keys", get(system::backup_keys))
+        .route(
+            "/api/system/backup-keys/rotate",
+            post(system::rotate_backup_keys),
+        )
+        .route("/api/system/secret-key", get(system::secret_key))
+        .route(
+            "/api/system/secret-key/rotate",
+            post(system::rotate_secret_key),
+        )
+        .route("/api/system/backups", get(system::list_backups))
+        .route(
+            "/api/system/maintenance",
+            get(system::maintenance_status).post(system::maintenance),
+        )
+        .route("/api/system/restore", post(system::restore_backup))
+        .route("/api/chat", post(chat::chat))
+        .route("/api/sdk/runs", get(sdk::list).post(sdk::start))
+        .route("/api/sdk/runs/source/:kind", get(sdk::by_source))
+        .route("/api/sdk/runs/:id", get(sdk::one))
+        .route("/api/sdk/runs/:id/resume", post(sdk::resume))
+        .route("/api/sdk/runs/:id/approve", post(sdk::approve))
+        .route("/api/sdk/runs/:id/reconcile", post(sdk::reconcile))
+        .route("/api/sdk/runs/:id/cancel", post(sdk::cancel))
+        .route("/api/sdk/runs/:id/steer",post(sdk::steer))
+        .route("/api/remote/jobs",get(remote_workers::list).post(remote_workers::create))
+        .route("/api/remote/jobs/:id",get(remote_workers::one))
+        .route("/api/remote/jobs/:id/review",post(remote_workers::review))
+        .route("/api/remote/jobs/:id/cancel",post(remote_workers::cancel))
+        .route("/api/remote/jobs/:id/artifact",get(remote_artifacts::get))
+        .route("/api/remote/jobs/:id/artifact/upload",post(remote_artifacts::upload))
+        .route("/api/remote/jobs/:id/artifact/review",post(remote_artifacts::accept))
+        .route("/api/remote/workers",get(remote_registry::list).post(remote_registry::enroll))
+        .route("/api/remote/workers/:id/state",post(remote_registry::state))
+        .route("/api/remote/workers/:id/rotate",post(remote_registry::rotate))
+        .route("/api/remote/claim",post(remote_workers::claim))
+        .route("/api/remote/reconcile",post(remote_workers::reconcile))
+        .route("/api/remote/jobs/:id/heartbeat",post(remote_workers::heartbeat))
+        .route("/api/remote/jobs/:id/finish",post(remote_workers::finish))
+        .route("/api/jobs",get(jobs::list).post(jobs::create))
+        .route("/api/jobs/:id",get(jobs::one))
+        .route("/api/jobs/:id/team-steps",get(jobs::team_steps))
+        .route("/api/jobs/:id/cancel",post(jobs::cancel))
+        .route("/api/jobs/:id/steer",post(jobs::steer))
+        .route("/api/jobs/:id/resume-external",post(jobs::resume_external))
+        .route("/api/tasks", get(tasks::list))
+        .route("/api/tasks/:id", get(tasks::one))
+        .route("/api/tools", get(extensions::list_tools))
+        .route("/api/extensions/runtime",
+            get(extensions::runtime_extensions).post(extensions::set_runtime_extensions))
+        .route("/api/browser/status", get(browser::status))
+        .route("/api/browser/screenshot", get(browser::screenshot))
+        .route("/api/browser/action", post(browser::action))
+        .route("/api/policy", get(approvals::get_policy).post(approvals::save_policy))
+        .route("/api/audit", get(system::audit_log))
+        .route("/api/model-route", get(system::model_route))
+        .route("/api/memory/overview", get(memory::memory_overview))
+        .route("/api/translate", post(translation::translate))
+        .route("/api/translate/config", get(translation::translate_config))
+        .route("/api/upload", post(compat::upload))
+        // providers
+        .route(
+            "/api/providers",
+            get(providers::list_providers).post(providers::save_provider),
+        )
+        .route(
+            "/api/providers/:id",
+            axum::routing::delete(providers::delete_provider),
+        )
+        .route("/api/providers/catalog", get(providers::provider_catalog))
+        .route("/api/providers/catalog/:id/models", get(providers::public_catalog_models))
+        .route("/api/providers/openrouter/free-models", get(providers::public_openrouter_free_catalog))
+        .route("/api/providers/free-catalog", get(providers::free_catalog))
+        .route("/api/providers/free-catalog/refresh", post(providers::free_catalog_refresh))
+        .route("/api/providers/cli", get(providers::cli_credentials))
+        .route("/api/providers/cli/:source/model", post(providers::set_cli_model))
+        .route("/api/providers/cli/:source/login", post(cli_oauth::start))
+        .route("/api/providers/cli/:source/login/status", get(cli_oauth::status))
+        .route("/api/providers/cli/:source/login/input", post(cli_oauth::input))
+        .route("/api/providers/cli/:source/login/cancel", post(cli_oauth::cancel))
+        .route("/api/providers/codex/login", get(providers::codex_login_start))
+        .route("/api/providers/codex/device", post(providers::codex_device_start))
+        .route("/api/providers/codex/login/status", get(providers::codex_login_status))
+        .route("/api/providers/cli/import", post(providers::import_cli_credential))
+        .route("/api/providers/:id/models", get(providers::provider_models))
+        .route("/api/providers/:id/test", post(providers::test_provider))
+        .route("/api/gateways/freellmapi", get(gateways::freellmapi))
+        .route("/api/providers/:id/gateway", get(gateways::inspect))
+        // agents
+        .route("/api/agents", get(agents::list_agents).post(agents::save_agent))
+        .route("/api/agents/bulk-model", post(agents::bulk_agent_model))
+        .route("/api/personas/import/preview", get(personas::preview))
+        .route("/api/personas/import", post(personas::import))
+        .route("/api/agents/:id/growth", get(agents::growth))
+        .route("/api/synergy", get(agents::synergy))
+        .route("/api/agents/:id/avatar", get(personas::avatar))
+        .route("/api/agents/:id", axum::routing::delete(agents::delete_agent))
+        .route("/api/rooms", get(rooms::list).post(rooms::save))
+        .route(
+            "/api/rooms/:id",
+            get(rooms::one).post(rooms::update).delete(rooms::remove),
+        )
+        .route(
+            "/api/rooms/:id/messages",
+            get(rooms::messages).post(rooms::send_message),
+        )
+        .route("/api/rooms/:id/events", get(rooms::events))
+        .route("/api/rooms/:id/state", get(rooms::state))
+        .route("/api/rooms/:id/knowledge", get(rooms::knowledge))
+        .route("/api/rooms/:id/system-prompt", get(rooms::system_prompt))
+        .route("/api/rooms/:id/knowledge/learn", post(rooms::learn))
+        .route("/api/rooms/:id/run", post(rooms::run))
+        .route("/api/rooms/:id/team-launches", post(rooms::team_launch))
+        .route("/api/rooms/:id/team-launches/:launch_id", get(rooms::team_launch_status))
+        .route("/api/rooms/:id/reset", post(rooms::reset))
+        .route("/api/rooms/:id/stop", post(rooms::stop))
+        // sessions
+        .route(
+            "/api/sessions",
+            get(sessions::list_sessions).post(sessions::create_session),
+        )
+        .route(
+            "/api/sessions/:id",
+            get(sessions::get_session)
+                .delete(sessions::delete_session)
+                .post(sessions::rename_session),
+        )
+        .route("/api/sessions/:id/messages", get(sessions::session_messages))
+        .route("/api/sessions/:id/extensions", post(sessions::set_session_extensions))
+        .route("/api/sessions/:id/usage", get(sessions::session_usage))
+        .route("/api/sessions/:id/rename", post(sessions::rename_session))
+        .route("/api/sessions/:id/clear", post(sessions::clear_session))
+        .route("/api/sessions/:id/fork", post(sessions::fork_session))
+        .route("/api/sessions/:id/compact", post(sessions::compact_session))
+        .route("/api/sessions/:id/cancel", post(sessions::cancel_session))
+        .route("/api/sessions/:id/archive", post(sessions::archive_session))
+        .route("/api/sessions/:id/learn", post(sessions::learn))
+        .route(
+            "/api/executions/:id/operations",
+            get(executions::execution_operations),
+        )
+        .route("/api/skills/:id/export", get(extensions::export_skill))
+        // approvals
+        .route(
+            "/api/approvals",
+            get(approvals::list_approvals).post(approvals::resolve_approval),
+        )
+        // capabilities + commands
+        .route("/api/capabilities", get(system::capabilities))
+        .route("/api/commands", get(system::commands))
+        // compatibility surface
+        .route("/api/mcp/presets", get(extensions::mcp_presets))
+        .route("/api/mcp/catalog", get(extensions::mcp_catalog))
+        .route("/api/mcp/discover", get(extensions::mcp_discover))
+        .route("/api/skill-catalog", get(extensions::skill_catalog))
+        .route("/api/skill-catalog/meta", get(extensions::skill_catalog_meta))
+        .route("/api/skill-catalog/import", post(extensions::import_skill))
+        .route("/api/skills/import-repo", post(extensions::import_skill_repo))
+        .route("/api/model-library/catalog", get(models::catalog))
+        .route("/api/model-library/details", get(models::details))
+        .route("/api/model-library/installed", get(models::installed))
+        .route("/api/model-library/installed/:id", axum::routing::delete(models::remove_installed))
+        .route("/api/model-library/pick-file", post(compat::pick_model))
+        .route("/api/model-library/jobs", get(models::jobs))
+        .route("/api/model-library/runtime", get(models::runtime))
+        .route("/api/model-library/runtime/load", post(models::load))
+        .route("/api/model-library/runtime/unload", post(models::unload))
+        .route("/api/model-library/runtime/install", post(models::install_runtime))
+        .route("/api/model-library/runtimes", get(models::runtimes))
+        .route("/api/model-library/download", post(models::download))
+        .route("/api/model-library/import", post(models::import))
+        .route(
+            "/api/model-library/jobs/:id/:action",
+            post(models::job_action),
+        )
+        .route("/api/dev/jobs/:id", get(dev::get_job))
+        .route("/api/dev/update", get(dev::update_status).post(dev::update))
+        // DOMINION Cloud desktop sign-in: browser OAuth, loopback state and PKCE.
+        .route("/api/cloud-auth/google/start", post(cloud_auth::start))
+        .route("/api/cloud-auth/google/status", get(cloud_auth::status))
+        .route("/api/cloud-auth/google/ack", post(cloud_auth::acknowledge))
+        .route("/api/cloud-auth/google/callback", get(cloud_auth::callback))
+        .route("/api/oauth/providers", get(oauth::providers))
+        .route("/api/oauth/connections", get(channels::connections))
+        .route("/api/oauth/providers/:id", post(oauth::save))
+        .route("/api/oauth/:id/start", get(oauth::start))
+        .route("/api/oauth/:id/open", post(oauth::open))
+        .route("/api/oauth/:id/callback", get(oauth::callback))
+        .route("/api/oauth/:id", axum::routing::delete(oauth::disconnect))
+        .route("/api/system/pick-folder", post(compat::pick_folder))
+        .route("/api/channels/catalog", get(channels::catalog_handler))
+        .route("/api/channels", get(channels::list).post(channels::save))
+        .route(
+            "/api/channels/:id",
+            get(channels::one)
+                .post(channels::update)
+                .delete(channels::remove),
+        )
+        .route("/api/channels/:id/diagnose", post(channels::diagnose))
+        .route("/api/executions", get(executions::list))
+        .route("/api/executions/active", get(executions::active_executions))
+        .route("/api/improvements", get(improvements::list))
+        .route("/api/experience", get(experience::list))
+        .route("/api/transfer", get(experience::transfer))
+        .route("/api/improvements/:id/:action", post(improvements::decide))
+        .route("/api/executions/:id", get(executions::one))
+        .route("/api/executions/:id/events", get(executions::run_events))
+        .route("/api/executions/:id/budget/reconcile",post(executions::reconcile_budget))
+        .route("/api/executions/:id/cancel", post(executions::cancel))
+        .route("/api/webhooks/:id", post(compat::webhook));
+
+    for kind in collections::COLLECTIONS {
+        router = router
+            .route(
+                &format!("/api/{kind}"),
+                get(collections::list).post(collections::save),
+            )
+            .route(
+                &format!("/api/{kind}/:id"),
+                get(collections::one)
+                    .delete(collections::remove)
+                    .post(collections::save),
+            )
+            .route(
+                &format!("/api/{kind}/:id/:action"),
+                post(collections::action),
+            );
+    }
+
     let static_files =
         ServeDir::new(state.config.web_dir.clone()).append_index_html_on_directories(true);
-    routes::router()
+
+    let port = state.config.port;
+    let origins = vec![
+        format!("http://127.0.0.1:{port}")
+            .parse::<HeaderValue>()
+            .expect("origin"),
+        format!("http://localhost:{port}")
+            .parse::<HeaderValue>()
+            .expect("origin"),
+    ];
+    let cors = CorsLayer::new()
+        .allow_origin(origins)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([
+            header::CONTENT_TYPE,
+            header::AUTHORIZATION,
+            HeaderName::from_static("x-dominion-token"),
+        ]);
+
+    router
         .route("/api/*rest", any(api_not_found))
         .fallback_service(static_files)
-        .layer(middleware::from_fn(http_policy::no_stale_ui))
+        .layer(middleware::from_fn(no_stale_ui))
         .layer(middleware::from_fn_with_state(
             state.clone(),
-            http_policy::maintenance_guard,
+            maintenance_guard,
         ))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            http_policy::guard_writes,
-        ))
-        .layer(http_policy::cors(state.config.port))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            http_policy::guard_owner_host,
-        ))
+        .layer(middleware::from_fn_with_state(state.clone(), guard_writes))
+        .layer(cors)
+        .layer(middleware::from_fn_with_state(state.clone(), guard_owner_host))
         .layer(axum::extract::DefaultBodyLimit::max(12 * 1024 * 1024))
         .with_state(state)
 }
@@ -87,4 +391,172 @@ async fn api_not_found(OriginalUri(uri): OriginalUri) -> Response {
         })),
     )
         .into_response()
+}
+
+/// HTML is served without a long-lived cache so a rebuilt UI is picked up
+/// immediately instead of showing an old bundle after a restart.
+async fn no_stale_ui(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    response
+}
+
+/// While maintenance mode is on, only reads and `/api/system/*` mutations are
+/// allowed. Restore cannot race with normal writes.
+async fn maintenance_guard(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    // A failed rollback or a crash during restore leaves a durable marker.
+    // Do not serve potentially mismatched database/key state until restart
+    // recovery has settled that marker before Store and Vault are opened.
+    if request.uri().path().starts_with("/api/")
+        && crate::engine::restore_transaction::pending(&state.config.data_dir)
+    {
+        return (StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error":"backup restore recovery pending; restart required"}))
+        ).into_response();
+    }
+    if !state.maintenance_mode() {
+        return next.run(request).await;
+    }
+    if request.method() == Method::GET || request.uri().path().starts_with("/api/system/") {
+        return next.run(request).await;
+    }
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({
+            "error": "유지보수 모드입니다. 복구가 끝난 뒤 다시 시도하세요.",
+            "maintenance": true
+        })),
+    )
+        .into_response()
+}
+
+/// Worker-only ingress has its own mandatory per-device or legacy secret.
+/// It must not require the separate owner admin credential.
+fn worker_ingress(path:&str)->bool{
+    path=="/api/remote/claim"||(path.starts_with("/api/remote/jobs/")
+        &&(path.ends_with("/heartbeat")||path.ends_with("/finish")
+            ||path.ends_with("/artifact/upload")))
+}
+/// Browser DNS rebinding and forwarded Host spoofing must not make owner
+/// GET endpoints readable. The listener binds loopback; remote Worker ingress
+/// has its own credential, while remote owner control always needs admin auth.
+fn is_local_owner_host(host: &str, port: u16) -> bool {
+    let normalized=host.to_ascii_lowercase();
+    normalized==format!("localhost:{port}")
+        || normalized==format!("127.0.0.1:{port}")
+}
+async fn guard_owner_host(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    let path=request.uri().path();
+    // Remote coordinator endpoints are handled by their dedicated admin token
+    // guard; device ingress is authenticated by per-device credentials.
+    if path.starts_with("/api/remote/") {
+        return next.run(request).await;
+    }
+    let host=request.headers().get(header::HOST)
+        .and_then(|value|value.to_str().ok());
+    let local=host.is_some_and(|host|is_local_owner_host(host,state.config.port));
+    // In-process Router::oneshot unit tests omit the Host header entirely.
+    // Network binaries are compiled without cfg(test) and reject that case.
+    let internal_test_request=cfg!(test) && host.is_none();
+    if local || internal_test_request {
+        return next.run(request).await;
+    }
+    // Explicitly authenticated reverse-proxied owner control is permitted.
+    // Merely choosing a different Host or supplying an Origin cannot grant it.
+    let configured=std::env::var("DOMINION_ADMIN_TOKEN").unwrap_or_default();
+    let presented=request.headers().get("x-dominion-token")
+        .and_then(|value|value.to_str().ok()).unwrap_or("");
+    if !configured.trim().is_empty() && presented==configured {
+        return next.run(request).await;
+    }
+    (StatusCode::FORBIDDEN,
+        Json(json!({"error":"untrusted Host for local owner API"}))
+    ).into_response()
+}
+
+/// Rejects cross-origin writes so a random website cannot drive the local
+/// computer-control API. Owner-controlled distributed endpoints require an
+/// explicit admin secret whenever exposed, regardless of the local default.
+async fn guard_writes(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    let is_worker=worker_ingress(request.uri().path());
+    let is_remote_owner=request.uri().path().starts_with("/api/remote/")&&!is_worker;
+    let configured=std::env::var("DOMINION_ADMIN_TOKEN").unwrap_or_default();
+    if is_remote_owner{
+        if configured.trim().is_empty(){
+            return (StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error":"Remote coordinator requires DOMINION_ADMIN_TOKEN"}))
+            ).into_response();
+        }
+        let presented=request.headers().get("x-dominion-token")
+            .and_then(|v|v.to_str().ok()).unwrap_or("");
+        if presented!=configured{
+            return (StatusCode::UNAUTHORIZED,
+                Json(json!({"error":"remote owner admin token required"}))).into_response();
+        }
+    }
+    let method = request.method().clone();
+    if !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) {
+        let port = state.config.port;
+        if let Some(origin) = request
+            .headers()
+            .get(header::ORIGIN)
+            .and_then(|value| value.to_str().ok())
+        {
+            let allowed = origin == format!("http://127.0.0.1:{port}")
+                || origin == format!("http://localhost:{port}");
+            if !allowed {
+                return (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({ "error": "cross-origin write blocked" })),
+                )
+                    .into_response();
+            }
+        }
+        if !is_worker&&!configured.trim().is_empty(){
+                let token=configured;
+                let provided = request
+                    .headers()
+                    .get("x-dominion-token")
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or("");
+                if provided != token {
+                    return (
+                        StatusCode::UNAUTHORIZED,
+                        Json(json!({ "error": "admin token required" })),
+                    )
+                        .into_response();
+                }
+        }
+    }
+    next.run(request).await
+}
+
+#[cfg(test)]
+mod remote_worker_route_tests{
+    use super::*;
+    #[test]
+    fn only_loopback_host_and_exact_listener_port_are_local_owner_authority(){
+        assert!(is_local_owner_host("127.0.0.1:4317",4317));
+        assert!(is_local_owner_host("LOCALHOST:4317",4317));
+        for rejected in ["evil.example:4317","localhost.evil:4317",
+            "127.0.0.1:9999","localhost:4318","127.0.0.1",
+            "[::1]:4317","127.0.0.1:4317.evil"] {
+            assert!(!is_local_owner_host(rejected,4317),"{rejected}");
+        }
+    }
+    #[test]
+    fn remote_machine_write_paths_never_bypass_owner_admin_policy(){
+        assert!(worker_ingress("/api/remote/claim"));
+        assert!(worker_ingress("/api/remote/jobs/remote:123/heartbeat"));
+        assert!(worker_ingress("/api/remote/jobs/remote:123/finish"));
+        assert!(worker_ingress("/api/remote/jobs/remote:123/artifact/upload"));
+        assert!(!worker_ingress("/api/remote/jobs/remote:123/artifact/review"));
+        for path in ["/api/remote/workers","/api/remote/workers/a/rotate",
+            "/api/remote/workers/a/state","/api/remote/jobs","/api/remote/reconcile",
+            "/api/remote/jobs/a/review","/api/remote/jobs/a/cancel"]{
+            assert!(!worker_ingress(path),"{path}");
+        }
+    }
 }

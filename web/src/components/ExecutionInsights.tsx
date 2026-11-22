@@ -86,12 +86,12 @@ export function ExecutionInsights({executionId,compact=false}:{executionId:strin
  return <div className={compact?'mt-1':'mt-3'}>
   <button type="button" aria-expanded={open}
    onClick={()=>setOpen(v=>!v)}
-   className="inline-flex min-h-7 items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium text-muted hover:bg-[#F3EEE5] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#A36A4A]">
+   className="inline-flex min-h-7 items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium text-[#7C7469] hover:bg-[#F3EEE5] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#A36A4A]">
    <Activity size={13}/>
    {en?'Execution & token details':'실행·토큰 상세'}
    {open?<ChevronDown size={13}/>:<ChevronRight size={13}/>}
   </button>
-  {open&&<div className="mt-2 min-w-0 rounded-xl border border-divider bg-[#FCFAF6] p-3 text-[11px] text-[#5C544A]">
+  {open&&<div className="mt-2 min-w-0 rounded-xl border border-[#E7E0D5] bg-[#FCFAF6] p-3 text-[11px] text-[#5C544A]">
    {remote.loading?<p role="status" className="flex items-center gap-2"><LoaderCircle className="animate-spin" size={13}/>{en?'Loading execution…':'실행 기록을 불러오는 중…'}</p>:
    remote.error?<div role="alert"><p className="break-words text-rose-700">{remote.error}</p>
      <button type="button" className="mt-2 underline" onClick={()=>void remote.reload()}>{en?'Retry':'다시 시도'}</button></div>:
@@ -114,7 +114,7 @@ export function ExecutionInsights({executionId,compact=false}:{executionId:strin
     <div className="mt-3 rounded-lg border border-[#EFE9DF] bg-white p-3">
      <div className="flex flex-wrap items-center justify-between gap-2">
       <strong className="text-[11px] text-[#3A342D]">{en?'Model token accounting':'모델 토큰 정산'}</strong>
-      <span className={'rounded-md px-2 py-0.5 text-[10px] '+(exactAggregate?'bg-emerald-50 text-emerald-800':'bg-[#F3EEE5] text-muted')}>
+      <span className={'rounded-md px-2 py-0.5 text-[10px] '+(exactAggregate?'bg-emerald-50 text-emerald-800':'bg-[#F3EEE5] text-[#7C7469]')}>
        {exactAggregate?(en?'Provider measured':'전부 공급자 실측'):estimatedCalls>0?(en?'Includes estimates':'추정값 포함'):(en?'Measurement unavailable':'실측 여부 미상')}
       </span>
      </div>
@@ -148,7 +148,7 @@ export function ExecutionInsights({executionId,compact=false}:{executionId:strin
       ?'Breakdown values are pre-send estimates. Per-call values use provider reports when available; cache misses are never inferred from missing data.'
       :'구성별 숫자는 전송 전 추정치입니다. 호출별 수치는 가능한 경우 공급자 실측값을 사용하며, 캐시 정보가 없으면 0으로 표시하지 않습니다.'}</p>
     {ctx?.requiredOverBudget&&<p className="mt-2 text-[10px] text-amber-800">{en?'Pre-send compiler estimated a capacity overflow; the provider wire is checked separately.':'컨텍스트 컴파일 단계에서 한도 초과가 추정됐습니다. 실제 전송 요청은 별도로 검사합니다.'}</p>}
-    {calls.length>0&&<div className="mt-3 border-t border-divider pt-2">
+    {calls.length>0&&<div className="mt-3 border-t border-[#E7E0D5] pt-2">
      <strong>{en?'Model call ledger':'모델 호출별 사용량'}</strong>
      <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">
       {calls.map((call,index)=>{

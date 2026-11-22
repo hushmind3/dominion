@@ -134,7 +134,7 @@ export function SystemPromptPanel(){
    <div className="grid min-w-0 gap-5">
     <Panel className="min-w-0 p-5">
      <Subheading title={tr('전체 시스템 프롬프트','Full system prompt',en)}/>
-     <p className="mb-3 text-xs leading-5 text-muted">
+     <p className="mb-3 text-xs leading-5 text-[#7C7469]">
       {tr('매번 모델로 전송하는 실제 지침입니다. 텍스트를 직접 수정하거나 비워서 저장하면 다음 일반 채팅부터 적용됩니다. 실행 권한과 도구 제한은 Rust가 별도로 관리합니다.',
       'Edit or clear the real system text sent to the model each private-chat turn. Rust separately enforces permissions and tool limits.',en)}
      </p>
@@ -179,7 +179,7 @@ export function SystemPromptPanel(){
       </Button>
      </div>
      <Notice message={previewError||loadError||agents.error||sessions.error}/>
-     {previewLoading&&<p className="mt-3 text-xs text-muted">{tr('프롬프트를 불러오는 중…','Loading prompt…',en)}</p>}
+     {previewLoading&&<p className="mt-3 text-xs text-[#7C7469]">{tr('프롬프트를 불러오는 중…','Loading prompt…',en)}</p>}
      {preview&&(
       <div className="mt-4">
        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -194,7 +194,7 @@ export function SystemPromptPanel(){
         value={fullDraft} disabled={busy}
         aria-label={tr('전체 시스템 프롬프트 직접 편집','Edit full system prompt',en)}
         onChange={e=>{setFullDraft(e.target.value);setFullDirty(true);setFullNotice('')}}/>
-       <p className="mt-2 text-xs text-muted">
+       <p className="mt-2 text-xs text-[#7C7469]">
         {tr('저장된 내용이 없으면 자동 생성 지침을 사용합니다. 빈 텍스트로 저장하면 기본 문구가 사라집니다.',
          'Without an override the compiler generates instructions. Saving empty text removes the default text.',en)}
        </p>
@@ -215,21 +215,21 @@ export function SystemPromptPanel(){
        </div>
        {fullNotice&&<p role="status" className="mt-3 text-xs text-emerald-700">{fullNotice}</p>}
        {preview.effectiveOverrideScope==='global'&&agentId!==''&&!preview.ownOverrideActive&&(
-        <p className="mt-2 text-xs text-muted">{tr('공통 프롬프트가 현재 적용 중입니다. 여기서 저장하면 이 에이전트에만 별도 적용됩니다.',
+        <p className="mt-2 text-xs text-[#7C7469]">{tr('공통 프롬프트가 현재 적용 중입니다. 여기서 저장하면 이 에이전트에만 별도 적용됩니다.',
          'Shared override is active. Saving here creates an agent-specific override.',en)}</p>
        )}
-       <details className="mt-4 rounded-xl border border-divider bg-surface p-3">
+       <details className="mt-4 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-3">
         <summary className="flex cursor-pointer items-center gap-2 text-sm font-semibold">
          <BookText size={14}/>{tr('별도 기억·학습 문맥','Separate retrieved memory and context',en)}
         </summary>
-        <p className="my-2 text-xs text-muted">
+        <p className="my-2 text-xs text-[#7C7469]">
          {preview.contextChars.toLocaleString()}{tr('자',' characters',en)} · {tr('약','~',en)} {preview.contextTokensEstimated.toLocaleString()} tokens
         </p>
         <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-white p-3 font-mono text-xs">
          {preview.dynamicContext||tr('추가 문맥 없음','No retrieved context',en)}
         </pre>
        </details>
-       <p className="mt-2 text-xs leading-5 text-muted">
+       <p className="mt-2 text-xs leading-5 text-[#7C7469]">
         {tr('전체 프롬프트 직접 저장은 기본 정체성·에이전트 지침·공통 지침을 대체합니다. 실행 중 추가되는 도구 스키마·대화 기록은 그대로 분리됩니다. 그룹 대화는 그룹 메뉴에서 관리합니다.',
          'A full override replaces built-in identity, persona and owner instructions in private chat. Tool schemas and conversation history remain separate. Rooms are configured independently.',en)}
        </p>
@@ -266,7 +266,7 @@ export function SystemPromptPanel(){
        onClick={()=>void savePersona()}><Save size={14}/>{tr('에이전트 지침 저장','Save agent',en)}</Button>
      </div>
      {personaNotice&&<p role="status" className="mt-2 text-xs text-emerald-700">{personaNotice}</p>}
-     <p className="mt-3 text-xs leading-5 text-muted">
+     <p className="mt-3 text-xs leading-5 text-[#7C7469]">
       {tr('전체 시스템 프롬프트를 직접 저장한 경우에는 이 지침이 자동으로 덧붙지 않습니다.',
        'An active full-prompt override replaces this generated persona section.',en)}
      </p>

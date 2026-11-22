@@ -1,4 +1,3 @@
-import {Notice} from './UI'
 import {useEffect,useState} from 'react'
 import {createPortal} from 'react-dom'
 import {Check,ChevronDown,ShieldAlert,ShieldCheck} from 'lucide-react'
@@ -60,7 +59,7 @@ export function ExecutionPermissions({open,onOpenChange,onError,onChanged,active
   </Button>
   {open&&permissionPanel.position&&createPortal(
    <div ref={permissionPanel.panel} style={permissionPanel.position} role="dialog" aria-label={t('chat.permissions')}
-    className="z-[80] max-w-full overflow-y-auto overscroll-contain rounded-2xl border border-divider bg-surface p-3 shadow-xl">
+    className="z-[80] max-w-full overflow-y-auto overscroll-contain rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-3 shadow-xl">
     <div className="border-b border-[#EAE2D6] px-2 pb-3">
      <h3 className="text-[15px] font-bold text-[#3A342D]">{t('chat.permissions')}</h3>
      <p className="mt-1 text-[12px] leading-5 text-[#81766A]">{t('chat.permissionsDesc')}</p>
@@ -70,7 +69,7 @@ export function ExecutionPermissions({open,onOpenChange,onError,onChanged,active
       <Button type="button" variant="ghost" key={mode} disabled={permissionBusy}
        aria-pressed={permissionMode===mode} onClick={()=>void changePermission(mode)}
        className={'flex w-full !min-h-16 items-start gap-3 !justify-start rounded-xl !border-0 px-3 py-3 text-left hover:bg-[#F3EEE5] focus-visible:outline-2 focus-visible:outline-offset-2 '+(permissionMode===mode?'!bg-[#F8F1E8]':'')}>
-       <span className={'mt-1 grid size-5 shrink-0 place-items-center rounded-full border '+(permissionMode===mode?'border-brand bg-brand text-white':'border-[#D8CFC2]')}>
+       <span className={'mt-1 grid size-5 shrink-0 place-items-center rounded-full border '+(permissionMode===mode?'border-[#C96442] bg-[#C96442] text-white':'border-[#D8CFC2]')}>
         {permissionMode===mode&&<Check size={13}/>}
        </span>
        <span className="min-w-0 flex-1">
@@ -87,16 +86,6 @@ export function ExecutionPermissions({open,onOpenChange,onError,onChanged,active
       </Button>
      )}
     </div>
-   </div>,permissionPanel.trigger.current?.closest('[role="dialog"]')||document.body)}
- </div>
-}
-
-/** Settings owns the popover and reports errors beside the control. */
-export function ExecutionPermissionsSetting() {
- const [open, setOpen] = useState(false)
- const [error, setError] = useState('')
- return <div>
-  <ExecutionPermissions open={open} onOpenChange={setOpen} onError={setError}/>
-  <Notice message={error}/>
+   </div>,document.body)}
  </div>
 }

@@ -16,7 +16,7 @@ type PatchResponse={manifest:Manifest;patch:string}
 const statusTone=(status:string)=>status==='needs_review'?'border-amber-200 bg-amber-50 text-amber-800':
  status==='owner_accepted'?'border-emerald-200 bg-emerald-50 text-emerald-800':
  status==='owner_rejected'||status==='cancelled'?'border-rose-200 bg-rose-50 text-rose-700':
- 'border-divider bg-[#FAF7F1] text-[#6F675D]'
+ 'border-[#E7E0D5] bg-[#FAF7F1] text-[#6F675D]'
 const stamped=(value?:string|null)=>value?new Date(value).toLocaleString():'—'
 function PatchReview({jobId,jobStatus,onChanged}:{jobId:string;jobStatus:string;onChanged:()=>void}){
  const en=useLocale()==='en'
@@ -48,17 +48,17 @@ function PatchReview({jobId,jobStatus,onChanged}:{jobId:string;jobStatus:string;
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
- return <div className="mt-2 rounded-lg border border-divider bg-[#FCFAF6]">
+ return <div className="mt-2 rounded-lg border border-[#E7E0D5] bg-[#FCFAF6]">
   <button type="button" aria-expanded={open} onClick={()=>{setOpen(v=>!v);if(!open&&!patch)void inspect()}}
    className="flex w-full items-center justify-between gap-2 px-3 py-2 text-[11px] font-semibold text-[#5C544A]">
    <span className="flex items-center gap-1.5"><FileDiff size={13}/>{en?'Remote patch evidence':'원격 패치 검토'}</span>
    {open?<ChevronDown size={13}/>:<ChevronRight size={13}/>}
   </button>
-  {open&&<div className="border-t border-divider p-3">
+  {open&&<div className="border-t border-[#E7E0D5] p-3">
    {loading&&<p role="status" className="text-[11px]">{en?'Loading patch…':'패치 불러오는 중…'}</p>}
    {error&&<p role="alert" className="mb-2 break-words text-[11px] text-rose-700">{error}</p>}
    {!loading&&patch&&<>
-    <div className="mb-2 flex flex-wrap gap-2 text-[10px] text-muted">
+    <div className="mb-2 flex flex-wrap gap-2 text-[10px] text-[#7C7469]">
      <span>{patch.manifest.status}</span>
      <span>{patch.manifest.patchBytes?.toLocaleString()??'—'} bytes</span>
      <span>SHA256: {patch.manifest.patchSha256||'—'}</span>
@@ -156,15 +156,15 @@ export function RemoteWorkPanel(){
    </span>
    {open?<ChevronDown size={16}/>:<ChevronRight size={16}/>}
   </button>
-  {open&&<div className="space-y-4 border-t border-divider p-4">
+  {open&&<div className="space-y-4 border-t border-[#E7E0D5] p-4">
    <div className="flex flex-wrap items-center justify-between gap-2">
     <p className="text-[11px] text-[#8A8176]">{en?'Owner-only access. Workers cannot grant themselves native verification.':'소유자 권한이 필요합니다. 워커 보고가 네이티브 검증을 대신하지 않습니다.'}</p>
     <button type="button" onClick={refreshAll} disabled={busy}
-     className="inline-flex items-center gap-1 rounded-lg border border-divider px-2.5 py-1.5 text-[11px]"><RefreshCw size={13}/>{en?'Refresh':'새로고침'}</button>
+     className="inline-flex items-center gap-1 rounded-lg border border-[#E7E0D5] px-2.5 py-1.5 text-[11px]"><RefreshCw size={13}/>{en?'Refresh':'새로고침'}</button>
    </div>
    <details className="rounded-xl border border-[#EFE9DF] bg-[#FCFAF6] p-3">
     <summary className="cursor-pointer text-[11px] font-semibold text-[#5C544A]">{en?'How to connect a remote machine':'원격 장치 연결 방법'}</summary>
-    <p className="mt-2 text-[11px] leading-5 text-muted">{en
+    <p className="mt-2 text-[11px] leading-5 text-[#7C7469]">{en
      ?'Set DOMINION_ADMIN_TOKEN on the coordinator and enter the same owner token in Settings → Advanced → Admin token. Register a worker here, then configure its one-time worker credential only on that remote machine. Use HTTPS for a network coordinator.'
      :'코디네이터에 DOMINION_ADMIN_TOKEN을 설정하고, 기존 설정 → 고급 설정 → 관리자 토큰에 같은 값을 입력하세요. 여기서 워커를 등록한 다음, 1회 발급된 워커 키는 원격 장치에만 설정합니다. 외부 네트워크 연결은 HTTPS를 사용합니다.'}</p>
     <pre className="mt-2 overflow-x-auto rounded-lg bg-white p-3 text-[10px] leading-5">{'export DOMINION_REMOTE_COORDINATOR="https://your-coordinator.example"\nexport DOMINION_REMOTE_WORKER_ID="registered-worker-id"\nexport DOMINION_REMOTE_WORKER_TOKEN="the-one-time-worker-token"\nexport DOMINION_WORKER_LOCAL_URL="http://127.0.0.1:4317"\ncargo run --locked --bin dominion-worker'}</pre>
@@ -185,7 +185,7 @@ export function RemoteWorkPanel(){
       className="rounded-lg border border-amber-300 px-3 py-2 text-[11px]">{en?'Dismiss':'확인·닫기'}</button>
     </div>
    </div>}
-   <section className="rounded-xl border border-divider bg-white p-3">
+   <section className="rounded-xl border border-[#E7E0D5] bg-white p-3">
     <button type="button" className="flex w-full justify-between text-left text-[12px] font-bold" aria-expanded={showWorkers} onClick={()=>setShowWorkers(v=>!v)}>
      {en?'Registered workers':'등록된 워커'} ({workers.value.length}) {showWorkers?'▴':'▾'}
     </button>
@@ -193,10 +193,10 @@ export function RemoteWorkPanel(){
      <form onSubmit={event=>{event.preventDefault();register()}} className="flex flex-wrap gap-2">
       <input value={workerName} maxLength={96} onChange={e=>setWorkerName(e.target.value)}
        placeholder={en?'Worker ID (unique)':'워커 ID (고유)'} aria-label={en?'Worker ID':'워커 ID'}
-       className="min-w-40 flex-1 rounded-lg border border-divider p-2 text-[11px]"/>
+       className="min-w-40 flex-1 rounded-lg border border-[#E7E0D5] p-2 text-[11px]"/>
       <input value={workerCaps} onChange={e=>setWorkerCaps(e.target.value)}
        placeholder="sdk,gpu" aria-label={en?'Worker capabilities':'워커 기능 태그'}
-       className="min-w-28 flex-1 rounded-lg border border-divider p-2 text-[11px]"/>
+       className="min-w-28 flex-1 rounded-lg border border-[#E7E0D5] p-2 text-[11px]"/>
       <button type="submit" disabled={!workerName.trim()||busy}
        className="rounded-lg bg-[#A4583E] px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-50">{en?'Register':'워커 등록'}</button>
      </form>
@@ -208,49 +208,49 @@ export function RemoteWorkPanel(){
        <button type="button" disabled={busy} onClick={()=>void act(
         ()=>post('/api/remote/workers/'+encodeURIComponent(worker.id)+'/state',{enabled:worker.status!=='enabled'}),
         en?'Worker state updated.':'워커 상태를 변경했습니다.')}
-        className="rounded-lg border border-divider px-2 py-1.5 disabled:opacity-50">{worker.status==='enabled'?(en?'Disable':'비활성화'):(en?'Enable':'활성화')}</button>
+        className="rounded-lg border border-[#E7E0D5] px-2 py-1.5 disabled:opacity-50">{worker.status==='enabled'?(en?'Disable':'비활성화'):(en?'Enable':'활성화')}</button>
        <button type="button" disabled={busy} onClick={()=>rotate(worker)}
-        className="rounded-lg border border-divider px-2 py-1.5 disabled:opacity-50">{en?'Rotate key':'키 재발급'}</button>
+        className="rounded-lg border border-[#E7E0D5] px-2 py-1.5 disabled:opacity-50">{en?'Rotate key':'키 재발급'}</button>
       </div>
      </div>)}
      {!workers.value.length&&!workers.loading&&<p className="text-[11px] text-[#8A8176]">{en?'No workers registered.':'등록된 워커가 없습니다.'}</p>}
     </div>}
    </section>
-   <section className="rounded-xl border border-divider bg-white p-3">
+   <section className="rounded-xl border border-[#E7E0D5] bg-white p-3">
     <button type="button" className="flex w-full justify-between text-left text-[12px] font-bold" aria-expanded={showCreate} onClick={()=>setShowCreate(v=>!v)}>
      {en?'Submit remote task':'원격 작업 제출'} {showCreate?'▴':'▾'}
     </button>
     {showCreate&&<form onSubmit={e=>{e.preventDefault();submit()}} className="mt-3 grid gap-2">
      <textarea rows={3} maxLength={16000} value={instruction} onChange={e=>setInstruction(e.target.value)}
       aria-label={en?'Remote instruction':'원격 작업 지시'} placeholder={en?'Describe a read-only remote task…':'원격 워커에 맡길 작업을 입력하세요.'}
-      className="w-full rounded-lg border border-divider p-3 text-[11px]"/>
+      className="w-full rounded-lg border border-[#E7E0D5] p-3 text-[11px]"/>
      <div className="grid gap-2 sm:grid-cols-2">
       <label className="text-[11px]">{en?'Target worker':'대상 워커'}
-       <select value={target} onChange={e=>setTarget(e.target.value)} className="mt-1 block w-full rounded-lg border border-divider p-2">
+       <select value={target} onChange={e=>setTarget(e.target.value)} className="mt-1 block w-full rounded-lg border border-[#E7E0D5] p-2">
         <option value="">{en?'Any eligible worker':'조건에 맞는 워커 자동 선택'}</option>
         {workers.value.filter(w=>w.status==='enabled').map(w=><option key={w.id} value={w.id}>{w.id}</option>)}
        </select>
       </label>
       <label className="text-[11px]">{en?'Capability tags (comma-separated)':'필요 기능 태그 (쉼표로 구분)'}
-       <input value={requiredCaps} onChange={e=>setRequiredCaps(e.target.value)} placeholder="sdk,gpu" className="mt-1 block w-full rounded-lg border border-divider p-2"/>
+       <input value={requiredCaps} onChange={e=>setRequiredCaps(e.target.value)} placeholder="sdk,gpu" className="mt-1 block w-full rounded-lg border border-[#E7E0D5] p-2"/>
       </label>
      </div>
      <input value={verifyCommand} maxLength={2048} onChange={e=>setVerifyCommand(e.target.value)}
       placeholder={en?'Optional verification command':'선택: 검증 명령어'} aria-label={en?'Verification command':'검증 명령어'}
-      className="rounded-lg border border-divider p-2 text-[11px]"/>
+      className="rounded-lg border border-[#E7E0D5] p-2 text-[11px]"/>
      <button type="submit" disabled={busy||!instruction.trim()}
       className="justify-self-start rounded-lg bg-[#A4583E] px-4 py-2 text-[11px] font-semibold text-white disabled:opacity-50">{en?'Queue remote task':'작업 예약'}</button>
     </form>}
    </section>
-   <section className="rounded-xl border border-divider bg-white p-3">
+   <section className="rounded-xl border border-[#E7E0D5] bg-white p-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
      <strong className="text-[12px]">{en?'Remote job ledger':'원격 작업 기록'} ({jobs.value.length})</strong>
      <button type="button" disabled={busy} onClick={()=>void act(()=>post('/api/remote/reconcile',{}),en?'Expired leases reconciled.':'만료된 임대를 검토 상태로 반영했습니다.')}
-      className="rounded-lg border border-divider px-2 py-1.5 text-[10px] disabled:opacity-50">{en?'Check expired leases':'만료 임대 확인'}</button>
+      className="rounded-lg border border-[#E7E0D5] px-2 py-1.5 text-[10px] disabled:opacity-50">{en?'Check expired leases':'만료 임대 확인'}</button>
     </div>
     <div className="mt-2 grid max-h-44 gap-1 overflow-y-auto">
      {jobs.value.map(job=><button type="button" key={job.id} aria-pressed={selectedJob?.id===job.id} onClick={()=>setSelected(job.id)}
-      className={'flex min-w-0 justify-between gap-2 rounded-lg border px-2.5 py-2 text-left text-[11px] '+(selectedJob?.id===job.id?'border-[#B78C70] bg-[#F7E8E1]':'border-divider bg-white hover:bg-[#FAF7F1]')}>
+      className={'flex min-w-0 justify-between gap-2 rounded-lg border px-2.5 py-2 text-left text-[11px] '+(selectedJob?.id===job.id?'border-[#B78C70] bg-[#F7E8E1]':'border-[#E7E0D5] bg-white hover:bg-[#FAF7F1]')}>
       <span className="min-w-0 flex-1 truncate">{job.instruction||job.id}</span>
       <span className="shrink-0 text-[10px]">{job.status}</span>
      </button>)}
@@ -264,7 +264,7 @@ export function RemoteWorkPanel(){
      <p className="mt-2 whitespace-pre-wrap break-words text-[12px]">{selectedJob.instruction}</p>
      <div className="mt-2 text-[10px] text-[#8A8176]">{en?'Worker':'워커'}: {selectedJob.workerId||selectedJob.targetWorkerId||'—'} · {en?'Created':'생성'}: {stamped(selectedJob.createdAt)}
       {selectedJob.reviewReason&&<p className="mt-1 text-amber-800">{selectedJob.reviewReason}</p>}</div>
-     {selectedJob.workerReport!=null&&<details className="mt-2 rounded-lg border border-divider p-2">
+     {selectedJob.workerReport!=null&&<details className="mt-2 rounded-lg border border-[#E7E0D5] p-2">
       <summary className="cursor-pointer text-[11px] font-semibold">{en?'Worker-reported evidence (not verified)':'워커 보고 증거 (미검증)'}</summary>
       <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all text-[10px]">{JSON.stringify(selectedJob.workerReport,null,2)}</pre>
      </details>}
@@ -276,7 +276,7 @@ export function RemoteWorkPanel(){
         className="rounded-lg border border-rose-200 px-3 py-1.5 text-[11px] text-rose-700 disabled:opacity-50">{en?'Reject report':'보고서 거절'}</button>
       </>}
       {['queued','leased','needs_review'].includes(selectedJob.status)&&<button type="button" disabled={busy} onClick={()=>cancel(selectedJob)}
-       className="rounded-lg border border-divider px-3 py-1.5 text-[11px] disabled:opacity-50">{en?'Cancel':'작업 중단'}</button>}
+       className="rounded-lg border border-[#E7E0D5] px-3 py-1.5 text-[11px] disabled:opacity-50">{en?'Cancel':'작업 중단'}</button>}
      </div>
      {selectedJob.artifactId&&<PatchReview key={selectedJob.id} jobId={selectedJob.id} jobStatus={selectedJob.status} onChanged={refreshAll}/>}
     </div>}

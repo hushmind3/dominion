@@ -29,7 +29,7 @@ export function CliAuthProgress({session,onInput,onCancel}:Props){
    {active&&<Button size="sm" variant="ghost" onClick={()=>void onCancel()}><X size={13}/> 취소</Button>}
   </div>
   {session.url&&<a href={session.url} target="_blank" rel="noopener noreferrer"
-    className="mt-3 inline-flex min-h-9 items-center gap-2 rounded-lg bg-brand px-3 text-[12px] font-semibold text-white hover:bg-brand-hover"><LogIn size={14}/> 공식 로그인 페이지 열기</a>}
+    className="mt-3 inline-flex min-h-9 items-center gap-2 rounded-lg bg-[#C96442] px-3 text-[12px] font-semibold text-white hover:bg-[#A94E30]"><LogIn size={14}/> 공식 로그인 페이지 열기</a>}
   {active&&<div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#E2E2EE] pt-3">
    <Button size="sm" variant="secondary" onClick={()=>void onInput('enter')}><RotateCcw size={13}/> 선택 / 계속</Button>
    <Button size="sm" variant="ghost" onClick={()=>void onInput('down')}>다음 항목</Button>
