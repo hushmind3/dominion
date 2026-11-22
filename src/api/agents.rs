@@ -1,10 +1,38 @@
 use crate::state::AppState;
-use axum::{extract::{Path,State},http::StatusCode,response::{IntoResponse,Response},Json};
+use axum::{extract::{Path,Query,State},http::StatusCode,response::{IntoResponse,Response},Json};
+use std::collections::HashMap;
 use serde_json::{json,Value};
 use super::response::error;
 
-pub async fn list_agents(State(state): State<AppState>) -> Json<Value> {
-    Json(json!(state.store.all("agent")))
+/// `?summary=1` keeps list fields and omits the persona prompt. The home
+/// screen only needs names and counts, and a full agent catalog is ~100 KB.
+pub async fn list_agents(
+    State(state): State<AppState>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Json<Value> {
+    let agents = state.store.all("agent");
+    let summary = query
+        .get("summary")
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes"));
+    if !summary {
+        return Json(json!(agents));
+    }
+    Json(json!(agents
+        .into_iter()
+        .map(|agent| json!({
+            "id": agent["id"],
+            "name": agent["name"],
+            "description": agent["description"],
+            "providerId": agent["providerId"],
+            "model": agent["model"],
+            "avatarUrl": agent["avatarUrl"],
+            "color": agent["color"],
+            "role": agent["role"],
+            "aliases": agent["aliases"],
+            "reasoningEffort": agent["reasoningEffort"],
+            "thinking": agent["thinking"],
+        }))
+        .collect::<Vec<_>>()))
 }
 
 pub async fn save_agent(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
@@ -137,4 +165,37 @@ pub async fn synergy(State(state): State<AppState>) -> Json<Value> {
         "sharedMethods": shared_methods,
         "algorithmStats": algorithm_stats.into_iter().take(40).collect::<Vec<_>>(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{config::Config,db::Store,vault::Vault};
+
+    fn state()->(AppState,std::path::PathBuf){
+        let dir=std::env::temp_dir().join(format!("dominion-agents-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=Config{port:0,data_dir:dir.clone(),web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(config.clone(),Store::open(&config.db_path()).unwrap(),Vault::open(&config.key_path()));
+        (state,dir)
+    }
+
+    #[tokio::test]
+    async fn summary_omits_the_persona_prompt_but_keeps_list_fields(){
+        let (state,dir)=state();
+        state.store.put("agent",&json!({
+            "id":"a","name":"A","systemPrompt":"secret persona",
+            "providerId":"p","model":"m"
+        })).unwrap();
+        let Json(rows)=list_agents(
+            State(state.clone()),
+            Query(HashMap::from([("summary".to_string(),"1".to_string())])),
+        ).await;
+        assert_eq!(rows[0]["name"],"A");
+        assert_eq!(rows[0]["model"],"m");
+        assert!(rows[0].get("systemPrompt").is_none());
+        let Json(full)=list_agents(State(state),Query(HashMap::new())).await;
+        assert_eq!(full[0]["systemPrompt"],"secret persona");
+        let _=std::fs::remove_dir_all(dir);
+    }
 }

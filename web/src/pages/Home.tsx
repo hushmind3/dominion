@@ -5,13 +5,13 @@ import {NativeAgentPanel} from '../components/NativeAgentPanel'
 import {useRemote} from '../components/UI'
 import {StatusPill} from '../components/StatusPill'
 import {t,useLocale,formatDateTime,jobKindLabel} from '../i18n'
-import type {Agent,ChatSession,Provider} from '../api'
+import type {ChatSession,Provider} from '../api'
 type Destination='chat'|'models'|'agents'|'rooms'|'connections'|'memory'|'activity'
 export function HomePage({navigate}:{navigate:(page:Destination)=>void}){
  const locale=useLocale()
  const sessions=useRemote<ChatSession[]>('/api/sessions',[])
  const providers=useRemote<Provider[]>('/api/providers',[])
- const agents=useRemote<Agent[]>('/api/agents',[])
+ const agents=useRemote<{id:string}[]>('/api/agents?summary=1',[])
  const jobs=useRemote<any[]>('/api/jobs',[])
  const channels=useRemote<any[]>('/api/channels',[])
  const runtime=useRemote<any>('/api/model-library/runtime',{status:'idle'})
