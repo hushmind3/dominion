@@ -362,6 +362,8 @@ try{
      sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}]}}}
  await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
  await page.getByText('No verified result').waitFor({timeout:8000})
+ await page.getByRole('button',{name:'실행 기록'}).click()
+ assert.equal(await page.getByRole('button',{name:'실행 기록'}).getAttribute('aria-pressed'),'true')
  // Long autonomous jobs retain more than four events. Owners must be able
  // to reopen earlier stages without a new menu or a fake progress timeline.
  sdkRuns[0].checkpoint.events=[
@@ -429,6 +431,8 @@ try{
  assert.equal(await olderToolReceipts.locator('li').count(),50)
  assert.equal(await page.getByRole('button',{name:'더 이전 영수증 불러오기'}).count(),0,
   'All persisted tool receipts must be accessible without exposing inputs')
+ await page.getByRole('button',{name:'검증 · 파일'}).click()
+ assert.equal(await page.getByRole('button',{name:'검증 · 파일'}).getAttribute('aria-pressed'),'true')
  assert.equal(await page.locator('summary').filter({hasText:'실제 결과 검증 · 0/1'}).count(),1,
   'A failed acceptance check must not be shown as a verified result')
  await page.locator('summary').filter({hasText:'파일 검증 스냅샷'}).click()
@@ -473,6 +477,7 @@ try{
     entries:[{path:'summary.md',state:'file',bytes:18,
      sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}]}}}
  await page.evaluate(()=>window.dispatchEvent(new Event('focus')))
+ await page.getByRole('button',{name:'결과 · 제어'}).click()
  await page.getByText('Saved output ready').waitFor({timeout:8000})
  // The terminal run is stable: do not keep polling it in the background.
  // Explicit owner focus still rechecks cross-tab state.
@@ -488,6 +493,7 @@ try{
  await focusRead
  assert.ok(requests.sdkDetailReads>terminalReadBaseline,
   'Explicit focus must still revalidate the terminal receipt')
+ await page.getByRole('button',{name:'검증 · 파일'}).click()
  const evidence=page.locator('summary').filter({hasText:'파일 검증 스냅샷'})
  if(!(await evidence.locator('..').evaluate(el=>el.hasAttribute('open'))))await evidence.click()
  await page.getByRole('button',{name:'검증된 파일 열기'}).click()
