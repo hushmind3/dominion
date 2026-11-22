@@ -16,6 +16,7 @@ import {
   CirclePlus,
   Clock3,
   Edit3,
+  Eye,
   FolderInput,
   LoaderCircle,
   MessageSquare,
@@ -73,6 +74,7 @@ export function AgentsPage() {
   const [showPersonaImport,setShowPersonaImport]=useState(false);
   const [agentSearch,setAgentSearch]=useState('');
   const [agentFilter,setAgentFilter]=useState<'all'|'configured'|'unconfigured'>('all');
+  const [selectedId,setSelectedId]=useState('');
   const [bulk, setBulk] = useState(false),
     [selected, setSelected] = useState<string[]>([]),
     [bulkProvider, setBulkProvider] = useState(""),
@@ -101,6 +103,7 @@ export function AgentsPage() {
    return [agent.name,agent.description,agent.role,providerName,agent.model]
     .some(value=>String(value||'').toLocaleLowerCase().includes(needle));
   });
+  const selectedAgent=visibleAgents.find(agent=>agent.id===selectedId)??visibleAgents[0];
   const editProvider = enabledProviders.find(p => p.id === edit?.providerId);
   const editModels = useProviderModels(edit?.providerId || "");
   const bulkModels = useProviderModels(bulk ? bulkProvider : "");
@@ -201,9 +204,9 @@ export function AgentsPage() {
         ] as const).map(filter=><button key={filter.id} type="button"
          aria-pressed={agentFilter===filter.id} onClick={()=>setAgentFilter(filter.id)}
          className={'min-w-0 rounded-xl border p-3 text-left '+(agentFilter===filter.id?
-          'border-[#BF8B70] bg-[#FBF0E7]':'border-divider bg-white hover:bg-canvas')}>
-         <strong className="block text-[22px] font-bold tabular-nums text-[#283933]">{filter.count}</strong>
-         <span className="block text-[10px] text-[#756D62]">{locale==='en'?filter.english:filter.ko}</span>
+          'border-[var(--color-brand)] bg-[var(--color-brand-soft)]':'border-divider bg-white hover:bg-canvas')}>
+         <strong className="block text-[22px] font-bold tabular-nums text-[var(--color-ink)]">{filter.count}</strong>
+         <span className="block text-[10px] text-[var(--color-muted)]">{locale==='en'?filter.english:filter.ko}</span>
         </button>)}
        </div>
        <label className="flex min-w-0 items-center gap-3 rounded-xl border border-divider bg-white px-4 py-2">
@@ -213,7 +216,7 @@ export function AgentsPage() {
           placeholder={locale==='en'?'Name, role, model, provider':'이름 · 역할 · 모델 · 제공자'}
           className="mt-1 min-h-9 w-full border-none bg-transparent text-[12px] outline-none"/>
         </span>
-        <span className="text-[11px] font-medium tabular-nums text-[#86796C]">{visibleAgents.length}/{agents.value.length}</span>
+        <span className="text-[11px] font-medium tabular-nums text-[var(--color-muted)]">{visibleAgents.length}/{agents.value.length}</span>
        </label>
       </div>
       <div className="mb-5 flex items-center gap-4 rounded-xl border border-divider bg-brand-soft p-5">
@@ -308,7 +311,9 @@ export function AgentsPage() {
           </div>
         </Panel>
       )}
-      <div className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+       <div className="min-w-0">
+        <div className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 2xl:grid-cols-3">
         {visibleAgents.map((a, i) => (
           <Panel className="flex min-w-0 flex-col gap-3 p-5" key={a.id}>
             <div className="flex items-start justify-between gap-3">
@@ -339,6 +344,9 @@ export function AgentsPage() {
                     />
                   </label>
                 )}
+                <Button size="icon" variant="ghost" aria-label={a.name + ' ' + (locale==='en'?'details':'상세')} onClick={() => setSelectedId(a.id)}>
+                  <Eye size={16} />
+                </Button>
                 <Button
                   size="icon"
                   variant="ghost"
@@ -369,7 +377,7 @@ export function AgentsPage() {
               </div>
             </div>
             <h3>{a.name}</h3>
-            {a.role&&<span className="text-[11px] font-semibold text-[#9B8064]">{String(a.role)}</span>}
+            {a.role&&<span className="text-[11px] font-semibold text-[var(--color-muted)]">{String(a.role)}</span>}
             <p className="line-clamp-2" title={a.description || ""}>{a.description || t('agents.noDescription')}</p>
             <div className="my-2 h-px bg-canvas" />
             <div className="mt-auto flex flex-col gap-1 border-t border-divider pt-3 text-xs text-muted">
@@ -383,10 +391,34 @@ export function AgentsPage() {
             </div>
           </Panel>
         ))}
+       </div>
+       {!visibleAgents.length&&!agents.loading&&<div className="rounded-xl border border-dashed border-divider bg-surface p-8 text-center text-[12px] text-muted">
+        {locale==='en'?'No agents match the current filters.':'현재 조건에 맞는 에이전트가 없습니다.'}
+       </div>}
       </div>
-      {!visibleAgents.length&&!agents.loading&&<div className="rounded-xl border border-dashed border-[#DDCEBC] bg-white p-8 text-center text-[12px] text-[#84786B]">
-       {locale==='en'?'No agents match the current filters.':'현재 조건에 맞는 에이전트가 없습니다.'}
-      </div>}
+      {selectedAgent&&<aside className="min-w-0 xl:sticky xl:top-4 xl:self-start">
+       <Panel className="flex min-w-0 flex-col gap-4 p-5">
+        <div className="flex items-start gap-3">
+         <span className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl text-white" style={{background:selectedAgent.color||'var(--color-brand)'}}>
+          {(selectedAgent.avatar||selectedAgent.avatarUrl)?<img src={String(selectedAgent.avatar||selectedAgent.avatarUrl)} alt="" className="size-12 object-cover"/>:<Bot size={24}/>}
+         </span>
+         <div className="min-w-0 flex-1"><h2 className="truncate text-[15px] font-semibold text-ink">{selectedAgent.name}</h2><p className="mt-0.5 text-[11px] text-muted">{selectedAgent.description||t('agents.noDescription')}</p></div>
+        </div>
+        <div className="grid gap-2 rounded-lg bg-canvas p-3 text-[11px]">
+         <div className="flex items-center justify-between gap-3"><span className="text-muted">{t('agents.api')}</span><strong className="min-w-0 truncate text-ink">{providers.value.find(p=>p.id===selectedAgent.providerId)?.name||t('agents.modelInChat')}</strong></div>
+         <div className="flex items-center justify-between gap-3"><span className="text-muted">{locale==='en'?'Model':'모델'}</span><strong className="min-w-0 truncate text-ink">{selectedAgent.model||enabledProviders.find(p=>p.id===selectedAgent.providerId)?.model||t('agents.modelNeeded')}</strong></div>
+        </div>
+        <details className="rounded-lg border border-divider p-3 text-[11px] text-muted">
+         <summary className="cursor-pointer font-semibold text-ink">{locale==='en'?'System prompt':'시스템 프롬프트'}</summary>
+         <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap font-sans text-[10px] leading-5">{selectedAgent.systemPrompt||(locale==='en'?'No prompt':'프롬프트 없음')}</pre>
+        </details>
+        <div className="flex flex-wrap gap-2">
+         <Button size="sm" onClick={()=>{setError('');setEdit({...selectedAgent})}}><Edit3 size={14}/>{t('agents.editShort')}</Button>
+         <a href={'#/chat?agent='+encodeURIComponent(selectedAgent.id)} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-divider bg-surface px-3 py-1.5 text-[12px] font-semibold text-ink hover:bg-canvas">{t('agents.chatWith')}<ArrowRight size={13}/></a>
+        </div>
+       </Panel>
+      </aside>}
+      </div>
       {!edit && <Notice message={error || agents.error || providers.error} />}
       {showPersonaImport&&<PersonaImportDialog agents={agents.value} onClose={()=>setShowPersonaImport(false)} onImported={async(count)=>{await agents.reload();refresh();setBulkNotice(t('agents.personaImported', { count }))}}/>}
       {edit && (
