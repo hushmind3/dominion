@@ -22,6 +22,19 @@ export function WorkspaceSidebar({page,open,collapsed,online,running,pending,onN
     {settingsOnly&&onToggleNav&&<Button variant="ghost" size="icon" aria-label={navOpen?t('shell.hideMenu'):t('shell.showMenu')} aria-expanded={navOpen} onClick={onToggleNav}><Menu size={18}/></Button>}
    </div>
    {!settingsOnly&&<div className="px-3 pt-5"><Button variant="bare" type="button" onClick={onNewChat} className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-[#C96442] text-[12px] font-semibold text-white shadow-[0_6px_16px_rgba(201,100,66,.22)] transition-colors hover:bg-[#A94E30]"><Plus size={16}/> {t('shell.newChat')}</Button></div>}
+   {settingsOnly&&<div className="workspace-settings-mobile">
+    <label className="flex min-w-0 flex-1 items-center gap-2 text-xs font-semibold">
+     <span className="shrink-0 text-[#6F675D]">{t('shell.mainNav')}</span>
+     <select aria-label={t('shell.mainNav')} value={items.some(item=>item.id===page)?page:'connections'}
+      onChange={event=>onNavigate(event.target.value as PageId)}
+      className="min-h-10 min-w-0 flex-1 rounded-lg border border-[#E0D8CC] bg-white px-3 text-[13px] text-[#3A342D]">
+      {navigation.map(group=><optgroup key={group.title} label={t(group.title)}>
+       {group.items.filter(item=>!['chat','rooms'].includes(item.id)).map(item=>
+        <option value={item.id} key={item.id}>{t(item.label)}</option>)}
+      </optgroup>)}
+     </select>
+    </label>
+   </div>}
    <nav className="mt-4 min-h-0 flex-1 overflow-y-auto px-2.5 pb-4">
     {navigation.map(group=><section key={group.title} className="mt-5">
      <h2 className="mb-2 px-3 text-[11px] font-semibold text-[#8A8176]">{t(group.title)}</h2>

@@ -2,7 +2,7 @@ import {DialogBackdrop} from './components/Dialog'
 import {QuickSwitcher} from './components/QuickSwitcher'
 import { ContextMenu } from './components/ContextMenu'
 import {OwnerProfileProvider} from './components/OwnerProfile'
-import {Component,lazy,Suspense,useCallback,useEffect,useLayoutEffect,useState,type ReactNode} from 'react'
+import {Component,lazy,Suspense,useCallback,useEffect,useLayoutEffect,useRef,useState,type ReactNode} from 'react'
 import {get} from './api'
 import {classifyRefreshEvent,emptyRefreshScope,mergeRefreshScopes} from './refreshEvents'
 import {WorkspaceSidebar,SettingsHeader,navigation,type PageId} from './components/WorkspaceShell'
@@ -103,6 +103,7 @@ export default function App(){
  const [visited,setVisited]=useState(()=>({chat:locationState().page!=='rooms',rooms:locationState().page==='rooms'}))
  const [chatDraft,setChatDraft]=useState(0)
  const [searchOpen,setSearchOpen]=useState(false)
+ const settingsScrollRef=useRef<HTMLDivElement>(null)
  const [settingsNav,setSettingsNav]=useState(()=>{try{return localStorage.getItem('dominion.settings.nav')!=='0'}catch{return true}})
  const toggleSettingsNav=useCallback(()=>setSettingsNav(open=>{const next=!open;try{localStorage.setItem('dominion.settings.nav',next?'1':'0')}catch{}return next}),[])
  const settingsOpen=page!=='chat'&&page!=='rooms'
@@ -147,6 +148,7 @@ export default function App(){
  },[chatRoute])
  const switchMode=useCallback((next:'chat'|'rooms')=>{if(next==='chat')returnToChat();else navigate('rooms')},[returnToChat,navigate])
  const closeSettings=useCallback(()=>switchMode(mode),[switchMode,mode])
+ useLayoutEffect(()=>{settingsScrollRef.current?.scrollTo({top:0,left:0})},[page])
  useEffect(()=>{
   const check=()=>{if(document.visibilityState==='visible')void checkForUpdatedUi()}
   window.addEventListener('focus',check)
@@ -231,7 +233,7 @@ export default function App(){
    <WorkspaceSidebar settingsOnly page={page} open collapsed={false} online={online} running={running} pending={pending} onNavigate={navigate} onNewChat={()=>navigate('chat')} onClose={closeSettings} navOpen={settingsNav} onToggleNav={toggleSettingsNav}/>
    <div className={'workspace-settings-main flex h-full min-w-0 flex-col '+(settingsNav?'ml-[216px]':'ml-14')}>
     <SettingsHeader page={page} online={online} build={engineBuild} onClose={closeSettings} onSearch={()=>setSearchOpen(true)}/>
-    <div className="workspace-settings-content min-h-0 flex-1 overflow-y-auto">
+    <div ref={settingsScrollRef} className="workspace-settings-content min-h-0 flex-1 overflow-y-auto">
      <PageLoadBoundary key={page}><Suspense fallback={<div role="status" className="p-8 text-sm text-[#7C7469]">화면 불러오는 중…</div>}>
       {page==='home'&&<HomePage navigate={navigate}/>}
       {page==='capabilities'&&<CapabilitiesPage navigate={navigate}/>}
