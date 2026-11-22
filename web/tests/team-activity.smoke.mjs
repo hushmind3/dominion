@@ -164,6 +164,14 @@ try{
   assert.equal(await switcher.getByRole('option').count(),1);
   await switcher.getByRole('combobox',{name:'기능 검색'}).press('Enter');
   await page.waitForURL('**/#/memory');
+  // The mobile settings navigator exposes every page without horizontal tab scrolling.
+  const mobileNav=page.locator('aside .workspace-settings-mobile select');
+  await mobileNav.waitFor({timeout:10000});
+  assert.ok(await mobileNav.isVisible());
+  await mobileNav.selectOption('activity');
+  await page.waitForURL('**/#/activity');
+  await mobileNav.selectOption('memory');
+  await page.waitForURL('**/#/memory');
   await page.goto(address+'/#/activity',{waitUntil:'domcontentloaded'});
   // Team search surfaces blocked Writer/Worker DAG without a long scroll.
   await page.getByRole('textbox',{name:'팀·Worker 검색'}).fill('researcher');
