@@ -18,6 +18,12 @@ const sourceLabels:Record<string,LocaleKey>={user:'memory.source.user',learn:'me
 const displayTime=(time?:string)=>time&&Number.isFinite(Date.parse(time))?new Date(time).toLocaleString():t('memory.time.none')
 const statusOf=(memory:Memory)=>memory.retrievalEligible?'active':memory.status&&memory.status!=='active'?memory.status:'excluded'
 const memoryDraftKey='dominion.memory.compose.v1'
+function persistMemoryDraft(text:string,scope:string){
+ try{
+  if(!text.trim()&&scope==='shared')sessionStorage.removeItem(memoryDraftKey)
+  else sessionStorage.setItem(memoryDraftKey,JSON.stringify({text,scope}))
+ }catch{/* Browser storage may be unavailable. */}
+}
 function readMemoryDraft(){
  const blank={text:'',scope:'shared'}
  try{
@@ -42,14 +48,8 @@ export function MemoryPage(){
  const [showRecords,setShowRecords]=useState(false)
  const [visibleLimit,setVisibleLimit]=useState(40)
  useEffect(()=>setVisibleLimit(40),[query,status,owner])
- // Keep unsubmitted memories when navigating back to Chat or other pages.
- // The draft is tab-local and never auto-submitted to the Rust memory store.
- useEffect(()=>{
-  try{
-   if(!text.trim()&&scope==='shared')sessionStorage.removeItem(memoryDraftKey)
-   else sessionStorage.setItem(memoryDraftKey,JSON.stringify({text,scope}))
-  }catch{/* Private browsing may deny storage. */}
- },[text,scope])
+ // The draft is stored synchronously with each user edit, so immediate
+ // navigation cannot skip a passive effect.
  const scopeAvailable=scope==='shared'||agents.value.some(agent=>agent.id===scope)
  const agentNames=new Map(agents.value.map(agent=>[agent.id,agent.name]))
  const sessionScoped=(m:Memory)=>m.scope==='session'||(m.scope!=='global'&&!m.partitionKey&&['learn','agent'].includes(m.source??''))
@@ -76,7 +76,7 @@ export function MemoryPage(){
   setBusy(true);setError('');setNotice('')
   try{
    await post('/api/memories',{text:text.trim(),status:'active',source:'user',...(scope==='shared'?{scope}:{scope:'agent',agentId:scope})})
-   setText('');setNotice(t('memory.saved'));setStatus('active');setOwner('all');await memories.reload()
+   setText('');persistMemoryDraft('',scope);setNotice(t('memory.saved'));setStatus('active');setOwner('all');await memories.reload()
   }catch(e){setError((e as Error).message)}finally{setBusy(false)}
  }
  const drop=async(id:string)=>{
@@ -91,8 +91,12 @@ export function MemoryPage(){
   <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
    <Panel className="min-w-0 p-5">
     <Subheading title={t('memory.new')} extra={<Action disabled={busy||!text.trim()||!scopeAvailable||agents.loading||Boolean(agents.error)} onClick={save}><Plus size={16}/> {t('memory.save')}</Action>}/>
-    <FormField label={t('memory.content')}><TextArea rows={6} value={text} onChange={e=>setText(e.target.value)}/></FormField>
-    <FormField label={t('memory.scope')}><SelectInput value={scope} onChange={e=>setScope(e.target.value)}>
+    <FormField label={t('memory.content')}><TextArea rows={6} value={text} onChange={e=>{
+     const next=e.target.value;setText(next);persistMemoryDraft(next,scope)
+    }}/></FormField>
+    <FormField label={t('memory.scope')}><SelectInput value={scope} onChange={e=>{
+     const next=e.target.value;setScope(next);persistMemoryDraft(text,next)
+    }}>
      <option value="shared">{t('memory.scope.shared')}</option>
      {!scopeAvailable&&<option value={scope} disabled>{scope} · {locale==='en'?'Unavailable':'현재 사용 불가'}</option>}
      {agents.value.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
