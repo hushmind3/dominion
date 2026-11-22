@@ -3,7 +3,7 @@ import {AlertCircle,ArrowRight,Clock3,LoaderCircle,RefreshCw,Settings2,ShieldChe
 import {post} from '../api'
 import {Button,SelectInput,TextArea} from './Primitives'
 import {Notice,refresh,useRemote} from './UI'
-import {TeamWorkflowPanel} from './TeamWorkflowPanel'
+import {NativeRoomTeamActivity} from './NativeRoomTeamActivity'
 import {useLocale} from '../i18n'
 
 type Launch={id:string;roomId:string;sessionId:string;status:'planning'|'queued'|'failed'|'uncertain';goal:string;maxParallel:number;jobId?:string|null;error?:string|null}
@@ -184,7 +184,7 @@ export function RoomTeamLauncher({roomId,sessionId,participantCount,agents,tools
    {launchId&&launch.loading&&<p role="status" className="flex items-center gap-2 text-[12px] text-muted">
     <LoaderCircle size={15} className="animate-spin"/>{en?'Loading saved task…':'저장된 작업 상태 불러오는 중…'}
    </p>}
-   <TeamWorkflowPanel filterSessionId={sessionId} agentNames={Object.fromEntries(agents.map(a=>[a.id,a.name]))}/>
+   <NativeRoomTeamActivity roomId={roomId} sessionId={sessionId} active={active} agentNames={Object.fromEntries(agents.map(a=>[a.id,a.name]))}/>
   </section>
  </div>
 }
