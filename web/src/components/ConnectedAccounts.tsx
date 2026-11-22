@@ -76,14 +76,14 @@ export function ConnectedAccounts(){
   {providers.error&&<Notice message={providers.error}/>}
   {accounts.error&&<Notice message={accounts.error}/>}
   {error&&<Notice message={error}/>}
-  {notice&&<p role="status" className="rounded-xl border border-[#D8E8DC] bg-[#F1F8F1] p-3 text-sm text-emerald-800">{notice}</p>}
+  {notice&&<p role="status" className="rounded-xl border border-divider bg-canvas p-3 text-sm text-success">{notice}</p>}
   {githubCli&&<Panel className="p-5">
    <div className="flex flex-wrap items-start justify-between gap-3">
     <div><h3 className="text-base font-bold text-ink">{t('conn.quick.githubCliTitle')}</h3>
      <p role="status" className="mt-1 text-sm text-muted">{githubCli.message||t('conn.quick.githubCliStarting')}</p></div>
     <StateTag online={githubCli.status==='completed'}>{githubCli.status}</StateTag>
    </div>
-   {githubCli.userCode&&<div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[var(--color-canvas)] p-4">
+   {githubCli.userCode&&<div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-canvas p-4">
     <div className="min-w-0">
      <p className="text-xs font-semibold text-muted">{t('conn.quick.githubCliCode')}</p>
      <code className="mt-2 block select-all break-all text-xl font-bold tracking-widest text-ink">{githubCli.userCode}</code>
@@ -106,23 +106,23 @@ export function ConnectedAccounts(){
     const title=provider.name||'GitHub'
     return <Panel key={provider.id} className="flex flex-col gap-4 p-5">
      <div className="flex items-start justify-between gap-3">
-      <span className="grid size-12 place-items-center rounded-xl bg-[var(--color-brand-soft)] text-brand"><Github size={27}/></span>
+      <span className="grid size-12 place-items-center rounded-xl bg-brand-soft text-brand"><Github size={27}/></span>
       <StateTag online={ready}>{ready?t('conn.quick.connected'):provider.configured?t('conn.quick.notConnected'):t('conn.quick.unavailable')}</StateTag>
      </div>
      <div><h3 className="text-lg font-bold text-ink">{title}</h3>
       <p className="mt-1 text-[13px] leading-6 text-muted">{t('conn.quick.githubDescription')}</p></div>
-     {ready&&<p className="flex items-center gap-2 text-sm font-medium text-emerald-700"><CheckCircle2 size={17}/>{account?.displayName||provider.account||title}</p>}
-     {!provider.configured&&<p className="text-xs leading-5 text-amber-800">{t('conn.quick.githubCliFallback')}</p>}
+     {ready&&<p className="flex items-center gap-2 text-sm font-medium text-success"><CheckCircle2 size={17}/>{account?.displayName||provider.account||title}</p>}
+     {!provider.configured&&<p className="text-xs leading-5 text-warning">{t('conn.quick.githubCliFallback')}</p>}
      {!provider.configured&&<a href="https://cli.github.com/" target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-brand underline">{t('conn.quick.githubCliInstall')}</a>}
-     <div className="mt-auto flex flex-wrap gap-2 border-t border-[var(--color-divider)] pt-4">
+     <div className="mt-auto flex flex-wrap gap-2 border-t border-divider pt-4">
       <Action disabled={busy!==null} onClick={()=>{void connect(provider.id)}}><Link2 size={17}/>{busy===provider.id?t('conn.quick.opening'):ready?t('conn.quick.reconnect'):!provider.configured?t('conn.quick.githubCliConnect'):t('conn.quick.connect')}<ExternalLink size={14}/></Action>
       {ready&&<Action variant="secondary" disabled={busy!==null} onClick={()=>{void disconnect(provider.id)}}><Unlink size={15}/>{t('conn.quick.disconnect')}</Action>}
      </div>
-     <details className="border-t border-[var(--color-divider)] pt-3">
+     <details className="border-t border-divider pt-3">
       <summary className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-muted"><Settings2 size={14}/>{t('conn.oauthAppSetup')}</summary>
       <div className="mt-3 grid gap-3">
        <p className="text-xs leading-5 text-muted">{t('conn.oauthAppHint')}</p>
-       <label className="text-xs">{t('conn.oauthRedirectUri')}<code className="mt-1 block break-all rounded-lg bg-[var(--color-canvas)] p-2">{provider.callback||''}</code></label>
+       <label className="text-xs">{t('conn.oauthRedirectUri')}<code className="mt-1 block break-all rounded-lg bg-canvas p-2">{provider.callback||''}</code></label>
        <label className="text-xs">{t('conn.oauthClientId')}<input className="mt-1 w-full rounded-lg border border-divider p-2" autoComplete="off" value={appClientId} disabled={appSaving} onChange={e=>setAppClientId(e.target.value)}/></label>
        <label className="text-xs">{t('conn.oauthClientSecret')}<input className="mt-1 w-full rounded-lg border border-divider p-2" autoComplete="new-password" type="password" value={appSecret} disabled={appSaving} onChange={e=>setAppSecret(e.target.value)}/></label>
        <Action disabled={appSaving||!appClientId.trim()||!appSecret.trim()} onClick={()=>void saveGithubApp()}>{t('conn.oauthAppSave')}</Action>
@@ -131,6 +131,6 @@ export function ConnectedAccounts(){
     </Panel>
    })}
   </div>
-  <p className="text-xs leading-6 text-[var(--color-muted)]">{t('conn.quick.renewal')}</p>
+  <p className="text-xs leading-6 text-muted">{t('conn.quick.renewal')}</p>
  </div>
 }

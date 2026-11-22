@@ -5,6 +5,7 @@ import {
   BookOpenText,
   Bot,
   Cpu,
+  FileText,
   House,
   RadioTower,
   Settings2,
@@ -12,6 +13,12 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import type { LocaleKey } from './i18n'
+
+const TasksPage = lazy(() => import('./pages/Tasks').then(module => ({default: module.TasksPage})))
+
+const PromptsPage = lazy(() =>
+  import('./pages/Prompts').then(module => ({default: module.PromptsPage})),
+)
 
 const HomePage = lazy(() =>
   import('./pages/Home').then((module) => ({ default: module.HomePage })),
@@ -61,6 +68,22 @@ type SettingsEntry = {
 }
 
 export const settingsPages = {
+  tasks: {
+    label: 'nav.tasks',
+    description: 'workspace.description.tasks',
+    group: 'nav.group.workspace',
+    icon: Activity,
+    primary: true,
+    render: () => <TasksPage />,
+  },
+  prompts: {
+    label: 'nav.prompts',
+    description: 'workspace.description.prompts',
+    group: 'nav.group.workspace',
+    icon: FileText,
+    primary: true,
+    render: () => <PromptsPage />,
+  },
   home: {
     label: 'nav.home',
     description: 'workspace.description.home',
@@ -82,6 +105,7 @@ export const settingsPages = {
     description: 'workspace.description.agents',
     group: 'nav.group.workspace',
     icon: Bot,
+    primary: true,
     render: () => <AgentsPage />,
   },
   connections: {

@@ -246,12 +246,12 @@ fn validated_config(state: &AppState, id: &str, previous: &Value, body: &Value) 
         "description":text_field(body,previous,"description","",4000)?,
         "topic":text_field(body,previous,"topic","",16000)?,
         "ownerName":text_field(body,previous,"ownerName","나",100)?,
-        "rounds":number_field(body,previous,"rounds",3,100_000)?,
+        "rounds":number_field(body,previous,"rounds",1,100_000)?,
         "maxTurns":max_turns,
         "tokenBudget":number_field_allow_zero(body,previous,"tokenBudget",10_000_000)?,
         "contextBudgetTokens":number_field(body,previous,"contextBudgetTokens",2_000,1_000_000)?,
         "toolsEnabled":bool_field(body,previous,"toolsEnabled",false)?,
-        "autoLearning":bool_field(body,previous,"autoLearning",true)?,
+        "autoLearning":bool_field(body,previous,"autoLearning",false)?,
         "autoModels":bool_field(body,previous,"autoModels",true)?,
         "reasoningEffort":reasoning_effort,
         "models":models,
@@ -1061,7 +1061,7 @@ mod tests {
         let saved = save_room(&state, None, &config()).unwrap();
         assert_eq!(saved["agentIds"].as_array().unwrap().len(), 9);
         assert_eq!(saved["toolsEnabled"], false);
-        assert_eq!(saved["autoLearning"], true);
+        assert_eq!(saved["autoLearning"], false);
         let session_id = saved["sessionId"].as_str().unwrap();
         let session = state.store.get("session", session_id).unwrap();
         assert_eq!(session["roomId"], "room-one");

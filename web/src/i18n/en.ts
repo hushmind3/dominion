@@ -1,5 +1,14 @@
 import type {LocaleKey} from './ko'
 const en: Record<LocaleKey, string> = {
+  'nav.tasks': 'Tasks',
+  'workspace.description.tasks': 'Follow progress, add instructions and review results.',
+
+  'connect.chooseProvider': 'Choose a service',
+  'chat.messageAria': 'Message',
+  'nav.prompts': 'Prompts & personas',
+  'workspace.description.prompts': 'Edit system prompts, shared instructions and each AI persona.',
+  'prompts.intro': 'Shared instructions apply across conversations. Personas belong to individual AIs. A full system-prompt override replaces generated instructions in its selected scope.',
+
   'nav.capabilities': 'What you can do',
   'nav.extensions': 'Add features',
   'shell.loadingChat': 'Loading conversation…',

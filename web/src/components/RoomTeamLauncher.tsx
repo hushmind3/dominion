@@ -82,10 +82,10 @@ export function RoomTeamLauncher({roomId,sessionId,participantCount,agents,tools
  return <div className="room-team-workspace">
   <section className="room-team-members" aria-label={en?'Room team members':'그룹 참여 AI'}>
    <div className="flex items-center justify-between gap-3">
-    <div className="flex items-center gap-2"><UsersRound size={18} className="text-[var(--color-brand)]"/>
+    <div className="flex items-center gap-2"><UsersRound size={18} className="text-brand"/>
      <strong className="text-[14px]">{en?'Available room agents':'함께 일할 AI'}</strong>
     </div>
-    <span className="rounded-full bg-white px-3 py-1 text-[12px] font-semibold text-[#7C6250]">
+    <span className="rounded-full bg-surface px-3 py-1 text-[12px] font-semibold text-muted">
      {en?participantCount+' members':participantCount+'명 참여'}
     </span>
    </div>
@@ -104,7 +104,7 @@ export function RoomTeamLauncher({roomId,sessionId,participantCount,agents,tools
     </div>
    </div>
    {!toolsEnabled&&<div className="room-team-permission" role="status">
-    <ShieldCheck size={20} className="shrink-0 text-amber-700"/>
+    <ShieldCheck size={20} className="shrink-0 text-warning"/>
     <div className="min-w-0 flex-1">
      <strong className="text-[13px]">{en?'Tool access is off':'그룹의 도구 사용이 꺼져 있습니다'}</strong>
      <p className="mt-1 text-[12px] leading-5">{en?'Allow this room to use its existing tools before starting a task.':'AI가 실제 조사를 하고 작업을 수행하려면 이 그룹의 도구 사용을 켜야 합니다.'}</p>
@@ -113,7 +113,7 @@ export function RoomTeamLauncher({roomId,sessionId,participantCount,agents,tools
      {en?'Enable tools':'도구 사용 켜기'}
     </Button>
    </div>}
-   {recovered&&requestId&&<p role="status" className="rounded-lg bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-900">
+   {recovered&&requestId&&<p role="status" className="rounded-lg bg-warning-soft px-3 py-2 text-[12px] leading-5 text-warning">
     {en?'A previous attempt may have reached the server. Try again without editing to reuse that request.':'이전 요청이 서버에 전달되었을 수 있습니다. 내용을 바꾸지 않고 다시 실행하면 중복 작업 없이 같은 요청을 확인합니다.'}
    </p>}
    <form className="space-y-3" onSubmit={event=>void start(event)}>
@@ -123,16 +123,16 @@ export function RoomTeamLauncher({roomId,sessionId,participantCount,agents,tools
     <TextArea id={'team-goal-'+roomId} rows={4} maxLength={4000} value={goal} autoFocus
      onChange={e=>{setGoal(e.target.value);clearPending()}} disabled={busy}
      placeholder={en?'Example: Find the cause of these bugs, prepare fixes, verify them, and report the results.':'예: 현재 프로젝트의 오류 원인을 찾아 수정하고 테스트 결과까지 정리해 주세요.'}
-     className="!min-h-28 !rounded-xl !bg-white !px-4 !py-3 !text-[14px] !leading-6"/>
+     className="!min-h-28 !rounded-xl !bg-surface !px-4 !py-3 !text-[14px] !leading-6"/>
     <details className="room-team-advanced">
-     <summary className="flex cursor-pointer items-center gap-2 text-[13px] font-semibold text-[#6E6254] focus-visible:outline-2 focus-visible:outline-offset-2">
+     <summary className="flex cursor-pointer items-center gap-2 text-[13px] font-semibold text-muted focus-visible:outline-2 focus-visible:outline-offset-2">
       <Settings2 size={16}/>{en?'Execution settings':'실행 설정'}
       <span className="ml-auto text-[12px] font-normal">{en?parallel+' concurrent tasks':'동시에 '+parallel+'개 작업'}</span>
      </summary>
-     <div className="mt-3 border-t border-[#E8DFD2] pt-3">
-      <label className="flex flex-wrap items-center justify-between gap-3 text-[13px] text-[var(--color-ink)]">
+     <div className="mt-3 border-t border-divider pt-3">
+      <label className="flex flex-wrap items-center justify-between gap-3 text-[13px] text-ink">
        <span><strong>{en?'Concurrent tasks':'동시 실행 작업 수'}</strong>
-        <small className="mt-1 block text-[12px] text-[var(--color-muted)]">
+        <small className="mt-1 block text-[12px] text-muted">
          {en?'1–4 tasks at once. The system decides the order and dependencies.':'1~4개를 동시에 처리합니다. 순서와 선행 조건은 AI가 결정합니다.'}</small>
        </span>
        <SelectInput aria-label={en?'Concurrent tasks':'동시 실행 작업 수'} className="!w-24 !py-2 !text-[13px]"
@@ -143,7 +143,7 @@ export function RoomTeamLauncher({roomId,sessionId,participantCount,agents,tools
      </div>
     </details>
     <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-     <p className="text-[12px] leading-5 text-[#81786C]">
+     <p className="text-[12px] leading-5 text-muted">
       {en?'Up to 8 steps. Existing budget and tool permissions apply.':'최대 8개 단계로 분담하며 기존 도구 권한과 예산을 따릅니다.'}
      </p>
      <Button variant="primary" type="submit" className="!min-h-11 !px-5 !text-[14px]"

@@ -1,31 +1,30 @@
+import {RoomWelcome, RoomFirstMessage} from '../components/rooms/RoomWelcome'
+import {RoomPromptEditor, type RoomPromptPreview} from '../features/prompts/RoomPromptEditor'
+import {useChatDraft} from '../hooks/useChatDraft'
+import {ConversationComposer, ComposerSendButton} from '../components/chat/ConversationComposer'
 import {ExecutionPermissionsSetting} from '../components/ExecutionPermissions'
 import {RoomActions} from '../components/rooms/RoomActions'
 import {RoomAvatar as Avatar} from '../components/rooms/RoomAvatar'
-import {RoomMessage as TranscriptMessage,RoomMessageBody as MessageBody} from '../components/rooms/RoomMessage'
-import {ConversationRail} from '../components/chat/ConversationRail'
-import {useConversationSidebar} from '../hooks/useConversationSidebar'
-import type {CSSProperties} from 'react'
+import {RoomMessage as TranscriptMessage, RoomMessageBody as MessageBody, RoomMessageFrame, RoomTyping} from '../components/rooms/RoomMessage'
 import {ConversationSettings} from '../components/ConversationSettings'
-import {usePersistentConversationToggle,usePersistentReasoningEffort,usePersistentKoreanReasoning} from '../hooks/usePersistentConversationPreference'
-import {matchesRoomRefresh,type RefreshScope} from '../refreshEvents'
+import {usePersistentConversationToggle, usePersistentReasoningEffort, usePersistentKoreanReasoning} from '../hooks/usePersistentConversationPreference'
+import {matchesRoomRefresh, type RefreshScope} from '../refreshEvents'
 import {createPortal} from 'react-dom'
 import {useAnchoredPanel} from '../hooks/useAnchoredPanel'
-import {ConversationSwitch} from '../components/WorkspaceShell'
 import {TeamWorkflowPanel} from '../components/TeamWorkflowPanel'
 import {RoomTeamLauncher} from '../components/RoomTeamLauncher'
 import {RunEventTimeline} from '../components/RunEventTimeline'
-import {OwnerProfileEditor} from '../components/OwnerProfile'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
-import {useCallback,useEffect,useMemo,useRef,useState,type ChangeEvent,type FormEvent} from 'react'
-import {Activity,ArrowDown,ArrowRight,ArrowUp,BookOpenText,Check,ChevronDown,FileText,Hash,LoaderCircle,Menu,PanelLeftClose,PanelLeftOpen,Search,Paperclip,Settings,Plus,RefreshCw,RotateCcw,ShieldCheck,Square,TerminalSquare,Trash2,UsersRound,X} from 'lucide-react'
-import {get,post,del,resolveApproval,uploadAttachment,type Agent,type ChatMessage,type ModelOption,type Provider} from '../api'
-import {Button,TextArea,TextInput,SelectInput} from '../components/Primitives'
-import {DialogBackdrop,DialogPanel} from '../components/Dialog'
-import {FormField,Notice,refresh,useRemote} from '../components/UI'
+import {useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent} from 'react'
+import {Activity, ArrowDown, ArrowRight, ArrowUp, Workflow, BookOpenText, Check, ChevronDown, FileText, LoaderCircle, Menu, Paperclip, Plus, RefreshCw, RotateCcw, ShieldCheck, Square, TerminalSquare, Trash2, UsersRound, X} from 'lucide-react'
+import {get, post, del, resolveApproval, uploadAttachment, type Agent, type ChatMessage, type ModelOption, type Provider} from '../api'
+import {Button, TextArea, TextInput, SelectInput} from '../components/Primitives'
+import {DialogBackdrop, DialogPanel} from '../components/Dialog'
+import {FormField, Notice, refresh, useRemote} from '../components/UI'
 import {ReasoningSelect} from '../components/ReasoningSelect'
 import './Rooms.css'
 import '../styles/group-workspace.css'
-import {t,useLocale,getLocale,type LocaleKey} from '../i18n'
+import {t, useLocale, getLocale, type LocaleKey} from '../i18n'
 import {translateError} from '../i18n/errors'
 
 const MAX_ROOM_PARTICIPANTS=32
@@ -42,7 +41,7 @@ type TokenUsage={promptTokens?:number;completionTokens?:number;totalTokens?:numb
 type FeedState={room?:RoomConfig;sessionId?:string;jobs:Job[];executions:Execution[];learningJobs:Job[];operations:Operation[];approvals:Approval[];activeAgentId?:string;status?:string;queueDepth?:number;usage?:TokenUsage}
 type LiveDraft={turnId:string;agentId:string;text:string;reasoning:string;tool:string;error:string;done:boolean;messageId?:string}
 type RoomEvent={roomId:string;agentId:string;turnId?:string;event:{type:string;text?:string;name?:string;message?:string;messageId?:string;terminal?:boolean;memories?:number;skill?:boolean;inserted?:number;updated?:number;promoted?:number}}
-type PendingRoomImage={key:string;file:File;preview:string}
+type PendingRoomImage={key:string;file:File;preview:string;attachmentId?:string}
 const ROOM_ATTACH_ALLOWED=['image/png','image/jpeg','image/webp','image/gif']
 const ROOM_ATTACH_LIMIT=8
 const emptyLive=(turnId:string,agentId:string):LiveDraft=>({turnId,agentId,text:'',reasoning:'',tool:'',error:'',done:false})
@@ -52,49 +51,27 @@ const modes:Record<RoutingMode,{label:LocaleKey;description:LocaleKey}>={discuss
 const active=(status?:string)=>status==='queued'||status==='running'
 const stamp=(value?:string)=>{if(!value)return '';const normalized=value.includes('T')?value:value.replace(' ','T')+'Z';const date=new Date(normalized);return Number.isNaN(date.getTime())?'':date.toLocaleTimeString(getLocale()==='en'?'en-US':'ko-KR',{hour:'2-digit',minute:'2-digit'})}
 const draftOf=(room?:RoomConfig):RoomDraft=>({id:room?.id,name:room?.name||'',topic:room?.topic||room?.description||'',ownerName:room?.ownerName||t('rooms.me'),agentIds:room?.agentIds||[],routingMode:room?.routingMode||'discussion',rounds:room?.rounds||1,maxTurns:room?.maxTurns??0,tokenBudget:room?.tokenBudget??0,contextBudgetTokens:room?.contextBudgetTokens??2000,toolsEnabled:room?.toolsEnabled===true,autoLearning:room?.autoLearning===true,autoModels:room?.autoModels!==false,models:room?.models||[],reasoningEffort:room?.reasoningEffort||''})
-export function RoomsPage({openSession,openSettings,switchMode,settingsTarget,active:visibleView=true}:{openSession:(id:string)=>void;openSettings:()=>void;switchMode:(mode:'chat'|'rooms')=>void;settingsTarget?:HTMLElement|null;active?:boolean}){
+export function RoomsPage({openSession,settingsTarget,active:visibleView=true,onOpenNavigation,selectedRoom,onSelectRoom,newRoomRevision=0}:{openSession:(id:string)=>void;settingsTarget?:HTMLElement|null;active?:boolean;onOpenNavigation?:()=>void;selectedRoom?:string;onSelectRoom?:(id:string)=>void;newRoomRevision?:number}){
  useLocale()
  const rooms=useRemote<RoomConfig[]>('/api/rooms',[],visibleView)
  const agents=useRemote<Agent[]>('/api/agents',[],visibleView)
  const providers=useRemote<Provider[]>('/api/providers',[],visibleView)
- const [selected,setSelected]=useState(()=>{try{return localStorage.getItem('dominion.room.selected')||''}catch{return ''}})
- const {open:showList,setOpen:setShowList,width:sidebarWidth,resize:resizeSidebar,mobile:sidebarMobile,panel:sidebarPanel}=useConversationSidebar('dominion.room.sidebar',visibleView)
+ const selected=selectedRoom||''
+ const setSelected=(id:string)=>onSelectRoom?.(id)
  const [creating,setCreating]=useState<RoomDraft|null>(null)
- const [saving,setSaving]=useState(false),[error,setError]=useState(''),[query,setQuery]=useState('')
+ const lastNewRoom=useRef(0)
+ useEffect(()=>{if(newRoomRevision!==lastNewRoom.current){lastNewRoom.current=newRoomRevision;setCreating(draftOf())}},[newRoomRevision])
+ const [saving,setSaving]=useState(false),[error,setError]=useState('')
  const current=rooms.value.find(room=>room.id===selected)
  useEffect(()=>{if(rooms.loading)return;if(!rooms.value.some(room=>room.id===selected))setSelected(rooms.value[0]?.id||'')},[rooms.value,rooms.loading,selected])
  useEffect(()=>{try{if(selected)localStorage.setItem('dominion.room.selected',selected)}catch{}},[selected])
- const selectRoom=(id:string)=>{setSelected(id);setError('');if(window.innerWidth<768)setShowList(false)}
- // The engine can fill members, so starting a group should not require a form.
- const [quickBusy,setQuickBusy]=useState(false)
- const quickRoom=async()=>{
-  if(quickBusy)return;setQuickBusy(true);setError('')
-  try{
-   const created=await post<RoomConfig>('/api/rooms',{name:t('rooms.defaultName')})
-   await rooms.reload();setSelected(created.id);if(window.innerWidth<768)setShowList(false);refresh()
-  }catch(e){setError((e as Error).message)}finally{setQuickBusy(false)}
- }
  const createRoom=async()=>{
   if(!creating||saving)return;setSaving(true);setError('')
-  try{const created=await post<RoomConfig>('/api/rooms',{...creating,name:creating.name.trim()||t('rooms.defaultName')});await rooms.reload();setSelected(created.id);setCreating(null);if(window.innerWidth<768)setShowList(false);refresh()}
+  try{const created=await post<RoomConfig>('/api/rooms',{...creating,name:creating.name.trim()||t('rooms.defaultName')});await rooms.reload();setSelected(created.id);setCreating(null);refresh()}
   catch(e){setError((e as Error).message)}finally{setSaving(false)}
  }
- const filtered=rooms.value.filter(room=>(room.name+' '+(room.topic||'')).toLowerCase().includes(query.toLowerCase()))
- return <div style={{'--conversation-sidebar-width':sidebarWidth+'px','--conversation-nav-width':showList?sidebarWidth+'px':'52px'} as CSSProperties} className="rooms-app">
-  {showList&&<Button variant="bare" className="room-list-scrim" aria-label={t('rooms.listClose')} onClick={()=>setShowList(false)}/>}
-  <aside ref={sidebarPanel} role={sidebarMobile&&showList?'dialog':undefined} aria-modal={sidebarMobile&&showList?true:undefined} tabIndex={-1} id="room-sidebar" className={'md:relative room-list '+(showList?'room-list-open':'room-list-closed')} aria-label={t('rooms.listAria')}>
-   <div className="chat-history-brand"><span className="workspace-logo">D</span><strong>dominion<span> / </span></strong><Button variant="ghost" size="icon" className="chat-history-collapse" aria-label={t('rooms.listCollapse')} title={t('rooms.listCollapse')} aria-controls="room-sidebar" aria-expanded="true" onClick={()=>setShowList(false)}><PanelLeftClose size={18}/></Button></div>
-   <Button className="chat-new-button" variant="primary" onClick={()=>{setCreating(draftOf());setError('')}}><Plus size={17}/>{t('rooms.create')}</Button>
-   <div className="chat-history-modes"><ConversationSwitch mode="rooms" onChange={switchMode}/></div>
-   <label className="chat-history-search"><Search size={15}/><TextInput aria-label={t('rooms.searchAria')} placeholder={t('rooms.search')} value={query} onChange={e=>setQuery(e.target.value)}/>{query&&<Button variant="bare" onClick={()=>setQuery('')} aria-label={t('history.clear')}><X size={14}/></Button>}</label>
-   <div className="room-list-items">{filtered.map(room=><Button variant="bare" key={room.id} className={'room-list-item '+(selected===room.id?'is-selected':'')} onClick={()=>selectRoom(room.id)} aria-current={selected===room.id?'true':undefined}><span className="room-list-icon"><Hash size={18}/></span><span className="room-list-copy"><strong>{room.name}</strong><small>{room.topic||t('rooms.space')}</small><span className="room-list-meta">{t('rooms.me')} + {room.agentIds?.length||0}{t('rooms.people')}{room.status==='running'&&<i title={t('rooms.st.running')}/>}</span></span></Button>)}
-    {!rooms.loading&&!filtered.length&&<div className="room-list-empty">{query?t('rooms.noSearch'):t('rooms.empty')}</div>}
-   </div>
-   <div className="room-list-footer"><OwnerProfileEditor compact active={visibleView}/><Button variant="ghost" onClick={openSettings} className="w-full !justify-start gap-2 !text-xs" aria-label={t('nav.settings')}><Settings size={17}/>{t('nav.settings')}</Button></div>
-   <div {...resizeSidebar} className="chat-history-resize" aria-label={t('history.resize')} title={t('history.resizeHint')}/>
-  </aside>
-  {!showList&&<ConversationRail mode="rooms" sidebarId="room-sidebar" onExpand={()=>setShowList(true)} onNew={()=>{setCreating(draftOf());setError('')}} onSwitchMode={switchMode} onSettings={openSettings}/>}
-  {current?<RoomConversation sidebarModal={showList&&sidebarMobile} settingsTarget={settingsTarget} key={current.id} room={current} openSettings={openSettings} visibleView={visibleView} switchMode={switchMode} agents={agents.value} providers={providers.value} openList={()=>setShowList(v=>!v)} showList={showList} openSession={openSession} onSaved={async()=>{await rooms.reload();refresh()}} onRemoved={async()=>{setSelected('');await rooms.reload()}}/>:rooms.loading?<div className="room-feed-loading" role="status"><LoaderCircle size={20} className="animate-spin"/>{t('rooms.loading')}</div>:<div inert={showList&&sidebarMobile} aria-hidden={showList&&sidebarMobile||undefined} className="room-welcome"><Button variant="ghost" className="room-empty-menu" onClick={()=>setShowList(true)} aria-label={t('rooms.listExpand')}><PanelLeftOpen size={18}/>{t('rooms.listTitle')}</Button><div className="room-welcome-mark"><UsersRound size={40}/></div><span className="room-eyebrow">{t('ui.label.teamPlace')}</span><h1>{t('rooms.welcome.title')}</h1><p>{t('rooms.welcome.line1')}<br/>{t('rooms.welcome.line2')}<br/>{t('rooms.welcome.line3')}</p><Button variant="primary" onClick={()=>void quickRoom()} disabled={quickBusy}>{quickBusy?<LoaderCircle size={16} className="animate-spin"/>:<Plus size={16}/>} {t('rooms.quickStart')}</Button><Button variant="secondary" onClick={()=>{setCreating(draftOf());setError('')}}>{t('rooms.create')}</Button><Button variant="bare" className="room-mobile-list-button" onClick={()=>setShowList(true)}>{t('rooms.viewSaved')}</Button></div>}
+ return <div className="rooms-app room-workspace">
+  {current?<RoomConversation settingsTarget={settingsTarget} key={current.id} room={current} visibleView={visibleView} agents={agents.value} providers={providers.value} openList={()=>onOpenNavigation?.()} openSession={openSession} onSaved={async()=>{await rooms.reload();refresh()}} onRemoved={async()=>{setSelected('');await rooms.reload()}}/>:rooms.loading?<div className="room-feed-loading" role="status"><LoaderCircle size={20} className="animate-spin"/>{t('rooms.loading')}</div>:<RoomWelcome hasAgents={agents.value.length>0} onCreate={()=>{setCreating(draftOf());setError('')}} onOpenNavigation={onOpenNavigation}/>}
   {(error||rooms.error||agents.error)&&!creating&&<div className="room-global-error"><Notice message={error||rooms.error||agents.error||providers.error} retrying={rooms.refreshing||agents.refreshing||providers.refreshing} onRetry={!error?()=>{void Promise.all([rooms.reload(),agents.reload(),providers.reload()])}:undefined}/></div>}
   {visibleView&&creating&&<DialogBackdrop onDismiss={()=>{if(!saving)setCreating(null)}}><DialogPanel size="wide" className="room-settings-dialog" aria-label={t('rooms.newTitle')}><div className="room-dialog-header"><div><span className="room-eyebrow">{t('ui.label.startConversation')}</span><h2>{t('rooms.who')}</h2></div><Button size="icon" variant="ghost" aria-label={t('rooms.close')} onClick={()=>setCreating(null)} disabled={saving}><X size={18}/></Button></div><div className="room-dialog-body">{!agents.loading&&!agents.value.length&&<div className="room-setup-next-step"><strong>{t('rooms.setupAssistants')}</strong><p>{t('rooms.setupAssistantsDescription')}</p><Button variant="primary" onClick={()=>{window.location.hash='#/agents'}}><Plus size={15}/>{t('rooms.setupAssistantsAction')}</Button></div>}<RoomSettings value={creating} onChange={setCreating} agents={agents.value} providers={providers.value} disabled={saving}/><Notice message={error}/></div><div className="room-dialog-footer"><span>{t('rooms.createHint')}</span><Button variant="primary" onClick={()=>void createRoom()} disabled={saving||!creating.agentIds.length}>{saving?<LoaderCircle size={15} className="animate-spin"/>:<Plus size={15}/>} {t('rooms.create')}</Button></div></DialogPanel></DialogBackdrop>}
  </div>
@@ -162,7 +139,7 @@ function RoomModelPicker({value,onChange,providers,disabled=false}:{value:RoomMo
  </div>
 }
 
-function RoomConversation({sidebarModal,settingsTarget,room,agents,providers,openList,showList,openSession,onSaved,onRemoved,switchMode,visibleView,openSettings}:{sidebarModal:boolean;settingsTarget?:HTMLElement|null;openSettings:()=>void;switchMode:(mode:'chat'|'rooms')=>void;visibleView:boolean;room:RoomConfig;agents:Agent[];providers:Provider[];openList:()=>void;showList:boolean;openSession:(id:string)=>void;onSaved:()=>Promise<void>;onRemoved:()=>Promise<void>}){
+function RoomConversation({settingsTarget,room,agents,providers,openList,openSession,onSaved,onRemoved,visibleView}:{settingsTarget?:HTMLElement|null;visibleView:boolean;room:RoomConfig;agents:Agent[];providers:Provider[];openList:()=>void;openSession:(id:string)=>void;onSaved:()=>Promise<void>;onRemoved:()=>Promise<void>}){
  useLocale()
  const [messages,setMessages]=useState<ChatMessage[]>([]),[feed,setFeed]=useState<FeedState>(initialFeed)
  const [loading,setLoading]=useState(true),[loadError,setLoadError]=useState(''),[error,setError]=useState('')
@@ -174,11 +151,12 @@ function RoomConversation({sidebarModal,settingsTarget,room,agents,providers,ope
  const [recipientsOpen,setRecipientsOpen]=useState(false)
  const recipientsPanel=useAnchoredPanel(recipientsOpen,()=>setRecipientsOpen(false),280,'top')
  useEffect(()=>{if(!visibleView){setRecipientsOpen(false)}},[visibleView])
- const [input,setInput]=useState(''),[targets,setTargets]=useState<string[]>([]),[sending,setSending]=useState(false),[stopping,setStopping]=useState(false)
+ const [input,setInput]=useChatDraft('room:'+room.id)
+ const [targets,setTargets]=useState<string[]>([]),[sending,setSending]=useState(false),[stopping,setStopping]=useState(false)
  const [inspector,setInspector]=useState(false),[draft,setDraft]=useState<RoomDraft>(()=>draftOf(room)),[dirty,setDirty]=useState(false),[saving,setSaving]=useState(false),[saved,setSaved]=useState(false)
  const [knowledgeOpen,setKnowledgeOpen]=useState(false),[knowledge,setKnowledge]=useState<any[]>([]),[knowledgeBusy,setKnowledgeBusy]=useState(false),[knowledgeNotice,setKnowledgeNotice]=useState('')
  const [approvalBusy,setApprovalBusy]=useState('')
- const [promptOpen,setPromptOpen]=useState(false),[promptAgent,setPromptAgent]=useState(''),[prompt,setPrompt]=useState<{prompt:string;chars:number;tokens:number;common:string;commonChars:number;commonTokens:number;persona:string;personaChars:number;personaTokens:number;commonOverride?:string|null;finalOverride?:string|null}|null>(null),[promptBusy,setPromptBusy]=useState(false),[promptError,setPromptError]=useState('')
+ const [promptOpen,setPromptOpen]=useState(false),[promptAgent,setPromptAgent]=useState(''),[prompt,setPrompt]=useState<RoomPromptPreview|null>(null),[promptBusy,setPromptBusy]=useState(false),[promptError,setPromptError]=useState('')
  const [personaDraft,setPersonaDraft]=useState(''),[commonDraft,setCommonDraft]=useState(''),[finalDraft,setFinalDraft]=useState(''),[promptSaving,setPromptSaving]=useState(false),[promptNotice,setPromptNotice]=useState('')
  const promptSequence=useRef(0)
  const promptDirty=Boolean(prompt&&(personaDraft!==prompt.persona||commonDraft!==(prompt.commonOverride??prompt.common)||finalDraft!==(prompt.finalOverride??prompt.prompt)))
@@ -351,6 +329,7 @@ function RoomConversation({sidebarModal,settingsTarget,room,agents,providers,ope
    if(personaDraft!==prompt.persona){
     const latest=(await get<Agent[]>('/api/agents')).find(agent=>agent.id===id)
     if(!latest)throw Error(t('rooms.noAgents'))
+    if((latest.systemPrompt||'')!==prompt.persona)throw Error(getLocale()==='en'?'This persona changed elsewhere. Reload and review before saving.':'다른 곳에서 페르소나가 수정되었습니다. 작성한 내용은 유지했으니 원본을 다시 확인해 주세요.')
     const saved=await post<Agent>('/api/agents',{...latest,systemPrompt:personaDraft})
     persisted=true;setPrompt(previous=>previous?{...previous,persona:saved.systemPrompt}:previous)
    }
@@ -381,35 +360,44 @@ function RoomConversation({sidebarModal,settingsTarget,room,agents,providers,ope
   try{
    if(pendingImages.length){
     setUploading(true)
-    const uploaded=await Promise.all(pendingImages.map(item=>uploadAttachment({roomId:room.id},item.file)))
-    attachmentIds=uploaded.map(item=>item.id)
-    pendingImages.forEach(item=>URL.revokeObjectURL(item.preview))
-    setPendingImages([])
+    const uploaded=await Promise.allSettled(pendingImages.map(async item=>{
+     if(item.attachmentId)return item.attachmentId
+     const attachment=await uploadAttachment({roomId:room.id},item.file)
+     setPendingImages(previous=>previous.map(image=>image.key===item.key?{...image,attachmentId:attachment.id}:image))
+     return attachment.id
+    }))
+    const failed=uploaded.find(item=>item.status==='rejected')
+    if(failed?.status==='rejected')throw failed.reason
+    attachmentIds=uploaded.flatMap(item=>item.status==='fulfilled'?[item.value]:[])
    }
   }catch(e){setError((e as Error).message);setUploading(false);setSending(false);return}
   setUploading(false)
   if(!sendAttempt.current||sendAttempt.current.input!==contents||JSON.stringify(sendAttempt.current.targets)!==JSON.stringify(recipients)||JSON.stringify(sendAttempt.current.attachmentIds)!==JSON.stringify(attachmentIds)||sendAttempt.current.reasoningEffort!==(reasoningEffort||undefined)||sendAttempt.current.thinking!==(reasoningEffort==='none'?false:thinkingEnabled)||sendAttempt.current.reasoningLanguage!==(reasoningKo?'ko':'default'))sendAttempt.current={input:contents,targets:recipients,attachmentIds,id:crypto.randomUUID(),reasoningLanguage:reasoningKo?'ko':'default',reasoningEffort:reasoningEffort||undefined,thinking:reasoningEffort==='none'?false:thinkingEnabled}
-  try{const result=await post<{room:RoomConfig;message:ChatMessage;job:Job;sessionId:string}>('/api/rooms/'+room.id+'/messages',{input:contents,...(attachmentIds.length?{attachmentIds}:{}),...(recipients.length?{agentIds:recipients}:{}),clientMessageId:sendAttempt.current.id,reasoningLanguage:sendAttempt.current.reasoningLanguage,reasoningEffort:sendAttempt.current.reasoningEffort,thinking:sendAttempt.current.thinking});dataVersion.current+=1;setMessages(previous=>previous.some(message=>message.id===result.message.id)?previous:[...previous,result.message]);setFeed(previous=>({...previous,room:result.room,sessionId:result.sessionId,jobs:[result.job,...previous.jobs.filter(job=>job.id!==result.job.id)]}));setInput('');if(inputRef.current)inputRef.current.style.height='';setTargets([]);setRecipientsOpen(false);sendAttempt.current=null;await load();await onSaved();inputRef.current?.focus({preventScroll:true})}
+  try{const result=await post<{room:RoomConfig;message:ChatMessage;job:Job;sessionId:string}>('/api/rooms/'+room.id+'/messages',{input:contents,...(attachmentIds.length?{attachmentIds}:{}),...(recipients.length?{agentIds:recipients}:{}),clientMessageId:sendAttempt.current.id,reasoningLanguage:sendAttempt.current.reasoningLanguage,reasoningEffort:sendAttempt.current.reasoningEffort,thinking:sendAttempt.current.thinking});dataVersion.current+=1;setMessages(previous=>previous.some(message=>message.id===result.message.id)?previous:[...previous,result.message]);setFeed(previous=>({...previous,room:result.room,sessionId:result.sessionId,jobs:[result.job,...previous.jobs.filter(job=>job.id!==result.job.id)]}));pendingImages.forEach(item=>URL.revokeObjectURL(item.preview));setPendingImages([]);setInput('');if(inputRef.current)inputRef.current.style.height='';setTargets([]);setRecipientsOpen(false);sendAttempt.current=null;await load();await onSaved();inputRef.current?.focus({preventScroll:true})}
   catch(e){setError((e as Error).message)}finally{setSending(false)}
  }
  const approve=async(id:string,allow:boolean)=>{if(approvalBusy)return;setApprovalBusy(id);setError('');try{await resolveApproval(id,allow);dataVersion.current+=1;setFeed(previous=>({...previous,approvals:previous.approvals.filter(approval=>approval.id!==id)}));refresh()}catch(e){setError((e as Error).message)}finally{await load();setApprovalBusy('')}}
  const stop=async()=>{if(stopping)return;setStopping(true);setError('');try{await post('/api/rooms/'+room.id+'/stop',{});dataVersion.current+=1;if(activeTurnId.current)terminalTurnIds.current.add(activeTurnId.current);setLive(null);await load();await onSaved()}catch(e){setError((e as Error).message)}finally{setStopping(false)}}
  const mention=(agent:Agent)=>setTargets(previous=>previous.includes(agent.id)?previous.filter(id=>id!==agent.id):[...previous,agent.id])
  return <div className="room-conversation">
-  {settingsTarget&&createPortal(<ConversationSettings permissionControl={<ExecutionPermissionsSetting/>} reasoningControl={<ReasoningSelect value={reasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} defaultLabel={current.reasoningEffort?`${t('rooms.reasoningDefault')} (${current.reasoningEffort})`:t('chat.reasoningAuto')} className="chat-reasoning !h-7 !w-auto !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-[var(--color-muted)]"/>} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={thinkingEnabled} setThinkingEnabled={setThinkingEnabled} reasoningEffort={reasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={current.toolsEnabled===true} setToolsEnabled={value=>void changeRoomOption('toolsEnabled',value)} autoLearn={current.autoLearning===true} setAutoLearn={value=>void changeRoomOption('autoLearning',value)} optionsBusy={optionsBusy} learning={knowledgeBusy} learnDisabled={!sessionId||running} onLearn={learnKnowledge} notice={knowledgeNotice}/>,settingsTarget)}
-  <section inert={sidebarModal} aria-hidden={sidebarModal||undefined} className="room-main" aria-label={t('rooms.headerAria',{name:current.name})}>
+  {settingsTarget&&createPortal(<ConversationSettings permissionControl={<ExecutionPermissionsSetting/>} reasoningControl={<ReasoningSelect value={reasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} defaultLabel={current.reasoningEffort?`${t('rooms.reasoningDefault')} (${current.reasoningEffort})`:t('chat.reasoningAuto')} className="chat-reasoning !h-7 !w-auto !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-muted"/>} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={thinkingEnabled} setThinkingEnabled={setThinkingEnabled} reasoningEffort={reasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={current.toolsEnabled===true} setToolsEnabled={value=>void changeRoomOption('toolsEnabled',value)} autoLearn={current.autoLearning===true} setAutoLearn={value=>void changeRoomOption('autoLearning',value)} optionsBusy={optionsBusy} learning={knowledgeBusy} learnDisabled={!sessionId||running} onLearn={learnKnowledge} notice={knowledgeNotice}/>,settingsTarget)}
+  <section className="room-main" aria-label={t('rooms.headerAria',{name:current.name})}>
 
-
-   <div className="room-scroll" ref={scrollRef} onScroll={onScroll} role="log" aria-label={t('rooms.logAria')} aria-busy={loading}>
-    {loading?<div className="room-feed-loading"><LoaderCircle size={20} className="animate-spin"/> {t('rooms.loading')}</div>:!visible.length?<div className="room-first-message"><div className="room-empty-avatars"><Avatar owner/>{roster.slice(0,3).map((agent,index)=><Avatar key={agent.id} agent={agent} index={index}/>)}</div><h2>{t('rooms.firstTitle')}</h2><p>{t('rooms.firstDesc')}<br/>{t('rooms.firstDesc2')}</p><div><span><UsersRound size={14}/> {t('rooms.mentionOne')}</span><span><BookOpenText size={14}/> {t('rooms.roomContinues')}</span></div></div>:<><div className="room-transcript-start"><span>{t('rooms.records')}</span></div>{visible.map(message=>{const owner=message.role==='user';const shared=message.metadata?.kind==='learning_report'&&(message.metadata?.learningScope==='room'||message.metadata?.source==='knowledge');const agent=shared?undefined:agents.find(item=>item.id===message.agent_id);return <TranscriptMessage key={message.id} active={visibleView} message={message} showReasoning={showReasoning} agent={agent} name={shared?t('rooms.sharedKnowledge'):owner?(current.ownerName||t('rooms.me')):(agent?.name||message.agent_id||t('rooms.agentFallback'))} owner={owner} index={Math.max(0,current.agentIds.indexOf(message.agent_id||''))}/>})}</>}
-    {live&&<div className="room-message room-message-agent room-message-live"><Avatar agent={agents.find(agent=>agent.id===live.agentId)}/><div className="room-message-main"><div className="room-message-byline"><strong>{agents.find(agent=>agent.id===live.agentId)?.name||live.agentId}</strong><span className="room-live-label">{!live.done&&<i/>}{live.error?t('rooms.live.stopped'):live.done?t('rooms.live.saving'):t('rooms.live.responding')}</span></div>{showReasoning&&live.reasoning&&<details className="room-reasoning"><summary>{t('rooms.live.showReasoning')}</summary><pre>{live.reasoning}</pre></details>}{live.text?<MessageBody text={live.text}/>:!live.error&&<span className="room-typing"><i/><i/><i/></span>}{live.tool&&<div className="room-tool-live"><TerminalSquare size={13}/>{t('rooms.live.toolRunning',{tool:live.tool})}</div>}{live.error&&<p className="room-message-error">{translateError(live.error)}</p>}</div></div>}
-    {running&&!live&&<div className="room-message room-message-agent room-message-live"><Avatar agent={speaker}/><div className="room-message-main"><div className="room-message-byline"><strong>{speaker?.name||t('rooms.waitingSpeaker')}</strong><span className="room-live-label">{speaker?t('rooms.preparing'):t('rooms.queuedWait')}</span></div>{speaker&&<span className="room-typing"><i/><i/><i/></span>}</div></div>}
+   <div className="room-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]" ref={scrollRef} onScroll={onScroll} role="log" aria-label={t('rooms.logAria')} aria-busy={loading}>
+    <div className="mx-auto w-full max-w-conversation px-4 py-6 sm:px-6">
+    {loading?<div className="room-feed-loading"><LoaderCircle size={20} className="animate-spin"/> {t('rooms.loading')}</div>:!visible.length?<RoomFirstMessage roster={roster}/>:<>{visible.map(message=>{const owner=message.role==='user';const shared=message.metadata?.kind==='learning_report'&&(message.metadata?.learningScope==='room'||message.metadata?.source==='knowledge');const agent=shared?undefined:agents.find(item=>item.id===message.agent_id);return <TranscriptMessage key={message.id} active={visibleView} message={message} showReasoning={showReasoning} agent={agent} name={shared?t('rooms.sharedKnowledge'):owner?(current.ownerName||t('rooms.me')):(agent?.name||message.agent_id||t('rooms.agentFallback'))} owner={owner} index={Math.max(0,current.agentIds.indexOf(message.agent_id||''))}/>})}</>}
+    {live&&<RoomMessageFrame agent={agents.find(agent=>agent.id===live.agentId)} name={agents.find(agent=>agent.id===live.agentId)?.name||live.agentId} metadata={<span className="text-xs text-muted">{live.error?t('rooms.live.stopped'):live.done?t('rooms.live.saving'):t('rooms.live.responding')}</span>}>
+     {showReasoning&&live.reasoning&&<details className="mb-3 text-xs text-muted"><summary className="cursor-pointer">{t('rooms.live.showReasoning')}</summary><pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap leading-6">{live.reasoning}</pre></details>}
+     {live.text?<MessageBody text={live.text}/>:!live.error&&<RoomTyping/>}{live.tool&&<p className="mt-2 flex items-center gap-1.5 text-xs text-muted"><TerminalSquare size={13}/>{t('rooms.live.toolRunning',{tool:live.tool})}</p>}{live.error&&<p role="alert" className="mt-2 text-sm text-danger">{translateError(live.error)}</p>}
+    </RoomMessageFrame>}
+    {running&&!live&&<RoomMessageFrame agent={speaker} name={speaker?.name||t('rooms.waitingSpeaker')} metadata={<span className="text-xs text-muted">{speaker?t('rooms.preparing'):t('rooms.queuedWait')}</span>}>{speaker&&<RoomTyping/>}</RoomMessageFrame>}
     {loadError&&<Notice message={loadError}/>}
+    </div>
    </div>
    {moreBelow&&<Button variant="bare" className="room-new-messages" onClick={jumpDown}><ArrowDown size={14}/> {t('rooms.newMessages')}</Button>}
-   <div className="conversation-composer-wrap">
+   <div className="conversation-composer-wrap mx-auto w-full max-w-conversation shrink-0 bg-surface px-3 pb-3 pt-2 sm:px-6 sm:pb-6">
     {pendingImages.length>0&&<div className="mb-2 flex flex-wrap items-center gap-2">
-     {pendingImages.map(item=><div key={item.key} className="relative h-16 w-16 overflow-hidden rounded-lg border border-divider bg-[var(--color-canvas)]">
+     {pendingImages.map(item=><div key={item.key} className="relative h-16 w-16 overflow-hidden rounded-lg border border-divider bg-canvas">
       <img src={item.preview} alt={item.file.name} className="h-full w-full object-cover"/>
       <button type="button" onClick={()=>removeImage(item.key)} aria-label={t('chat.attachRemove')} title={t('chat.attachRemove')} className="absolute right-0.5 top-0.5 grid size-5 place-items-center rounded-full bg-black/60 text-white hover:bg-black/80"><X size={12}/></button>
      </div>)}
@@ -417,18 +405,17 @@ function RoomConversation({sidebarModal,settingsTarget,room,agents,providers,ope
 
     {pendingApprovals.length>0&&<div className="room-approvals-stack" ref={approvalRef} tabIndex={-1}>{pendingApprovals.map(approval=><div key={approval.id} className="room-approval" data-room-approval><div><ShieldCheck size={15}/><strong>{approval.tool}</strong><span>{t('rooms.approvalRequest')}</span></div><details><summary>{t('rooms.approvalShow')}</summary><pre>{JSON.stringify(approval.args,null,2)}</pre></details><div className="room-approval-actions"><Button size="sm" variant="ghost" disabled={Boolean(approvalBusy)} onClick={()=>void approve(approval.id,false)}>{t('rooms.deny')}</Button><Button size="sm" variant="primary" disabled={Boolean(approvalBusy)} onClick={()=>void approve(approval.id,true)}>{approvalBusy===approval.id?t('rooms.processing'):t('rooms.approveOnce')}</Button></div></div>)}</div>}
     {error&&<Notice message={error}/>}
-    <form className="conversation-composer" onSubmit={send}>
-     <TextArea ref={inputRef} className="conversation-composer-input" aria-label={t('rooms.messageAria')} placeholder={mode==='mentioned'?t('rooms.mentionPlaceholder'):t('rooms.composerPlaceholder',{name:current.name})} value={input} onChange={e=>{setInput(e.target.value);e.currentTarget.style.height='auto';e.currentTarget.style.height=Math.min(e.currentTarget.scrollHeight,180)+'px'}} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();void send()}}} rows={1} disabled={sending}/>
-     <div className="chat-composer-controls conversation-composer-controls">
-      <div className="chat-composer-options conversation-composer-options">
-       <Button variant="ghost" size="icon" className="md:hidden" onClick={openList} aria-label={showList?t('rooms.listCollapse'):t('rooms.listExpand')}><Menu size={17}/></Button>
+    <ConversationComposer value={input} onChange={setInput} onSend={send} inputRef={inputRef} disabled={sending}
+     label={t('rooms.messageAria')} placeholder={mode==='mentioned'?t('rooms.mentionPlaceholder'):t('rooms.composerPlaceholder',{name:current.name})}
+     options={<>
+       <Button variant="ghost" size="icon" className="md:hidden" onClick={openList} aria-label={t('rooms.listExpand')}><Menu size={17}/></Button>
+       <Button variant="ghost" className="!min-h-9 !gap-1.5 !px-2 !py-1.5 !text-xs !font-medium" onClick={()=>{setTeamOpen(true);setInspector(false)}}><Workflow size={16}/>{t('rooms.taskAction')}</Button>
+       <Button variant="ghost" className="!min-h-9 !gap-1.5 !px-2 !py-1.5 !text-xs !font-medium" onClick={()=>void openPrompt()}><FileText size={16}/>{t('rooms.systemPrompt')}</Button>
        <RoomActions active={visibleView} actions={[
-        {label:t('rooms.taskAction'),icon:<UsersRound size={16}/>,run:()=>{setTeamOpen(true);setInspector(false)}},
         {label:t('rooms.editParticipants'),icon:<UsersRound size={16}/>,run:()=>{setInspector(true);setRecipientsOpen(false)}},
         {label:t('rooms.sharedKnowledge'),icon:<BookOpenText size={16}/>,run:()=>void openKnowledge()},
-        {label:t('rooms.systemPrompt'),icon:<FileText size={16}/>,run:()=>void openPrompt()},
        ]}/>
-       <Button type="button" variant="ghost" size="icon" className="!h-7 !w-7 !border-0 !bg-transparent !text-[var(--color-muted)]" title={t('chat.attach')} aria-label={t('chat.attach')} onClick={()=>imageInputRef.current?.click()} disabled={sending||uploading}>{uploading?<LoaderCircle size={16} className="animate-spin"/>:<Paperclip size={16}/>}</Button>
+       <Button type="button" variant="ghost" size="icon" className="!h-7 !w-7 !border-0 !bg-transparent !text-muted" title={t('chat.attach')} aria-label={t('chat.attach')} onClick={()=>imageInputRef.current?.click()} disabled={sending||uploading}>{uploading?<LoaderCircle size={16} className="animate-spin"/>:<Paperclip size={16}/>}</Button>
        <input ref={imageInputRef} type="file" accept={ROOM_ATTACH_ALLOWED.join(',')} multiple className="sr-only" aria-label={t('chat.attach')} onChange={onPickImages}/>
 
        <div className="relative">
@@ -439,15 +426,11 @@ function RoomConversation({sidebarModal,settingsTarget,room,agents,providers,ope
          {roster.map((agent,index)=><Button variant="ghost" key={agent.id} className="flex w-full !justify-start gap-2 !text-xs" aria-pressed={targets.includes(agent.id)} onClick={()=>mention(agent)}><Avatar agent={agent} size="small" index={index}/><span className="min-w-0 flex-1 truncate text-left">{agent.name}</span>{targets.includes(agent.id)&&<Check size={13}/>}</Button>)}
         </div>,document.body)}
        </div>
-
-      </div>
-      <div className="ml-auto flex shrink-0 items-center gap-2">
+</>} actions={<>
 
        {running&&<Button size="sm" variant="ghost" disabled={stopping} onClick={()=>void stop()}><Square size={12} fill="currentColor"/>{stopping?t('rooms.stopping'):t('rooms.stop')}</Button>}
-       <Button type="submit" className="conversation-composer-send" aria-label={t('rooms.sendAria')} disabled={sending||uploading||(!input.trim()&&!pendingImages.length)||!current.agentIds.length}>{sending?<LoaderCircle size={18} className="animate-spin"/>:<ArrowUp size={19}/>}</Button>
-      </div>
-     </div>
-    </form>
+       <ComposerSendButton type="submit" aria-label={t('rooms.sendAria')} disabled={sending||uploading||(!input.trim()&&!pendingImages.length)||!current.agentIds.length}>{sending?<LoaderCircle size={18} className="animate-spin"/>:<ArrowUp size={19}/>}</ComposerSendButton></>}/>
+
    </div>
    {visibleView&&showActivity&&<DialogBackdrop onDismiss={()=>setShowActivity(false)}><DialogPanel size="wide" aria-label={t('rooms.activityTitle')}><RoomActivity jobs={feed.jobs} executions={feed.executions} learningJobs={feed.learningJobs} recordedOperations={feed.operations} sessionId={sessionId} openSession={openSession} onClose={()=>setShowActivity(false)}/></DialogPanel></DialogBackdrop>}
   </section>
@@ -467,7 +450,9 @@ function RoomConversation({sidebarModal,settingsTarget,room,agents,providers,ope
    </DialogPanel>
   </DialogBackdrop>}
   {visibleView&&inspector&&<DialogBackdrop onDismiss={()=>setInspector(false)}><DialogPanel size="wide" className="room-settings-dialog" aria-label={t('rooms.groupSettings')}><div className="room-dialog-header"><h2>{t('rooms.groupSettings')}</h2><Button variant="ghost" size="icon" onClick={()=>setInspector(false)} aria-label={t('rooms.settingsClose')}><X size={18}/></Button></div><div className="room-dialog-body"><RoomSettings value={draft} onChange={updateDraft} agents={agents} providers={providers} disabled={saving}/>{saved&&<p className="room-saved"><Check size={13}/> {t('rooms.settingsSaved')}</p>}<Button variant="ghost" className="mt-3 w-full !justify-start !text-xs" onClick={()=>{setShowActivity(true);setInspector(false)}} aria-expanded={showActivity}><Activity size={14}/>{t('rooms.activity')}{feed.jobs.length>0&&' '+feed.jobs.length}</Button>{(learningNotice||learningActive>0||memoryCount>0)&&<p className="room-note">{learningNotice}{learningActive>0&&` · ${t('rooms.learning')} ${learningActive}`}{memoryCount>0&&` · ${t('rooms.memory',{count:memoryCount})}`}</p>}<Button variant="bare" className="room-reset" onClick={()=>void reset()} disabled={stopping}><RotateCcw size={13}/> {t('rooms.reset')}</Button><Button variant="bare" className="room-delete" onClick={()=>void remove()}><Trash2 size={13}/> {t('rooms.deleteRoom')}</Button></div><div className="room-dialog-footer"><Button variant="primary" disabled={!dirty||saving||!draft.name.trim()||!draft.agentIds.length} onClick={()=>void save()}>{saving?<LoaderCircle size={14} className="animate-spin"/>:<Check size={14}/>} {t('rooms.saveChanges')}</Button></div></DialogPanel></DialogBackdrop>}
-  {visibleView&&promptOpen&&<DialogBackdrop onDismiss={closePrompt}><DialogPanel size="wide" aria-label={t('rooms.systemPrompt')}><div className="room-dialog-header"><div><span className="room-eyebrow">{t('rooms.systemPrompt')}</span><h2>{t('rooms.systemPromptHint')}</h2></div><Button size="icon" variant="ghost" aria-label={t('rooms.close')} disabled={promptSaving} onClick={closePrompt}><X size={18}/></Button></div><div className="room-dialog-body">{roster.length>1&&<FormField label={t('rooms.systemPromptAgent')}><SelectInput disabled={promptSaving||promptBusy} value={promptAgent} onChange={e=>void openPrompt(e.target.value)}>{roster.map(agent=><option key={agent.id} value={agent.id}>{agent.name}</option>)}</SelectInput></FormField>}{prompt&&!promptBusy&&<p className="room-note">{t('rooms.systemPromptStats',{chars:prompt.chars.toLocaleString(),tokens:prompt.tokens.toLocaleString(),personaChars:prompt.personaChars.toLocaleString(),personaTokens:prompt.personaTokens.toLocaleString()})}</p>}{promptBusy?<p className="room-note"><LoaderCircle size={14} className="animate-spin"/> {t('rooms.systemPromptLoading')}</p>:prompt&&<><details className="room-prompt-part" open><summary>{t('rooms.systemPromptCommon')} · {prompt.commonChars.toLocaleString()}자 / {prompt.commonTokens.toLocaleString()}토큰</summary><TextArea aria-label={t('rooms.systemPromptCommon')} className="room-system-prompt" rows={10} disabled={promptSaving} value={commonDraft} onChange={e=>setCommonDraft(e.target.value)}/></details><details className="room-prompt-part"><summary>{t('rooms.systemPromptPersona')} · {prompt.personaChars.toLocaleString()}자 / {prompt.personaTokens.toLocaleString()}토큰</summary><TextArea aria-label={t('rooms.systemPromptPersona')} className="room-system-prompt" rows={10} disabled={promptSaving} value={personaDraft} onChange={e=>setPersonaDraft(e.target.value)}/></details><details className="room-prompt-part"><summary>{t('rooms.systemPromptCombined')} · {prompt.chars.toLocaleString()}자 / {prompt.tokens.toLocaleString()}토큰</summary><TextArea aria-label={t('rooms.systemPromptCombined')} className="room-system-prompt" rows={12} disabled={promptSaving} value={finalDraft} onChange={e=>setFinalDraft(e.target.value)}/></details></>}<Notice message={promptError}/>{promptNotice&&<p role="status" className="room-saved"><Check size={13}/>{promptNotice}</p>}</div><div className="room-dialog-footer"><span>{t('rooms.systemPromptHint')}</span><Button variant="primary" disabled={promptSaving||promptBusy||!promptDirty} onClick={()=>void savePrompt()}>{promptSaving?<LoaderCircle size={14} className="animate-spin"/>:<Check size={14}/>} {t('rooms.saveChanges')}</Button><Button disabled={promptSaving} onClick={closePrompt}>{t('rooms.close')}</Button></div></DialogPanel></DialogBackdrop>}
+  {visibleView&&promptOpen&&<RoomPromptEditor roster={roster} agentId={promptAgent} preview={prompt} loading={promptBusy} saving={promptSaving} dirty={promptDirty} error={promptError} notice={promptNotice}
+   common={commonDraft} persona={personaDraft} final={finalDraft} onCommon={setCommonDraft} onPersona={setPersonaDraft} onFinal={setFinalDraft}
+   onAgent={id=>void openPrompt(id)} onSave={()=>void savePrompt()} onClose={closePrompt}/>}
 {visibleView&&knowledgeOpen&&<DialogBackdrop onDismiss={()=>setKnowledgeOpen(false)}><DialogPanel size="wide" aria-label={t('rooms.sharedKnowledge')}><div className="room-dialog-header"><div><span className="room-eyebrow">{t('ui.label.sharedKnowledge')}</span><h2>{t('rooms.knowledgeOf',{name:current.name})}</h2></div><Button size="icon" variant="ghost" aria-label={t('rooms.close')} onClick={()=>setKnowledgeOpen(false)}><X size={18}/></Button></div><div className="room-dialog-body"><p className="room-note">{t('rooms.knowledgeDesc')}</p><div className="room-knowledge-list">{knowledgeBusy&&!knowledge.length&&<p className="room-note"><LoaderCircle size={14} className="animate-spin"/> {t('rooms.knowledgeLoading')}</p>}{!knowledgeBusy&&!knowledge.length&&<p className="room-note">{t('rooms.knowledgeEmpty')}</p>}{knowledge.map(item=>{const sources=(item.sources||[]).map((source:any)=>[source.agentName||source.agentId||'?',source.model||t('rooms.modelUnrecorded')].filter(Boolean).join(' · ')).filter(Boolean).join(', ');return <div className={'room-knowledge-item '+(item.status==='superseded'?'is-superseded':'')} key={item.id}><div className="room-knowledge-head"><strong>{item.type}</strong><span>{item.verification||'unverified'}</span><span>{item.status==='active'?t('rooms.knowledgeActive'):t('rooms.knowledgeSuperseded')}</span></div><p>{item.text}</p><small>{t('rooms.source')}: {sources||t('rooms.noRecord')}</small></div>})}</div>{knowledgeNotice&&<p className="room-saved"><Check size={13}/>{knowledgeNotice}</p>}</div><div className="room-dialog-footer"><span>{t('rooms.selectedKnowledge')}</span><div className="flex gap-2"><Button variant="secondary" disabled={knowledgeBusy} onClick={()=>void learnKnowledge()}>{knowledgeBusy?<LoaderCircle size={14} className="animate-spin"/>:<RefreshCw size={14}/>} {t('rooms.learnNow')}</Button><Button onClick={()=>setKnowledgeOpen(false)}>{t('rooms.close')}</Button></div></div></DialogPanel></DialogBackdrop>}
  </div>
 }

@@ -1,18 +1,23 @@
-import React,{forwardRef} from 'react'
-const focus='focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1'
-const field='w-full min-w-0 rounded-xl border border-[var(--color-divider)] bg-surface px-3.5 py-2.5 text-[13px] text-[#2E2922] placeholder:text-[var(--color-muted)] transition-colors hover:border-[var(--color-divider)] focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/10 disabled:cursor-not-allowed disabled:bg-[var(--color-canvas)] disabled:opacity-70'
-export type ButtonProps=React.ButtonHTMLAttributes<HTMLButtonElement>&{variant?:'primary'|'secondary'|'ghost'|'danger'|'bare';size?:'default'|'sm'|'icon'}
+import {forwardRef, type ButtonHTMLAttributes, type HTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TableHTMLAttributes, type TextareaHTMLAttributes} from 'react'
+
+export const cn=(...classes:(string|false|null|undefined)[])=>classes.filter(Boolean).join(' ')
+const focus='focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-surface'
+const field='w-full min-w-0 rounded-xl border border-divider bg-surface px-3.5 py-2.5 text-sm text-ink placeholder:text-muted/65 transition-colors hover:border-muted/40 focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/10 disabled:cursor-not-allowed disabled:bg-canvas disabled:opacity-60'
+
+export type ButtonProps=ButtonHTMLAttributes<HTMLButtonElement>&{variant?:'primary'|'secondary'|'ghost'|'danger'|'bare';size?:'default'|'sm'|'icon'}
+const tones={primary:'border-brand bg-brand text-white shadow-sm hover:bg-brand-hover',secondary:'border-divider bg-surface text-ink hover:bg-canvas',ghost:'border-transparent bg-transparent text-muted hover:bg-canvas hover:text-ink',danger:'border-danger/20 bg-danger-soft text-danger hover:bg-danger/10',bare:''}
+const sizes={default:'inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-semibold',sm:'inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold',icon:'inline-flex size-10 shrink-0 items-center justify-center rounded-xl border'}
 export const Button=forwardRef<HTMLButtonElement,ButtonProps>(function Button({className='',variant='secondary',size='default',type='button',...props},ref){
- const tones={primary:'border-brand bg-brand text-white shadow-[0_4px_12px_rgba(201,100,66,.16)] hover:bg-brand-hover',secondary:'border-[var(--color-divider)] bg-surface text-[var(--color-ink)] hover:bg-[var(--color-canvas)]',ghost:'border-transparent bg-transparent text-[var(--color-muted)] hover:bg-[var(--color-canvas)]',danger:'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100',bare:''}
- const isIcon=size==='icon'||/\b(icon-button|mobile-close)\b/.test(className)
- const base=variant==='bare'?'':isIcon?'inline-flex size-9 shrink-0 items-center justify-center rounded-xl border':size==='sm'?'inline-flex min-h-8 items-center justify-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] font-semibold':'inline-flex min-h-9 items-center justify-center gap-1.5 rounded-xl border px-3.5 py-2 text-[13px] font-semibold'
- return <button ref={ref} type={type} className={[base,tones[variant],focus,'transition-colors disabled:pointer-events-none disabled:opacity-45',className].filter(Boolean).join(' ')} {...props}/>
+ return <button ref={ref} type={type} className={cn(variant!=='bare'&&sizes[size],tones[variant],focus,'transition-colors disabled:pointer-events-none disabled:opacity-45',className)} {...props}/>
 })
-export const TextInput=forwardRef<HTMLInputElement,React.InputHTMLAttributes<HTMLInputElement>>(function TextInput({className='',type='text',...props},ref){const special=['checkbox','radio','range','color','file','hidden'].includes(type);return <input ref={ref} type={type} className={[!special&&field,className].filter(Boolean).join(' ')} {...props}/>})
-export const TextArea=forwardRef<HTMLTextAreaElement,React.TextareaHTMLAttributes<HTMLTextAreaElement>>(function TextArea({className='',...props},ref){return <textarea ref={ref} className={[field,'min-h-20 resize-y',className].join(' ')} {...props}/>})
-export const SelectInput=forwardRef<HTMLSelectElement,React.SelectHTMLAttributes<HTMLSelectElement>>(function SelectInput({className='',...props},ref){return <select ref={ref} className={[field,'cursor-pointer',className].join(' ')} {...props}/>})
-export const DataTable=forwardRef<HTMLTableElement,React.TableHTMLAttributes<HTMLTableElement>>(function DataTable({className='',...props},ref){return <table ref={ref} className={['w-full border-collapse text-left text-[12px] text-[var(--color-ink)]',className].join(' ')} {...props}/>})
-export function PageContainer({children,className=''}:{children:React.ReactNode;className?:string}){return <div className={['mx-auto w-full max-w-[1280px] min-w-0 px-4 py-5 sm:px-6 lg:px-7 lg:py-6',className].join(' ')}>{children}</div>}
-export function Card({children,className=''}:{children:React.ReactNode;className?:string}){return <section className={['min-w-0 rounded-2xl border border-divider bg-surface p-5 shadow-[0_1px_2px_rgba(36,33,29,.04),0_10px_30px_rgba(36,33,29,.03)]',className].join(' ')}>{children}</section>}
-export function Stack({children,className=''}:{children:React.ReactNode;className?:string}){return <div className={['flex min-w-0 flex-col gap-3',className].join(' ')}>{children}</div>}
-export function Inline({children,className=''}:{children:React.ReactNode;className?:string}){return <div className={['flex min-w-0 flex-wrap items-center gap-2',className].join(' ')}>{children}</div>}
+export const TextInput=forwardRef<HTMLInputElement,InputHTMLAttributes<HTMLInputElement>>(function TextInput({className='',type='text',...props},ref){
+ const special=['checkbox','radio','range','color','file','hidden'].includes(type)
+ return <input ref={ref} type={type} className={cn(!special&&field,special&&'accent-brand',className)} {...props}/>
+})
+export const TextArea=forwardRef<HTMLTextAreaElement,TextareaHTMLAttributes<HTMLTextAreaElement>>(function TextArea({className='',...props},ref){return <textarea ref={ref} className={cn(field,'min-h-20 resize-y',className)} {...props}/>})
+export const SelectInput=forwardRef<HTMLSelectElement,SelectHTMLAttributes<HTMLSelectElement>>(function SelectInput({className='',...props},ref){return <select ref={ref} className={cn(field,'cursor-pointer',className)} {...props}/>})
+export const DataTable=forwardRef<HTMLTableElement,TableHTMLAttributes<HTMLTableElement>>(function DataTable({className='',...props},ref){return <table ref={ref} className={cn('w-full border-collapse text-left text-sm text-ink',className)} {...props}/>})
+export function PageContainer({children,className=''}:{children:ReactNode;className?:string}){return <div className={cn('mx-auto w-full min-w-0 max-w-6xl px-4 py-6 sm:px-8',className)}>{children}</div>}
+export function Card({children,className='',...props}:HTMLAttributes<HTMLElement>){return <section className={cn('min-w-0 rounded-2xl border border-divider bg-surface p-5',className)} {...props}>{children}</section>}
+export function Stack({children,className=''}:{children:ReactNode;className?:string}){return <div className={cn('flex min-w-0 flex-col gap-4',className)}>{children}</div>}
+export function Inline({children,className=''}:{children:ReactNode;className?:string}){return <div className={cn('flex min-w-0 flex-wrap items-center gap-2',className)}>{children}</div>}

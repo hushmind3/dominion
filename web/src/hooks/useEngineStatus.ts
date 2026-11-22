@@ -1,49 +1,24 @@
-import {useEffect, useState} from 'react'
-import {get} from '../api'
+import {useEffect} from 'react'
 import {connectEngineEvents} from '../services/engineEvents'
+import {useRemote} from './useRemote'
 
-type EngineStatus = {online: boolean; connecting: boolean; running: number; pending: number; engineBuild: {branch: string; commit: string} | null}
-const initialStatus: EngineStatus = {online: false, connecting: true, running: 0, pending: 0, engineBuild: null}
+type Status={jobs:number;branch?:string;commit?:string}
 
+/** Connection status and conversations share read state and one event bridge. */
 export function useEngineStatus() {
-  const [status, setStatus] = useState(initialStatus)
-  useEffect(() => {
-    let mounted = true
-    let statusRequest: AbortController | undefined
-    let approvalRequest: AbortController | undefined
-    const check = async () => {
-      if (statusRequest) return
-      const controller = new AbortController()
-      statusRequest = controller
-      try {
-        const value = await get<{jobs: number; branch: string; commit: string}>('/api/status', controller.signal)
-        if (mounted) setStatus(previous => ({...previous, online: true, connecting: false, running: Number(value.jobs) || 0, engineBuild: {branch: value.branch, commit: value.commit}}))
-      } catch {
-        if (mounted) setStatus(previous => ({...previous, online: false, connecting: false, running: 0, engineBuild: null}))
-      } finally {statusRequest = undefined}
-    }
-    const approvals = async () => {
-      if (approvalRequest) return
-      const controller = new AbortController()
-      approvalRequest = controller
-      try {
-        const value = await get<unknown[]>('/api/approvals', controller.signal)
-        if (mounted) setStatus(previous => ({...previous, pending: Array.isArray(value) ? value.length : 0}))
-      } catch {
-        if (mounted) setStatus(previous => ({...previous, pending: 0}))
-      } finally {approvalRequest = undefined}
-    }
-    void check()
-    void approvals()
-    const poll = setInterval(() => {void check()}, 12000)
-    const disconnect = connectEngineEvents(() => {void check()}, () => {void approvals()})
-    return () => {
-      mounted = false
-      clearInterval(poll)
-      disconnect()
-      statusRequest?.abort()
-      approvalRequest?.abort()
-    }
-  }, [])
-  return status
+ const state=useRemote<Status|null>('/api/status',null)
+ const approvals=useRemote<unknown[]>('/api/approvals',[])
+ useEffect(()=>{
+  const status=()=>{void state.reload()}
+  const pending=()=>{void approvals.reload()}
+  const disconnect=connectEngineEvents(status,pending)
+  const poll=setInterval(()=>{if(!document.hidden)status()},12_000)
+  const resume=()=>{if(!document.hidden)status()}
+  document.addEventListener('visibilitychange',resume)
+  return()=>{disconnect();clearInterval(poll);document.removeEventListener('visibilitychange',resume)}
+ },[state.reload,approvals.reload])
+ const online=Boolean(state.value&&!state.error)
+ return {online,connecting:state.loading,running:online?Number(state.value?.jobs)||0:0,
+  pending:approvals.error?0:approvals.value.length,
+  engineBuild:state.value?.branch&&state.value.commit?{branch:state.value.branch,commit:state.value.commit}:null}
 }

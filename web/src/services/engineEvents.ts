@@ -1,4 +1,4 @@
-import {classifyRefreshEvent, emptyRefreshScope, mergeRefreshScopes, type BusChange} from '../refreshEvents'
+import {classifyRefreshEvent, matchesRefreshTarget, emptyRefreshScope, mergeRefreshScopes, type BusChange} from '../refreshEvents'
 
 /** One event bridge owns connection recovery, burst coalescing and cleanup. */
 export function connectEngineEvents(onStatus: () => void, onApprovals: () => void) {
@@ -16,8 +16,6 @@ export function connectEngineEvents(onStatus: () => void, onApprovals: () => voi
       // Reconnects may have missed durable changes. Refetch once, then resume
       // the normal scoped events rather than leaving old conversations visible.
       window.dispatchEvent(new Event('dominion-refresh'))
-      onStatus()
-      onApprovals()
     }
     connectedBefore = true
     disconnected = false
@@ -42,10 +40,10 @@ export function connectEngineEvents(onStatus: () => void, onApprovals: () => voi
         window.dispatchEvent(new CustomEvent('dominion-data-change', {detail: batch}))
       })
     }
-    if (item.type === 'approval' || (item.type === 'record' && item.kind === 'approval')) {
+    if (!matchesRefreshTarget('/api/approvals',next.targets)&&(item.type === 'approval' || (item.type === 'record' && item.kind === 'approval'))) {
       schedule('approvals', 250, onApprovals)
     }
-    if (item.type === 'job_event' || item.type === 'goal_event' || item.type === 'execution_event' || (item.type === 'record' && item.kind === 'job')) {
+    if (!matchesRefreshTarget('/api/status',next.targets)&&(item.type === 'job_event' || item.type === 'goal_event' || item.type === 'execution_event' || (item.type === 'record' && item.kind === 'job'))) {
       schedule('status', 250, onStatus)
     }
   }

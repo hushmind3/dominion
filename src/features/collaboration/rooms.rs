@@ -133,15 +133,6 @@ fn speaker_window(
     if roster.len() <= 3 {
         return roster.to_vec();
     }
-    // An explicit total cap of at least one turn per participant is the
-    // owner's instruction that everyone should speak. Do not silently trim
-    // that room down to two casual responders.
-    if room["maxTurns"]
-        .as_u64()
-        .is_some_and(|turns| turns as usize >= roster.len())
-    {
-        return roster.to_vec();
-    }
     let lower = input.to_lowercase();
     if [
         "다들", "다 같이", "다같이", "모두", "모든", "전원", "전부", "각자",
@@ -493,7 +484,7 @@ async fn run_locked(
     if initial.iter().any(|id| !roster.contains(id)) {
         return Err("실행 체크포인트의 응답자가 대화방 참가자가 아닙니다.".into());
     }
-    let rounds = room["rounds"].as_i64().unwrap_or(3).clamp(1, max_turns_ceiling() as i64) as usize;
+    let rounds = room["rounds"].as_i64().unwrap_or(1).clamp(1, max_turns_ceiling() as i64) as usize;
     // rounds is the primary control: one round means every participant
     // speaks once. maxTurns > 0 is an explicit total cap; 0 means automatic.
     let budget = existing["turnBudget"]
@@ -1748,7 +1739,7 @@ mod tests {
         crate::test_support::cleanup_dir(dir);
     }
     #[test]
-    fn an_explicit_turn_cap_keeps_all_room_speakers() {
+    fn turn_cap_is_not_a_broadcast_request() {
         let (state, dir) = test_state();
         let mut ids = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         for index in 4..=9 {
@@ -1764,6 +1755,7 @@ mod tests {
         });
         assert_eq!(speaker_window(&state, &room, "다시 인사해봐", &ids).len(), 9);
         assert_eq!(speaker_window(&state, &room, "나머지도 말해라", &ids).len(), 9);
+        assert_eq!(speaker_window(&state, &room, "짧게 말해", &ids).len(), 2);
         room["maxTurns"] = json!(0);
         assert_eq!(speaker_window(&state, &room, "짧게 말해", &ids).len(), 2);
         crate::test_support::cleanup_dir(dir);

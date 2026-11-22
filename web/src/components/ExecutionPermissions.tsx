@@ -53,7 +53,7 @@ export function ExecutionPermissions({open,onOpenChange,onError,onChanged,active
  const activePermission=permissionCopy[permissionMode]
  return <div className="relative">
   <Button type="button" variant="ghost" ref={permissionPanel.trigger} onClick={()=>onOpenChange(!open)}
-   className={'chat-permission inline-flex !min-h-9 items-center gap-2 !rounded-lg !border-0 !px-3 !text-[12px] font-semibold '+(permissionMode==='full'?'!bg-amber-50 text-amber-700 hover:!bg-amber-100':'!bg-[var(--color-canvas)] text-[var(--color-muted)] hover:!bg-[var(--color-canvas)]')}
+   className={'chat-permission inline-flex !min-h-9 items-center gap-2 !rounded-lg !border-0 !px-3 !text-[12px] font-semibold '+(permissionMode==='full'?'!bg-warning-soft text-warning hover:!bg-warning-soft':'!bg-canvas text-muted hover:!bg-canvas')}
    title={t(activePermission.detail)} aria-label={t('chat.permissions')+': '+t(activePermission.label)} aria-expanded={open} aria-haspopup="dialog">
    {permissionMode==='full'?<ShieldAlert size={16}/>:<ShieldCheck size={16}/>}
    <span className="truncate">{t(activePermission.label)}</span><ChevronDown size={14}/>
@@ -61,27 +61,27 @@ export function ExecutionPermissions({open,onOpenChange,onError,onChanged,active
   {open&&permissionPanel.position&&createPortal(
    <div ref={permissionPanel.panel} style={permissionPanel.position} role="dialog" aria-label={t('chat.permissions')}
     className="z-[80] max-w-full overflow-y-auto overscroll-contain rounded-2xl border border-divider bg-surface p-3 shadow-xl">
-    <div className="border-b border-[var(--color-canvas)] px-2 pb-3">
-     <h3 className="text-[15px] font-bold text-[var(--color-ink)]">{t('chat.permissions')}</h3>
-     <p className="mt-1 text-[12px] leading-5 text-[var(--color-muted)]">{t('chat.permissionsDesc')}</p>
+    <div className="border-b border-canvas px-2 pb-3">
+     <h3 className="text-[15px] font-bold text-ink">{t('chat.permissions')}</h3>
+     <p className="mt-1 text-[12px] leading-5 text-muted">{t('chat.permissionsDesc')}</p>
     </div>
     <div className="space-y-1 pt-2">
      {(['request','workspace','full'] as PermissionMode[]).map(mode=>
       <Button type="button" variant="ghost" key={mode} disabled={permissionBusy}
        aria-pressed={permissionMode===mode} onClick={()=>void changePermission(mode)}
-       className={'flex w-full !min-h-16 items-start gap-3 !justify-start rounded-xl !border-0 px-3 py-3 text-left hover:bg-[var(--color-canvas)] focus-visible:outline-2 focus-visible:outline-offset-2 '+(permissionMode===mode?'!bg-[#F8F1E8]':'')}>
-       <span className={'mt-1 grid size-5 shrink-0 place-items-center rounded-full border '+(permissionMode===mode?'border-brand bg-brand text-white':'border-[var(--color-divider)]')}>
+       className={'flex w-full !min-h-16 items-start gap-3 !justify-start rounded-xl !border-0 px-3 py-3 text-left hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-2 '+(permissionMode===mode?'!bg-canvas':'')}>
+       <span className={'mt-1 grid size-5 shrink-0 place-items-center rounded-full border '+(permissionMode===mode?'border-brand bg-brand text-white':'border-divider')}>
         {permissionMode===mode&&<Check size={13}/>}
        </span>
        <span className="min-w-0 flex-1">
-        <strong className={'block text-[13px] '+(mode==='full'?'text-amber-700':'text-[var(--color-ink)]')}>
+        <strong className={'block text-[13px] '+(mode==='full'?'text-warning':'text-ink')}>
          {t(permissionCopy[mode].label)}
         </strong>
-        <small className="mt-1 block text-[12px] leading-5 text-[var(--color-muted)]">
+        <small className="mt-1 block text-[12px] leading-5 text-muted">
          {t(permissionCopy[mode].detail)}
         </small>
        </span>
-       {permissionMode===mode&&<span className="shrink-0 text-[11px] font-bold text-[var(--color-brand)]">
+       {permissionMode===mode&&<span className="shrink-0 text-[11px] font-bold text-brand">
         {locale==='ko'?'현재 설정':'Active'}
        </span>}
       </Button>

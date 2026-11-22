@@ -65,37 +65,37 @@ export function RunEventTimeline({executionId}:{executionId:string}){
   const timer=window.setInterval(()=>{void load(false)},5000)
   return()=>window.clearInterval(timer)
  },[open,cursor,loading,executionId])
- return <section className="mt-3 rounded-xl border border-divider bg-white">
+ return <section className="mt-3 rounded-xl border border-divider bg-surface">
   <button type="button" aria-expanded={open} onClick={()=>{if(!open&&!rows.length)void load(true);setOpen(!open)}}
-   className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left text-[11px] font-semibold text-[var(--color-ink)] hover:bg-[var(--color-canvas)]">
+   className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left text-[11px] font-semibold text-ink hover:bg-canvas">
    <span className="inline-flex items-center gap-2"><Activity size={14}/>{en?'Durable execution events':'실행 이벤트 기록'} {rows.length>0?'('+rows.length+')':''}</span>
    {open?<ChevronDown size={14}/>:<ChevronRight size={14}/>}
   </button>
-  {open&&<div className="border-t border-[var(--color-divider)] px-3 py-2">
+  {open&&<div className="border-t border-divider px-3 py-2">
    <div className="flex justify-end">
     <button type="button" disabled={loading} onClick={()=>void load(true)}
      className="inline-flex items-center gap-1 text-[10px] text-muted disabled:opacity-50"><RefreshCw size={11}/>{en?'Refresh':'새로고침'}</button>
    </div>
-   {truncated&&<p className="my-2 text-[11px] text-amber-800">{en?'Old events were truncated by retention; this history is incomplete.':'보관 기간으로 일부 과거 이벤트가 누락됐습니다.'}</p>}
+   {truncated&&<p className="my-2 text-[11px] text-warning">{en?'Old events were truncated by retention; this history is incomplete.':'보관 기간으로 일부 과거 이벤트가 누락됐습니다.'}</p>}
    <div className="mt-1 max-h-72 space-y-1 overflow-y-auto">
-    {rows.map(event=><details key={event.seq} className="rounded-lg border border-[var(--color-canvas)] bg-[var(--color-surface)] px-2.5 py-2">
-     <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-[11px] text-[var(--color-ink)]">
-      <span className="font-mono text-[10px] text-[var(--color-muted)]">#{event.seq}</span>
+    {rows.map(event=><details key={event.seq} className="rounded-lg border border-canvas bg-surface px-2.5 py-2">
+     <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-[11px] text-ink">
+      <span className="font-mono text-[10px] text-muted">#{event.seq}</span>
       <strong>{friendly(event,en)}</strong>
-      {event.runRef.lifecycle&&<span className="rounded bg-[var(--color-canvas)] px-1.5 py-0.5 text-[10px]">{event.runRef.lifecycle}</span>}
+      {event.runRef.lifecycle&&<span className="rounded bg-canvas px-1.5 py-0.5 text-[10px]">{event.runRef.lifecycle}</span>}
      </summary>
      <div className="mt-2 text-[10px] text-muted">
       {event.runRef.agentId&&<p>Agent: {event.runRef.agentId}</p>}
       {event.runRef.taskId&&<p>Task: {event.runRef.taskId}</p>}
       {event.runRef.externalRunId&&<p>External: {event.runRef.externalRunId}</p>}
-      <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-white p-2 text-[10px]">{JSON.stringify(event,null,2)}</pre>
+      <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-surface p-2 text-[10px]">{JSON.stringify(event,null,2)}</pre>
      </div>
     </details>)}
-    {!rows.length&&!loading&&!error&&<p className="py-4 text-center text-[11px] text-[var(--color-muted)]">{en?'No recorded events.':'기록된 이벤트가 없습니다.'}</p>}
+    {!rows.length&&!loading&&!error&&<p className="py-4 text-center text-[11px] text-muted">{en?'No recorded events.':'기록된 이벤트가 없습니다.'}</p>}
    </div>
-   {loading&&<p role="status" className="mt-2 flex items-center gap-1 text-[11px] text-[var(--color-muted)]"><LoaderCircle size={12} className="animate-spin"/>{en?'Loading…':'불러오는 중…'}</p>}
-   {error&&<p role="alert" className="mt-2 text-[11px] text-rose-700">{error}</p>}
-   {more&&<button type="button" disabled={loading} onClick={()=>void load()} className="mt-2 rounded-lg border border-divider px-3 py-1.5 text-[11px] text-[var(--color-ink)] disabled:opacity-50">{en?'Load more':'이어서 보기'}</button>}
+   {loading&&<p role="status" className="mt-2 flex items-center gap-1 text-[11px] text-muted"><LoaderCircle size={12} className="animate-spin"/>{en?'Loading…':'불러오는 중…'}</p>}
+   {error&&<p role="alert" className="mt-2 text-[11px] text-danger">{error}</p>}
+   {more&&<button type="button" disabled={loading} onClick={()=>void load()} className="mt-2 rounded-lg border border-divider px-3 py-1.5 text-[11px] text-ink disabled:opacity-50">{en?'Load more':'이어서 보기'}</button>}
   </div>}
  </section>
 }

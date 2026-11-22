@@ -18,11 +18,11 @@ const active=(s:string)=>s==='running'
 function ToolHistory({id}:{id:string}){
  const log=useRemote<Operation[]>('/api/executions/'+id+'/operations',[])
  return <div className="mt-3 max-h-44 space-y-2 overflow-y-auto">
-  {log.value.map(o=><div key={o.id} className="flex items-center gap-2 rounded-lg bg-[var(--color-canvas)] px-3 py-2 text-xs">
+  {log.value.map(o=><div key={o.id} className="flex items-center gap-2 rounded-lg bg-canvas px-3 py-2 text-xs">
    <Terminal size={13} className="shrink-0 text-muted"/><span className="min-w-0 flex-1 truncate">{o.tool}</span>
    <span className="text-muted">{o.status}</span>
   </div>)}
-  {!log.value.length&&<p className="text-xs text-[var(--color-muted)]">{t('em.noTools')}</p>}
+  {!log.value.length&&<p className="text-xs text-muted">{t('em.noTools')}</p>}
  </div>
 }
 export function ExecutionMonitor(){
@@ -56,11 +56,11 @@ export function ExecutionMonitor(){
   <div className="flex flex-wrap items-center justify-between gap-3 border-b border-divider px-5 py-4">
    <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-ink text-white"><Activity size={20}/></span>
     <div><h2 className="m-0 text-lg font-bold text-ink">{t('em.title')}</h2><p className="m-0 text-xs text-muted">{t('em.subtitle')}</p></div></div>
-   <div className="flex items-center gap-3"><span className="text-xs font-semibold text-[var(--color-muted)]">{t('em.count',{count})}</span>
+   <div className="flex items-center gap-3"><span className="text-xs font-semibold text-muted">{t('em.count',{count})}</span>
     <Button size="sm" variant="ghost" onClick={()=>void runs.reload()}><RefreshCw size={14}/> {t('em.refresh')}</Button></div>
   </div>
   <div className="border-b border-divider p-5">
-   <label className="mb-2 block text-sm font-semibold text-[var(--color-ink)]">{t('em.instruction')}</label>
+   <label className="mb-2 block text-sm font-semibold text-ink">{t('em.instruction')}</label>
    <TextArea rows={3} value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder={t('em.placeholder')}/>
    <div className="mt-3 flex flex-wrap items-center gap-2">
     <SelectInput value={executorId} onChange={e=>setAgentChoice(e.target.value)} aria-label={t('em.agentAria')}>
@@ -69,33 +69,33 @@ export function ExecutionMonitor(){
     </SelectInput>
     <Button variant="primary" disabled={busy||!executorId||!prompt.trim()} onClick={()=>void execute()}><Play size={15}/> {t('em.run')}</Button>
    </div>
-   {info&&<p className="mt-2 text-xs text-emerald-700">{info}</p>}
+   {info&&<p className="mt-2 text-xs text-success">{info}</p>}
   </div>
   <div className="grid min-w-0 gap-4 p-5 lg:grid-cols-2">
    <div className="max-h-64 space-y-2 overflow-y-auto">
     {runs.value.map(r=><Button key={r.id} variant="ghost" onClick={()=>setSelected(r.id)}
-     className={'!flex !w-full !items-center !justify-between !gap-2 !rounded-lg !border !px-3 !py-3 !text-left '+(current?.id===r.id?'!border-blue-300 !bg-[var(--color-brand-soft)]':'!border-divider')}>
-      <span className="min-w-0"><strong className="block truncate text-xs text-[var(--color-ink)]">{r.model}</strong>
+     className={'!flex !w-full !items-center !justify-between !gap-2 !rounded-lg !border !px-3 !py-3 !text-left '+(current?.id===r.id?'!border-info/20 !bg-brand-soft':'!border-divider')}>
+      <span className="min-w-0"><strong className="block truncate text-xs text-ink">{r.model}</strong>
        <small className="block truncate text-[11px] text-muted">{r.sessionId}</small></span>
-      <span className="shrink-0 text-xs font-medium text-[var(--color-muted)]">{labels[r.status]?t(labels[r.status]):r.status}</span>
+      <span className="shrink-0 text-xs font-medium text-muted">{labels[r.status]?t(labels[r.status]):r.status}</span>
     </Button>)}
     {!runs.value.length&&<p className="py-8 text-center text-sm text-muted">{t('em.empty')}</p>}
    </div>
    <div className="min-w-0 border-t border-divider pt-4 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
-    {current?<><div className="flex items-center justify-between gap-2"><h3 className="m-0 text-sm font-bold text-[var(--color-ink)]">{t('em.detail')}</h3>
-     <span className="text-xs font-semibold text-[var(--color-muted)]">{labels[current.status]?t(labels[current.status]):current.status}</span></div>
-     <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg bg-[var(--color-canvas)] p-3 text-center">
+    {current?<><div className="flex items-center justify-between gap-2"><h3 className="m-0 text-sm font-bold text-ink">{t('em.detail')}</h3>
+     <span className="text-xs font-semibold text-muted">{labels[current.status]?t(labels[current.status]):current.status}</span></div>
+     <div className="mt-3 grid grid-cols-3 gap-2 rounded-lg bg-canvas p-3 text-center">
       <div><strong className="block text-lg">{current.modelCalls||0}</strong><small className="text-[10px]">{t('em.modelCalls')}</small></div>
       <div><strong className="block text-lg">{current.toolCalls||0}</strong><small className="text-[10px]">{t('em.toolCalls')}</small></div>
       <div><strong className="block text-lg">{current.tokens||0}</strong><small className="text-[10px]">{t('em.tokens')}</small></div>
      </div>
      <p className="mt-3 flex items-center gap-2 text-xs text-muted"><Clock3 size={13}/>{current.startedAt?.replace('T',' ').slice(0,19)} UTC</p>
-     {current.reason&&<p role="alert" className="mt-2 break-words rounded-lg bg-amber-50 p-3 text-xs text-amber-800">{translateError(current.reason)}</p>}
+     {current.reason&&<p role="alert" className="mt-2 break-words rounded-lg bg-warning-soft p-3 text-xs text-warning">{translateError(current.reason)}</p>}
      {active(current.status)&&<Button variant="danger" disabled={busy} onClick={()=>void cancel()}><Square size={14}/> {t('em.cancel')}</Button>}
      <ToolHistory key={current.id} id={current.id}/>
     </>:<p className="text-sm text-muted">{t('em.idle')}</p>}
    </div>
   </div>
-  {error&&<p role="alert" className="px-5 pb-4 text-xs text-rose-600">{translateError(error)}</p>}
+  {error&&<p role="alert" className="px-5 pb-4 text-xs text-danger">{translateError(error)}</p>}
  </Panel>
 }

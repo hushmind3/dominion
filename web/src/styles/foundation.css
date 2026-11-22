@@ -8,28 +8,37 @@
  --color-muted: #7C7469;
  --color-divider: #E7E0D5;
  --color-brand-soft: #F7E8E1;
+ --color-sidebar: #F4F1EA;
+ --color-selected: #E9DFD0;
+ --color-danger: #AD4737;
+ --color-danger-soft: #FFF1EC;
+ --color-warning: #936128;
+ --color-warning-soft: #FFF5E4;
  --color-success: #4F6F52;
  --color-success-soft: #D9DFC8;
  --color-info: #6B4FA0;
  --color-info-soft: #E9E1F5;
+ --container-conversation: 54rem;
  --radius-panel: 1rem;
  --radius-control: .65rem;
  --shadow-panel: 0 1px 2px rgb(36 33 29 / .04), 0 10px 30px rgb(36 33 29 / .04);
 }
 @layer base {
- :root{font-family:var(--font-sans);color:var(--color-ink);background:var(--color-canvas);font-size:14px;line-height:1.55;font-synthesis:none;text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased}
+ :root{font-family:var(--font-sans);color:var(--color-ink);background:var(--color-canvas);font-size:16px;line-height:1.55;font-synthesis:none;text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased}
  *,:before,:after{box-sizing:border-box}
  html,body,#root{min-height:100%;margin:0}
  body{background:var(--color-canvas)}
  button,input,select,textarea{font:inherit}
  button{cursor:pointer}
  button:disabled{cursor:not-allowed}
- button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid #C96442;outline-offset:2px}
+ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--color-brand);outline-offset:2px}
  a{color:inherit;text-decoration:none}
  p,small,strong,span{overflow-wrap:break-word}
  pre,code{tab-size:2}
- ::selection{background:#F1DCCF;color:#5A2A1A}
+ ::selection{background:var(--color-brand-soft);color:var(--color-ink)}
  ::-webkit-scrollbar{width:9px;height:9px}
- ::-webkit-scrollbar-thumb{background:#D8CFC2;border-radius:10px;border:2px solid #F6F3EC}
+ ::-webkit-scrollbar-thumb{background:var(--color-divider);border-radius:10px;border:2px solid var(--color-surface)}
  ::-webkit-scrollbar-track{background:transparent}
 }
+
+@layer utilities { .chat-sidebar-resizing, .chat-sidebar-resizing * { cursor: col-resize !important; user-select: none !important; } }

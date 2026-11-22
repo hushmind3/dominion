@@ -402,18 +402,18 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
   {!token&&cloudUrl&&<div className="mt-3">
    <button type="button" onClick={()=>setShowLoginOptions(true)} className="rounded-lg bg-brand px-4 py-2 text-[12px] font-semibold text-white">가입 · 로그인</button>
    {showLoginOptions&&<div role="dialog" aria-modal="true" aria-label="DOMINION 가입 및 로그인" className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={()=>setShowLoginOptions(false)}>
-    <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl" onClick={event=>event.stopPropagation()}>
+    <div className="w-full max-w-sm rounded-xl bg-surface p-5 shadow-xl" onClick={event=>event.stopPropagation()}>
      <div className="flex items-center justify-between gap-3"><strong className="text-base">DOMINION 가입 · 로그인</strong><button type="button" onClick={()=>setShowLoginOptions(false)} aria-label="닫기" className="rounded-lg border px-3 py-1">닫기</button></div>
      <p className="my-3 text-[12px] text-muted">처음 인증하면 자동 가입됩니다. 로그인 없이도 로컬 모델과 개인 API를 사용할 수 있습니다.</p>
      <div className="flex flex-col items-start gap-3">
       {desktopGoogleReady?
-       <button type="button" onClick={()=>void startNativeGoogle()} disabled={busy||Boolean(nativeFlow)} className="w-full rounded-lg border border-[#DADCE0] bg-white px-4 py-3 text-[13px] font-semibold text-[#1F1F1F] disabled:opacity-60">
+       <button type="button" onClick={()=>void startNativeGoogle()} disabled={busy||Boolean(nativeFlow)} className="w-full rounded-lg border border-divider bg-surface px-4 py-3 text-[13px] font-semibold text-ink disabled:opacity-60">
         {nativeFlow?'Google 인증 완료를 기다리는 중…':'Google로 계속하기'}
        </button>
        :googleClientId?<div ref={button} aria-label="Google 계정으로 계속하기"/>:<button type="button" disabled className="w-full rounded-lg border px-4 py-2 text-[12px] opacity-60">Google로 계속하기 · 설정 확인 중</button>}
       <p className="text-[11px] text-muted">Google 계정으로 가입하고 로그인합니다. 비밀번호는 DOMINION에 입력하지 않습니다.</p>
       {emailReady&&<CloudEmailLogin cloudUrl={cloudUrl} onSuccess={emailLoginComplete}/>}
-      {message&&<p role="status" className="text-[12px] text-[#9A3C29]">{message}</p>}
+      {message&&<p role="status" className="text-[12px] text-brand-hover">{message}</p>}
      </div>
     </div>
    </div>}
@@ -430,14 +430,14 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
    </select>
    <button type="button" disabled={busy||!selected||!models.some(model=>model.id===selected&&(modelFilter==='all'||(modelFilter==='free'?model.free:!model.free))&&(model.id+' '+(model.name||'')+' '+(model.provider||'')).toLowerCase().includes(modelSearch.toLowerCase()))} onClick={()=>void register()} className="rounded-lg bg-brand px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">모델 등록</button>
   </div>}
-  {token&&<div className="mt-3 rounded-xl border border-divider bg-white p-3 text-[12px]">
+  {token&&<div className="mt-3 rounded-xl border border-divider bg-surface p-3 text-[12px]">
    <div className="flex flex-wrap items-center justify-between gap-2"><span>내 구독: <strong>{billing?.plan==='pro'?'Pro':'무료'}</strong>{billing?.valid_until&&billing.plan==='pro'?' · 만료 '+new Date(billing.valid_until*1000).toLocaleDateString('ko-KR'):''}</span>
     <button type="button" className="rounded-lg border px-3 py-2" onClick={()=>setShowCheckout(true)}>요금제 · 결제</button></div>
    <div className="mt-2 flex flex-wrap items-center gap-2"><span className="text-muted">유료 API 본인확인: {identity?.verified?'완료':'미완료'}</span>{!identity?.verified&&<button type="button" disabled={identityBusy} onClick={()=>void verifyIdentity()} className="rounded-lg border px-3 py-2">{identityBusy?'인증 진행 중…':'PASS · 간편 본인확인'}</button>}</div>
    {billingMessage&&<p role="status" className="mt-2">{billingMessage}</p>}
   </div>}
   {token&&billing&&<p className="mt-2 text-[12px] text-muted" role="status">DOMINION 무료 AI: 오늘 {billing.free_daily_used ?? 0} / {billing.free_daily_limit ?? 20}회 사용 · 남은 {billing.free_daily_remaining ?? 0}회 (매일 오전 9시 KST 초기화)</p>}
-  {token&&showCheckout&&<div role="dialog" aria-modal="true" aria-label="DOMINION 구독 결제" className="mt-3 rounded-xl border border-divider bg-white p-4">
+  {token&&showCheckout&&<div role="dialog" aria-modal="true" aria-label="DOMINION 구독 결제" className="mt-3 rounded-xl border border-divider bg-surface p-4">
    <div className="flex items-center justify-between"><strong>DOMINION Pro · 구독 결제</strong><button type="button" onClick={()=>setShowCheckout(false)}>닫기</button></div>
    <p className="mt-2 text-[12px]">무료 플랜은 계속 이용할 수 있습니다. Pro는 결제일부터 30일 이용권이며 자동 갱신되지 않습니다.</p>
    <p className="mt-2 text-[14px] font-semibold">{billing?.pro_price_krw?.toLocaleString('ko-KR')||'가격 미설정'}원 / 30일</p>
@@ -467,7 +467,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
     <div className="flex items-center gap-2 text-[12px]"><button type="button" className="rounded border px-2 py-1" disabled={providerPage===0} onClick={()=>{catalogBrowseSeq.current++;setCatalogBusy(false);setProviderPage(p=>Math.max(0,p-1));setCatalogId('');setCatalogModels([]);setCatalogKey('');setCatalogModel('');setCatalogProviderId('')}}>이전</button><span>{providerPage+1} / {providerPageCount}</span><button type="button" className="rounded border px-2 py-1" disabled={providerPage+1>=providerPageCount} onClick={()=>{catalogBrowseSeq.current++;setCatalogBusy(false);setProviderPage(p=>p+1);setCatalogId('');setCatalogModels([]);setCatalogKey('');setCatalogModel('');setCatalogProviderId('')}}>다음</button></div>
     <button type="button" disabled={catalogBusy||!catalogId} onClick={()=>void loadCatalogModels()} className="rounded-lg bg-brand px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">{catalogBusy?'조회 중…':'모델 조회 (키 불필요)'}</button>
    </div>}
-   {catalogModels.length>0&&<div className="mt-3 rounded-xl border border-divider bg-white p-3">
+   {catalogModels.length>0&&<div className="mt-3 rounded-xl border border-divider bg-surface p-3">
     <div className="flex flex-wrap items-center justify-between gap-2 text-[12px]"><strong>공개 모델 목록 · {filteredModels.length} / {catalogModels.length}개</strong><span className="text-muted">API 키 없이 검색 가능</span></div>
     <input aria-label="업체 모델 검색" value={catalogModelSearch} onChange={e=>setCatalogModelSearch(e.target.value)} placeholder="모델 이름 또는 ID 검색" className="mt-2 w-full rounded-lg border px-3 py-2 text-[12px]"/>
     {visibleModels.length>0?<select aria-label="공개 업체 모델 선택" value={visibleModels.some(m=>m.id===catalogModel)?catalogModel:''} onChange={e=>setCatalogModel(e.target.value)} className="mt-2 w-full rounded-lg border px-3 py-2 text-[12px]">
@@ -475,8 +475,8 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
      {visibleModels.map(m=><option key={m.id} value={m.id}>{m.name||m.id} · {m.id}</option>)}
     </select>:<p className="mt-2 text-[11px] text-muted">검색된 모델이 없습니다.</p>}
     {filteredModels.length>100&&<p className="mt-1 text-[11px] text-muted">처음 100개만 표시합니다. 검색어로 모델을 좁혀 주세요.</p>}
-    {catalogModels.find(m=>m.id===catalogModel)&&<p className="mt-2 break-all text-[11px] leading-5 text-[var(--color-muted)]">모델 ID: {catalogModel}{catalogModels.find(m=>m.id===catalogModel)?.context?' · 컨텍스트 '+catalogModels.find(m=>m.id===catalogModel)?.context?.toLocaleString()+' 토큰':''}{catalogModels.find(m=>m.id===catalogModel)?.reasoning===true?' · 추론 지원':''}{catalogModels.find(m=>m.id===catalogModel)?.toolCall===true?' · 도구 호출 지원':''}</p>}
-    <div className="mt-3 flex flex-wrap gap-2 border-t border-[var(--color-divider)] pt-3">
+    {catalogModels.find(m=>m.id===catalogModel)&&<p className="mt-2 break-all text-[11px] leading-5 text-muted">모델 ID: {catalogModel}{catalogModels.find(m=>m.id===catalogModel)?.context?' · 컨텍스트 '+catalogModels.find(m=>m.id===catalogModel)?.context?.toLocaleString()+' 토큰':''}{catalogModels.find(m=>m.id===catalogModel)?.reasoning===true?' · 추론 지원':''}{catalogModels.find(m=>m.id===catalogModel)?.toolCall===true?' · 도구 호출 지원':''}</p>}
+    <div className="mt-3 flex flex-wrap gap-2 border-t border-divider pt-3">
      <input type="password" autoComplete="off" aria-label="업체 API 키 (등록 시에만 필요)" value={catalogKey} onChange={e=>setCatalogKey(e.target.value)} placeholder="채팅 등록용 API 키 (조회에는 불필요)" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
      <button type="button" disabled={catalogBusy||!visibleModels.some(m=>m.id===catalogModel)} onClick={()=>void saveCatalogModel()} className="rounded-lg bg-brand px-3 py-2 text-[12px] font-semibold text-white disabled:opacity-50">선택 모델 채팅 등록</button>
      <button type="button" disabled={catalogBusy} onClick={()=>void importCatalogModels()} className="rounded-lg border px-3 py-2 text-[12px] disabled:opacity-50">전체 등록</button>
@@ -496,10 +496,10 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
     <button type="button" disabled={routerBusy} onClick={()=>void browseOpenRouterFree()} className="rounded-lg border px-3 py-2 text-[12px] disabled:opacity-50">{routerBusy?'조회 중…':'무료 모델 조회 (키 불필요)'}</button>
     <input aria-label="OpenRouter 무료 모델 검색" value={routerSearch} onChange={e=>setRouterSearch(e.target.value)} placeholder="무료 모델 이름 검색" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>
    </div>
-   {routerModels.length>0&&<div className="mt-2 max-h-48 overflow-y-auto rounded-lg border bg-white px-3 py-2 text-[11px] text-[var(--color-muted)]">
+   {routerModels.length>0&&<div className="mt-2 max-h-48 overflow-y-auto rounded-lg border bg-surface px-3 py-2 text-[11px] text-muted">
     <strong>공개 무료 모델 · {filteredRouterModels.length} / {routerModels.length}개</strong>
-    {filteredRouterModels.slice(0,60).map(m=><button type="button" key={m.id} aria-pressed={routerSelected===m.id} onClick={()=>{setRouterSelected(m.id);setRegistered(null)}} className={'block w-full border-b border-[var(--color-divider)] px-1 py-1.5 text-left hover:bg-[var(--color-canvas)] '+(routerSelected===m.id?'bg-[var(--color-brand-soft)]':'')}><span className="font-semibold">{m.name||m.id}</span><span className="ml-2 break-all text-[var(--color-muted)]">{m.id}</span>{m.context?' · '+m.context.toLocaleString()+' 토큰':''}</button>)}
-    {filteredRouterModels.length>60&&<p className="mt-2 text-[var(--color-muted)]">처음 60개만 표시합니다. 검색어로 좁혀 주세요.</p>}
+    {filteredRouterModels.slice(0,60).map(m=><button type="button" key={m.id} aria-pressed={routerSelected===m.id} onClick={()=>{setRouterSelected(m.id);setRegistered(null)}} className={'block w-full border-b border-divider px-1 py-1.5 text-left hover:bg-canvas '+(routerSelected===m.id?'bg-brand-soft':'')}><span className="font-semibold">{m.name||m.id}</span><span className="ml-2 break-all text-muted">{m.id}</span>{m.context?' · '+m.context.toLocaleString()+' 토큰':''}</button>)}
+    {filteredRouterModels.length>60&&<p className="mt-2 text-muted">처음 60개만 표시합니다. 검색어로 좁혀 주세요.</p>}
    </div>}
    <div className="mt-2 flex flex-wrap gap-2">
     <input type="password" autoComplete="off" aria-label="OpenRouter API 키 (등록 시에만 필요)" value={routerKey} onChange={e=>setRouterKey(e.target.value)} placeholder="채팅 등록용 API 키" className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-[12px]"/>

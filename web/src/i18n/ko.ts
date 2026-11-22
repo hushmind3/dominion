@@ -1,4 +1,13 @@
 const ko = {
+  'nav.tasks': '작업',
+  'workspace.description.tasks': '맡긴 작업의 진행, 추가 지시와 결과를 확인합니다.',
+
+  'connect.chooseProvider': '연결할 서비스를 선택하세요',
+  'chat.messageAria': '메시지 입력',
+  'nav.prompts': '프롬프트·페르소나',
+  'workspace.description.prompts': '시스템 프롬프트, 공통 지침과 AI별 페르소나를 직접 편집합니다.',
+  'prompts.intro': '공통 지침은 함께 적용하고, 페르소나는 AI별로 수정할 수 있습니다. 전체 시스템 프롬프트를 직접 지정하면 해당 범위의 자동 생성 지침을 대체합니다.',
+
   'nav.capabilities': '할 수 있는 일',
   'nav.extensions': '기능 추가',
   'shell.loadingChat': '대화를 불러오는 중…',

@@ -100,7 +100,7 @@ export class PageLoadBoundary extends Component<
     return (
       <div
         role="alert"
-        className="m-6 max-w-lg rounded-xl border border-[#E7DDCC] bg-white p-6 text-sm text-[var(--color-muted)]"
+        className="m-6 max-w-lg rounded-xl border border-divider bg-surface p-6 text-sm text-muted"
       >
         <p className="mb-3 font-semibold">{t('shell.loadFailed')}</p>
         <button

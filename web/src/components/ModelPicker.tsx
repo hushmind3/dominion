@@ -91,14 +91,14 @@ export function ModelPicker({
         aria-expanded={visible}
         onClick={() => setOpen((current) => !current)}
         className={
-          'inline-flex min-w-0 items-center justify-between gap-2 rounded-lg border border-[var(--color-divider)] bg-surface px-2.5 py-1.5 text-left text-[12px] text-[var(--color-ink)] hover:border-[var(--color-divider)] disabled:cursor-not-allowed disabled:opacity-50 ' +
+          'inline-flex min-w-0 items-center justify-between gap-2 rounded-lg border border-divider bg-surface px-2.5 py-1.5 text-left text-[12px] text-ink hover:border-divider disabled:cursor-not-allowed disabled:opacity-50 ' +
           className
         }
       >
-        <span className={'truncate ' + (value ? '' : 'text-[var(--color-muted)]')}>
+        <span className={'truncate ' + (value ? '' : 'text-muted')}>
           {value || placeholder}
         </span>
-        <ChevronDown size={13} className="shrink-0 text-[var(--color-muted)]" />
+        <ChevronDown size={13} className="shrink-0 text-muted" />
       </button>
 
       {visible &&
@@ -109,10 +109,10 @@ export function ModelPicker({
             role="dialog"
             aria-label={ariaLabel}
             style={position}
-            className="z-[120] flex flex-col overflow-hidden rounded-xl border border-[#DDD3C5] bg-white shadow-2xl"
+            className="z-[120] flex flex-col overflow-hidden rounded-xl border border-success-soft bg-surface shadow-2xl"
           >
-            <div className="flex items-center gap-2 border-b border-[var(--color-divider)] px-3 py-2">
-              <Search size={14} className="shrink-0 text-[var(--color-muted)]" />
+            <div className="flex items-center gap-2 border-b border-divider px-3 py-2">
+              <Search size={14} className="shrink-0 text-muted" />
               <input
                 ref={search}
                 value={query}
@@ -135,29 +135,29 @@ export function ModelPicker({
                   }
                 }}
                 placeholder={t('picker.searchPlaceholder')}
-                className="min-w-0 flex-1 border-0 bg-transparent text-[12px] text-[var(--color-ink)] outline-none placeholder:text-[var(--color-muted)]"
+                className="min-w-0 flex-1 border-0 bg-transparent text-[12px] text-ink outline-none placeholder:text-muted"
               />
               {query && (
                 <button
                   type="button"
                   aria-label={t('picker.clear')}
                   onClick={() => setQuery('')}
-                  className="rounded p-0.5 text-[var(--color-muted)] hover:bg-[var(--color-canvas)]"
+                  className="rounded p-0.5 text-muted hover:bg-canvas"
                 >
                   <X size={13} />
                 </button>
               )}
             </div>
 
-            {models.some(model=>model.catalogStale)&&<p role="status" className="px-3 py-2 text-[11px] text-amber-700">최근 저장된 모델 목록입니다. 새로고침으로 현재 계정 목록을 확인하세요.</p>}
+            {models.some(model=>model.catalogStale)&&<p role="status" className="px-3 py-2 text-[11px] text-warning">최근 저장된 모델 목록입니다. 새로고침으로 현재 계정 목록을 확인하세요.</p>}
             <div ref={list} id={listId} role="listbox" aria-label={ariaLabel} className="min-h-0 max-h-[min(58vh,320px)] overflow-y-auto overscroll-contain p-1">
               {loading && (
-                <div className="flex items-center gap-2 px-3 py-4 text-[12px] text-[var(--color-muted)]">
+                <div className="flex items-center gap-2 px-3 py-4 text-[12px] text-muted">
                   <LoaderCircle size={14} className="animate-spin" /> {t('picker.loading')}
                 </div>
               )}
               {!loading && error && (
-                <div className="px-3 py-4 text-[12px] text-rose-600">{error}<button type="button" className="ml-2 underline" onClick={()=>void (catalogue??ownCatalogue).reload()}>{t('picker.retry')}</button></div>
+                <div className="px-3 py-4 text-[12px] text-danger">{error}<button type="button" className="ml-2 underline" onClick={()=>void (catalogue??ownCatalogue).reload()}>{t('picker.retry')}</button></div>
               )}
               {!loading &&
                 !error &&
@@ -171,18 +171,18 @@ export function ModelPicker({
                     aria-selected={model.id === value}
                     onClick={() => choose(model.id)}
                     className={
-                      'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] hover:bg-[var(--color-canvas)] ' +
-                      (index===active||model.id === value ? 'bg-[var(--color-brand-soft)] text-brand-hover' : 'text-[var(--color-ink)]')
+                      'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] hover:bg-canvas ' +
+                      (index===active||model.id === value ? 'bg-brand-soft text-brand-hover' : 'text-ink')
                     }
                   >
                     <span className="min-w-0 flex-1 truncate">{model.id}</span>
                     {isFreeModel(model) && (
-                      <span className="shrink-0 rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">
+                      <span className="shrink-0 rounded bg-success-soft px-1.5 py-0.5 text-[9px] font-semibold text-success">
                         {t('picker.free')}
                       </span>
                     )}
                     {model.freeStatus === 'unknown' && !isFreeModel(model) && (
-                      <span className="shrink-0 rounded bg-[var(--color-canvas)] px-1.5 py-0.5 text-[9px] font-semibold text-[var(--color-muted)]" title={model.freeSource || ''}>
+                      <span className="shrink-0 rounded bg-canvas px-1.5 py-0.5 text-[9px] font-semibold text-muted" title={model.freeSource || ''}>
                         {t('picker.unknownFree')}
                       </span>
                     )}
@@ -190,7 +190,7 @@ export function ModelPicker({
                   </button>
                 ))}
               {!loading && !error && filtered.length === 0 && (
-                <div className="px-3 py-4 text-[12px] text-[var(--color-muted)]">
+                <div className="px-3 py-4 text-[12px] text-muted">
                   {!models.length
                     ? t('picker.noneProvider')
                     : freeOnly && !models.some(isFreeModel)
@@ -202,13 +202,13 @@ export function ModelPicker({
 
             {!freeOnly && query.trim() && !models.some(model=>model.id===query.trim()) && (
               <button type="button" disabled={new TextEncoder().encode(query.trim()).length>256}
-                className="shrink-0 truncate border-t border-[var(--color-divider)] px-3 py-2 text-left text-[11px] font-semibold text-brand-hover hover:bg-[var(--color-canvas)] disabled:opacity-50"
+                className="shrink-0 truncate border-t border-divider px-3 py-2 text-left text-[11px] font-semibold text-brand-hover hover:bg-canvas disabled:opacity-50"
                 title={query.trim()} onClick={()=>choose(query.trim())}>
                 {t('picker.useId', { id: query.trim() })}
               </button>
             )}
 
-            <div className="flex shrink-0 items-center justify-between gap-2 border-t border-[var(--color-divider)] px-3 py-1.5 text-[10px] text-[var(--color-muted)]">
+            <div className="flex shrink-0 items-center justify-between gap-2 border-t border-divider px-3 py-1.5 text-[10px] text-muted">
               <label className="flex cursor-pointer items-center gap-1.5">
                 <input
                   type="checkbox"
@@ -218,7 +218,7 @@ export function ModelPicker({
                 />
                 {t('picker.freeOnly')}
               </label>
-              <button type="button" aria-label="모델 목록 새로고침" title="모델 목록 새로고침" disabled={loading} onClick={()=>void (catalogue??ownCatalogue).reload()} className="rounded p-1 hover:bg-[var(--color-canvas)] disabled:opacity-50"><RefreshCw size={12} className={loading?'animate-spin':''}/></button>
+              <button type="button" aria-label="모델 목록 새로고침" title="모델 목록 새로고침" disabled={loading} onClick={()=>void (catalogue??ownCatalogue).reload()} className="rounded p-1 hover:bg-canvas disabled:opacity-50"><RefreshCw size={12} className={loading?'animate-spin':''}/></button>
               <span>
                 {t('picker.count', { shown: filtered.length, total: models.length })}
               </span>

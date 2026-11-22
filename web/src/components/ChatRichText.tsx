@@ -11,14 +11,14 @@ function inlineParts(text:string):ReactNode[]{
   if(index>last)parts.push(text.slice(last,index))
   const token=match[0]
   if(token.startsWith('**')){
-   parts.push(<strong key={index} className="font-semibold text-[#292622]">{token.slice(2,-2)}</strong>)
+   parts.push(<strong key={index} className="font-semibold text-ink">{token.slice(2,-2)}</strong>)
   }else if(token.startsWith('`')){
-   parts.push(<code key={index} className="rounded-md bg-[var(--color-canvas)] px-1.5 py-0.5 font-mono text-[.9em]">{token.slice(1,-1)}</code>)
+   parts.push(<code key={index} className="rounded-md bg-canvas px-1.5 py-0.5 font-mono text-[.9em]">{token.slice(1,-1)}</code>)
   }else{
    const separator=token.indexOf('](')
    const label=token.slice(1,separator)
    const href=token.slice(separator+2,-1)
-   parts.push(<a key={index} href={href} target="_blank" rel="noopener noreferrer" className="underline decoration-[#BA8D7D] underline-offset-2 hover:text-brand-hover">{label}</a>)
+   parts.push(<a key={index} href={href} target="_blank" rel="noopener noreferrer" className="underline decoration-muted underline-offset-2 hover:text-brand-hover">{label}</a>)
   }
   last=index+token.length
  }
@@ -52,9 +52,9 @@ function renderBlocks(text:string):ReactNode[]{
    const body:string[]=[]
    while(i<lines.length&&!/^\s*```\s*$/.test(lines[i]))body.push(lines[i++])
    if(i<lines.length)i++
-   blocks.push(<div key={blocks.length} className="my-3 overflow-hidden rounded-xl border border-[#363A44] bg-[#23272F]">
-    {code[1]&&<div className="border-b border-white/10 px-4 py-1.5 text-[11px] font-medium text-[#D1D5DB]">{code[1]}</div>}
-    <pre className="max-w-full overflow-x-auto p-4 text-[13px] leading-6 text-[#F5F5F5]"><code className="font-mono whitespace-pre">{body.join('\n')}</code></pre>
+   blocks.push(<div key={blocks.length} className="my-3 overflow-hidden rounded-xl border border-ink bg-ink">
+    {code[1]&&<div className="border-b border-white/10 px-4 py-1.5 text-[11px] font-medium text-success-soft">{code[1]}</div>}
+    <pre className="max-w-full overflow-x-auto p-4 text-[13px] leading-6 text-canvas"><code className="font-mono whitespace-pre">{body.join('\n')}</code></pre>
    </div>)
    continue
   }
@@ -65,29 +65,29 @@ function renderBlocks(text:string):ReactNode[]{
    while(i<lines.length&&lines[i].trim()&&lines[i].includes('|')){
     rows.push(pipeCells(lines[i++]))
    }
-   blocks.push(<div key={blocks.length} className="my-4 max-w-full overflow-x-auto rounded-xl border border-[var(--color-divider)]">
+   blocks.push(<div key={blocks.length} className="my-4 max-w-full overflow-x-auto rounded-xl border border-divider">
     <table className="w-full min-w-[360px] border-collapse text-left text-[14px] leading-6">
-     <thead className="bg-[#F5F0E8]"><tr>{headers.map((cell,j)=><th key={j} scope="col" className="border-b border-[var(--color-divider)] px-3 py-2 font-semibold text-[var(--color-ink)]">{inlineParts(cell)}</th>)}</tr></thead>
-     <tbody>{rows.map((row,j)=><tr key={j} className="even:bg-[#FAF8F3]">{headers.map((_,k)=><td key={k} className="border-b border-[#EEE8DF] px-3 py-2 align-top">{inlineParts(row[k]||'')}</td>)}</tr>)}</tbody>
+     <thead className="bg-canvas"><tr>{headers.map((cell,j)=><th key={j} scope="col" className="border-b border-divider px-3 py-2 font-semibold text-ink">{inlineParts(cell)}</th>)}</tr></thead>
+     <tbody>{rows.map((row,j)=><tr key={j} className="even:bg-surface">{headers.map((_,k)=><td key={k} className="border-b border-brand-soft px-3 py-2 align-top">{inlineParts(row[k]||'')}</td>)}</tr>)}</tbody>
     </table>
    </div>)
    continue
   }
   if(/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)){
-   blocks.push(<hr key={blocks.length} className="my-5 border-0 border-t border-[var(--color-divider)]"/>)
+   blocks.push(<hr key={blocks.length} className="my-5 border-0 border-t border-divider"/>)
    i++;continue
   }
   const heading=line.match(/^(#{1,4})\s+(.+)$/)
   if(heading){
    const level=heading[1].length
    const cls=level===1?'text-[22px] font-bold':level===2?'text-[19px] font-bold':level===3?'text-[17px] font-semibold':'text-[16px] font-semibold'
-   blocks.push(<div key={blocks.length} role="heading" aria-level={level} className={'mb-2 mt-4 leading-snug text-[#292622] '+cls}>{inlineParts(heading[2])}</div>)
+   blocks.push(<div key={blocks.length} role="heading" aria-level={level} className={'mb-2 mt-4 leading-snug text-ink '+cls}>{inlineParts(heading[2])}</div>)
    i++;continue
   }
   if(/^>\s?/.test(line)){
    const quoted:string[]=[]
    while(i<lines.length&&/^>\s?/.test(lines[i]))quoted.push(lines[i++].replace(/^>\s?/,''))
-   blocks.push(<blockquote key={blocks.length} className="my-3 border-l-[3px] border-[#C9B5A6] bg-[var(--color-canvas)] py-2 pl-3 pr-2 text-[#61584E] whitespace-pre-wrap">{inlineParts(quoted.join('\n'))}</blockquote>)
+   blocks.push(<blockquote key={blocks.length} className="my-3 border-l-[3px] border-success-soft bg-canvas py-2 pl-3 pr-2 text-success whitespace-pre-wrap">{inlineParts(quoted.join('\n'))}</blockquote>)
    continue
   }
   const bullet=line.match(/^\s*([-*]|\d+[.)])\s+(.+)$/)

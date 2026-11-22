@@ -24,12 +24,12 @@ export function MessageInfo({message, children, active = true}: {message: ChatMe
  const timestamp = date && !Number.isNaN(date.getTime())
   ? date.toLocaleString(getLocale() === 'en' ? 'en-US' : 'ko-KR', {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : ''
  return <>
-  <Button ref={panel.trigger} variant="bare" className="message-info-trigger" aria-label={t('rooms.messageInfo')}
+  <Button ref={panel.trigger} variant="bare" className="inline-grid size-8 place-items-center rounded-lg align-middle text-muted hover:bg-canvas hover:text-ink aria-expanded:bg-canvas" aria-label={t('rooms.messageInfo')}
    title={t('rooms.messageInfo')} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(value => !value)}>
    <MoreHorizontal size={15}/>
   </Button>
   {active && open && panel.position && createPortal(
-   <div ref={panel.panel} style={panel.position} role="dialog" tabIndex={-1} aria-label={t('rooms.messageInfo')} className="message-info-panel">
+   <div ref={panel.panel} style={panel.position} role="dialog" tabIndex={-1} aria-label={t('rooms.messageInfo')} className="z-80 grid gap-3 overflow-y-auto rounded-xl border border-divider bg-surface p-4 text-xs leading-7 text-muted shadow-xl">
     {timestamp && <time dateTime={value}>{timestamp}</time>}
     <TokenUsage usage={message.metadata?.usage}/>
     {children}

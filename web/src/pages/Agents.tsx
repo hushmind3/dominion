@@ -158,8 +158,8 @@ export function AgentsPage() {
           </>
         }
       />
-      <div className="mb-5 flex items-center gap-4 rounded-xl border border-[var(--color-divider)] bg-[var(--color-brand-soft)] p-5">
-        <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-[var(--color-brand-soft)] text-brand">
+      <div className="mb-5 flex items-center gap-4 rounded-xl border border-divider bg-brand-soft p-5">
+        <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand">
           <BrainCircuit size={22} />
         </div>
         <div>
@@ -170,7 +170,7 @@ export function AgentsPage() {
         </div>
       </div>
       {bulkNotice && (
-        <div className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+        <div className="my-3 flex items-center gap-2 rounded-xl border border-success/20 bg-success-soft p-3 text-sm text-success">
           <Check size={16} />
           {bulkNotice}
         </div>
@@ -180,7 +180,7 @@ export function AgentsPage() {
           <Subheading
             title={t('agents.bulk.title')}
             extra={
-              <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-muted)]">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-muted">
                 {t('agents.selectedCount', { total: agents.value.length, selected: selected.length })}
               </span>
             }
@@ -311,10 +311,10 @@ export function AgentsPage() {
               </div>
             </div>
             <h3>{a.name}</h3>
-            {a.role&&<span className="text-[11px] font-semibold text-[#9B8064]">{String(a.role)}</span>}
+            {a.role&&<span className="text-[11px] font-semibold text-muted">{String(a.role)}</span>}
             <p className="line-clamp-2" title={a.description || ""}>{a.description || t('agents.noDescription')}</p>
-            <div className="my-2 h-px bg-[var(--color-canvas)]" />
-            <div className="mt-auto flex flex-col gap-1 border-t border-[var(--color-divider)] pt-3 text-xs text-muted">
+            <div className="my-2 h-px bg-canvas" />
+            <div className="mt-auto flex flex-col gap-1 border-t border-divider pt-3 text-xs text-muted">
               <span>
                 <Sparkles size={15} />{" "}
                 {providers.value.find((p) => p.id === a.providerId)?.name ||
@@ -331,7 +331,7 @@ export function AgentsPage() {
       {edit && (
         <DialogBackdrop onDismiss={closeEditor}>
           <DialogPanel size="wide">
-            <div className="flex items-center justify-between border-b border-[var(--color-divider)] p-5">
+            <div className="flex items-center justify-between border-b border-divider p-5">
               <div>
                 <small>{t('agents.roleAndModel')}</small>
                 <h2>{edit.id ? t('agents.edit') : t('agents.new')}</h2>
@@ -351,7 +351,7 @@ export function AgentsPage() {
                 <FormField label={t('agents.color')}>
                   <TextInput
                     type="color"
-                    className="h-10 w-full cursor-pointer rounded-xl border border-divider bg-white p-1"
+                    className="h-10 w-full cursor-pointer rounded-xl border border-divider bg-surface p-1"
                     value={edit.color || "#5979e8"}
                     onChange={(e) =>
                       setEdit({ ...edit, color: e.target.value })
@@ -419,14 +419,14 @@ export function AgentsPage() {
               </FormField>
               <FormField label={t('agents.avatar')} hint={t('agents.imageHint')}>
                 <div className="flex items-center gap-3">
-                  <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-xl border border-divider bg-[var(--color-canvas)]">
+                  <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-xl border border-divider bg-canvas">
                     {(edit.avatar || edit.avatarUrl) ? (
                       <img src={String(edit.avatar || edit.avatarUrl)} alt="" className="size-14 object-cover" />
                     ) : (
                       <Bot size={22} className="text-brand" />
                     )}
                   </div>
-                  <label className="cursor-pointer rounded-xl border border-[var(--color-divider)] bg-surface px-3 py-2 text-[12px] font-semibold text-[var(--color-ink)] hover:bg-[var(--color-canvas)]">
+                  <label className="cursor-pointer rounded-xl border border-divider bg-surface px-3 py-2 text-[12px] font-semibold text-ink hover:bg-canvas">
                     {t('agents.imagePick')}
                     <input
                       type="file"
@@ -469,7 +469,7 @@ export function AgentsPage() {
               </FormField>
               <Notice message={error}/>
             </div>
-            <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--color-divider)] p-5">
+            <div className="flex flex-wrap justify-end gap-2 border-t border-divider p-5">
               <Action variant="secondary" onClick={closeEditor} disabled={saving}>
                 {t('agents.cancel')}
               </Action>
@@ -495,5 +495,5 @@ function PersonaImportDialog({agents,onClose,onImported}:{agents:Agent[];onClose
   try{const result=await post<{imported:number;skipped:number;errors:{sourceProfile:string;error:string}[]}>('/api/personas/import',{apply:true,profileIds:selected,...(refreshIdentity?{refreshIdentity:true}:{})});await onImported(result.imported);if(result.errors.length)setError(result.errors.map(item=>item.sourceProfile+': '+item.error).join(' · '));else onClose()}
   catch(e){setError((e as Error).message)}finally{setBusy(false)}
  }
- return <DialogBackdrop onDismiss={()=>{if(!busy)onClose()}}><DialogPanel size="wide" aria-label={t('agents.import')}><div className="flex items-center justify-between border-b border-[var(--color-divider)] p-5"><div><small className="text-[10px] tracking-widest text-[var(--color-muted)]">{t('ui.label.personas')}</small><h2 className="mt-1 font-bold">{t('agents.persona.title')}</h2></div><Button size="icon" variant="ghost" aria-label={t('agents.close')} disabled={busy} onClick={onClose}><X size={18}/></Button></div><div className="grid gap-4 p-5"><p className="text-[12px] text-[#8F7D65]">{t('agents.persona.desc')}</p>{loading?<div className="flex items-center justify-center gap-2 py-10 text-[var(--color-muted)]"><LoaderCircle size={17} className="animate-spin"/> {t('agents.persona.loading')}</div>:<><div className="flex items-center justify-between text-[11px] text-[var(--color-muted)]"><span>{t('agents.persona.found', { count: profiles.length, selected: selected.length })}</span><button className="underline underline-offset-2" disabled={busy||!available.length} onClick={()=>setSelected(selected.length===available.length?[]:available.map(profile=>profile.sourceProfile))}>{selected.length===available.length?t('agents.persona.clear'):t('agents.persona.selectAll')}</button></div><div className="grid max-h-[48vh] gap-3 overflow-auto sm:grid-cols-2">{profiles.map((profile,index)=>{const agent=agents.find(item=>item.id===profile.id);const enabled=profile.available&&(!profile.exists||refreshIdentity);const checked=selected.includes(profile.sourceProfile);return <div className={'rounded-xl border p-3 '+(checked?'border-[#D1B894] bg-[#FBF4E8]':'border-divider bg-[#FFFCF7]')} key={profile.sourceProfile}><label className="flex cursor-pointer items-center gap-3"><input type="checkbox" className="accent-[var(--color-brand)]" checked={checked} disabled={busy||!enabled} onChange={()=>setSelected(previous=>checked?previous.filter(id=>id!==profile.sourceProfile):[...previous,profile.sourceProfile])}/><span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-xl text-[13px] font-semibold text-white" style={{background:agent?.color||accents[index%accents.length]}}>{(agent?.avatar||agent?.avatarUrl)?<img src={String(agent.avatar||agent.avatarUrl)} alt="" className="size-10 object-cover"/>:profile.name.slice(0,1)}</span><span className="min-w-0 flex-1"><strong className="block text-[12px] text-[#776249]">{profile.name}</strong><small className="block text-[10px] text-[#AC987A]">{profile.role||profile.description}</small></span>{profile.exists&&<span className="rounded bg-[var(--color-canvas)] px-1.5 py-0.5 text-[9px] text-[#9D8D74]">{t('agents.persona.imported')}</span>}</label><div className="mt-3 flex gap-2 text-[9px] text-[#B2A087]"><span>{profile.hasAvatar?t('agents.persona.avatar'):t('agents.persona.defaultAvatar')}</span><span>·</span><span>{t('agents.persona.mine')}</span></div>{profile.personaPreview&&<details className="mt-2 text-[10px] text-[#9F896B]"><summary className="cursor-pointer">{t('agents.persona.preview')}</summary><pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-[#F4EDE1] p-3 font-sans text-[10px] leading-6 text-[#A18C6E]">{profile.personaPreview}</pre></details>}{profile.error&&<p className="mt-2 text-[10px] text-rose-600">{profile.error}</p>}</div>})}</div>{!profiles.length&&<p className="py-7 text-center text-[12px] text-[var(--color-muted)]">{t('agents.persona.none')}</p>}<label className="flex items-start gap-2 text-[11px] text-[var(--color-muted)]"><input type="checkbox" className="mt-1 accent-[var(--color-brand)]" checked={refreshIdentity} disabled={busy} onChange={e=>{setRefreshIdentity(e.target.checked);if(!e.target.checked)setSelected(previous=>previous.filter(id=>!profiles.find(profile=>profile.sourceProfile===id)?.exists))}}/><span>{t('agents.persona.refresh')}<small className="mt-1 block text-[10px] text-[#B3A187]">{t('agents.persona.refreshHint')}</small></span></label></>}<Notice message={error}/></div><div className="flex items-center justify-end gap-2 border-t border-[var(--color-divider)] p-5"><Button variant="ghost" disabled={busy} onClick={onClose}>{t('agents.close')}</Button><Button variant="primary" disabled={loading||busy||!selected.length} onClick={()=>void apply()}>{busy?<LoaderCircle size={15} className="animate-spin"/>:<FolderInput size={15}/>} {t('agents.persona.apply', { count: selected.length })}</Button></div></DialogPanel></DialogBackdrop>
+ return <DialogBackdrop onDismiss={()=>{if(!busy)onClose()}}><DialogPanel size="wide" aria-label={t('agents.import')}><div className="flex items-center justify-between border-b border-divider p-5"><div><small className="text-[10px] tracking-widest text-muted">{t('ui.label.personas')}</small><h2 className="mt-1 font-bold">{t('agents.persona.title')}</h2></div><Button size="icon" variant="ghost" aria-label={t('agents.close')} disabled={busy} onClick={onClose}><X size={18}/></Button></div><div className="grid gap-4 p-5"><p className="text-[12px] text-muted">{t('agents.persona.desc')}</p>{loading?<div className="flex items-center justify-center gap-2 py-10 text-muted"><LoaderCircle size={17} className="animate-spin"/> {t('agents.persona.loading')}</div>:<><div className="flex items-center justify-between text-[11px] text-muted"><span>{t('agents.persona.found', { count: profiles.length, selected: selected.length })}</span><button className="underline underline-offset-2" disabled={busy||!available.length} onClick={()=>setSelected(selected.length===available.length?[]:available.map(profile=>profile.sourceProfile))}>{selected.length===available.length?t('agents.persona.clear'):t('agents.persona.selectAll')}</button></div><div className="grid max-h-[48vh] gap-3 overflow-auto sm:grid-cols-2">{profiles.map((profile,index)=>{const agent=agents.find(item=>item.id===profile.id);const enabled=profile.available&&(!profile.exists||refreshIdentity);const checked=selected.includes(profile.sourceProfile);return <div className={'rounded-xl border p-3 '+(checked?'border-success-soft bg-warning-soft':'border-divider bg-surface')} key={profile.sourceProfile}><label className="flex cursor-pointer items-center gap-3"><input type="checkbox" className="accent-[var(--color-brand)]" checked={checked} disabled={busy||!enabled} onChange={()=>setSelected(previous=>checked?previous.filter(id=>id!==profile.sourceProfile):[...previous,profile.sourceProfile])}/><span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-xl text-[13px] font-semibold text-white" style={{background:agent?.color||accents[index%accents.length]}}>{(agent?.avatar||agent?.avatarUrl)?<img src={String(agent.avatar||agent.avatarUrl)} alt="" className="size-10 object-cover"/>:profile.name.slice(0,1)}</span><span className="min-w-0 flex-1"><strong className="block text-[12px] text-muted">{profile.name}</strong><small className="block text-[10px] text-muted">{profile.role||profile.description}</small></span>{profile.exists&&<span className="rounded bg-canvas px-1.5 py-0.5 text-[9px] text-muted">{t('agents.persona.imported')}</span>}</label><div className="mt-3 flex gap-2 text-[9px] text-muted"><span>{profile.hasAvatar?t('agents.persona.avatar'):t('agents.persona.defaultAvatar')}</span><span>·</span><span>{t('agents.persona.mine')}</span></div>{profile.personaPreview&&<details className="mt-2 text-[10px] text-muted"><summary className="cursor-pointer">{t('agents.persona.preview')}</summary><pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-brand-soft p-3 font-sans text-[10px] leading-6 text-muted">{profile.personaPreview}</pre></details>}{profile.error&&<p className="mt-2 text-[10px] text-danger">{profile.error}</p>}</div>})}</div>{!profiles.length&&<p className="py-7 text-center text-[12px] text-muted">{t('agents.persona.none')}</p>}<label className="flex items-start gap-2 text-[11px] text-muted"><input type="checkbox" className="mt-1 accent-[var(--color-brand)]" checked={refreshIdentity} disabled={busy} onChange={e=>{setRefreshIdentity(e.target.checked);if(!e.target.checked)setSelected(previous=>previous.filter(id=>!profiles.find(profile=>profile.sourceProfile===id)?.exists))}}/><span>{t('agents.persona.refresh')}<small className="mt-1 block text-[10px] text-muted">{t('agents.persona.refreshHint')}</small></span></label></>}<Notice message={error}/></div><div className="flex items-center justify-end gap-2 border-t border-divider p-5"><Button variant="ghost" disabled={busy} onClick={onClose}>{t('agents.close')}</Button><Button variant="primary" disabled={loading||busy||!selected.length} onClick={()=>void apply()}>{busy?<LoaderCircle size={15} className="animate-spin"/>:<FolderInput size={15}/>} {t('agents.persona.apply', { count: selected.length })}</Button></div></DialogPanel></DialogBackdrop>
 }
