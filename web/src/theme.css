@@ -3,21 +3,27 @@
  --font-sans: "Pretendard Variable", Pretendard, Inter, SUIT, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
  /* One light surface stack. Values live only here; components consume the
     utilities (bg-surface, text-ink, border-divider) and never re-declare them. */
- --color-canvas: #f6f6f8;
+ /* Light, but never gray. A violet-tinted canvas, white cards and one strong
+    indigo accent; teal and amber are reserved for state, not decoration. */
+ --color-canvas: #f3f1ff;
  --color-surface: #ffffff;
- --color-ink: #111318;
- --color-muted: #6b7280;
- --color-divider: #e4e5e9;
- --color-brand: #4f46e5;
- --color-brand-hover: #4338ca;
- --color-brand-soft: #eef0ff;
+ --color-ink: #1a1a3c;
+ --color-muted: #5d5f86;
+ --color-divider: #e2defa;
+ --color-brand: #5146e5;
+ --color-brand-hover: #4035c9;
+ --color-brand-soft: #e9e6ff;
+ --color-accent: #0f8f8a;
+ --color-accent-soft: #dcf5f2;
+ --color-warm: #d97706;
+ --color-warm-soft: #fdf0dc;
  --color-workspace-sidebar: #ffffff;
- --color-workspace-sidebar-text: #111318;
- --color-workspace-line: #e4e5e9;
- --color-workspace-hover: #f6f6f8;
- --color-workspace-selected: #111318;
- --color-workspace-muted: #6b7280;
- --color-workspace-accent: #4f46e5;
+ --color-workspace-sidebar-text: #1a1a3c;
+ --color-workspace-line: #e2defa;
+ --color-workspace-hover: #f3f1ff;
+ --color-workspace-selected: #1a1a3c;
+ --color-workspace-muted: #5d5f86;
+ --color-workspace-accent: #5146e5;
  --radius-panel: 1rem;
  --radius-control: .65rem;
  --shadow-panel: 0 1px 2px rgb(17 19 24 / .04), 0 8px 24px rgb(17 19 24 / .05);
@@ -141,31 +147,34 @@
  max-width:760px;
 }
 .chat-transcript .chat-message-label{
- font-size:13px;
+ font-size:12px;
+ font-weight:600;
  line-height:1.5;
- letter-spacing:-.015em;
+ letter-spacing:0;
+ color:var(--color-muted);
 }
 .chat-transcript .chat-message-text{
- font-size:16px;
+ font-size:15px;
  font-weight:400;
- line-height:1.8;
- letter-spacing:-.015em;
+ line-height:1.75;
+ letter-spacing:-.01em;
  overflow-wrap:anywhere;
  word-break:normal;
 }
 .chat-transcript .chat-message-text--user{
- padding:12px 18px;
- border-radius:20px 20px 6px 20px;
- background:var(--color-canvas);
- color:var(--color-ink);
+ padding:11px 16px;
+ border-radius:18px 18px 4px 18px;
+ background:var(--color-brand);
+ color:#fff;
  line-height:1.65;
+ box-shadow:0 6px 18px rgb(81 70 229 / .22);
 }
 .chat-transcript .chat-message-text--assistant{
- color:#302C28;
+ color:var(--color-ink);
 }
 @media(max-width:767px){
  .chat-transcript .chat-message--user .chat-message-inner{max-width:90%}
- .chat-transcript .chat-message-text{font-size:15.5px;line-height:1.75}
+ .chat-transcript .chat-message-text{font-size:14.5px;line-height:1.7}
  .chat-transcript .chat-message-text--user{padding:11px 15px}
 }
 

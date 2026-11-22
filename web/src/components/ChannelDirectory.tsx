@@ -48,7 +48,7 @@ function State({connection}:{connection:Channel}){
   status==='starting'?'text-blue-700 bg-blue-50 ring-blue-200':
   'text-[#706659] bg-[#F4F0EA] ring-[#E8E0D7]'
  return <span className={'inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-semibold ring-1 ring-inset '+color}>
-  <span className={'size-1.5 rounded-full '+(ready(connection)?'bg-emerald-500':needHelp(connection)?'bg-amber-500':'bg-slate-400')}/>
+  <span className={'size-1.5 rounded-full '+(ready(connection)?'bg-emerald-500':needHelp(connection)?'bg-amber-500':'bg-muted/60')}/>
   {t(stateLabels[status])}
  </span>
 }
@@ -208,7 +208,7 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
             <span className="block truncate text-[13px] font-bold text-[#362E27]">{connection.name}</span>
             <span className="mt-0.5 block truncate text-[11px] text-[#8E8173]">{byKind.get(connection.kind)?.name||connection.kind}{place?' · '+place:''}</span>
             <span className={'mt-2 inline-flex items-center gap-1.5 text-[11px] font-medium '+(hasIssues?'text-amber-800':ready(connection)?'text-emerald-700':'text-[#8E8173]')}>
-             <span className={'size-1.5 rounded-full '+(hasIssues?'bg-amber-500':ready(connection)?'bg-emerald-500':'bg-slate-400')}/>{t(stateLabels[channelHealth(connection)])}
+             <span className={'size-1.5 rounded-full '+(hasIssues?'bg-amber-500':ready(connection)?'bg-emerald-500':'bg-muted/60')}/>{t(stateLabels[channelHealth(connection)])}
              {(connection.delivery?.needsReview||0)>0&&<span className="ml-1 font-semibold">{connection.delivery?.needsReview}</span>}
             </span>
            </span>

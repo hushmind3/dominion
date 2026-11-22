@@ -61,7 +61,7 @@ export function DialogBackdrop({children,onDismiss,...props}:HTMLAttributes<HTML
    if (top && origin instanceof HTMLElement && origin.isConnected) origin.focus({preventScroll: true})
   }
  }, [])
- return <div ref={backdrop} {...props} className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-[2px]"
+ return <div ref={backdrop} {...props} className="fixed inset-0 z-[60] flex items-center justify-center bg-ink/45/50 p-4 backdrop-blur-[2px]"
   onMouseDown={event=>{if(event.target===event.currentTarget)onDismiss()}}>{children}</div>
 }
 export function DialogPanel({children,size='default',className='',...props}:HTMLAttributes<HTMLDivElement>&{

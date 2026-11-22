@@ -423,7 +423,7 @@ export function ModelHub(){
     </OAuthConnectionCard>)}
    </div>
    {cliAuth&&<CliAuthProgress session={cliAuth} onInput={sendCliInput} onCancel={cancelCliAuth}/>}
-   {deviceCode&&<div className="mt-3 rounded-xl border border-[#E7D9C8] bg-[#FFF9F0] px-4 py-3"><div className="text-[11px] text-[#8A775F]">{t('models.oauth.deviceHint')}</div><div className="my-2 font-mono text-[26px] font-bold tracking-[.18em] text-brand-hover">{deviceCode.userCode}</div><a className="text-[11px] font-semibold text-brand hover:underline" href={deviceCode.verificationUrl} target="_blank" rel="noreferrer">{t('models.oauth.openDevice')}</a></div>}
+   {deviceCode&&<div className="mt-3 rounded-xl border border-divider bg-brand-soft px-4 py-3"><div className="text-[11px] text-muted">{t('models.oauth.deviceHint')}</div><div className="my-2 font-mono text-[26px] font-bold tracking-[.18em] text-brand-hover">{deviceCode.userCode}</div><a className="text-[11px] font-semibold text-brand hover:underline" href={deviceCode.verificationUrl} target="_blank" rel="noreferrer">{t('models.oauth.openDevice')}</a></div>}
    {loginPending&&!deviceCode&&<p className="mt-3 rounded-xl border border-[#E7E0DF] bg-canvas px-3 py-2 text-[11px] text-muted">{t('models.oauth.loginHint')}{loginUrl&&<> · <a className="font-semibold text-brand hover:underline" href={loginUrl} target="_blank" rel="noreferrer">{t('models.oauth.openBrowser')}</a></>}</p>}
    {loginMessage&&<p className="mt-3 rounded-xl border border-[#CFE0CF] bg-[#F4FAF3] px-3 py-2 text-[11px] text-[#4F6F52]">{loginMessage}</p>}
   </section>}

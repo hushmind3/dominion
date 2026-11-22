@@ -23,11 +23,11 @@ export function ChatMessageRow({message,agentName,showReasoning}:{message:ChatMe
  return <div className={'chat-message flex min-w-0 items-start gap-3 '+(human?'chat-message--user justify-end':'chat-message--assistant')} data-message data-role={human?'user':'assistant'}>
   {!human&&<div className="grid size-9 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand-hover"><Sparkles size={17}/></div>}
   <div className="chat-message-inner relative min-w-0">
-   {!human&&<div className="chat-message-label mb-2 flex items-center gap-2 font-bold text-ink">{agentName||'DOMINION'}<TokenUsage usage={message.metadata?.usage} className="ml-auto rounded border border-divider bg-canvas px-1.5 py-0.5 text-[9px] font-medium text-[#8A775F]"/></div>}
+   {!human&&<div className="chat-message-label mb-2 flex items-center gap-2 font-bold text-ink">{agentName||'DOMINION'}<TokenUsage usage={message.metadata?.usage} className="ml-auto rounded border border-divider bg-canvas px-1.5 py-0.5 text-[9px] font-medium text-muted"/></div>}
    {!human&&showReasoning&&message.reasoning&&<details className="mb-3 max-h-56 overflow-y-auto rounded-xl border border-divider bg-canvas p-3 text-[11px] leading-5 text-muted" open={open}><summary className="cursor-pointer select-none" onClick={e=>{e.preventDefault();setOpen(v=>!v)}}><BrainCircuit size={14} className="inline"/> {t('chat.reasoningProcess',{count:message.reasoning.length.toLocaleString()} )} <ChevronRight size={13} className="inline"/></summary><div className="mt-2 whitespace-pre-wrap">{message.reasoning}</div></details>}
    <div className={'chat-message-text min-w-0 whitespace-pre-wrap break-words '+(human?'chat-message-text--user':'chat-message-text--assistant')}>{human?message.content:(message.content?<ChatRichText content={message.content}/>:message.tool_calls?.length?t('chat.toolRequest'):'')}</div>
    {files.length>0&&<div className="mt-2 flex flex-wrap gap-1.5">{files.map(file=><ChatAttachment key={file.id} file={file}/>)}</div>}
-   {usedMemories.length>0&&<details className="chat-message-memories mt-2 rounded-lg border border-divider bg-canvas px-3 py-2 text-[11px] leading-5 text-[#665D51]">
+   {usedMemories.length>0&&<details className="chat-message-memories mt-2 rounded-lg border border-divider bg-canvas px-3 py-2 text-[11px] leading-5 text-muted">
     <summary className="cursor-pointer select-none font-medium">{t('chat.usedMemories',{count:usedMemories.length})}</summary>
     <div className="mt-2 grid gap-2">{usedMemories.map(item=><div key={item.id} className="break-words border-t border-divider pt-2 whitespace-pre-wrap">{item.text}</div>)}</div>
    </details>}
