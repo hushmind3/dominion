@@ -73,7 +73,7 @@ export function MemoryPage(){
     <p className="mt-4 text-sm text-[#7C7469]">{t('memory.note')}</p>
    </Panel>
    <div>
-    <Subheading title={t('memory.count',{count:filtered.length})}/>
+    <Subheading title={memories.loading?t('memory.loading'):memories.error?t('memory.unavailable'):t('memory.count',{count:filtered.length})}/>
     <div className="mb-4 grid gap-2 sm:grid-cols-2">
      <TextInput className="sm:col-span-2" aria-label={t('memory.searchAria')} value={query} onChange={e=>setQuery(e.target.value)} placeholder={t('memory.search')}/>
      <SelectInput aria-label={t('memory.statusAria')} value={status} onChange={e=>setStatus(e.target.value)}><option value="all">{t('memory.status.all')}</option>{Object.entries(statusLabels).map(([key,label])=><option key={key} value={key}>{t(label)}</option>)}</SelectInput>
@@ -86,7 +86,7 @@ export function MemoryPage(){
      <details className="mt-2 text-xs text-[#5C544A]"><summary className="cursor-pointer">{t('memory.evidence')}</summary><div className="mt-2 grid gap-1 break-all"><span>{t('memory.created')} {displayTime(m.createdAt)}</span><span>{t('memory.verification')} {m.verification==='source_quote'?t('memory.verification.sourceQuote'):m.verification||t('memory.time.none')}</span>{m.partitionKey&&<span>{t('memory.workspace')} {m.partitionKey}</span>}{m.sessionId&&<span>{t('memory.sessionId')} {m.sessionId}</span>}{m.sourceMessageIds?.length?<span>{t('memory.sourceMessages')} {m.sourceMessageIds.join(', ')}</span>:null}{m.evidenceQuote&&<blockquote>{m.evidenceQuote}</blockquote>}{m.archiveReason||m.forgetReason?<span>{t('memory.archiveReason')} {m.archiveReason??m.forgetReason}</span>:null}{m.expiresAt&&<span>{t('memory.expires')} {displayTime(m.expiresAt)}</span>}</div></details>
     </Panel>)}</div>
     {filtered.length>visibleLimit&&<Button variant="secondary" className="w-full" onClick={()=>setVisibleLimit(value=>value+40)}>{t('memory.showMore',{count:filtered.length-visibleLimit})}</Button>}
-    {!filtered.length&&<Panel className="p-6 text-center text-sm text-[#7C7469]">{memories.loading?t('memory.loading'):t('memory.empty')}</Panel>}
+    {!filtered.length&&<Panel className="p-6 text-center text-sm text-[#7C7469]">{memories.loading?t('memory.loading'):memories.error?t('memory.unavailable'):t('memory.empty')}</Panel>}
    </div>
   </div>
   <details className="mt-6 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-4" onToggle={event=>setShowRecords(event.currentTarget.open)}>

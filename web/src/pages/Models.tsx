@@ -348,17 +348,17 @@ export function ModelHub(){
 
   {tab==='free'&&<section className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] px-3 py-2 text-[11px] text-[#7C7469]" title={t('models.freeCheck.note')}>
    <strong className="text-[#3A342D]">{t('models.freeCheck.title')}</strong>
-   <span className="rounded bg-emerald-50 px-1.5 py-0.5 font-semibold text-emerald-700">{t('models.freeCheck.free',{count:freeCatalog.value.counts?.free||0})}</span>
-   <span className="rounded bg-[#F1ECE3] px-1.5 py-0.5 font-semibold text-[#8A8176]">{t('models.freeCheck.unknown',{count:freeCatalog.value.counts?.unknown||0})}</span>
-   <span className="rounded bg-[#F7EEE9] px-1.5 py-0.5 font-semibold text-[#A05B48]">{t('models.freeCheck.paid',{count:freeCatalog.value.counts?.paid||0})}</span>
-   {freeCatalog.value.providers.filter(p=>!p.reachable).length>0&&<span className="font-semibold text-rose-600">{t('models.freeCheck.failed',{count:freeCatalog.value.providers.filter(p=>!p.reachable).length})}</span>}
-   <span className="ml-auto text-[10px] text-[#9C9388]">{freeCatalog.value.updatedAt?t('models.freeCheck.updated',{time:new Date(freeCatalog.value.updatedAt).toLocaleString()}):t('models.freeCheck.empty')}</span>
+   <span className="rounded bg-emerald-50 px-1.5 py-0.5 font-semibold text-emerald-700">{freeCatalog.loading||freeCatalog.error?'—':t('models.freeCheck.free',{count:freeCatalog.value.counts?.free||0})}</span>
+   <span className="rounded bg-[#F1ECE3] px-1.5 py-0.5 font-semibold text-[#8A8176]">{freeCatalog.loading||freeCatalog.error?'—':t('models.freeCheck.unknown',{count:freeCatalog.value.counts?.unknown||0})}</span>
+   <span className="rounded bg-[#F7EEE9] px-1.5 py-0.5 font-semibold text-[#A05B48]">{freeCatalog.loading||freeCatalog.error?'—':t('models.freeCheck.paid',{count:freeCatalog.value.counts?.paid||0})}</span>
+   {!freeCatalog.error&&freeCatalog.value.providers.filter(p=>!p.reachable).length>0&&<span className="font-semibold text-rose-600">{t('models.freeCheck.failed',{count:freeCatalog.value.providers.filter(p=>!p.reachable).length})}</span>}
+   <span className="ml-auto text-[10px] text-[#9C9388]">{freeCatalog.loading?t('models.freeCheck.loading'):freeCatalog.error?t('models.freeCheck.unavailable'):freeCatalog.value.updatedAt?t('models.freeCheck.updated',{time:new Date(freeCatalog.value.updatedAt).toLocaleString()}):t('models.freeCheck.empty')}</span>
    <Button type="button" variant="ghost" size="sm" disabled={freeBusy} onClick={()=>void refreshFreeCatalog()}>{freeBusy?<RefreshCw size={13} className="animate-spin"/>:<RefreshCw size={13}/>} {freeBusy?t('models.freeCheck.checking'):t('models.freeCheck.refresh')}</Button>
   </section>}
   {tab==='free'&&<section className="mb-4 rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-4">
    <h2 className="mb-2 text-[14px] font-semibold text-[#3A342D]">업체별 무료 모델 조회</h2>
    <p className="mb-3 text-[12px] text-[#7C7469]">무료 여부는 제공 업체의 조회 결과를 기준으로 표시합니다. 실제 사용은 해당 업체 연결 상태에 따라 달라집니다.</p>
-   {freeCatalog.value.providers.length===0?<p className="text-[12px] text-[#8A8176]">조회된 모델이 없습니다. 위의 새로고침으로 확인하세요.</p>:<div className="grid gap-2 sm:grid-cols-2">{freeCatalog.value.providers.map(provider=><div key={provider.providerId} className="rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] p-3"><div className="flex items-center justify-between gap-2"><strong className="text-[12px] text-[#3A342D]">{provider.providerName}</strong><span className={'text-[10px] '+(provider.reachable?'text-emerald-700':'text-rose-600')}>{provider.reachable?'조회됨':'연결 실패'}</span></div>{provider.error&&<p className="mt-1 text-[11px] text-rose-600">{provider.error}</p>}<div className="mt-2 max-h-40 space-y-1 overflow-auto">{provider.models.filter(model=>model.free===true).map(model=><p key={model.id} className="break-all text-[11px] text-[#6F675D]">{model.id}</p>)}{!provider.models.some(model=>model.free===true)&&<p className="text-[11px] text-[#8A8176]">무료로 분류된 모델 없음</p>}</div></div>)}</div>}
+   {freeCatalog.loading?<p className="text-[12px] text-[#8A8176]">{t('models.freeCheck.loading')}</p>:freeCatalog.error?<p role="status" className="text-[12px] text-[#8A8176]">{t('models.freeCheck.unavailable')}</p>:freeCatalog.value.providers.length===0?<p className="text-[12px] text-[#8A8176]">{t('models.freeCheck.noResults')}</p>:<div className="grid gap-2 sm:grid-cols-2">{freeCatalog.value.providers.map(provider=><div key={provider.providerId} className="rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] p-3"><div className="flex items-center justify-between gap-2"><strong className="text-[12px] text-[#3A342D]">{provider.providerName}</strong><span className={'text-[10px] '+(provider.reachable?'text-emerald-700':'text-rose-600')}>{provider.reachable?'조회됨':'연결 실패'}</span></div>{provider.error&&<p className="mt-1 text-[11px] text-rose-600">{provider.error}</p>}<div className="mt-2 max-h-40 space-y-1 overflow-auto">{provider.models.filter(model=>model.free===true).map(model=><p key={model.id} className="break-all text-[11px] text-[#6F675D]">{model.id}</p>)}{!provider.models.some(model=>model.free===true)&&<p className="text-[11px] text-[#8A8176]">무료로 분류된 모델 없음</p>}</div></div>)}</div>}
   </section>}
   {(tab==='cloud'||tab==='connect')&&<div className="mb-4"><DominionCloudAccount key={tab} initialTab={tab==='connect'?'providers':'cloud'} initialProviderId={tab==='connect'?browseProviderId:undefined} hideManagementNavigation onProviderAdded={providers.reload}/></div>}
    {tab==='catalog'&&<section className="rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-5 shadow-[0_1px_2px_rgba(36,33,29,.04)]">
@@ -372,6 +372,9 @@ export function ModelHub(){
 
   {tab==='oauth'&&<section className="rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-5 shadow-[0_1px_2px_rgba(36,33,29,.04)]">
    <div className="mb-4"><h2 className="m-0 text-[16px] font-bold text-[#24211D]">{t('models.oauth.title')}</h2><p className="mt-1 text-[12px] text-[#7C7469]">{t('models.oauth.desc')}</p></div>
+   {cli.loading&&!cli.value.length&&<p className="mb-3 text-center text-[12px] text-[#8A8176]">{t('models.oauth.loading')}</p>}
+   {cli.error&&!cli.value.length&&<p role="status" className="mb-3 text-center text-[12px] text-[#8A8176]">{t('models.oauth.unavailable')}</p>}
+   {!cli.loading&&!cli.error&&!cli.value.length&&<p className="mb-3 text-center text-[12px] text-[#8A8176]">{t('models.oauth.empty')}</p>}
    <div className="grid grid-cols-1 items-stretch gap-3 md:grid-cols-2">
     {cli.value.map(item=><OAuthConnectionCard
      key={item.id}
@@ -428,7 +431,7 @@ export function ModelHub(){
   {tab==='huggingface'&&<div className="mt-2"><ModelExplorer key="huggingface-browser" initialView="search" hideNavigation/></div>}
 
   {removedName&&<p role="status" className="mb-4 mt-4 text-[12px] text-emerald-700">{t('models.dlg.disconnected',{name:removedName})}</p>}
-  {!modal&&<div className="mt-4"><Notice message={error||providers.error}/></div>}
+  {!modal&&<div className="mt-4"><Notice message={error||providers.error||(tab==='free'?freeCatalog.error:tab==='oauth'?cli.error:'')}/></div>}
   {modal&&<DialogBackdrop onDismiss={close}><DialogPanel size="default">
    <div className="flex items-center justify-between border-b border-[#EFE9DF] p-4"><h2 className="text-[15px] font-bold">{presetMode&&!edit?name+' '+t('models.editConnection'):edit?t('models.editConnection'):t('models.addConnection')}</h2><Button size="icon" variant="ghost" aria-label={t('models.close')} onClick={close} disabled={saving}><X size={16}/></Button></div>
    <div className="grid gap-3 p-4">
