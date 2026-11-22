@@ -54,6 +54,7 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
  const [preview,setPreview]=useState<Preview|null>(null)
  const [consent,setConsent]=useState(false),[busy,setBusy]=useState(false)
  const [error,setError]=useState(''),[notice,setNotice]=useState('')
+ const goalBytes=new TextEncoder().encode(goal.trim()).length
  // Polls from before an owner create/cancel/retry cannot rewind the selected
  // Team, especially while the server is saving a new DAG.
  const refreshSequence=useRef(0)
@@ -99,6 +100,7 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
  }
  const invalid=(()=>{
   if(!goal.trim())return t('팀 목표를 입력하세요.','Enter a team goal.')
+  if(goalBytes>16000)return t('팀 목표는 UTF-8 16,000바이트 이하여야 합니다.','Team goal must be at most 16,000 UTF-8 bytes.')
   if(!steps.length||steps.some(v=>!v.prompt.trim() && steps.length>1))
    return t('여러 작업을 만들 때는 각 Worker의 지시문이 필요합니다.','Give each worker instructions when adding multiple tasks.')
   if(new Set(steps.map(v=>v.id)).size!==steps.length)return t('작업 ID가 중복됩니다.','Duplicate task IDs.')
@@ -209,6 +211,8 @@ export function TaskTeamsPanel({providers}:{providers:Provider[]}){
     <label className="grid gap-1 text-[12px] font-semibold">{t('팀 목표','Team goal')}
      <textarea className={field} rows={2} maxLength={16000} value={goal}
       onChange={e=>setGoal(e.target.value)}/></label>
+    <p className={'-mt-3 text-right text-[10px] '+(goalBytes>16000?'text-rose-600':'text-[#8A8176]')}>
+     UTF-8 {goalBytes.toLocaleString()} / 16,000 bytes</p>
     <div className="my-4 flex flex-wrap gap-3">
      <label className="text-[11px]">{t('동시 Worker 수','Concurrent workers')}
       <select className={field} value={parallel} onChange={e=>setParallel(Number(e.target.value))}>
