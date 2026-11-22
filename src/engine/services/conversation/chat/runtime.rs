@@ -153,6 +153,16 @@ async fn run_turn_with_policy(
         .and_then(|value| value.as_str())
         .ok_or("Session has no id")?
         .to_string();
+    // A retried consumer turn must never re-execute tools or reissue a
+    // provider call after its original owner message was durably accepted.
+    if let Some(request_id)=request.request_id.as_deref(){
+        let key=format!("chat-turn-{}",crate::engine::memory::stable_id(&[
+            &session_id,request_id
+        ]));
+        if state.store.get("chat_turn_request",&key).is_some(){
+            return Err("이미 수신한 채팅 요청입니다. 저장된 대화 기록을 확인하세요.".into());
+        }
+    }
     // Stop can reach the server before a delayed browser POST. Reject such
     // stale turns BEFORE acquiring the session lock, so a fresh request is
     // never starved by an already cancelled network arrival.

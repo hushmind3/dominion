@@ -185,7 +185,7 @@ impl TurnRequest {
         };
         Ok(Self {
             session_id: string("sessionId"),
-            request_id: match string("requestId") {
+            request_id: match string("requestId").or_else(||string("clientTurnId")) {
                 Some(value) if uuid::Uuid::parse_str(&value).is_ok() => Some(value),
                 Some(_) => return Err("채팅 요청 ID 형식이 올바르지 않습니다.".into()),
                 None => None,
@@ -195,7 +195,8 @@ impl TurnRequest {
             agent_id: string("agentId"),
             direct_chat: match value.get("conversationMode").and_then(Value::as_str) {
                 Some("chat") => true,
-                Some("agent") | None => false,
+                Some("agent") => false,
+                None => value.get("directChat").and_then(Value::as_bool).unwrap_or(false),
                 Some(_) => return Err("채팅 실행 모드가 올바르지 않습니다.".into()),
             },
             web_search: value.get("webSearch").and_then(Value::as_bool).unwrap_or(false),
@@ -289,4 +290,26 @@ struct Metrics {
     model_elapsed_ms: u64,
     tool_elapsed_ms: u64,
     context_elapsed_ms: u64,
+}
+
+#[cfg(test)]
+mod consumer_chat_contract_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn consumer_direct_chat_and_client_turn_id_do_not_inherit_agent_permissions(){
+        let request_id=uuid::Uuid::new_v4().to_string();
+        let request=TurnRequest::from_value(&json!({
+            "input":"안녕하세요","directChat":true,
+            "clientTurnId":request_id,"toolsEnabled":false,
+            "toolsExecutionEnabled":false
+        })).unwrap();
+        assert!(request.direct_chat);
+        assert_eq!(request.request_id.as_deref(),Some(request_id.as_str()));
+        assert!(!request.tools_enabled);
+        assert!(!request.tools_execution_enabled);
+        assert!(!TurnRequest::from_value(&json!({
+            "input":"hi","clientTurnId":"not-a-uuid"
+        })).is_ok());
+    }
 }

@@ -33,13 +33,29 @@ pub(super) fn prepare(
     let recorded_source = if record_input {
         let attachments =
             crate::engine::attachments::validate_ids(state, session_id, &request.attachment_ids)?;
-        let user_message = state
-            .store
-            .write_message(&json!({
-                "session_id": session_id,"role": "user","content": request.input,
-                "agent_id": request.agent_id,"metadata":{"authorKind":"owner","attachments":attachments},
-            }))
-            .ok_or("사용자 메시지를 저장할 수 없습니다.")?;
+        let message=json!({
+            "session_id":session_id,"role":"user","content":request.input,
+            "agent_id":request.agent_id,"metadata":{
+                "authorKind":"owner","attachments":attachments,
+                "clientTurnId":request.request_id
+            }
+        });
+        let user_message=if let Some(request_id)=request.request_id.as_deref(){
+            let key=format!("chat-turn-{}",crate::engine::memory::stable_id(&[
+                session_id,request_id
+            ]));
+            let receipt=json!({
+                "id":key,"sessionId":session_id,"requestId":request_id,
+                "inputDigest":crate::engine::memory::stable_id(&[&request.input]),
+                "acceptedAt":chrono::Utc::now().to_rfc3339()
+            });
+            state.store.write_message_with_record(&message,"chat_turn_request",&receipt)
+                .map(|(saved,_)|saved)
+                .ok_or("같은 채팅 요청이 이미 저장됐거나 메시지를 저장할 수 없습니다.")?
+        }else{
+            state.store.write_message(&message)
+                .ok_or("사용자 메시지를 저장할 수 없습니다.")?
+        };
         state.bus.message(&user_message);
         crate::engine::episode::attach_source(
             state,

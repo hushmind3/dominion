@@ -260,7 +260,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   }
   stoppingRef.current=true;setStopping(true);setError('');
   try{
-   const outcome=await post<{cancelled:boolean;stopped:boolean}>('/api/sessions/'+encodeURIComponent(id)+'/cancel',{});
+   const outcome=await post<{cancelled:boolean;stopped:boolean}>('/api/sessions/'+encodeURIComponent(id)+'/cancel',{requestId:pendingTurn.current?.id});
    if(!outcome.stopped)throw Error(t('chat.stopPending'));
    // A STOP must preserve already streamed text, even when the native
    // execution was cancelled before the assistant answer was saved.
@@ -431,7 +431,9 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    }
    streamStarted=true;
    await streamChat({
-    sessionId:id,clientTurnId,agentId:agentMode?agentId:undefined,directChat:!agentMode,
+    sessionId:id,clientTurnId,requestId:clientTurnId,
+    conversationMode:agentMode?'agent':'chat',
+    agentId:agentMode?agentId:undefined,directChat:!agentMode,
     providerId:agentMode?manual?.providerId:providerId,model:agentMode?manual?.model:model,input:text,
     toolsEnabled:agentMode&&toolsEnabled,toolsExecutionEnabled:agentMode&&toolsEnabled,autoLearning:agentMode&&autoLearn,attachmentIds,
     reasoningLanguage:reasoningKo?'ko':'original',reasoningEffort:effectiveReasoningEffort||undefined,thinking:selectedProvider?.kind==='codex'?(effectiveReasoningEffort==='none'?false:canDisableThinking?effectiveThinkingEnabled:undefined):effectiveThinkingEnabled,

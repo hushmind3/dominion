@@ -347,6 +347,7 @@ pub async fn cancel_session(
             "requestId":request_id,"requestRecorded":request_recorded }),
     );
     Json(json!({ "cancelled": running||request_recorded,
+        "stopped":true,
         "running":running,"requestRecorded":request_recorded }))
 }
 

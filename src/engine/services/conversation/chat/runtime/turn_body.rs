@@ -23,6 +23,14 @@ pub(super) async fn run_turn_body(
         state,request,session_id,execution_id,task_id,
         record_input,source_message_id,
     )?;
+    if record_input && source_message_id.is_none(){
+        if let Some(message_id)=reply_to.as_deref(){
+            let _=tx.send(json!({
+                "type":"owner_saved","messageId":message_id,
+                "sessionId":session_id
+            }));
+        }
+    }
     // An owner request for a real effect is not a conversational completion.
     // Reject it before model generation when execution authority is absent;
     // neither a fluent answer nor a learned program may forge a file write.
