@@ -394,8 +394,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   <div className={'native-command-grid '+(historyOpen?'has-history':'')}>
    <div className="native-command-main">
     <div className="native-command-compose">
-     <span className="native-command-step">{en?'What should I do?':'어떤 작업을 수행할까요?'}</span>
-   <label className="text-[12px] font-semibold" htmlFor="sdk-goal">{en?'What would you like done?':'무엇을 해드릴까요?'}</label>
+   <label className="native-command-step" htmlFor="sdk-goal">{en?'What would you like done?':'무엇을 해드릴까요?'}</label>
    <textarea id="sdk-goal" value={instruction} onChange={e=>editInstruction(e.target.value)}
     rows={3} maxLength={64000}
     placeholder={en?'Describe a task, such as inspecting a project or fixing an issue.':'프로젝트를 분석하거나 문제를 해결하는 등 필요한 작업을 적어주세요.'}
