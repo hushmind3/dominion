@@ -64,12 +64,12 @@ export function GrowthDashboard(){
    <Subheading title={t('growth.transfer')} extra={<span className="text-[10px] text-[#9C9388]">{t('ui.label.provenance')}</span>}/>
    {!principles.length&&!rules.length?<p className="text-sm text-[#7C7469]">{t('growth.noPrinciples')}</p>:<div className="grid gap-2">
     {principles.slice(0,6).map(principle=><div className="rounded-lg border border-[#EFE9DF] p-3" key={principle.id}>
-     <div className="flex flex-wrap gap-2 text-[11px]"><strong>{label(principle.kind,t('growth.principle'))}</strong><span className="text-[#7C7469]">{label(principle.status)} · {t('growth.confidence',{value:percent(principle.confidence)})}</span><span className="ml-auto rounded bg-[#F7E8E1] px-1.5 py-0.5 text-[10px] text-[#A94E30]">{t('growth.cases',{count:number((principle.supportingCases||[]).length)})}</span></div>
+     <div className="flex flex-wrap gap-2 text-[11px]"><strong>{label(principle.kind,t('growth.principle'))}</strong><span className="text-[#7C7469]">{statusLabel(principle.status)||label(principle.status)} · {t('growth.confidence',{value:percent(principle.confidence)})}</span><span className="ml-auto rounded bg-[#F7E8E1] px-1.5 py-0.5 text-[10px] text-[#A94E30]">{t('growth.cases',{count:number((principle.supportingCases||[]).length)})}</span></div>
      <p className="mt-1 text-[12px] text-[#4A443C]">{label(principle.principle)}</p>
      <p className="mt-1 text-[10px] text-[#8A8176]">{t('growth.contributors',{models:(principle.supportingModels||[]).join(', ')||t('growth.none')})} · {t('growth.agentsCount',{count:(principle.supportingAgents||[]).length})} · {t('growth.counterexamples',{count:number((principle.counterexamples||[]).length)})}</p>
     </div>)}
     {rules.slice(0,6).map(rule=><div className="rounded-lg border border-[#EFE9DF] p-3" key={rule.id}>
-     <div className="flex flex-wrap gap-2 text-[11px]"><strong>{t('growth.conditional')}</strong><span className="text-[#7C7469]">{label(rule.status)} · {t('growth.confidence',{value:percent(rule.confidence)})}</span><span className="ml-auto text-[10px] text-[#A94E30]">{t('growth.cases',{count:number((rule.supportingCases||[]).length)})}</span></div>
+     <div className="flex flex-wrap gap-2 text-[11px]"><strong>{t('growth.conditional')}</strong><span className="text-[#7C7469]">{statusLabel(rule.status)||label(rule.status)} · {t('growth.confidence',{value:percent(rule.confidence)})}</span><span className="ml-auto text-[10px] text-[#A94E30]">{t('growth.cases',{count:number((rule.supportingCases||[]).length)})}</span></div>
      <p className="mt-1 text-[12px] text-[#4A443C]">{label(rule.trigger)} → {label(rule.intervention?.tool,t('growth.tool'))}</p>
      <p className="mt-1 text-[10px] text-[#8A8176]">{t('growth.agentsCount',{count:(rule.supportingAgents||[]).length})} · {t('growth.counterexamples',{count:number((rule.counterexamples||[]).length)})}</p>
     </div>)}
