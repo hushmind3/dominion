@@ -117,31 +117,33 @@ export function ConnectionsPage(){
  }
  const tabs=[{id:'channels',label:t('conn.tab.channels'),icon:RadioTower},{id:'quick-connect',label:t('conn.tab.quickConnect'),icon:Link2},{id:'accounts',label:t('conn.tab.accounts'),icon:KeyRound},{id:'market',label:'MCP 마켓',icon:Blocks},{id:'installed',label:t('ext.tab.installed'),icon:Server},{id:'skills',label:t('ext.tab.skills'),icon:BookOpenText},{id:'plugins',label:t('ext.tab.plugins'),icon:PackagePlus},{id:'capabilities',label:'역량 마켓',icon:Sparkles}] as const
  const pageHeader=<header className="mb-2 flex flex-wrap items-center justify-between gap-3 sm:mb-5 sm:items-end">
-  <div className="min-w-0"><p className="mb-1 hidden text-[10px] font-bold uppercase tracking-[.2em] text-[#B76D50] sm:block">DOMINION / CONNECTIONS</p>
-   <h1 className="m-0 text-[21px] font-bold tracking-[-.035em] text-[#29221B] sm:text-[26px]">{t('conn.title')}</h1>
-   <p className="mt-2 hidden max-w-xl text-[12px] leading-5 text-[#817467] sm:block">{t('conn.description')}</p>
+  <div className="min-w-0"><p className="mb-1 hidden text-[10px] font-bold uppercase tracking-[.2em] text-[var(--color-brand)] sm:block">DOMINION / CONNECTIONS</p>
+   <h1 className="m-0 text-[21px] font-bold tracking-[-.035em] text-[var(--color-ink)] sm:text-[26px]">{t('conn.title')}</h1>
+   <p className="mt-2 hidden max-w-xl text-[12px] leading-5 text-[var(--color-muted)] sm:block">{t('conn.description')}</p>
   </div>
   <Button type="button" size="sm" variant="secondary" aria-label={t('conn.refresh')} disabled={refreshing} onClick={()=>void refreshChannels()}>
    <Activity size={15} className={refreshing?'animate-spin':''}/><span className="hidden sm:inline">{t('conn.refresh')}</span>
   </Button>
  </header>
- const sectionTabs=<nav ref={tabsRef} className="connection-tabs connection-workbench-tabs" aria-label={t('conn.navigation')}>
+ const sectionTabs=<nav ref={tabsRef} className="flex gap-4 overflow-x-auto [scrollbar-width:none] lg:flex-col lg:gap-5 lg:overflow-visible" aria-label={t('conn.navigation')}>
   {([
    {ko:'연결 및 채널',english:'Connections',items:tabs.slice(0,3)},
    {ko:'확장 및 도구',english:'Tools & Extensions',items:tabs.slice(3,7)},
    {ko:'역량 탐색',english:'Capabilities',items:tabs.slice(7)},
-  ] as const).map(group=><section key={group.ko} className="connection-workbench-group">
+  ] as const).map(group=><section key={group.ko} className="shrink-0 lg:w-full">
    <h2 className="text-[10px] font-bold tracking-[.1em] text-muted">{locale==='en'?group.english:group.ko}</h2>
-   <div className="mt-2 flex flex-wrap gap-1">
+   <div className="mt-2 flex flex-wrap gap-1 lg:flex-col">
     {group.items.map(({id,label,icon:Icon})=><Button key={id} variant="bare" aria-current={section===id?'page':undefined}
-     onClick={()=>setSection(id)}><Icon size={15}/>{label}</Button>)}
+     onClick={()=>setSection(id)} className="lg:w-full lg:justify-start"><Icon size={15}/>{label}</Button>)}
    </div>
   </section>)}
  </nav>
- if(section!=='channels'&&section!=='accounts'&&section!=='quick-connect')return <div className={PAGE_FRAME}>{pageHeader}{sectionTabs}{section==='capabilities'?<CapabilitiesPage embedded navigate={page=>setSection(page==='extensions'?'market':'channels')}/>:<ExtensionsPage section={section} embedded/>}</div>
+ if(section!=='channels'&&section!=='accounts'&&section!=='quick-connect')return <div className={PAGE_FRAME}>{pageHeader}<div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]"><aside className="min-w-0">{sectionTabs}</aside><div className="min-w-0">{section==='capabilities'?<CapabilitiesPage embedded navigate={page=>setSection(page==='extensions'?'market':'channels')}/>:<ExtensionsPage section={section} embedded/>}</div></div></div>
  return <div className={PAGE_FRAME}>
   {pageHeader}
-  {sectionTabs}
+  <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+   <aside className="min-w-0">{sectionTabs}</aside>
+   <div className="min-w-0">
   {section==='quick-connect'&&<ConnectedAccounts onSetupApp={id=>{setOauthError('');setOauthEditor({id,clientId:'',clientSecret:''});setSection('accounts')}}/>}
   {info&&<div role="status" className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{info}</div>}
   {error&&!editor&&<Notice message={error}/>}
@@ -154,6 +156,8 @@ export function ConnectionsPage(){
    <Subheading title={t('conn.accounts')} extra={<Button size="sm" variant="secondary" onClick={()=>setSection('quick-connect')}><Link2 size={14}/>{t('conn.tab.quickConnect')}</Button>}/>
    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{supportedOAuthAccounts(oauth.value).map(item=>{const account=accounts.value.find(a=>a.provider===item.id&&a.hasToken);const Icon=item.id==='github'?Github:Globe2;return <Panel className="flex min-w-0 flex-col gap-3 p-5" key={item.id}><div className="grid size-11 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand"><Icon size={28}/></div><h3>{item.id==='github'?'GitHub':'Google'}</h3><p>{item.id==='github'?t('conn.dlg.githubTitle'):t('conn.dlg.googleTitle')}</p><p className="text-[11px] leading-5 text-muted">{t(item.id==='github'?'conn.githubCapability':'conn.googleCapability')}</p><small className="break-words text-[10px] text-muted">{t('conn.scopeName')}: {account?.scopes||item.scope}</small><div className="integration-status"><StateTag online={Boolean(account)}>{account?t('conn.accountReady',{name:account.displayName}):item.configured?t('conn.oauthReady'):t('conn.oauthNeeded')}</StateTag></div><div className="mt-auto flex flex-wrap items-center gap-2 border-t border-divider pt-3"><Action variant="secondary" onClick={()=>{setOauthError('');setOauthEditor({id:item.id,clientId:'',clientSecret:''})}}><Settings2 size={15}/>{t('conn.oauthAppSetup')}</Action><Action variant="ghost" onClick={()=>setSection('quick-connect')}><Link2 size={15}/>{account?t('conn.quick.reconnect'):t('conn.quick.connect')}</Action></div></Panel>})}</div>
   </>}
+   </div>
+  </div>
   {oauthEditor&&<DialogBackdrop onDismiss={()=>{if(!oauthSaving)setOauthEditor(null)}}><DialogPanel size="wide" aria-label={t('conn.oauthAppSetup')}>
    <div className="flex items-center justify-between border-b border-divider p-5"><div><small>OAUTH · {oauthEditor.id.toUpperCase()}</small><h2 className="text-lg font-bold">{t('conn.oauthAppSetup')}</h2></div><Button size="icon" variant="ghost" disabled={oauthSaving} onClick={()=>setOauthEditor(null)} aria-label={t('conn.cancel')}><X size={18}/></Button></div>
    <div className="grid gap-4 p-5">
