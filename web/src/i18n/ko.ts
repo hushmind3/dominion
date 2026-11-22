@@ -62,7 +62,7 @@ const ko = {
   'memory.editNote': '기존 기록은 수정 이력으로 보존하고, 새 내용만 활성 기억으로 사용합니다.',
   'memory.update': '수정 저장',
   'memory.cancel': '취소',
-  'memory.updated': '기억을 수정하고 이전 기록을 보존했습니다.'
+  'memory.updated': '기억을 수정하고 이전 기록을 보존했습니다.',
   'memory.title': '기억과 학습 기록',
   'memory.description': '검색에 사용할 수 있는 기억과 보관된 기록을 확인하세요. 활성 기억도 실행의 작업 공간, 에이전트, 대화 범위에 맞을 때만 검색됩니다.',
   'memory.new': '새 기억 등록',

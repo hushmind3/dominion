@@ -63,7 +63,7 @@ const en: Record<LocaleKey, string> = {
   'memory.editNote': 'The old record remains in history. Only the revised text stays active.',
   'memory.update': 'Save revision',
   'memory.cancel': 'Cancel',
-  'memory.updated': 'Memory updated; the earlier record is preserved.'
+  'memory.updated': 'Memory updated; the earlier record is preserved.',
   'memory.title': 'Memory and learning',
   'memory.description': 'Inspect memories available for retrieval and archived records. Active memories are only retrieved when the workspace, agent and conversation scope match.',
   'memory.new': 'Register memory',
