@@ -378,7 +378,9 @@ fn retrieve_ranked_with_rerank(
     let query_terms = terms(query);
     let compact_query = normalize(query);
     let mut cache = RecallCache::default();
-    let all_records = store.all("memory");
+    let all_records = store.memory_retrieval_candidates(
+        &scope.partition_key, &scope.session_id, scope.agent_id.as_deref(),
+    );
     let mut records = all_records.iter()
         .filter(|record| recallable_cached(store, record, scope, &mut cache))
         .cloned()

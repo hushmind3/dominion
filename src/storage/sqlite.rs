@@ -318,6 +318,15 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_algorithm_kind_lookup
                  ON records(json_extract(data,'$.kind'),id)
                  WHERE kind='algorithm';
+             -- Memory recall starts from the active conversation's scope.
+             -- Keep partition and agent candidates indexed so each prompt
+             -- does not deserialize the owner's entire memory history.
+             CREATE INDEX IF NOT EXISTS idx_memory_partition_scope
+                 ON records(json_extract(data,'$.partitionKey'),json_extract(data,'$.scope'))
+                 WHERE kind='memory';
+             CREATE INDEX IF NOT EXISTS idx_memory_agent_scope
+                 ON records(json_extract(data,'$.agentId'),json_extract(data,'$.scope'))
+                 WHERE kind='memory';
              CREATE INDEX IF NOT EXISTS idx_remote_active_lease
                  ON records(json_extract(data,'$.leaseExpiresAtMs'))
                  WHERE kind='remote_task'
@@ -400,6 +409,48 @@ impl Store {
             Err(_) => return Vec::new(),
         };
         rows.filter_map(|row| row.ok()).collect()
+    }
+
+    /// Return only memory rows that could be visible in this retrieval scope.
+    /// The caller still applies the authoritative provenance and lifecycle
+    /// checks; this SQL predicate only avoids loading unrelated partitions.
+    pub fn memory_retrieval_candidates(
+        &self, partition_key: &str, session_id: &str, agent_id: Option<&str>,
+    ) -> Vec<Value> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='memory' AND (
+                 json_extract(data,'$.scope')='global'
+                 OR json_extract(data,'$.partitionKey')=?1
+                 OR json_extract(data,'$.partitionKey') IS NULL
+                 OR (?2 IS NOT NULL AND json_extract(data,'$.agentId')=?2
+                     AND json_extract(data,'$.scope')='agent')
+                 OR (?2 IS NOT NULL AND json_extract(data,'$.scope')=?2)
+             )
+             ORDER BY updated_at DESC",
+        ) {
+            Ok(stmt) => stmt,
+            Err(_) => return Vec::new(),
+        };
+        let rows = match stmt.query_map(
+            params![partition_key, agent_id], record_from_row,
+        ) {
+            Ok(rows) => rows,
+            Err(_) => return Vec::new(),
+        };
+        // Legacy learned memories are session-local and do not carry a
+        // partition. Keep them only for their source session on local recall.
+        rows.filter_map(|row| row.ok())
+            .filter(|record| {
+                record["partitionKey"].is_string()
+                    || record["source"].as_str().is_none_or(|source| {
+                        !matches!(source, "learn" | "agent")
+                    })
+                    || (partition_key == "local"
+                        && record["sessionId"].as_str() == Some(session_id))
+            })
+            .collect()
     }
 
     /// Build the Room status snapshot with bounded, indexed ownership lookups.
