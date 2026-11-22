@@ -237,6 +237,33 @@ try{
   assert.ok(widths.body<=widths.screen+2,
     'Team UI is horizontally clipped on a mobile viewport: '+JSON.stringify(widths));
   assert.deepEqual(errors,[], 'React/JS runtime errors');
+  // Other frontend areas use the same task-first discovery and safe drafts.
+  await page.goto(address+'/#/connections',{waitUntil:'domcontentloaded'});
+  const connectionAreas=page.getByRole('navigation',{name:'연결 영역'});
+  await connectionAreas.getByRole('button',{name:'MCP·스킬'}).waitFor({timeout:10000});
+  await connectionAreas.getByRole('button',{name:'MCP·스킬'}).click();
+  assert.equal(await page.getByRole('navigation',{name:'연결 상세'}).getByRole('button').count(),4);
+  await connectionAreas.getByRole('button',{name:'외부 계정'}).click();
+  assert.equal(await page.getByRole('navigation',{name:'연결 상세'}).getByRole('button').count(),2);
+  await connectionAreas.getByRole('button',{name:'채널 연결'}).click();
+  assert.equal(await page.getByRole('navigation',{name:'연결 상세'}).count(),0);
+  await page.goto(address+'/#/agents',{waitUntil:'domcontentloaded'});
+  const agentSearch=page.getByRole('textbox',{name:'에이전트 검색'});
+  await agentSearch.waitFor({timeout:10000});
+  await agentSearch.fill('Researcher');
+  assert.equal(await page.getByRole('heading',{name:'Researcher'}).count(),1);
+  assert.equal(await page.getByRole('heading',{name:'Lead'}).count(),0);
+  await page.getByRole('combobox',{name:'에이전트 준비 상태'}).selectOption('setup');
+  await page.getByText('검색 조건에 맞는 에이전트가 없습니다.').waitFor({timeout:10000});
+  await page.goto(address+'/#/memory',{waitUntil:'domcontentloaded'});
+  const memoryDraft=page.locator('textarea').first();
+  await memoryDraft.waitFor({timeout:10000});
+  await memoryDraft.fill('아직 저장하지 않은 기억 초안');
+  await page.goto(address+'/#/agents',{waitUntil:'domcontentloaded'});
+  await page.goto(address+'/#/memory',{waitUntil:'domcontentloaded'});
+  await memoryDraft.waitFor({timeout:10000});
+  assert.equal(await memoryDraft.inputValue(),'아직 저장하지 않은 기억 초안');
+  await page.goto(address+'/#/chat?session=chat-one',{waitUntil:'domcontentloaded'});
   // Chat drafts are scoped to the actual session, including fresh chats.
   const inputSelector='textarea[placeholder^="무엇을 도와드릴까요?"]';
   await page.goto(address+'/#/chat?session=chat-one',{waitUntil:'domcontentloaded'});
