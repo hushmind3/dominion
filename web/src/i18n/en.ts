@@ -1,5 +1,11 @@
 import type {LocaleKey} from './ko'
 const en: Record<LocaleKey, string> = {
+  'nav.capabilities': 'Capabilities',
+  'nav.extensions': 'Extensions',
+  'shell.loadingChat': 'Loading conversation…',
+  'shell.loadingPage': 'Loading page…',
+  'shell.loadFailed': 'This page could not be loaded.',
+  'shell.reload': 'Reload page',
   'nav.group.workspace': 'Workspace',
   'nav.group.extensions': 'Extensions',
   'nav.group.operations': 'Operations',

@@ -12,7 +12,7 @@ const chat=readFileSync(root+'src/pages/Chat.tsx','utf8')
 const rooms=readFileSync(root+'src/pages/Rooms.tsx','utf8')
 const shared=readFileSync(root+'src/components/ConversationSettings.tsx','utf8')
 const hook=readFileSync(root+'src/hooks/usePersistentConversationPreference.ts','utf8')
-const app=readFileSync(root+'src/App.tsx','utf8')
+const recovery=readFileSync(root+'src/components/PageLoadBoundary.tsx','utf8')
 
 function storageFixture(){
  const data=new Map()
@@ -90,7 +90,7 @@ test('both screens bind persisted display/thinking controls and chat wire uses e
  assert.match(shared,/onChange=\{e=>setReasoningKo\(e\.target\.checked\)\}/)
  assert.match(chat,/usePersistentKoreanReasoning\(\)/)
  assert.match(rooms,/usePersistentKoreanReasoning\(\)/)
- assert.match(app,/reloadUpdatedUi\(\)/)
+ assert.match(recovery,/reloadUpdatedUi\(\)/)
  assert.doesNotMatch(chat,/\[toolsEnabled,setToolsEnabled\]=useState\(true\)/)
 })
 

@@ -177,6 +177,6 @@ test('catalog registration selects the Anthropic protocol and chat route retains
  const app=readFileSync(new URL('../src/App.tsx',import.meta.url),'utf8')
  assert.match(account,/catalogProviderKind=\(provider:CatalogProvider\)/)
  assert.match(account,/kind:catalogProviderKind\(entry\)/)
- assert.match(app,/provider:params\.get\('provider'\)\|\|undefined/)
- assert.match(app,/model:params\.get\('model'\)\|\|undefined/)
+ assert.match(app,/provider:\s*params\.get\('provider'\)\s*\|\|\s*undefined/)
+ assert.match(app,/model:\s*params\.get\('model'\)\s*\|\|\s*undefined/)
 })

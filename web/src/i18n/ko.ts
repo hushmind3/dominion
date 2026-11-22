@@ -1,4 +1,10 @@
 const ko = {
+  'nav.capabilities': '기능 목록',
+  'nav.extensions': '확장 관리',
+  'shell.loadingChat': '대화를 불러오는 중…',
+  'shell.loadingPage': '화면을 불러오는 중…',
+  'shell.loadFailed': '화면을 불러오지 못했습니다.',
+  'shell.reload': '다시 열기',
   'nav.group.workspace': '작업 공간',
   'nav.group.extensions': '확장',
   'nav.group.operations': '운영',

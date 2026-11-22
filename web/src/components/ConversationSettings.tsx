@@ -31,7 +31,7 @@ export function ConversationSettings({open,onOpenChange,showReasoning,setShowRea
   </Button>
   {open&&settingsPanel.position&&createPortal(
    <div ref={settingsPanel.panel} style={settingsPanel.position} role="dialog" aria-label={t('chat.settings')}
-    className="z-[80] max-w-full overflow-y-auto overscroll-contain rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-3 shadow-xl">
+    className="z-[80] max-w-full overflow-y-auto overscroll-contain rounded-2xl border border-divider bg-surface p-3 shadow-xl">
     <div className="flex items-start justify-between gap-2 border-b border-[#EAE2D6] px-2 pb-3">
      <div><h3 className="text-[15px] font-bold text-[#3A342D]">{t('chat.settings')}</h3>
       <p className="mt-1 text-[12px] leading-5 text-[#82776B]">

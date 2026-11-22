@@ -631,7 +631,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
           </Action>
         }
       />}
-      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] px-4 py-3 text-[11px] text-[#5C544A]">
+      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-divider bg-[#FAF7F1] px-4 py-3 text-[11px] text-[#5C544A]">
         <StatusLine label={t('ext.tab.servers')} value={mcp.value.length} />
         <StatusLine
           label={t('ext.tab.tools')}
@@ -646,7 +646,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
           }
         />
       </div>
-      {!embedded&&<div className="mb-6 flex flex-wrap items-center gap-2 border-b border-[#E7E0D5] pb-3">
+      {!embedded&&<div className="mb-6 flex flex-wrap items-center gap-2 border-b border-divider pb-3">
         <Button
           variant={tab === "market" ? "primary" : "ghost"}
           onClick={() => setTab("market")}
@@ -704,7 +704,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
             />
           </div>
           <Panel className="min-w-0 p-5">
-            <div className="flex min-w-0 items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] px-3 py-2">
+            <div className="flex min-w-0 items-center gap-2 rounded-xl border border-divider bg-surface px-3 py-2">
               <Search size={18} />
               <TextInput
                 value={query}
@@ -716,21 +716,21 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                 {searching ? t('ext.searching') : t('ext.search')}
               </Action>
             </div>
-            <div className="rounded-xl bg-[#FAF7F1] p-3 text-xs leading-5 text-[#7C7469]">
+            <div className="rounded-xl bg-[#FAF7F1] p-3 text-xs leading-5 text-muted">
               {t('ext.registryNote')}
             </div>
             <div className="registry-results">
               {catalog.map((x) => (
                 <div
-                  className="flex min-w-0 flex-wrap items-start gap-3 rounded-xl border border-[#E7E0D5] bg-white p-4 hover:border-[#E6C9B8]"
+                  className="flex min-w-0 flex-wrap items-start gap-3 rounded-xl border border-divider bg-white p-4 hover:border-[#E6C9B8]"
                   key={x.name}
                 >
-                  <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-[#F7E8E1] text-[#C96442]">
+                  <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-[#F7E8E1] text-brand">
                     <Server size={19} />
                   </span>
                   <div className="min-w-0 flex-1">
                     <strong className="block break-words text-sm">{x.name}</strong>
-                    <p className="mt-1 break-words text-xs leading-5 text-[#7C7469]">{x.description || "MCP server"}</p>
+                    <p className="mt-1 break-words text-xs leading-5 text-muted">{x.description || "MCP server"}</p>
                     <small className="mt-1 block break-all text-[11px] text-[#8A8176]">{x.packageName || x.url || t('ext.noInstallInfo')}</small>
                   </div>
                   {(x.packageName || x.url) &&
@@ -763,11 +763,11 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
               )}
             </div>
           </Panel>
-          <details className="mt-5 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9]">
+          <details className="mt-5 rounded-xl border border-divider bg-surface">
             <summary className="cursor-pointer px-4 py-3 text-[13px] font-semibold text-[#3A342D]">
               {loc==='en'?'Browse curated MCP server examples':'추천 MCP 서버 보기'} · {presets.value.length+featured.length}
             </summary>
-            <div className="border-t border-[#E7E0D5] p-4">
+            <div className="border-t border-divider p-4">
           <div className="mb-4 flex flex-wrap items-center gap-1.5">
             {pluginCategories.map((category) => (
               <Button
@@ -780,7 +780,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
               </Button>
             ))}
           </div>
-          <div className="mb-5 flex items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] px-3 py-2">
+          <div className="mb-5 flex items-center gap-2 rounded-xl border border-divider bg-surface px-3 py-2">
             <Search size={17} className="text-[#A79C8E]" />
             <TextInput
               value={pluginQuery}
@@ -808,7 +808,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                   className="flex min-w-0 flex-col gap-3 p-5"
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]">
+                    <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-brand">
                       <PackagePlus size={21} />
                     </div>
                     <StateTag online={Boolean(record)}>
@@ -876,7 +876,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
               ).length;
               return (
                 <Panel key={x.name} className="flex min-w-0 flex-col gap-3 p-5">
-                  <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]">
+                  <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-brand">
                     <Icon size={24} />
                   </div>
                   <h3>{x.name}</h3>
@@ -924,7 +924,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
         <>
           <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
             <div>
-              <h3 className="m-0 text-[15px] font-bold text-[#24211D]">
+              <h3 className="m-0 text-[15px] font-bold text-ink">
                 {t('ext.pluginSkillsTitle')}
               </h3>
               <p className="mt-1 text-[11px] text-[#8A8176]">
@@ -955,7 +955,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
             ))}
           </div>
           <div className="mb-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_220px]">
-            <div className="flex items-center gap-2 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] px-3 py-2">
+            <div className="flex items-center gap-2 rounded-xl border border-divider bg-surface px-3 py-2">
               <Search size={17} className="text-[#A79C8E]" />
               <TextInput
                 value={catalogQuery}
@@ -977,7 +977,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                 ))}
             </SelectInput>
           </div>
-          <div className="mb-3 max-h-[440px] overflow-y-auto rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9]">
+          <div className="mb-3 max-h-[440px] overflow-y-auto rounded-2xl border border-divider bg-surface">
             {visibleCatalog.map((item) => {
               const installed = skills.value.some(
                 (skill) => skill.name === item.name,
@@ -992,14 +992,14 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                       <strong className="text-[12px] text-[#3A342D]">
                         {item.name}
                       </strong>
-                      <span className="rounded bg-[#F3EEE5] px-1.5 py-0.5 text-[10px] font-semibold text-[#7C7469]">
+                      <span className="rounded bg-[#F3EEE5] px-1.5 py-0.5 text-[10px] font-semibold text-muted">
                         {item.source}
                       </span>
                       <span className="text-[10px] text-[#A79C8E]">
                         {item.category}
                       </span>
                     </div>
-                    <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-[#7C7469]">
+                    <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-muted">
                       {item.description}
                     </p>
                     {!item.available && (
@@ -1089,14 +1089,14 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
             {mcp.value.map((x) => (
               <Panel
                 key={x.id}
-                className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E7E0D5] p-4"
+                className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-xl border border-divider p-4"
               >
-                <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#C96442]">
+                <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-brand">
                   <Blocks size={21} />
                 </div>
                 <div className="min-w-0 flex-1">
                   <strong className="block break-words text-sm">{x.name}</strong>
-                  <p className="mt-1 break-all text-xs leading-5 text-[#7C7469]">
+                  <p className="mt-1 break-all text-xs leading-5 text-muted">
                     {x.transport === "stdio" ? x.command + " " + (x.args || []).join(" ") : x.url}
                   </p>
                   <small className="mt-1 block text-[11px] text-[#8A8176]">
@@ -1171,7 +1171,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
               {tools.map((t) => (
                 <div
                   key={t.name + t.mcpId}
-                  className="overflow-auto rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-4 text-xs leading-6"
+                  className="overflow-auto rounded-xl border border-divider bg-[#FAF7F1] p-4 text-xs leading-6"
                 >
                   <Code2 size={16} />
                   <strong>{t.name}</strong>

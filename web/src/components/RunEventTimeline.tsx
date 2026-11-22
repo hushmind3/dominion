@@ -65,7 +65,7 @@ export function RunEventTimeline({executionId}:{executionId:string}){
   const timer=window.setInterval(()=>{void load(false)},5000)
   return()=>window.clearInterval(timer)
  },[open,cursor,loading,executionId])
- return <section className="mt-3 rounded-xl border border-[#E7E0D5] bg-white">
+ return <section className="mt-3 rounded-xl border border-divider bg-white">
   <button type="button" aria-expanded={open} onClick={()=>{if(!open&&!rows.length)void load(true);setOpen(!open)}}
    className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left text-[11px] font-semibold text-[#514940] hover:bg-[#FAF7F1]">
    <span className="inline-flex items-center gap-2"><Activity size={14}/>{en?'Durable execution events':'실행 이벤트 기록'} {rows.length>0?'('+rows.length+')':''}</span>
@@ -74,7 +74,7 @@ export function RunEventTimeline({executionId}:{executionId:string}){
   {open&&<div className="border-t border-[#EFE9DF] px-3 py-2">
    <div className="flex justify-end">
     <button type="button" disabled={loading} onClick={()=>void load(true)}
-     className="inline-flex items-center gap-1 text-[10px] text-[#7C7469] disabled:opacity-50"><RefreshCw size={11}/>{en?'Refresh':'새로고침'}</button>
+     className="inline-flex items-center gap-1 text-[10px] text-muted disabled:opacity-50"><RefreshCw size={11}/>{en?'Refresh':'새로고침'}</button>
    </div>
    {truncated&&<p className="my-2 text-[11px] text-amber-800">{en?'Old events were truncated by retention; this history is incomplete.':'보관 기간으로 일부 과거 이벤트가 누락됐습니다.'}</p>}
    <div className="mt-1 max-h-72 space-y-1 overflow-y-auto">
@@ -84,7 +84,7 @@ export function RunEventTimeline({executionId}:{executionId:string}){
       <strong>{friendly(event,en)}</strong>
       {event.runRef.lifecycle&&<span className="rounded bg-[#F0EAE1] px-1.5 py-0.5 text-[10px]">{event.runRef.lifecycle}</span>}
      </summary>
-     <div className="mt-2 text-[10px] text-[#7C7469]">
+     <div className="mt-2 text-[10px] text-muted">
       {event.runRef.agentId&&<p>Agent: {event.runRef.agentId}</p>}
       {event.runRef.taskId&&<p>Task: {event.runRef.taskId}</p>}
       {event.runRef.externalRunId&&<p>External: {event.runRef.externalRunId}</p>}
@@ -95,7 +95,7 @@ export function RunEventTimeline({executionId}:{executionId:string}){
    </div>
    {loading&&<p role="status" className="mt-2 flex items-center gap-1 text-[11px] text-[#8A8176]"><LoaderCircle size={12} className="animate-spin"/>{en?'Loading…':'불러오는 중…'}</p>}
    {error&&<p role="alert" className="mt-2 text-[11px] text-rose-700">{error}</p>}
-   {more&&<button type="button" disabled={loading} onClick={()=>void load()} className="mt-2 rounded-lg border border-[#E7E0D5] px-3 py-1.5 text-[11px] text-[#514940] disabled:opacity-50">{en?'Load more':'이어서 보기'}</button>}
+   {more&&<button type="button" disabled={loading} onClick={()=>void load()} className="mt-2 rounded-lg border border-divider px-3 py-1.5 text-[11px] text-[#514940] disabled:opacity-50">{en?'Load more':'이어서 보기'}</button>}
   </div>}
  </section>
 }

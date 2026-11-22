@@ -41,7 +41,7 @@ export function ExtensionRuntimeControls(){
    </div>
    <button type="button" disabled={Boolean(saving)||remote.loading}
     onClick={()=>void save({},'reset')}
-    className="inline-flex items-center gap-1.5 rounded-lg border border-[#E7E0D5] px-2.5 py-1.5 text-[11px] text-[#5C544A] hover:bg-[#FAF7F1] disabled:opacity-50">
+    className="inline-flex items-center gap-1.5 rounded-lg border border-divider px-2.5 py-1.5 text-[11px] text-[#5C544A] hover:bg-[#FAF7F1] disabled:opacity-50">
     <RefreshCw size={13}/>{en?'Restore defaults':'기본값 복원'}
    </button>
   </div>

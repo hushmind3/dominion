@@ -31,7 +31,7 @@ const stateClass=(state?:string)=>state==='completed'?'border-emerald-200 bg-eme
  state==='failed'||state==='cancelled'?'border-rose-200 bg-rose-50 text-rose-700':
  state==='running'?'border-[#D9BAA6] bg-[#F7E8E1] text-[#9D5039]':
  state==='needs_review'?'border-amber-200 bg-amber-50 text-amber-800':
- 'border-[#E7E0D5] bg-[#FAF7F1] text-[#7C7469]'
+ 'border-divider bg-[#FAF7F1] text-muted'
 function ExternalContinuation({job,onCreated}:{job:Job;onCreated:()=>void}){
  const en=useLocale()==='en'
  const [open,setOpen]=useState(false)
@@ -43,14 +43,14 @@ function ExternalContinuation({job,onCreated}:{job:Job;onCreated:()=>void}){
  const finished=job.status==='completed'&&typeof job.result?.externalRunId==='string'
  const parent=job.input?.parentSessionId
  return <div className="mt-2 min-w-0">
-  <div className="flex flex-wrap items-center gap-2 text-[10px] text-[#7C7469]">
+  <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted">
    <span className="rounded-md bg-[#F3EEE5] px-2 py-0.5">{runtime}</span>
    <span>{en?'External receipt':'외부 실행 증거'}: {compact(job.result?.externalRunId)}</span>
    {job.input?.resumeFromJobId&&<span>{en?'Continued from':'이어받은 작업'}: {job.input.resumeFromJobId}</span>}
    {parent&&<a href={'#/chat?session='+encodeURIComponent(parent)} className="underline">{en?'Parent conversation':'원본 대화'}</a>}
   </div>
   {finished&&<button type="button" aria-expanded={open} onClick={()=>setOpen(v=>!v)}
-   className="mt-2 inline-flex items-center gap-1 rounded-lg border border-[#E7E0D5] px-2.5 py-1.5 text-[11px] text-[#5C544A] hover:bg-[#FAF7F1]">
+   className="mt-2 inline-flex items-center gap-1 rounded-lg border border-divider px-2.5 py-1.5 text-[11px] text-[#5C544A] hover:bg-[#FAF7F1]">
    <RefreshCw size={12}/>{en?'Continue verified inspection session':'검증된 조사 세션 이어하기'} {open?'▴':'▾'}
   </button>}
   {open&&finished&&<form className="mt-2 flex flex-wrap gap-2" onSubmit={event=>{
@@ -61,7 +61,7 @@ function ExternalContinuation({job,onCreated}:{job:Job;onCreated:()=>void}){
     .catch(e=>setError((e as Error).message))
     .finally(()=>setBusy(false))
   }}>
-   <input className="min-w-40 flex-1 rounded-lg border border-[#E7E0D5] px-3 py-2 text-[11px]"
+   <input className="min-w-40 flex-1 rounded-lg border border-divider px-3 py-2 text-[11px]"
     value={prompt} onChange={e=>setPrompt(e.target.value)} maxLength={3000}
     aria-label={en?'Follow-up inspection instructions':'이어갈 조사 지시'}
     placeholder={en?'What should the same inspector check next?':'같은 에이전트가 이어서 조사할 내용'}/>
@@ -78,7 +78,7 @@ function WorkerStep({step,job,ids,onCreated,index=0,agentNames}:{step:Step;job?:
  const fileHash=job?.delegationPatchSha256
  const deps=(step.dependsOn||[])
  const receipt=job?.result
- return <div className="relative rounded-xl border border-[#E7E0D5] bg-white p-3">
+ return <div className="relative rounded-xl border border-divider bg-white p-3">
   <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
    <div className="flex min-w-0 items-center gap-2">
     <span className="grid size-8 shrink-0 place-items-center rounded-full bg-[#F7E8E1] text-[12px] font-bold text-[#A4583E]">{index+1}</span>
@@ -93,7 +93,7 @@ function WorkerStep({step,job,ids,onCreated,index=0,agentNames}:{step:Step;job?:
    {en?'Assigned AI':'담당 AI'}: {agentNames?.[step.agentId||'']||step.agentId||job?.input?.agentId||'—'}
    {step.remoteWorker&&<span className="ml-2 rounded bg-[#F3EEE5] px-2 py-0.5 text-[11px] font-normal">{en?'Remote':'원격'}</span>}
   </p>
-  <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[12px] text-[#7C7469]">
+  <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[12px] text-muted">
    {deps.length?<>{en?'After':'선행 단계'}: {deps.map((dep,index)=><span key={dep} className="inline-flex items-center gap-1 rounded bg-[#FAF7F1] px-1.5 py-1">
      {index>0?', ':''}{dep}<span className={'size-1.5 rounded-full '+(Object.keys(ids).includes(dep)&&ids[dep]==='completed'?'bg-emerald-500':'bg-amber-400')}/>
     </span>)}</>:<span>{en?'No prerequisites':'선행 조건 없음'}</span>}
@@ -106,7 +106,7 @@ function WorkerStep({step,job,ids,onCreated,index=0,agentNames}:{step:Step;job?:
    <ShieldCheck size={16}/>{en?'Technical receipt':'작업 영수증(기술 정보)'} {showResult?'▴':'▾'}
   </button>}
   {job?.input?.sessionId&&<a href={'#/chat?session='+encodeURIComponent(job.input.sessionId)}
-   className="ml-2 mt-2 inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-[#E7E0D5] px-3 py-1 text-[12px] font-medium text-[#5C544A] hover:bg-[#FAF7F1] focus-visible:outline-2 focus-visible:outline-offset-2">
+   className="ml-2 mt-2 inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-divider px-3 py-1 text-[12px] font-medium text-[#5C544A] hover:bg-[#FAF7F1] focus-visible:outline-2 focus-visible:outline-offset-2">
    <MessageSquare size={16}/>{en?'Open agent conversation':'담당 AI 대화 보기'}
   </a>}
   {showResult&&job?.result&&<pre aria-label={en?'Raw native job receipt':'원본 작업 영수증'} className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-[#FAF7F1] p-3 text-[12px] leading-5">{JSON.stringify(job.result,null,2)}</pre>}
@@ -135,10 +135,10 @@ function TeamCard({team,summary,onCreated,initiallyOpen=false,agentNames}:{team:
   const timer=setInterval(()=>{if(!document.hidden)void details.reload()},5000)
   return()=>clearInterval(timer)
  },[open,team.status,details.reload])
- return <div className="rounded-xl border border-[#E7E0D5] bg-[#FCFAF6] p-4">
+ return <div className="rounded-xl border border-divider bg-[#FCFAF6] p-4">
   <button type="button" aria-expanded={open} onClick={()=>setOpen(v=>!v)} className="flex w-full min-w-0 justify-between gap-2 text-left">
    <span className="min-w-0"><strong className="block break-words text-[14px] leading-6">{team.input?.goal||team.id}</strong>
-    <span className="mt-1 block text-[12px] text-[#7C7469]">{en?'Steps finished':'완료된 단계'} {complete}/{plan.length}
+    <span className="mt-1 block text-[12px] text-muted">{en?'Steps finished':'완료된 단계'} {complete}/{plan.length}
      {unknown>0&&<> · {en?'Checking':'확인 중'} {unknown}</>}</span></span>
    <span className={'shrink-0 self-start rounded-lg border px-3 py-1.5 text-[12px] font-semibold '+stateClass(team.status)}>{humanStatus(team.status,en)}</span>
   </button>
@@ -147,7 +147,7 @@ function TeamCard({team,summary,onCreated,initiallyOpen=false,agentNames}:{team:
   {reports.length>0&&<section className="mt-4 rounded-xl border border-[#DFD5C6] bg-white p-4" aria-label={en?'Verified worker answers':'실제 AI 작업 결과'}>
    <div className="flex flex-wrap items-center justify-between gap-2">
     <h4 className="text-[14px] font-bold text-[#3A342D]">{en?'What the agents found':'AI 작업 결과'}</h4>
-    <span className="text-[12px] text-[#7C7469]">{reports.length}{en?' reports':'개 결과'}</span>
+    <span className="text-[12px] text-muted">{reports.length}{en?' reports':'개 결과'}</span>
    </div>
    <p className="mt-1 text-[12px] leading-5 text-[#81766A]">{en
     ?'These are saved worker answers; the code changes may still require your approval.'
@@ -180,7 +180,7 @@ function TeamCard({team,summary,onCreated,initiallyOpen=false,agentNames}:{team:
    {typeof team.result?.reason==='string'&&<>: {team.result.reason}</>}
   </p>}
   {open&&<div className="mt-3 space-y-2">
-   {details.loading&&<p role="status" className="text-[11px] text-[#7C7469]">{en?'Loading durable Worker records…':'저장된 Worker 기록 조회 중…'}</p>}
+   {details.loading&&<p role="status" className="text-[11px] text-muted">{en?'Loading durable Worker records…':'저장된 Worker 기록 조회 중…'}</p>}
    {details.error&&<p role="alert" className="text-[11px] text-rose-700">{en?'Detailed Worker status could not be loaded':'Worker 상세 기록 조회 실패'}: {details.error}
     <button type="button" onClick={()=>void details.reload()} className="ml-2 underline">{en?'Retry':'다시 조회'}</button></p>}
    {fresh&&details.value.missing.length>0&&<p role="alert" className="text-[11px] text-rose-700">{en?'Missing or mismatched Worker records':'누락되거나 소유권이 일치하지 않는 Worker 기록'}: {details.value.missing.length}</p>}
@@ -232,17 +232,17 @@ export function TeamWorkflowPanel({jobs,filterSessionId,agentNames}:{jobs?:Job[]
      <small className="text-[11px] text-[#8A8176]">{filterSessionId?(en?'Progress, responsible agents and verified results':'진행 단계 · 담당 AI · 실제 작업 결과'):(en?'Recorded native steps, dependencies, actual worker outcomes.':'네이티브 작업 단계·선행 조건·실제 워커 결과를 연결합니다.')}</small></span></span>
    {expanded?<ChevronDown size={15}/>:<ChevronRight size={15}/>}
   </button>
-  {expanded&&<div className="space-y-3 border-t border-[#E7E0D5] p-4">
-   {jobs===undefined&&<button type="button" onClick={refresh} className="text-[11px] text-[#7C7469] underline">{en?'Refresh native jobs':'작업 기록 새로고침'}</button>}
+  {expanded&&<div className="space-y-3 border-t border-divider p-4">
+   {jobs===undefined&&<button type="button" onClick={refresh} className="text-[11px] text-muted underline">{en?'Refresh native jobs':'작업 기록 새로고침'}</button>}
    {parentTeams.map((team,index)=><TeamCard key={team.id} team={team} summary={jobMap} onCreated={refresh} agentNames={agentNames} initiallyOpen={Boolean(filterSessionId)&&index===0}/>)}
-   {dependentJobs.length>0&&<section className="rounded-xl border border-[#E7E0D5] bg-[#FCFAF6] p-3">
+   {dependentJobs.length>0&&<section className="rounded-xl border border-divider bg-[#FCFAF6] p-3">
     <h3 className="mb-2 flex items-center gap-2 text-[12px] font-bold"><GitBranch size={14}/>{en?'Dependent delegated jobs':'의존성 있는 개별 위임 작업'}</h3>
     <p className="mb-2 text-[10px] text-[#8A8176]">{en?'The arrows below represent durable sibling job dependencies, not inferred order.':'개별 위임 작업의 저장된 선행 작업 ID를 그대로 표시합니다. 화면 순서로 의존성을 추정하지 않습니다.'}</p>
     <div className="space-y-2">{dependentJobs.map(job=><WorkerStep key={job.id} job={job} ids={independentStates} onCreated={refresh}
       step={{id:job.input?.teamStepId||job.id.slice(0,8),jobId:job.id,agentId:job.input?.agentId,
        profile:job.input?.delegationProfile,dependsOn:job.input?.dependsOnJobIds}}/>)}</div>
    </section>}
-   {standaloneExternal.length>0&&<section className="rounded-xl border border-[#E7E0D5] bg-[#FCFAF6] p-3">
+   {standaloneExternal.length>0&&<section className="rounded-xl border border-divider bg-[#FCFAF6] p-3">
     <h3 className="mb-2 flex items-center gap-2 text-[12px] font-bold"><Layers3 size={14}/>{en?'Standalone external inspections':'독립 외부 조사 기록'}</h3>
     <div className="space-y-2">{standaloneExternal.map(job=><div key={job.id} className="rounded-lg border border-[#EFE9DF] bg-white p-3">
      <div className="flex flex-wrap justify-between gap-2 text-[11px]"><strong className="min-w-0 break-words">{job.input?.prompt||job.id}</strong>

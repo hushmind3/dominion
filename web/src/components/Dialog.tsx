@@ -50,7 +50,7 @@ export function DialogPanel({children,size='default',className='',...props}:HTML
  children:ReactNode;size?:'default'|'wide'
 }){
  return <div role="dialog" aria-modal="true" aria-label={props['aria-label']||t('common.settingsWindow')} {...props}
-  className={['relative max-h-[90dvh] w-full overflow-y-auto overscroll-contain rounded-2xl border border-[#E7E0D5] bg-white shadow-2xl',
+  className={['relative max-h-[90dvh] w-full overflow-y-auto overscroll-contain rounded-2xl border border-divider bg-white shadow-2xl',
    size==='wide'?'max-w-3xl':'max-w-xl',className].join(' ')}>{children}</div>
 }
 export function DialogHeader({children}: {children:ReactNode}){
