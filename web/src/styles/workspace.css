@@ -238,3 +238,22 @@
   .quick-connect-icon { position: static; width: 38px; height: 38px; margin-bottom: 16px; }
   .quick-connect-option > button, .quick-connect-option > a { width: 100%; }
 }
+
+/* Navigation stays in the sidebar; the main conversation has no top bar. */
+.chat-history-modes { padding: 0 16px 18px; }
+.chat-history-modes .conversation-switch { width: 100%; gap: 5px; }
+.chat-history-modes .conversation-switch button { min-height: 36px; flex: 1; font-size: 12px; }
+.chat-history-modes .conversation-switch [aria-current] { background: #e9dfd0; color: #554333; box-shadow: none; }
+.chat-composer-options { min-width: 0; flex-wrap: wrap; row-gap: 5px; }
+.conversation-composer .chat-ai-trigger { max-width: 230px; min-height: 30px; padding: 4px 8px; font-size: 12px; }
+.conversation-composer .chat-ai-trigger > svg:first-child { display: none; }
+.workspace-conversation-settings { width: 100%; max-width: 1320px; margin: 0 auto; padding: 12px 24px 0; }
+.conversation-settings-inline { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); column-gap: 18px; }
+.conversation-settings-inline > div:first-child { grid-column: 1/-1; }
+.conversation-settings-inline > p, .conversation-settings-inline > div { grid-column: 1/-1; }
+@media (max-width: 767px) {
+  .conversation-composer .chat-ai-trigger { max-width: 145px; font-size: 11px; }
+  .chat-composer-options { flex: 1; }
+  .workspace-conversation-settings { padding: 16px 20px 0; }
+  .conversation-settings-inline { grid-template-columns: 1fr; }
+}

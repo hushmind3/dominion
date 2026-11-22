@@ -1,6 +1,9 @@
 # Workspace experience and implementation boundaries
 
-The default experience is a conversation. A new user can connect an existing
+The default experience is a conversation with an empty top area. Model selection
+lives in the composer; navigation and the single settings entry live in the
+sidebar. Reply controls render into that settings screen while retaining the
+active conversation state. A new user can connect an existing
 account, enter a provider key, or choose an AI on their computer. Model IDs,
 request limits, execution internals and developer tools are optional controls.
 Existing saved conversation and reasoning preferences continue to apply.

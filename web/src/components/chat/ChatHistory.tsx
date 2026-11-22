@@ -1,3 +1,4 @@
+import {ConversationSwitch} from '../WorkspaceShell'
 import {useMemo, useState} from 'react'
 import {ArrowRight, LoaderCircle, MessageSquare, Plus, Search, Settings, X} from 'lucide-react'
 import type {ChatSession} from '../../api'
@@ -12,12 +13,13 @@ type Props = {
   error: string
   onSelect: (session: ChatSession) => void
   onNew: () => void
+  onSwitchMode: (mode: 'chat' | 'rooms') => void
   onSettings: () => void
   onClose: () => void
   onRetry: () => void
 }
 
-export function ChatHistory({sessions, selected, loading, error, onSelect, onNew, onSettings, onClose, onRetry}: Props) {
+export function ChatHistory({sessions, selected, loading, error, onSelect, onNew, onSettings, onSwitchMode, onClose, onRetry}: Props) {
   useLocale()
   const [query, setQuery] = useState('')
   const groups = useMemo(() => {
@@ -40,6 +42,7 @@ export function ChatHistory({sessions, selected, loading, error, onSelect, onNew
   return <>
     <div className="chat-history-brand"><span className="workspace-logo">D</span><strong>dominion<span> / </span></strong><Button variant="ghost" size="icon" className="ml-auto md:hidden" aria-label={t('chat.listCollapse')} onClick={onClose}><X size={18}/></Button></div>
     <Button className="chat-new-button" variant="primary" onClick={onNew}><Plus size={17}/>{t('chat.newChat')}</Button>
+    <div className="chat-history-modes"><ConversationSwitch mode="chat" onChange={onSwitchMode}/></div>
     <label className="chat-history-search">
       <Search size={15}/>
       <TextInput value={query} onChange={event => setQuery(event.target.value)} placeholder={t('history.search')} aria-label={t('history.search')}/>

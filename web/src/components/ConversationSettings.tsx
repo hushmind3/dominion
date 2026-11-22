@@ -6,6 +6,7 @@ import {useAnchoredPanel} from '../hooks/useAnchoredPanel'
 import {t,useLocale} from '../i18n'
 
 type Props={
+ inline?:boolean
  open:boolean;onOpenChange:(open:boolean)=>void
  showReasoning:boolean;setShowReasoning:(value:boolean)=>void
  reasoningKo:boolean;setReasoningKo:(value:boolean)=>void
@@ -19,29 +20,23 @@ type Props={
 }
 /** Shared chat controls: readable labels, native checkboxes and unchanged
  * persistence callbacks for both single chat and nine-agent rooms. */
-export function ConversationSettings({open,onOpenChange,showReasoning,setShowReasoning,reasoningKo,setReasoningKo,thinkingEnabled,setThinkingEnabled,canDisableThinking=true,reasoningEffort,setReasoningEffort,toolsEnabled,setToolsEnabled,autoLearn,setAutoLearn,learning,learnDisabled,onLearn,optionsBusy=false,notice,reasoningControl}:Props){
+export function ConversationSettings({open,onOpenChange,showReasoning,setShowReasoning,reasoningKo,setReasoningKo,thinkingEnabled,setThinkingEnabled,canDisableThinking=true,reasoningEffort,setReasoningEffort,toolsEnabled,setToolsEnabled,autoLearn,setAutoLearn,learning,learnDisabled,onLearn,optionsBusy=false,notice,reasoningControl,inline=false}:Props){
  const locale=useLocale()
  const en=locale==='en'
- const settingsPanel=useAnchoredPanel(open,()=>onOpenChange(false),340,'top')
+ const settingsPanel=useAnchoredPanel(open&&!inline,()=>onOpenChange(false),340,'top')
  const row='flex min-h-12 cursor-pointer items-center justify-between gap-4 rounded-xl px-3 py-3 text-[#3A342D] transition-colors hover:bg-[#FAF7F1] focus-within:bg-[#FAF7F1]'
  const check='size-5 shrink-0 cursor-pointer accent-[#A4583E] focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed'
- return <div className="relative">
-  <Button type="button" variant="ghost" ref={settingsPanel.trigger} onClick={()=>onOpenChange(!open)}
-   className="inline-flex !min-h-9 items-center gap-1.5 !rounded-lg !border-0 !px-2.5 !text-[12px] !font-semibold text-[#6C6257] hover:bg-[#F3EEE5]"
-   title={t('chat.settings')} aria-label={t('chat.settings')} aria-expanded={open} aria-haspopup="dialog">
-   <SlidersHorizontal size={16}/><span className="hidden sm:inline">{t('chat.settings')}</span>
-  </Button>
-  {open&&settingsPanel.position&&createPortal(
-   <div ref={settingsPanel.panel} style={settingsPanel.position} role="dialog" aria-label={t('chat.settings')}
-    className="z-[80] max-w-full overflow-y-auto overscroll-contain rounded-2xl border border-divider bg-surface p-3 shadow-xl">
+ const content=(
+   <div ref={inline?undefined:settingsPanel.panel} style={inline?undefined:settingsPanel.position} role={inline?undefined:'dialog'} aria-label={t('chat.settings')}
+    className={inline?'conversation-settings-inline rounded-2xl border border-divider bg-surface p-4':'z-[80] max-w-full overflow-y-auto overscroll-contain rounded-2xl border border-divider bg-surface p-3 shadow-xl'}>
     <div className="flex items-start justify-between gap-2 border-b border-[#EAE2D6] px-2 pb-3">
      <div><h3 className="text-[15px] font-bold text-[#3A342D]">{t('chat.settings')}</h3>
       <p className="mt-1 text-[12px] leading-5 text-[#82776B]">
        {en?'Adjust how replies are generated and displayed.':'응답 방식과 화면 표시를 조정합니다.'}
       </p>
      </div>
-     <Button type="button" variant="ghost" size="icon" className="!size-9" aria-label={en?'Close settings':'대화 설정 닫기'}
-      onClick={()=>onOpenChange(false)}><X size={17}/></Button>
+     {!inline&&<Button type="button" variant="ghost" size="icon" className="!size-9" aria-label={en?'Close settings':'대화 설정 닫기'}
+      onClick={()=>onOpenChange(false)}><X size={17}/></Button>}
     </div>
     <p className="px-3 pb-1 pt-3 text-[11px] font-bold tracking-[.08em] text-[#98795C]">
      {en?'DISPLAY':'화면 표시'}
@@ -110,6 +105,15 @@ export function ConversationSettings({open,onOpenChange,showReasoning,setShowRea
      </Button>
      {notice&&<p role="status" className="px-2 py-2 text-[12px] leading-5 text-[#6A5C4E]">{notice}</p>}
     </div>
-   </div>,document.body)}
+   </div>
+ );
+ return inline?content:<div className="relative">
+  <Button type="button" variant="ghost" ref={settingsPanel.trigger} onClick={()=>onOpenChange(!open)}
+   className="inline-flex !min-h-9 items-center gap-1.5 !rounded-lg !border-0 !px-2.5 !text-[12px] !font-semibold text-[#6C6257] hover:bg-[#F3EEE5]"
+   title={t('chat.settings')} aria-label={t('chat.settings')} aria-expanded={open} aria-haspopup="dialog">
+   <SlidersHorizontal size={16}/><span className="hidden sm:inline">{t('chat.settings')}</span>
+  </Button>
+  {open&&settingsPanel.position&&createPortal(
+content,document.body)}
  </div>
 }

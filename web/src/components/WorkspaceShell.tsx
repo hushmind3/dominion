@@ -78,7 +78,7 @@ export function SettingsHeader({page, onNavigate, online, connecting, onClose}: 
   </header>
 }
 
-/** The same mode switch stays in both conversation headers. */
+/** One mode switch can be placed in each conversation navigation. */
 export function ConversationSwitch({mode, onChange}: {mode: 'chat' | 'rooms'; onChange: (mode: 'chat' | 'rooms') => void}) {
   useLocale()
   return <nav className="conversation-switch" aria-label={t('shell.conversationSwitch')}>

@@ -21,7 +21,7 @@ export function ConversationModelPicker({providers, providerId, model, catalogue
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const search = useRef<HTMLInputElement>(null)
-  const panel = useAnchoredPanel(open, () => setOpen(false), 380, 'bottom')
+  const panel = useAnchoredPanel(open, () => setOpen(false), 380, 'top')
   const provider = providers.find(item => item.id === providerId)
   const selectedModel = catalogue.value.find(item => item.id === model)
   const visibleModels = catalogue.value.filter(item => (item.name + ' ' + item.id).toLowerCase().includes(query.trim().toLowerCase()))

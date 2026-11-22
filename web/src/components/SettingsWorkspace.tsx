@@ -6,6 +6,7 @@ import {settingsPages, type PageId, type SettingsPage} from '../workspacePages'
 import {t} from '../i18n'
 
 type Props = {
+  conversationSettingsRef: (element: HTMLDivElement|null) => void
   page: SettingsPage
   online: boolean
   connecting: boolean
@@ -15,7 +16,7 @@ type Props = {
   onClose: () => void
 }
 
-export function SettingsWorkspace({page, online, connecting, running, pending, onNavigate, onClose}: Props) {
+export function SettingsWorkspace({conversationSettingsRef, page, online, connecting, running, pending, onNavigate, onClose}: Props) {
   const [navOpen, setNavOpen] = useState(() => {
     try {return localStorage.getItem('dominion.settings.nav') !== '0'} catch {return true}
   })
@@ -29,7 +30,7 @@ export function SettingsWorkspace({page, online, connecting, running, pending, o
       <WorkspaceSidebar page={page} online={online} connecting={connecting} running={running} pending={pending} onNavigate={onNavigate} navOpen={navOpen} onToggleNav={toggleNav}/>
       <div className="workspace-settings-main">
         <SettingsHeader page={page} onNavigate={onNavigate} online={online} connecting={connecting} onClose={onClose}/>
-        <div key={page} className="workspace-settings-content"><AsyncPage label={t('shell.loadingPage')}>{settingsPages[page].render(onNavigate)}</AsyncPage></div>
+        <div key={page} className="workspace-settings-content">{page==='settings'&&<div className="workspace-conversation-settings" ref={conversationSettingsRef}/>}<AsyncPage label={t('shell.loadingPage')}>{settingsPages[page].render(onNavigate)}</AsyncPage></div>
       </div>
     </div>
   </DialogBackdrop>
