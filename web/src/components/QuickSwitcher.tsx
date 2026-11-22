@@ -5,7 +5,14 @@ import {Button,TextInput} from './Primitives'
 import {navigation,type PageId} from './WorkspaceShell'
 import {t,useLocale} from '../i18n'
 
-type Destination={id:PageId|'new-chat';name:string;section:string;icon:typeof Search}
+type Destination={id:PageId|'new-chat';name:string;section:string;icon:typeof Search;keywords?:string}
+const aliases:Partial<Record<PageId,string>>={
+ home:'대시보드 시작 상황',chat:'채팅 대화 질문',rooms:'그룹 대화 회의 토론',
+ models:'모델 LLM API 키',agents:'에이전트 비서 역할',
+ connections:'연결 채널 MCP 스킬 마켓 플러그인 계정',
+ memory:'기억 지식 메모 회상',activity:'실행 기록 작업 실패 승인 로그',
+ settings:'설정 권한 보안',
+}
 export function QuickSwitcher({page,onClose,onNavigate,onNewChat,running,pending}:{
  page:PageId;onClose:()=>void;onNavigate:(page:PageId)=>void;
  onNewChat:()=>void;running:number;pending:number
@@ -17,12 +24,12 @@ export function QuickSwitcher({page,onClose,onNavigate,onNewChat,running,pending
  const items=useMemo<Destination[]>(()=>[
   {id:'new-chat',name:en?'Start a new chat':'새 대화 시작',section:en?'Quick action':'바로 실행',icon:MessageSquarePlus},
   ...navigation.flatMap(group=>group.items.map(item=>({
-   id:item.id,name:t(item.label),section:t(group.title),icon:item.icon
+   id:item.id,name:t(item.label),section:t(group.title),icon:item.icon,keywords:aliases[item.id]
   })))
  ],[en])
  const choices=useMemo(()=>{
   const term=query.trim().toLocaleLowerCase()
-  return term?items.filter(item=>[item.name,item.section,item.id].join(' ').toLocaleLowerCase().includes(term)):items
+  return term?items.filter(item=>[item.name,item.section,item.id,item.keywords].join(' ').toLocaleLowerCase().includes(term)):items
  },[query,items])
  useEffect(()=>{input.current?.focus({preventScroll:true})},[])
  const select=(item:Destination)=>{
