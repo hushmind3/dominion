@@ -2,8 +2,7 @@ import {DialogBackdrop} from './components/Dialog'
 import { ContextMenu } from './components/ContextMenu'
 import {OwnerProfileProvider} from './components/OwnerProfile'
 import {Component,lazy,Suspense,useCallback,useEffect,useLayoutEffect,useState,type ReactNode} from 'react'
-import {get} from './api'
-import {classifyRefreshEvent,emptyRefreshScope,mergeRefreshScopes} from './refreshEvents'
+import {useWorkspaceSignals} from './hooks/useWorkspaceSignals'
 import {WorkspaceSidebar,SettingsHeader,navigation,type PageId} from './components/WorkspaceShell'
 import {WorkspaceSearch} from './components/WorkspaceSearch'
 const HomePage=lazy(()=>import('./pages/Home').then(module=>({default:module.HomePage})))
@@ -106,19 +105,6 @@ export default function App(){
  const [searchOpen,setSearchOpen]=useState(false)
  const toggleSettingsNav=useCallback(()=>setSettingsNav(open=>{const next=!open;try{localStorage.setItem('dominion.settings.nav',next?'1':'0')}catch{}return next}),[])
  const settingsOpen=page!=='chat'&&page!=='rooms'
- const [online,setOnline]=useState(false)
- const [running,setRunning]=useState(0)
- const [pending,setPending]=useState(0)
- const [engineBuild,setEngineBuild]=useState<{branch:string;commit:string}|null>(null)
- useEffect(()=>{
-  let live=true
-  const load=()=>{void get<{branch:string;commit:string}>('/api/health')
-   .then(info=>{if(live)setEngineBuild(info)}).catch(()=>{if(live)setEngineBuild(null)})}
-  load()
-  const focus=()=>{if(document.visibilityState==='visible')load()}
-  window.addEventListener('focus',focus)
-  return()=>{live=false;window.removeEventListener('focus',focus)}
- },[])
  const navigate=useCallback((target:PageId,sessionId?:string)=>{
   const next='#/'+target+(sessionId?'?session='+encodeURIComponent(sessionId):'')
   if(window.location.hash!==next)window.history.pushState(null,'',next)
@@ -127,6 +113,7 @@ export default function App(){
   // entry changed; never block menu clicks on a network request.
   void checkForUpdatedUi()
  },[])
+ const {online,running,pending,engineBuild}=useWorkspaceSignals(navigate,setSearchOpen)
  useEffect(()=>{
   const sync=()=>setRoute(locationState())
   window.addEventListener('hashchange',sync)
@@ -153,67 +140,7 @@ export default function App(){
   document.addEventListener('visibilitychange',check)
   return()=>{window.removeEventListener('focus',check);document.removeEventListener('visibilitychange',check)}
  },[])
- useEffect(()=>{
-  let mounted=true
-  const check=async()=>{
-   try{
-    const status=await get<{jobs?:number}>('/api/status')
-    if(mounted){setOnline(true);setRunning(Number(status.jobs)||0)}
-   }catch{if(mounted){setOnline(false);setRunning(0)}}
-  }
-  const approvals=async()=>{
-   try{const data=await get<unknown[]>('/api/approvals');if(mounted)setPending(Array.isArray(data)?data.length:0)}
-   catch{if(mounted)setPending(0)}
-  }
-  void check();void approvals()
-  const poll=setInterval(()=>{void check()},12000)
-  const stream=new EventSource('/api/events')
-  let refreshTimer:ReturnType<typeof setTimeout>|undefined
-  let statusTimer:ReturnType<typeof setTimeout>|undefined
-  let approvalsTimer:ReturnType<typeof setTimeout>|undefined
-  let pendingRefresh=emptyRefreshScope()
-  const scheduleStatus=()=>{
-   if(statusTimer)return
-   statusTimer=setTimeout(()=>{statusTimer=undefined;void check()},250)
-  }
-  const scheduleApprovals=()=>{
-   if(approvalsTimer)return
-   approvalsTimer=setTimeout(()=>{approvalsTimer=undefined;void approvals()},250)
-  }
-  stream.onmessage=event=>{
-   try{
-    const item=JSON.parse(event.data)
-    if(item.type==='room_event'){
-     window.dispatchEvent(new CustomEvent('dominion-room-event',{detail:item}))
-     return
-    }
-    // Keep SSE records scoped to their consumers. A busy tool journal should
-    // not re-fetch agents, providers or account connections on every receipt.
-    const next=classifyRefreshEvent(item)
-    if(next.targets.length||next.rooms.length||next.sessions.length){
-     pendingRefresh=mergeRefreshScopes(pendingRefresh,next)
-     refreshTimer ??= setTimeout(()=>{
-      refreshTimer=undefined
-      const batch=pendingRefresh
-      pendingRefresh=emptyRefreshScope()
-      window.dispatchEvent(new CustomEvent('dominion-data-change',{detail:batch}))
-     },100)
-    }
-    if(item.type==='approval')scheduleApprovals()
-    if(item.type==='job_event'||item.type==='goal_event'||item.type==='execution_event'
-      ||(item.type==='record'&&item.kind==='job'))scheduleStatus()
-   }catch{}
-  }
-  const shortcuts=(e:KeyboardEvent)=>{
-   if((e.metaKey||e.ctrlKey)&&e.key===','){e.preventDefault();navigate('settings')}
-   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){
-    e.preventDefault()
-    setSearchOpen(value=>!value)
-   }
-  }
-  window.addEventListener('keydown',shortcuts)
-  return()=>{mounted=false;clearInterval(poll);clearTimeout(refreshTimer);clearTimeout(statusTimer);clearTimeout(approvalsTimer);stream.close();window.removeEventListener('keydown',shortcuts)}
- },[navigate])
+
  return <OwnerProfileProvider><div className="h-dvh overflow-hidden bg-[#FFFDF9] font-sans text-[#24211D]">
   <ContextMenu/>
   <main inert={settingsOpen||searchOpen} className="h-dvh min-w-0">
