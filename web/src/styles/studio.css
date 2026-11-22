@@ -298,3 +298,37 @@
   display:none!important;
  }
 }
+
+
+/* Neutral product shell: complement the focused Code workspace without extra panels. */
+.dominion-studio{
+ --studio-background:#f4f4f2;--studio-deep:#202126;
+ --studio-border:#dedfdf;--studio-accent:#d49b78;
+ background:#f4f4f2;color:#303138;
+}
+.dominion-studio>aside{background:#202126!important;border-right-color:#3b3d43!important;box-shadow:none!important}
+.dominion-studio>aside>div:first-child{border-color:#393a40!important}
+.dominion-studio>aside>div:first-child>div:first-child{background:#cc987a;border-color:#cc987a;box-shadow:none}
+.dominion-studio>aside nav section h2{color:#92949d!important}
+.dominion-studio>aside nav button{color:#b7b9bf!important}
+.dominion-studio>aside nav button:hover{color:#f1f1f2!important;background:#303138!important}
+.dominion-studio>aside nav button[aria-current="page"]{color:#fff!important;background:#3a3a40!important;border-color:#45474c!important;box-shadow:inset 2px 0 #d7a081!important}
+.dominion-studio>aside nav button[aria-current="page"] svg{color:#e6b091}
+.dominion-studio>aside>div:last-child{border-color:#393a40!important}
+.dominion-studio>aside>div:last-child span:last-child{color:#b3b5b9!important}
+.dominion-studio .workspace-settings.dominion-studio-workspace,.dominion-studio-workspace .workspace-settings-content{background:#f4f4f2!important}
+.dominion-studio-workspace>header{background:#fbfbfa!important;border-color:#dedfdf!important}
+.dominion-studio .chat-header{background:#fbfbfa!important;border-color:#dedfdf!important;box-shadow:none!important}
+.dominion-studio .chat-message--assistant>.chat-message-inner{border-color:#e2e2e2;background:#fff;box-shadow:none}
+.dominion-studio .chat-message--assistant>.chat-message-inner .chat-message-text{color:#33353a}
+.dominion-studio .chat-message--user .chat-message-inner{background:#393b42}
+.dominion-studio .chat-message--assistant>div:first-child{background:#dddde0!important;color:#4e505a!important}
+.dominion-studio .page-chat>div>aside:not(.chat-inspector){background:#f2f2f1!important;border-color:#e0e0de!important}
+.dominion-studio .page-chat>div>aside:not(.chat-inspector) .chat-history-entry:hover{background:#e6e6e5!important}
+.dominion-studio .conversation-composer-wrap{background:linear-gradient(0deg,#f4f4f2 45%,#f4f4f2ec 80%,transparent)!important}
+.dominion-studio .conversation-composer{border-color:#dedee0!important;box-shadow:0 4px 18px #1b1c2020!important}
+.dominion-studio .conversation-composer:focus-within{border-color:#c99a79!important;box-shadow:0 0 0 2px #d7a38230,0 7px 25px #22222416!important}
+.dominion-studio .conversation-composer-input{color:#33353b!important}
+.dominion-studio .conversation-composer-send{background:#383a40!important;border-color:#383a40!important}
+.dominion-studio .conversation-composer-send:hover{background:#575960!important}
+.dominion-studio .rooms-app{background:#f4f4f2}
