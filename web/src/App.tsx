@@ -181,8 +181,7 @@ export default function App(){
     </div>}
     {visited.rooms&&<div hidden={mode!=='rooms'} className="h-full page-rooms">
      <PageLoadBoundary><Suspense fallback={<div role="status" className="p-8 text-sm">Room 불러오는 중…</div>}>
-      <RoomsPage active={mode==='rooms'&&!settingsOpen} openSession={id=>navigate('chat',id)}
-       openSettings={()=>navigate('settings')}/>
+      <RoomsPage active={mode==='rooms'&&!settingsOpen} openSession={id=>navigate('chat',id)}/>
      </Suspense></PageLoadBoundary>
     </div>}
    </main>

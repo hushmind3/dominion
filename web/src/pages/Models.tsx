@@ -333,7 +333,7 @@ export function ModelHub(){
  const tabs:Array<{id:Tab;label:string;count?:number}>= [
   {id:'providers',label:'내 AI',count:providers.value.filter(p=>!p.local).length},
   {id:'cloud',label:'DOMINION Cloud'},
-  {id:'connect',label:'AI 추가'},
+  {id:'connect',label:'새로 연결'},
   {id:'free',label:'무료 AI',count:freeCatalog.value.counts?.free||0},
   {id:'catalog',label:'AI 찾아보기'},
   {id:'huggingface',label:'오픈 모델'},

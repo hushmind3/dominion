@@ -82,8 +82,6 @@ export function WorkspaceTopBar({page,online,running,pending,onNavigate,onSearch
      <div className="my-1.5 border-t border-divider"/>
      {menuItem('activity')}
      {menuItem('memory')}
-     <div className="my-1.5 border-t border-divider"/>
-     {menuItem('settings')}
     </div>}
    </div>
    <span className={'hidden size-2 rounded-full sm:block '+(online ? 'bg-emerald-500' : 'bg-rose-500')}

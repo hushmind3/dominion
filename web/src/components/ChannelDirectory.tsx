@@ -153,7 +153,6 @@ export function ChannelDirectory({entries,bindings,rooms,focusId,loading,error,p
          <div aria-hidden className="pointer-events-none absolute -right-20 -top-28 size-72 rounded-full border-[35px] border-[#FAF1EB]"/>
          <h3 className="relative max-w-lg text-[27px] font-bold leading-tight tracking-[-.035em] text-[#312923] sm:text-[32px]">{t('conn.emptyTitle')}</h3>
          <p className="relative mt-3 max-w-md text-[13px] leading-6 text-[#83766A]">{t('conn.emptyDescription')}</p>
-         <Button variant="primary" className="relative mt-6" onClick={showAdd}>{t('conn.addChannel')}<ArrowRight size={16}/></Button>
          <div className="relative mt-7 flex flex-wrap gap-2">{entries.filter(item=>item.available).slice(0,4).map(entry=>
           <button type="button" key={entry.id} onClick={()=>pick(entry)}
            className="inline-flex items-center gap-2 rounded-lg border border-[#E7DED5] bg-white px-3 py-2 text-[12px] font-semibold text-[#53463B] hover:border-[#C9A48C]">
