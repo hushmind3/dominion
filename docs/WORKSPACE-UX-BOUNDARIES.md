@@ -57,8 +57,9 @@ empty 204/205 responses and cancels attachment reads/uploads when a turn stops.
 
 At the owner's request, no further build or test suite was run after they asked
 to stop those actions. The updated UI was inspected in the development server
-at desktop and mobile sizes. The preview uses the existing isolated backend
-binary; Rust source changes require a later build to run in that preview.
+at desktop and mobile sizes. The development UI must use the existing configured engine on port 4317.
+Pointing it at an empty or stopped temporary runtime hides existing connections
+and breaks chat. Rust source changes still require a later build to run.
 Existing source-contract references were adjusted for the new file locations.
 
 ## Interaction review
