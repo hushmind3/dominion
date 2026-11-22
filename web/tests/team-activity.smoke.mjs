@@ -257,7 +257,13 @@ try{
   await page.getByText('검색 조건에 맞는 에이전트가 없습니다.').waitFor({timeout:10000});
   await page.goto(address+'/#/models',{waitUntil:'domcontentloaded'});
   const modelAreas=page.getByRole('navigation',{name:'모델 영역'});
-  await modelAreas.getByRole('button',{name:'모델 찾아보기'}).waitFor({timeout:10000});
+  try{
+   await modelAreas.getByRole('button',{name:'모델 찾아보기'}).waitFor({timeout:10000});
+  }catch(error){
+   const body=await page.locator('body').innerText();
+   throw new Error('Model route failed to render: '+page.url()+' '+body.slice(0,1800)+
+    ' runtimeErrors='+JSON.stringify(errors),{cause:error});
+  }
   await modelAreas.getByRole('button',{name:'모델 찾아보기'}).click();
   assert.equal(await page.getByRole('navigation',{name:'모델 상세'}).getByRole('button').count(),3);
   await modelAreas.getByRole('button',{name:'Cloud·업체'}).click();
