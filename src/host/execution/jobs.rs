@@ -1374,7 +1374,9 @@ mod tests {
         let job = state.store.get("job", "learn-failed").unwrap();
         assert_eq!(job["status"], "queued");
         assert!(job["availableAt"].is_string());
-        assert_eq!(job["lastError"], "model unavailable");
+        // User-visible stored errors are normalized before the retry is queued.
+        assert_eq!(job["lastError"], crate::plain::error("model unavailable"));
+        assert_ne!(job["lastError"], "model unavailable");
         let _ = std::fs::remove_dir_all(dir);
     }
 }
