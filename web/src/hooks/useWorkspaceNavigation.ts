@@ -19,9 +19,31 @@ type WorkspaceState = {
   chatRoute: ChatRoute
 }
 
+
+/** Keep old links and chat shortcuts valid without rendering duplicate pages. */
+function canonicalHash(hash:string):string{
+ const [rawName,rawQuery]=hash.replace(/^#\\/?/, '').split('?')
+ const name=rawName.replace(/^\\//,'')
+ const params=new URLSearchParams(rawQuery)
+ if(name==='agents'||name==='prompts'){
+  const view=name==='agents'?'personas':params.get('view')||'shared'
+  params.set('view',view==='personas'||view==='groups'?view:'shared')
+  return '#/memory?'+params.toString()
+ }
+ if(name==='models')return '#/settings?view=ai'
+ if(name==='capabilities')return '#/settings?view=features'
+ if(name==='home')return '#/settings?view=overview'
+ if(name==='activity')return '#/settings?view=activity'
+ if(name==='extensions'){
+  const tab=params.get('tab')||params.get('section')
+  const view=tab==='market'?'registry':tab==='plugins'||tab==='skills'?tab:'mcp'
+  return '#/connections?view='+view
+ }
+ return hash
+}
+
 function readWorkspaceRoute(): WorkspaceRoute {
   const [name, query] = window.location.hash.replace(/^#\/?/, '').split('?')
-  if (name === 'agents') return {page:'prompts'}
   if (name === 'rooms' || isSettingsPage(name)) return { page: name }
 
   const params = new URLSearchParams(query)
@@ -61,11 +83,8 @@ export function useWorkspaceNavigation() {
   const { chatRoute } = workspace
 
   const syncRoute = useCallback(() => {
-    if (/^#\/agents(?:\?|$)/.test(window.location.hash)) {
-      const params = new URLSearchParams(window.location.hash.split('?')[1])
-      params.set('view', 'personas')
-      window.history.replaceState(null, '', '#/prompts?' + params)
-    }
+    const canonical=canonicalHash(window.location.hash)
+    if(canonical!==window.location.hash)window.history.replaceState(null,'',canonical)
     const route = readWorkspaceRoute()
     setWorkspace((previous) => applyRoute(previous, route))
   }, [])
@@ -92,9 +111,8 @@ export function useWorkspaceNavigation() {
   }, [syncRoute])
 
   const navigate = useCallback((page: PageId, sessionId?: string) => {
-    if(page==='agents'){navigateHash('#/prompts?view=personas');return}
-    const query = sessionId ? `?session=${encodeURIComponent(sessionId)}` : ''
-    navigateHash(`#/${page}${query}`)
+    const query = page==='chat'&&sessionId ? `?session=${encodeURIComponent(sessionId)}` : ''
+    navigateHash(canonicalHash(`#/${page}${query}`))
   }, [navigateHash])
 
   const switchMode = useCallback((mode: ConversationMode) => {
