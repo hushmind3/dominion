@@ -422,7 +422,7 @@ pub(super) async fn run_turn_body(
                 }
                 state.store.put("execution", &execution);
             }
-            messages.insert(1, json!({"role":"system","content":format!("Internal execution plan. Verify every step with real tools, never claims:\n{plan}")}));
+            messages.insert(1, json!({"role":"system","content":super::harness_prompts::render(state,"agent.plan",&[("plan",&plan)])}));
             metrics.lock().unwrap().model_calls += 1;
         }
     }
@@ -443,9 +443,7 @@ pub(super) async fn run_turn_body(
             .join("\n");
         messages.insert(1, json!({
             "role":"system",
-            "content":format!(
-                "Engine-owned task decomposition. Complete these subtasks in order and verify each with real tools before claiming done:\n{subtasks}"
-            )
+            "content":super::harness_prompts::render(state,"agent.decomposition",&[("subtasks",&subtasks)])
         }));
     }
 
@@ -731,7 +729,7 @@ pub(super) async fn run_turn_body(
                         force_final=true;
                         messages.push(json!({
                             "role":"system",
-                            "content":"프로그램 실행이 needs_review 상태로 종료되었습니다. 이미 일어난 외부 효과는 유지되고, 추가 도구 호출은 자동 실행하지 않습니다. 검증 실패 원인과 확인이 필요한 사항만 보고하세요."
+                            "content":super::harness_prompts::effective(state,"agent.program_review")
                         }));
                     }
                 }
@@ -1241,10 +1239,7 @@ pub(super) async fn run_turn_body(
                         }));
                         messages.push(json!({
                             "role":"system",
-                            "content": format!(
-                                "방금 실행은 학습된 절차를 위반했습니다. 도구를 다시 호출해 아래 위반을 수정한 뒤 최종 답변을 작성하세요. 위반: {}",
-                                serde_json::to_string(&violations).unwrap_or_default()
-                            )
+                            "content":super::harness_prompts::render(state,"agent.procedure_retry",&[("violations",&serde_json::to_string(&violations).unwrap_or_default())])
                         }));
                         continue;
                     }
@@ -1388,12 +1383,9 @@ pub(super) async fn run_turn_body(
                         };
                         messages.push(json!({
                             "role": "user",
-                            "content": format!(
-                                "자동 검증 결과 아직 완료되지 않았습니다:\n- {}\n\n{}\n말로만 완료하지 말고, 실패 원인을 바꾸는 실제 도구를 호출한 뒤 결과를 검증하세요.",
-                                gaps.iter().take(8).map(|g|g.chars().take(280)
-                                    .collect::<String>()).collect::<Vec<_>>().join("\n- "),
-                                guidance
-                            )
+                            "content":super::harness_prompts::render(state,"agent.acceptance_retry",&[
+                                ("gaps",&gaps.iter().take(8).map(|g|g.chars().take(280).collect::<String>()).collect::<Vec<_>>().join("\n- ")),
+                                ("guidance",&guidance)])
                         }));
                         continue;
                     }
@@ -1697,9 +1689,7 @@ pub(super) async fn run_turn_body(
                 }
                 messages.push(json!({
                     "role":"system",
-                    "content": format!(
-                        "절차 관찰: {error}. 이 전략은 강제가 아니므로 지금 실행을 계속할 수 있습니다. 필요하면 순서를 바꾸세요."
-                    )
+                    "content":super::harness_prompts::render(state,"agent.procedure_observation",&[("error",&error)])
                 }));
             }
             // Read-before-write applies to direct local mutations. External
@@ -1728,7 +1718,7 @@ pub(super) async fn run_turn_body(
                 } else if tool_selection.recommends_read() {
                     messages.push(json!({
                         "role":"system",
-                        "content":"도구 선택 알고리즘(read-before-write): 쓰기 전에 workspace_list/workspace_read로 대상 상태를 먼저 확인하는 것이 권장됩니다. 이 힌트는 실행을 막지 않습니다."
+                        "content":super::harness_prompts::effective(state,"agent.read_before_write")
                     }));
                 }
             }
@@ -1767,7 +1757,7 @@ pub(super) async fn run_turn_body(
                 ));
                 messages.push(json!({
                     "role":"system",
-                    "content":"직전 실패와 동일한 호출이 차단되었습니다. 다른 도구/인자로 실행하거나, 원인을 확인하는 probe를 선택하거나, 실제로 막혔다면 그 이유를 최종 답변에 쓰세요."
+                    "content":super::harness_prompts::effective(state,"agent.blocked_repeat")
                 }));
                 continue;
             }
@@ -1785,10 +1775,7 @@ pub(super) async fn run_turn_body(
                 // sees the same real result and decides whether to change tack.
                 messages.push(json!({
                     "role":"system",
-                    "content": format!(
-                        "`{}` 호출이 {}회 반복되었습니다. 같은 결과가 나온다면 다른 접근을 선택하세요.",
-                        call.name, repeat
-                    )
+                    "content":super::harness_prompts::render(state,"agent.repeat_feedback",&[("tool",&call.name),("count",&repeat.to_string())])
                 }));
             }
             if !budget.charge_tool() {
@@ -1873,10 +1860,10 @@ pub(super) async fn run_turn_body(
                         let result = &adapted["result"];
                         messages.push(json!({
                             "role":"system",
-                            "content": format!(
-                                "적응 실행: 선택된 개입 `{}` (tool={}) 결과={}. 근거 제한 계약={} 검사 관측={} 가설 판정={}. 같은 실패 호출을 반복하지 마세요.",
-                                selected["id"], selected["tool"], result, adapted["actionCertificate"], adapted["probeResults"], adapted["hypothesisResults"]
-                            )
+                            "content":super::harness_prompts::render(state,"agent.adaptation_result",&[
+                                ("id",&selected["id"].to_string()),("tool",&selected["tool"].to_string()),
+                                ("result",&result.to_string()),("certificate",&adapted["actionCertificate"].to_string()),
+                                ("probes",&adapted["probeResults"].to_string()),("hypotheses",&adapted["hypothesisResults"].to_string())])
                         }));
                         if tool_succeeded(result)
                             && matches!(
@@ -1894,9 +1881,7 @@ pub(super) async fn run_turn_body(
                             record_adaptation_error(state, execution_id, &error);
                             messages.push(json!({
                                 "role":"system",
-                                "content": format!(
-                                    "적응 후보 생성/실행에 실패했습니다: {error}. 모델은 원인 가설과 다른 도구/인자를 직접 선택하세요."
-                                )
+                                "content":super::harness_prompts::render(state,"agent.adaptation_error",&[("error",&error)])
                             }));
                         }
                     }
@@ -1905,7 +1890,7 @@ pub(super) async fn run_turn_body(
                     force_final = true;
                     messages.push(json!({
                         "role":"system",
-                        "content":"연속 적응 실행이 진전 없이 실패했습니다. 추가 반복을 중단하고 실제 관측과 막힌 원인을 최종 답변에 쓰세요."
+                        "content":super::harness_prompts::effective(state,"agent.adaptation_no_progress")
                     }));
                 }
             }
@@ -1942,7 +1927,7 @@ pub(super) async fn run_turn_body(
                     );
                     messages.push(json!({
                         "role": "system",
-                        "content": "모든 검증 조건이 충족되었습니다. 추가 도구 호출 없이 최종 답변만 작성하세요."
+                        "content":super::harness_prompts::effective(state,"agent.acceptance_complete")
                     }));
                     let _ = tx.send(json!({"type": "acceptance_passed"}));
                     if let Some(path)=simple_creation_target.as_ref().filter(|path|
