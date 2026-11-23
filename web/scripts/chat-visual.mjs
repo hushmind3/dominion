@@ -14,4 +14,28 @@ await withBrowser('chat-visual',async({page,db,url})=>{
  assert.equal(db.chatRequests[0].toolsExecutionEnabled,true)
  assert.ok(!db.chatRequests[0].agentId,'model-only mode must not silently bind a persona')
  await tools.waitFor({state:'visible'})
+ const command=async value=>{
+  await form.locator('textarea').fill(value)
+  await form.locator('button[type="submit"]').click()
+ }
+ // One conversational command searches the official registry and registers a real MCP record.
+ await command('/mcp search Parallel')
+ const panel=page.getByRole('region',{name:'MCP 빠른 연결'})
+ await panel.getByText('Parallel MCP 2.0').waitFor({state:'visible'})
+ await panel.getByRole('button',{name:'연결',exact:true}).click()
+ await panel.getByText(/Parallel MCP 2.0 · 연결 성공/).waitFor({state:'visible'})
+ assert.equal(db.mcpWrites.at(-1).url,'https://mcp.parallel.ai/mcp')
+ assert.equal(db.mcpWrites.at(-1).transport,'http')
+ const installed=panel.getByRole('button',{name:'Parallel MCP 2.0 사용 중지'})
+ await installed.click()
+ await panel.getByRole('button',{name:'Parallel MCP 2.0 사용'}).waitFor({state:'visible'})
+ assert.equal(db.mcp.find(x=>x.name==='Parallel MCP 2.0')?.enabled,false)
+ // Slash commands also use the same backend job queue, not UI-only command messages.
+ await command('/goal 실제 코드를 검사해 줘')
+ await page.getByText(/자율 작업이 접수됐습니다/).waitFor({state:'visible'})
+ assert.equal(db.jobs[0].kind,'prompt')
+ assert.equal(db.jobs[0].input.prompt,'실제 코드를 검사해 줘')
+ await command('/workflows')
+ await page.waitForURL(/#\/tasks/)
+
 },[{width:1440,height:900},{width:390,height:844}])
