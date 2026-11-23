@@ -150,6 +150,10 @@ fn slug(value: &str) -> String {
     out.trim_matches('_').to_string()
 }
 
+fn slug_for_server(server:&Value)->String{
+    slug(server.get("name").and_then(Value::as_str).unwrap_or("mcp"))
+}
+
 fn enabled_servers(state: &AppState) -> Vec<Value> {
     state
         .store
@@ -173,13 +177,26 @@ pub async fn tools_with_errors(state: &AppState) -> (Vec<McpTool>, Vec<Value>) {
 async fn collect_tools(state: &AppState) -> (Vec<McpTool>, Vec<Value>) {
     let mut collected = Vec::new();
     let mut failures = Vec::new();
-    for server in enabled_servers(state) {
+    let enabled=enabled_servers(state);
+    let mut counts=HashMap::<String,usize>::new();
+    for server in &enabled {
+        *counts.entry(slug_for_server(server)).or_default()+=1;
+    }
+    for server in enabled {
         let id = server
             .get("id")
             .and_then(|value| value.as_str())
             .unwrap_or("")
             .to_string();
         if id.is_empty() {
+            continue;
+        }
+        // MCP protocol names are constructed from a normalized server name.
+        // Distinct installed records can normalize to the SAME namespace.
+        // Do not start either process or publish an arbitrary first match.
+        if counts.get(&slug_for_server(&server)).copied().unwrap_or(0)>1 {
+            failures.push(json!({"mcpId":id,"server":server["name"],"name":server["name"],
+                "error":"MCP 서버 이름이 다른 연결과 충돌합니다. 이름을 변경하세요."}));
             continue;
         }
         let identity=connection_identity(state,&server);
@@ -280,36 +297,14 @@ pub async fn definitions(state: &AppState) -> Vec<Value> {
 }
 
 pub fn requires_approval(state: &AppState, qualified: &str) -> bool {
-    let policy = state
-        .store
-        .get("policy", "default")
-        .unwrap_or_else(|| json!({}));
-    if policy
-        .get("autoApproveMcp")
-        .and_then(|value| value.as_bool())
-        == Some(true)
-    {
-        return false;
-    }
-    let qualified = qualified.to_string();
-    let server_slug = qualified
-        .strip_prefix("mcp__")
-        .and_then(|rest| rest.split_once("__"))
-        .map(|(slug, _)| slug.to_string())
-        .unwrap_or_default();
-    let servers = enabled_servers(state);
-    servers
-        .iter()
-        .find(|server| {
-            slug(
-                server
-                    .get("name")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("mcp"),
-            ) == server_slug
-        })
-        .and_then(|server| server.get("approval").and_then(|value| value.as_bool()))
-        .unwrap_or(true)
+    let server_slug=qualified.strip_prefix("mcp__")
+        .and_then(|rest|rest.split_once("__")).map(|(s,_)|s).unwrap_or("");
+    let matching=enabled_servers(state).into_iter()
+        .filter(|server|slug_for_server(server)==server_slug).collect::<Vec<_>>();
+    if matching.len()!=1 {return true;}
+    let policy=state.store.get("policy","default").unwrap_or_else(||json!({}));
+    if policy["autoApproveMcp"]==true {return false;}
+    matching[0]["approval"].as_bool().unwrap_or(true)
 }
 
 /// Executes `mcp__{server}__{tool}`.
@@ -321,17 +316,12 @@ pub async fn call(state: &AppState, qualified: &str, args: &Value) -> Result<Val
         .split_once("__")
         .ok_or_else(|| format!("MCP 도구 이름을 해석할 수 없습니다: {qualified}"))?;
 
-    let server = enabled_servers(state)
-        .into_iter()
-        .find(|server| {
-            slug(
-                server
-                    .get("name")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("mcp"),
-            ) == server_slug
-        })
-        .ok_or_else(|| format!("MCP 서버를 찾을 수 없습니다: {server_slug}"))?;
+    let mut matching=enabled_servers(state).into_iter()
+        .filter(|server|slug_for_server(server)==server_slug).collect::<Vec<_>>();
+    if matching.len()!=1 {
+        return Err(format!("MCP 서버가 없거나 내부 이름이 충돌합니다: {server_slug}"));
+    }
+    let server=matching.remove(0);
 
     let params = json!({ "name": tool_name, "arguments": args });
     let (identity,mut session)=checkout_session(state,&server).await?;
