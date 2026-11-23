@@ -1,5 +1,6 @@
 import {OwnerProfileEditor} from './OwnerProfile'
-import {Activity,BookOpenText,Bot,Cpu,House,MessageSquare,RadioTower,Settings2,UsersRound,Plus,X,Settings,Menu} from 'lucide-react'
+import {useEffect,useState} from 'react'
+import {Activity,BookOpenText,Bot,Cpu,House,MessageSquare,RadioTower,Settings2,UsersRound,Plus,X,Settings,Menu,Search,ChevronDown,ShieldCheck,Blocks} from 'lucide-react'
 import {Button} from './Primitives'
 import {t,type LocaleKey,useLocale} from '../i18n'
 
@@ -7,42 +8,93 @@ export type PageId='home'|'chat'|'models'|'agents'|'rooms'|'memory'|'capabilitie
 type NavItem={id:PageId;label:LocaleKey;icon:typeof House}
 export const navigation:{title:LocaleKey;items:NavItem[];collapsible?:boolean}[]=[
  {title:'nav.group.workspace',items:[{id:'home',label:'nav.home',icon:House},{id:'chat',label:'nav.chat',icon:MessageSquare},{id:'rooms',label:'nav.rooms',icon:UsersRound},{id:'models',label:'nav.models',icon:Cpu},{id:'agents',label:'nav.agents',icon:Bot}]},
- {title:'nav.group.extensions',items:[{id:'connections',label:'nav.connections',icon:RadioTower},{id:'memory',label:'nav.memory',icon:BookOpenText}]},
+ {title:'nav.group.extensions',items:[{id:'connections',label:'nav.connections',icon:RadioTower},{id:'memory',label:'nav.memory',icon:BookOpenText},{id:'capabilities',label:'nav.capabilities',icon:ShieldCheck},{id:'extensions',label:'nav.extensions',icon:Blocks}]},
  {title:'nav.group.operations',items:[{id:'activity',label:'nav.activity',icon:Activity},{id:'settings',label:'nav.settings',icon:Settings2}]}
 ]
 const items=navigation.flatMap(g=>g.items)
-export function WorkspaceSidebar({page,open,collapsed,online,running,pending,onNavigate,onNewChat,onClose,settingsOnly=false,navOpen=true,onToggleNav}:{settingsOnly?:boolean;page:PageId;open:boolean;collapsed:boolean;online:boolean;running:number;pending:number;onNavigate:(id:PageId)=>void;onNewChat:()=>void;onClose:()=>void;navOpen?:boolean;onToggleNav?:()=>void}){
- useLocale()
+type SidebarProps={settingsOnly?:boolean;page:PageId;open:boolean;collapsed:boolean;online:boolean;running:number;pending:number;
+ onNavigate:(id:PageId)=>void;onNewChat:()=>void;onClose:()=>void;navOpen?:boolean;onToggleNav?:()=>void}
+const primaryPages:PageId[]=['home','models','memory','settings']
+export function WorkspaceSidebar({page,open,collapsed,online,running,pending,onNavigate,onNewChat,onClose,settingsOnly=false,navOpen=true,onToggleNav}:SidebarProps){
+ const en=useLocale()==='en'
+ const [query,setQuery]=useState('')
+ const [moreOpen,setMoreOpen]=useState(!primaryPages.includes(page))
+ useEffect(()=>{if(!primaryPages.includes(page))setMoreOpen(true)},[page])
+ const all=navigation.flatMap(group=>group.items)
+ const compact=settingsOnly&&!navOpen
+ const needle=navOpen?query.trim().toLocaleLowerCase():''
+ const available=(entry:NavItem)=>!needle||t(entry.label).toLocaleLowerCase().includes(needle)
+ const primary=all.filter(entry=>primaryPages.includes(entry.id)&&available(entry))
+ const secondary=all.filter(entry=>!primaryPages.includes(entry.id)
+  &&entry.id!=='chat'&&entry.id!=='rooms'&&available(entry))
+ const showMore=moreOpen||secondary.some(entry=>entry.id===page)||!!needle
+ const navigateTo=(id:PageId)=>{
+  onNavigate(id)
+  if(settingsOnly&&navOpen&&window.matchMedia('(max-width: 767px)').matches)onToggleNav?.()
+ }
+ const renderItem=(entry:NavItem)=>{
+  const Icon=entry.icon
+  const count=entry.id==='activity'?running:entry.id==='settings'?pending:0
+  return <Button variant="bare" key={entry.id} type="button" title={t(entry.label)}
+   aria-label={t(entry.label)} aria-current={page===entry.id?'page':undefined}
+   onClick={()=>navigateTo(entry.id)} className="workspace-settings-nav-item">
+   <Icon size={18} strokeWidth={1.7}/><span>{t(entry.label)}</span>
+   {count>0&&<small>{count}</small>}
+  </Button>
+ }
+ if(settingsOnly)return <aside id="workspace-settings-sidebar" data-collapsed={compact}
+  aria-label={t('shell.mainNav')} className="workspace-settings-sidebar">
+  <div className="workspace-settings-brand">
+   <span className="workspace-settings-logo">D</span>
+   <strong className="workspace-settings-wordmark">dominion</strong>
+   <Button variant="ghost" size="icon" type="button" aria-controls="workspace-settings-sidebar"
+    aria-label={navOpen?t('shell.hideMenu'):t('shell.showMenu')}
+    aria-expanded={navOpen} onClick={onToggleNav}><Menu size={19}/></Button>
+  </div>
+  {navOpen&&<label className="workspace-settings-search">
+   <Search size={16}/>
+   <input type="search" value={query} onChange={event=>setQuery(event.target.value)}
+    aria-label={en?'Search settings':'설정 찾기'}
+    placeholder={en?'Search settings':'설정 찾기'}/>
+  </label>}
+  <nav className="workspace-settings-nav" aria-label={t('shell.mainNav')}>
+   {!compact&&<p className="workspace-settings-section-label">{en?'My space':'나의 공간'}</p>}
+   {primary.map(renderItem)}
+   {!compact&&<Button variant="bare" type="button" className="workspace-settings-more"
+    aria-expanded={showMore} onClick={()=>setMoreOpen(value=>!value)}>
+    {en?'More features':'더 많은 기능'} <ChevronDown size={15} className={showMore?'rotate-180':''}/>
+   </Button>}
+   {(compact||showMore)&&secondary.map(renderItem)}
+   {!compact&&needle&&!primary.length&&!secondary.length&&<p className="p-3 text-xs text-[#8A8176]">
+    {en?'No matching settings.':'일치하는 메뉴가 없습니다.'}</p>}
+  </nav>
+  <div className="workspace-settings-footer">
+   <span className="workspace-settings-connection" role="status"
+    title={online?t('shell.engineConnected'):t('shell.engineDisconnected')}>
+    <i className={online?'bg-emerald-500':'bg-rose-400'}/>
+    {!compact&&<span>{online?t('shell.engineConnected'):t('shell.engineDisconnected')}</span>}
+   </span>
+   <OwnerProfileEditor compact={compact}/>
+  </div>
+ </aside>
  return <>
-  {!settingsOnly&&open&&<Button variant="bare" type="button" className="fixed inset-0 z-40 bg-slate-900/40 min-[520px]:hidden" aria-label={t('shell.menuClose')} onClick={onClose}/>}
-  <aside aria-label={t('shell.mainNav')} className={(settingsOnly?'absolute inset-y-0 left-0 z-10 flex':'fixed inset-y-0 left-0 z-50 flex')+' w-[216px] flex-col border-r border-[#E0D8CC] bg-[#EFEAE1] text-[#4A443C] transition-[width,transform] duration-200 '+(settingsOnly&&!navOpen?'settings-nav-collapsed ':'')+(!settingsOnly?'max-[519px]:-translate-x-full ':'')+(collapsed?'min-[520px]:-translate-x-full ':'')+(open?'max-[519px]:translate-x-0':'')}>
-   <div className="flex h-16 shrink-0 items-center gap-3 border-b border-[#E0D8CC] px-5">
-    <div className="grid size-8 shrink-0 place-items-center rounded-xl bg-[#C96442] text-[17px] font-black text-white shadow-[0_4px_12px_rgba(201,100,66,.28)]">D</div>
-    <div className="min-w-0 flex-1 truncate text-[14px] font-extrabold tracking-[.14em] text-[#24211D]">DOMINION</div>
-    {settingsOnly&&onToggleNav&&<Button variant="ghost" size="icon" aria-label={navOpen?t('shell.hideMenu'):t('shell.showMenu')} aria-expanded={navOpen} onClick={onToggleNav}><Menu size={18}/></Button>}
-   </div>
-   {!settingsOnly&&<div className="px-3 pt-5"><Button variant="bare" type="button" onClick={onNewChat} className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-[#C96442] text-[12px] font-semibold text-white shadow-[0_6px_16px_rgba(201,100,66,.22)] transition-colors hover:bg-[#A94E30]"><Plus size={16}/> {t('shell.newChat')}</Button></div>}
-   <nav className="mt-4 min-h-0 flex-1 overflow-y-auto px-2.5 pb-4">
-    {navigation.map(group=><section key={group.title} className="mt-5">
-     <h2 className="mb-2 px-3 text-[11px] font-semibold text-[#8A8176]">{t(group.title)}</h2>
-     {<div className="space-y-0.5">{group.items.filter(item=>!settingsOnly||!['chat','rooms'].includes(item.id)).map(item=>{const Icon=item.icon;const count=item.id==='activity'?running:item.id==='settings'?pending:0;return <Button variant="bare" key={item.id} type="button" aria-current={page===item.id?'page':undefined} onClick={()=>onNavigate(item.id)}
-      className={'group flex h-9 w-full items-center gap-3 rounded-xl px-3 text-left text-[13px] transition-colors '+(page===item.id?'bg-[#FFFDF9] font-semibold text-[#24211D] shadow-[0_2px_8px_rgba(70,58,42,.07)]':'text-[#6F675D] hover:bg-[#E8E0D3] hover:text-[#24211D]')}>
-      <Icon size={15} strokeWidth={1.8}/><span className="min-w-0 flex-1">{t(item.label)}</span>{count>0&&<span className="text-[10px] font-semibold text-[#C96442]">{count}</span>}
-     </Button>})}</div>}
-    </section>)}
-   </nav>
+  {open&&<Button variant="bare" type="button" className="fixed inset-0 z-40 bg-slate-900/40 min-[520px]:hidden"
+   aria-label={t('shell.menuClose')} onClick={onClose}/>}
+  <aside aria-label={t('shell.mainNav')} className={'fixed inset-y-0 left-0 z-50 flex w-[216px] flex-col border-r border-[#E0D8CC] bg-[#EFEAE1] transition-transform duration-200 '+(collapsed?'min-[520px]:-translate-x-full ':'')+(open?'max-[519px]:translate-x-0':'max-[519px]:-translate-x-full')}>
+   <div className="flex h-16 shrink-0 items-center gap-3 px-5"><span className="grid size-8 place-items-center rounded-xl bg-[#C96442] font-bold text-white">D</span><strong>DOMINION</strong></div>
+   <Button variant="primary" type="button" onClick={onNewChat}><Plus size={17}/>{t('shell.newChat')}</Button>
+   <nav className="min-h-0 flex-1 overflow-y-auto p-2">{all.map(renderItem)}</nav>
    <OwnerProfileEditor/>
-   <div className="flex h-14 shrink-0 items-center gap-2.5 border-t border-[#E0D8CC] px-5">
-    <span className={'size-2 rounded-full '+(online?'bg-emerald-500':'bg-rose-400')}/>
-    <span className="text-[11px] text-[#6F675D]">{online?t('shell.engineConnected'):t('shell.engineDisconnected')}</span>
-   </div>
   </aside>
  </>
 }
-export function SettingsHeader({page,online,build,onClose}:{page:PageId;online:boolean;build?:{branch:string;commit:string}|null;onClose:()=>void}){
+export function SettingsHeader({page,online,build,onClose,onToggleNav}:{page:PageId;online:boolean;build?:{branch:string;commit:string}|null;onClose:()=>void;onToggleNav?:()=>void}){
  useLocale()
  const selected=items.find(x=>x.id===page)
- return <header className="flex h-13 shrink-0 items-center gap-3 border-b border-[#E7E0D5] bg-[#FFFDF9] px-4">
+ return <header className="workspace-responsive-header flex h-13 shrink-0 items-center gap-3 border-b border-[#E7E0D5] bg-[#FFFDF9] px-4">
+  <Button variant="ghost" size="icon" type="button" className="workspace-responsive-mobile-toggle"
+   aria-label={t('shell.showMenu')} aria-controls="workspace-settings-sidebar"
+   onClick={onToggleNav}><Menu size={19}/></Button>
   <Settings size={17} className="text-[#8A8176]"/><h1 className="min-w-0 flex-1 truncate text-[14px] font-semibold text-[#24211D]">{selected?t(selected.label):t('nav.settings')}</h1>
   <span className={'hidden items-center gap-1.5 text-[11px] sm:inline-flex '+(online?'text-emerald-700':'text-rose-600')}><i className={'size-1.5 rounded-full '+(online?'bg-emerald-500':'bg-rose-500')}/>{online?t('shell.connected'):t('shell.disconnected')}</span>
   {build?.branch&&build.branch!=='unknown'&&<span className="hidden max-w-[185px] truncate rounded-md border border-[#E7E0D5] bg-[#F7F3EC] px-2 py-1 text-[10px] font-mono text-[#8A8176] lg:block" title={build.branch+' · '+build.commit}>{build.branch.replace(/^dominion-/,'')} · {build.commit.slice(0,7)}</span>}

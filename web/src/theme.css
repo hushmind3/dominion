@@ -210,3 +210,73 @@
 }
 @media(max-width:839px){.rooms-app>.conversation-rail{display:none}}
 @media(prefers-reduced-motion:reduce){.conversation-rail *, .conversation-rail{transition:none!important}}
+
+
+/* Responsive settings shell: the desktop hamburger preserves an icon rail
+ * instead of removing the navigation, while mobile uses a modal drawer. */
+.workspace-settings.workspace-responsive-settings{display:flex;background:#FFFDF9}
+.workspace-responsive-settings>.workspace-settings-sidebar{
+ position:relative;inset:auto;display:flex;width:236px;min-width:0;height:100%;flex:0 0 auto;
+ flex-direction:column;border-right:1px solid #E7E0D5;background:#F3EFE7;
+ transition:width .18s ease;z-index:10;
+}
+.workspace-responsive-settings>.workspace-settings-sidebar[data-collapsed=true]{width:64px}
+.workspace-settings-brand{display:flex;min-height:76px;flex-shrink:0;align-items:center;gap:9px;padding:0 14px}
+.workspace-settings-logo{display:grid;flex:0 0 30px;height:30px;place-items:center;border:1px solid #E9C7B6;border-radius:10px;background:#F7E8E1;color:#C96442;font-size:18px;font-weight:750}
+.workspace-settings-wordmark{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#24211D;font-size:19px;letter-spacing:-.05em}
+.workspace-settings-brand>button{flex-shrink:0;color:#776C5E}
+.workspace-settings-search{display:flex;flex-shrink:0;align-items:center;gap:8px;margin:8px 14px 18px;border-bottom:1px solid #D9CFC1;padding:0 0 10px;color:#938779}
+.workspace-settings-search input{min-width:0;width:100%;border:0;background:transparent;color:#3A342D;font-size:12px;outline:none}
+.workspace-settings-search input:focus{outline:0}
+.workspace-settings-nav{display:flex;min-height:0;flex:1;flex-direction:column;gap:3px;overflow-y:auto;overflow-x:hidden;padding:10px 11px 22px}
+.workspace-settings-section-label{margin:0 9px 9px;color:#9B8B78;font-size:11px}
+.workspace-settings-nav-item{position:relative;display:flex;width:100%;min-height:42px;flex:0 0 auto;align-items:center;gap:11px;border-radius:11px;padding:9px 11px;text-align:left;font-size:12px;color:#76695B;transition:background .15s ease}
+.workspace-settings-nav-item>svg{flex-shrink:0}
+.workspace-settings-nav-item>span{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.workspace-settings-nav-item>small{border-radius:6px;background:#E7D5C9;padding:1px 5px;color:#A94E30;font-size:10px}
+.workspace-settings-nav-item:hover{background:#EAE3D8}
+.workspace-settings-nav-item[aria-current=page]{background:#E9E0D4;color:#594635;font-weight:700}
+.workspace-settings-more{display:flex;min-height:36px;align-items:center;justify-content:space-between;gap:6px;margin-top:16px;border-top:1px solid #DBD0C2;padding:15px 11px 3px;color:#978675;font-size:11px}
+.workspace-settings-footer{display:flex;flex-shrink:0;flex-direction:column;gap:5px;border-top:1px solid #E0D7CA;padding:9px 11px 13px}
+.workspace-settings-connection{display:flex;min-height:23px;align-items:center;gap:8px;color:#9B8B78;font-size:10px}
+.workspace-settings-connection i{display:block;width:7px;height:7px;flex-shrink:0;border-radius:50%}
+.workspace-responsive-settings>.workspace-settings-sidebar[data-collapsed=true] .workspace-settings-brand{justify-content:center;padding:0}
+.workspace-responsive-settings>.workspace-settings-sidebar[data-collapsed=true] .workspace-settings-logo,
+.workspace-responsive-settings>.workspace-settings-sidebar[data-collapsed=true] .workspace-settings-wordmark,
+.workspace-responsive-settings>.workspace-settings-sidebar[data-collapsed=true] .workspace-settings-nav-item>span{display:none}
+.workspace-responsive-settings>.workspace-settings-sidebar[data-collapsed=true] .workspace-settings-nav{padding:11px 8px}
+.workspace-responsive-settings>.workspace-settings-sidebar[data-collapsed=true] .workspace-settings-nav-item{justify-content:center;padding:10px}
+.workspace-responsive-settings>.workspace-settings-sidebar[data-collapsed=true] .workspace-settings-nav-item>small{position:absolute;top:-2px;right:0}
+.workspace-responsive-settings>.workspace-settings-sidebar[data-collapsed=true] .workspace-settings-footer{align-items:center;padding:9px 5px}
+.workspace-responsive-settings>.workspace-settings-main{flex:1;min-width:0;margin-left:0!important}
+.workspace-responsive-settings .workspace-settings-content{padding-top:0}
+.workspace-responsive-mobile-toggle,.workspace-responsive-scrim{display:none}
+@media(max-width:767px){
+ .workspace-settings.workspace-responsive-settings{position:fixed;inset:0;width:100%;max-width:none;height:100dvh;border:0;border-radius:0}
+ .workspace-responsive-settings>.workspace-settings-sidebar{
+  position:absolute;inset:0 auto 0 0;z-index:80;width:min(300px,85vw);max-width:85vw;
+  height:100%;border-bottom:0;border-right:1px solid #E7E0D5;transform:translateX(0);
+  transition:transform .18s ease;box-shadow:10px 0 36px #3C2E2220;
+ }
+ .workspace-responsive-settings>.workspace-settings-sidebar[data-collapsed=true]{
+  width:min(300px,85vw);transform:translateX(-110%);pointer-events:none;visibility:hidden;
+ }
+ .workspace-responsive-settings>.workspace-settings-sidebar>div{display:flex}
+ .workspace-responsive-settings>.workspace-settings-sidebar nav{
+  display:flex;flex-direction:column;align-items:stretch;gap:3px;height:auto;
+  min-height:0;margin:0;overflow-y:auto;overflow-x:hidden;padding:8px 11px 18px
+ }
+ .workspace-responsive-settings>.workspace-settings-sidebar nav button{
+  width:100%;min-height:42px;flex-shrink:0;justify-content:flex-start;
+  white-space:normal;gap:11px;padding:9px 11px;
+ }
+ .workspace-responsive-settings>.workspace-settings-sidebar nav .workspace-settings-more{justify-content:space-between}
+ .workspace-responsive-settings>.workspace-settings-main{width:100%;margin-left:0!important}
+ .workspace-responsive-settings .workspace-settings-content{padding-top:0}
+ .workspace-responsive-mobile-toggle{display:inline-flex}
+ .workspace-responsive-scrim{position:absolute;inset:0;z-index:70;display:block!important;border:0;background:#201B1970}
+}
+@media(prefers-reduced-motion:reduce){
+ .workspace-responsive-settings>.workspace-settings-sidebar,
+ .workspace-settings-nav-item{transition:none!important}
+}
