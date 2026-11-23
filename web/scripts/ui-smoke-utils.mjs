@@ -81,6 +81,7 @@ function fixture() {
   if(p==='/api/providers')return ok(route,db.providers)
   if(/^\/api\/providers\/[^/]+\/models$/.test(p))return ok(route,[{id:'qwen-test',name:'qwen-test',isDefault:true}])
   if(p==='/api/providers/catalog')return ok(route,{providers:[]})
+  if(p==='/api/capabilities')return ok(route,{items:[{id:'web_search',name:'Web Search',description:'Search current web information',namespace:'builtin',available:true},{id:'file_read',name:'Read File',description:'Read workspace files',namespace:'builtin',available:true}]})
   if(p==='/api/agents')return ok(route,db.agents)
   if(p==='/api/memories')return ok(route,db.memories)
   if(p==='/api/mcp')return ok(route,db.mcp)
