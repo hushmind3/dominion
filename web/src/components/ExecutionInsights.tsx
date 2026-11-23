@@ -31,6 +31,11 @@ type InputContext = {
  providerContextTokens?:number|null;
  modelCallUsage?:ModelCallUsage[];
 }
+type ToolOperation = {
+ id:string;tool?:string;callId?:string;status?:string;origin?:string;
+ result?:{error?:string}|null;
+ effectState?:string;
+};
 type ExecutionEvidence = {
  id:string;status?:string;contextPolicy?:string;
  modelCalls?:number;toolCalls?:number;tokens?:number;
@@ -54,7 +59,12 @@ export function ExecutionInsights({executionId,compact=false}:{executionId:strin
  const [open,setOpen]=useState(false)
  const remote=useRemote<ExecutionEvidence|null>(
   open?'/api/executions/'+encodeURIComponent(executionId):null,null,false)
+ const operations=useRemote<ToolOperation[]>(
+  open?'/api/executions/'+encodeURIComponent(executionId)+'/operations':null,[],false)
  const record=remote.value
+ const completedOps=operations.value.filter(op=>op.status==='completed')
+ const failedOps=operations.value.filter(op=>op.status==='failed'
+  ||op.effectState==='needs_review'||op.effectState==='unknown')
  const ctx=record?.inputContext
  const calls=Array.isArray(ctx?.modelCallUsage)?ctx.modelCallUsage:[]
  const first=calls[0]
@@ -134,6 +144,24 @@ export function ExecutionInsights({executionId,compact=false}:{executionId:strin
      <p className="mt-2 text-[10px] text-muted">{en
       ?'KRW cost: unavailable without an attributable provider price. No price is fabricated.'
       :'원화 비용: 호출별 공급자 단가가 연결되지 않아 표시하지 않습니다. 임의 비용은 계산하지 않습니다.'}</p>
+    </div>
+    <div className="mt-3 rounded-lg border border-divider bg-surface p-3 text-[11px]">
+     <strong>{en?'Tool execution & errors':'도구 실행·실패 기록'}</strong>
+     {operations.loading?<p role="status" className="mt-2">{en?'Loading tool receipts…':'도구 실행 기록 불러오는 중…'}</p>:
+      operations.error?<div role="alert" className="mt-2 text-danger">
+       {operations.error} <button type="button" className="underline" onClick={()=>void operations.reload()}>{en?'Retry':'다시 시도'}</button>
+      </div>:
+      <div className="mt-2">
+       <p>{en?'Completed':'완료'} {completedOps.length} · {en?'Failed / review needed':'실패·검토 필요'} {failedOps.length}</p>
+       {failedOps.length>0&&<div className="mt-2 max-h-48 space-y-2 overflow-y-auto">
+        {failedOps.slice(-20).map(op=><div key={op.id} className="rounded-lg border border-danger/20 bg-danger-soft px-3 py-2">
+         <strong className="block break-all text-danger">{op.tool||'—'} · {op.status||op.effectState||'unknown'}</strong>
+         {typeof op.result?.error==='string'&&<p className="mt-1 break-words text-danger">{op.result.error.slice(0,1000)}</p>}
+         {op.callId&&<small className="block break-all text-muted">callId: {op.callId}</small>}
+        </div>)}
+       </div>}
+       {operations.value.length===0&&<p className="mt-1 text-muted">{en?'No tool calls recorded.':'기록된 도구 호출이 없습니다.'}</p>}
+      </div>}
     </div>
     {(record.taskOutcome||record.reason||visibleFailureClass)&&<div className="mt-3 rounded-lg border border-divider bg-surface p-3 text-[11px]">
      <strong>{en?'Execution verification':'실행 검증·결과'}</strong>
