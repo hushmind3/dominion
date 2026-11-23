@@ -12,7 +12,7 @@ test('chat keeps live session-wide usage visible in its own compact top-right st
  assert.match(chat,/totalUsedTokens\.toLocaleString\(\)/)
  assert.match(chat,/usageSession===current/)
  assert.match(chat,/Math\.max\(serverUsage,messageUsage\)/)
- assert.match(chat,/\/api\/sessions\/\'+encodeURIComponent\(current\)\+'\/usage/)
+ assert.ok(chat.includes("'/api/sessions/'+encodeURIComponent(current)+'/usage'"))
  assert.match(css,/\.chat-usage-popover/)
 })
 
