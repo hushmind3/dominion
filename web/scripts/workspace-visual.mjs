@@ -43,7 +43,7 @@ await withBrowser('workspace-visual',async({page,db,url,viewport})=>{
  await page.getByRole('button',{name:/Web Search/}).waitFor({state:'visible'})
  await page.goto(url+'/#/rooms')
  await page.getByRole('heading',{name:/나도 대화의 한가운데|At the center of the conversation/}).waitFor({state:'visible'})
- await page.getByRole('link',{name:/페르소나 만들기|Create persona/}).waitFor({state:'visible'})
+ await page.getByRole('button',{name:/대화방 만들기|Create room/}).waitFor({state:'visible'})
  const width=await page.evaluate(()=>document.documentElement.scrollWidth-window.innerWidth)
  assert.ok(width<12,'horizontal overflow '+width+' at '+viewport.width)
 },[{width:1440,height:900},{width:820,height:820},{width:390,height:844}])
