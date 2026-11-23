@@ -623,7 +623,9 @@ pub(super) async fn run_turn_body(
     // `toolsEnabled` controls whether the model may call tools. It is not an
     // execution permission for the Rust harness; harness nodes use the same
     // approval, cancellation and budget policy as model tool calls.
-    let harness_messages = if request.tools_execution_enabled && !finished {
+    let harness_messages = if automatic_tool_actions_allowed(
+        request.tools_execution_enabled,lightweight_chat,finished
+    ) {
         run_harness_nodes(
         state,
         tx,
@@ -678,7 +680,9 @@ pub(super) async fn run_turn_body(
         // DECIDE: an active durable program supplies the next step; otherwise
         // the model decides. Program steps and model steps share this loop,
         // the same tool gateway and the same checkpoint.
-        if !program_finished && request.tools_execution_enabled {
+        if !program_finished && automatic_tool_actions_allowed(
+            request.tools_execution_enabled,lightweight_chat,finished
+        ) {
             if let Some(policy) = &program_policy {
                 if let Some(program) = policy["parameters"]["program"].as_object() {
                     let program = crate::engine::program::validate(&json!(program))?;
