@@ -41,6 +41,19 @@ test('MCP identity matches exact registration without substring ambiguity',()=>{
  assert.equal(findInstalledMcp(rows,'search-2')?.id,'search-2')
  assert.equal(findInstalledMcp(rows,'Parallel')?.id,undefined)
 })
+test('ambiguous MCP names and ID/name collisions never pick a destructive target',()=>{
+ const rows=[
+  {id:'alpha-id',name:'Shared',transport:'http',url:'https://a.example/mcp'},
+  {id:'beta-id',name:'shared',transport:'http',url:'https://b.example/mcp'},
+  {id:'shared-id',name:'Unique',transport:'http',url:'https://c.example/mcp'},
+  {id:'unique-id',name:'shared-id',transport:'http',url:'https://d.example/mcp'},
+ ]
+ assert.equal(findInstalledMcp(rows,'shared'),undefined)
+ assert.equal(findInstalledMcp(rows,'shared-id'),undefined)
+ assert.equal(findInstalledMcp(rows,'Unique')?.id,'shared-id')
+ assert.equal(findInstalledMcp(rows,'beta-id')?.id,'beta-id')
+})
+
 test('MCP slash palette has actual actionable commands and backend calls',()=>{
  assert.ok(catalog.some(item=>item.key==='mcp'))
  assert.match(menu,/key:'mcp:search'/)
