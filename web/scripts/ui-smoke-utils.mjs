@@ -24,7 +24,7 @@ async function start() {
  for(const stream of [child.stdout,child.stderr])stream.on('data',data=>logs+=data.toString().slice(0,3000))
  for(let i=0;i<140;i++){
   if(child.exitCode!==null)throw Error('Vite exited: '+logs)
-  try{const res=await fetch(url);if(res.ok)return{child,url}}catch{}
+  try{const res=await fetch(url);if(res.ok)return{child,url,logs:()=>logs}}catch{}
   await sleep(150)
  }
  child.kill()
@@ -109,12 +109,22 @@ export async function withBrowser(name,callback,viewports=[{width:1280,height:80
    const page=await context.newPage(),errors=[]
    page.on('pageerror',error=>errors.push(error.message))
    try{
-    await callback({page,db,url:server.url,viewport})
-    assert.deepEqual(errors,[],name+': unexpected React page errors')
-    const folder=path.join(root,'artifacts',name)
-    await mkdir(folder,{recursive:true})
-    await page.screenshot({path:path.join(folder,viewport.width+'.png'),animations:'disabled'})
-    console.log('PASS '+name+' '+viewport.width+'px')
+    try{
+     await callback({page,db,url:server.url,viewport})
+     assert.deepEqual(errors,[],name+': unexpected React page errors')
+     console.log('PASS '+name+' '+viewport.width+'px')
+    }catch(error){
+     console.error('FAIL '+name+' '+viewport.width+'px: '+String(error))
+     console.error('URL: '+page.url())
+     console.error('PAGE ERRORS: '+JSON.stringify(errors.slice(-10)))
+     console.error('BODY: '+(await page.locator('body').innerText().catch(()=>'' )).slice(0,2000))
+     console.error('VITE: '+server.logs().slice(-1500))
+     throw error
+    }finally{
+     const folder=path.join(root,'artifacts',name)
+     await mkdir(folder,{recursive:true})
+     await page.screenshot({path:path.join(folder,viewport.width+'.png'),animations:'disabled'}).catch(()=>{})
+    }
    }finally{await context.close()}
   }
  }finally{if(browser)await browser.close();server.child.kill('SIGTERM')}
