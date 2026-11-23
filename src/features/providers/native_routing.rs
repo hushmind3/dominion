@@ -124,7 +124,13 @@ pub(crate) fn choose(
             continue;
         }
         if !route.local && route.api_key.is_empty(){continue;}
-        if route.context_tokens.is_some_and(|cap|cap<input.saturating_add(output)){continue;}
+        // Context/output admissibility and live rate/cooldown headroom are
+        // pre-dispatch filters, not reasons to bill a doomed model attempt.
+        if route.context_tokens.is_some_and(|cap|cap<input.saturating_add(output))
+            || route.max_output_tokens.is_some_and(|cap|cap<output)
+            || !gateway::has_generation_headroom(
+                &route.base_url,&route.model,route.requests_per_minute
+            ) {continue;}
         let Some((estimated,history_calls))=estimate_with_history(
             state,&route,price,input,output) else {continue;};
         candidates.push((route,q,estimated,profile["nativeRouting"].clone(),history_calls));
@@ -232,6 +238,30 @@ mod tests {
         assert_eq!(explicit.id,"weak");
         assert_eq!(pinned["selection"]["reason"],"explicit_provider_or_model");
     }
+    #[test]
+    fn native_auto_route_filters_unavailable_and_too_small_outputs_before_pricing() {
+        let s=state();
+        add(&s,"cheapest",Some(0.95),Some(1.0),1.0);
+        add(&s,"small",Some(0.95),Some(2.0),2.0);
+        add(&s,"healthy",Some(0.95),Some(50.0),100.0);
+        let mut too_small=s.store.get("provider","small").unwrap();
+        too_small["modelCapabilities"][too_small["model"].as_str().unwrap()]["maxOutputTokens"]=json!(1024);
+        s.store.put("provider",&too_small).unwrap();
+        let mut cheap=s.store.get("provider","cheapest").unwrap();
+        cheap["requestsPerMinute"]=json!(1);
+        s.store.put("provider",&cheap).unwrap();
+        let cheap_route=gateway::resolve(&s,"cheapest",None).unwrap();
+        assert!(gateway::reserve_generation(
+            &cheap_route.base_url,&cheap_route.model,Some(1)
+        ).is_ok());
+        let policy=json!({"mode":"quality_cost","minQuality":0.9});
+        let (selected,receipt)=choose(&s,"",None,&policy,"implement feature","").unwrap();
+        assert_eq!(selected.id,"healthy");
+        assert_eq!(receipt["selection"]["qualifiedCandidates"],1);
+        let (pinned,_)=choose(&s,"cheapest",None,&policy,"implement feature","").unwrap();
+        assert_eq!(pinned.id,"cheapest");
+    }
+
     #[test]
     fn native_router_never_guesses_missing_prices_or_quality_and_is_deterministic() {
         let s=state();
