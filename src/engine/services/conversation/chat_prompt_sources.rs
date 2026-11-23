@@ -122,9 +122,7 @@ pub(super) fn project(source:&str,text:&str,query:&str)->Projection{
 pub(super) fn indexed_identity(
     state:&AppState,request:&TurnRequest,query:&str
 )->(String,String,Vec<Value>){
-    let mut stable=String::from(
-        "DOMINION 지속 에이전트. 정체성과 개인 경험은 에이전트 ID에 속하며 대화 장소가 바뀌어도 유지한다. 실제 권한과 도구는 현재 실행 경계에 따른다."
-    );
+    let mut stable=super::harness_prompts::effective(state,"identity.agent");
     let mut relevant=String::new();
     let mut items=Vec::new();
     if let Some(agent)=request.agent_id.as_deref().and_then(|id|state.store.get("agent",id)){

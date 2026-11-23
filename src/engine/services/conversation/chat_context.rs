@@ -6,16 +6,10 @@ use serde_json::{json, Value};
 /// One identity prefix per bot, shared by private chat, rooms and channels.
 /// Conversation-specific instructions follow this prefix, never precede it.
 pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec<Value>){
-    let mut text=if request.direct_chat || (request.agent_id.is_none()
+    let mut text=super::harness_prompts::effective(state,if request.direct_chat || (request.agent_id.is_none()
         && !request.tools_enabled && !request.tools_execution_enabled) {
-        String::from(if request.web_search&&request.direct_chat {
-            "DOMINION 대화형 AI입니다. 사용자 요청 시 공개 웹 검색과 페이지 읽기만 할 수 있습니다. 파일·셸·MCP·메모리 쓰기·외부 작업 권한은 없습니다."
-        }else{
-            "DOMINION 대화형 AI입니다. 사용자의 질문에 자연스럽게 답하십시오. 이번 대화에는 도구나 외부 실행 권한이 없습니다."
-        })
-    } else {
-        String::from("DOMINION 지속 에이전트. 정체성과 개인 경험은 에이전트 ID에 속하며 대화 장소가 바뀌어도 유지한다. 실제 권한과 도구는 현재 실행 경계에 따른다.")
-    };
+        if request.web_search && request.direct_chat {"identity.web"}else{"identity.chat"}
+    }else{"identity.agent"});
     let mut items=Vec::new();
     if let Some(agent)=request.agent_id.as_deref().and_then(|id|state.store.get("agent",id)) {
         text.push_str(&format!("\n활성 에이전트: {} (id: {}).",agent["name"].as_str().unwrap_or(""),agent["id"].as_str().unwrap_or("")));
@@ -39,11 +33,7 @@ pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec
 /// do not attach an unrelated operation manual or memory retrieval batch.
 /// Long owner instructions remain exact even when this costs more tokens.
 pub(super) fn lightweight_chat_prompt(state:&AppState,request:&TurnRequest)->PromptContext{
-    let mut prompt=String::from(if request.direct_chat {
-        "DOMINION. 당신은 사용자의 일반 대화를 돕는 AI 어시스턴트입니다. 사용자의 언어로 자연스럽고 정확하게 답하십시오."
-    }else{
-        "DOMINION. 사용자의 언어로 자연스럽고 간결하게 답하십시오."
-    });
+    let mut prompt=super::harness_prompts::effective(state,if request.direct_chat{"chat.lightweight"}else{"chat.lightweight_alt"});
     if request.direct_chat {
         prompt.push_str(&format!(
             "\n현재 날짜: {}",chrono::Local::now().format("%Y-%m-%d")
@@ -70,7 +60,7 @@ pub(super) fn lightweight_chat_prompt(state:&AppState,request:&TurnRequest)->Pro
         }
     }
     if request.reasoning_language.as_deref()==Some("ko"){
-        prompt.push_str("\n추론과 최종 답변은 다른 언어 요청이 없으면 한국어로 작성하십시오.");
+        prompt.push('\n');prompt.push_str(&super::harness_prompts::effective(state,"chat.lightweight_ko"));
     }
     let watermark=crate::engine::memory::stable_id(&[&prompt]);
     PromptContext{prompt,dynamic_context:String::new(),
@@ -81,7 +71,7 @@ pub(super) fn lightweight_chat_prompt(state:&AppState,request:&TurnRequest)->Pro
 /// Unlike identity_prefix, no participant persona or current query is included.
 /// The caller appends the stable room charter before each agent's persona.
 pub(super) fn room_shared_identity_prefix(state:&AppState)->(String,Vec<Value>){
-    let mut text=String::from("DOMINION 지속 에이전트. 정체성과 개인 경험은 에이전트 ID에 속하며 대화 장소가 바뀌어도 유지한다. 실제 권한과 도구는 현재 실행 경계에 따른다.");
+    let mut text=super::harness_prompts::effective(state,"identity.agent");
     let mut items=Vec::new();
     if let Some(settings)=state.store.get("assistant_settings","global")
         .filter(|settings|settings["enabled"]!=false){
@@ -180,19 +170,16 @@ pub(super) fn system_prompt_with_manifest_at(
     };
     if request.direct_chat || (request.agent_id.is_none() && !request.tools_enabled
         && !request.tools_execution_enabled) {
-        prompt.push_str("\n당신은 사용자의 일반 대화를 돕는 AI 어시스턴트입니다. 사용자의 언어로 대답하십시오.");
+        prompt.push('\n');prompt.push_str(&super::harness_prompts::effective(state,"chat.general"));
     } else {
-        prompt.push_str(
-            "\n당신은 Rust 엔진에서 동작하는 에이전트형 AI 작업 공간 DOMINION입니다. \
-             사용자가 다른 언어로 쓰지 않는 한 한국어로 답하십시오.",
-        );
+        prompt.push('\n');prompt.push_str(&super::harness_prompts::effective(state,"agent.general"));
         }
     if request.direct_chat && request.web_search {
-        prompt.push_str(" 이번 턴에는 공개 웹 검색(web_search)과 해당 웹페이지 읽기(http_fetch)만 허용됩니다. 검색 결과의 출처 URL을 명시하십시오. 파일·셸·계정·MCP·자동 실행 권한은 없습니다.");
+        prompt.push(' ');prompt.push_str(&super::harness_prompts::effective(state,"chat.web_scope"));
     } else if request.tools_enabled && request.tools_execution_enabled {
-        prompt.push_str(" 작업에 필요하면 사용 가능한 도구를 사용하십시오. 도구 결과를 정확히 보고하십시오.");
+        prompt.push(' ');prompt.push_str(&super::harness_prompts::effective(state,"agent.tools"));
     } else {
-        prompt.push_str(" 이번 턴에는 도구가 비활성화되어 있습니다. 외부 작업을 수행했다고 말하지 마십시오.");
+        prompt.push(' ');prompt.push_str(&super::harness_prompts::effective(state,"chat.no_tools"));
     }
     if request.direct_chat {
         // Direct conversation does not need the user's local directory in the
@@ -247,9 +234,7 @@ pub(super) fn system_prompt_with_manifest_at(
         &serde_json::to_string(&items).unwrap_or_default(),
     ]);
     if request.reasoning_language.as_deref() == Some("ko") {
-        prompt.push_str(
-            "\n\nWrite every internal reasoning / thinking step in Korean (한국어).              The final answer must also be in Korean unless the user asks otherwise.",
-        );
+        prompt.push_str("\n\n");prompt.push_str(&super::harness_prompts::effective(state,"chat.reasoning_ko"));
     }
     if let Some(extra) = &request.system_override {
         prompt.push_str("\n\n");

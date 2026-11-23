@@ -1,12 +1,9 @@
 //! Bounded SSE framing and optional text tool-call protocol for compatible local models.
 use serde_json::{json, Value};
+use crate::state::AppState;
 
-pub(super) async fn tool_manual(native: &[Value], query: &str) -> String {
-    let mut manual = String::from(
-        "You cannot use native function calling. To call a tool, output exactly one line:\n\
-         <tool_call>{\"name\":\"tool_name\",\"arguments\":{...}}</tool_call>\n\
-         Available tools:",
-    );
+pub(super) async fn tool_manual(state:&AppState,native: &[Value], query: &str) -> String {
+    let mut manual=super::harness_prompts::effective(state,"compat.tool_header");
     let lower = query.to_lowercase();
     let mut ranked = native.to_vec();
     ranked.sort_by_key(|definition| {
@@ -65,7 +62,7 @@ pub(super) async fn tool_manual(native: &[Value], query: &str) -> String {
             function.get("parameters").cloned().unwrap_or(json!({}))
         ));
     }
-    manual.push_str("\nExample: <tool_call>{\"name\":\"workspace_read\",\"arguments\":{\"path\":\"a.txt\"}}</tool_call>");
+    manual.push('\n');manual.push_str(&super::harness_prompts::effective(state,"compat.tool_example"));
     manual
 }
 
