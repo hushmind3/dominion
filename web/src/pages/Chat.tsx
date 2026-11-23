@@ -12,7 +12,7 @@ import {ExecutionInsights} from '../components/ExecutionInsights'
 import {createPortal} from 'react-dom'
 import {Button} from '../components/Primitives'
 import {FormEvent,useEffect,useLayoutEffect,useRef,useState,type ChangeEvent,type KeyboardEvent} from 'react'
-import {ArrowDown,ArrowRight,ArrowUp,BrainCircuit,Check,ChevronRight,CircleHelp,Copy,Menu,LoaderCircle,Paperclip,ShieldAlert,Sparkles,Square,TerminalSquare,X} from 'lucide-react'
+import {ArrowDown,ArrowRight,ArrowUp,BrainCircuit,Check,ChevronRight,CircleHelp,Copy,Menu,LoaderCircle,Paperclip,ShieldAlert,Sparkles,Square,TerminalSquare,Wrench,X} from 'lucide-react'
 import {Agent,Approval,Attachment,ChatMessage,ChatSession,Provider,get,post,resolveApproval,streamChat,uploadAttachment} from '../api'
 import {Action,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
@@ -49,7 +49,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const [override,setOverride]=useState<ModelOverride>();
  const defaultAgent=agents.value.find(agent=>agent.id==='default')||agents.value.find(agent=>agent.name==='기본값')||agents.value.find(agent=>agent.id==='general');
  const agentMode=(chatModeOverride&&chatModeOverride.scope===current?chatModeOverride.mode:
-  current?(selectedSession?.chatMode??(selectedSession?.agentId?'agent':'chat')):(initialAgent?'agent':'chat'))==='agent';
+  current?(selectedSession?.agentId?'agent':'chat'):(initialAgent?'agent':'chat'))==='agent';
  const agentId=agentMode?((agentChoice?.scope===current?agentChoice?.id:undefined)??selectedSession?.agentId??(!current?initialAgent:undefined)??defaultAgent?.id??''):'';
  const activeAgent=agents.value.find(agent=>agent.id===agentId);
  const manual=override&&override.scope===current?override:
@@ -419,9 +419,9 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    }
    streamStarted=true;
    await streamChat({
-    sessionId:id,clientTurnId,agentId:agentMode?agentId:undefined,directChat:!agentMode,
+    sessionId:id,clientTurnId,agentId:agentMode?agentId:undefined,mode:agentMode||toolsEnabled?'agent':'chat',
     providerId:agentMode?manual?.providerId:providerId,model:agentMode?manual?.model:model,input:text,
-    toolsEnabled:agentMode&&toolsEnabled,toolsExecutionEnabled:agentMode&&toolsEnabled,autoLearning:agentMode&&autoLearn,attachmentIds,
+    toolsEnabled,toolsExecutionEnabled:toolsEnabled,autoLearning:agentMode&&autoLearn,attachmentIds,
     reasoningLanguage:reasoningKo?'ko':'original',reasoningEffort:effectiveReasoningEffort||undefined,thinking:selectedProvider?.kind==='codex'?(effectiveReasoningEffort==='none'?false:canDisableThinking?effectiveThinkingEnabled:undefined):effectiveThinkingEnabled,
    },event=>{
     if(controller.signal.aborted||stoppingRef.current||stream.current!==controller)return;
@@ -539,7 +539,14 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      options={<>
        <Button variant="ghost" size="icon" className="!h-7 !w-7 md:hidden" onClick={onOpenNavigation} aria-label={t('chat.listExpand')} title={t('chat.recent')}><Menu size={17}/></Button>
        <ConversationTargetPicker openRevision={pickerRevision} active={active} providers={enabledProviders} agents={agents.value} providerId={providerId} model={model} agentId={agentMode?agentId:''} catalogue={catalogue}
-        onModel={(provider,chosenModel)=>{setChatModeOverride({scope:current,mode:'chat'});setRoute(provider,chosenModel)}} onAgent={chooseAgent}/>
+        onModel={(provider,chosenModel)=>{setChatModeOverride({scope:current,mode:'chat'});setAgentChoice(undefined);setRoute(provider,chosenModel)}} onAgent={chooseAgent}/>
+       <Button type="button" variant="ghost" size="sm" aria-pressed={toolsEnabled}
+        aria-label={loc==='en'?'Use built-in tools':'기본 도구 사용'}
+        title={toolsEnabled?(loc==='en'?'Built-in search, files and code tools are ready. Connected MCP plugins are managed separately.':'검색·파일·코드 등 내장 도구를 사용할 수 있습니다. MCP는 확장 기능에서 별도로 관리합니다.'):(loc==='en'?'Enable built-in tools':'검색·파일·코드 도구 켜기')}
+        onClick={()=>setToolsEnabled(!toolsEnabled)} disabled={busy}
+        className={'!min-h-8 !gap-1.5 !rounded-lg !px-2 !text-xs '+(toolsEnabled?'!bg-canvas !font-medium !text-ink':'!text-muted')}>
+        <Wrench size={15}/><span>{loc==='en'?(toolsEnabled?'Tools on':'Tools off'):(toolsEnabled?'도구 켜짐':'도구 꺼짐')}</span>
+       </Button>
 
        <Button type="button" variant="ghost" size="icon" className="!h-7 !w-7 !border-0 !bg-transparent !text-muted" title={t('chat.attach')} aria-label={t('chat.attach')} onClick={()=>imageInputRef.current?.click()} disabled={busy||uploading||Boolean(selectedSession?.roomId)}>{uploading?<LoaderCircle size={16} className="animate-spin"/>:<Paperclip size={16}/>}</Button>
        <input ref={imageInputRef} type="file" accept={ATTACH_ALLOWED.join(',')} multiple className="sr-only" aria-label={t('chat.attach')} onChange={onPickImages}/>
@@ -552,7 +559,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
 </div>
    </div></div>
   </div>
-  {settingsTarget&&createPortal(<ConversationSettings permissionControl={agentMode?<ExecutionPermissionsSetting/>:undefined} reasoningControl={<ReasoningSelect value={effectiveReasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} model={selectedModel} requireCatalog={selectedProvider?.kind==='codex'} className="w-full"/>} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={effectiveThinkingEnabled} setThinkingEnabled={setThinkingEnabled} canDisableThinking={canDisableThinking} reasoningEffort={effectiveReasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={agentMode&&toolsEnabled} setToolsEnabled={setToolsEnabled} autoLearn={agentMode&&autoLearn} setAutoLearn={setAutoLearn} optionsBusy={!agentMode} learning={learning} learnDisabled={!agentMode||!current||Boolean(selectedSession?.roomId)||busy} onLearn={learnSession}/>,settingsTarget)}
+  {settingsTarget&&createPortal(<ConversationSettings permissionControl={agentMode?<ExecutionPermissionsSetting/>:undefined} reasoningControl={<ReasoningSelect value={effectiveReasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} model={selectedModel} requireCatalog={selectedProvider?.kind==='codex'} className="w-full"/>} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={effectiveThinkingEnabled} setThinkingEnabled={setThinkingEnabled} canDisableThinking={canDisableThinking} reasoningEffort={effectiveReasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={toolsEnabled} setToolsEnabled={setToolsEnabled} autoLearn={agentMode&&autoLearn} setAutoLearn={setAutoLearn} optionsBusy={busy} learning={learning} learnDisabled={!agentMode||!current||Boolean(selectedSession?.roomId)||busy} onLearn={learnSession}/>,settingsTarget)}
  </div>
 }
 function Message({message,agentName,showReasoning,active=true}:{message:ChatMessage;agentName?:string;showReasoning?:boolean;active?:boolean}){
