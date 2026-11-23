@@ -32,7 +32,7 @@ test('MCP tools are directly accessible without extra menus or duplicate pages',
  assert.equal((nav.match(/id:'extensions' as const/g)||[]).length,1)
  assert.match(page,/<ViewTabs value=\{view\}/)
  assert.match(ui,/export function ViewTabs/)
- assert.match(page,/<CapabilitiesPage embedded/)
+ assert.match(extensions,/<CapabilitiesPage embedded/)
 })
 
 test('filters deduplicate catalog and prioritize saved connections',()=>{
