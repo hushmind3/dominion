@@ -10,9 +10,12 @@ test('Sub2 owns an editable registry and every registered model instruction is w
   read('../../src/engine/services/conversation/chat_prompt_sources.rs'),
   read('../../src/engine/services/conversation/chat/runtime/turn_body.rs'),
   read('../../src/engine/services/conversation/chat/protocol.rs'),
+  read('../../src/engine/services/decision/runtime_action_review.rs'),
+  read('../../src/engine/services/decision/learning.rs'),
+  read('../../src/engine/services/decision/reflect.rs'),
  ].join('\n')
  const ids=[...root.matchAll(/PromptSpec\{id:"([^"]+)"/g)].map(match=>match[1])
- assert.equal(ids.length,27)
+ assert.equal(ids.length,31)
  assert.equal(new Set(ids).size,ids.length)
  for(const id of ids)assert.ok(sources.includes('"'+id+'"'),'Unwired model-facing stage: '+id)
  assert.match(root,/harness_prompt_override/)
