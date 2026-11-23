@@ -8,7 +8,7 @@ import {AttachmentLink} from '../components/AttachmentLink'
 import {createPortal} from 'react-dom'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormEvent,useEffect,useMemo,useRef,useState,type ClipboardEvent,type DragEvent,type KeyboardEvent} from 'react'
-import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,MoreHorizontal,Globe2,Paperclip,Plus,Power,RefreshCw,Search,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
+import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,PanelLeftClose,MoreHorizontal,Globe2,Paperclip,Plus,Power,RefreshCw,Search,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
 import {Agent,Approval,ChatMessage,ChatSession,Provider,get,post,del,resolveApproval,streamChat,koreanReasoningEnabled} from '../api'
 import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
@@ -626,7 +626,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     <span className="grid size-8 shrink-0 place-items-center rounded-xl border border-[#EED0BC] bg-[#F7E8E1] text-lg font-bold text-[#C96442]">D</span>
     <strong className="min-w-0 flex-1 truncate text-lg font-semibold tracking-tight text-[#24211D]">dominion</strong>
     <Button size="icon" variant="ghost" type="button" onClick={()=>setShowHistory(false)}
-     aria-label={t('chat.listCollapse')} aria-controls="conversation-sidebar" aria-expanded={true} title={t('chat.listCollapse')}><Menu size={19}/></Button>
+     aria-label={t('chat.listCollapse')} aria-controls="conversation-sidebar" aria-expanded={true} title={t('chat.listCollapse')}><PanelLeftClose size={19}/></Button>
    </div>
    <Button className="mx-3 mb-3 inline-flex items-center justify-center gap-2 rounded-xl border border-[#EED9CC] bg-[#C96442] px-4 py-2.5 text-xs font-bold text-white hover:bg-[#A94E30]" onClick={resetLocal}><Plus size={17}/> {t('chat.newChat')}</Button>
    <div className="mx-3 mb-3"><ConversationSwitch mode="chat" onChange={switchMode}/></div>
