@@ -459,9 +459,9 @@ pub fn has_generation_headroom(
     let Some(limit) = requests_per_minute.filter(|value| *value > 0) else {
         return true;
     };
-    window.stamps.iter()
+    (window.stamps.iter()
         .filter(|stamp| now.duration_since(**stamp).as_secs() < 60)
-        .count() as u64 < limit
+        .count() as u64) < limit
 }
 
 /// Reserve one generation slot for routes with a documented anonymous limit.
