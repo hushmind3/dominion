@@ -16,10 +16,10 @@ await withBrowser('workspace-visual',async({page,db,url,viewport})=>{
  const plugin=page.getByRole('checkbox',{name:/MCP.*Mock Test MCP/})
  await plugin.waitFor({state:'visible'})
  assert.equal(await plugin.isChecked(),true)
- await plugin.uncheck()
+ await plugin.click() // React commits the server-confirmed state asynchronously.
  await page.waitForFunction(()=>document.querySelector('input[aria-label*="Mock Test MCP"]')?.checked===false)
  assert.equal(db.mcp[0].enabled,false)
- await plugin.check()
+ await plugin.click()
  await page.waitForFunction(()=>document.querySelector('input[aria-label*="Mock Test MCP"]')?.checked===true)
  assert.equal(db.mcp[0].enabled,true)
  assert.equal(db.mcpWrites.length,2)
