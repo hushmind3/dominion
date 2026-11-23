@@ -332,29 +332,7 @@ function RoomConversation({settingsTarget,room,agents,providers,openList,openSes
  return <div className="room-conversation">
   {settingsTarget&&createPortal(<ConversationSettings permissionControl={<ExecutionPermissionsSetting/>} reasoningControl={<ReasoningSelect value={reasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} defaultLabel={current.reasoningEffort?`${t('rooms.reasoningDefault')} (${current.reasoningEffort})`:t('chat.reasoningAuto')} className="chat-reasoning !h-7 !w-auto !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-muted"/>} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={thinkingEnabled} setThinkingEnabled={setThinkingEnabled} reasoningEffort={reasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={current.toolsEnabled===true} setToolsEnabled={value=>void changeRoomOption('toolsEnabled',value)} autoLearn={current.autoLearning===true} setAutoLearn={value=>void changeRoomOption('autoLearning',value)} optionsBusy={optionsBusy} learning={knowledgeBusy} learnDisabled={!sessionId||running} onLearn={learnKnowledge} notice={knowledgeNotice}/>,settingsTarget)}
   <section className="room-main" aria-label={t('rooms.headerAria',{name:current.name})}>
-   <header className="flex min-w-0 shrink-0 flex-wrap items-center gap-3 border-b border-[#EEE7DC] bg-[#FFFDF9] px-4 py-3 sm:px-6 sm:py-4">
-    <div className="flex min-w-0 flex-1 items-center gap-3">
-     <div className="hidden shrink-0 items-center -space-x-1.5 sm:flex">{roster.slice(0,3).map(agent=><span key={agent.id} className="rounded-full border-2 border-surface"><Avatar agent={agent} size="small"/></span>)}</div>
-     <div className="min-w-0">
-      <h2 className="truncate text-[15px] font-semibold tracking-[-.03em] text-[#46382C]">{current.name}</h2>
-      <p className="mt-1 flex min-w-0 items-center gap-2 text-[11px] text-[#9C8D7A]">
-       <span className={'size-1.5 shrink-0 rounded-full '+(running?'bg-brand':'bg-success')}/>
-       <span className="shrink-0">{running?t('rooms.live.responding'):t('rooms.st.idle')}</span>
-       <span aria-hidden="true">·</span>
-       <span className="truncate">{current.topic||t('rooms.responders',{count:roster.length})}</span>
-      </p>
-     </div>
-    </div>
-    <div className="flex shrink-0 items-center gap-1.5">
-     <Button variant="secondary" size="sm" onClick={()=>{setTeamOpen(true);setInspector(false)}} className="!min-h-9 !gap-1.5 !rounded-lg !px-2.5 !text-xs">
-      <Workflow size={16}/><span className="hidden min-[420px]:inline">{t('rooms.taskAction')}</span>
-     </Button>
-     <RoomActions active={visibleView} actions={[
-      {label:t('rooms.editParticipants'),icon:<UsersRound size={16}/>,run:()=>{setInspector(true);setRecipientsOpen(false)}},
-      {label:t('rooms.sharedKnowledge'),icon:<BookOpenText size={16}/>,run:()=>void openKnowledge()},
-     ]}/>
-    </div>
-   </header>
+
    <div className="room-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]" ref={scrollRef} onScroll={onScroll} role="log" aria-label={t('rooms.logAria')} aria-busy={loading}>
     <div className="mx-auto w-full max-w-conversation px-4 py-6 sm:px-6">
     {loading?<div className="room-feed-loading"><LoaderCircle size={20} className="animate-spin"/> {t('rooms.loading')}</div>:!visible.length?<RoomFirstMessage roster={roster}/>:<>{visible.map(message=>{const owner=message.role==='user';const shared=message.metadata?.kind==='learning_report'&&(message.metadata?.learningScope==='room'||message.metadata?.source==='knowledge');const agent=shared?undefined:agents.find(item=>item.id===message.agent_id);return <TranscriptMessage key={message.id} active={visibleView} message={message} showReasoning={showReasoning} agent={agent} name={shared?t('rooms.sharedKnowledge'):owner?(current.ownerName||t('rooms.me')):(agent?.name||message.agent_id||t('rooms.agentFallback'))} owner={owner} index={Math.max(0,current.agentIds.indexOf(message.agent_id||''))}/>})}</>}
@@ -381,6 +359,11 @@ function RoomConversation({settingsTarget,room,agents,providers,openList,openSes
      label={t('rooms.messageAria')} placeholder={mode==='mentioned'?t('rooms.mentionPlaceholder'):t('rooms.composerPlaceholder',{name:current.name})}
      options={<>
        <Button variant="ghost" size="icon" className="md:hidden" onClick={openList} aria-label={t('rooms.listExpand')}><Menu size={17}/></Button>
+       <Button variant="ghost" className="!min-h-9 !gap-1.5 !px-2 !py-1.5 !text-xs !font-medium" onClick={()=>{setTeamOpen(true);setInspector(false)}}><Workflow size={16}/>{t('rooms.taskAction')}</Button>
+       <RoomActions active={visibleView} actions={[
+        {label:t('rooms.editParticipants'),icon:<UsersRound size={16}/>,run:()=>{setInspector(true);setRecipientsOpen(false)}},
+        {label:t('rooms.sharedKnowledge'),icon:<BookOpenText size={16}/>,run:()=>void openKnowledge()},
+       ]}/>
        <Button type="button" variant="ghost" size="icon" className="!h-7 !w-7 !border-0 !bg-transparent !text-muted" title={t('chat.attach')} aria-label={t('chat.attach')} onClick={()=>imageInputRef.current?.click()} disabled={sending||uploading}>{uploading?<LoaderCircle size={16} className="animate-spin"/>:<Paperclip size={16}/>}</Button>
        <input ref={imageInputRef} type="file" accept={ROOM_ATTACH_ALLOWED.join(',')} multiple className="sr-only" aria-label={t('chat.attach')} onChange={onPickImages}/>
 

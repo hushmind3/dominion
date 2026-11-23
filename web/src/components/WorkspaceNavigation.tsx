@@ -1,103 +1,54 @@
-import {useMemo,useState,type RefObject} from 'react'
-import {ArrowRight,LoaderCircle,Menu,MessageSquare,PanelLeftClose,PanelLeftOpen,Plus,Search,Settings,UsersRound,X} from 'lucide-react'
+import {useState, type RefObject} from 'react'
+import {BookOpenText, LoaderCircle, Menu, MessageSquare, PanelLeftClose, Plus, RadioTower, Search, Settings, UsersRound, Workflow, X} from 'lucide-react'
 import type {ChatSession} from '../api'
 import {useRemote} from '../hooks/useRemote'
-import {Button,TextInput,cn} from './Primitives'
+import {Button, TextInput, cn} from './Primitives'
 import {OwnerProfileEditor} from './OwnerProfile'
-import {t,useLocale} from '../i18n'
+import {t, useLocale} from '../i18n'
 import type {PageId} from '../workspacePages'
 
-type Room={id:string;name:string;agentIds:string[];status?:string}
-type Props={
- page:PageId;mode:'chat'|'rooms';session?:string;selectedRoom?:string;open:boolean;mobile:boolean;online:boolean
- panel:RefObject<HTMLElement|null>;onToggle:()=>void;onNavigate:(page:PageId,session?:string)=>void
- onRoom:(id:string)=>void;onNew:()=>void;onNewGroup:()=>void;onClose:()=>void;resize:Record<string,unknown>
+type Room = {id:string;name:string;agentIds:string[];status?:string}
+type Props = {
+ page:PageId; session?:string; selectedRoom?:string; open:boolean; mobile:boolean; online:boolean
+ panel:RefObject<HTMLElement|null>; onToggle:()=>void; onNavigate:(page:PageId,session?:string)=>void
+ onRoom:(id:string)=>void; onNew:()=>void; onNewGroup:()=>void; onClose:()=>void; resize:Record<string,unknown>
 }
 
-/** Sub4 conversation UX: history belongs to conversations; settings and
- * service/MCP/persona management open in their own workspace. */
-export function WorkspaceNavigation({mode,page,session,selectedRoom,open,mobile,online,panel,onToggle,onNavigate,onRoom,onNew,onNewGroup,onClose,resize}:Props){
+/** One navigation and one conversation index across the entire sub3 client. */
+export function WorkspaceNavigation({page,session,selectedRoom,open,mobile,online,panel,onToggle,onNavigate,onRoom,onNew,onNewGroup,onClose,resize}:Props) {
  const en=useLocale()==='en'
  const tr=(ko:string,english:string)=>en?english:ko
  const sessions=useRemote<ChatSession[]>('/api/sessions',[])
  const rooms=useRemote<Room[]>('/api/rooms',[])
  const [query,setQuery]=useState('')
  const navigate=(target:PageId,id?:string)=>{onNavigate(target,id);if(mobile)onClose()}
- const create=()=>{if(mode==='rooms')onNewGroup();else onNew();if(mobile)onClose()}
+ const main=[{id:'chat' as const,label:tr('대화','Chat'),icon:MessageSquare},{id:'rooms' as const,label:tr('그룹','Groups'),icon:UsersRound},{id:'tasks' as const,label:t('nav.tasks'),icon:Workflow}]
+ const tools=[{id:'connections' as const,label:tr('서비스 연결','Connected services'),icon:RadioTower},{id:'memory' as const,label:tr('기억','Memory'),icon:BookOpenText}]
+ const renderItem=({id,label,icon:Icon}:typeof main[number]|typeof tools[number])=><Button variant="bare" key={id} className={cn('flex min-h-11 w-full min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2 text-left text-sm text-ink/75 hover:bg-surface/75 aria-[current=page]:bg-selected aria-[current=page]:font-semibold aria-[current=page]:text-brand-hover [&>svg]:shrink-0 [&>span]:min-w-0 [&>span]:flex-1',!open&&'justify-center !px-2')} aria-current={page===id?'page':undefined} title={!open?label:undefined} aria-label={label} onClick={()=>navigate(id)}><Icon size={19}/>{open&&<span>{label}</span>}</Button>
  const needle=query.trim().toLocaleLowerCase()
- const roomMatches=rooms.value.filter(room=>room.name.toLocaleLowerCase().includes(needle))
- const history=useMemo(()=>{
-  const now=new Date();now.setHours(0,0,0,0)
-  const week=now.getTime()-7*86400000
-  const bins:[string,ChatSession[]][]=[
-   [tr('오늘','Today'),[]],[tr('지난 7일','Last 7 days'),[]],[tr('이전 대화','Earlier'),[]]
-  ]
-  for(const item of sessions.value){
-   if(item.roomId||!(item.title||'').toLocaleLowerCase().includes(needle))continue
-   const updated=new Date(item.updatedAt||item.createdAt||'').getTime()
-   bins[updated>=now.getTime()?0:updated>=week?1:2][1].push(item)
-  }
-  return bins.filter(([,items])=>items.length)
- },[sessions.value,needle,en])
- const itemClass='flex min-h-10 w-full min-w-0 items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[12px] text-[#706456] transition-colors hover:bg-[#EAE3D8] aria-[current=page]:bg-[#E9DFD0] aria-[current=page]:font-semibold aria-[current=page]:text-[#44382E]'
- const selectMode=(next:'chat'|'rooms')=>navigate(next)
+ const privateChats=sessions.value.filter(item=>!item.roomId&&(item.title||'').toLocaleLowerCase().includes(needle)).slice(0,50)
+ const groups=rooms.value.filter(item=>item.name.toLocaleLowerCase().includes(needle))
  return <>
-  {mobile&&open&&<Button variant="bare" className="fixed inset-0 z-80 !rounded-none !bg-ink/35" aria-label={tr('메뉴 닫기','Close menu')} onClick={onClose}/>}
-  <aside ref={panel} id="workspace-navigation" role={mobile&&open?'dialog':undefined} aria-modal={mobile&&open?true:undefined}
-   tabIndex={-1} aria-label={tr('대화 목록','Conversation history')}
-   className={cn('workspace-navigation relative flex min-h-0 shrink-0 flex-col border-r border-divider bg-[#F4F1EA]',
-    mobile?(open?'fixed inset-y-0 left-0 z-81 w-[min(19rem,86vw)] shadow-2xl':'hidden'):'w-[var(--workspace-navigation-width)]',
-    !open&&'items-center')} data-open={open} data-mobile={mobile}>
-   <div className={cn('flex min-h-[76px] shrink-0 items-center gap-2.5',open?'px-5':'justify-center px-2')}>
-    {open&&<><span className="grid size-8 shrink-0 place-items-center rounded-[10px] border border-[#C9644230] bg-[#F5E5DA] text-lg font-extrabold text-brand">D</span>
-     <strong className="min-w-0 flex-1 truncate text-[21px] font-semibold tracking-[-.04em] text-[#44382E]">dominion</strong></>}
-    <Button variant="ghost" size="icon" className="!shrink-0" title={open?tr('메뉴 접기','Collapse'):tr('메뉴 펼치기','Expand')}
-     aria-label={open?tr('메뉴 접기','Collapse navigation'):tr('메뉴 펼치기','Expand navigation')}
-     aria-expanded={open} aria-controls="workspace-navigation" onClick={onToggle}>
-     {open?<PanelLeftClose size={18}/>:<PanelLeftOpen size={19}/>}
-    </Button>
+  {mobile&&open&&<Button variant="bare" className="fixed inset-0 z-80 border-0 bg-ink/30" aria-label={tr('메뉴 닫기','Close navigation')} onClick={onClose}/>}
+  <aside ref={panel} id="workspace-navigation" role={mobile&&open?'dialog':undefined} aria-modal={mobile&&open?true:undefined} tabIndex={-1} aria-label={tr('작업공간 메뉴','Workspace navigation')} className={cn('workspace-navigation relative flex min-h-0 flex-col border-r border-divider bg-sidebar p-3',mobile?(open?'fixed inset-y-0 left-0 z-81 w-[min(20rem,86vw)] shadow-xl':'hidden'):'w-[var(--workspace-navigation-width)] shrink-0',!open&&'!px-2')} data-open={open} data-mobile={mobile}>
+   <div className="mb-4 flex min-h-12 items-center justify-between gap-3 px-2 [&>a]:text-2xl [&>a]:font-semibold [&>a]:tracking-tight">{open&&<a href="#/chat" onClick={event=>{event.preventDefault();navigate('chat')}}>dominion</a>}<Button size="icon" variant="ghost" onClick={onToggle} aria-label={open?tr('메뉴 접기','Collapse navigation'):tr('메뉴 펼치기','Expand navigation')} aria-expanded={open} aria-controls="workspace-navigation">{open?<PanelLeftClose size={18}/>:<Menu size={20}/>}</Button></div>
+   <Button variant="bare" className="mb-4 flex min-h-11 items-center justify-center gap-2 rounded-xl bg-brand px-2 text-sm font-semibold text-white hover:bg-brand-hover" title={tr('새 대화','New conversation')} onClick={()=>{onNew();if(mobile)onClose()}}><Plus size={20}/>{open&&<span>{tr('새 대화','New conversation')}</span>}</Button>
+   <nav className="border-b border-divider pb-3" aria-label={tr('대화와 작업','Conversations and work')}>{main.map(item=><div className="flex min-w-0 items-center gap-0.5" key={item.id}>{renderItem(item)}{item.id==='rooms'&&open&&<Button variant="ghost" size="icon" className="!h-8 !w-8 !p-0" title={tr('새 그룹 만들기','Create a group')} aria-label={tr('새 그룹 만들기','Create a group')} onClick={()=>{onNewGroup();if(mobile)onClose()}}><Plus size={16}/></Button>}</div>)}</nav>
+   <div className="mt-3 min-h-0 flex-1 overflow-y-auto overscroll-contain">
+    <nav className="pb-3" aria-label={tr('서비스 연결과 기억','Service connections and memory')}>{tools.map(renderItem)}</nav>
+    {open&&<>
+     <div className="my-3 flex items-center gap-2 rounded-lg border border-divider bg-surface/50 px-2 text-muted focus-within:ring-2 focus-within:ring-brand/25 [&>svg]:shrink-0 [&_input]:!border-0 [&_input]:!bg-transparent [&_input]:!px-0 [&_input]:!text-xs [&_input]:!shadow-none [&_input]:!ring-0"><Search size={15}/><TextInput value={query} onChange={event=>setQuery(event.target.value)} placeholder={tr('대화·그룹 찾기','Find chats and groups')} aria-label={tr('대화·그룹 검색','Search chats and groups')}/>{query&&<Button size="icon" variant="ghost" aria-label={tr('검색 지우기','Clear search')} onClick={()=>setQuery('')}><X size={14}/></Button>}</div>
+     <div className="space-y-5 [&_h2]:mb-2 [&_h2]:px-3 [&_h2]:text-xs [&_h2]:font-medium [&_h2]:text-muted">
+      {groups.length>0&&<section><h2>{tr('그룹 대화','Groups')}</h2>{groups.map(room=><Button key={room.id} variant="bare" className="flex min-h-10 w-full min-w-0 items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-muted hover:bg-surface/60 aria-[current=page]:bg-selected aria-[current=page]:font-semibold aria-[current=page]:text-brand-hover [&>svg]:shrink-0 [&>span]:min-w-0 [&>span]:flex-1 [&>span]:truncate [&>i]:size-1.5 [&>i]:rounded-full [&>i]:bg-success" aria-current={page==='rooms'&&room.id===selectedRoom?'page':undefined} onClick={()=>{onRoom(room.id);if(mobile)onClose()}}><UsersRound size={15}/><span>{room.name}</span>{room.status==='running'&&<i aria-label={tr('답변 중','Responding')}/>}</Button>)}</section>}
+      {privateChats.length>0&&<section><h2>{tr('최근 대화','Recent conversations')}</h2>{privateChats.map(item=><Button key={item.id} variant="bare" className="flex min-h-10 w-full min-w-0 items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-muted hover:bg-surface/60 aria-[current=page]:bg-selected aria-[current=page]:font-semibold aria-[current=page]:text-brand-hover [&>svg]:shrink-0 [&>span]:min-w-0 [&>span]:flex-1 [&>span]:truncate [&>i]:size-1.5 [&>i]:rounded-full [&>i]:bg-success" title={item.title} aria-current={page==='chat'&&session===item.id?'page':undefined} onClick={()=>navigate('chat',item.id)}><MessageSquare size={15}/><span>{item.title||tr('새 대화','New conversation')}</span></Button>)}</section>}
+      {(sessions.loading||rooms.loading)&&!privateChats.length&&!groups.length&&<div className="flex items-center justify-center gap-2 px-3 py-4 text-center text-xs leading-6 text-muted" role="status"><LoaderCircle size={15} className="animate-spin"/>{tr('대화 불러오는 중','Loading conversations')}</div>}
+      {!sessions.loading&&!rooms.loading&&!privateChats.length&&!groups.length&&<p className="flex items-center justify-center gap-2 px-3 py-4 text-center text-xs leading-6 text-muted">{tr(query?'검색 결과가 없습니다.':'대화를 시작하면 여기에 저장됩니다.',query?'No matching conversations.':'Your conversations will appear here.')}</p>}
+      {(sessions.error||rooms.error)&&<Button variant="ghost" className="w-full !text-xs" onClick={()=>{void sessions.reload();void rooms.reload()}}>{tr('대화 목록 다시 불러오기','Reload conversations')}</Button>}
+     </div>
+    </>}
    </div>
-   <Button variant="primary" title={mode==='chat'?tr('새 대화','New chat'):tr('새 그룹 만들기','New group')}
-    aria-label={mode==='chat'?tr('새 대화','New chat'):tr('새 그룹 만들기','New group')} onClick={create}
-    className={cn('!min-h-11 !shrink-0 !justify-start !gap-2.5 !rounded-xl !text-sm',open?'!mx-4 !mb-4 !px-3':'!mx-1 !mb-4 !size-11 !justify-center !p-0')}>
-    <Plus size={19}/>{open&&<span>{mode==='chat'?tr('새 대화','New chat'):tr('새 그룹 만들기','New group')}</span>}
-   </Button>
-   <nav className={cn('flex shrink-0 gap-1',open?'mx-4 mb-4 rounded-xl bg-[#EBE5DB] p-1':'flex-col px-1')} aria-label={tr('대화 전환','Conversation switch')}>
-    {([{id:'chat',label:tr('대화','Chat'),icon:MessageSquare},{id:'rooms',label:tr('그룹','Groups'),icon:UsersRound}] as const).map(({id,label,icon:Icon})=>
-     <Button key={id} variant="bare" onClick={()=>selectMode(id)} aria-current={mode===id?'page':undefined}
-      title={label} aria-label={label} className={cn('!min-h-9 !rounded-lg !text-[12px]',open?'!flex-1 !gap-2':'!size-11 !justify-center !p-0',
-       mode===id?'!bg-surface !font-semibold !text-brand-hover !shadow-sm':'!text-[#82776A] hover:!bg-[#E1D7C9]')}>
-      <Icon size={17}/>{open&&<span>{label}</span>}
-     </Button>)}
-   </nav>
-   {open&&<label className="mx-4 mb-3 flex min-w-0 shrink-0 items-center gap-2 rounded-lg border border-[#E1DACD] bg-[#FBF9F4] px-2.5 text-muted focus-within:ring-2 focus-within:ring-brand/30">
-    <Search size={15} className="shrink-0"/>
-    <TextInput value={query} onChange={event=>setQuery(event.target.value)} placeholder={mode==='chat'?tr('대화 검색','Search chats'):tr('그룹 검색','Search groups')}
-     aria-label={tr('대화·그룹 검색','Search chats and groups')} className="!min-h-9 !min-w-0 !flex-1 !border-0 !bg-transparent !px-0 !text-xs !shadow-none focus:!ring-0"/>
-    {query&&<Button variant="bare" size="icon" onClick={()=>setQuery('')} aria-label={tr('검색 지우기','Clear search')}><X size={14}/></Button>}
-   </label>}
-   <nav className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-5" aria-label={mode==='chat'?tr('최근 대화','Recent chats'):tr('그룹 목록','Groups')}>
-    {open&&(mode==='chat'?history.length>0?history.map(([label,items])=><section key={label} className="mb-5">
-     <h2 className="mb-2 px-3 text-[11px] font-medium text-[#9B8E7E]">{label}</h2>
-     {items.map(item=><Button key={item.id} variant="bare" className={itemClass} aria-current={page==='chat'&&session===item.id?'page':undefined}
-      title={item.title} onClick={()=>navigate('chat',item.id)}><MessageSquare size={15} className="shrink-0 opacity-70"/><span className="min-w-0 flex-1 truncate">{item.title||tr('새 대화','New chat')}</span><ArrowRight size={13} className="shrink-0 opacity-50"/></Button>)}
-    </section>):null:
-     <section><h2 className="mb-2 px-3 text-[11px] font-medium text-[#9B8E7E]">{tr('그룹 목록','Groups')}</h2>
-      {roomMatches.map(room=><Button key={room.id} variant="bare" className={itemClass} aria-current={page==='rooms'&&room.id===selectedRoom?'page':undefined}
-       onClick={()=>{onRoom(room.id);if(mobile)onClose()}}><UsersRound size={15} className="shrink-0 opacity-70"/><span className="min-w-0 flex-1 truncate">{room.name}</span>{room.status==='running'&&<i className="size-1.5 rounded-full bg-success" aria-label={tr('답변 중','Responding')}/>}</Button>)}
-     </section>)}
-    {open&&((mode==='chat'?sessions.loading:rooms.loading))&&<div role="status" className="flex items-center gap-2 px-3 py-4 text-xs text-muted"><LoaderCircle size={16} className="animate-spin"/>{tr('불러오는 중','Loading')}</div>}
-    {open&&((mode==='chat'?sessions.error:rooms.error))&&<Button variant="ghost" onClick={()=>{void sessions.reload();void rooms.reload()}}>{tr('목록 다시 불러오기','Retry loading')}</Button>}
-    {open&&!(mode==='chat'?sessions.loading:rooms.loading)&&!(mode==='chat'?history.length:roomMatches.length)&&<p className="px-3 py-5 text-center text-xs text-muted">{tr(query?'검색 결과가 없습니다.':'아직 내역이 없습니다.',query?'No matches':'Nothing here yet')}</p>}
-   </nav>
-   <footer className={cn('mt-auto shrink-0 border-t border-divider',open?'px-4 py-3':'flex flex-col items-center gap-2 px-1 py-3')}>
-    <Button variant="bare" className={cn('!min-h-11 !gap-2.5 !rounded-lg !text-[13px] !text-[#706456] hover:!bg-[#EAE3D8]',open?'!w-full !justify-start !px-3':'!size-11 !justify-center !p-0')}
-     onClick={()=>navigate('settings')} title={t('nav.settings')} aria-label={t('nav.settings')}>
-     <Settings size={18}/>{open&&<span>{t('nav.settings')}</span>}
-    </Button>
-    {open&&<div className="mt-2 flex items-center justify-between gap-2 border-t border-divider pt-2"><OwnerProfileEditor compact/><span role="status" className="flex items-center gap-1.5 text-[10px] text-muted"><i className={'size-1.5 rounded-full '+(online?'bg-success':'bg-warning')}/>{online?tr('연결됨','Connected'):tr('연결 끊김','Offline')}</span></div>}
-   </footer>
-   {open&&!mobile&&<div {...resize} className="absolute inset-y-0 -right-0.5 z-20 w-1.5 cursor-col-resize hover:bg-brand/20" aria-label={tr('메뉴 너비 조절','Resize navigation')}/>}
+   <div className="flex items-center gap-1.5 border-t border-divider pt-3"><Button variant="bare" className={cn('flex min-h-11 w-full min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2 text-left text-sm text-ink/75 hover:bg-surface/75 aria-[current=page]:bg-selected aria-[current=page]:font-semibold aria-[current=page]:text-brand-hover [&>svg]:shrink-0 [&>span]:min-w-0 [&>span]:flex-1',!open&&'justify-center !px-2')} aria-current={page==='settings'?'page':undefined} onClick={()=>navigate('settings')} aria-label={t('nav.settings')}><Settings size={19}/>{open&&<span>{t('nav.settings')}</span>}<i className="size-1.5 shrink-0 rounded-full bg-divider data-[online=true]:bg-success" data-online={online} aria-label={online?tr('연결됨','Connected'):tr('연결 끊김','Disconnected')}/></Button>{open&&<OwnerProfileEditor compact/>}</div>
+   {open&&!mobile&&<div {...resize} className="absolute inset-y-0 -right-0.5 z-20 w-1.5 cursor-col-resize hover:bg-brand/15" aria-label={tr('메뉴 너비 조절','Resize navigation')}/>}
   </aside>
  </>
 }
