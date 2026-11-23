@@ -1,4 +1,5 @@
 import { koreanToolSummary } from '../lib/toolSummary'
+import {discoveryForMcp} from '../features/mcp/quickCommands'
 import {DialogBackdrop,DialogPanel} from "../components/Dialog";
 import {SkillsPanel} from "./extensions/SkillsPanel";
 import {CapabilitiesPage} from './Capabilities';
@@ -478,11 +479,13 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
       for (let attempt = 0; attempt < 30; attempt++) {
         const found = await get<any[]>("/api/mcp/discover");
         setTools(found);
-        const own = found.filter((t) => t.mcpId === saved.id && !t.error);
+        const {tools:own,error:failure}=discoveryForMcp(found,saved.id);
         if (own.length) {
-          setMessage(
-            t('ext.connectedToolsMsg', { name: preset.name, count: own.length }),
-          );
+          setMessage(t('ext.connectedToolsMsg', { name: preset.name, count: own.length }));
+          return;
+        }
+        if (failure) {
+          setError((loc === 'en' ? 'MCP connection failed: ' : 'MCP 연결 실패: ')+failure);
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -840,9 +843,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
           <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {filteredPresets.map((preset) => {
               const record = mcp.value.find((x) => x.name === preset.name);
-              const connected = tools.filter(
-                (t) => t.mcpId === record?.id && !t.error,
-              ).length;
+              const connected = discoveryForMcp(tools,record?.id||'').tools.length;
               return (
                 <Panel
                   key={preset.id}
@@ -912,9 +913,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
             {featured.map((x) => {
               const Icon = x.icon;
               const record = mcp.value.find((y) => y.name === x.name);
-              const connected = tools.filter(
-                (t) => t.mcpId === record?.id && !t.error,
-              ).length;
+              const connected = discoveryForMcp(tools,record?.id||'').tools.length;
               return (
                 <Panel key={x.name} className="flex min-w-0 flex-col gap-3 p-5">
                   <div className="grid size-12 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand">
@@ -1155,16 +1154,13 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                   </small>
                 </div>
                 <StateTag
-                  online={x.enabled !== false && Boolean(
-                    tools.find((t) => t.mcpId === x.id && !t.error),
-                  )}
+                  online={x.enabled !== false && discoveryForMcp(tools,x.id).tools.length>0}
                 >
                   {(() => {
-                    const own = tools.filter((t) => t.mcpId === x.id);
-                    const ok = own.filter((t) => !t.error).length;
+                    const {tools:own,error:failure}=discoveryForMcp(tools,x.id);
                     if (x.enabled === false) return t('conn.status.disabled');
-                    if (own.some((t) => t.error)) return t('ext.connectionFailed');
-                    if (ok) return t('ext.connectedTools', { count: ok });
+                    if (failure) return t('ext.connectionFailed');
+                    if (own.length) return t('ext.connectedTools', { count: own.length });
                     return tools.length ? t('ext.checkConnection') : t('ext.checking');
                   })()}
                 </StateTag>
