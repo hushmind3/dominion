@@ -173,7 +173,7 @@ try{
  await inspector.route(url=>new URL(url).pathname.startsWith('/api/'),async route=>{
   const path=new URL(route.request().url()).pathname
   if(path==='/api/events'){
-   await route.fulfill({status:200,contentType:'text/event-stream',body:': fixture\\n\\n'})
+   await route.fulfill({status:200,contentType:'text/event-stream',body:': fixture\n\n'})
    return
   }
   let result=[]
