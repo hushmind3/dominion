@@ -389,6 +389,9 @@ pub fn ordered_alternatives(state: &AppState, exclude_id: &str) -> Vec<Route> {
         .filter(|provider| provider["id"].as_str() != Some(exclude_id))
         .filter_map(|provider| {
             let route = route_from_provider(state, &provider, None).ok()?;
+            if !has_generation_headroom(&route.base_url, &route.model, route.requests_per_minute) {
+                return None;
+            }
             let learning = provider["learning"].as_bool() == Some(true);
             Some((route, capability_score(&provider), learning))
         })
@@ -433,6 +436,32 @@ struct LimitWindow {
 fn rate_limits() -> &'static Mutex<HashMap<String, LimitWindow>> {
     static LIMITS: OnceLock<Mutex<HashMap<String, LimitWindow>>> = OnceLock::new();
     LIMITS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// A read-only admission check for automatic routing. This must not spend a
+/// request slot: the actual dispatch still performs the authoritative
+/// reservation, so a concurrent request cannot overbook an RPM limit.
+/// Explicit owner-pinned routes deliberately bypass this routing hint.
+pub fn has_generation_headroom(
+    base_url: &str,
+    model: &str,
+    requests_per_minute: Option<u64>,
+) -> bool {
+    let key = format!("{base_url}|{model}");
+    let now = std::time::Instant::now();
+    let Ok(limits) = rate_limits().lock() else { return false; };
+    let Some(window) = limits.get(&key) else { return true; };
+    if window.blocked_until.is_some_and(|until| until > now)
+        || window.slow_until.is_some_and(|until| until > now)
+    {
+        return false;
+    }
+    let Some(limit) = requests_per_minute.filter(|value| *value > 0) else {
+        return true;
+    };
+    window.stamps.iter()
+        .filter(|stamp| now.duration_since(**stamp).as_secs() < 60)
+        .count() as u64 < limit
 }
 
 /// Reserve one generation slot for routes with a documented anonymous limit.
@@ -793,6 +822,23 @@ mod tests {
         let error = reserve_generation("http://slow.invalid/v1", "slow-model", None).unwrap_err();
         assert!(error.contains("느렸던"));
         assert!(reserve_generation("http://fast.invalid/v1", "fast-model", None).is_ok());
+    }
+
+    #[test]
+    fn automatic_route_headroom_sees_cooldowns_without_consuming_slots() {
+        let base = "http://headroom-sub3.example.invalid/v1";
+        let cool = "cooled";
+        assert!(has_generation_headroom(base, cool, Some(1)));
+        assert!(has_generation_headroom(base, cool, Some(1)));
+        assert!(reserve_generation(base, cool, Some(1)).is_ok());
+        assert!(!has_generation_headroom(base, cool, Some(1)));
+        assert!(!has_generation_headroom(base, cool, Some(1)));
+        assert!(has_generation_headroom(base, cool, None));
+        mark_rate_limited(base, cool);
+        assert!(!has_generation_headroom(base, cool, None));
+        assert!(has_generation_headroom(base, "separate", Some(1)));
+        mark_slow(base, "separate");
+        assert!(!has_generation_headroom(base, "separate", Some(1)));
     }
 
     #[test]
