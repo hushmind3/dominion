@@ -205,7 +205,7 @@ pub(super) async fn attempt_model_adaptation(
         .to_string();
     let before_observation = failure_observation(state, tool, arguments, error);
     let environment_fingerprint = environment_fingerprint(state, tool, arguments);
-    let (system, mut prompt) = crate::engine::adaptation_loop::adaptation_prompt(
+    let (generated_system, mut prompt) = crate::engine::adaptation_loop::adaptation_prompt(
         tool,
         arguments,
         error,
@@ -213,6 +213,14 @@ pub(super) async fn attempt_model_adaptation(
         &before_observation,
         &environment_fingerprint,
     );
+    // Preserve the original native planner text when no override was saved.
+    // A user-edited Sub2 prompt replaces only the model's instructions;
+    // evidence collection, probe admission and tool permissions remain native.
+    let system=if crate::engine::chat::harness_prompts::revision(state,"decision.adaptation_planner")=="builtin"{
+        generated_system
+    }else{
+        crate::engine::chat::harness_prompts::effective(state,"decision.adaptation_planner")
+    };
     // Backward evidence slice from native receipts, not a fabricated model
     // analysis. Historical file contents and access tokens never enter here.
     let failure_trace = crate::engine::adaptation::trace_ir::compile(
