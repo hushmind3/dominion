@@ -29,13 +29,15 @@ test('model launch failures distinguish memory, files and engines',()=>{
  assert.equal(classifyRuntimeFailure('MLX 실행기가 설치되지 않았습니다.'),'engine')
  assert.equal(classifyRuntimeFailure('unexpected exit'),'other')
 })
-test('model menu renders only one Hugging Face browser and unique tab id',()=>{
- const source=readFileSync(new URL('../src/pages/Models.tsx',import.meta.url),'utf8')
- assert.equal([...source.matchAll(/id:'huggingface'/g)].length,1)
- assert.equal([...source.matchAll(/<ModelExplorer[^>]*initialView="search"/g)].length,1)
- assert.match(source,/hideManagementNavigation/)
+test('model hub renders a single Hugging Face browser through the reusable connection component',()=>{
+ const models=readFileSync(new URL('../src/pages/Models.tsx',import.meta.url),'utf8')
+ const tabs=readFileSync(new URL('../src/features/models/catalog.ts',import.meta.url),'utf8')
+ const tools=readFileSync(new URL('../src/features/models/ConnectionTools.tsx',import.meta.url),'utf8')
+ assert.match(models,/<ConnectionTools hub=\{hub\}\/>/)
+ assert.match(tabs,/'huggingface'/)
+ assert.equal([...tools.matchAll(/<ModelExplorer[^>]*initialView="search"/g)].length,1)
+ assert.match(tools,/<ModelExplorer key="huggingface-browser" initialView="search" hideNavigation\/>/)
 })
-
 test('queued model launch resumes interrupted downloads instead of leaving them paused',()=>{
  assert.equal(planDownloadLaunch(undefined,false),'start')
  assert.equal(planDownloadLaunch('downloading',false),'wait')
@@ -129,11 +131,13 @@ test('OpenRouter free model lookup remains separate from authenticated registrat
  assert.match(source,/무료 모델 조회 \(키 불필요\)/)
 })
 
-test('public catalog opens the provider model list without entering an API key',()=>{
+test('public catalog opens selected provider models without requiring a key for browsing',()=>{
  const models=readFileSync(new URL('../src/pages/Models.tsx',import.meta.url),'utf8')
+ const tools=readFileSync(new URL('../src/features/models/ConnectionTools.tsx',import.meta.url),'utf8')
  const account=readFileSync(new URL('../src/components/DominionCloudAccount.tsx',import.meta.url),'utf8')
- assert.match(models,/setBrowseProviderId\(p\.id\)/)
- assert.match(models,/initialProviderId=\{browseProviderId\}/)
+ assert.match(models,/<ConnectionTools hub=\{hub\}\/>/)
+ assert.match(tools,/setBrowseProviderId\(p\.id\)/)
+ assert.match(tools,/initialProviderId=\{browseProviderId\}/)
  assert.match(account,/initialCatalogApplied\.current=initialProviderId/)
  assert.match(account,/void loadCatalogModels\(initialProviderId\)/)
  assert.match(account,/setProviderPage\(Math\.floor\(index\/40\)\)/)
