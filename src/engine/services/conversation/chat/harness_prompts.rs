@@ -93,4 +93,46 @@ mod tests {
         assert!(validate(spec("agent.plan").unwrap(),"No plan evidence").is_err());
         assert!(validate(spec("agent.plan").unwrap(),"New strategy: {plan}").is_ok());
     }
+
+    #[test]
+    fn edited_lightweight_prompt_reaches_real_chat_context_without_rebuilding_binary(){
+        let dir=std::env::temp_dir().join(format!("dominion-prompt-test-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=crate::config::Config{port:0,data_dir:dir.clone(),
+            web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(config.clone(),
+            crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        let request=crate::engine::chat::TurnRequest::from_value(&json!({
+            "input":"야","conversationMode":"chat","toolsEnabled":false,"toolsExecutionEnabled":false
+        })).unwrap();
+        let before=crate::engine::chat::context::lightweight_chat_prompt(&state,&request);
+        assert!(before.prompt.contains("자연스럽고 정확하게 답하십시오."));
+        state.store.put("harness_prompt_override",&json!({
+            "id":"chat.lightweight","text":"서브2에서 수정한 짧은 대화 지침.",
+            "revision":"one"
+        })).unwrap();
+        let after=crate::engine::chat::context::lightweight_chat_prompt(&state,&request);
+        assert!(after.prompt.starts_with("서브2에서 수정한 짧은 대화 지침."));
+        assert!(!after.prompt.contains("자연스럽고 정확하게 답하십시오."));
+        assert_eq!(revision(&state,"chat.lightweight"),"one");
+        state.store.remove("harness_prompt_override","chat.lightweight");
+        assert_eq!(effective(&state,"chat.lightweight"),spec("chat.lightweight").unwrap().default);
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn dynamic_plan_prompt_uses_edited_template_and_preserves_evidence(){
+        let dir=std::env::temp_dir().join(format!("dominion-prompt-render-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config=crate::config::Config{port:0,data_dir:dir.clone(),web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(config.clone(),crate::db::Store::open(&config.db_path()).unwrap(),
+            crate::vault::Vault::open(&config.key_path()));
+        state.store.put("harness_prompt_override",&json!({
+            "id":"agent.plan","text":"계획 실행은 실제로 검증: {plan}","revision":"updated"
+        })).unwrap();
+        let rendered=render(&state,"agent.plan",&[("plan","검사 → 적용 → 재검증")]);
+        assert_eq!(rendered,"계획 실행은 실제로 검증: 검사 → 적용 → 재검증");
+        let _=std::fs::remove_dir_all(dir);
+    }
 }
