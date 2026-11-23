@@ -17,7 +17,7 @@
 
         let invalid = dir.join("invalid.sqlite");
         let mut header_only = vec![0u8; 4096];
-        header_only[..16].copy_from_slice(b"SQLite format 3\\0");
+        header_only[..16].copy_from_slice(b"SQLite format 3\0");
         std::fs::write(&invalid, header_only).unwrap();
         assert!(Store::validate_restore_snapshot_file(&invalid).is_err());
         assert!(store.replace_database_from_file(&invalid).is_err());
