@@ -256,6 +256,12 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  useEffect(()=>()=>stream.current?.abort(),[]);
  useEffect(()=>{if(window.innerWidth<768)return;try{localStorage.setItem('dominion.chat.sidebar',showHistory?'1':'0')}catch{}},[showHistory]);
  useEffect(()=>{
+  const narrow=window.matchMedia('(max-width: 767px)')
+  const sync=()=>{if(narrow.matches)setShowHistory(false)}
+  narrow.addEventListener('change',sync)
+  return()=>narrow.removeEventListener('change',sync)
+ },[]);
+ useEffect(()=>{
   if(!active)return;
   const controller=new AbortController();
   let timer:ReturnType<typeof setTimeout>;

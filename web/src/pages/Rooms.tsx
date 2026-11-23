@@ -82,6 +82,12 @@ export function RoomsPage({openSession,openSettings,switchMode,active:visibleVie
  const [selected,setSelected]=useState(()=>{try{return localStorage.getItem('dominion.room.selected')||''}catch{return ''}})
  const [showList,setShowList]=useState(false)
  useEffect(()=>{if(!visibleView)setShowList(false)},[visibleView])
+ useEffect(()=>{
+  const narrow=window.matchMedia('(max-width: 839px)')
+  const sync=()=>{if(narrow.matches)setShowList(false)}
+  narrow.addEventListener('change',sync)
+  return()=>narrow.removeEventListener('change',sync)
+ },[])
  const [creating,setCreating]=useState<RoomDraft|null>(null)
  const [saving,setSaving]=useState(false),[error,setError]=useState(''),[query,setQuery]=useState('')
  const current=rooms.value.find(room=>room.id===selected)

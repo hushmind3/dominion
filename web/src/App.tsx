@@ -108,6 +108,12 @@ export default function App(){
   try{return localStorage.getItem('dominion.settings.nav')!=='0'}catch{return true}
  })
  const toggleSettingsNav=useCallback(()=>setSettingsNav(open=>{const next=!open;try{localStorage.setItem('dominion.settings.nav',next?'1':'0')}catch{}return next}),[])
+ useEffect(()=>{
+  const narrow=window.matchMedia('(max-width: 767px)')
+  const sync=()=>{if(narrow.matches)setSettingsNav(false)}
+  narrow.addEventListener('change',sync)
+  return()=>narrow.removeEventListener('change',sync)
+ },[])
  const settingsOpen=page!=='chat'&&page!=='rooms'
  const [online,setOnline]=useState(false)
  const [running,setRunning]=useState(0)
