@@ -15,6 +15,7 @@ import {
 import type { LocaleKey } from './i18n'
 
 const TasksPage = lazy(() => import('./pages/Tasks').then(module => ({default: module.TasksPage})))
+const SettingsHub = lazy(() => import('./pages/SettingsHub').then(module => ({default:module.SettingsHub})))
 
 const PromptsPage = lazy(() =>
   import('./pages/Prompts').then(module => ({default: module.PromptsPage})),
@@ -147,7 +148,7 @@ export const settingsPages = {
     group: 'nav.group.operations',
     icon: Settings2,
     primary: true,
-    render: () => <OperationsPage section="settings" />,
+    render: (navigate: Navigate) => <SettingsHub navigate={navigate} />,
   },
 } satisfies Record<string, SettingsEntry>
 
