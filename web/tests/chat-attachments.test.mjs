@@ -7,7 +7,8 @@ import {resolve,dirname} from 'node:path'
 const dir=dirname(fileURLToPath(import.meta.url))
 const chat=readFileSync(resolve(dir,'../src/pages/Chat.tsx'),'utf8')
 const rooms=readFileSync(resolve(dir,'../src/pages/Rooms.tsx'),'utf8')
-const models=readFileSync(resolve(dir,'../src/pages/Models.tsx'),'utf8')
+const dialog=readFileSync(resolve(dir,'../src/features/models/ConnectionTools.tsx'),'utf8')
+const modelHub=readFileSync(resolve(dir,'../src/features/models/useModelHub.ts'),'utf8')
 const api=readFileSync(resolve(dir,'../src/api/attachments.ts'),'utf8')
 
 test('private chat uploads selected images and forwards their ids',()=>{
