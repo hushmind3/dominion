@@ -37,7 +37,7 @@ function fixture() {
   agents:[{id:'test-persona',name:'Test Persona',description:'Mock persona',systemPrompt:'Be clear.',providerId:'mock-local',model:'qwen-test',enabled:true}],
   sessions:[{id:'recent-chat',title:'Recent Test Chat',providerId:'mock-local',model:'qwen-test',createdAt:'2026-11-23T00:00:00Z'}],
   memories:[{id:'memory-one',text:'Remember test choice',scope:'shared',status:'active',source:'user',retrievalEligible:true,createdAt:'2026-11-23T00:00:00Z'}],
-  chatRequests:[],mcpWrites:[],providerWrites:[],memoryWrites:[],
+  chatRequests:[],mcpWrites:[],providerWrites:[],memoryWrites:[],jobs:[],
  }
  const ok=(route,value,status=200,headers={})=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(value),headers})
  const handler=async route=>{
@@ -51,9 +51,13 @@ function fixture() {
   if(p==='/api/mcp'&&method==='POST'){
    db.mcpWrites.push(body)
    const i=db.mcp.findIndex(row=>row.id===body.id)
-   const saved={...body,id:body.id||'mock-mcp'}
+   const saved={...body,id:body.id||'mock-mcp-'+db.mcp.length}
    if(i>=0)db.mcp[i]=saved;else db.mcp.push(saved)
    return ok(route,saved)
+  }
+  if(p==='/api/jobs'&&method==='POST'){
+   db.jobs.push(body)
+   return ok(route,{id:'mock-job-'+db.jobs.length,kind:body.kind,status:'queued',input:body.input},202)
   }
   if(p==='/api/providers'&&method==='POST'){
    db.providerWrites.push(body)
@@ -87,11 +91,12 @@ function fixture() {
   if(p==='/api/mcp')return ok(route,db.mcp)
   if(p==='/api/mcp/discover')return ok(route,db.mcp.filter(row=>row.enabled!==false).map(row=>({mcpId:row.id,name:'mcp__mock__search',description:'Mock plugin search'})))
   if(p==='/api/mcp/presets')return ok(route,[])
-  if(p==='/api/mcp/catalog')return ok(route,{servers:[]})
+  if(p==='/api/mcp/catalog')return ok(route,[{name:'Parallel MCP 2.0',description:'2026 web search and fetching',url:'https://mcp.parallel.ai/mcp'}])
   if(p==='/api/skill-catalog')return ok(route,{items:[],total:0,updatedAt:''})
   if(p==='/api/model-library/runtime')return ok(route,{status:'idle'})
   if(p==='/api/extensions/runtime')return ok(route,{enabled:{},configured:{}})
   if(p==='/api/policy')return ok(route,{id:'default',autoApprove:[],autoApproveAll:false,autoApproveMcp:false})
+  if(p==='/api/jobs')return ok(route,db.jobs)
   if(/^\/api\/(sessions|agents|rooms|mcp|skills|jobs|channels|approvals|memories|executions|activities)(\/|$)/.test(p))return ok(route,[])
   return ok(route,{})
  }
