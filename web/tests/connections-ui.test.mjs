@@ -12,6 +12,9 @@ const page=readFileSync(resolve(dir,'../src/pages/Connections.tsx'),'utf8')
 const extensions=readFileSync(resolve(dir,'../src/pages/Extensions.tsx'),'utf8')
 const capabilities=readFileSync(resolve(dir,'../src/pages/Capabilities.tsx'),'utf8')
 const accounts=readFileSync(resolve(dir,'../src/components/ConnectedAccounts.tsx'),'utf8')
+const modelHub=readFileSync(resolve(dir,'../src/features/models/useModelHub.ts'),'utf8')
+const modelDialog=readFileSync(resolve(dir,'../src/features/models/ConnectionTools.tsx'),'utf8')
+const models=readFileSync(resolve(dir,'../src/pages/Models.tsx'),'utf8')
 const entry=(id,name=id,fields=[])=>({
  id,name,category:'community',mode:'webhook',description:'Channel',docs:'',available:true,
  status:'available',features:[],fields,requiresRoom:true,
@@ -72,4 +75,22 @@ test('opening GitHub device URL does not submit CLI confirmation prematurely',()
  assert.ok(link)
  assert.doesNotMatch(link,/\/api\/providers\/cli\/github\/login\/input/)
  assert.match(accounts,/navigator\.clipboard\.writeText/)
+})
+
+test('each installed MCP plugin is independently switchable without removing it',()=>{
+ assert.match(extensions,/checked=\{x.enabled !== false\}/)
+ assert.match(extensions,/onChange=\{event => void toggleMcp\(x, event.target.checked\)\}/)
+ assert.match(extensions,/await post\('\/api\/mcp', \{\.\.\.record, enabled\}\)/)
+ assert.match(extensions,/await mcp\.reload\(\)/)
+ assert.match(extensions,/setTools\(previous => previous\.filter\(tool => tool\.mcpId !== record\.id\)\)/)
+ assert.match(extensions,/if \(enabled && tab === 'installed'\) void discover\(true\)/)
+})
+
+test('local model connections expose the saved tool adapter rather than hiding compat mode',()=>{
+ assert.match(modelHub,/toolMode:kind==='codex'\?'compat':toolMode/)
+ assert.match(modelHub,/setToolMode\(preset\.local\|\|preset\.kind==='ollama'\?'native':'auto'\)/)
+ assert.match(modelDialog,/value=\{toolMode\}/)
+ assert.match(modelDialog,/<option value="native">/)
+ assert.match(modelDialog,/<option value="compat">/)
+ assert.match(models,/provider\.toolMode==='compat'/)
 })
