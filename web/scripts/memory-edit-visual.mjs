@@ -1,0 +1,15 @@
+import {withBrowser,assert} from './ui-smoke-utils.mjs'
+await withBrowser('memory-edit-visual',async({page,db,url})=>{
+ await page.goto(url+'/#/memory')
+ await page.getByText('Remember test choice',{exact:true}).waitFor({state:'visible'})
+ const edit=page.getByRole('button',{name:/수정|Edit/}).first()
+ await edit.click()
+ const input=page.locator('textarea[aria-label]').last()
+ await input.waitFor({state:'visible'})
+ await input.fill('Corrected test choice')
+ assert.equal(await input.inputValue(),'Corrected test choice')
+ const cancel=page.getByRole('button',{name:/취소|Cancel/}).last()
+ await cancel.click()
+ await page.getByText('Remember test choice',{exact:true}).waitFor({state:'visible'})
+ assert.equal(db.memoryWrites.length,0,'cancelling memory correction must not mutate backend')
+},[{width:1280,height:800},{width:390,height:844}])
