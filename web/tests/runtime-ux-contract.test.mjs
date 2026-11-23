@@ -188,27 +188,22 @@ test('room configuration keeps recognizable icons and usable roster hit targets'
  assert.match(style,/\.room-settings-form input:not\(\[type=checkbox\]\)/)
 })
 
-test('private chat separates owner and assistant sides and exposes usable scroll recovery',()=>{
+test('private chat preserves owner/assistant alignment and scroll recovery via Tailwind',()=>{
  const chat=source('src/pages/Chat.tsx')
- const style=source('src/styles/conversations.css')
  const scroll=source('src/hooks/useTranscriptScroll.ts')
  assert.match(chat,/data-message-role=\{human\?'user':'assistant'\}/)
  assert.match(chat,/chat-message--user justify-end/)
  assert.match(chat,/chat-message--assistant justify-start/)
- assert.match(chat,/chat-message-content--user/)
- assert.match(chat,/chat-message-content--assistant/)
+ assert.match(chat,/human\?'flex max-w-\[88%\] flex-col items-end sm:max-w-\[78%\]':'flex-1'/)
+ assert.match(chat,/human\?'max-w-full whitespace-pre-wrap rounded-2xl/)
  assert.match(chat,/showOptimisticOwner&&<Message/)
  assert.match(chat,/setOptimisticOwner\(\{sessionId:current,content:text/)
  assert.match(chat,/onClick=\{jumpDown\} aria-label="최신 메시지로 이동"/)
- assert.match(style,/\.page-chat \.chat-message--user>\.chat-message-body/)
- assert.match(style,/justify-content:flex-end/)
- assert.match(style,/\.page-chat \.chat-message-content\{font-family:var\(--font-sans\);font-size:16px/)
- assert.match(style,/\.page-chat \.chat-transcript--responding::after/)
+ assert.match(chat,/max-w-conversation flex-col gap-7/)
  assert.match(scroll,/const moreBelow = el\.scrollHeight - el\.scrollTop - el\.clientHeight >= 100/)
  assert.match(scroll,/onMore\?\.\(moreBelow\)/)
  assert.doesNotMatch(chat,/<OwnerAvatar profile=\{profile\}/)
 })
-
 test('assistant rich text keeps code fences, lists, headings and safe outbound links',()=>{
  const chat=source('src/pages/Chat.tsx')
  const rich=source('src/components/ChatRichText.tsx')
@@ -365,14 +360,14 @@ test('pending image previews survive rejected chat attempts and clear only after
  assert.doesNotMatch(chat,/attachmentIds=uploaded\.map\(item=>item\.id\);\s*pendingImages\.forEach/)
 })
 
-test('streaming and persisted assistant replies share the same width and message selectors',()=>{
+test('streaming and persisted assistant replies share transcript width and message selectors',()=>{
  const chat=source('src/pages/Chat.tsx')
- const css=source('src/styles/conversations.css')
  assert.match(chat,/data-message data-message-role="assistant"/)
  assert.match(chat,/chat-message-body relative min-w-0 flex-1/)
- assert.match(css,/\.page-chat \.chat-message--assistant>\.chat-message-body\{max-width:760px;min-width:0\}/)
+ assert.match(chat,/data-message-role=\{human\?'user':'assistant'\}/)
+ assert.match(chat,/max-w-conversation flex-col gap-7/)
+ assert.equal((chat.match(/chat-message-content min-w-0 break-words text-base leading-7/g)||[]).length,2)
 })
-
 test('chat error alerts can be dismissed even when failure comes from transcript or learning jobs',()=>{
  const chat=source('src/pages/Chat.tsx')
  assert.match(chat,/const alertMessage=error\|\|transcript\.error\|\|translateError\(job\.error\|\|''\)/)
@@ -442,26 +437,32 @@ test('home resumes persisted chats and distinguishes unavailable data from empty
  assert.match(en,/'dashboard\.recentChats': 'Resume recent chats'/)
 })
 
-test('2026 provider presets do not mislabel paid or trial-only APIs as renewable free',()=>{
+test('2026 cloud provider presets remain metered and legacy endpoints migrate in extracted model components',()=>{
+ const catalog=source('src/features/models/catalog.ts')
+ const hub=source('src/features/models/useModelHub.ts')
+ const dialog=source('src/features/models/ConnectionTools.tsx')
  const models=source('src/pages/Models.tsx')
  const ko=source('src/i18n/ko.ts')
  const en=source('src/i18n/en.ts')
- assert.match(models,/\{name:'Chutes',baseUrl:'https:\/\/llm\.chutes\.ai\/v1',kind:'openai',local:false,category:'cloud'\}/)
- assert.match(models,/\{name:'Cerebras',baseUrl:'https:\/\/api\.cerebras\.ai\/v1',kind:'openai',local:false,category:'cloud'\}/)
- assert.match(models,/\{name:'Novita',baseUrl:'https:\/\/api\.novita\.ai\/v3\/openai',kind:'openai',local:false,category:'cloud'\}/)
- assert.match(models,/\{name:'Hyperbolic',baseUrl:'https:\/\/api\.hyperbolic\.ai\/inference\/v1',kind:'openai',local:false,category:'cloud'\}/)
- assert.match(models,/\{name:'Nebius',baseUrl:'https:\/\/api\.tokenfactory\.nebius\.com\/v1',kind:'openai',local:false,category:'cloud'\}/)
- assert.match(models,/const updatedProviderEndpoint=\(p:Provider\):string\|undefined=>/)
- assert.match(models,/if\(p\.name==='Hyperbolic'&&url==='https:\/\/api\.hyperbolic\.xyz\/v1'\)/)
- assert.match(models,/if\(p\.name==='Nebius'&&url==='https:\/\/api\.studio\.nebius\.ai\/v1'\)/)
- assert.match(models,/setBaseUrl\(p\?\(updatedProviderEndpoint\(p\)\|\|p\.baseUrl\):''\)/)
- assert.match(models,/const migratingHyperbolic=Boolean\(edit&&edit\.name==='Hyperbolic'/)
- assert.match(models,/t\('models\.endpointOutdated'\)/)
- assert.match(models,/t\('models\.endpointMigrated'\)/)
+ for(const [name,url] of [
+  ['Chutes','https://llm.chutes.ai/v1'],
+  ['Cerebras','https://api.cerebras.ai/v1'],
+  ['Novita','https://api.novita.ai/v3/openai'],
+  ['Hyperbolic','https://api.hyperbolic.ai/inference/v1'],
+  ['Nebius','https://api.tokenfactory.nebius.com/v1'],
+ ]) {
+  assert.ok(catalog.includes("{name:'"+name+"',baseUrl:'"+url+"',kind:'openai',local:false,category:'cloud'}"),name+' should not be marked free')
+ }
+ assert.match(models,/providerPresets\.filter/)
+ assert.match(catalog,/const updatedProviderEndpoint=\(p:Provider\):string\|undefined=>/)
+ assert.match(catalog,/if\(p\.name==='Hyperbolic'&&url==='https:\/\/api\.hyperbolic\.xyz\/v1'\)/)
+ assert.match(catalog,/if\(p\.name==='Nebius'&&url==='https:\/\/api\.studio\.nebius\.ai\/v1'\)/)
+ assert.match(hub,/setBaseUrl\(p\?\(updatedProviderEndpoint\(p\)\|\|p\.baseUrl\):''\)/)
+ assert.match(hub,/const migratingHyperbolic=Boolean\(edit&&edit\.name==='Hyperbolic'/)
+ assert.match(dialog,/t\('models\.endpointMigrated'\)/)
  assert.match(ko,/'models\.endpointNewKey': 'Hyperbolic/)
  assert.match(en,/'models\.endpointNewKey': 'Hyperbolic/)
 })
-
 test('memory corrections atomically supersede prior evidence and preserve source scope',()=>{
  const memory=source('src/pages/Memory.tsx')
  const ko=source('src/i18n/ko.ts')
