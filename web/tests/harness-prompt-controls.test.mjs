@@ -33,7 +33,7 @@ test('Sub2 Memory presents the real harness templates and saves with conflict ch
  assert.match(editor,/status===409/)
  assert.match(editor,/current\.required/)
  assert.match(editor,/reset:true/)
- assert.match(editor,/item\.default/)
+ assert.match(editor,/current\.default/)
  assert.match(routes,/\/api\/settings\/harness-prompts/)
  assert.match(api,/begin_session\(&key\)/)
  assert.match(api,/validate\(spec,content\)/)
