@@ -12,6 +12,8 @@ const en: Record<LocaleKey, string> = {
   'nav.agents': 'Agents',
   'nav.connections': 'Connections',
   'nav.memory': 'Memory',
+  'nav.capabilities': 'Capabilities',
+  'nav.extensions': 'Add-ons',
   'nav.activity': 'Activity',
   'nav.settings': 'Settings',
   'shell.newChat': 'New chat',

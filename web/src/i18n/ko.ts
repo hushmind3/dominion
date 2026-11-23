@@ -11,6 +11,8 @@ const ko = {
   'nav.agents': '에이전트',
   'nav.connections': '연결 · 채널',
   'nav.memory': '메모리',
+  'nav.capabilities': '할 수 있는 일',
+  'nav.extensions': '기능 추가',
   'nav.activity': '실행 기록',
   'nav.settings': '설정',
   'shell.newChat': '새 대화',
