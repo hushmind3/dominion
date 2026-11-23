@@ -345,9 +345,12 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
   const [localTab, setTab] = useState<ExtensionTab>("installed");
   const [showBuiltins, setShowBuiltins] = useState(false);
   const tab = section ?? localTab;
+  // Services embeds only MCP management: do not load unrelated skill data
+  // or show the native tool inventory in a connection management screen.
+  const mcpOnlyEmbed=embedded&&(tab==='market'||tab==='installed');
   const mcp = useRemote<Mcp[]>("/api/mcp", []),
-    skills = useRemote<Skill[]>("/api/skills", []),
-    presets = useRemote<any[]>(tab === "market" ? "/api/mcp/presets" : null, []);
+    skills = useRemote<Skill[]>(mcpOnlyEmbed?null:"/api/skills", []),
+    presets = useRemote<any[]>(tab === "market"&&!mcpOnlyEmbed ? "/api/mcp/presets" : null, []);
   const catalogSkills = useRemote<{
     items: any[];
     total: number;
@@ -670,14 +673,14 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
           label={t('ext.tab.tools')}
           value={tools.filter((t) => !t.error).length}
         />
-        <StatusLine
+        {!mcpOnlyEmbed&&<StatusLine
           label={t('ext.tab.skills')}
           value={
             skills.value.filter((s) => s.enabled).length +
             "/" +
             skills.value.length
           }
-        />
+        />}
       </div>
       {!embedded&&<div className="mb-6 flex flex-wrap items-center gap-2 border-b border-divider pb-3">
         <Button
@@ -1112,7 +1115,7 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
       )}
       {tab === "installed" && (
         <>
-          <section className="mb-6 rounded-xl border border-divider bg-surface p-4">
+          {!mcpOnlyEmbed&&<section className="mb-6 rounded-xl border border-divider bg-surface p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-ink">{loc==='en'?'Built-in tools':'기본 도구'}</h2>
@@ -1121,7 +1124,7 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
               <Button type="button" variant="secondary" size="sm" aria-expanded={showBuiltins} onClick={()=>setShowBuiltins(value=>!value)}>{showBuiltins?(loc==='en'?'Hide tools':'도구 목록 접기'):(loc==='en'?'View available tools':'도구 목록 보기')}</Button>
             </div>
             {showBuiltins&&<div className="mt-4 border-t border-divider pt-4"><CapabilitiesPage embedded navigate={()=>{}}/></div>}
-          </section>
+          </section>}
           <Subheading
             title={t('ext.connectedServers')}
             extra={
