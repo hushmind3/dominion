@@ -76,6 +76,15 @@ pub(super) fn tool_name(definition: &Value) -> &str {
         .unwrap_or("")
 }
 
+/// A tool-on preference grants *permission* to use tools, not permission
+/// for an optional procedure to execute before the model on a conversational
+/// turn that was deliberately classified as tool-free.
+pub(super) fn automatic_tool_actions_allowed(
+    execution_enabled:bool, lightweight_chat:bool, finished:bool
+)->bool {
+    execution_enabled && !lightweight_chat && !finished
+}
+
 /// Exact greetings need neither tools nor progressive tool-discovery
 /// schemas. Do not generalize this to deictic followups ("그거 확인해",
 /// "계속해") or requests with attachments; the turn host owns that context.
@@ -456,6 +465,14 @@ mod room_catalog_cache_tests {
         tools.retain(|tool|tool_name(tool)!="github_work_read");
         let disconnected=select_chat_tools(tools,query,&default);
         assert!(!disconnected.iter().any(|tool|tool_name(tool)=="github_work_read"));
+    }
+
+    #[test]
+    fn lightweight_conversation_never_dispatches_hidden_harness_or_program_tools() {
+        assert!(!automatic_tool_actions_allowed(true,true,false));
+        assert!(!automatic_tool_actions_allowed(false,false,false));
+        assert!(!automatic_tool_actions_allowed(true,false,true));
+        assert!(automatic_tool_actions_allowed(true,false,false));
     }
 
     #[test]
