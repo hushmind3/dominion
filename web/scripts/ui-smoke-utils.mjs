@@ -105,7 +105,9 @@ export async function withBrowser(name,callback,viewports=[{width:1280,height:80
   for(const viewport of viewports){
    const context=await browser.newContext({viewport})
    const {db,handler}=fixture()
-   await context.route('**/api/**',handler)
+   // Intercept only backend /api requests. A broad **/api/** glob also
+   // intercepts Vite frontend modules under /src/api/, replacing JS with JSON.
+   await context.route(url=>new URL(url).pathname.startsWith('/api/'),handler)
    const page=await context.newPage(),errors=[],networkErrors=[],consoleErrors=[]
    page.on('pageerror',error=>errors.push(error.message))
    page.on('console',message=>{if(message.type()==='error')consoleErrors.push(message.text())})
