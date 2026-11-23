@@ -106,8 +106,11 @@ export async function withBrowser(name,callback,viewports=[{width:1280,height:80
    const context=await browser.newContext({viewport})
    const {db,handler}=fixture()
    await context.route('**/api/**',handler)
-   const page=await context.newPage(),errors=[]
+   const page=await context.newPage(),errors=[],networkErrors=[],consoleErrors=[]
    page.on('pageerror',error=>errors.push(error.message))
+   page.on('console',message=>{if(message.type()==='error')consoleErrors.push(message.text())})
+   page.on('requestfailed',request=>networkErrors.push(request.url()+': '+request.failure()?.errorText))
+   page.on('response',response=>{if(response.status()>=400)networkErrors.push(response.status()+' '+response.url())})
    try{
     try{
      await callback({page,db,url:server.url,viewport})
@@ -117,6 +120,10 @@ export async function withBrowser(name,callback,viewports=[{width:1280,height:80
      console.error('FAIL '+name+' '+viewport.width+'px: '+String(error))
      console.error('URL: '+page.url())
      console.error('PAGE ERRORS: '+JSON.stringify(errors.slice(-10)))
+     console.error('CONSOLE ERRORS: '+JSON.stringify(consoleErrors.slice(-12)))
+     console.error('NETWORK FAILURES: '+JSON.stringify(networkErrors.slice(-12)))
+     console.error('ROOT HTML: '+(await page.locator('#root').innerHTML().catch(()=>'NOT_FOUND')).slice(0,1200))
+     console.error('DOCUMENT: '+(await page.content().catch(()=>'' )).slice(0,1100))
      console.error('BODY: '+(await page.locator('body').innerText().catch(()=>'' )).slice(0,2000))
      console.error('VITE: '+server.logs().slice(-1500))
      throw error
