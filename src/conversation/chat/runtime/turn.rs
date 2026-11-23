@@ -126,11 +126,15 @@ pub(super) async fn run_turn_body(
         && acceptance.is_none() && discovery["ownerActivated"]!=true
         && (pure_greeting(&request.input)
             || standalone_explanation(&request.input));
-    // Skip both tool schemas and remote MCP enumeration for context-free
-    // conversation. Source requests, active tasks and referential followups
-    // keep the normal owner-authorized discovery and evidence paths.
+    // Connected MCP servers are discovered only for owner action requests,
+    // attachments and followups. Casual conversation needs no network probe.
+    let tool_opportunity = tool_catalog_needed(
+        &request.input,is_room,acceptance.is_some(),
+        !request.attachment_ids.is_empty(),discovery["ownerActivated"]==true,
+        simple_creation_target.is_some()
+    );
     let enumerate_tools = request.tools_enabled && request.tools_execution_enabled
-        && !lightweight_chat;
+        && !lightweight_chat && tool_opportunity;
     let mut tool_definitions = if enumerate_tools {
         tools::definitions_for(state)
     } else {
@@ -624,7 +628,7 @@ pub(super) async fn run_turn_body(
     // execution permission for the Rust harness; harness nodes use the same
     // approval, cancellation and budget policy as model tool calls.
     let harness_messages = if automatic_tool_actions_allowed(
-        request.tools_execution_enabled,lightweight_chat,finished
+        request.tools_execution_enabled,lightweight_chat,tool_opportunity,finished
     ) {
         run_harness_nodes(
         state,
@@ -681,7 +685,7 @@ pub(super) async fn run_turn_body(
         // the model decides. Program steps and model steps share this loop,
         // the same tool gateway and the same checkpoint.
         if !program_finished && automatic_tool_actions_allowed(
-            request.tools_execution_enabled,lightweight_chat,finished
+            request.tools_execution_enabled,lightweight_chat,tool_opportunity,finished
         ) {
             if let Some(policy) = &program_policy {
                 if let Some(program) = policy["parameters"]["program"].as_object() {
