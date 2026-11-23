@@ -1,0 +1,25 @@
+import {withBrowser,assert} from './ui-smoke-utils.mjs'
+await withBrowser('workspace-visual',async({page,db,url,viewport})=>{
+ await page.goto(url+'/#/chat')
+ await page.locator('.conversation-composer').waitFor({state:'visible'})
+ const nav=page.locator('#workspace-navigation')
+ if(!(await nav.isVisible())){
+  await page.locator('.conversation-composer-options button').first().click()
+  await nav.waitFor({state:'visible'})
+ }
+ const tools=nav.getByRole('button',{name:/도구 · MCP|Tools & MCP/})
+ await tools.click()
+ await page.waitForURL(/#\/extensions/)
+ const plugin=page.getByRole('checkbox',{name:/MCP.*Mock Test MCP/})
+ await plugin.waitFor({state:'visible'})
+ assert.equal(await plugin.isChecked(),true)
+ await plugin.uncheck()
+ await page.waitForFunction(()=>document.querySelector('input[aria-label*="Mock Test MCP"]')?.checked===false)
+ assert.equal(db.mcp[0].enabled,false)
+ await plugin.check()
+ await page.waitForFunction(()=>document.querySelector('input[aria-label*="Mock Test MCP"]')?.checked===true)
+ assert.equal(db.mcp[0].enabled,true)
+ assert.equal(db.mcpWrites.length,2)
+ const width=await page.evaluate(()=>document.documentElement.scrollWidth-window.innerWidth)
+ assert.ok(width<12,'horizontal overflow '+width+' at '+viewport.width)
+},[{width:1440,height:900},{width:820,height:820},{width:390,height:844}])
