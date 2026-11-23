@@ -7,7 +7,7 @@ import {Notice,Panel} from '../../components/UI'
 type Template={id:string;title:string;category:string;location:string;default:string;text:string;revision:string;customized:boolean;required:string[]}
 type Catalog={items:Template[];scope:string;runtimeGuardsEditable:boolean}
 const api='/api/settings/harness-prompts'
-const categories=['전체','대화','에이전트','실행','검증','복구','로컬 모델']
+const categories=['전체','대화','에이전트','실행','판단','검증','복구','학습','로컬 모델']
 
 export function HarnessPromptsPanel(){
  const [items,setItems]=useState<Template[]>([])
