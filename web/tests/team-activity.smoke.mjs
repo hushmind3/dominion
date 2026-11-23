@@ -193,7 +193,7 @@ try{
     'Team UI is horizontally clipped on a mobile viewport: '+JSON.stringify(widths));
   assert.deepEqual(errors,[], 'React/JS runtime errors');
   // Chat drafts are scoped to the actual session, including fresh chats.
-  const inputSelector='textarea[placeholder^="무엇을 도와드릴까요?"]';
+  const inputSelector='textarea.conversation-composer-input';
   await page.goto(address+'/#/chat?session=chat-one',{waitUntil:'domcontentloaded'});
   const chatInput=page.locator(inputSelector);
   await chatInput.waitFor({timeout:10000});
