@@ -17,17 +17,17 @@ export function ConversationComposer({value, onChange, onSend, inputRef, label, 
   input.style.height = 'auto'
   input.style.height = Math.min(input.scrollHeight, 180) + 'px'
  }, [value, inputRef])
- return <form className="conversation-composer rounded-2xl border border-divider bg-surface shadow-sm focus-within:border-brand focus-within:ring-4 focus-within:ring-brand/10" onSubmit={event => {event.preventDefault(); void onSend()}}>
+ return <form className="conversation-composer group min-w-0 overflow-hidden rounded-[20px] border border-[#DFD8CD] bg-[#FFFDF9] shadow-[0_3px_18px_rgba(54,43,32,.06)] transition-[border-color,box-shadow] focus-within:border-[#C9A185] focus-within:shadow-[0_5px_28px_rgba(54,43,32,.11)]" onSubmit={event => {event.preventDefault(); void onSend()}}>
   <TextArea ref={inputRef} rows={1} value={value} disabled={disabled} aria-label={label} placeholder={placeholder}
    aria-controls={slashOpen ? 'dominion-slash-menu' : undefined} aria-expanded={slashOpen}
-   className="conversation-composer-input block w-full !min-h-14 !max-h-44 !resize-none !rounded-2xl !border-0 !bg-surface !px-5 !pb-0 !pt-4 !text-base !leading-7 !text-ink !shadow-none !ring-0" onChange={event => onChange(event.target.value)}
+   className="conversation-composer-input block w-full !min-h-[72px] !max-h-44 !resize-none !rounded-none !border-0 !bg-transparent !px-5 !pb-2 !pt-5 !text-[15px] !leading-7 !text-[#44382E] !shadow-none !ring-0 placeholder:!text-[#AA9D8D]" onChange={event => onChange(event.target.value)}
    onKeyDown={event => {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return
     if (onKeyDown) {onKeyDown(event); return}
     if (event.key === 'Enter' && !event.shiftKey) {event.preventDefault(); void onSend()}
    }}/>
-  <div className="flex items-end justify-between gap-2 px-3 pb-3 pt-2">
-   <div className="conversation-composer-options flex min-w-0 flex-1 flex-wrap items-center gap-1 gap-y-2">{options}</div>
+  <div className="flex min-w-0 items-end justify-between gap-2 border-t border-[#F0E9DD] bg-[#FBF9F4]/80 px-3 py-2.5 sm:px-4">
+   <div className="conversation-composer-options flex min-w-0 flex-1 flex-wrap items-center gap-1 gap-y-1.5">{options}</div>
    <div className="flex shrink-0 items-center gap-2 self-end">{actions}</div>
   </div>
  </form>
