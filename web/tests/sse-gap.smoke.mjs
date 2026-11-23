@@ -62,6 +62,10 @@ try{
    body:JSON.stringify(result)});
  });
  await page.goto(origin+'/#/chat?session=gap-session',{waitUntil:'domcontentloaded'});
+ // The clean chat surface intentionally starts with a compact navigation rail.
+ // Open the history explicitly to observe the refreshed title.
+ await page.getByRole('button',{name:'대화 목록 펼치기'}).click();
+ await page.locator('#conversation-sidebar').waitFor({state:'visible',timeout:10000});
  await page.getByText('Before reconnect',{exact:true}).first().waitFor({timeout:10000})
   .catch(async error=>{
    console.error('SSE fixture initial Chat diagnosis',JSON.stringify({
