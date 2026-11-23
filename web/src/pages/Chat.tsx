@@ -5,10 +5,9 @@ import {ConversationSwitch} from '../components/WorkspaceShell'
 import {TokenUsage} from '../components/TokenUsage'
 import {MarkdownMessage} from '../components/MarkdownMessage'
 import {AttachmentLink} from '../components/AttachmentLink'
-import {createPortal} from 'react-dom'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormEvent,useEffect,useMemo,useRef,useState,type ClipboardEvent,type DragEvent,type KeyboardEvent} from 'react'
-import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronDown,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,Cpu,CornerDownLeft,HardDrive,Menu,Settings,List,LoaderCircle,MessageCircle,PanelLeftClose,MoreHorizontal,Globe2,Paperclip,Plus,Power,RefreshCw,Search,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
+import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,CornerDownLeft,Menu,Settings,List,LoaderCircle,MessageCircle,PanelLeftClose,MoreHorizontal,Globe2,Paperclip,Plus,Search,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
 import {Agent,Approval,ChatMessage,ChatSession,Provider,get,post,del,resolveApproval,streamChat,koreanReasoningEnabled} from '../api'
 import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
@@ -17,7 +16,6 @@ import {ConversationRail} from '../components/chat/ConversationRail'
 import {ReasoningSelect,reasoningOptions} from '../components/ReasoningSelect'
 import {useProviderModels} from '../hooks/useProviderModels'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
-import {useAnchoredPanel} from '../hooks/useAnchoredPanel'
 import {useJob,jobFinished,type JobState} from '../hooks/useJob'
 import {t,useLocale,type LocaleKey} from '../i18n'
 import {translateError} from '../i18n/errors'
@@ -78,10 +76,6 @@ function storeChatDraft(scope:string,text:string){
 const formatDraftBytes=(bytes:number)=>bytes>=1048576
  ?(bytes/1048576).toFixed(1)+' MiB'
  :bytes>=1024?(bytes/1024).toFixed(1)+' KiB':bytes+' B'
-const formatBytes=(bytes:number)=>{
- const gb=Number(bytes||0)/1024/1024/1024
- return gb>=1?gb.toFixed(1)+' GB':Math.max(0,Math.round(Number(bytes||0)/1024/1024))+' MB'
-}
 export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,onSession,openModels,openSettings,switchMode,active=true}:{sessionId?:string;initialAgent?:string;initialProvider?:string;initialModel?:string;onSession:(x:string|undefined)=>void;openModels:()=>void;openSettings:()=>void;switchMode:(mode:'chat'|'rooms')=>void;active?:boolean}){
  const loc=useLocale()
  const sessions=useRemote<ChatSession[]>('/api/sessions',[],active);
@@ -214,7 +208,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const [error,setError]=useState(''),[busy,setBusy]=useState(false),[live,setLive]=useState(''),[thought,setThought]=useState(''),[thinking,setThinking]=useState(false),[reasoningKo,setReasoningKo]=useState(koreanReasoningEnabled),[showReasoning,setShowReasoning]=useState(true),[showSettings,setShowSettings]=useState(false),[toolsEnabled,setToolsEnabled]=useState(true),[thinkingEnabled,setThinkingEnabled]=useState(true),[reasoningEffort,setReasoningEffort]=useState(''),[autoLearn,setAutoLearn]=useState(false),[showHistory,setShowHistory]=useState(()=>{try{if(window.innerWidth<768)return false;return localStorage.getItem('dominion.chat.sidebar')!=='0'}catch{return true}}),[toolStatus,setToolStatus]=useState('');
  useEffect(()=>{setReasoningEffort('');setThinkingEnabled(true)},[providerId,model,agentId,current]);
  const [permissionOpen,setPermissionOpen]=useState(false);
- const [modelMenu,setModelMenu]=useState(false),[installed,setInstalled]=useState<InstalledModel[]>([]),[modelsLoading,setModelsLoading]=useState(false),[runtime,setRuntime]=useState<Runtime>({status:'idle'}),[modelBusy,setModelBusy]=useState(''),[unloading,setUnloading]=useState(false),[learning,setLearning]=useState(false),[menuError,setMenuError]=useState('');
+ const [installed,setInstalled]=useState<InstalledModel[]>([]),[modelsLoading,setModelsLoading]=useState(false),[runtime,setRuntime]=useState<Runtime>({status:'idle'}),[modelBusy,setModelBusy]=useState(''),[unloading,setUnloading]=useState(false),[learning,setLearning]=useState(false),[menuError,setMenuError]=useState('');
  const [slashOpen,setSlashOpen]=useState(false),[slashActive,setSlashActive]=useState(0),[commandInfo,setCommandInfo]=useState('');
  const fileInputRef=useRef<HTMLInputElement>(null);
  const inputRef=useRef<HTMLTextAreaElement>(null);
@@ -252,7 +246,6 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  },[usageBreakdown]);
  useEffect(()=>{if(!current){setServerUsage(0);setUsageBreakdown(undefined);setUsageUnavailable(false);return}let alive=true;get<{totalTokens?:number;breakdown?:SessionUsageBreakdown}>('/api/sessions/'+encodeURIComponent(current)+'/usage').then(usage=>{if(alive){setServerUsage(Number(usage.totalTokens)||0);setUsageBreakdown(usage.breakdown);setUsageUnavailable(false)}}).catch(()=>{if(alive)setUsageUnavailable(true)});return()=>{alive=false}},[current,usageRevision])
  const {scrollRef,onScroll,jumpDown}=useTranscriptScroll(current,transcriptRevision);
- const modelPanel=useAnchoredPanel(modelMenu,()=>setModelMenu(false),380);
  useEffect(()=>()=>stream.current?.abort(),[]);
  useEffect(()=>{if(window.innerWidth<768)return;try{localStorage.setItem('dominion.chat.sidebar',showHistory?'1':'0')}catch{}},[showHistory]);
  useEffect(()=>{
@@ -273,19 +266,15 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   void check();
   return()=>{controller.abort();clearTimeout(timer)};
  },[providerId,active]);
- const loadModelMenu=async()=>{
+ const loadLocalModels=async()=>{
   setMenuError('');setModelsLoading(true)
   try{
    const [list,state]=await Promise.all([get<InstalledModel[]>('/api/model-library/installed'),get<Runtime>('/api/model-library/runtime')])
    setInstalled(list);setRuntime(state)
   }catch(e){setMenuError((e as Error).message)}finally{setModelsLoading(false)}
  }
- const openModelMenu=()=>{
-  const next=!modelMenu;setModelMenu(next);setPermissionOpen(false);setShowSettings(false)
-  if(next)void loadModelMenu()
- }
- const switchLocalModel=async(m:InstalledModel)=>{
-  if(modelBusy)return
+ const switchLocalModel=async(m:InstalledModel):Promise<boolean>=>{
+  if(modelBusy)return false
   setModelBusy(m.id);setMenuError('')
   try{
    const state=await get<Runtime>('/api/model-library/runtime');
@@ -295,10 +284,12 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    if(ready.status!=='ready'||ready.id!==m.id||!ready.model)throw Error(ready.error||t('chat.model.loadFailed'));
    await providers.reload();
    if(providerId==='dominion-native')void catalogue.reload();
-   setRoute('dominion-native',ready.model);
+   setExecutionMode('chat')
+   setAgentChoice(undefined)
+   setRoute('dominion-native',ready.model)
    setCommandInfo(t('chat.model.switched',{repo:m.repo,label:m.label}))
-   setModelMenu(false)
-  }catch(e){setMenuError((e as Error).message)}finally{setModelBusy('')}
+   return true
+  }catch(e){setMenuError((e as Error).message);return false}finally{setModelBusy('')}
  }
  const unloadModel=async()=>{
   if(unloading)return
@@ -618,7 +609,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   }
   if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void send();}
  };
- useEffect(()=>{if(!active){setModelMenu(false);setPermissionOpen(false);setShowSettings(false);setSlashOpen(false)}else setReasoningKo(koreanReasoningEnabled())},[active]);
+ useEffect(()=>{if(!active){setPermissionOpen(false);setShowSettings(false);setSlashOpen(false)}else setReasoningKo(koreanReasoningEnabled())},[active]);
  return <div className={'relative grid h-dvh min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] bg-[#FFFDF9] '+(showHistory?'md:grid-cols-[232px_minmax(0,1fr)]':'md:grid-cols-[56px_minmax(0,1fr)]')}>
   {showHistory&&<Button type="button" aria-label={t('chat.listCollapse')} className="absolute inset-y-0 right-0 left-[232px] z-20 !h-auto !w-auto cursor-default !rounded-none !border-0 !bg-slate-900/30 md:hidden" onClick={()=>setShowHistory(false)}/>}
   <aside id="conversation-sidebar" aria-label={t('chat.recent')} className={'flex min-h-0 flex-col overflow-hidden border-r border-[#E7E0D5] bg-[#FAF7F1] '+(showHistory?'max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:w-[232px] max-md:shadow-2xl':'hidden')}>
@@ -640,35 +631,6 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   {!showHistory&&<ConversationRail sidebarId="conversation-sidebar" onExpand={()=>setShowHistory(true)}
    onNew={resetLocal} onSwitchMode={switchMode} onSettings={openSettings}/>}
   <div className="flex min-h-0 min-w-0 flex-col">
-   <header className="chat-header relative flex h-13 shrink-0 items-center justify-between gap-2 border-b border-[#E7E0D5] bg-[#FFFDF9] px-4">
-    <Button size="icon" variant="ghost" onClick={()=>setShowHistory(x=>!x)} title={showHistory?t('chat.listCollapse'):t('chat.listExpand')} aria-label={showHistory?t('chat.listCollapse'):t('chat.listExpand')}><Menu size={18}/></Button>
-    <ConversationSwitch mode="chat" onChange={switchMode}/>
-    <div className="flex min-w-0 flex-1 items-center gap-1.5">
-     <div className="chat-model-controls relative flex min-w-0 items-center gap-1">
-      <Button variant="ghost" size="sm" ref={modelPanel.trigger} onClick={openModelMenu} title={t('chat.localModel')} className="ml-auto !border !border-[#E7E0D5] !bg-white !text-[#5C544A] hover:!bg-[#FAF7F1]" aria-label={t('chat.localModel')} aria-expanded={modelMenu}><HardDrive size={14}/><span className="hidden lg:inline">{t('chat.localModel')}</span><ChevronDown size={12}/></Button>
-      <Button variant="ghost" size="sm" title={t('chat.unload')} aria-label={t('chat.unload')} onClick={()=>void unloadModel()} disabled={unloading||runtime.status!=='ready'} className="!border !border-[#E7E0D5] !bg-white !text-[#5C544A] hover:!bg-[#FAF7F1] disabled:opacity-40"><Power size={14}/><span className="hidden xl:inline">{unloading?t('chat.unloading'):t('chat.unload')}</span></Button>
-      {modelMenu&&modelPanel.position&&createPortal(
-       <div ref={modelPanel.panel} style={modelPanel.position} className="z-[80] overflow-y-auto overscroll-contain rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] shadow-[0_18px_50px_rgba(36,33,29,.14)]">
-        <div className="flex items-center justify-between gap-2 border-b border-[#EFE9DF] px-3 py-2.5"><div className="min-w-0"><strong className="text-[12px] text-[#3A342D]">{t('chat.localModel')}</strong><p className="truncate text-[10px] text-[#9C9388]">{runtime.status==='ready'?t('chat.running')+' · '+(runtime.name||''):runtime.status==='loading'?t('chat.loadingModel'):t('chat.noLocal')}</p></div><Button size="icon" variant="ghost" title={t('models.refresh')} onClick={()=>void loadModelMenu()}><RefreshCw size={15}/></Button></div>
-        {menuError&&<div className="border-b border-rose-100 bg-rose-50 px-3 py-2 text-[11px] text-rose-700">{menuError}</div>}
-        <div className="max-h-[320px] overflow-y-auto p-1.5">{modelsLoading&&<div className="flex items-center justify-center gap-2 p-5 text-[11px] text-[#9C9388]"><LoaderCircle size={14} className="animate-spin"/> {t('chat.loadingModel')}</div>}{!modelsLoading&&installed.map(m=><Button type="button" variant="ghost" key={m.id} disabled={Boolean(modelBusy)} onClick={()=>void switchLocalModel(m)} className={'flex w-full items-center gap-3 !justify-start !border-0 rounded-lg px-2.5 py-2.5 text-left hover:bg-[#FAF7F1] disabled:opacity-60 '+(runtime.status==='ready'&&runtime.id===m.id?'bg-emerald-50/60':'')}>
-         <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#F3EEE5] text-[#7C7469]"><HardDrive size={15}/></span>
-         <span className="min-w-0 flex-1"><strong className="block truncate text-[12px] text-[#3A342D]">{m.repo}</strong><small className="text-[10px] text-[#9C9388]">{m.label} · {m.format.toUpperCase()} · {formatBytes(m.bytes)}</small></span>
-         {runtime.status==='ready'&&runtime.id===m.id?<span className="shrink-0 rounded bg-emerald-100 px-2 py-1 text-[10px] font-semibold text-emerald-700">{t('chat.inUse')}</span>:modelBusy===m.id?<span className="shrink-0 text-[10px] font-semibold text-[#C96442]">{t('chat.loadingShort')}</span>:<span className="shrink-0 text-[10px] font-semibold text-[#C96442]">{t('chat.runShort')}</span>}
-        </Button>)}{!modelsLoading&&!installed.length&&<div className="p-5 text-center text-[11px] text-[#9C9388]">{t('chat.noInstalled')}</div>}</div>
-        <Button type="button" variant="ghost" onClick={()=>{setModelMenu(false);openModels()}} className="flex w-full items-center justify-between !rounded-none border-t border-[#EFE9DF] px-3 py-2.5 text-[11px] font-semibold text-[#5C544A] hover:bg-[#FAF7F1]">{t('chat.openModels')} <ArrowRight size={13}/></Button>
-       </div>
-      ,document.body)}
-     </div>
-    </div>
-    <div className="flex shrink-0 items-center gap-1">
-     {usageUnavailable?<span role="status" title={t('usage.unavailable')} className="hidden rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-800 sm:inline-flex">{messageUsage>0?t('usage.loadedOnly',{count:messageUsage.toLocaleString()}):t('usage.unavailable')}</span>:(serverUsage||messageUsage)>0&&<span title={tokenUsageTip} className="hidden rounded-lg border border-[#E7DDCC] bg-[#F7F1E6] px-2 py-1 text-[10px] font-semibold text-[#8A775F] sm:inline-flex">{t('usage.sessionTotal',{count:(serverUsage||messageUsage).toLocaleString()})}</span>}
-
-     
-     <Button size="icon" variant="ghost" title={t('chat.modelManage')} aria-label={t('chat.modelManage')} onClick={openModels}><Cpu size={18}/></Button>
-     <Button size="icon" variant="ghost" className="conversation-settings" title={t('nav.settings')} aria-label={t('nav.settings')} onClick={openSettings}><Settings size={18}/></Button>
-    </div>
-   </header>
    <div ref={scrollRef} onScroll={onScroll} data-chat-scroll className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{current&&transcript.loading&&!messages.length?<div className="flex min-h-full items-center justify-center p-6 text-sm text-[#8A8176]">{t('chat.transcriptLoading')}</div>:current&&transcript.error&&!messages.length?<div role="status" className="flex min-h-full items-center justify-center p-6 text-sm text-[#8A8176]">{t('chat.transcriptUnavailable')}</div>:!messages.length&&!(busy&&viewingTurn)?<div className="mx-auto flex min-h-full max-w-xl flex-col justify-center px-5 py-8">
     <div className="mb-6 flex items-center gap-3"><span className="grid size-11 place-items-center rounded-2xl bg-[#F7E8E1] text-[#C96442]"><Sparkles size={22}/></span><div><h1 className="text-[24px] font-bold tracking-[-.03em] text-[#24211D]">{t('chat.newChatHeading')}</h1><p className="mt-1 text-[13px] text-[#8A8176]">{t('chat.newChatDesc')}</p></div></div>
     <div className="rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-5"><div className="mb-2 text-[11px] font-semibold text-[#8A8176]">{t('chat.examples')}</div>{[t('chat.example1'),t('chat.example2'),t('chat.example3')].map(example=><Button type="button" key={example} onClick={()=>{setInput(example);inputRef.current?.focus({preventScroll:true})}} className="flex w-full items-center justify-between border-t border-[#EFE9DF] px-2 py-3 text-left text-[12px] text-[#5C544A] hover:bg-[#FFFDF9]">{example}<ArrowRight size={14} className="shrink-0 text-[#9C9388]"/></Button>)}</div>
@@ -696,20 +658,25 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      <TextArea ref={inputRef} rows={1} placeholder={t("chat.inputPlaceholder")} value={input} onChange={e=>{const next=e.target.value;setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n'));setSlashActive(0);const el=e.currentTarget;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,180)+'px'}} onKeyDown={appendKey} onPaste={handleClipboardFiles} aria-controls="dominion-slash-menu" aria-expanded={slashOpen} className="conversation-composer-input"/>
      <div className="chat-composer-controls conversation-composer-controls">
       <div className="chat-composer-options conversation-composer-options">
+       <Button type="button" variant="ghost" size="icon" className="md:!hidden !size-8 shrink-0"
+        aria-label={t('chat.listExpand')} aria-controls="conversation-sidebar"
+        aria-expanded={showHistory} onClick={()=>setShowHistory(true)}><Menu size={17}/></Button>
        <ConversationTargetPicker active={active} disabled={busy}
         providers={enabledProviders} agents={agents.value}
         providerId={providerId} model={model} agentId={agentId} mode={executionMode}
-        onModel={chooseConversationModel} onPersona={chooseAgent} onManage={openModels}/>
+        onModel={chooseConversationModel} onPersona={chooseAgent} onManage={openModels}
+        local={{installed,runtime,loading:modelsLoading,busy:modelBusy,unloading,error:menuError}}
+        onLocalOpen={()=>void loadLocalModels()} onLocalLoad={switchLocalModel} onLocalUnload={unloadModel}/>
        <Button type="button" variant="ghost" disabled={busy} className="chat-file-add" title="이미지 또는 텍스트 파일 첨부" onClick={()=>fileInputRef.current?.click()}><Paperclip size={15}/><span className="hidden sm:inline">첨부</span></Button>
         {executionMode==='chat'&&<Button type="button" variant="ghost" disabled={busy}
          className="chat-web-search-toggle" aria-pressed={webSearchEnabled}
          title={webSearchEnabled?'공개 웹 검색 사용 중':'공개 웹에서 검색하고 출처 확인'}
          onClick={()=>setWebSearchEnabled(!webSearchEnabled)}><Globe2 size={14}/>웹 검색</Button>}
-       {executionMode==='agent'&&<ExecutionPermissions active={active} open={permissionOpen} onOpenChange={open=>{setPermissionOpen(open);if(open){setShowSettings(false);setModelMenu(false)}}} onError={setError} onChanged={label=>setCommandInfo(t('chat.perm.changed',{label}))}/>}
+       {executionMode==='agent'&&<ExecutionPermissions active={active} open={permissionOpen} onOpenChange={open=>{setPermissionOpen(open);if(open){setShowSettings(false)}}} onError={setError} onChanged={label=>setCommandInfo(t('chat.perm.changed',{label}))}/>}
 
        <ReasoningSelect value={reasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} model={selectedModel} requireCatalog={selectedProvider?.kind==='codex'} defaultLabel={executionMode==='agent'&&activeAgent?.reasoningEffort?`에이전트 설정 (${activeAgent.reasoningEffort})`:t('chat.reasoningAuto')} className="chat-reasoning !h-7 !w-auto !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-[#5C544A]"/>
 
-       <ConversationSettings open={showSettings} onOpenChange={open=>{setShowSettings(open);if(open){setPermissionOpen(false);setModelMenu(false)}}} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={thinkingEnabled} setThinkingEnabled={setThinkingEnabled} canDisableThinking={canDisableThinking} reasoningEffort={reasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={executionMode==='agent'&&toolsEnabled} setToolsEnabled={value=>{if(value)setExecutionMode('agent');setToolsEnabled(value)}} autoLearn={executionMode==='agent'&&autoLearn} setAutoLearn={value=>{if(value)setExecutionMode('agent');setAutoLearn(value)}} learning={learning} learnDisabled={!current||Boolean(selectedSession?.roomId)||busy} onLearn={learnSession}/>
+       <ConversationSettings open={showSettings} onOpenChange={open=>{setShowSettings(open);if(open){setPermissionOpen(false)}}} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={thinkingEnabled} setThinkingEnabled={setThinkingEnabled} canDisableThinking={canDisableThinking} reasoningEffort={reasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={executionMode==='agent'&&toolsEnabled} setToolsEnabled={value=>{if(value)setExecutionMode('agent');setToolsEnabled(value)}} autoLearn={executionMode==='agent'&&autoLearn} setAutoLearn={value=>{if(value)setExecutionMode('agent');setAutoLearn(value)}} learning={learning} learnDisabled={!current||Boolean(selectedSession?.roomId)||busy} onLearn={learnSession}/>
       </div>
       <div className="ml-auto flex items-center gap-2">
        <span className="hidden text-[10px] text-[#9C9388] sm:inline">{t('chat.enterHint')}</span>
