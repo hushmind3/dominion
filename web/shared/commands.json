@@ -54,7 +54,7 @@
     "key": "goal",
     "command": "/goal",
     "name": "자율 작업 실행",
-    "description": "실행 엔진에 목표 작업을 등록합니다",
+    "description": "실제 작업 대기열에 목표를 등록합니다",
     "group": "실행",
     "requiresArg": true,
     "hint": "실행할 내용"
@@ -106,8 +106,8 @@
   {
     "key": "mcp",
     "command": "/mcp",
-    "name": "MCP 설정",
-    "description": "MCP 연결과 서버 설정으로 이동합니다",
+    "name": "MCP 빠른 연결",
+    "description": "채팅에서 MCP 검색·등록·연결 확인·활성화·삭제",
     "group": "도구 · 확장"
   },
   {
@@ -127,8 +127,8 @@
   {
     "key": "workflows",
     "command": "/workflows",
-    "name": "워크플로",
-    "description": "실행 엔진과 워크플로 화면을 엽니다",
+    "name": "작업 현황",
+    "description": "작업 화면을 열어 실행 상태와 결과를 확인합니다",
     "group": "화면"
   },
   {
