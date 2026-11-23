@@ -330,11 +330,14 @@ test('stop retains streamed assistant text and restores pre-session unsaved owne
  assert.doesNotMatch(chat,/controller\?\.abort\(\);clearStreamBuffer\(\);/)
 })
 
-test('model selection keeps tools available without forcing a persona',()=>{
+test('model selection keeps native tools and never hides an inherited persona',()=>{
  const chat=source('src/pages/Chat.tsx')
- assert.match(chat,/onModel=\{\(provider,chosenModel\)=>\{setChatModeOverride\(\{scope:current,mode:'chat'\}\);setAgentChoice\(undefined\);setRoute\(provider,chosenModel\)\}\}/)
+ const picker=source('src/components/chat/ConversationTargetPicker.tsx')
  assert.match(chat,/mode:agentMode\|\|toolsEnabled\?'agent':'chat'/)
+ assert.match(chat,/mode:agentMode\|\|Boolean\(selectedSession\?\.agentId\)\?'agent':'chat'/)
+ assert.match(chat,/if\(!agentMode&&!selectedSession\?\.agentId\)setAgentChoice\(undefined\)/)
  assert.match(chat,/providerId:agentMode\?manual\?\.providerId:providerId/)
+ assert.match(picker,/selectedAgent\?\[selectedAgent\.name,selectedModel\?\.name\|\|model\]/)
 })
 
 test('failed SSE never blindly resends an already persisted owner instruction',()=>{
