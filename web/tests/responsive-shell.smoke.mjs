@@ -183,10 +183,19 @@ try{
    providerId:'fixture',model:'test-model'}]
   else if(path==='/api/sessions/menu-demo/messages')result=[{
    id:'response-1',role:'assistant',content:'복사할 답변입니다.',
-   reasoning:'추론 기록 예시',
-   metadata:{usage:{totalTokens:80,promptTokens:60,completionTokens:20,cachedPromptTokens:10}}
+   reasoning:'추론 기록 예시',created_at:'2026-11-23T00:52:00Z',
+   metadata:{executionId:'exec-menu-demo',usage:{totalTokens:80,promptTokens:60,completionTokens:20,cachedPromptTokens:10}}
   }]
   else if(path==='/api/sessions/menu-demo/usage')result={totalTokens:80}
+  else if(path==='/api/executions/exec-menu-demo')result={
+   id:'exec-menu-demo',status:'completed',contextPolicy:'private-context-engine-v1',
+   modelCalls:1,toolCalls:0,tokens:80,
+   providerRounds:[{round:1,promptTokens:60,completionTokens:20,cachedPromptTokens:10,
+    usageExact:true,toolsAdvertised:0,nativeInputTokensEstimated:75}],
+   inputContext:{systemTokens:28,historyTokens:15,toolSchemaTokens:0,
+    reservedOutputTokens:1024,preAdapterWireProfile:{totalEstimatedTokens:75,
+     components:{systemAndPersona:28,ownerAndHistory:45,toolSchemas:0},toolDefinitions:0}}
+  }
   else if(path==='/api/providers')result=[{id:'fixture',name:'Fixture',enabled:true,
    kind:'openai',model:'test-model',baseUrl:'http://127.0.0.1/v1'}]
   else if(path==='/api/agents')result=[]
@@ -205,7 +214,14 @@ try{
  await answer.getByText('추론 기록 예시').waitFor({state:'visible',timeout:5000})
  await answer.getByRole('button',{name:'답변 옵션'}).click()
  await answer.getByRole('menuitem',{name:'토큰 사용량 보기'}).click()
- await answer.getByRole('region',{name:'답변 토큰 사용량'}).waitFor({state:'visible',timeout:5000})
+ const evidence=inspector.getByRole('dialog',{name:'실행·토큰 상세'})
+ await evidence.waitFor({state:'visible',timeout:5000})
+ await evidence.getByText('요청 구성').waitFor({state:'visible',timeout:5000})
+ await evidence.getByText('모델 토큰 정산').waitFor({state:'visible',timeout:5000})
+ await evidence.getByText('모델 호출별 사용량').waitFor({state:'visible',timeout:5000})
+ assert.match(await evidence.innerText(),/첫 입력[sS]*60/)
+ assert.match(await evidence.innerText(),/입력 합계[sS]*60/)
+ await evidence.getByRole('button',{name:'실행·토큰 상세 닫기'}).click()
  await answer.getByRole('button',{name:'답변 복사'}).click()
  await answer.getByRole('button',{name:'답변 복사됨'}).waitFor({state:'visible',timeout:5000})
  assert.equal(await inspector.evaluate(()=>navigator.clipboard.readText()),'복사할 답변입니다.')

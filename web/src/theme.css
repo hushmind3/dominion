@@ -340,3 +340,18 @@
 .page-chat .chat-turn-detail-heading{display:flex;align-items:center;gap:6px;margin-bottom:7px;color:#45403B;font-weight:650}
 .page-chat .chat-turn-detail-heading button{margin-left:auto;display:grid;place-items:center;min-width:25px;min-height:25px;border-radius:7px}
 .page-chat .chat-turn-detail-heading button:hover{background:#ECE7DF}
+
+/* Sub4 execution footprint in an anchored, scrolling detail panel.
+   Portals escape transcript scroll clipping; the hook constrains viewport bounds. */
+.chat-token-detail-popover{z-index:1200;overflow-y:auto;overscroll-behavior:contain;
+ border:1px solid #E6DFD5;border-radius:16px;background:#FFFDFA;padding:15px;
+ box-shadow:0 16px 40px #30251A20;color:#524B43;max-height:min(690px,calc(100dvh - 24px))}
+.chat-token-detail-title{position:sticky;top:-15px;z-index:2;display:flex;align-items:center;
+ justify-content:space-between;gap:8px;background:#FFFDFA;padding:2px 0 11px;
+ font-size:13px;color:#332F2A}
+.chat-token-detail-title button{display:grid;place-items:center;width:27px;height:27px;
+ border-radius:8px;border:0;background:transparent;color:#766D63}
+.chat-token-detail-title button:hover{background:#F1EBE4}
+.execution-token-details{min-width:0;overflow-wrap:anywhere}
+@media(max-width:480px){.chat-token-detail-popover{padding:12px;border-radius:12px}
+ .chat-token-detail-title{top:-12px}}

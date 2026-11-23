@@ -2,7 +2,9 @@ import {ConversationSettings} from '../components/ConversationSettings'
 import {ExecutionPermissions} from '../components/ExecutionPermissions'
 import {TeamRunStrip} from '../components/TeamActivity'
 import {ConversationSwitch} from '../components/WorkspaceShell'
-import {TokenUsage} from '../components/TokenUsage'
+import {ExecutionTokenDetails} from '../components/chat/ExecutionTokenDetails'
+import {useAnchoredPanel} from '../hooks/useAnchoredPanel'
+import {createPortal} from 'react-dom'
 import {MarkdownMessage} from '../components/MarkdownMessage'
 import {AttachmentLink} from '../components/AttachmentLink'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
@@ -734,10 +736,12 @@ function Message({message,agentName,showReasoning}:{message:ChatMessage;agentNam
  const [menuOpen,setMenuOpen]=useState(false)
  const [copied,setCopied]=useState(false)
  const menuRef=useRef<HTMLDivElement>(null)
+ const tokenPanel=useAnchoredPanel(detail==='usage',()=>setDetail(null),420,'top')
  const human=message.role==='user'
  const usage=message.metadata?.usage
+ const executionId=typeof message.metadata?.executionId==='string'?message.metadata.executionId:undefined
  const canShowReasoning=Boolean(showReasoning&&message.reasoning)
- const canShowUsage=Boolean(usage?.totalTokens)
+ const canShowUsage=Boolean(usage?.totalTokens||executionId)
  const attached=(Array.isArray(message.metadata?.attachments)?message.metadata.attachments:[]) as {id:string;name:string;size?:number;isImage?:boolean}[]
  const sources=Array.isArray(message.metadata?.sources)
   ?message.metadata.sources.filter(source=>typeof source.title==='string'
@@ -783,17 +787,14 @@ function Message({message,agentName,showReasoning}:{message:ChatMessage;agentNam
     <div className="chat-turn-detail-heading"><BrainCircuit size={14}/> 추론 정보 <Button variant="bare" type="button" onClick={()=>setDetail(null)} aria-label="추론 정보 접기"><X size={14}/></Button></div>
     <div className="max-h-56 overflow-auto whitespace-pre-wrap">{message.reasoning}</div>
    </section>}
-   {!human&&detail==='usage'&&canShowUsage&&<section className="chat-turn-detail" aria-label="답변 토큰 사용량">
-    <div className="chat-turn-detail-heading">답변 토큰 사용량 <Button variant="bare" type="button" onClick={()=>setDetail(null)} aria-label="토큰 정보 접기"><X size={14}/></Button></div>
-    <TokenUsage usage={usage} className="block text-[11px] leading-6 text-[#6D6257]"/>
-   </section>}
+
    {!human&&Boolean(message.content)&&<div className="chat-turn-actions" role="group" aria-label="답변 작업">
     <Button type="button" variant="bare" className="chat-turn-action" onClick={()=>void copyAnswer()}
      aria-label={copied?'답변 복사됨':'답변 복사'} title={copied?'복사됨':t('chat.copy')}>
      {copied?<Check size={15}/>:<Copy size={15}/>}<span>{copied?'복사됨':'복사'}</span>
     </Button>
     {(canShowReasoning||canShowUsage)&&<div className="chat-turn-action-menu" ref={menuRef}>
-     <Button type="button" variant="bare" className="chat-turn-action" aria-label="답변 옵션"
+     <Button ref={tokenPanel.trigger} type="button" variant="bare" className="chat-turn-action" aria-label="답변 옵션"
       aria-haspopup="menu" aria-expanded={menuOpen} title="추론·토큰 상세" onClick={()=>setMenuOpen(value=>!value)}>
       <MoreHorizontal size={17}/>
      </Button>
@@ -804,5 +805,13 @@ function Message({message,agentName,showReasoning}:{message:ChatMessage;agentNam
     </div>}
    </div>}
   </div>
+  {!human&&detail==='usage'&&canShowUsage&&tokenPanel.position&&createPortal(
+   <div ref={tokenPanel.panel} style={tokenPanel.position} role="dialog" tabIndex={-1}
+    aria-label="실행·토큰 상세" className="chat-token-detail-popover">
+    <div className="chat-token-detail-title"><strong>실행·토큰 상세</strong>
+     <button type="button" onClick={()=>setDetail(null)} aria-label="실행·토큰 상세 닫기"><X size={15}/></button>
+    </div>
+    <ExecutionTokenDetails executionId={executionId} usage={usage} createdAt={message.created_at}/>
+   </div>,document.body)}
  </div>
 }

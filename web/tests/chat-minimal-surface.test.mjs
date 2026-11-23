@@ -42,6 +42,8 @@ test('assistant messages expose copy beside a small options menu with on-demand 
  assert.match(chat,/navigator\.clipboard\.writeText\(message\.content\|\|''\)/)
  assert.match(chat,/detail==='reasoning'&&canShowReasoning/)
  assert.match(chat,/detail==='usage'&&canShowUsage/)
+ assert.match(chat,/ExecutionTokenDetails executionId=\{executionId\}/)
+ assert.match(chat,/createPortal\(/)
  assert.doesNotMatch(chat,/chat-turn-copy inline-flex/)
  assert.match(css,/\.chat-turn-action-popover/)
  assert.match(css,/\.chat-turn-detail/)
