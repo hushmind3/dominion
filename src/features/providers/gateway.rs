@@ -623,45 +623,17 @@ pub async fn send_once_with_affinity(
     Ok(GatewayResponse{response,_permit:permit})
 }
 
-/// Sends a helper completion through shared admission and authentication.
+/// Helper completions may be metered. A disconnected POST can already
+/// have generated a response upstream, so retrying it silently can bill twice.
+/// Reuse the native adapter's single-dispatch admission and uncertainty marker;
+/// callers decide separately whether an entirely new operation is warranted.
 pub async fn send(
     route: &Route,
     client: &reqwest::Client,
     body: &Value,
     timeout: Duration,
 ) -> Result<GatewayResponse, String> {
-    reserve_generation(
-        &route.base_url,
-        &route.model,
-        route.requests_per_minute,
-    )?;
-    let permit = acquire(&route.base_url, route.local).await;
-    let mut last_error = String::new();
-    for attempt in 0..2 {
-        match benchmark_request(client.post(route.endpoint("/chat/completions")))
-            .header("Content-Type", "application/json")
-            .header("Authorization", format!("Bearer {}", route.api_key))
-            .json(body)
-            .timeout(timeout)
-            .send()
-            .await
-        {
-            Ok(response) => {
-                if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                    mark_rate_limited(&route.base_url, &route.model);
-                }
-                verify_benchmark_route(&response)?;
-                return Ok(GatewayResponse { response, _permit: permit });
-            }
-            Err(error) => {
-                last_error = error.to_string();
-                if attempt == 0 {
-                    tokio::time::sleep(Duration::from_millis(400)).await;
-                }
-            }
-        }
-    }
-    Err(format!("{} 연결 실패: {last_error}", route.name))
+    send_once(route, client, body, timeout).await
 }
 
 pub fn usage_from(value: &Value) -> Usage {
@@ -985,6 +957,44 @@ mod tests {
             Usage { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 }
         );
         assert_eq!(usage_from(&json!({})), Usage::default());
+    }
+
+    #[tokio::test]
+    async fn helper_transport_disconnect_never_automatically_replays_paid_post() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let state=state();
+        state.store.put("provider",&json!({
+            "id":"paid-helper-test","name":"paid-helper-test",
+            "kind":"openai","model":"paid-model",
+            "baseUrl":format!("http://{addr}/v1")
+        })).unwrap();
+        let route=resolve(&state,"paid-helper-test",None).unwrap();
+        // The first accepted connection is dropped without a response. The
+        // old adapter retried after 400ms and produced two accepted POSTs.
+        let server=tokio::spawn(async move {
+            let mut accepted=0u32;
+            loop {
+                match tokio::time::timeout(
+                    Duration::from_millis(800),listener.accept()
+                ).await {
+                    Ok(Ok((socket,_))) => {
+                        accepted+=1;
+                        drop(socket);
+                        if accepted>=2 {break;}
+                    }
+                    _=>break,
+                }
+            }
+            accepted
+        });
+        let client=reqwest::Client::new();
+        let failure=send(
+            &route,&client,&json!({"model":"paid-model","messages":[]}),
+            Duration::from_millis(1000),
+        ).await.err().expect("disconnected helper must remain unresolved");
+        assert!(failure.contains("not replayed"),"{failure}");
+        assert_eq!(server.await.unwrap(),1,"helper must never retransmit an uncertain paid POST");
     }
 
     #[tokio::test]
