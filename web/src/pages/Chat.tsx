@@ -671,7 +671,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      </div>)}
     </div>}
     {slashOpen&&<SlashMenu items={slashItems} active={slashActive} onChoose={chooseSlash}/>}
-    <ConversationComposer value={input} onChange={next=>{setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n'));setSlashActive(0)}}
+    <ConversationComposer value={input} onChange={next=>{setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n')&&(!/\s/.test(next)||/^\/(?:model|agent|mcp)\s+\S*$/.test(next)));setSlashActive(0)}}
      onSend={send} inputRef={inputRef} label={t('chat.messageAria')} placeholder={t('chat.inputPlaceholder')} onKeyDown={appendKey} slashOpen={slashOpen}
      options={<>
        <Button variant="ghost" size="icon" className="!h-7 !w-7 md:hidden" onClick={onOpenNavigation} aria-label={t('chat.listExpand')} title={t('chat.recent')}><Menu size={17}/></Button>
