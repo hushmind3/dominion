@@ -340,7 +340,7 @@ function StatusLine({
   );
 }
 export type ExtensionTab='market'|'installed'|'plugins'|'skills'
-export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;embedded?:boolean}={}) {
+export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section?:ExtensionTab;embedded?:boolean;onMcpRegistered?:()=>void}={}) {
   const loc = useLocale();
   const [localTab, setTab] = useState<ExtensionTab>("installed");
   const [showBuiltins, setShowBuiltins] = useState(false);
@@ -452,10 +452,11 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
           entry.args || (entry.packageName ? ["-y", entry.packageName] : []),
       };
       await post("/api/mcp", payload);
-      mcp.reload();
-      setMessage(
-        t('ext.registeredHint'),
-      );
+      await mcp.reload();
+      setMessage(t('ext.registeredHint'));
+      // In Service connections, take the owner straight to the real installed
+      // server and its connection check rather than leaving a dead-end badge.
+      onMcpRegistered?.();
     } catch (e) {
       setError((e as Error).message);
     }
