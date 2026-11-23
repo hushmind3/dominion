@@ -1,6 +1,7 @@
 import { koreanToolSummary } from '../lib/toolSummary'
 import {DialogBackdrop,DialogPanel} from "../components/Dialog";
 import {SkillsPanel} from "./extensions/SkillsPanel";
+import {CapabilitiesPage} from './Capabilities';
 import {t,useLocale} from "../i18n";
 import {
   Button,
@@ -341,6 +342,7 @@ export type ExtensionTab='market'|'installed'|'plugins'|'skills'
 export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;embedded?:boolean}={}) {
   const loc = useLocale();
   const [localTab, setTab] = useState<ExtensionTab>("installed");
+  const [showBuiltins, setShowBuiltins] = useState(false);
   const tab = section ?? localTab;
   const mcp = useRemote<Mcp[]>("/api/mcp", []),
     skills = useRemote<Skill[]>("/api/skills", []),
@@ -1110,6 +1112,16 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
       )}
       {tab === "installed" && (
         <>
+          <section className="mb-6 rounded-xl border border-divider bg-surface p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold text-ink">{loc==='en'?'Built-in tools':'기본 도구'}</h2>
+                <p className="mt-1 text-xs leading-5 text-muted">{loc==='en'?'Search, files and code are built into DOMINION. MCP plugins below can be enabled independently.':'검색·파일·코드는 도미니온의 기본 도구입니다. 아래 MCP는 설치 후 개별적으로 끌 수 있습니다.'}</p>
+              </div>
+              <Button type="button" variant="secondary" size="sm" aria-expanded={showBuiltins} onClick={()=>setShowBuiltins(value=>!value)}>{showBuiltins?(loc==='en'?'Hide tools':'도구 목록 접기'):(loc==='en'?'View available tools':'도구 목록 보기')}</Button>
+            </div>
+            {showBuiltins&&<div className="mt-4 border-t border-divider pt-4"><CapabilitiesPage embedded navigate={()=>{}}/></div>}
+          </section>
           <Subheading
             title={t('ext.connectedServers')}
             extra={
