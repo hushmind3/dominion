@@ -520,7 +520,7 @@ pub async fn run(ctx:&JobContext,job:&Value)->Result<Value,String>{
 mod tests {
     use super::*;
     fn sample()->Team{
-        Team{goal:"Implement and verify".into(),max_parallel:3,max_read_retries:0,tasks:vec![
+        Team{goal:"Implement and verify".into(),max_parallel:3,max_read_retries:0,plan:None,session_id:None,tasks:vec![
             Task{id:"investigate".into(),prompt:"Inspect source".into(),
                 runtime:WorkerRuntime::Native,mode:Mode::Read,isolation:Isolation::Shared,resume_id:None,
                 depends_on:vec![],agent_id:None,provider_id:None,model:None,
@@ -701,7 +701,7 @@ mod tests {
             agent_id:None,provider_id:Some("missing-provider".into()),
             model:None,allowed_tools:vec![],checks:vec![]};
         let team=Team{goal:"Recover task".into(),tasks:vec![task.clone()],
-            max_parallel:1,max_read_retries:0};
+            max_parallel:1,max_read_retries:0,plan:None,session_id:None};
         state.store.put("job",&json!({"id":"team-lead","kind":"team",
             "status":"running","attempts":1,"input":team})).unwrap();
         state.store.put("job",&json!({"id":child_id("team-lead","inspect"),
