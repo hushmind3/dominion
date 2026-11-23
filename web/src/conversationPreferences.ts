@@ -4,6 +4,13 @@ export type ConversationToggle='showReasoning'|'thinkingEnabled'|'toolsEnabled'|
 const defaults:Record<ConversationToggle,boolean>={
  showReasoning:false,thinkingEnabled:true,toolsEnabled:true,autoLearn:false,
 }
+/** Slash /think controls the persisted *display*, not model reasoning effort. */
+export function nextReasoningDisplayState(argument:string,current:boolean):boolean|null{
+ if(argument==='on')return true
+ if(argument==='off')return false
+ if(argument==='')return !current
+ return null
+}
 export const conversationPreferenceEvent='dominion-conversation-preference-changed'
 export const conversationToggleKey=(name:ConversationToggle)=>'dominion.chat.pref.'+name
 export const conversationEffortKey='dominion.chat.pref.reasoningEffort'
