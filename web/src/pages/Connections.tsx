@@ -1,6 +1,6 @@
 import {ViewTabs, SearchField, EmptyState} from '../components/ui/WorkspaceUI'
-import {lazy,Suspense,useState} from 'react'
-import {Activity, ArrowRight, RefreshCw, Blocks, Check, ExternalLink, Link2, LoaderCircle, MessageCircle, Plus, RadioTower, Send, Settings2, ShieldCheck, Trash2, UsersRound, X} from 'lucide-react'
+import {lazy,Suspense,useEffect,useState} from 'react'
+import {Activity, ArrowRight, RefreshCw, Blocks, BookOpenText, Check, ExternalLink, Link2, LoaderCircle, MessageCircle, PackagePlus, Plus, RadioTower, Send, Settings2, ShieldCheck, Trash2, UsersRound, X} from 'lucide-react'
 import {DialogBackdrop, DialogPanel} from '../components/Dialog'
 
 import {Button, TextInput, SelectInput, PageContainer} from '../components/Primitives'
@@ -160,6 +160,14 @@ function ChannelEditor({editor,saving,error,rooms,agents,providers,onClose,onSav
  </DialogBackdrop>
 }
 
+type ConnectionView='saved'|'add'|'accounts'|'mcp'|'registry'|'plugins'|'skills'
+function connectionViewFromHash():ConnectionView{
+ const [path,query]=window.location.hash.split('?')
+ if(path!=='#/connections')return 'saved'
+ const view=new URLSearchParams(query).get('view')
+ return view==='add'||view==='accounts'||view==='mcp'||view==='registry'||view==='plugins'||view==='skills'?view:'saved'
+}
+
 export function ConnectionsPage(){
  const locale=useLocale()
  const english=locale==='en'
@@ -168,7 +176,16 @@ export function ConnectionsPage(){
  const agents=useRemote<any[]>('/api/agents',[])
  const rooms=useRemote<any[]>('/api/rooms',[])
  const providers=useRemote<any[]>('/api/providers',[])
- const [view,setView]=useState<'saved'|'add'|'accounts'|'mcp'|'registry'>('saved')
+ const [view,setView]=useState<ConnectionView>(connectionViewFromHash)
+ useEffect(()=>{
+  const sync=()=>setView(connectionViewFromHash())
+  window.addEventListener('hashchange',sync);window.addEventListener('popstate',sync)
+  return()=>{window.removeEventListener('hashchange',sync);window.removeEventListener('popstate',sync)}
+ },[])
+ const choose=(next:ConnectionView)=>{
+  setView(next)
+  window.location.hash=next==='saved'?'#/connections':'#/connections?view='+next
+ }
  const [query,setQuery]=useState('')
  const [editor,setEditor]=useState<Editor|null>(null)
  const [error,setError]=useState('')
@@ -223,21 +240,21 @@ export function ConnectionsPage(){
  const choices=registry.value.filter(entry=>(entry.name+' '+entry.id).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).sort((a,b)=>a.name.localeCompare(b.name))
  const tr=(ko:string,en:string)=>english?en:ko
  return <PageContainer>
-  <ViewTabs value={view} onChange={setView} label={tr('서비스 연결 보기','Connection views')} options={[{id:'saved',label:tr('내 연결','Your connections'),count:channels.value.length},{id:'add',label:tr('연결 추가','Add a connection')},{id:'accounts',label:tr('앱 계정','App accounts')},{id:'mcp',label:tr('MCP 연결','MCP connections'),icon:Blocks},{id:'registry',label:tr('MCP 레지스트리','MCP registry'),icon:RadioTower}]}/>
+  <ViewTabs value={view} onChange={choose} label={tr('서비스 연결 보기','Connection views')} options={[{id:'saved',label:tr('내 연결','Your connections'),count:channels.value.length},{id:'add',label:tr('연결 추가','Add a connection')},{id:'accounts',label:tr('앱 계정','App accounts')},{id:'mcp',label:tr('MCP 연결','MCP connections'),icon:Blocks},{id:'registry',label:tr('MCP 레지스트리','MCP registry'),icon:RadioTower},{id:'plugins',label:tr('플러그인','Plugins'),icon:PackagePlus},{id:'skills',label:tr('스킬','Skills'),icon:BookOpenText}]}/>
 
   <Notice message={error||(view==='saved'||view==='add'?registry.error||channels.error:'')} onRetry={()=>{void registry.reload();void channels.reload()}}/>
   {info&&<p className="mb-4 flex items-center gap-2 rounded-xl border border-success/20 bg-success-soft/30 p-4 text-sm text-success" role="status"><Check size={16}/>{info}</p>}
   {view==='accounts'?<ConnectedAccounts/>:
-   (view==='mcp'||view==='registry')?
+   (view==='mcp'||view==='registry'||view==='plugins'||view==='skills')?
     <Suspense fallback={<p className="p-5 text-sm text-muted">{tr('MCP 관리 화면 여는 중…','Loading MCP connections…')}</p>}>
-     <McpExtensions section={view==='mcp'?'installed':'market'} embedded
-      onMcpRegistered={()=>setView('mcp')}/>
+     <McpExtensions section={view==='mcp'?'installed':view==='registry'?'market':view} embedded
+      onMcpRegistered={()=>choose('mcp')}/>
     </Suspense>:<>
    <div className="mb-6 flex flex-wrap items-center gap-3 [&>label]:max-w-xl"><SearchField value={query} onChange={setQuery} label={tr('서비스 연결 검색','Search connections')} placeholder={tr('서비스 이름으로 찾기','Search by service name')}/>
-    {view==='saved'&&<Button variant="primary" onClick={()=>{setQuery('');setView('add')}}><Plus size={17}/>{tr('새 연결','New connection')}</Button>}
+    {view==='saved'&&<Button variant="primary" onClick={()=>{setQuery('');choose('add')}}><Plus size={17}/>{tr('새 연결','New connection')}</Button>}
    </div>
    {view==='saved'&&<>
-    {!channels.loading&&!channels.error&&!channels.value.length?<EmptyState icon={RadioTower} title={tr('연결한 서비스가 없습니다','No connected services yet')} description={tr('사용할 메신저나 앱을 직접 선택해 연결하세요. AI와 대화하거나 답변을 보내는 데 사용할 수 있습니다.','Choose a messenger or app to chat with your AI or receive its replies.')} action={<Button variant="primary" onClick={()=>setView('add')}>{tr('연결할 서비스 선택','Choose a service')}<ArrowRight size={17}/></Button>}/>:<div className="grid gap-4">
+    {!channels.loading&&!channels.error&&!channels.value.length?<EmptyState icon={RadioTower} title={tr('연결한 서비스가 없습니다','No connected services yet')} description={tr('사용할 메신저나 앱을 직접 선택해 연결하세요. AI와 대화하거나 답변을 보내는 데 사용할 수 있습니다.','Choose a messenger or app to chat with your AI or receive its replies.')} action={<Button variant="primary" onClick={()=>choose('add')}>{tr('연결할 서비스 선택','Choose a service')}<ArrowRight size={17}/></Button>}/>:<div className="grid gap-4">
      {visibleBindings.map(channel=>{const entry=registry.value.find(item=>item.id.toLocaleLowerCase()===channel.kind.toLocaleLowerCase());const Icon=channelIcons[channel.kind.toLocaleLowerCase()]||MessageCircle;return <article key={channel.id} className="flex min-w-0 flex-wrap items-start gap-4 rounded-2xl border border-divider bg-surface p-5 sm:p-6">
       <span className="grid size-12 shrink-0 place-items-center rounded-xl border border-divider bg-brand-soft text-brand"><Icon size={24}/></span><div className="min-w-0 flex-1 [&>h2]:text-base [&>h2]:font-semibold [&>p]:mt-1.5 [&>p]:text-sm [&>p]:leading-7 [&>p]:text-muted [&>[role=status]]:mt-2"><h2>{channel.name}</h2><p>{entry?.name||channel.kind}{channel.roomId?' · '+(rooms.value.find(room=>room.id===channel.roomId)?.name||tr('그룹 확인 필요','Review group')):''}</p><ChannelHealth channel={channel}/>{channel.runtimeError&&<p className="!text-danger" role="alert">{channel.runtimeError}</p>}{probe[channel.id]&&<p role="status">{probe[channel.id]}</p>}</div>
       <div className="flex w-full flex-wrap justify-end gap-2 lg:w-auto"><Button variant="secondary" disabled={probing===channel.id} onClick={()=>void diagnose(channel.id)}>{probing===channel.id?<LoaderCircle size={16} className="animate-spin"/>:<Activity size={16}/>} {tr('연결 확인','Check connection')}</Button>{entry&&<Button variant="ghost" onClick={()=>openEditor(entry,channel)}><Settings2 size={16}/>{tr('수정','Edit')}</Button>}<Button variant="ghost" size="icon" disabled={deleting===channel.id} onClick={()=>void remove(channel)} aria-label={tr(channel.name+' 연결 삭제','Remove '+channel.name)}><Trash2 size={16}/></Button></div>
