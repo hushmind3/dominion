@@ -228,20 +228,21 @@ test('assistant rich text keeps code fences, lists, headings and safe outbound l
  assert.doesNotMatch(rich,/dangerouslySetInnerHTML/)
 })
 
-test('private chat offers agent-free model conversation while preserving explicit agent tasks',()=>{
+test('private chat exposes built-in tools by default and sends the backend mode contract',()=>{
   const chat=source('src/pages/Chat.tsx')
   const api=source('src/api/types.ts')
-  assert.match(chat,/aria-label="대화 모드 및 에이전트 선택"/)
-  assert.match(chat,/<option value="">\{t\('welcome\.chatMode'\)\}<\/option>/)
-  assert.match(chat,/t\('welcome\.agentMode'\)/)
-  assert.match(chat,/initialAgent\?'agent':'chat'/)
-  assert.match(chat,/directChat:!agentMode/)
+  const preferences=source('src/conversationPreferences.ts')
+  assert.match(preferences,/toolsEnabled:true/)
+  assert.match(chat,/aria-pressed=\{toolsEnabled\}/)
+  assert.match(chat,/onClick=\{\(\)=>setToolsEnabled\(!toolsEnabled\)\}/)
+  assert.match(chat,/mode:agentMode\|\|toolsEnabled\?'agent':'chat'/)
   assert.match(chat,/agentId:agentMode\?agentId:undefined/)
-  assert.match(chat,/toolsEnabled:agentMode&&toolsEnabled/)
+  assert.match(chat,/toolsEnabled,toolsExecutionEnabled:toolsEnabled/)
   assert.match(chat,/autoLearning:agentMode&&autoLearn/)
   assert.match(chat,/<ExecutionPermissionsSetting\/>/)
-  assert.match(chat,/optionsBusy=\{!agentMode\}/)
-  assert.match(api,/directChat\?: boolean/)
+  assert.match(chat,/optionsBusy=\{busy\}/)
+  assert.match(api,/mode: 'chat' \| 'agent'/)
+  assert.doesNotMatch(chat,/directChat:!agentMode/)
 })
 
 test('zero-tool direct chat reaches a model turn and does not disappear on save latency',()=>{
@@ -329,7 +330,11 @@ test('stop retains streamed assistant text and restores pre-session unsaved owne
  assert.doesNotMatch(chat,/controller\?\.abort\(\);clearStreamBuffer\(\);/)
 })
 
-test('explicit web-search wording in model-only chat bypasses agent tool enforcement',()=>{
+test('model selection keeps tools available without forcing a persona',()=>{
+ const chat=source('src/pages/Chat.tsx')
+ assert.match(chat,/onModel=\{\(provider,chosenModel\)=>\{setChatModeOverride\(\{scope:current,mode:'chat'\}\);setAgentChoice\(undefined\);setRoute\(provider,chosenModel\)\}\}/)
+ assert.match(chat,/mode:agentMode\|\|toolsEnabled\?'agent':'chat'/)
+ assert.match(chat,/providerId:agentMode\?manual\?\.providerId:providerId/)
 })
 
 test('failed SSE never blindly resends an already persisted owner instruction',()=>{
