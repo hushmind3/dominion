@@ -6,6 +6,7 @@ import {Action, FormField, Headline, Notice, Panel, Subheading, useRemote} from 
 import {LearningRecords} from './memory/LearningRecords'
 import {t,useLocale,type LocaleKey} from '../i18n'
 import {GrowthDashboard} from './memory/Growth'
+import {HarnessPromptsPanel} from './memory/HarnessPromptsPanel'
 
 type Memory={
  id:string;text:string;scope?:string;agentId?:string;sessionId?:string;partitionKey?:string;
@@ -20,6 +21,16 @@ const statusOf=(memory:Memory)=>memory.retrievalEligible?'active':memory.status&
 
 export function MemoryPage(){
  useLocale()
+ const [tab,setTab]=useState<'memories'|'harness'>(()=>new URLSearchParams(window.location.hash.split('?')[1]||'').get('view')==='harness'?'harness':'memories')
+ useEffect(()=>{
+  const sync=()=>setTab(new URLSearchParams(window.location.hash.split('?')[1]||'').get('view')==='harness'?'harness':'memories')
+  window.addEventListener('hashchange',sync)
+  return()=>window.removeEventListener('hashchange',sync)
+ },[])
+ const chooseTab=(next:'memories'|'harness')=>{
+  setTab(next)
+  window.location.hash=next==='harness'?'#/memory?view=harness':'#/memory'
+ }
  const memories=useRemote<Memory[]>('/api/memories',[])
  const agents=useRemote<Agent[]>('/api/agents',[])
  const [query,setQuery]=useState(''),[text,setText]=useState(''),[scope,setScope]=useState('shared')
@@ -65,6 +76,12 @@ export function MemoryPage(){
   <Headline eyebrow={t('ui.eyebrow.memory')} title={t('memory.title')} description={t('memory.description')}/>
   <Notice message={error||memories.error||agents.error}/>
   {notice&&<div role="status" className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{notice}</div>}
+  <div role="tablist" aria-label="기억·하네스 지침" className="mb-5 flex flex-wrap gap-2 border-b border-[#E7E0D5] pb-3">
+   {([['memories','기억'],['harness','하네스 지침']] as const).map(([key,label])=>
+    <button key={key} type="button" role="tab" aria-selected={tab===key} onClick={()=>chooseTab(key)}
+     className={'rounded-lg px-4 py-2 text-[13px] font-semibold '+(tab===key?'bg-[#3A342D] text-white':'bg-[#F4F1EB] text-[#776E64]')}>{label}</button>)}
+  </div>
+  {tab==='harness'?<HarnessPromptsPanel/>:<>
   <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
    <Panel className="min-w-0 p-5">
     <Subheading title={t('memory.new')} extra={<Action disabled={busy||!text.trim()} onClick={save}><Plus size={16}/> {t('memory.save')}</Action>}/>
@@ -97,5 +114,6 @@ export function MemoryPage(){
    <summary className="cursor-pointer font-semibold">{t('memory.growth')}</summary>
    <GrowthDashboard/>
   </details>
+  </>}
  </div>
 }
