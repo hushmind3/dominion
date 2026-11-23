@@ -9,13 +9,14 @@ const oauth=load('src/integrations/accounts/oauth.rs');
 const accountTools=load('src/integrations/accounts/tools.rs');
 const tools=load('src/integrations/local_tools.rs');
 
-test('only the quick-connect UI exposes GitHub and Google sign-in',()=>{
+test('account sign-in is owned by ConnectedAccounts, not duplicated in channel or operations pages',()=>{
   const quick=load('web/src/components/ConnectedAccounts.tsx');
   const accounts=load('web/src/pages/Connections.tsx');
   const operations=load('web/src/pages/Operations.tsx');
   const authority=load('src/api/channels.rs');
-  assert.match(quick,/supportedOAuthAccounts\(providers\.value\)/);
-  assert.match(accounts,/supportedOAuthAccounts\(oauth\.value\)/);
+  assert.match(quick,/useRemote<Provider\[\]>\('\/api\/oauth\/providers',\[\]\)/);
+  assert.match(quick,/providers\.value\.filter\(provider=>provider\.id==='github'\)/);
+  assert.match(accounts,/<ConnectedAccounts\/>/);
   assert.match(quick,/await openOAuth\(id\)/);
   assert.doesNotMatch(accounts,/\bopenOAuth\b/);
   assert.doesNotMatch(operations,/\bopenOAuth\b/);
