@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs'
 import {fileURLToPath} from 'node:url'
 import {
  readConversationToggle,writeConversationToggle,readConversationEffort,writeConversationEffort,
- conversationToggleKey,conversationEffortKey,conversationPreferenceEvent,compatibleConversationEffort,
+ conversationToggleKey,conversationEffortKey,conversationPreferenceEvent,compatibleConversationEffort,nextReasoningDisplayState,
 } from '../src/conversationPreferences.ts'
 
 const root=fileURLToPath(new URL('../',import.meta.url))
@@ -36,6 +36,18 @@ test('all private chat toggles survive read-back, including explicit false',()=>
   assert.equal(writeConversationToggle(name,true),true)
   assert.equal(readConversationToggle(name),true)
  }
+})
+
+test('/think toggles persisted reasoning visibility, not the model reasoning mode',()=>{
+ storageFixture()
+ assert.equal(nextReasoningDisplayState('',false),true)
+ assert.equal(nextReasoningDisplayState('',true),false)
+ assert.equal(nextReasoningDisplayState('on',false),true)
+ assert.equal(nextReasoningDisplayState('off',true),false)
+ assert.equal(nextReasoningDisplayState('maybe',true),null)
+ assert.match(chat,/nextReasoningDisplayState\(arg,showReasoning\)/)
+ assert.match(chat,/setShowReasoning\(enabled\);setThinking\(enabled\)/)
+ assert.doesNotMatch(chat,/const enabled=arg==='on'\?true:arg==='off'\?false:!thinking/)
 })
 
 test('bad storage and unsupported values fail safely without enabling learning',()=>{
