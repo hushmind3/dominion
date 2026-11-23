@@ -17,7 +17,7 @@ import {ArrowDown,ArrowRight,ArrowUp,BrainCircuit,Check,ChevronRight,CircleHelp,
 import {Agent,Approval,Attachment,ChatMessage,ChatSession,Provider,del,get,post,resolveApproval,streamChat,uploadAttachment} from '../api'
 import {Action,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
-import {parseMcpQuickCommand,findInstalledMcp,validRemoteMcpUrl,type InstalledMcp,type RegistryMcp,type McpAvailableTool} from '../features/mcp/quickCommands'
+import {parseMcpQuickCommand,findInstalledMcp,validRemoteMcpUrl,discoveryForMcp,type InstalledMcp,type RegistryMcp,type McpAvailableTool} from '../features/mcp/quickCommands'
 import {ReasoningSelect,reasoningOptions} from '../components/ReasoningSelect'
 import {useProviderModels} from '../hooks/useProviderModels'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
@@ -289,10 +289,12 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const verifyQuickMcp=async(record:InstalledMcp)=>{
   try{
    const discovered=await get<McpAvailableTool[]>('/api/mcp/discover');
-   const own=discovered.filter(tool=>tool.mcpId===record.id&&!tool.error);
-   setMcpNotice(own.length
-    ?record.name+' · 연결 성공 · '+own.length+'개 도구 사용 가능'
-    :record.name+' · 등록 완료. 연결 확인이 필요합니다. 인증 또는 서버 설정을 확인하세요.');
+   const {tools:own,error:failure}=discoveryForMcp(discovered,record.id);
+   setMcpNotice(failure
+    ?record.name+' · 연결 실패: '+failure
+    :own.length
+     ?record.name+' · 연결 성공 · '+own.length+'개 도구 사용 가능'
+     :record.name+' · 등록 완료. 서버에서 사용 가능한 도구가 발견되지 않았습니다.');
   }catch(e){setMcpNotice(record.name+' · 등록 완료. 연결 확인 실패: '+(e as Error).message);}
  };
  const registerQuickMcp=async(entry:RegistryMcp)=>{
