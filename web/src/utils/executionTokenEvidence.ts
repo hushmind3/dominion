@@ -34,8 +34,8 @@ export type ExecutionEvidence={
  };
 }
 export type MessageUsage={
- promptTokens?:NumberLike;cachedPromptTokens?:NumberLike;
- completionTokens?:NumberLike;totalTokens?:NumberLike;estimated?:boolean
+ promptTokens?:number;cachedPromptTokens?:number|null;
+ completionTokens?:number;totalTokens?:number;estimated?:boolean
 }
 export const numberOrNull=(value:unknown):number|null=>
  typeof value==='number'&&Number.isFinite(value)&&value>=0?value:null
