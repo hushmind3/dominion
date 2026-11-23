@@ -526,6 +526,13 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     {visibleAlert&&<div role="alert" className="mb-3 rounded-xl border border-danger/20 bg-danger-soft p-3 text-xs text-danger"><CircleHelp size={16}/>{visibleAlert}<Button type="button" aria-label="오류 닫기" onClick={()=>setDismissedError({session:current,message:visibleAlert})}><X size={14}/></Button></div>}
     {modelError&&!model&&<div className="mb-3 text-xs text-muted">{t('welcome.modelError')} <Button onClick={chooseAI}>{t('chat.modelPick')} <ArrowRight size={13}/></Button></div>}
     {commandInfo&&<div role="status" className="mb-3 max-h-36 overflow-auto whitespace-pre-wrap rounded-xl border border-divider bg-brand-soft p-3 text-xs leading-6 text-ink">{commandInfo}</div>}
+    {toolsEnabled&&selectedProvider&&(selectedProvider.toolMode==='compat'||selectedProvider.capabilities?.toolCalling===false||selectedProvider.modelCapabilities?.[model]?.toolCalling===false)&&<div role="status" className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-divider bg-canvas px-3 py-2 text-xs text-muted">
+      <Wrench size={15} className="shrink-0"/>
+      <span className="min-w-0 flex-1">{selectedProvider.capabilities?.toolCalling===false||selectedProvider.modelCapabilities?.[model]?.toolCalling===false
+       ?(loc==='en'?'This connection declares tool calling unavailable.':'연결 설정에서 이 모델의 도구 호출이 미지원으로 지정돼 있습니다.')
+       :(loc==='en'?'Legacy text-based tools are active. Native tool calling can be configured in AI connections.':'이 연결은 구형 텍스트 도구 방식입니다. 정식 Tool Calling은 AI 연결에서 설정할 수 있습니다.')}</span>
+      <Button type="button" variant="ghost" size="sm" className="!min-h-8 !shrink-0 !text-xs" onClick={openModels}>{loc==='en'?'Connections':'연결 설정'}</Button>
+    </div>}
     <div className="relative">
     {pendingImages.length>0&&<div className="mb-2 flex flex-wrap items-center gap-2">
      {pendingImages.map(item=><div key={item.key} className="relative h-16 w-16 overflow-hidden rounded-lg border border-divider bg-canvas">
