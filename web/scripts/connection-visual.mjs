@@ -8,7 +8,7 @@ await withBrowser('connection-visual',async({page,db,url})=>{
  await adapter.waitFor({state:'visible'})
  await adapter.selectOption('compat')
  await page.getByRole('button',{name:/저장|Save/}).last().click()
- await page.waitForFunction(()=>!document.querySelector('[role="dialog"]'))
+ await page.waitForFunction(()=>document.querySelectorAll('[role="dialog"]').length===1) // only the persistent management workspace remains
  assert.equal(db.providerWrites.at(-1)?.toolMode,'compat','adapter choice must reach provider API')
  const card=page.locator('article').filter({hasText:'Test Local'})
  await card.getByText(/텍스트 호환|Text compatibility/).waitFor({state:'visible'})
