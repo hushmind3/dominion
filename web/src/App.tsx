@@ -44,7 +44,7 @@ export default function App() {
   <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden" inert={navigation.mobile&&navigation.open} aria-hidden={navigation.mobile&&navigation.open||undefined}>
    {visited.chat&&<div hidden={page!=='chat'} className="h-full page-chat"><AsyncPage label={t('shell.loadingChat')}><ChatPage newConversationRevision={newConversationRevision} onOpenNavigation={openNavigation} settingsTarget={mode==='chat'?conversationSettingsTarget:null} active={page==='chat'}
     sessionId={chatRoute.session} initialAgent={chatRoute.agent} initialProvider={chatRoute.provider} initialModel={chatRoute.model}
-    onSession={selectChatSession} openModels={()=>navigate('models')} openSettings={()=>navigate('settings')} switchMode={switchMode}/></AsyncPage></div>}
+    onSession={selectChatSession} openModels={()=>navigate('models')} openSettings={()=>navigate('settings')} openExtensions={()=>navigate('extensions')} switchMode={switchMode}/></AsyncPage></div>}
    {visited.rooms&&<div hidden={page!=='rooms'} className="h-full page-rooms"><AsyncPage label={t('shell.loadingChat')}><RoomsPage newRoomRevision={newRoomRevision} onOpenNavigation={openNavigation} selectedRoom={roomSelection} onSelectRoom={setRoomSelection} settingsTarget={mode==='rooms'?conversationSettingsTarget:null} active={page==='rooms'}
     openSession={id=>navigate('chat',id)}/></AsyncPage></div>}
    {workspacePage&&<WorkspacePage conversationSettingsRef={setConversationSettingsTarget} page={page} onNavigate={navigate}/>}
