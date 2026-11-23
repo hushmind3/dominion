@@ -164,7 +164,55 @@ try{
  await page.getByRole('button',{name:'닫기'}).last().click()
  assert.equal(await rail.isVisible(),false,'collapsed icon rail must not occupy mobile viewport')
  assert.deepEqual(pageErrors,[], 'responsive React navigation runtime errors')
- console.log('PASS: responsive Chat rail, settings icon nav, desktop/mobile drawer and route selection')
+ // Exercise the actual message toolbar: copy beside the overflow menu,
+ // with reasoning and tokens hidden until selected.
+ const inspector=await browser.newPage({viewport:{width:1080,height:760},locale:'ko-KR',
+  permissions:['clipboard-read','clipboard-write']})
+ const inspectionErrors=[]
+ inspector.on('pageerror',error=>inspectionErrors.push(error.message))
+ await inspector.route(url=>new URL(url).pathname.startsWith('/api/'),async route=>{
+  const path=new URL(route.request().url()).pathname
+  if(path==='/api/events'){
+   await route.fulfill({status:200,contentType:'text/event-stream',body:': fixture\\n\\n'})
+   return
+  }
+  let result=[]
+  if(path==='/api/health')result={branch:'dominion-sub2',commit:'message-actions'}
+  else if(path==='/api/status')result={jobs:0,providers:1,agents:0}
+  else if(path==='/api/sessions')result=[{id:'menu-demo',title:'Fixture conversation',
+   providerId:'fixture',model:'test-model'}]
+  else if(path==='/api/sessions/menu-demo/messages')result=[{
+   id:'response-1',role:'assistant',content:'복사할 답변입니다.',
+   reasoning:'추론 기록 예시',
+   metadata:{usage:{totalTokens:80,promptTokens:60,completionTokens:20,cachedPromptTokens:10}}
+  }]
+  else if(path==='/api/sessions/menu-demo/usage')result={totalTokens:80}
+  else if(path==='/api/providers')result=[{id:'fixture',name:'Fixture',enabled:true,
+   kind:'openai',model:'test-model',baseUrl:'http://127.0.0.1/v1'}]
+  else if(path==='/api/agents')result=[]
+  else if(path==='/api/approvals')result=[]
+  else if(path==='/api/settings/owner-profile')result={id:'owner',name:'나'}
+  else if(path==='/api/policy'||path.startsWith('/api/settings/'))result={}
+  await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(result)})
+ })
+ await inspector.goto(origin+'/#/chat?session=menu-demo',{waitUntil:'domcontentloaded'})
+ const answer=inspector.locator('[data-message][data-role="assistant"]').first()
+ await answer.waitFor({state:'visible',timeout:15000})
+ assert.equal(await answer.getByText('추론 기록 예시').count(),0,
+  'reasoning must not fill the transcript until requested')
+ await answer.getByRole('button',{name:'답변 옵션'}).click()
+ await answer.getByRole('menuitem',{name:'추론 정보 보기'}).click()
+ await answer.getByText('추론 기록 예시').waitFor({state:'visible',timeout:5000})
+ await answer.getByRole('button',{name:'답변 옵션'}).click()
+ await answer.getByRole('menuitem',{name:'토큰 사용량 보기'}).click()
+ await answer.getByRole('region',{name:'답변 토큰 사용량'}).waitFor({state:'visible',timeout:5000})
+ await answer.getByRole('button',{name:'답변 복사'}).click()
+ await answer.getByRole('button',{name:'답변 복사됨'}).waitFor({state:'visible',timeout:5000})
+ assert.equal(await inspector.evaluate(()=>navigator.clipboard.readText()),'복사할 답변입니다.')
+ await inspector.locator('.chat-usage-details > summary').waitFor({state:'visible',timeout:5000})
+ assert.deepEqual(inspectionErrors,[],'assistant message action errors')
+ await inspector.close()
+ console.log('PASS: responsive Chat and compact assistant copy/reasoning/token menu')
 }finally{
  await browser?.close()
  server.kill('SIGTERM')
