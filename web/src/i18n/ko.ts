@@ -443,7 +443,7 @@ const ko = {
   'models.close': '닫기',
   'models.tab.installed': '내 컴퓨터의 모델',
   'models.tab.search': '다운로드할 모델 찾기',
-  'models.tab.import': '로컬',
+  'models.tab.import': '실행기 설치·파일 등록',
   'models.status.ready': '모델 실행 중',
   'models.status.loading': '로딩 중',
   'models.status.installing': '실행기 설치 중',

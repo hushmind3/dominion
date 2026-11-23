@@ -21,7 +21,7 @@ type Props={
  active:boolean;disabled?:boolean;providers:Provider[];agents:Agent[];
  providerId:string;model:string;agentId:string;mode:'chat'|'agent';
  onModel:(providerId:string,model:string)=>void;
- onPersona:(agentId:string)=>void;onManage:()=>void
+ onPersona:(agentId:string)=>void;onManage:()=>void;onLocalSetup:()=>void
  local:LocalControl;onLocalOpen:()=>void;
  onLocalLoad:(model:InstalledLocalModel)=>Promise<boolean>;
  onLocalUnload:()=>Promise<void>
@@ -32,7 +32,7 @@ type Props={
  * only clicking a model or persona commits a selection. */
 export function ConversationTargetPicker({
  active,disabled=false,providers,agents,providerId,model,agentId,mode,
- onModel,onPersona,onManage,local,onLocalOpen,onLocalLoad,onLocalUnload,
+ onModel,onPersona,onManage,onLocalSetup,local,onLocalOpen,onLocalLoad,onLocalUnload,
 }:Props){
  const en=useLocale()==='en'
  const tr=(ko:string,english:string)=>en?english:ko
@@ -72,6 +72,7 @@ export function ConversationTargetPicker({
  }
  const showLocal=()=>{setView('local');setQuery('');onLocalOpen()}
  const manage=()=>{setOpen(false);onManage()}
+ const setup=()=>{setOpen(false);onLocalSetup()}
  return <>
   <Button ref={panel.trigger} type="button" variant="ghost" disabled={disabled||!active}
    aria-label={tr('대화 상대 선택','Choose an AI or persona')}
@@ -218,9 +219,11 @@ export function ConversationTargetPicker({
      </div>
     </div>
     <footer className="shrink-0 border-t border-[#E7E0D5] px-5 py-3">
-     <Button type="button" variant="ghost" onClick={manage}
+     <Button type="button" variant="ghost" onClick={view==='local'?setup:manage}
       className="!justify-start !gap-2 !px-2 !text-sm">
-      <Plus size={18}/>{tr('연결 추가 · AI 관리','Add connection · Manage AIs')}
+      <Plus size={18}/>{view==='local'
+       ?tr('실행기 설치 · 로컬 모델 관리','Install engines · Manage local models')
+       :tr('연결 추가 · AI 관리','Add connection · Manage AIs')}
      </Button>
     </footer>
    </div>,document.body)}

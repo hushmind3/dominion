@@ -11,6 +11,7 @@ import {OAuthConnectionCard} from '../components/OAuthConnectionCard'
 import {CliAuthProgress, type CliAuthStatus} from '../components/CliAuthProgress'
 import {ReasoningSelect} from '../components/ReasoningSelect'
 import {useProviderModels} from '../hooks/useProviderModels'
+import {modelHubLanding} from '../utils/modelHubRoute'
 import {t,useLocale} from '../i18n'
 
 type PresetCategory='free'|'cloud'|'local'
@@ -77,7 +78,8 @@ export function ModelHub(){
  const providerList=useRef<HTMLDetailsElement>(null)
  const [modal,setModal]=useState(false),[presetMode,setPresetMode]=useState(false)
  const [edit,setEdit]=useState<Provider|null>(null)
- const [tab,setTab]=useState<Tab>('providers'),[category,setCategory]=useState<'all'|PresetCategory>('all'),[query,setQuery]=useState('')
+ const [tab,setTab]=useState<Tab>(()=>modelHubLanding(window.location.hash).tab),[category,setCategory]=useState<'all'|PresetCategory>('all'),[query,setQuery]=useState('')
+ const [localExplorerView]=useState(()=>modelHubLanding(window.location.hash).localView)
  const [catalogSort,setCatalogSort]=useState<'name'|'models'>('name'),[catalogLimit,setCatalogLimit]=useState(60)
  const [browseProviderId,setBrowseProviderId]=useState('')
  const catalog=useRemote<CatalogResponse>(tab==='catalog'?'/api/providers/catalog':null,{providers:[]})
@@ -332,7 +334,7 @@ export function ModelHub(){
   {id:'free',label:'무료 모델',count:freeCatalog.value.counts?.free||0},
   {id:'catalog',label:'업체 탐색'},
   {id:'huggingface',label:'허깅페이스 모델 탐색'},
-  {id:'local',label:'로컬',count:providers.value.filter(p=>p.local).length},
+  {id:'local',label:'로컬 모델·실행기'},
   {id:'oauth',label:'계정 인증'},
  ]
  return <div className="mx-auto w-full max-w-[1200px] px-4 pt-2 pb-5 sm:px-6 lg:pt-3">
@@ -341,8 +343,8 @@ export function ModelHub(){
    <div className="flex flex-wrap gap-1 rounded-xl border border-[#E7E0D5] bg-[#FFFDF9] p-1">
     {tabs.map(item=><Button variant="bare" key={item.id} type="button" onClick={()=>{setTab(item.id);setCategory('all');if(item.id==='connect')setBrowseProviderId('')}} className={'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors '+(tab===item.id?'bg-[#C96442] text-white':'text-[#6F675D] hover:bg-[#F3EEE5]')}>{item.label}{item.count!==undefined&&<span className={'rounded px-1.5 py-0.5 text-[10px] '+(tab===item.id?'bg-white/20':'bg-[#F0EAE0] text-[#8A8176]')}>{item.count}</span>}</Button>)}
    </div>
-   <Button type="button" onClick={()=>open()} className="ml-auto inline-flex h-8 items-center gap-2 rounded-lg border border-[#E1D9CC] bg-white px-3 text-[11px] font-semibold text-[#3A342D] hover:bg-[#FAF7F1]"><Plus size={14}/> {t('models.apiAdd')}</Button>
-   {(tab==='providers'||tab==='local')&&<><div className="relative min-w-[180px] flex-1 sm:max-w-[280px]"><Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#A79C8E]"/><TextInput value={query} onChange={e=>setQuery(e.target.value)} placeholder={t('models.providerSearch')} className="!pl-8 !text-[12px]"/></div>
+   {tab!=='local'&&<Button type="button" onClick={()=>open()} className="ml-auto inline-flex h-8 items-center gap-2 rounded-lg border border-[#E1D9CC] bg-white px-3 text-[11px] font-semibold text-[#3A342D] hover:bg-[#FAF7F1]"><Plus size={14}/> {t('models.apiAdd')}</Button>}
+   {tab==='providers'&&<><div className="relative min-w-[180px] flex-1 sm:max-w-[280px]"><Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#A79C8E]"/><TextInput value={query} onChange={e=>setQuery(e.target.value)} placeholder={t('models.providerSearch')} className="!pl-8 !text-[12px]"/></div>
     {tab==='providers'&&<div className="flex flex-wrap gap-1">{(['all','free','cloud'] as const).map(value=><Button variant="bare" key={value} type="button" onClick={()=>setCategory(value)} className={'rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold '+(category===value?'border-[#C96442] bg-[#FBF1EC] text-[#A94E30]':'border-[#E7E0D5] bg-white text-[#7C7469]')}>{t(value==='all'?'models.filter.all':value==='free'?'models.filter.free':'models.filter.cloud')}</Button>)}</div>}</>}
   </div>
 
@@ -418,7 +420,11 @@ export function ModelHub(){
    {loginMessage&&<p className="mt-3 rounded-xl border border-[#CFE0CF] bg-[#F4FAF3] px-3 py-2 text-[11px] text-[#4F6F52]">{loginMessage}</p>}
   </section>}
 
-  {(tab==='providers'||tab==='local')&&<section className="rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-5 shadow-[0_1px_2px_rgba(36,33,29,.04)]">
+  {tab==='local'&&<div className="mb-4"><ModelExplorer initialView={localExplorerView}/></div>}
+  {(tab==='providers'||tab==='local')&&<section className="rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-4 shadow-[0_1px_2px_rgba(36,33,29,.04)]">
+   <details open={tab==='providers'}>
+    <summary className="cursor-pointer text-[12px] font-semibold text-[#3A342D]">{tab==='local'?'외부 로컬 서버 연결 (고급) · Ollama / LM Studio 등': 'API 연결 추가·관리'}</summary>
+    <div className="mt-3">
    {tab==='providers'&&<div className="mb-4 flex flex-wrap items-center justify-between gap-3"><h2 className="m-0 text-[14px] font-semibold text-[#3A342D]">등록된 API 연결</h2><span className="text-[11px] text-[#7C7469]">{visibleProviders.length}개 연결</span></div>}
 
    {visibleProviders.length>0&&<details ref={providerList} className="mb-4 rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] p-3" open><summary className="cursor-pointer text-[12px] font-semibold text-[#3A342D]">{t('models.registeredList',{count:visibleProviders.length})}</summary><div className="mt-2 max-h-[320px] divide-y divide-[#EFE9DF] overflow-auto">{visibleProviders.map(p=><div key={p.id} className="flex flex-wrap items-center gap-3 py-2.5"><span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#F3EEE5] text-[#C96442]">{p.local?<HardDrive size={15}/>:p.kind==='codex'?<Sparkles size={15}/>:<Cloud size={15}/>}</span><div className="min-w-0 flex-1"><div className="text-[12px] font-semibold text-[#3A342D]">{p.name}{p.kind==='codex'&&<span className="ml-2 rounded bg-[#E9E1F5] px-1.5 py-0.5 text-[9px] font-bold text-[#6B4FA0]">OAuth</span>}{(p.reflection ?? p.learning)&&<span className="ml-2 rounded bg-[#FBE7D8] px-1.5 py-0.5 text-[9px] font-bold text-[#A94E30]">{t('models.review')}</span>}{p.kind!=='cli'&&(!p.local||p.integration==='freellmapi')&&p.hasKey===false&&<span className="ml-2 rounded bg-[#EDE8DE] px-1.5 py-0.5 text-[9px] text-[#8A8176]">{t('models.needKey')}</span>}{!p.enabled&&<span className="ml-2 text-[10px] text-[#A79C8E]">{t('models.disabled')}</span>}</div><div className="mt-0.5 break-all text-[11px] text-[#8A8176]">{p.baseUrl}</div>{p.model&&<div className="mt-0.5 text-[10px] text-[#9C9388]">{t('models.defaultModel')} · {p.model}</div>}{p.requestsPerMinute?<div className="mt-0.5 text-[10px] text-[#9C9388]">{t('models.perMinute',{count:p.requestsPerMinute})}</div>:null}{counts[p.id]?.error&&<div className="mt-1 text-[11px] text-rose-600">{counts[p.id].error}</div>}{counts[p.id]?.info&&<div className="mt-1 text-[11px] text-[#7C7469]">{counts[p.id].info}</div>}{counts[p.id]&&!counts[p.id].busy&&!counts[p.id].error&&!counts[p.id].list.length&&<div className="mt-1 text-[11px] text-[#8A8176]">{t('models.emptyList')}</div>}{(counts[p.id]?.list.length??0)>0&&<div className="mt-1 text-[10px] text-emerald-700">{t('models.recognized',{count:counts[p.id].list.length})} · {counts[p.id].list.slice(0,2).join(', ')}</div>}</div><Button className="rounded-md px-2 py-1 text-[11px] text-[#C96442] hover:bg-[#FBF1EC]" type="button" disabled={counts[p.id]?.busy} onClick={()=>void probe(p)}>{counts[p.id]?.busy?t('models.checking'):t('models.checkModels')}</Button>{savedId===p.id&&<span role="status" className="text-[11px] text-emerald-700">{t('models.saved')}</span>}{p.enabled!==false&&<a className="text-[11px] font-semibold text-[#C96442] hover:underline" href={'#/chat?provider='+encodeURIComponent(p.id)}>{t('models.chatSelect')}</a>}<Button className="rounded-md p-2 text-[#8A8176] hover:bg-[#F3EEE5]" type="button" onClick={()=>p.kind==='cli'?setTab('oauth'):open(p)} aria-label={t('models.dlg.settingsAria',{name:p.name})}><Settings2 size={15}/></Button></div>)}</div></details>}
@@ -426,8 +432,9 @@ export function ModelHub(){
    <div className="mb-2 text-[11px] text-[#8A8176]">{tab==='local'?'로컬 실행기 연결':'연결 가능한 업체'} · {visiblePresets.length}개</div>
    <div className="grid max-h-[460px] grid-cols-1 gap-2 overflow-auto sm:grid-cols-2 xl:grid-cols-3">{visiblePresets.map(preset=>{const existing=providers.value.find(p=>sameProvider(p,preset));const needsKey=Boolean(existing&&!preset.free&&(!preset.local||preset.integration==='freellmapi')&&existing.hasKey===false);return <div key={preset.name} className="flex min-w-0 flex-col gap-2 rounded-xl border border-[#EFE9DF] bg-[#FAF7F1] px-3 py-3"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><strong className="block truncate text-[12px] text-[#3A342D]">{preset.name}</strong><small className="block truncate text-[10px] text-[#A79C8E]">{preset.baseUrl.replace(/^https?:\/\//,'')}</small></div><span className={'shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold '+(preset.category==='free'?'bg-emerald-50 text-emerald-700':preset.category==='local'?'bg-[#E9E1F5] text-[#6B4FA0]':'bg-[#EDE8DE] text-[#8A8176]')}>{preset.category==='free'&&preset.free?t('models.filter.free'):preset.category==='local'?t('models.filter.local'):t('models.filter.cloud')}</span></div><div className="flex items-center justify-between gap-2"><small className="min-w-0 truncate text-[10px] text-[#A79C8E]">{existing?(needsKey?t('models.needKey'):existing.enabled===false?t('models.off'):t('models.registered')):(preset.free?t('models.freeProvider'):preset.integration==='freellmapi'?t('models.integrationKey'):preset.local?t('models.local'):t('models.needKey'))}</small><Button variant={existing?'secondary':'primary'} onClick={()=>existing?open(existing):openPreset(preset)} className="!px-2.5 !py-1 !text-[11px]">{existing?(needsKey?t('models.keyInput'):t('models.settings')):t('models.register')}</Button></div></div>})}</div>
    {!visiblePresets.length&&<p className="py-8 text-center text-[12px] text-[#9C9388]">{t('models.noPreset')}</p>}
+    </div>
+   </details>
   </section>}
-  {tab==='local'&&<div className="mt-5"><ModelExplorer initialView="installed"/></div>}
   {tab==='huggingface'&&<div className="mt-2"><ModelExplorer key="huggingface-browser" initialView="search" hideNavigation/></div>}
 
   {removedName&&<p role="status" className="mb-4 mt-4 text-[12px] text-emerald-700">{t('models.dlg.disconnected',{name:removedName})}</p>}

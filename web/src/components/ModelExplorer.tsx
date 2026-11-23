@@ -323,13 +323,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
      <Button variant="bare" type="button" className={btn} onClick={()=>setPendingEngineLaunch(null)}><X size={13}/>대기 취소</Button>
     </div>
    </div>}
-   <h3 className="text-[13px] font-bold">{t('models.importTitle')}</h3>
-   <p className="mt-1 text-[11px] text-[#7C7469]">{t('models.importDesc')}</p>
-   <label className="mt-4 block text-[11px] font-medium text-[#5C544A]">{t('models.path')}</label>
-   <div className="mt-1.5 flex flex-col gap-2 sm:flex-row"><TextInput className="!flex-1" value={localPath} onChange={e=>setLocalPath(e.target.value)} placeholder="/models/model.gguf · /models/mlx-model"/><Button variant="bare" type="button" className={btn} disabled={!localPicker||picking} onClick={()=>void chooseLocal()}><FolderOpen size={14}/> {t('models.pickFile')}</Button><Button variant="bare" type="button" className={btn} disabled={!localPicker||picking} onClick={()=>void chooseFolder()}><FolderOpen size={14}/> {t('models.pickFolder')}</Button></div>
-   <p className="mt-2 text-[11px] text-[#8A8176]">{localPicker?t('models.pickHintLocal'):t('models.pickHintRemote')}</p>
-   <Button variant="bare" type="button" disabled={!localPath.trim()||Boolean(working)} onClick={()=>void importLocal()} className="mt-5 flex h-9 items-center gap-2 rounded-lg bg-[#C96442] px-4 text-[12px] font-semibold text-white hover:bg-[#A94E30] disabled:opacity-40">{working==='import'?<LoaderCircle className="animate-spin" size={15}/>:<Check size={15}/>}{t('models.file.register')}</Button>
-   <div className="mt-7 border-t border-[#EFE9DF] pt-5">
+   <div className="mb-6">
     <div className="mb-3"><strong className="text-[13px] text-[#24211D]">{t('models.runtimes')}</strong><p className="mt-1 text-[11px] text-[#818a96]">{t('models.runtimesDesc')}</p></div>
     <div className="grid gap-3 lg:grid-cols-2">{runtimes.map((item:any)=>{
     const setup=runtime.setup
@@ -356,7 +350,13 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
     </div>
    })}</div>
    </div>
-  </div>}
+   <div className="border-t border-[#EFE9DF] pt-5">\n   <h3 className="text-[13px] font-bold">{t('models.importTitle')}</h3>
+   <p className="mt-1 text-[11px] text-[#7C7469]">{t('models.importDesc')}</p>
+   <label className="mt-4 block text-[11px] font-medium text-[#5C544A]">{t('models.path')}</label>
+   <div className="mt-1.5 flex flex-col gap-2 sm:flex-row"><TextInput className="!flex-1" value={localPath} onChange={e=>setLocalPath(e.target.value)} placeholder="/models/model.gguf · /models/mlx-model"/><Button variant="bare" type="button" className={btn} disabled={!localPicker||picking} onClick={()=>void chooseLocal()}><FolderOpen size={14}/> {t('models.pickFile')}</Button><Button variant="bare" type="button" className={btn} disabled={!localPicker||picking} onClick={()=>void chooseFolder()}><FolderOpen size={14}/> {t('models.pickFolder')}</Button></div>
+   <p className="mt-2 text-[11px] text-[#8A8176]">{localPicker?t('models.pickHintLocal'):t('models.pickHintRemote')}</p>
+   <Button variant="bare" type="button" disabled={!localPath.trim()||Boolean(working)} onClick={()=>void importLocal()} className="mt-5 flex h-9 items-center gap-2 rounded-lg bg-[#C96442] px-4 text-[12px] font-semibold text-white hover:bg-[#A94E30] disabled:opacity-40">{working==='import'?<LoaderCircle className="animate-spin" size={15}/>:<Check size={15}/>}{t('models.file.register')}</Button>
+   </div>\n  </div>}
   {view==='search'&&<div className="grid min-h-[560px] grid-cols-1 lg:grid-cols-[400px_minmax(0,1fr)]">
    <div className="min-w-0 border-b border-[#E7E0D5] lg:border-b-0 lg:border-r">
     <div className="border-b border-[#EFE9DF] p-4">

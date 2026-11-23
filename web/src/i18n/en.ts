@@ -444,7 +444,7 @@ const en: Record<LocaleKey, string> = {
   'models.close': 'Close',
   'models.tab.installed': 'Models on this Mac',
   'models.tab.search': 'Find models to download',
-  'models.tab.import': 'Local',
+  'models.tab.import': 'Install engines & import',
   'models.status.ready': 'Model running',
   'models.status.loading': 'Loading',
   'models.status.installing': 'Installing runner',

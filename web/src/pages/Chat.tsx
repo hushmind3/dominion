@@ -19,13 +19,15 @@ import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
 import {useJob,jobFinished,type JobState} from '../hooks/useJob'
 import {t,useLocale,type LocaleKey} from '../i18n'
 import {translateError} from '../i18n/errors'
+import {classifyRuntimeFailure,modelPreflight,type LaunchCapabilities} from '../utils/modelHardware'
+import {localRuntimeSetupHref} from '../utils/modelHubRoute'
 
 type SessionUsageBreakdown={byPurpose?:{purpose:string;calls:number;promptTokens:number;completionTokens:number;totalTokens:number;observedCachedTokens:number;cacheObservedCalls:number;estimatedCalls:number;tokensSinceClear:number}[];recentPromptProfiles?:{profile?:{totalEstimatedTokens?:number;components?:Record<string,number>}}[];latestSourceCharacterCounts?:{fixedSystemPrompt?:number;ownerInstructions?:number;agentPersona?:number;systemOverride?:number;retrievedMemoryAndExperience?:number;selectedHistory?:number};hasClearMarker?:boolean}
 type LearningResult={memories:number;skill:boolean}
 type LearningJob=JobState & {result?:LearningResult}
 type ModelOverride={scope?:string;providerId:string;model:string}
 type InstalledModel={id:string;repo:string;label:string;format:string;bytes:number;source?:string}
-type Runtime={status:string;id?:string;name?:string;model?:string;error?:string}
+type Runtime={status:string;id?:string;name?:string;model?:string;error?:string;capabilities?:LaunchCapabilities}
 type PendingFile=File
 type UploadedFile={id:string;sessionId:string}
 const maxFileBytes=8*1024*1024,maxTotalBytes=24*1024*1024,maxFileCount=8
@@ -273,11 +275,24 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    setInstalled(list);setRuntime(state)
   }catch(e){setMenuError((e as Error).message)}finally{setModelsLoading(false)}
  }
+ const openLocalRuntimeSetup=(model?:InstalledModel)=>{
+  if(model){
+   try{window.sessionStorage.setItem('dominion-model-engine-retry',JSON.stringify({
+    id:model.id,from:'installed',createdAt:Date.now(),
+   }))}catch{/* The setup page is still accessible without session storage. */}
+  }
+  window.location.hash=localRuntimeSetupHref
+ }
  const switchLocalModel=async(m:InstalledModel):Promise<boolean>=>{
   if(modelBusy)return false
   setModelBusy(m.id);setMenuError('')
   try{
    const state=await get<Runtime>('/api/model-library/runtime');
+   if((m.format==='mlx'||m.format==='gguf')&&
+      modelPreflight({id:m.id,format:m.format,bytes:m.bytes},state.capabilities).status==='blocked'){
+    openLocalRuntimeSetup(m)
+    return false
+   }
    const ready=state.status==='ready'&&state.id===m.id?state:
     await post<Runtime>('/api/model-library/runtime/load',{id:m.id,context:4096});
    setRuntime(ready);
@@ -289,7 +304,11 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    setRoute('dominion-native',ready.model)
    setCommandInfo(t('chat.model.switched',{repo:m.repo,label:m.label}))
    return true
-  }catch(e){setMenuError((e as Error).message);return false}finally{setModelBusy('')}
+  }catch(e){
+   if(classifyRuntimeFailure((e as Error).message)==='engine')openLocalRuntimeSetup(m)
+   else setMenuError((e as Error).message)
+   return false
+  }finally{setModelBusy('')}
  }
  const unloadModel=async()=>{
   if(unloading)return
@@ -664,7 +683,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
        <ConversationTargetPicker active={active} disabled={busy}
         providers={enabledProviders} agents={agents.value}
         providerId={providerId} model={model} agentId={agentId} mode={executionMode}
-        onModel={chooseConversationModel} onPersona={chooseAgent} onManage={openModels}
+        onModel={chooseConversationModel} onPersona={chooseAgent} onManage={openModels} onLocalSetup={()=>openLocalRuntimeSetup()}
         local={{installed,runtime,loading:modelsLoading,busy:modelBusy,unloading,error:menuError}}
         onLocalOpen={()=>void loadLocalModels()} onLocalLoad={switchLocalModel} onLocalUnload={unloadModel}/>
        <Button type="button" variant="ghost" disabled={busy} className="chat-file-add" title="이미지 또는 텍스트 파일 첨부" onClick={()=>fileInputRef.current?.click()}><Paperclip size={15}/><span className="hidden sm:inline">첨부</span></Button>
