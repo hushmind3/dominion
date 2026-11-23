@@ -8,6 +8,7 @@ pub(super) fn routes()->Router<AppState>{
             "/api/settings/assistant",
             get(settings::assistant_settings).post(settings::save_assistant_settings),
         )
+        .route("/api/settings/harness-prompts",get(settings::harness_prompts).post(settings::save_harness_prompt))
         .route(
             "/api/settings/owner-profile",
             get(settings::owner_profile).post(settings::save_owner_profile),

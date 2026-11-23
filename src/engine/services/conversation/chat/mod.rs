@@ -1,5 +1,6 @@
 //! Native Rust chat engine: shared request contract and stable public entry points.
 mod approval;
+pub(crate) mod harness_prompts;
 mod cancellation;
 use dominion_agent_kernel as budget;
 mod tool_schedule;
