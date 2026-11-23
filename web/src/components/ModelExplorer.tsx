@@ -361,6 +361,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
     <div className="grid gap-3 lg:grid-cols-2">{prioritizedRuntimes.map((item:any)=>{
     const setup=runtime.setup
     const active=Boolean(item.installing)
+    const actionInBanner=pendingEngineId===item.id&&['install','repair'].includes(pendingEngineAction)
     const percent=Math.round((setup?.downloaded||0)/Math.max(1,setup?.total||0)*100)
     return <div id={pendingEngineId===item.id?'required-runtime-engine':undefined} className={'flex min-w-0 flex-col gap-3 rounded-xl border bg-[#FFFDF9] p-4 '+(pendingEngineId===item.id?'border-[#C9A78C] ring-1 ring-[#C9A78C]':'border-[#E7E0D5]')} key={item.id}>
      <div className="flex items-start justify-between gap-3">
@@ -376,9 +377,9 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
      {active?<div><div className="flex items-center justify-between text-[10px] text-[#7C7469]"><span>{item.name} · {t('models.runtime.installing')}</span><span>{setup?.total?percent+'%':''}</span></div><div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#E7E0D5]"><div className="h-full bg-[#C96442]" style={{width:Math.max(4,percent)+'%'}}/></div></div>:
       <div className="mt-auto flex items-center justify-between gap-2 border-t border-[#EFE9DF] pt-3">
        <small className="text-[10px] text-[#9C9388]">{!item.installed&&!item.installable?t('models.runtime.external'):''}</small>
-       {item.installed&&item.id==='mlx-lm'&&item.installable
+       {item.installed&&item.id==='mlx-lm'&&item.installable&&!actionInBanner
         ?<Button variant="bare" type="button" className={btn+' !border-[#C9A78C]'} disabled={Boolean(working)||installing||runtime.status==='loading'||(runtime.status==='ready'&&runtime.engine==='MLX')} onClick={()=>void safe('repair-'+item.id,()=>post('/api/model-library/runtime/install',{engine:item.id,repair:true}))}><RefreshCw size={13}/> MLX 실행기 재설치</Button>
-        :!item.installed&&(item.installable
+        :!item.installed&&!actionInBanner&&(item.installable
         ?<Button variant="bare" type="button" className={btn+' !border-[#C96442] !bg-[#C96442] !text-white hover:!bg-[#A94E30]'} disabled={Boolean(working)||installing} onClick={()=>void safe('install-'+item.id,()=>post('/api/model-library/runtime/install',{engine:item.id}))}>{t('models.runtime.install')}</Button>
         :item.url?<a className={btn} href={item.url} target="_blank" rel="noreferrer">{t('models.runtime.download')} <ExternalLink size={12}/></a>:null)}
       </div>}

@@ -32,7 +32,7 @@ try{
  const page=await browser.newPage({viewport:{width:1280,height:800},locale:'ko-KR'})
  const pageErrors=[]
  let localRunning=false
- let forceMissingEngine=false,mlxInstalled=false,llamaInstalled=false
+ let forceMissingEngine=false,mlxInstalled=false,llamaInstalled=false,mlxRepairs=0
  page.on('pageerror',error=>pageErrors.push(error.message))
  page.on('dialog',dialog=>void dialog.accept())
  await page.route(url=>new URL(url).pathname.startsWith('/api/'),async route=>{
@@ -55,7 +55,9 @@ try{
     {id:'llama-cpp',name:'llama.cpp',formats:['gguf'],installMethod:'fixture',installed:llamaInstalled,installable:true}
    ]}
   else if(path==='/api/model-library/runtime/install'){
-   const engine=route.request().postDataJSON()?.engine
+   const payload=route.request().postDataJSON()
+   const engine=payload?.engine
+   if(engine==='mlx-lm'&&payload?.repair===true)mlxRepairs++
    if(engine==='mlx-lm')mlxInstalled=true
    if(engine==='llama-cpp')llamaInstalled=true
    response={ok:true}
@@ -111,6 +113,8 @@ try{
   .locator('xpath=ancestor::div[contains(@class,"rounded-xl")][1]')
  await mlxCard.getByRole('button',{name:'설치',exact:true}).click()
  assert.equal(mlxInstalled,true,'MLX install action must use runtime install API')
+ await mlxCard.getByRole('button',{name:'MLX 실행기 재설치'}).click()
+ assert.equal(mlxRepairs,1,'installed MLX must allow force-repair without LM Studio')
  assert.equal(await page.getByText('외부 로컬 서버 연결 (고급) · Ollama / LM Studio 등').count(),1)
  await page.getByRole('button',{name:'닫기'}).last().click()
  // Missing llama.cpp must preserve selected model and guide straight to setup.
@@ -135,6 +139,10 @@ try{
  await sidebar.waitFor({state:'visible',timeout:12000})
  assert.equal(await sidebar.getAttribute('data-collapsed'),'false','settings should begin expanded on desktop')
  assert.equal(await sidebar.getByText('더 많은 기능').count(),0,'no Sub4 extra-features grouping')
+ for(const section of ['작업 공간','확장','운영']){
+  assert.equal(await sidebar.getByText(section,{exact:true}).count(),0,
+   'remove redundant settings section heading: '+section)
+ }
  assert.equal(await sidebar.getByPlaceholder('설정 찾기').count(),0,'no copied settings search')
  for(const label of ['모델 관리','에이전트','연결 · 채널','메모리','실행 기록']){
   assert.equal(await sidebar.getByRole('button',{name:label,exact:true}).count(),1,'original Sub2 item: '+label)
