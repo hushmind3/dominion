@@ -210,6 +210,62 @@ fn verify_snapshot_attachments(state:&AppState, db_bytes:&[u8]) -> Result<(),Str
     result
 }
 
+/// Prepare the rollback pair without leaving plaintext copies on an early
+/// failure. The pending marker is not durable yet, so startup recovery cannot
+/// clean these files if the process keeps running.
+fn prepare_rollback<F>(
+    state: &AppState,
+    old_db: &Path,
+    old_key: &Path,
+    write_key: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&Path) -> std::io::Result<()>,
+{
+    // Neither a stale rollback nor a symlink may be overwritten. In
+    // particular, write_key_file must never follow a pre-existing symlink.
+    for path in [old_db, old_key] {
+        match fs::symlink_metadata(path) {
+            Ok(_) => return Err(format!(
+                "restore rollback path already exists: {}; restart to recover",
+                path.display()
+            )),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!(
+                "restore rollback path cannot be checked: {}: {error}",
+                path.display()
+            )),
+        }
+    }
+
+    let prepared = (|| -> Result<(), String> {
+        state.store.backup_to(old_db)?;
+        write_key(old_key)
+            .map_err(|error| format!("restore rollback key backup: {error}"))?;
+        sync(old_db)?;
+        sync(old_key)?;
+        Ok(())
+    })();
+    if let Err(error) = prepared {
+        let failed_cleanup: Vec<String> = [old_db, old_key]
+            .iter()
+            .filter_map(|path| {
+                remove_if_present(path)
+                    .err()
+                    .map(|reason| format!("{}: {reason}", path.display()))
+            })
+            .collect();
+        if !failed_cleanup.is_empty() {
+            return Err(format!(
+                "{error}; rollback staging cleanup incomplete ({});                  stop the engine and repair before another restore",
+                failed_cleanup.join(", ")
+            ));
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
 /// Restore a verified backup. Old DB and key remain available until DB
 /// swap, vault installation and migrations all succeed. Rollback is guarded
 /// by the same marker used after power loss or process termination.
@@ -224,13 +280,24 @@ pub fn restore(state:&AppState,bytes:&[u8],key:Option<[u8;32]>)->Result<(),Strin
     verify_snapshot_attachments(state,bytes)?;
     let old_db=dir.join(DB_ROLLBACK);
     let old_key=dir.join(KEY_ROLLBACK);
-    state.store.backup_to(&old_db)?;
-    state.vault.write_key_file(&old_key)
-        .map_err(|e|format!("restore rollback key backup: {e}"))?;
-    sync(&old_db)?;
-    sync(&old_key)?;
-    let mut marker=fs::OpenOptions::new().write(true).create_new(true)
-        .open(dir.join(MARKER)).map_err(|e|e.to_string())?;
+    prepare_rollback(state, &old_db, &old_key, |path| state.vault.write_key_file(path))?;
+    // If the marker itself cannot be created, no durable restore transaction
+    // exists yet. Discard its plaintext rollback pair immediately.
+    let mut marker = match fs::OpenOptions::new().write(true).create_new(true)
+        .open(dir.join(MARKER)) {
+        Ok(marker) => marker,
+        Err(error) => {
+            let cleanup = [old_db.as_path(), old_key.as_path()]
+                .iter()
+                .filter_map(|path| remove_if_present(path).err())
+                .collect::<Vec<_>>();
+            return Err(if cleanup.is_empty() {
+                format!("restore pending marker: {error}")
+            } else {
+                format!("restore pending marker: {error}; rollback cleanup incomplete: {cleanup:?}")
+            });
+        }
+    };
     marker.write_all(b"DOMINION_RESTORE_PENDING_V1\n").map_err(|e|e.to_string())?;
     marker.sync_all().map_err(|e|e.to_string())?;
     sync(dir)?;
@@ -276,6 +343,39 @@ mod tests{
         let vault=Vault::open(&config.key_path());
         (AppState::new(config.clone(),store,vault),config)
     }
+    #[test]
+    fn pre_marker_failure_removes_plaintext_rollbacks_and_keeps_live_data() {
+        let (state, config) = fixture();
+        state.store.put("session", &json!({"id":"live","title":"keep"}));
+        let old_db = config.data_dir.join(DB_ROLLBACK);
+        let old_key = config.data_dir.join(KEY_ROLLBACK);
+        let error = prepare_rollback(&state, &old_db, &old_key, |path| {
+            fs::write(path, [42u8; 32])?;
+            Err(std::io::Error::other("simulated key staging failure"))
+        }).unwrap_err();
+        assert!(error.contains("simulated key staging failure"), "{error}");
+        assert!(!old_db.exists(), "plaintext SQLite rollback leaked");
+        assert!(!old_key.exists(), "plaintext secret key rollback leaked");
+        assert!(!config.data_dir.join(MARKER).exists());
+        assert!(state.store.get("session", "live").is_some());
+        let _ = fs::remove_dir_all(config.data_dir);
+    }
+
+    #[test]
+    fn pre_marker_stage_rejects_existing_rollback_without_overwriting_it() {
+        let (state, config) = fixture();
+        let old_db = config.data_dir.join(DB_ROLLBACK);
+        let old_key = config.data_dir.join(KEY_ROLLBACK);
+        fs::write(&old_key, b"preexisting-key-material").unwrap();
+        let error = prepare_rollback(&state, &old_db, &old_key, |_| {
+            panic!("must not write to an existing rollback path")
+        }).unwrap_err();
+        assert!(error.contains("already exists"), "{error}");
+        assert_eq!(fs::read(&old_key).unwrap(), b"preexisting-key-material");
+        assert!(!old_db.exists());
+        let _ = fs::remove_dir_all(config.data_dir);
+    }
+
     #[test]
     fn restore_requires_foreground_and_background_work_to_drain(){
         let (state,config)=fixture();
