@@ -245,7 +245,8 @@ mod tests {
         add(&s,"small",Some(0.95),Some(2.0),2.0);
         add(&s,"healthy",Some(0.95),Some(50.0),100.0);
         let mut too_small=s.store.get("provider","small").unwrap();
-        too_small["modelCapabilities"][too_small["model"].as_str().unwrap()]["maxOutputTokens"]=json!(1024);
+        let small_model=too_small["model"].as_str().unwrap().to_string();
+        too_small["modelCapabilities"][&small_model]["maxOutputTokens"]=json!(1024);
         s.store.put("provider",&too_small).unwrap();
         let mut cheap=s.store.get("provider","cheapest").unwrap();
         cheap["requestsPerMinute"]=json!(1);
