@@ -14,6 +14,13 @@ const usage=source('src/components/ExecutionInsights.tsx')
 const operations=source('src/pages/Operations.tsx')
 const rooms=source('src/pages/Rooms.tsx')
 
+test('chat execution detail shows persisted tool failures instead of losing failed SSE tool events',()=>{
+ assert.match(usage,/\+encodeURIComponent\(executionId\)\+'\/operations'/)
+ assert.match(usage,/op\.status==='failed'/)
+ assert.match(usage,/op\.result\?\.error/)
+ assert.match(usage,/operations\.reload\(\)/)
+})
+
 test('remote patch evidence cannot survive a selected-job switch',()=>{
  assert.match(remote,/<PatchReview key=\{selectedJob\.id\} jobId=\{selectedJob\.id\}/)
  assert.match(remote,/evidence\.manifest\.jobId!==jobId/)
