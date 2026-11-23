@@ -89,7 +89,7 @@ const featured = [
   },
   {
     name: "Hugging Face",
-    description: "모델·데이터셋을 검색하는 원격 도구",
+    description: "모델·데이터셋을 검색하는 원격 MCP 서버",
     descriptionEn: "Remote MCP for searching models and datasets",
     icon: BrainIcon,
     transport: "http",
@@ -687,7 +687,7 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
           variant={tab === "market" ? "primary" : "ghost"}
           onClick={() => setTab("market")}
         >
-          <Blocks size={17} /> 도구
+          <Blocks size={17} /> {loc==='en'?'MCP Registry':'MCP 레지스트리'}
         </Button>
         <Button
           variant={tab === "plugins" ? "primary" : "ghost"}
@@ -813,7 +813,7 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
           </Panel>
           <details className="mt-5 rounded-xl border border-divider bg-surface">
             <summary className="cursor-pointer px-4 py-3 text-[13px] font-semibold text-ink">
-              {loc==='en'?'Browse curated MCP server examples':'추천 도구 보기'} · {presets.value.length+featured.length}
+              {loc==='en'?'Browse curated MCP server examples':'추천 MCP 서버 보기'} · {presets.value.length+featured.length}
             </summary>
             <div className="border-t border-divider p-4">
           <div className="mb-4 flex flex-wrap items-center gap-1.5">
@@ -837,7 +837,7 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
             />
           </div>
           <Subheading
-            title={loc==='en'?'Recommended MCP servers':'추천 도구'}
+            title={loc==='en'?'Recommended MCP servers':'추천 MCP 서버'}
             extra={
               <span className="text-[11px] text-muted">
                 {t('ext.count', { count: filteredPresets.length })}
@@ -906,7 +906,7 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
             })}
           </div>
           <Subheading
-            title={loc==='en'?'Featured MCP connections':'주요 도구 연결'}
+            title={loc==='en'?'Featured MCP connections':'주요 MCP 연결'}
             extra={
               <span className="text-[10px] font-bold uppercase tracking-widest text-muted">
                 CURATED EXAMPLES
