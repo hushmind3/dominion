@@ -422,7 +422,7 @@ pub(super) async fn run_turn_body(
                 }
                 state.store.put("execution", &execution);
             }
-            messages.insert(1, json!({"role":"system","content":super::harness_prompts::render(state,"agent.plan",&[("plan",&plan)])}));
+            messages.insert(1, json!({"role":"system","content":crate::engine::chat::harness_prompts::render(state,"agent.plan",&[("plan",&plan)])}));
             metrics.lock().unwrap().model_calls += 1;
         }
     }
@@ -443,7 +443,7 @@ pub(super) async fn run_turn_body(
             .join("\n");
         messages.insert(1, json!({
             "role":"system",
-            "content":super::harness_prompts::render(state,"agent.decomposition",&[("subtasks",&subtasks)])
+            "content":crate::engine::chat::harness_prompts::render(state,"agent.decomposition",&[("subtasks",&subtasks)])
         }));
     }
 
@@ -729,7 +729,7 @@ pub(super) async fn run_turn_body(
                         force_final=true;
                         messages.push(json!({
                             "role":"system",
-                            "content":super::harness_prompts::effective(state,"agent.program_review")
+                            "content":crate::engine::chat::harness_prompts::effective(state,"agent.program_review")
                         }));
                     }
                 }
@@ -1239,7 +1239,7 @@ pub(super) async fn run_turn_body(
                         }));
                         messages.push(json!({
                             "role":"system",
-                            "content":super::harness_prompts::render(state,"agent.procedure_retry",&[("violations",&serde_json::to_string(&violations).unwrap_or_default())])
+                            "content":crate::engine::chat::harness_prompts::render(state,"agent.procedure_retry",&[("violations",&serde_json::to_string(&violations).unwrap_or_default())])
                         }));
                         continue;
                     }
@@ -1383,7 +1383,7 @@ pub(super) async fn run_turn_body(
                         };
                         messages.push(json!({
                             "role": "user",
-                            "content":super::harness_prompts::render(state,"agent.acceptance_retry",&[
+                            "content":crate::engine::chat::harness_prompts::render(state,"agent.acceptance_retry",&[
                                 ("gaps",&gaps.iter().take(8).map(|g|g.chars().take(280).collect::<String>()).collect::<Vec<_>>().join("\n- ")),
                                 ("guidance",&guidance)])
                         }));
@@ -1689,7 +1689,7 @@ pub(super) async fn run_turn_body(
                 }
                 messages.push(json!({
                     "role":"system",
-                    "content":super::harness_prompts::render(state,"agent.procedure_observation",&[("error",&error)])
+                    "content":crate::engine::chat::harness_prompts::render(state,"agent.procedure_observation",&[("error",&error)])
                 }));
             }
             // Read-before-write applies to direct local mutations. External
@@ -1718,7 +1718,7 @@ pub(super) async fn run_turn_body(
                 } else if tool_selection.recommends_read() {
                     messages.push(json!({
                         "role":"system",
-                        "content":super::harness_prompts::effective(state,"agent.read_before_write")
+                        "content":crate::engine::chat::harness_prompts::effective(state,"agent.read_before_write")
                     }));
                 }
             }
@@ -1757,7 +1757,7 @@ pub(super) async fn run_turn_body(
                 ));
                 messages.push(json!({
                     "role":"system",
-                    "content":super::harness_prompts::effective(state,"agent.blocked_repeat")
+                    "content":crate::engine::chat::harness_prompts::effective(state,"agent.blocked_repeat")
                 }));
                 continue;
             }
@@ -1775,7 +1775,7 @@ pub(super) async fn run_turn_body(
                 // sees the same real result and decides whether to change tack.
                 messages.push(json!({
                     "role":"system",
-                    "content":super::harness_prompts::render(state,"agent.repeat_feedback",&[("tool",&call.name),("count",&repeat.to_string())])
+                    "content":crate::engine::chat::harness_prompts::render(state,"agent.repeat_feedback",&[("tool",&call.name),("count",&repeat.to_string())])
                 }));
             }
             if !budget.charge_tool() {
@@ -1860,7 +1860,7 @@ pub(super) async fn run_turn_body(
                         let result = &adapted["result"];
                         messages.push(json!({
                             "role":"system",
-                            "content":super::harness_prompts::render(state,"agent.adaptation_result",&[
+                            "content":crate::engine::chat::harness_prompts::render(state,"agent.adaptation_result",&[
                                 ("id",&selected["id"].to_string()),("tool",&selected["tool"].to_string()),
                                 ("result",&result.to_string()),("certificate",&adapted["actionCertificate"].to_string()),
                                 ("probes",&adapted["probeResults"].to_string()),("hypotheses",&adapted["hypothesisResults"].to_string())])
@@ -1881,7 +1881,7 @@ pub(super) async fn run_turn_body(
                             record_adaptation_error(state, execution_id, &error);
                             messages.push(json!({
                                 "role":"system",
-                                "content":super::harness_prompts::render(state,"agent.adaptation_error",&[("error",&error)])
+                                "content":crate::engine::chat::harness_prompts::render(state,"agent.adaptation_error",&[("error",&error)])
                             }));
                         }
                     }
@@ -1890,7 +1890,7 @@ pub(super) async fn run_turn_body(
                     force_final = true;
                     messages.push(json!({
                         "role":"system",
-                        "content":super::harness_prompts::effective(state,"agent.adaptation_no_progress")
+                        "content":crate::engine::chat::harness_prompts::effective(state,"agent.adaptation_no_progress")
                     }));
                 }
             }
@@ -1927,7 +1927,7 @@ pub(super) async fn run_turn_body(
                     );
                     messages.push(json!({
                         "role": "system",
-                        "content":super::harness_prompts::effective(state,"agent.acceptance_complete")
+                        "content":crate::engine::chat::harness_prompts::effective(state,"agent.acceptance_complete")
                     }));
                     let _ = tx.send(json!({"type": "acceptance_passed"}));
                     if let Some(path)=simple_creation_target.as_ref().filter(|path|
