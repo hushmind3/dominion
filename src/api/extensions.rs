@@ -43,12 +43,14 @@ pub async fn mcp_presets() -> Json<Value> {
 }
 
 pub async fn mcp_discover(State(state): State<AppState>) -> Json<Value> {
-    let items = crate::integrations::mcp::tools(&state)
-        .await
+    let (tools, failures) = crate::integrations::mcp::tools_with_errors(&state).await;
+    let mut items = tools
+        .into_iter()
         .into_iter()
         .map(|tool| {
             let qualified = tool.qualified();
             json!({
+                "mcpId":tool.server_id,
                 "server": tool.server_name,
                 "name": qualified,
                 "tool": tool.tool,
@@ -58,6 +60,7 @@ pub async fn mcp_discover(State(state): State<AppState>) -> Json<Value> {
             })
         })
         .collect::<Vec<_>>();
+    items.extend(failures);
     Json(json!(items))
 }
 
