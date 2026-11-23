@@ -1,0 +1,17 @@
+import {withBrowser,assert} from './ui-smoke-utils.mjs'
+await withBrowser('chat-visual',async({page,db,url})=>{
+ await page.goto(url+'/#/chat')
+ const form=page.locator('.conversation-composer')
+ await form.waitFor({state:'visible'})
+ const tools=form.getByRole('button',{name:/기본 도구 사용|Use built-in tools/})
+ assert.equal(await tools.getAttribute('aria-pressed'),'true')
+ await form.locator('textarea').fill('오늘 AI 최신 뉴스를 검색해 줘')
+ await form.locator('button[type="submit"]').click()
+ for(let n=0;n<60&&!db.chatRequests.length;n++)await page.waitForTimeout(100)
+ assert.equal(db.chatRequests.length,1,'Chat POST must reach the wire')
+ assert.equal(db.chatRequests[0].mode,'agent','built-in tools must use agent tool path')
+ assert.equal(db.chatRequests[0].toolsEnabled,true)
+ assert.equal(db.chatRequests[0].toolsExecutionEnabled,true)
+ assert.ok(!db.chatRequests[0].agentId,'model-only mode must not silently bind a persona')
+ await tools.waitFor({state:'visible'})
+},[{width:1440,height:900},{width:390,height:844}])
