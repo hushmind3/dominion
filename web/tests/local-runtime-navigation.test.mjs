@@ -37,3 +37,9 @@ test('chat handles missing engine by preserving model and opening same setup ins
  assert.ok(picker.includes('onLocalSetup:()=>void'))
  assert.match(picker,/실행기 설치 · 로컬 모델 관리/)
 })
+
+test('chat keeps the actual missing-engine reason in the same installer workflow',()=>{
+ const chat=source('../src/pages/Chat.tsx')
+ assert.match(chat,/openLocalRuntimeSetup\(m,\(e as Error\)\.message\)/)
+ assert.match(chat,/error:reason\?\.slice\(0,400\)/)
+})

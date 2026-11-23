@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
-import {classifyRuntimeFailure,engineForModel,memoryFit,modelPreflight,requiredMemory,selectRecommended,selectSmaller,planDownloadLaunch,preferredServerModelFormat} from '../src/utils/modelHardware.ts'
+import {classifyRuntimeFailure,engineForModel,engineRecoveryAction,memoryFit,modelPreflight,requiredMemory,selectRecommended,selectSmaller,planDownloadLaunch,preferredServerModelFormat} from '../src/utils/modelHardware.ts'
 
 const gguf=(id,bytes)=>({id,format:'gguf',bytes})
 const mlx=(id,bytes)=>({id,format:'mlx',bytes})
@@ -179,4 +179,25 @@ test('catalog registration selects the Anthropic protocol and chat route retains
  assert.match(account,/kind:catalogProviderKind\(entry\)/)
  assert.match(app,/provider:params\.get\('provider'\)\|\|undefined/)
  assert.match(app,/model:params\.get\('model'\)\|\|undefined/)
+})
+
+test('installed but unavailable engine is a repair path, not a successful launch',()=>{
+ const caps={gguf:{available:true,path:null},mlx:{available:false,standalone:false},memory:{free:16_000}}
+ const runtime={installed:true,installable:true}
+ assert.equal(engineRecoveryAction(mlx('mlx:owner/model',4_000),caps,runtime),'repair')
+ assert.equal(engineRecoveryAction(mlx('mlx:owner/model',4_000),{...caps,mlx:{available:true,standalone:true}},runtime,true),'repair')
+ assert.equal(engineRecoveryAction(mlx('mlx:owner/model',4_000),caps,{installed:false,installable:true}),'install')
+ assert.equal(engineRecoveryAction(mlx('mlx:owner/model',4_000),caps,{installed:false,url:'https://example.invalid'}),'download')
+ assert.equal(engineRecoveryAction(mlx('mlx:owner/model',4_000),caps,{installed:false,installable:true,installing:true}),'installing')
+ assert.equal(engineRecoveryAction(mlx('mlx:owner/model',4_000),undefined,undefined),'checking')
+ assert.equal(engineRecoveryAction(gguf('model.gguf',4_000),{gguf:{available:true,path:'/bin/llama-server'},memory:{free:16_000}},runtime),'retry')
+})
+test('model launch engine errors keep original model and prioritize its installer',()=>{
+ const explorer=readFileSync(new URL('../src/components/ModelExplorer.tsx',import.meta.url),'utf8')
+ assert.match(explorer,/classifyRuntimeFailure\(\(error as Error\)\.message\)==='engine'/)
+ assert.match(explorer,/queueEngineSetup\(model,\(error as Error\)\.message\)/)
+ assert.match(explorer,/prioritizedRuntimes\.map/)
+ assert.match(explorer,/data-engine-recovery=\{pendingEngineAction\}/)
+ assert.match(explorer,/실행 확인 필요/)
+ assert.match(explorer,/원래 모델 다시 실행/)
 })

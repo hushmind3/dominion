@@ -288,10 +288,10 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    setInstalled(list);setRuntime(state)
   }catch(e){setMenuError((e as Error).message)}finally{setModelsLoading(false)}
  }
- const openLocalRuntimeSetup=(model?:InstalledModel)=>{
+ const openLocalRuntimeSetup=(model?:InstalledModel,reason?:string)=>{
   if(model){
    try{window.sessionStorage.setItem('dominion-model-engine-retry',JSON.stringify({
-    id:model.id,from:'installed',createdAt:Date.now(),
+    id:model.id,from:'installed',createdAt:Date.now(),error:reason?.slice(0,400),
    }))}catch{/* The setup page is still accessible without session storage. */}
   }
   window.location.hash=localRuntimeSetupHref
@@ -318,7 +318,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    setCommandInfo(t('chat.model.switched',{repo:m.repo,label:m.label}))
    return true
   }catch(e){
-   if(classifyRuntimeFailure((e as Error).message)==='engine')openLocalRuntimeSetup(m)
+   if(classifyRuntimeFailure((e as Error).message)==='engine')openLocalRuntimeSetup(m,(e as Error).message)
    else setMenuError((e as Error).message)
    return false
   }finally{setModelBusy('')}

@@ -100,6 +100,24 @@ export function modelPreflight(model:LocalModelToLaunch,capabilities:LaunchCapab
  return {status:'ready',reason:'none',engine,memory,gpu}
 }
 
+/** Installed is not the same as launchable: an existing backend can still fail. */
+export type EngineRecoveryAction='checking'|'installing'|'install'|'download'|'repair'|'retry'|'manual'
+export function engineRecoveryAction(
+ model:LocalModelToLaunch,
+ capabilities:LaunchCapabilities|undefined,
+ runtime:{installed?:boolean;installable?:boolean;url?:string;installing?:boolean}|undefined,
+ engineLaunchFailed=false,
+):EngineRecoveryAction{
+ if(!runtime)return 'checking'
+ if(runtime.installing)return 'installing'
+ const blocked=modelPreflight(model,capabilities).status==='blocked'
+ if(!blocked&&!engineLaunchFailed)return 'retry'
+ if(runtime.installed)return 'repair'
+ if(runtime.installable)return 'install'
+ if(runtime.url)return 'download'
+ return 'manual'
+}
+
 export type ManagedEngineId='llama-cpp'|'mlx-lm'|'lm-studio'
 export function engineForModel(model:LocalModelToLaunch):ManagedEngineId{
  if(model.id.startsWith('lms:'))return 'lm-studio'
