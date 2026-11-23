@@ -31,7 +31,9 @@ try{
  browser=await chromium.launch({headless:true})
  const page=await browser.newPage({viewport:{width:1280,height:800},locale:'ko-KR'})
  const pageErrors=[]
+ let localRunning=false
  page.on('pageerror',error=>pageErrors.push(error.message))
+ page.on('dialog',dialog=>void dialog.accept())
  await page.route(url=>new URL(url).pathname.startsWith('/api/'),async route=>{
   const path=new URL(route.request().url()).pathname
   if(path==='/api/events'){
@@ -43,13 +45,40 @@ try{
   else if(path==='/api/status')response={jobs:0,providers:0,agents:0}
   else if(path==='/api/settings/owner-profile')response={id:'owner',name:'나',avatar:''}
   else if(path==='/api/policy'||path.startsWith('/api/settings/'))response={}
-  else if(path==='/api/model-library/runtime')response={status:'idle'}
+  else if(path==='/api/model-library/runtime')
+   response=localRunning?{status:'ready',id:'fixture-local',name:'Fixture 4B',model:'fixture-local-model'}:{status:'idle'}
+  else if(path==='/api/model-library/runtime/load'){
+   localRunning=true
+   response={status:'ready',id:'fixture-local',name:'Fixture 4B',model:'fixture-local-model'}
+  }
+  else if(path==='/api/model-library/runtime/unload'){
+   localRunning=false
+   response={status:'idle'}
+  }
+  else if(path==='/api/model-library/installed')
+   response=[{id:'fixture-local',repo:'fixture/local-4b',label:'Fixture 4B',format:'gguf',bytes:4294967296}]
+  else if(path==='/api/providers')
+   response=localRunning?[{id:'dominion-native',name:'Local model',model:'fixture-local-model',enabled:true}]:[]
   else if(path==='/api/activity/teams')response={teams:[],leadJobs:[],remoteWorkers:[],remoteConfigured:false}
   await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(response)})
  })
  await page.goto(origin+'/#/chat',{waitUntil:'domcontentloaded'})
  const history=page.locator('#conversation-sidebar')
  await history.waitFor({state:'visible',timeout:12000})
+ assert.equal(await page.locator('.page-chat .chat-header').count(),0,'Chat top bar must not take space')
+ await page.getByRole('button',{name:'대화 상대 선택'}).click()
+ const picker=page.getByRole('dialog',{name:'대화 상대 선택'})
+ await picker.waitFor({state:'visible',timeout:5000})
+ await picker.getByRole('tab',{name:'로컬 모델'}).click()
+ await picker.getByText('fixture/local-4b').waitFor({timeout:5000})
+ await picker.getByRole('button',{name:/fixture\/local-4b/}).click()
+ await picker.waitFor({state:'hidden',timeout:5000})
+ assert.equal(localRunning,true,'native model load must run from AI picker')
+ await page.getByRole('button',{name:'대화 상대 선택'}).click()
+ await picker.getByRole('tab',{name:'로컬 모델'}).click()
+ await picker.getByRole('button',{name:'로컬 모델 종료'}).click()
+ assert.equal(localRunning,false,'native model unload must run in AI picker')
+ await picker.getByRole('button',{name:'닫기'}).click()
  await history.getByRole('button',{name:'대화 목록 접기'}).click()
  const rail=page.locator('.page-chat .conversation-rail')
  await rail.waitFor({state:'visible',timeout:5000})
