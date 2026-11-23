@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { checkForUpdatedUi } from '../components/PageLoadBoundary'
 import { isSettingsPage, type PageId } from '../workspacePages'
+import {canonicalWorkspaceHash} from '../utils/workspaceRouting'
 
 type ConversationMode = 'chat' | 'rooms'
 type ChatRoute = {
@@ -20,29 +21,8 @@ type WorkspaceState = {
 }
 
 
-/** Keep old links and chat shortcuts valid without rendering duplicate pages. */
-function canonicalHash(hash:string):string{
- const [name,rawQuery]=hash.replace(/^#\/?/, '').split('?')
- const params=new URLSearchParams(rawQuery)
- if(name==='agents'||name==='prompts'){
-  const view=name==='agents'?'personas':params.get('view')||'shared'
-  params.set('view',view==='personas'||view==='groups'?view:'shared')
-  return '#/memory?'+params.toString()
- }
- if(name==='models')return '#/settings?view=ai'
- if(name==='capabilities')return '#/settings?view=features'
- if(name==='home')return '#/settings?view=overview'
- if(name==='activity')return '#/settings?view=activity'
- if(name==='extensions'){
-  const tab=params.get('tab')||params.get('section')
-  const view=tab==='market'?'registry':tab==='plugins'||tab==='skills'?tab:'mcp'
-  return '#/connections?view='+view
- }
- return hash
-}
-
 function readWorkspaceRoute(): WorkspaceRoute {
-  const [name, query] = window.location.hash.replace(/^#\/?/, '').split('?')
+  const [name, query] = canonicalWorkspaceHash(window.location.hash).replace(/^#\/?/, '').split('?')
   if (name === 'rooms' || isSettingsPage(name)) return { page: name }
 
   const params = new URLSearchParams(query)
@@ -82,7 +62,7 @@ export function useWorkspaceNavigation() {
   const { chatRoute } = workspace
 
   const syncRoute = useCallback(() => {
-    const canonical=canonicalHash(window.location.hash)
+    const canonical=canonicalWorkspaceHash(window.location.hash)
     if(canonical!==window.location.hash)window.history.replaceState(null,'',canonical)
     const route = readWorkspaceRoute()
     setWorkspace((previous) => applyRoute(previous, route))
@@ -111,7 +91,7 @@ export function useWorkspaceNavigation() {
 
   const navigate = useCallback((page: PageId, sessionId?: string) => {
     const query = page==='chat'&&sessionId ? `?session=${encodeURIComponent(sessionId)}` : ''
-    navigateHash(canonicalHash(`#/${page}${query}`))
+    navigateHash(canonicalWorkspaceHash(`#/${page}${query}`))
   }, [navigateHash])
 
   const switchMode = useCallback((mode: ConversationMode) => {
