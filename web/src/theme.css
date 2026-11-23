@@ -285,3 +285,44 @@
  .workspace-responsive-settings>.workspace-settings-sidebar .workspace-settings-group{display:block;width:100%}
  .workspace-responsive-settings>.workspace-settings-sidebar .workspace-settings-group-items{display:grid;gap:2px}
 }
+
+/* Sub2 uncluttered chat surface: show one small cumulative meter,
+   keep the existing history, agent, permissions and model actions usable. */
+.page-chat > div{background:#FCFAF7}
+.page-chat #conversation-sidebar{background:#F7F5F1;border-color:#EAE6DF}
+.page-chat .conversation-rail{background:#F8F6F2;border-color:#EAE6DF}
+.page-chat .conversation-rail>button{color:#77726C}
+.page-chat .conversation-rail>[aria-current]{background:#EDEAE4;color:#34312D}
+.chat-usage-bar{display:flex;align-items:center;justify-content:flex-end;height:44px;flex:0 0 44px;padding:7px 24px 0;background:#FCFAF7;position:relative;z-index:11}
+.chat-usage-details{position:relative;max-width:100%}
+.chat-usage-details summary{display:flex;align-items:center;gap:6px;list-style:none;cursor:pointer;border:1px solid transparent;border-radius:10px;padding:5px 9px;color:#857E75;font-size:11px;line-height:20px;white-space:nowrap;user-select:none}
+.chat-usage-details summary::-webkit-details-marker{display:none}
+.chat-usage-details summary:hover,.chat-usage-details[open] summary{border-color:#E8E3DA;background:#F2EFE9;color:#47423B}
+.chat-usage-details summary:focus-visible{outline:2px solid #A59C91;outline-offset:2px}
+.chat-usage-popover{position:absolute;right:0;top:calc(100% + 6px);width:max-content;max-width:min(420px,calc(100vw - 32px));white-space:pre-line;overflow-wrap:anywhere;border:1px solid #E9E3DA;border-radius:13px;background:#FFFDF9;box-shadow:0 12px 32px #27211A1A;padding:14px 16px;color:#5D554D;font-size:12px;line-height:1.75}
+.chat-welcome{gap:0}
+.chat-welcome-mark{display:grid;place-items:center;width:68px;height:68px;border:1px solid #E9E3D9;border-radius:21px;background:#F4F1EB;color:#37332D;margin-bottom:28px}
+#root main .chat-welcome-title{font-size:clamp(27px,3vw,37px)!important;line-height:1.25;font-weight:680;letter-spacing:-.045em;color:#242321;margin:0}
+#root main .chat-welcome-desc{font-size:15px;line-height:1.8;color:#8D857A;margin:23px 0 0;max-width:570px}
+.chat-welcome-connect{margin-top:24px;display:inline-flex!important;align-items:center;gap:7px!important;color:#514B44!important;border:1px solid #E7E2DA!important;border-radius:10px!important;padding:8px 12px!important}
+.page-chat .conversation-composer-wrap{background:#FCFAF7;padding:10px 18px max(17px,env(safe-area-inset-bottom))}
+.page-chat .conversation-composer{border-color:#E7E1D8;border-radius:20px;background:#FFFDF9;box-shadow:0 2px 16px #28231E0B}
+.page-chat .conversation-composer:focus-within{border-color:#B7ACA0;box-shadow:0 0 0 3px #C7BEB31F,0 3px 20px #28231E0D}
+.page-chat .conversation-composer-input{background:#FFFDF9!important;color:#302D29;font-size:15.5px!important;padding-top:15px!important}
+.page-chat .conversation-composer-input::placeholder{color:#A69E92}
+.page-chat .chat-execution-mode{padding:9px 12px 2px;gap:3px}
+.page-chat .chat-execution-mode-option{color:#817B71!important;font-size:11px!important;font-weight:570!important}
+.page-chat .chat-execution-mode-option[aria-pressed="true"]{background:#F1EEE8!important;border-color:#E7E2D9!important;color:#36332F!important}
+.page-chat .chat-execution-mode-hint{display:none}
+.page-chat .conversation-composer-send{background:#34322E!important;border-color:#34322E!important}
+.page-chat .conversation-composer-send:hover{background:#24221F!important}
+.page-chat .chat-web-search-toggle[aria-pressed="true"]{background:#EEEAE3!important;border-color:#DDD6CC!important;color:#38342E!important}
+.page-chat .chat-turn-byline .token-usage-breakdown{display:none}
+@media(max-width:767px){
+ .chat-usage-bar{height:38px;flex-basis:38px;padding:4px 10px 0}
+ .chat-welcome-mark{width:59px;height:59px;margin-bottom:20px}
+ #root main .chat-welcome-title{font-size:27px!important}
+ #root main .chat-welcome-desc{font-size:13px;margin-top:15px}
+ .page-chat .conversation-composer-wrap{padding:7px 9px max(10px,env(safe-area-inset-bottom))}
+ .page-chat .chat-execution-mode{padding:6px 8px 2px}
+}

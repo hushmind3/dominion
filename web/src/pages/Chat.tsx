@@ -7,7 +7,7 @@ import {MarkdownMessage} from '../components/MarkdownMessage'
 import {AttachmentLink} from '../components/AttachmentLink'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormEvent,useEffect,useMemo,useRef,useState,type ClipboardEvent,type DragEvent,type KeyboardEvent} from 'react'
-import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,CornerDownLeft,Menu,Settings,List,LoaderCircle,MessageCircle,PanelLeftClose,MoreHorizontal,Globe2,Paperclip,Plus,Search,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
+import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,CornerDownLeft,Menu,Settings,List,LoaderCircle,MessageCircle,Hash,PanelLeftClose,MoreHorizontal,Globe2,Paperclip,Plus,Search,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
 import {Agent,Approval,ChatMessage,ChatSession,Provider,get,post,del,resolveApproval,streamChat,koreanReasoningEnabled} from '../api'
 import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
@@ -89,6 +89,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const messages=transcript.value
  const messageUsage=useMemo(()=>messages.reduce((sum,message)=>sum+(Number(message.metadata?.usage?.totalTokens)||0),0),[messages])
  const [serverUsage,setServerUsage]=useState(0);
+ const [usageSession,setUsageSession]=useState('');
  const [usageBreakdown,setUsageBreakdown]=useState<SessionUsageBreakdown>();
  const [usageUnavailable,setUsageUnavailable]=useState(false)
  const approvals=useRemote<Approval[]>('/api/approvals',[],active);
@@ -207,7 +208,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const job=useJob<LearningJob>(learningJob?'/api/jobs/'+encodeURIComponent(learningJob.id):null);
  const approval=(liveApproval?.sessionId===current?liveApproval:null)||
   approvals.value.find(item=>item.sessionId===current&&item.status==='pending');
- const [error,setError]=useState(''),[busy,setBusy]=useState(false),[live,setLive]=useState(''),[thought,setThought]=useState(''),[thinking,setThinking]=useState(false),[reasoningKo,setReasoningKo]=useState(koreanReasoningEnabled),[showReasoning,setShowReasoning]=useState(true),[showSettings,setShowSettings]=useState(false),[toolsEnabled,setToolsEnabled]=useState(true),[thinkingEnabled,setThinkingEnabled]=useState(true),[reasoningEffort,setReasoningEffort]=useState(''),[autoLearn,setAutoLearn]=useState(false),[showHistory,setShowHistory]=useState(()=>{try{if(window.innerWidth<768)return false;return localStorage.getItem('dominion.chat.sidebar')!=='0'}catch{return true}}),[toolStatus,setToolStatus]=useState('');
+ const [error,setError]=useState(''),[busy,setBusy]=useState(false),[live,setLive]=useState(''),[thought,setThought]=useState(''),[thinking,setThinking]=useState(false),[reasoningKo,setReasoningKo]=useState(koreanReasoningEnabled),[showReasoning,setShowReasoning]=useState(true),[showSettings,setShowSettings]=useState(false),[toolsEnabled,setToolsEnabled]=useState(true),[thinkingEnabled,setThinkingEnabled]=useState(true),[reasoningEffort,setReasoningEffort]=useState(''),[autoLearn,setAutoLearn]=useState(false),[showHistory,setShowHistory]=useState(()=>{try{if(window.innerWidth<768)return false;return localStorage.getItem('dominion.chat.sidebar')==='1'}catch{return false}}),[toolStatus,setToolStatus]=useState('');
  useEffect(()=>{setReasoningEffort('');setThinkingEnabled(true)},[providerId,model,agentId,current]);
  const [permissionOpen,setPermissionOpen]=useState(false);
  const [installed,setInstalled]=useState<InstalledModel[]>([]),[modelsLoading,setModelsLoading]=useState(false),[runtime,setRuntime]=useState<Runtime>({status:'idle'}),[modelBusy,setModelBusy]=useState(''),[unloading,setUnloading]=useState(false),[learning,setLearning]=useState(false),[menuError,setMenuError]=useState('');
@@ -246,7 +247,19 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   lines.push("캐시 입력은 총 입력에 포함되며, 캐시 수치는 제공자가 보고한 경우만 표시")
   return lines.join("\n")
  },[usageBreakdown]);
- useEffect(()=>{if(!current){setServerUsage(0);setUsageBreakdown(undefined);setUsageUnavailable(false);return}let alive=true;get<{totalTokens?:number;breakdown?:SessionUsageBreakdown}>('/api/sessions/'+encodeURIComponent(current)+'/usage').then(usage=>{if(alive){setServerUsage(Number(usage.totalTokens)||0);setUsageBreakdown(usage.breakdown);setUsageUnavailable(false)}}).catch(()=>{if(alive)setUsageUnavailable(true)});return()=>{alive=false}},[current,usageRevision])
+ useEffect(()=>{
+  setServerUsage(0);setUsageBreakdown(undefined);setUsageUnavailable(false);setUsageSession('');
+  if(!current)return;
+  let alive=true;
+  get<{totalTokens?:number;breakdown?:SessionUsageBreakdown}>('/api/sessions/'+encodeURIComponent(current)+'/usage')
+   .then(usage=>{if(alive){setServerUsage(Number(usage.totalTokens)||0);setUsageBreakdown(usage.breakdown);setUsageSession(current);setUsageUnavailable(false)}})
+   .catch(()=>{if(alive){setUsageUnavailable(true);setUsageSession('')}})
+  return()=>{alive=false}
+ },[current,usageRevision])
+ const totalUsedTokens=current?(usageSession===current&&!usageUnavailable?Math.max(serverUsage,messageUsage):messageUsage):0;
+ const usageDetails=current?(usageSession===current&&!usageUnavailable
+  ?tokenUsageTip||'세션 전체 누적 토큰 · 모델 제공자의 사용량 보고 기준'
+  :'현재 대화 기록에서 확인한 토큰 합계 · 서버 누적 조회 대기 중이거나 실패'):'새 대화 · 아직 사용한 토큰이 없습니다.';
  const {scrollRef,onScroll,jumpDown}=useTranscriptScroll(current,transcriptRevision);
  useEffect(()=>()=>stream.current?.abort(),[]);
  useEffect(()=>{if(window.innerWidth<768)return;try{localStorage.setItem('dominion.chat.sidebar',showHistory?'1':'0')}catch{}},[showHistory]);
@@ -650,10 +663,18 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   {!showHistory&&<ConversationRail sidebarId="conversation-sidebar" onExpand={()=>setShowHistory(true)}
    onNew={resetLocal} onSwitchMode={switchMode} onSettings={openSettings}/>}
   <div className="flex min-h-0 min-w-0 flex-col">
-   <div ref={scrollRef} onScroll={onScroll} data-chat-scroll className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{current&&transcript.loading&&!messages.length?<div className="flex min-h-full items-center justify-center p-6 text-sm text-[#8A8176]">{t('chat.transcriptLoading')}</div>:current&&transcript.error&&!messages.length?<div role="status" className="flex min-h-full items-center justify-center p-6 text-sm text-[#8A8176]">{t('chat.transcriptUnavailable')}</div>:!messages.length&&!(busy&&viewingTurn)?<div className="mx-auto flex min-h-full max-w-xl flex-col justify-center px-5 py-8">
-    <div className="mb-6 flex items-center gap-3"><span className="grid size-11 place-items-center rounded-2xl bg-[#F7E8E1] text-[#C96442]"><Sparkles size={22}/></span><div><h1 className="text-[24px] font-bold tracking-[-.03em] text-[#24211D]">{t('chat.newChatHeading')}</h1><p className="mt-1 text-[13px] text-[#8A8176]">{t('chat.newChatDesc')}</p></div></div>
-    <div className="rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] p-5"><div className="mb-2 text-[11px] font-semibold text-[#8A8176]">{t('chat.examples')}</div>{[t('chat.example1'),t('chat.example2'),t('chat.example3')].map(example=><Button type="button" key={example} onClick={()=>{setInput(example);inputRef.current?.focus({preventScroll:true})}} className="flex w-full items-center justify-between border-t border-[#EFE9DF] px-2 py-3 text-left text-[12px] text-[#5C544A] hover:bg-[#FFFDF9]">{example}<ArrowRight size={14} className="shrink-0 text-[#9C9388]"/></Button>)}</div>
-    {!model&&<Button type="button" onClick={openModels} className="mt-4 inline-flex items-center gap-2 self-start text-[12px] font-semibold text-[#C96442]"><Compass size={15}/> {t('chat.connectFirst')} <ArrowRight size={14}/></Button>}
+   <div className="chat-usage-bar">
+    <details className="chat-usage-details">
+     <summary aria-label={t('chat.cumulativeTokens',{count:totalUsedTokens.toLocaleString()})}
+      title="누적 토큰 상세 보기"><Hash size={13}/><span>{t('chat.cumulativeTokens',{count:totalUsedTokens.toLocaleString()})}</span></summary>
+     <div role="note" className="chat-usage-popover">{usageDetails}</div>
+    </details>
+   </div>
+   <div ref={scrollRef} onScroll={onScroll} data-chat-scroll className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{current&&transcript.loading&&!messages.length?<div className="flex min-h-full items-center justify-center p-6 text-sm text-[#8A8176]">{t('chat.transcriptLoading')}</div>:current&&transcript.error&&!messages.length?<div role="status" className="flex min-h-full items-center justify-center p-6 text-sm text-[#8A8176]">{t('chat.transcriptUnavailable')}</div>:!messages.length&&!(busy&&viewingTurn)?<div className="chat-welcome mx-auto flex min-h-full w-full max-w-[900px] flex-col items-center justify-center px-5 py-12 text-center">
+    <div className="chat-welcome-mark"><MessageCircle size={30} strokeWidth={1.8}/></div>
+    <h1 className="chat-welcome-title">{t('chat.newChatHeading')}</h1>
+    <p className="chat-welcome-desc">{t('chat.newChatDesc')}</p>
+    {!model&&<Button type="button" variant="ghost" onClick={openModels} className="chat-welcome-connect"><Compass size={15}/>{t('chat.connectFirst')}<ArrowRight size={14}/></Button>}
    </div>:<div className="chat-transcript mx-auto flex min-h-full w-full max-w-[860px] flex-col gap-6 px-6 py-7">{messages.filter(m=>m.role!=='tool').map(m=><Message key={m.id} message={m} agentName={agents.value.find(a=>a.id===m.agent_id)?.name} showReasoning={showReasoning} />)}{viewingTurn&&(live||thought||busy)&&<div className="chat-turn chat-turn-assistant chat-turn-live"><div className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#F3EEE5] text-[#4A443C] ai"><Sparkles size={17}/></div><div className="chat-turn-body"><div className="mb-2 flex items-center gap-2 text-xs font-bold text-[#4A443C]">DOMINION <span>{t('ui.label.live')}</span>{busy&&thought&&!showReasoning&&<span className="inline-flex items-center gap-1 rounded bg-[#F3EEE5] px-1.5 py-0.5 text-[10px] font-medium text-[#7C7469]"><BrainCircuit size={11}/> {t('chat.thinkingNow')}</span>}</div>{showReasoning&&thought&&<details className="mb-3 max-h-56 overflow-y-auto rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-[11px] leading-5 text-[#7C7469]" open={thinking}><summary className="cursor-pointer select-none" onClick={e=>{e.preventDefault();setThinking(x=>!x)}}><BrainCircuit size={14} className="inline"/> {t('chat.reasoningProcess',{count:thought.length.toLocaleString()} )} <ChevronRight size={13} className="inline"/></summary><div className="mt-2 whitespace-pre-wrap">{thought}</div></details>}{live&&<div className="chat-turn-text">{live}</div>}{busy&&!live&&<div className="flex items-center gap-2 text-xs text-[#9C9388]"><i/><i/><i/></div>}</div></div>}{viewingTurn&&toolStatus&&<div className="inline-flex items-center gap-2 rounded-lg bg-[#FAF7F1] px-3 py-1.5 text-xs text-[#7C7469]"><TerminalSquare size={15}/>{toolStatus}</div>}</div>}</div>
    <div className="conversation-composer-wrap sticky bottom-0 z-10"><div className="mx-auto w-full max-w-[860px]">{approval&&<div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"><div><ShieldAlert size={20}/><span><strong>{t('chat.approval')}</strong><small>{approval.tool} · {JSON.stringify(approval.args??{}).slice(0,150)}</small></span></div><div><Action variant="secondary" disabled={approvalBusy} onClick={()=>approve(false)}>{t('chat.deny')}</Action><Action disabled={approvalBusy} onClick={()=>approve(true)}><Check size={15}/> {t('chat.approve')}</Action></div></div>}
     <Notice message={agents.error||providers.error||approvals.error}/>

@@ -17,6 +17,6 @@ export function TokenUsage({usage,className}:{usage?:Usage;className?:string}){
  const detail=`${input} · ${cached} · ${output}`
  return <span className={className} title={detail}>
   {t(usage.estimated?'usage.tokensEstimated':'usage.tokens',{count:count(usage.totalTokens)})}
-  <span> · {detail}</span>
+  <span className="token-usage-breakdown"> · {detail}</span>
  </span>
 }
