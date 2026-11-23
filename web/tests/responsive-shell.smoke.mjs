@@ -60,6 +60,11 @@ try{
  const sidebar=page.locator('#workspace-settings-sidebar')
  await sidebar.waitFor({state:'visible',timeout:12000})
  assert.equal(await sidebar.getAttribute('data-collapsed'),'false','settings should begin expanded on desktop')
+ assert.equal(await sidebar.getByText('더 많은 기능').count(),0,'no Sub4 extra-features grouping')
+ assert.equal(await sidebar.getByPlaceholder('설정 찾기').count(),0,'no copied settings search')
+ for(const label of ['모델 관리','에이전트','연결 · 채널','메모리','실행 기록']){
+  assert.equal(await sidebar.getByRole('button',{name:label,exact:true}).count(),1,'original Sub2 item: '+label)
+ }
  await sidebar.getByRole('button',{name:'메뉴 접기'}).click()
  assert.equal(await sidebar.getAttribute('data-collapsed'),'true','settings collapse should retain a rail')
  assert.equal(await sidebar.getByRole('button',{name:'모델 관리'}).isVisible(),true,

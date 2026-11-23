@@ -1,6 +1,5 @@
 import {OwnerProfileEditor} from './OwnerProfile'
-import {useEffect,useState} from 'react'
-import {Activity,BookOpenText,Bot,Cpu,House,MessageSquare,RadioTower,Settings2,UsersRound,Plus,X,Settings,Menu,Search,ChevronDown,ShieldCheck,Blocks} from 'lucide-react'
+import {Activity,BookOpenText,Bot,Cpu,House,MessageSquare,RadioTower,Settings2,UsersRound,Plus,X,Settings,Menu} from 'lucide-react'
 import {Button} from './Primitives'
 import {t,type LocaleKey,useLocale} from '../i18n'
 
@@ -8,26 +7,16 @@ export type PageId='home'|'chat'|'models'|'agents'|'rooms'|'memory'|'capabilitie
 type NavItem={id:PageId;label:LocaleKey;icon:typeof House}
 export const navigation:{title:LocaleKey;items:NavItem[];collapsible?:boolean}[]=[
  {title:'nav.group.workspace',items:[{id:'home',label:'nav.home',icon:House},{id:'chat',label:'nav.chat',icon:MessageSquare},{id:'rooms',label:'nav.rooms',icon:UsersRound},{id:'models',label:'nav.models',icon:Cpu},{id:'agents',label:'nav.agents',icon:Bot}]},
- {title:'nav.group.extensions',items:[{id:'connections',label:'nav.connections',icon:RadioTower},{id:'memory',label:'nav.memory',icon:BookOpenText},{id:'capabilities',label:'nav.capabilities',icon:ShieldCheck},{id:'extensions',label:'nav.extensions',icon:Blocks}]},
+ {title:'nav.group.extensions',items:[{id:'connections',label:'nav.connections',icon:RadioTower},{id:'memory',label:'nav.memory',icon:BookOpenText}]},
  {title:'nav.group.operations',items:[{id:'activity',label:'nav.activity',icon:Activity},{id:'settings',label:'nav.settings',icon:Settings2}]}
 ]
 const items=navigation.flatMap(g=>g.items)
 type SidebarProps={settingsOnly?:boolean;page:PageId;open:boolean;collapsed:boolean;online:boolean;running:number;pending:number;
  onNavigate:(id:PageId)=>void;onNewChat:()=>void;onClose:()=>void;navOpen?:boolean;onToggleNav?:()=>void}
-const primaryPages:PageId[]=['home','models','memory','settings']
 export function WorkspaceSidebar({page,open,collapsed,online,running,pending,onNavigate,onNewChat,onClose,settingsOnly=false,navOpen=true,onToggleNav}:SidebarProps){
- const en=useLocale()==='en'
- const [query,setQuery]=useState('')
- const [moreOpen,setMoreOpen]=useState(!primaryPages.includes(page))
- useEffect(()=>{if(!primaryPages.includes(page))setMoreOpen(true)},[page])
+ useLocale()
  const all=navigation.flatMap(group=>group.items)
  const compact=settingsOnly&&!navOpen
- const needle=navOpen?query.trim().toLocaleLowerCase():''
- const available=(entry:NavItem)=>!needle||t(entry.label).toLocaleLowerCase().includes(needle)
- const primary=all.filter(entry=>primaryPages.includes(entry.id)&&available(entry))
- const secondary=all.filter(entry=>!primaryPages.includes(entry.id)
-  &&entry.id!=='chat'&&entry.id!=='rooms'&&available(entry))
- const showMore=moreOpen||secondary.some(entry=>entry.id===page)||!!needle
  const navigateTo=(id:PageId)=>{
   onNavigate(id)
   if(settingsOnly&&navOpen&&window.matchMedia('(max-width: 767px)').matches)onToggleNav?.()
@@ -46,27 +35,18 @@ export function WorkspaceSidebar({page,open,collapsed,online,running,pending,onN
   aria-label={t('shell.mainNav')} className="workspace-settings-sidebar">
   <div className="workspace-settings-brand">
    <span className="workspace-settings-logo">D</span>
-   <strong className="workspace-settings-wordmark">dominion</strong>
+   <strong className="workspace-settings-wordmark">DOMINION</strong>
    <Button variant="ghost" size="icon" type="button" aria-controls="workspace-settings-sidebar"
     aria-label={navOpen?t('shell.hideMenu'):t('shell.showMenu')}
     aria-expanded={navOpen} onClick={onToggleNav}><Menu size={19}/></Button>
   </div>
-  {navOpen&&<label className="workspace-settings-search">
-   <Search size={16}/>
-   <input type="search" value={query} onChange={event=>setQuery(event.target.value)}
-    aria-label={en?'Search settings':'설정 찾기'}
-    placeholder={en?'Search settings':'설정 찾기'}/>
-  </label>}
   <nav className="workspace-settings-nav" aria-label={t('shell.mainNav')}>
-   {!compact&&<p className="workspace-settings-section-label">{en?'My space':'나의 공간'}</p>}
-   {primary.map(renderItem)}
-   {!compact&&<Button variant="bare" type="button" className="workspace-settings-more"
-    aria-expanded={showMore} onClick={()=>setMoreOpen(value=>!value)}>
-    {en?'More features':'더 많은 기능'} <ChevronDown size={15} className={showMore?'rotate-180':''}/>
-   </Button>}
-   {(compact||showMore)&&secondary.map(renderItem)}
-   {!compact&&needle&&!primary.length&&!secondary.length&&<p className="p-3 text-xs text-[#8A8176]">
-    {en?'No matching settings.':'일치하는 메뉴가 없습니다.'}</p>}
+   {navigation.map(group=><section key={group.title} className="workspace-settings-group">
+    {!compact&&<h2 className="workspace-settings-group-title">{t(group.title)}</h2>}
+    <div className="workspace-settings-group-items">
+     {group.items.filter(item=>item.id!=='chat'&&item.id!=='rooms').map(renderItem)}
+    </div>
+   </section>)}
   </nav>
   <div className="workspace-settings-footer">
    <span className="workspace-settings-connection" role="status"
