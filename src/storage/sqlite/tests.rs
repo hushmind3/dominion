@@ -9,6 +9,42 @@
     }
 
     #[test]
+    fn failed_restore_snapshot_does_not_disconnect_or_truncate_live_database() {
+        let (store, dir) = temp_store();
+        store.put("mcp", &json!({"id":"saved-mcp","name":"Keep me"})).unwrap();
+        assert!(store.replace_database_from_file(&dir.join("missing.sqlite")).is_err());
+        assert_eq!(store.get("mcp", "saved-mcp").unwrap()["name"], "Keep me");
+
+        let invalid = dir.join("invalid.sqlite");
+        let mut header_only = vec![0u8; 4096];
+        header_only[..16].copy_from_slice(b"SQLite format 3\\0");
+        std::fs::write(&invalid, header_only).unwrap();
+        assert!(Store::validate_restore_snapshot_file(&invalid).is_err());
+        assert!(store.replace_database_from_file(&invalid).is_err());
+        assert_eq!(store.get("mcp", "saved-mcp").unwrap()["name"], "Keep me");
+        store.put("mcp", &json!({"id":"still-writable","name":"Yes"})).unwrap();
+        assert_eq!(store.get("mcp", "still-writable").unwrap()["name"], "Yes");
+        drop(store);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn restored_snapshot_is_complete_and_reopened_with_saved_contents() {
+        let (store, dir) = temp_store();
+        store.put("mcp", &json!({"id":"old","name":"Old"})).unwrap();
+        let source = Store::open(&dir.join("source.sqlite")).unwrap();
+        source.put("mcp", &json!({"id":"new","name":"New"})).unwrap();
+        let snapshot = dir.join("snapshot.sqlite");
+        source.backup_to(&snapshot).unwrap();
+        store.replace_database_from_file(&snapshot).unwrap();
+        assert!(store.get("mcp", "old").is_none());
+        assert_eq!(store.get("mcp", "new").unwrap()["name"], "New");
+        drop(source);
+        drop(store);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn one_kind_algorithm_lookup_uses_partial_expression_index() {
         let store=Store::open(std::path::Path::new(":memory:")).unwrap();
         for n in 0..150 {
