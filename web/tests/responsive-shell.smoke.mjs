@@ -71,6 +71,12 @@ try{
  await mobileToggle.waitFor({state:'visible',timeout:5000})
  await mobileToggle.click()
  assert.equal(await sidebar.getAttribute('data-collapsed'),'false','mobile hamburger opens settings drawer')
+ // The drawer uses a 180 ms transform. Measure its settled position, not
+ // a transitional animation frame returned immediately after the click.
+ await page.waitForFunction(()=>{
+  const rect=document.querySelector('#workspace-settings-sidebar')?.getBoundingClientRect()
+  return !!rect && rect.left>=-1 && rect.right<=window.innerWidth+1
+ },null,{timeout:6000})
  const rect=await sidebar.boundingBox()
  assert.ok(rect && rect.x>=-1 && rect.width>200 && rect.width<=390,
   'mobile drawer must fit viewport: '+JSON.stringify(rect))
