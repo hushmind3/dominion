@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {fileURLToPath} from 'node:url'
 import {dirname,resolve} from 'node:path'
-import {parseMcpQuickCommand,validRemoteMcpUrl,findInstalledMcp} from '../src/features/mcp/quickCommands.ts'
+import {parseMcpQuickCommand,validRemoteMcpUrl,findInstalledMcp,discoveryForMcp} from '../src/features/mcp/quickCommands.ts'
 
 const dir=dirname(fileURLToPath(import.meta.url))
 const chat=readFileSync(resolve(dir,'../src/pages/Chat.tsx'),'utf8')
@@ -52,6 +52,19 @@ test('ambiguous MCP names and ID/name collisions never pick a destructive target
  assert.equal(findInstalledMcp(rows,'shared-id'),undefined)
  assert.equal(findInstalledMcp(rows,'Unique')?.id,'shared-id')
  assert.equal(findInstalledMcp(rows,'beta-id')?.id,'beta-id')
+})
+
+test('MCP discovery correlates each healthy or broken server by stable installed ID',()=>{
+ const rows=[
+  {mcpId:'healthy',name:'mcp__healthy__search'},
+  {mcpId:'other',name:'mcp__other__write'},
+  {mcpId:'broken',name:'Broken',error:'unauthorized'},
+  {mcpId:'healthy',name:''},
+ ]
+ assert.deepEqual(discoveryForMcp(rows,'healthy').tools.map(x=>x.name),['mcp__healthy__search'])
+ assert.equal(discoveryForMcp(rows,'broken').error,'unauthorized')
+ assert.equal(discoveryForMcp(rows,'other').tools.length,1)
+ assert.equal(discoveryForMcp(rows,'missing').error,undefined)
 })
 
 test('MCP slash palette has actual actionable commands and backend calls',()=>{
