@@ -352,7 +352,8 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
   }>(tab === "plugins" ? "/api/skill-catalog" : null, { items: [], total: 0, updatedAt: "" }, false);
   const [repo, setRepo] = useState(""),
     [repoBusy, setRepoBusy] = useState(false),
-    [mcpSaving, setMcpSaving] = useState(false);
+    [mcpSaving, setMcpSaving] = useState(false),
+    [mcpToggling, setMcpToggling] = useState('');
   const [query, setQuery] = useState(""),
     [catalog, setCatalog] = useState<RegistryItem[]>([]),
     [searching, setSearching] = useState(false),
@@ -511,6 +512,26 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
       return;
     }
     await loadCatalog(query.trim());
+  };
+  const toggleMcp = async (record:Mcp, enabled:boolean) => {
+    if (mcpToggling || mcpSaving) return;
+    setMcpToggling(record.id);
+    setError('');
+    try {
+      await post('/api/mcp', {...record, enabled});
+      await mcp.reload();
+      // A disabled plugin must disappear from the displayed live tool catalog.
+      setTools(previous => previous.filter(tool => tool.mcpId !== record.id));
+      setMessage(loc === 'en'
+        ? `${record.name} ${enabled ? 'enabled' : 'disabled'}`
+        : `${record.name} ${enabled ? '사용' : '사용 중지'}`);
+      if (enabled && tab === 'installed') void discover(true);
+    } catch (e) {
+      setError((e as Error).message);
+      await mcp.reload();
+    } finally {
+      setMcpToggling('');
+    }
   };
   const saveMcp = async () => {
     if (!edit || mcpSaving) return;
@@ -1130,6 +1151,13 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                     return tools.length ? t('ext.checkConnection') : t('ext.checking');
                   })()}
                 </StateTag>
+                <label className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-divider bg-surface px-3 py-2 text-xs text-ink">
+                  <TextInput type="checkbox" className="size-4 accent-[var(--color-brand)]"
+                    checked={x.enabled !== false} disabled={Boolean(mcpToggling) || mcpSaving}
+                    aria-label={(loc === 'en' ? 'Enable MCP plugin ' : 'MCP 확장 기능 사용 ') + x.name}
+                    onChange={event => void toggleMcp(x, event.target.checked)}/>
+                  {mcpToggling===x.id?<LoaderCircle size={14} className="animate-spin" aria-label={t('ext.saving')}/>:<span>{x.enabled !== false?(loc==='en'?'On':'사용 중'):(loc==='en'?'Off':'사용 안 함')}</span>}
+                </label>
                 <Button
                   size="icon"
                   variant="ghost"
