@@ -6,6 +6,7 @@ import {resolve,dirname} from 'node:path'
 import {
  channelsByKind,visibleChannelCatalog,channelDraftMissing,channelStatusTone,
 } from '../src/utils/connectionState.ts'
+import {canonicalWorkspaceHash} from '../src/utils/workspaceRouting.ts'
 
 const dir=dirname(fileURLToPath(import.meta.url))
 const page=readFileSync(resolve(dir,'../src/pages/Connections.tsx'),'utf8')
@@ -17,6 +18,11 @@ const accounts=readFileSync(resolve(dir,'../src/components/ConnectedAccounts.tsx
 const modelHub=readFileSync(resolve(dir,'../src/features/models/useModelHub.ts'),'utf8')
 const modelDialog=readFileSync(resolve(dir,'../src/features/models/ConnectionTools.tsx'),'utf8')
 const models=readFileSync(resolve(dir,'../src/pages/Models.tsx'),'utf8')
+const settings=readFileSync(resolve(dir,'../src/pages/SettingsHub.tsx'),'utf8')
+const memory=readFileSync(resolve(dir,'../src/pages/Memory.tsx'),'utf8')
+const prompts=readFileSync(resolve(dir,'../src/pages/Prompts.tsx'),'utf8')
+const workspace=readFileSync(resolve(dir,'../src/workspacePages.tsx'),'utf8')
+const routingHook=readFileSync(resolve(dir,'../src/hooks/useWorkspaceNavigation.ts'),'utf8')
 const ko=readFileSync(resolve(dir,'../src/i18n/ko.ts'),'utf8')
 const en=readFileSync(resolve(dir,'../src/i18n/en.ts'),'utf8')
 const entry=(id,name=id,fields=[])=>({
@@ -46,8 +52,8 @@ test('Service connections reuses the real MCP registry and installed editor, wit
  assert.match(page,/id:'mcp',label:tr\('MCP 연결','MCP connections'\)/)
  assert.match(page,/id:'registry',label:tr\('MCP 레지스트리','MCP registry'\)/)
  assert.match(page,/import\('\.\/Extensions'\)/)
- assert.match(page,/section=\{view==='mcp'\?'installed':'market'\}/)
- assert.match(page,/onMcpRegistered=\{\(\)=>setView\('mcp'\)\}/)
+ assert.match(page,/section=\{view==='mcp'\?'installed':view==='registry'\?'market':view\}/)
+ assert.match(page,/onMcpRegistered=\{\(\)=>choose\('mcp'\)\}/)
  assert.match(extensions,/onMcpRegistered\?\.\(\)/)
  assert.match(extensions,/const mcpOnlyEmbed=embedded&&/)
  assert.match(extensions,/skills = useRemote<Skill\[]>\(mcpOnlyEmbed\?null/)
@@ -56,16 +62,56 @@ test('Service connections reuses the real MCP registry and installed editor, wit
  assert.match(extensions,/"\/api\/mcp\/catalog" \+ \(term/)
  assert.match(extensions,/"\/api\/mcp\/discover"/)
  assert.equal((nav.match(/id:'connections' as const/g)||[]).length,1)
- assert.equal((nav.match(/id:'extensions' as const/g)||[]).length,1)
+ assert.equal((nav.match(/id:'extensions' as const/g)||[]).length,0)
 })
 
-test('MCP tools are directly accessible without extra menus or duplicate pages',()=>{
- assert.match(nav,/id:'extensions' as const,label:tr\('도구 · MCP','Tools & MCP'\)/)
+test('one sidebar entry per destination, with MCP plugins and skills in Service Connections',()=>{
+ assert.match(nav,/id:'connections' as const,label:tr\('서비스 연결','Connected services'\)/)
+ assert.match(nav,/id:'memory' as const,label:tr\('기억','Memory'\)/)
  assert.match(nav,/tools\.map\(renderItem\)/)
- assert.equal((nav.match(/id:'extensions' as const/g)||[]).length,1)
+ assert.doesNotMatch(nav,/id:'models' as const|id:'prompts' as const|id:'capabilities' as const|id:'extensions' as const/)
+ assert.doesNotMatch(nav,/전체 기능|All features|extra\.map\(renderItem\)/)
+ assert.match(page,/id:'plugins',label:tr\('플러그인','Plugins'\)/)
+ assert.match(page,/id:'skills',label:tr\('스킬','Skills'\)/)
+ assert.match(page,/section=\{view==='mcp'\?'installed':view==='registry'\?'market':view\}/)
  assert.match(page,/<ViewTabs value=\{view\}/)
  assert.match(ui,/export function ViewTabs/)
- assert.match(extensions,/<CapabilitiesPage embedded/)
+ assert.match(extensions,/\{tab === "plugins" &&/)
+ assert.match(extensions,/\{tab === "skills" &&/)
+})
+
+test('memory owns personas and prompts; settings owns AIs and native capabilities',()=>{
+ assert.match(memory,/id:'personas',label:tr\('AI·페르소나','AIs & personas'\)/)
+ assert.match(memory,/id:'shared',label:tr\('공통·시스템 지침','Shared & system instructions'\)/)
+ assert.match(memory,/<PromptsPage section=\{view==='memories'\?'shared':view\} embedded\/>/)
+ assert.match(prompts,/<SystemPromptPanel\/>/)
+ assert.match(prompts,/<AgentsPage embedded/)
+ assert.match(settings,/id:'ai',label:tr\('AI 연결','AI connections'\)/)
+ assert.match(settings,/id:'features',label:tr\('기본 기능','Built-in capabilities'\)/)
+ assert.match(settings,/<CapabilitiesPage embedded navigate=\{\(\)=>\{\}\}\/>/)
+ assert.match(workspace,/render: \(navigate: Navigate\) => <SettingsHub navigate=\{navigate\} \/>/)
+ assert.match(routingHook,/canonicalWorkspaceHash\(window\.location\.hash\)/)
+ assert.match(capabilities,/embedded\?\[\]:catalog\.value/)
+})
+
+test('old navigation links resolve to the new location without losing prompt targets',()=>{
+ const expected=[
+  ['#/models','#/settings?view=ai'],
+  ['#/capabilities','#/settings?view=features'],
+  ['#/extensions','#/connections?view=mcp'],
+  ['#/extensions?tab=market','#/connections?view=registry'],
+  ['#/extensions?tab=plugins','#/connections?view=plugins'],
+  ['#/extensions?tab=skills','#/connections?view=skills'],
+  ['#/home','#/settings?view=overview'],
+  ['#/activity','#/settings?view=activity'],
+  ['#/prompts','#/memory?view=shared'],
+  ['#/prompts?view=groups&room=g1','#/memory?view=groups&room=g1'],
+  ['#/agents?agent=a1','#/memory?agent=a1&view=personas'],
+ ]
+ for(const [before,after] of expected)assert.equal(canonicalWorkspaceHash(before),after,before)
+ assert.equal(canonicalWorkspaceHash('#/chat?session=s1'),'#/chat?session=s1')
+ assert.equal(canonicalWorkspaceHash('#/connections?view=mcp'),'#/connections?view=mcp')
+ assert.equal(canonicalWorkspaceHash('#/memory?view=personas'),'#/memory?view=personas')
 })
 
 test('filters deduplicate catalog and prioritize saved connections',()=>{
