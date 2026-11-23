@@ -1,6 +1,7 @@
 import {resolveConversationRoute} from '../features/conversations/resolveRoute'
 import {ConversationComposer,ComposerSendButton} from '../components/chat/ConversationComposer'
 import {ChatWelcome} from '../components/chat/ChatWelcome'
+import {McpQuickConnect} from '../components/chat/McpQuickConnect'
 import {ConversationTargetPicker} from '../components/chat/ConversationTargetPicker'
 import {ConversationSettings} from '../components/ConversationSettings'
 import {ChatRichText} from '../components/ChatRichText'
@@ -13,9 +14,10 @@ import {createPortal} from 'react-dom'
 import {Button} from '../components/Primitives'
 import {FormEvent,useEffect,useLayoutEffect,useRef,useState,type ChangeEvent,type KeyboardEvent} from 'react'
 import {ArrowDown,ArrowRight,ArrowUp,BrainCircuit,Check,ChevronRight,CircleHelp,Copy,Menu,LoaderCircle,Paperclip,ShieldAlert,Sparkles,Square,TerminalSquare,Wrench,X} from 'lucide-react'
-import {Agent,Approval,Attachment,ChatMessage,ChatSession,Provider,get,post,resolveApproval,streamChat,uploadAttachment} from '../api'
+import {Agent,Approval,Attachment,ChatMessage,ChatSession,Provider,del,get,post,resolveApproval,streamChat,uploadAttachment} from '../api'
 import {Action,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
+import {parseMcpQuickCommand,findInstalledMcp,validRemoteMcpUrl,type InstalledMcp,type RegistryMcp,type McpAvailableTool} from '../features/mcp/quickCommands'
 import {ReasoningSelect,reasoningOptions} from '../components/ReasoningSelect'
 import {useProviderModels} from '../hooks/useProviderModels'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
@@ -96,6 +98,12 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const effectiveThinkingEnabled=!canDisableThinking||thinkingEnabled;
  const [learning,setLearning]=useState(false);
  const [slashOpen,setSlashOpen]=useState(false),[slashActive,setSlashActive]=useState(0),[commandInfo,setCommandInfo]=useState('');
+ const [mcpQuickOpen,setMcpQuickOpen]=useState(false);
+ const [mcpInstalled,setMcpInstalled]=useState<InstalledMcp[]>([]);
+ const [mcpResults,setMcpResults]=useState<RegistryMcp[]>([]);
+ const [mcpQuickBusy,setMcpQuickBusy]=useState(false);
+ const [mcpNotice,setMcpNotice]=useState('');
+ const [mcpLastQuery,setMcpLastQuery]=useState('');
  const inputRef=useRef<HTMLTextAreaElement>(null);
  // Refit restored and newly typed drafts; a session switch does not emit an
  // input event and can otherwise leave multiline drafts visually clipped.
@@ -270,6 +278,107 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   }finally{
    stoppingRef.current=false;setStopping(false);
   }
+ };
+ // MCP management stays in the native MCP registry/API rather than creating
+ // a second plugin runtime. Tool discovery proves a connection; saving alone does not.
+ const loadQuickMcp=async()=>{
+  const items=await get<InstalledMcp[]>('/api/mcp');
+  setMcpInstalled(items);
+  return items;
+ };
+ const verifyQuickMcp=async(record:InstalledMcp)=>{
+  try{
+   const discovered=await get<McpAvailableTool[]>('/api/mcp/discover');
+   const own=discovered.filter(tool=>tool.mcpId===record.id&&!tool.error);
+   setMcpNotice(own.length
+    ?record.name+' · 연결 성공 · '+own.length+'개 도구 사용 가능'
+    :record.name+' · 등록 완료. 연결 확인이 필요합니다. 인증 또는 서버 설정을 확인하세요.');
+  }catch(e){setMcpNotice(record.name+' · 등록 완료. 연결 확인 실패: '+(e as Error).message);}
+ };
+ const registerQuickMcp=async(entry:RegistryMcp)=>{
+  if(mcpQuickBusy)return;
+  setMcpQuickOpen(true);setMcpQuickBusy(true);setMcpNotice('MCP 연결 정보를 확인하는 중…');
+  try{
+   const existing=await loadQuickMcp();
+   if(existing.some(record=>record.name.toLocaleLowerCase()===entry.name.toLocaleLowerCase()))
+    throw Error('이미 등록된 MCP입니다: '+entry.name);
+   const remote=Boolean(entry.url&&validRemoteMcpUrl(entry.url));
+   if(entry.url&&!remote)throw Error('원격 MCP는 HTTPS 주소와 인증정보가 없는 URL만 연결할 수 있습니다.');
+   if(!remote&&!entry.packageName)throw Error('이 항목에는 연결 가능한 MCP 주소 또는 패키지가 없습니다.');
+   if(!remote){
+    if(!/^(@[a-z0-9_.-]+\/)?[a-z0-9_.-]+(?:@[a-z0-9_.-]+)?$/i.test(entry.packageName||''))
+     throw Error('MCP 패키지 이름을 확인하세요.');
+    if(!window.confirm(entry.name+' 설치 시 외부 npm 프로그램이 실행됩니다. 설치하시겠습니까?')){
+     setMcpNotice('설치를 취소했습니다.');return;
+    }
+   }
+   const payload=remote
+    ?{name:entry.name,transport:'http',url:entry.url,enabled:true}
+    :{name:entry.name,transport:'stdio',command:'npx',args:['-y',entry.packageName],enabled:true};
+   const saved=await post<InstalledMcp>('/api/mcp',payload);
+   await loadQuickMcp();
+   refresh('/api/mcp','/api/tools');
+   setMcpNotice(saved.name+' · 등록 완료. 실제 연결을 확인하는 중…');
+   await verifyQuickMcp(saved);
+  }catch(e){setMcpNotice('MCP 연결 실패: '+(e as Error).message);}
+  finally{setMcpQuickBusy(false);}
+ };
+ const toggleQuickMcp=async(record:InstalledMcp,enabled:boolean)=>{
+  if(mcpQuickBusy)return;
+  setMcpQuickBusy(true);
+  try{
+   await post('/api/mcp',{...record,enabled});
+   await loadQuickMcp();refresh('/api/mcp','/api/tools');
+   setMcpNotice(record.name+' · '+(enabled?'활성화했습니다.':'비활성화했습니다.'));
+  }catch(e){setMcpNotice('변경 실패: '+(e as Error).message);}
+  finally{setMcpQuickBusy(false);}
+ };
+ const removeQuickMcp=async(record:InstalledMcp)=>{
+  if(mcpQuickBusy||!window.confirm(record.name+' MCP 연결을 삭제하시겠습니까?'))return;
+  setMcpQuickBusy(true);
+  try{
+   await del('/api/mcp/'+encodeURIComponent(record.id));
+   await loadQuickMcp();refresh('/api/mcp','/api/tools');
+   setMcpNotice(record.name+' · 연결을 삭제했습니다.');
+  }catch(e){setMcpNotice('삭제 실패: '+(e as Error).message);}
+  finally{setMcpQuickBusy(false);}
+ };
+ const executeMcpCommand=async(input:string)=>{
+  const action=parseMcpQuickCommand(input);
+  if(action.kind==='invalid')throw Error(action.message);
+  setMcpQuickOpen(true);
+  if(action.kind==='add'){await registerQuickMcp({name:action.name,url:action.url});return;}
+  setMcpQuickBusy(true);
+  try{
+   const items=await loadQuickMcp();
+   if(action.kind==='open'||action.kind==='list'){
+    setMcpNotice('등록된 MCP '+items.length+'개 · 검색으로 새 서버를 연결할 수 있습니다.');return;
+   }
+   if(action.kind==='help'){
+    setMcpNotice('/mcp search 검색어 · /mcp add 이름 https://주소 · /mcp list · /mcp enable 이름 · /mcp disable 이름 · /mcp remove 이름');return;
+   }
+   if(action.kind==='search'){
+    setMcpLastQuery(action.query);
+    setMcpResults([]);
+    setMcpNotice('공식 MCP 레지스트리에서 검색 중…');
+    const results=await get<RegistryMcp[]>('/api/mcp/catalog?q='+encodeURIComponent(action.query));
+    setMcpResults(results);
+    setMcpNotice(results.length?results.length+'개 검색됨 · 연결할 MCP를 선택하세요.':'검색 결과가 없습니다.');
+    return;
+   }
+   const target=findInstalledMcp(items,action.name);
+   if(!target)throw Error('등록된 MCP를 찾을 수 없습니다: '+action.name);
+   if(action.kind==='remove'){
+    if(!window.confirm(target.name+' MCP 연결을 삭제하시겠습니까?')){setMcpNotice('삭제를 취소했습니다.');return;}
+    await del('/api/mcp/'+encodeURIComponent(target.id));
+    await loadQuickMcp();refresh('/api/mcp','/api/tools');
+    setMcpNotice(target.name+' · 연결을 삭제했습니다.');return;
+   }
+   await post('/api/mcp',{...target,enabled:action.kind==='enable'});
+   await loadQuickMcp();refresh('/api/mcp','/api/tools');
+   setMcpNotice(target.name+' · '+(action.kind==='enable'?'활성화했습니다.':'비활성화했습니다.'));
+  }catch(e){setMcpNotice('MCP 명령 실패: '+(e as Error).message);}
+  finally{setMcpQuickBusy(false);}
  };
  const executeCommand=async(text:string)=>{
   const found=text.trim().match(/^\/([a-zA-Z]+)(?:\s+([\s\S]*))?$/);
