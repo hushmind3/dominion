@@ -17,6 +17,8 @@ const accounts=readFileSync(resolve(dir,'../src/components/ConnectedAccounts.tsx
 const modelHub=readFileSync(resolve(dir,'../src/features/models/useModelHub.ts'),'utf8')
 const modelDialog=readFileSync(resolve(dir,'../src/features/models/ConnectionTools.tsx'),'utf8')
 const models=readFileSync(resolve(dir,'../src/pages/Models.tsx'),'utf8')
+const ko=readFileSync(resolve(dir,'../src/i18n/ko.ts'),'utf8')
+const en=readFileSync(resolve(dir,'../src/i18n/en.ts'),'utf8')
 const entry=(id,name=id,fields=[])=>({
  id,name,category:'community',mode:'webhook',description:'Channel',docs:'',available:true,
  status:'available',features:[],fields,requiresRoom:true,
@@ -24,6 +26,20 @@ const entry=(id,name=id,fields=[])=>({
 const binding=(kind,id)=>({
  kind,id,name:id,agentId:'',providerId:'',model:'',enabled:true,
  mentionOnly:true,status:'connected',configured:true,credentialsPresent:{token:true},
+})
+
+test('MCP registry and MCP server UI does not mislabel MCPs as generic tools',()=>{
+ assert.match(ko,/'ext\.registry': '공식 MCP 레지스트리'/)
+ assert.match(ko,/'ext\.connectedServers': '등록된 MCP 서버'/)
+ assert.match(ko,/'ext\.tab\.servers': 'MCP 서버'/)
+ assert.match(ko,/'ext\.toolSearch': 'MCP 연결 확인'/)
+ assert.match(ko,/'ext\.url': 'MCP 서버 주소'/)
+ assert.match(ko,/'ext\.realTools': 'MCP에서 제공하는 기능'/)
+ assert.match(en,/'ext\.registry': 'Official MCP Registry'/)
+ assert.match(extensions,/MCP 레지스트리/)
+ assert.match(extensions,/추천 MCP 서버 보기/)
+ assert.match(extensions,/주요 MCP 연결/)
+ assert.doesNotMatch(extensions,/추천 도구 보기|주요 도구 연결|<Blocks size=\{17\} \/> 도구/)
 })
 
 test('Service connections reuses the real MCP registry and installed editor, without a new navigation item',()=>{
