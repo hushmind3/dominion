@@ -92,7 +92,7 @@ export function ConnectionTools({hub}:{hub:ModelHubController}){
 }
 
 export function ConnectionDialog({hub}:{hub:ModelHubController}){
- const {error, saving, integration, freePreset, modal, presetMode, edit, name, setName, baseUrl, setBaseUrl, kind, setKind, apiKey, setApiKey, local, setLocal, modelId, setModelId, defaultModel, setDefaultModel, reflection, setReflection, rpm, setRpm, accountId, setAccountId, testBusy, testResult, defaultEffort, setDefaultEffort, vision, setVision, editModels, needsNewKey, testConnection, close, save, disconnect}=hub
+ const {error, saving, integration, freePreset, modal, presetMode, edit, name, setName, baseUrl, setBaseUrl, kind, setKind, apiKey, setApiKey, local, setLocal, modelId, setModelId, defaultModel, setDefaultModel, reflection, setReflection, rpm, setRpm, accountId, setAccountId, testBusy, testResult, defaultEffort, setDefaultEffort, vision, setVision, toolMode, setToolMode, editModels, needsNewKey, testConnection, close, save, disconnect}=hub
  return <>{modal&&<DialogBackdrop onDismiss={close}><DialogPanel size="default">
    <div className="flex items-center justify-between border-b border-divider p-4"><h2 className="text-[15px] font-bold">{presetMode&&!edit?name+' '+t('models.editConnection'):edit?t('models.editConnection'):t('models.addConnection')}</h2><Button size="icon" variant="ghost" aria-label={t('models.close')} onClick={close} disabled={saving}><X size={16}/></Button></div>
    <div className="grid gap-3 p-4">
@@ -127,6 +127,16 @@ export function ConnectionDialog({hub}:{hub:ModelHubController}){
       </FormField>}
      </details>}
     </>}
+    {(local||kind==='ollama')&&kind!=='codex'&&<FormField
+      label="Tool Calling"
+      hint="정식 도구 호출은 서버와 모델 모두 function calling을 지원해야 합니다. 호환 방식은 텍스트로 도구 사용을 요청합니다.">
+      <SelectInput value={toolMode} aria-label="로컬 모델 도구 연결 방식"
+        onChange={e=>setToolMode(e.target.value as 'native'|'compat'|'auto')}>
+       <option value="native">네이티브 Tool Calling (권장)</option>
+       <option value="auto">API 기본 방식 (네이티브 시도)</option>
+       <option value="compat">텍스트 호환 방식 (구형 모델)</option>
+      </SelectInput>
+     </FormField>}
     <details className="rounded-xl border border-divider p-3"><summary className="cursor-pointer text-xs text-muted">{t('connect.advanced')}</summary><div className="mt-3 grid gap-3">
     {kind!=='codex'&&<FormField label="기본 모델 ID" hint="키를 등록한 후 제공자 모델 목록에서 선택하거나 ID를 직접 입력하세요.">
      <div className="grid gap-2">
