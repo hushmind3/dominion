@@ -26,6 +26,20 @@ const binding=(kind,id)=>({
  mentionOnly:true,status:'connected',configured:true,credentialsPresent:{token:true},
 })
 
+test('Service connections reuses the real MCP registry and installed editor, without a new navigation item',()=>{
+ assert.match(page,/id:'mcp',label:tr\('MCP 연결','MCP connections'\)/)
+ assert.match(page,/id:'registry',label:tr\('MCP 레지스트리','MCP registry'\)/)
+ assert.match(page,/import\('\.\/Extensions'\)/)
+ assert.match(page,/section=\{view==='mcp'\?'installed':'market'\}/)
+ assert.match(page,/onMcpRegistered=\{\(\)=>setView\('mcp'\)\}/)
+ assert.match(extensions,/onMcpRegistered\?\.\(\)/)
+ assert.match(extensions,/await mcp\.reload\(\);[\s\S]*?onMcpRegistered\?\.\(\)/)
+ assert.match(extensions,/"\/api\/mcp\/catalog" \+ \(term/)
+ assert.match(extensions,/"\/api\/mcp\/discover"/)
+ assert.equal((nav.match(/id:'connections' as const/g)||[]).length,1)
+ assert.equal((nav.match(/id:'extensions' as const/g)||[]).length,1)
+})
+
 test('MCP tools are directly accessible without extra menus or duplicate pages',()=>{
  assert.match(nav,/id:'extensions' as const,label:tr\('도구 · MCP','Tools & MCP'\)/)
  assert.match(nav,/tools\.map\(renderItem\)/)
