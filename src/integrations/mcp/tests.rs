@@ -75,6 +75,25 @@ use super::*;
     }
 
     #[tokio::test]
+    async fn colliding_mcp_names_do_not_publish_or_dispatch_to_arbitrary_servers() {
+        let state=temp_state();
+        for (id,name) in [("first","Echo Lab"),("second","Echo-Lab")] {
+            state.store.put("mcp",&json!({"id":id,"name":name,
+                "enabled":true,"transport":"stdio","command":"__should_not_launch__"})).unwrap();
+        }
+        let (tools,errors)=tools_with_errors(&state).await;
+        assert!(tools.is_empty());
+        assert_eq!(errors.len(),2);
+        assert!(errors.iter().all(|item|item["error"].as_str()
+            .is_some_and(|message|message.contains("충돌"))));
+        assert!(definitions(&state).await.is_empty());
+        assert!(requires_approval(&state,"mcp__echo_lab__echo"));
+        let reason=call(&state,"mcp__echo_lab__echo",&json!({}))
+            .await.unwrap_err();
+        assert!(reason.contains("충돌"),"{reason}");
+    }
+
+    #[tokio::test]
     async fn http_reuses_mcp_session_and_reconnects_after_credential_rotation() {
         use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
         use tokio::io::{AsyncReadExt,AsyncWriteExt,AsyncBufReadExt};
