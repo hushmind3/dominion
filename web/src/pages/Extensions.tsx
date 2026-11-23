@@ -340,7 +340,7 @@ function StatusLine({
 export type ExtensionTab='market'|'installed'|'plugins'|'skills'
 export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;embedded?:boolean}={}) {
   const loc = useLocale();
-  const [localTab, setTab] = useState<ExtensionTab>("market");
+  const [localTab, setTab] = useState<ExtensionTab>("installed");
   const tab = section ?? localTab;
   const mcp = useRemote<Mcp[]>("/api/mcp", []),
     skills = useRemote<Skill[]>("/api/skills", []),
