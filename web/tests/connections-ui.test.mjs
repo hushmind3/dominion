@@ -10,6 +10,8 @@ import {
 const dir=dirname(fileURLToPath(import.meta.url))
 const page=readFileSync(resolve(dir,'../src/pages/Connections.tsx'),'utf8')
 const extensions=readFileSync(resolve(dir,'../src/pages/Extensions.tsx'),'utf8')
+const nav=readFileSync(resolve(dir,'../src/components/WorkspaceNavigation.tsx'),'utf8')
+const ui=readFileSync(resolve(dir,'../src/components/ui/WorkspaceUI.tsx'),'utf8')
 const capabilities=readFileSync(resolve(dir,'../src/pages/Capabilities.tsx'),'utf8')
 const accounts=readFileSync(resolve(dir,'../src/components/ConnectedAccounts.tsx'),'utf8')
 const modelHub=readFileSync(resolve(dir,'../src/features/models/useModelHub.ts'),'utf8')
@@ -24,11 +26,13 @@ const binding=(kind,id)=>({
  mentionOnly:true,status:'connected',configured:true,credentialsPresent:{token:true},
 })
 
-test('connection navigation keeps the original seven tabs and no new workspace menu',()=>{
- const ids=[...page.matchAll(/\{id:'(channels|quick-connect|market|installed|skills|plugins|capabilities)'/g)].map(match=>match[1])
- assert.deepEqual(ids,['channels','quick-connect','market','installed','skills','plugins','capabilities'])
- assert.equal((page.match(/className="connection-tabs"/g)||[]).length,1)
- assert.match(page,/CapabilitiesPage embedded/)
+test('MCP tools are directly accessible without extra menus or duplicate pages',()=>{
+ assert.match(nav,/id:'extensions' as const,label:tr\('도구 · MCP','Tools & MCP'\)/)
+ assert.match(nav,/tools\.map\(renderItem\)/)
+ assert.equal((nav.match(/id:'extensions' as const/g)||[]).length,1)
+ assert.match(page,/<ViewTabs value=\{view\}/)
+ assert.match(ui,/export function ViewTabs/)
+ assert.match(page,/<CapabilitiesPage embedded/)
 })
 
 test('filters deduplicate catalog and prioritize saved connections',()=>{
