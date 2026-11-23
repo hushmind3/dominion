@@ -59,3 +59,14 @@ test('MLX installed-but-not-running can be repaired from either the error banner
  assert.doesNotMatch(sidebar,/<h2 className="workspace-settings-group-title">/)
  assert.match(sidebar,/navigation\.flatMap\(group=>group\.items\)/)
 })
+
+test('MLX repair clears only the previous missing-engine warning after verified installation',()=>{
+ const explorer=source('../src/components/ModelExplorer.tsx')
+ const engine=source('../../src/engine/services/providers/models.rs')
+ assert.match(explorer,/awaitingMlxRepair/)
+ assert.match(explorer,/runtime\.setup\.status==='installed'&&runtime\.capabilities\?\.mlx\?\.standalone/)
+ assert.match(explorer,/setPendingEngineLaunch\(current=>current\?\{\.\.\.current,error:undefined\}:current\)/)
+ assert.match(explorer,/const repairMlx=async\(\)=>/)
+ assert.match(engine,/guard\.status = "idle"\.into\(\)/)
+ assert.match(engine,/guard\.error\.clear\(\)/)
+})

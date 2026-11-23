@@ -76,6 +76,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
  const [snapshotLoaded,setSnapshotLoaded]=useState(false),[installedUnavailable,setInstalledUnavailable]=useState(false),[snapshotUnavailable,setSnapshotUnavailable]=useState(false)
  const [pendingLaunch,setPendingLaunch]=useState<PendingLaunch|null>(readPendingLaunch)
  const [pendingEngineLaunch,setPendingEngineLaunch]=useState<PendingEngineLaunch|null>(readPendingEngineLaunch)
+ const [awaitingMlxRepair,setAwaitingMlxRepair]=useState(false)
  useEffect(()=>{try{if(pendingEngineLaunch)window.sessionStorage.setItem(engineLaunchKey,JSON.stringify(pendingEngineLaunch));else window.sessionStorage.removeItem(engineLaunchKey)}catch{/* private session */}},[pendingEngineLaunch])
  useEffect(()=>{try{if(pendingLaunch)window.sessionStorage.setItem(launchKey,JSON.stringify(pendingLaunch));else window.sessionStorage.removeItem(launchKey)}catch{/* private browser session */}},[pendingLaunch])
  const [localPath,setLocalPath]=useState('')
@@ -178,6 +179,14 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
  const selectedPreflight=option&&detail?modelPreflight(existing||{id:option.format==='mlx'?'mlx:'+detail.id:'hf:'+detail.id,format:option.format,bytes:option.bytes},runtime.capabilities):null
  const activeModel=installed.find(m=>m.id===runtime.id)
  const pendingEngineModel=installed.find(m=>m.id===pendingEngineLaunch?.id)
+ useEffect(()=>{
+  if(!awaitingMlxRepair||runtime.setup?.engine!=='mlx')return
+  if(runtime.setup.status==='failed'){setAwaitingMlxRepair(false);return}
+  if(runtime.setup.status==='installed'&&runtime.capabilities?.mlx?.standalone){
+   setPendingEngineLaunch(current=>current?{...current,error:undefined}:current)
+   setAwaitingMlxRepair(false)
+  }
+ },[awaitingMlxRepair,runtime.setup?.engine,runtime.setup?.status,runtime.capabilities?.mlx?.standalone])
  const pendingEngineCheck=pendingEngineModel?modelPreflight(pendingEngineModel,runtime.capabilities):null
  const pendingEngineId=pendingEngineModel?engineForModel(pendingEngineModel):null
  const pendingEngineItem=runtimes.find((item:any)=>item.id===pendingEngineId)
@@ -195,6 +204,10 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
   try{await action();await refresh();return true}
   catch(e){setError((e as Error).message);return false}
   finally{setWorking('')}
+ }
+ const repairMlx=async()=>{
+  const started=await safe('repair-mlx-lm',()=>post('/api/model-library/runtime/install',{engine:'mlx-lm',repair:true}))
+  if(started)setAwaitingMlxRepair(true)
  }
  const importLocal=()=>safe('import',async()=>{
   const result=await post<Installed>('/api/model-library/import',{filePath:localPath.trim(),reference:true})
@@ -349,7 +362,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
     </div>
     <div className="flex flex-wrap items-center gap-2">
      {pendingEngineModel&&pendingEngineAction==='install'&&pendingEngineItem?.installable&&!installing&&<Button variant="bare" type="button" className={btn+' !border-[#C96442] !bg-[#C96442] !text-white'} disabled={Boolean(working)} onClick={()=>void safe('install-'+pendingEngineId,()=>post('/api/model-library/runtime/install',{engine:pendingEngineId}))}><ArrowDownToLine size={13}/>필요한 실행기 설치</Button>}
-     {pendingEngineAction==='repair'&&pendingEngineItem?.installable&&!installing&&<Button variant="bare" type="button" className={btn} disabled={Boolean(working)} onClick={()=>void safe('repair-'+pendingEngineId,()=>post('/api/model-library/runtime/install',{engine:pendingEngineId,repair:true}))}><ArrowDownToLine size={13}/>실행기 다시 설치</Button>}
+     {pendingEngineAction==='repair'&&pendingEngineItem?.installable&&!installing&&<Button variant="bare" type="button" className={btn} disabled={Boolean(working)} onClick={()=>void repairMlx()}><ArrowDownToLine size={13}/>실행기 다시 설치</Button>}
      {pendingEngineAction==='download'&&pendingEngineItem?.url&&<a className={btn} href={pendingEngineItem.url} target="_blank" rel="noreferrer">실행기 받기 <ExternalLink size={12}/></a>}
      <Button variant="bare" type="button" className={btn} disabled={Boolean(working)||installing} onClick={()=>void refresh()}><RefreshCw size={13}/>상태 확인</Button>
      {pendingEngineModel&&['retry','repair'].includes(pendingEngineAction)&&<Button variant="bare" type="button" className={btn+' !border-[#C96442] !bg-[#C96442] !text-white'} disabled={Boolean(working)||installing||runtime.status==='loading'} onClick={()=>void continueEngineLaunch()}><Play size={13}/>원래 모델 다시 실행</Button>}
@@ -378,7 +391,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
       <div className="mt-auto flex items-center justify-between gap-2 border-t border-[#EFE9DF] pt-3">
        <small className="text-[10px] text-[#9C9388]">{!item.installed&&!item.installable?t('models.runtime.external'):''}</small>
        {item.installed&&item.id==='mlx-lm'&&item.installable&&!actionInBanner
-        ?<Button variant="bare" type="button" className={btn+' !border-[#C9A78C]'} disabled={Boolean(working)||installing||runtime.status==='loading'||(runtime.status==='ready'&&runtime.engine==='MLX')} onClick={()=>void safe('repair-'+item.id,()=>post('/api/model-library/runtime/install',{engine:item.id,repair:true}))}><RefreshCw size={13}/> MLX 실행기 재설치</Button>
+        ?<Button variant="bare" type="button" className={btn+' !border-[#C9A78C]'} disabled={Boolean(working)||installing||runtime.status==='loading'||(runtime.status==='ready'&&runtime.engine==='MLX')} onClick={()=>void repairMlx()}><RefreshCw size={13}/> MLX 실행기 재설치</Button>
         :!item.installed&&!actionInBanner&&(item.installable
         ?<Button variant="bare" type="button" className={btn+' !border-[#C96442] !bg-[#C96442] !text-white hover:!bg-[#A94E30]'} disabled={Boolean(working)||installing} onClick={()=>void safe('install-'+item.id,()=>post('/api/model-library/runtime/install',{engine:item.id}))}>{t('models.runtime.install')}</Button>
         :item.url?<a className={btn} href={item.url} target="_blank" rel="noreferrer">{t('models.runtime.download')} <ExternalLink size={12}/></a>:null)}

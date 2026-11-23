@@ -1435,6 +1435,17 @@ pub async fn install_runtime_with_repair(
                 "updatedAt": chrono::Utc::now().to_rfc3339(),
             }),
         };
+        if result["status"] == "installed" {
+            // A verified standalone runtime replaces a stale "engine absent"
+            // error. It does NOT claim the model was launched successfully.
+            let mut guard = runtime().lock().unwrap();
+            if guard.status == "error"
+                && (guard.error.contains("MLX 실행기") || guard.engine == "MLX")
+            {
+                guard.status = "idle".into();
+                guard.error.clear();
+            }
+        }
         set_install(result);
     });
     Ok(json!({
