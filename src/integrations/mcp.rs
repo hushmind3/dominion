@@ -110,6 +110,8 @@ fn return_session(state:&AppState,server:&Value,identity:String,session:LiveSess
 
 #[derive(Clone)]
 pub struct McpTool {
+    /// Stable identity of the installed record; names and slugs may collide.
+    pub server_id: String,
     pub server_name: String,
     pub slug: String,
     pub tool: String,
@@ -159,7 +161,18 @@ fn enabled_servers(state: &AppState) -> Vec<Value> {
 
 /// Fetch (and cache) the tool list of every enabled MCP server.
 pub async fn tools(state: &AppState) -> Vec<McpTool> {
+    collect_tools(state).await.0
+}
+
+/// Discovery diagnostics are returned ONLY by the owner-facing endpoint.
+/// Ordinary model tool catalog lookup keeps its original list-only contract.
+pub async fn tools_with_errors(state: &AppState) -> (Vec<McpTool>, Vec<Value>) {
+    collect_tools(state).await
+}
+
+async fn collect_tools(state: &AppState) -> (Vec<McpTool>, Vec<Value>) {
     let mut collected = Vec::new();
+    let mut failures = Vec::new();
     for server in enabled_servers(state) {
         let id = server
             .get("id")
@@ -185,16 +198,21 @@ pub async fn tools(state: &AppState) -> Vec<McpTool> {
                 collected.extend(tools);
             }
             Err(error) => {
-                state
-                    .store
-                    .audit("mcp.list_failed", json!({ "server": id, "error": error }));
+                state.store.audit("mcp.list_failed", json!({ "server": id, "error": error }));
+                failures.push(json!({
+                    "mcpId":id,
+                    "server":server["name"],
+                    "name":server["name"],
+                    "error":error,
+                }));
             }
         }
     }
-    collected
+    (collected, failures)
 }
 
 async fn list_server(state: &AppState, server: &Value) -> Result<Vec<McpTool>, String> {
+    let server_id = server["id"].as_str().unwrap_or_default().to_string();
     let server_name = server
         .get("name")
         .and_then(|value| value.as_str())
@@ -226,6 +244,7 @@ async fn list_server(state: &AppState, server: &Value) -> Result<Vec<McpTool>, S
                 .and_then(|value| value.as_str())?
                 .to_string();
             Some(McpTool {
+                server_id: server_id.clone(),
                 server_name: server_name.clone(),
                 slug: server_slug.clone(),
                 tool: name,
