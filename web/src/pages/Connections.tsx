@@ -1,5 +1,5 @@
 import {ViewTabs, SearchField, EmptyState} from '../components/ui/WorkspaceUI'
-import {useState} from 'react'
+import {lazy,Suspense,useState} from 'react'
 import {Activity, ArrowRight, RefreshCw, Blocks, Check, ExternalLink, Link2, LoaderCircle, MessageCircle, Plus, RadioTower, Send, Settings2, ShieldCheck, Trash2, UsersRound, X} from 'lucide-react'
 import {DialogBackdrop, DialogPanel} from '../components/Dialog'
 
@@ -8,6 +8,10 @@ import {del, post} from '../api'
 import {Action, FormField, Notice, useRemote} from '../components/UI'
 import {t, useLocale, type LocaleKey} from '../i18n'
 import {ConnectedAccounts} from '../components/ConnectedAccounts'
+
+// Reuse the same MCP registry/installed editor as Tools & MCP.
+// Lazy loading avoids starting MCP discovery on ordinary connection visits.
+const McpExtensions=lazy(()=>import('./Extensions').then(module=>({default:module.ExtensionsPage})))
 import {type ChannelEntry, type ChannelBinding, type ChannelDraft, channelDraftMissing, channelStatusTone} from '../utils/connectionState'
 
 type Editor={entry:ChannelEntry;record:ChannelDraft}
@@ -164,7 +168,7 @@ export function ConnectionsPage(){
  const agents=useRemote<any[]>('/api/agents',[])
  const rooms=useRemote<any[]>('/api/rooms',[])
  const providers=useRemote<any[]>('/api/providers',[])
- const [view,setView]=useState<'saved'|'add'|'accounts'>('saved')
+ const [view,setView]=useState<'saved'|'add'|'accounts'|'mcp'|'registry'>('saved')
  const [query,setQuery]=useState('')
  const [editor,setEditor]=useState<Editor|null>(null)
  const [error,setError]=useState('')
@@ -219,11 +223,16 @@ export function ConnectionsPage(){
  const choices=registry.value.filter(entry=>(entry.name+' '+entry.id).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).sort((a,b)=>a.name.localeCompare(b.name))
  const tr=(ko:string,en:string)=>english?en:ko
  return <PageContainer>
-  <ViewTabs value={view} onChange={setView} label={tr('서비스 연결 보기','Connection views')} options={[{id:'saved',label:tr('내 연결','Your connections'),count:channels.value.length},{id:'add',label:tr('연결 추가','Add a connection')},{id:'accounts',label:tr('앱 계정','App accounts')}]}/>
+  <ViewTabs value={view} onChange={setView} label={tr('서비스 연결 보기','Connection views')} options={[{id:'saved',label:tr('내 연결','Your connections'),count:channels.value.length},{id:'add',label:tr('연결 추가','Add a connection')},{id:'accounts',label:tr('앱 계정','App accounts')},{id:'mcp',label:tr('MCP 연결','MCP connections'),icon:Blocks},{id:'registry',label:tr('MCP 레지스트리','MCP registry'),icon:RadioTower}]}/>
 
-  <Notice message={error||registry.error||channels.error} onRetry={()=>{void registry.reload();void channels.reload()}}/>
+  <Notice message={error||(view==='saved'||view==='add'?registry.error||channels.error:'')} onRetry={()=>{void registry.reload();void channels.reload()}}/>
   {info&&<p className="mb-4 flex items-center gap-2 rounded-xl border border-success/20 bg-success-soft/30 p-4 text-sm text-success" role="status"><Check size={16}/>{info}</p>}
-  {view==='accounts'?<ConnectedAccounts/>:<>
+  {view==='accounts'?<ConnectedAccounts/>:
+   (view==='mcp'||view==='registry')?
+    <Suspense fallback={<p className="p-5 text-sm text-muted">{tr('MCP 관리 화면 여는 중…','Loading MCP connections…')}</p>}>
+     <McpExtensions section={view==='mcp'?'installed':'market'} embedded
+      onMcpRegistered={()=>setView('mcp')}/>
+    </Suspense>:<>
    <div className="mb-6 flex flex-wrap items-center gap-3 [&>label]:max-w-xl"><SearchField value={query} onChange={setQuery} label={tr('서비스 연결 검색','Search connections')} placeholder={tr('서비스 이름으로 찾기','Search by service name')}/>
     {view==='saved'&&<Button variant="primary" onClick={()=>{setQuery('');setView('add')}}><Plus size={17}/>{tr('새 연결','New connection')}</Button>}
    </div>
