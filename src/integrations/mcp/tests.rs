@@ -46,6 +46,7 @@ use super::*;
     #[test]
     fn qualified_names_are_namespaced() {
         let tool = McpTool {
+            server_id: "stable-record-001".into(),
             server_name: "Echo Lab".into(),
             slug: slug("Echo Lab"),
             tool: "echo".into(),
@@ -54,6 +55,23 @@ use super::*;
         };
         assert_eq!(slug("Echo Lab"), "echo_lab");
         assert_eq!(tool.qualified(), "mcp__echo_lab__echo");
+        assert_eq!(tool.server_id, "stable-record-001");
+    }
+
+    #[tokio::test]
+    async fn failed_mcp_discovery_reports_the_exact_installed_record() {
+        let state=temp_state();
+        state.store.put("mcp",&json!({
+            "id":"broken-connector", "name":"Broken connector",
+            "transport":"stdio", "command":"__nonexistent_sub3_mcp_server__",
+            "enabled":true
+        })).unwrap();
+        let (tools, errors)=tools_with_errors(&state).await;
+        assert!(tools.is_empty());
+        assert_eq!(errors.len(),1);
+        assert_eq!(errors[0]["mcpId"],"broken-connector");
+        assert_eq!(errors[0]["name"],"Broken connector");
+        assert!(errors[0]["error"].is_string());
     }
 
     #[tokio::test]
