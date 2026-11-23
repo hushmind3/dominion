@@ -32,6 +32,7 @@ try{
  const page=await browser.newPage({viewport:{width:1280,height:800},locale:'ko-KR'})
  const pageErrors=[]
  let localRunning=false
+ let forceMissingEngine=false,mlxInstalled=false,llamaInstalled=false
  page.on('pageerror',error=>pageErrors.push(error.message))
  page.on('dialog',dialog=>void dialog.accept())
  await page.route(url=>new URL(url).pathname.startsWith('/api/'),async route=>{
@@ -46,7 +47,19 @@ try{
   else if(path==='/api/settings/owner-profile')response={id:'owner',name:'나',avatar:''}
   else if(path==='/api/policy'||path.startsWith('/api/settings/'))response={}
   else if(path==='/api/model-library/runtime')
-   response=localRunning?{status:'ready',id:'fixture-local',name:'Fixture 4B',model:'fixture-local-model'}:{status:'idle'}
+   response=localRunning?{status:'ready',id:'fixture-local',name:'Fixture 4B',model:'fixture-local-model'}:
+    {status:'idle',capabilities:forceMissingEngine?{gguf:{available:llamaInstalled,path:llamaInstalled?'/fixture/llama-server':null},memory:{free:1024},gpu:{free:0}}:undefined}
+  else if(path==='/api/model-library/runtimes')
+   response={items:[
+    {id:'mlx-lm',name:'MLX (mlx-lm)',formats:['mlx'],installMethod:'fixture',installed:mlxInstalled,installable:true},
+    {id:'llama-cpp',name:'llama.cpp',formats:['gguf'],installMethod:'fixture',installed:llamaInstalled,installable:true}
+   ]}
+  else if(path==='/api/model-library/runtime/install'){
+   const engine=route.request().postDataJSON()?.engine
+   if(engine==='mlx-lm')mlxInstalled=true
+   if(engine==='llama-cpp')llamaInstalled=true
+   response={ok:true}
+  }
   else if(path==='/api/model-library/runtime/load'){
    localRunning=true
    response={status:'ready',id:'fixture-local',name:'Fixture 4B',model:'fixture-local-model'}
@@ -78,7 +91,27 @@ try{
  await picker.getByRole('tab',{name:'로컬 모델'}).click()
  await picker.getByRole('button',{name:'로컬 모델 종료'}).click()
  assert.equal(localRunning,false,'native model unload must run in AI picker')
- await picker.getByRole('button',{name:'닫기'}).click()
+ // The local picker should open the EXISTING installation panel directly.
+ await picker.getByRole('button',{name:'실행기 설치 · 로컬 모델 관리'}).click()
+ await page.waitForURL('**/#/models?tab=local&view=import',{timeout:8000})
+ await page.getByText('MLX (mlx-lm)',{exact:true}).waitFor({state:'visible',timeout:8000})
+ const mlxCard=page.getByText('MLX (mlx-lm)',{exact:true})
+  .locator('xpath=ancestor::div[contains(@class,"rounded-xl")][1]')
+ await mlxCard.getByRole('button',{name:'설치',exact:true}).click()
+ assert.equal(mlxInstalled,true,'MLX install action must use runtime install API')
+ assert.equal(await page.getByText('외부 로컬 서버 연결 (고급) · Ollama / LM Studio 등').count(),1)
+ await page.getByRole('button',{name:'닫기'}).last().click()
+ // Missing llama.cpp must preserve selected model and guide straight to setup.
+ forceMissingEngine=true
+ await page.getByRole('button',{name:'대화 상대 선택'}).click()
+ await picker.getByRole('tab',{name:'로컬 모델'}).click()
+ await picker.getByRole('button',{name:/fixture\/local-4b/}).click()
+ await page.waitForURL('**/#/models?tab=local&view=import',{timeout:8000})
+ await page.getByText(/실행 이어가기 · Fixture 4B/).waitFor({state:'visible',timeout:8000})
+ assert.equal(JSON.parse(await page.evaluate(()=>sessionStorage.getItem('dominion-model-engine-retry'))).id,'fixture-local')
+ await page.getByRole('button',{name:'필요한 실행기 설치'}).click()
+ assert.equal(llamaInstalled,true,'missing llama.cpp installs through existing runtime API')
+ await page.getByRole('button',{name:'닫기'}).last().click()
  await history.getByRole('button',{name:'대화 목록 접기'}).click()
  const rail=page.locator('.page-chat .conversation-rail')
  await rail.waitFor({state:'visible',timeout:5000})
