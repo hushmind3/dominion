@@ -41,6 +41,12 @@ jobs:
       - run: cargo check --locked --bin dominion-rust
       - run: cargo test --locked --workspace --no-run
       - run: cargo check --locked --all-targets
+      # Automatic routing must exclude unavailable/under-capacity providers;
+      # the gateway must not retry a paid POST with uncertain delivery.
+      - run: cargo test --locked --bin dominion-rust automatic_route_headroom_sees_cooldowns_without_consuming_slots
+      - run: cargo test --locked --bin dominion-rust auto_router_skips_unavailable_route_but_keeps_explicit_choice
+      - run: cargo test --locked --bin dominion-rust native_auto_route_filters_unavailable_and_too_small_outputs_before_pricing
+      - run: cargo test --locked --bin dominion-rust helper_transport_disconnect_never_automatically_replays_paid_post
       - run: cargo test --locked --test e2e web_api::health_reports_running_binary_identity_instead_of_moving_checkout_head -- --exact
       - run: cargo test --locked --bin dominion-rust real_modern_stdio_never_initializes_and_persists_one_live_process
       - run: cargo test --locked --bin dominion-rust modern_mcp_http_uses_discovery_stateless_headers_and_live_pinned_schema
