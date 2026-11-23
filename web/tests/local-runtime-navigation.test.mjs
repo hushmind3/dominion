@@ -34,6 +34,6 @@ test('chat handles missing engine by preserving model and opening same setup ins
  assert.match(chat,/openLocalRuntimeSetup\(m\)/)
  assert.match(chat,/dominion-model-engine-retry/)
  assert.match(chat,/window\.location\.hash=localRuntimeSetupHref/)
- assert.match(picker,/onLocalSetup:()=>void/)
+ assert.ok(picker.includes('onLocalSetup:()=>void'))
  assert.match(picker,/실행기 설치 · 로컬 모델 관리/)
 })
