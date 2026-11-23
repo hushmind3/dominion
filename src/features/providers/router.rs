@@ -52,7 +52,11 @@ pub fn select_provider(state: &AppState, complexity: Complexity) -> Option<Value
         .all("provider")
         .into_iter()
         .filter(gateway::provider_eligible)
-        .filter(|provider| gateway::route_from_provider(state, provider, None).is_ok())
+        .filter(|provider| gateway::route_from_provider(state, provider, None).is_ok_and(
+            |route| gateway::has_generation_headroom(
+                &route.base_url, &route.model, route.requests_per_minute,
+            )
+        ))
         .filter(|provider| provider["enabled"] != false)
         .collect::<Vec<_>>();
     if candidates.is_empty() {
@@ -163,6 +167,25 @@ mod tests {
         );
         assert_eq!(classify("첨부한 로그를 봐줘", 1, 2), Complexity::Deep);
         assert_eq!(classify("오늘 있었던 일을 조금 길게 정리해 주세요. 어떤 상황이었는지, 누가 있었는지, 다음에는 어떻게 했으면 하는지까지 순서대로 적어 주시면 좋겠습니다. 너무 딱딱하지 않게 편한 말투로 부탁드립니다.", 0, 2), Complexity::Standard);
+    }
+
+    #[test]
+    fn auto_router_skips_unavailable_route_but_keeps_explicit_choice() {
+        let (state, dir) = state();
+        for (id, cost) in [("cheap", 0.3), ("available", 0.7)] {
+            state.store.put("provider", &json!({
+                "id":id, "name":id,
+                "baseUrl":format!("https://{id}.sub3.invalid/v1"),
+                "model":"test-model", "enabled":true,
+                "capabilities":{"quality":cost}
+            })).unwrap();
+        }
+        assert_eq!(select_provider(&state, Complexity::Light).unwrap()["id"],"cheap");
+        gateway::mark_rate_limited("https://cheap.sub3.invalid/v1", "test-model");
+        assert_eq!(select_provider(&state, Complexity::Light).unwrap()["id"],"available");
+        // An explicit owner choice is not silently replaced by the automatic router.
+        assert_eq!(gateway::resolve(&state,"cheap",None).unwrap().id,"cheap");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
