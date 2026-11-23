@@ -115,7 +115,7 @@ export type ChatRequest = {
   sessionId: string
   clientTurnId?: string
   agentId?: string
-  directChat?: boolean
+  mode: 'chat' | 'agent'
   providerId?: string
   model?: string
   input: string
