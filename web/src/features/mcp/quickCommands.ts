@@ -1,6 +1,6 @@
 /** Frontend-only MCP command grammar. All mutations use the existing MCP API. */
 export type McpQuickAction =
- | {kind:'open'|'list'|'help'}
+ | {kind:'open'} | {kind:'list'} | {kind:'help'}
  | {kind:'search';query:string}
  | {kind:'add';name:string;url:string}
  | {kind:'enable'|'disable'|'remove';name:string}
