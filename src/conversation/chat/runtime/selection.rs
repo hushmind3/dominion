@@ -80,9 +80,19 @@ pub(super) fn tool_name(definition: &Value) -> &str {
 /// for an optional procedure to execute before the model on a conversational
 /// turn that was deliberately classified as tool-free.
 pub(super) fn automatic_tool_actions_allowed(
-    execution_enabled:bool, lightweight_chat:bool, finished:bool
+    execution_enabled:bool, lightweight_chat:bool, action_intent:bool, finished:bool
 )->bool {
-    execution_enabled && !lightweight_chat && !finished
+    execution_enabled && !lightweight_chat && action_intent && !finished
+}
+
+/// Enabled tools are permissions, not instructions to start every connector.
+pub(super) fn tool_catalog_needed(
+    input:&str, room:bool, acceptance:bool, attachment:bool,
+    owner_activated:bool, file_creation:bool
+)->bool {
+    if acceptance||attachment||owner_activated||file_creation {return true;}
+    if room_tool_request(input) {return true;}
+    !room && (input.chars().count()>180 || input.contains('\n'))
 }
 
 /// Exact greetings need neither tools nor progressive tool-discovery
@@ -138,6 +148,9 @@ pub(super) fn room_tool_request(input: &str) -> bool {
         "결과", "가져와", "확인해", "진행해",
         "위임", "에이전트", "delegate", "agent",
         "재시도", "복구", "실패", "오류", "retry", "recover", "failed", "failure", "error",
+        "찾아", "조사", "조회", "배포", "개발", "리팩터", "프로젝트", "진행", "처리해",
+        "오늘", "지금", "현재", "최신", "실시간", "날씨", "뉴스", "환율", "가격",
+        "find", "research", "look up", "today", "current", "latest", "weather", "news", "price",
         "스킬", "메모리", "브라우저", "깃허브", "github", "구글", "google", "지메일", "gmail",
         "메일", "드라이브", "drive", "캘린더", "calendar", "일정", "docs", "shell", "file", "read",
         "write", "run", "execute", "command", "commands", "search", "fetch", "install", "build", "test", "tool",
@@ -469,10 +482,28 @@ mod room_catalog_cache_tests {
 
     #[test]
     fn lightweight_conversation_never_dispatches_hidden_harness_or_program_tools() {
-        assert!(!automatic_tool_actions_allowed(true,true,false));
-        assert!(!automatic_tool_actions_allowed(false,false,false));
-        assert!(!automatic_tool_actions_allowed(true,false,true));
-        assert!(automatic_tool_actions_allowed(true,false,false));
+        assert!(!automatic_tool_actions_allowed(true,true,true,false));
+        assert!(!automatic_tool_actions_allowed(false,false,true,false));
+        assert!(!automatic_tool_actions_allowed(true,false,false,false));
+        assert!(!automatic_tool_actions_allowed(true,false,true,true));
+        assert!(automatic_tool_actions_allowed(true,false,true,false));
+    }
+
+    #[test]
+    fn casual_utterances_do_not_enumerate_external_mcp_connections() {
+        for input in ["안녕하세요", "저는 비오는 날이 좋아요", "그냥 이런 생각이 들었어요",
+                      "What do you think?"] {
+            assert!(!tool_catalog_needed(input,false,false,false,false,false),"{input}");
+            assert!(!tool_catalog_needed(input,true,false,false,false,false),"{input}");
+        }
+        for input in ["오늘 날씨 검색해줘", "최신 뉴스 알려줘", "파일을 읽어줘",
+                      "지난 작업 계속해", "깃허브 저장소 조사해"] {
+            assert!(tool_catalog_needed(input,false,false,false,false,false),"{input}");
+        }
+        assert!(tool_catalog_needed("내용을 정리해",false,true,false,false,false));
+        assert!(tool_catalog_needed("사진",false,false,true,false,false));
+        assert!(tool_catalog_needed("평소 대화",false,false,false,true,false));
+        assert!(tool_catalog_needed("파일 생성",false,false,false,false,true));
     }
 
     #[test]
