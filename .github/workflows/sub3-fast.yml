@@ -48,6 +48,8 @@ jobs:
       - run: cargo test --locked --bin dominion-rust native_auto_route_filters_unavailable_and_too_small_outputs_before_pricing
       - run: cargo test --locked --bin dominion-rust helper_transport_disconnect_never_automatically_replays_paid_post
       - run: cargo test --locked --bin dominion-rust helper_uncertain_transport_prevents_automatic_fallback
+      - run: cargo test --locked --bin dominion-rust failed_mcp_discovery_reports_the_exact_installed_record
+      - run: cargo test --locked --bin dominion-rust lightweight_conversation_never_dispatches_hidden_harness_or_program_tools
       - run: cargo test --locked --test e2e web_api::health_reports_running_binary_identity_instead_of_moving_checkout_head -- --exact
       - run: cargo test --locked --bin dominion-rust real_modern_stdio_never_initializes_and_persists_one_live_process
       - run: cargo test --locked --bin dominion-rust modern_mcp_http_uses_discovery_stateless_headers_and_live_pinned_schema
@@ -98,6 +100,6 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci --prefix web
-      - run: node --experimental-strip-types --test web/tests/conversation-preferences.test.mjs web/tests/slash-mcp-contract.test.mjs
+      - run: node --experimental-strip-types --test web/tests/conversation-preferences.test.mjs web/tests/slash-mcp-contract.test.mjs web/tests/runtime-ux-contract.test.mjs
       - run: npm run typecheck --prefix web
       - run: npm run build --prefix web
