@@ -6,6 +6,33 @@ use crate::state::AppState;
 use serde_json::{json, Value};
 use std::time::Duration;
 
+/// A missing response after dispatch may have been charged upstream. Only a
+/// confirmed pre-dispatch rejection or a complete, handled response may enter
+/// automatic provider fallback.
+#[derive(Debug)]
+struct HelperFailure {
+    message: String,
+    delivery_unknown: bool,
+}
+impl From<String> for HelperFailure {
+    fn from(message: String) -> Self { Self {message,delivery_unknown:false} }
+}
+impl From<&str> for HelperFailure {
+    fn from(message: &str) -> Self { Self::from(message.to_string()) }
+}
+impl HelperFailure {
+    fn unknown(message: String) -> Self { Self {message,delivery_unknown:true} }
+    fn from_gateway(message: String) -> Self {
+        // Gateway labels POST delivery failures distinctly from an admission
+        // refusal (rate cooldown or exhausted local RPM allowance).
+        if message.contains("delivery may be uncertain (not replayed)") {
+            Self::unknown(message)
+        } else {
+            Self::from(message)
+        }
+    }
+}
+
 async fn try_complete(
     state: &AppState,
     provider_id: &str,
@@ -13,14 +40,14 @@ async fn try_complete(
     system: &str,
     prompt: &str,
     session_id: Option<&str>,
-) -> Result<String, String> {
+) -> Result<String, HelperFailure> {
     let route = gateway::resolve(state, provider_id, Some(model))?;
     if route.kind=="cli"{
         let source=route.base_url.strip_prefix("cli://").ok_or("CLI 제공자 주소 오류")?;
         let text=crate::engine::cli_model::generate(source,&route.model,&[
             json!({"role":"system","content":system}),
             json!({"role":"user","content":prompt})
-        ]).await?;
+        ]).await.map_err(HelperFailure::unknown)?;
         let prompt_tokens=(system.len()+prompt.len()).div_ceil(4) as u64;
         let output_tokens=text.len().div_ceil(4) as u64;
         gateway::record_usage_tokens(state,&route.id,&route.model,false,"helper",session_id,
@@ -52,13 +79,21 @@ async fn try_complete(
             body["think"] = json!(false);
             body["chat_template_kwargs"] = json!({"enable_thinking": false});
         }
-        let response = gateway::send(&route, &client, &body, Duration::from_secs(240)).await?;
+        let response = gateway::send(&route, &client, &body, Duration::from_secs(240))
+            .await.map_err(HelperFailure::from_gateway)?;
         let response = response.response;
         if !response.status().is_success() {
-            return Err(format!("모델 호출 실패: HTTP {}", response.status()));
+            let status=response.status();
+            let failure=format!("모델 호출 실패: HTTP {status}");
+            return Err(if status.is_server_error() {
+                HelperFailure::unknown(failure)
+            } else {
+                HelperFailure::from(failure)
+            });
         }
         let value=crate::integrations::network::read_bounded_json(
-            response,16*1024*1024,"Model completion").await?;
+            response,16*1024*1024,"Model completion")
+            .await.map_err(HelperFailure::unknown)?;
         gateway::record_usage(
             state,
             &route,
@@ -90,7 +125,7 @@ async fn try_complete(
         }
         max_tokens = (max_tokens * 2).min(16384);
     }
-    Err(last)
+    Err(last.into())
 }
 
 pub async fn complete(
@@ -100,7 +135,8 @@ pub async fn complete(
     system: &str,
     prompt: &str,
 ) -> Result<String, String> {
-    try_complete(state, provider_id, model, system, prompt, None).await
+    try_complete(state, provider_id, model, system, prompt, None)
+        .await.map_err(|error| error.message)
 }
 
 /// Session-aware helper call used by room learning, reflection and planning so
@@ -121,7 +157,7 @@ pub async fn complete_for_session(
         prompt,
         Some(session_id),
     )
-    .await
+    .await.map_err(|error| error.message)
 }
 
 /// Optional-session variant for turn helpers that can run without a durable
@@ -134,7 +170,8 @@ pub async fn complete_for_turn(
     prompt: &str,
     session_id: Option<&str>,
 ) -> Result<String, String> {
-    try_complete(state, provider_id, model, system, prompt, session_id).await
+    try_complete(state, provider_id, model, system, prompt, session_id)
+        .await.map_err(|error| error.message)
 }
 
 /// A provider explicitly marked for learning is used as the teacher model,
@@ -213,7 +250,14 @@ async fn complete_with_fallback_inner(
         .await
         {
             Ok(content) => return Ok((content, candidate_id, candidate_model)),
-            Err(error) => last_error = error,
+            Err(error) => {
+                if error.delivery_unknown {
+                    // Do not blindly run the same paid work on an alternative:
+                    // the first provider may have completed it already.
+                    return Err(error.message);
+                }
+                last_error=error.message;
+            },
         }
     }
     Err(last_error)
@@ -264,6 +308,45 @@ mod tests {
             learning_route(&state),
             Some(("teacher".into(), "large".into()))
         );
+    }
+
+    #[test]
+    fn helper_failure_marks_unknown_delivery_but_not_pre_dispatch_rejection() {
+        assert!(HelperFailure::from_gateway(
+            "native model delivery may be uncertain (not replayed): disconnected".into()
+        ).delivery_unknown);
+        assert!(!HelperFailure::from_gateway(
+            "무료 제공자 호출 한도(분당 2회)에 도달했습니다.".into()
+        ).delivery_unknown);
+    }
+
+    #[tokio::test]
+    async fn helper_uncertain_transport_prevents_automatic_fallback() {
+        let primary=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let alternate=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let primary_addr=primary.local_addr().unwrap();
+        let alternate_addr=alternate.local_addr().unwrap();
+        let state=state();
+        for (id,addr) in [("primary",primary_addr),("alternate",alternate_addr)] {
+            state.store.put("provider",&json!({
+                "id":id,"name":id,"kind":"openai","model":"helper-test",
+                "baseUrl":format!("http://{addr}/v1"),"enabled":true
+            })).unwrap();
+        }
+        let first=tokio::spawn(async move {
+            let (socket,_)=primary.accept().await.unwrap();
+            drop(socket); // The request may already be running upstream.
+        });
+        let second=tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_millis(700),alternate.accept())
+                .await.is_ok()
+        });
+        let result=complete_with_fallback_inner(
+            &state,"primary","helper-test","system","explain",None,
+        ).await;
+        assert!(result.unwrap_err().contains("not replayed"));
+        first.await.unwrap();
+        assert!(!second.await.unwrap(),"unknown paid delivery must not switch providers");
     }
 
     #[test]
