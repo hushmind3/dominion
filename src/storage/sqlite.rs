@@ -2137,24 +2137,70 @@ impl Store {
         self.replace_database_from_staged(source, false)
     }
 
+    /// Validate a complete SQLite snapshot before modifying the active vault
+    /// key or closing the live connection. A matching header alone is not
+    /// enough: malformed pages can still pass that inexpensive check.
+    pub fn validate_restore_snapshot_file(path: &Path) -> Result<(), String> {
+        let conn = Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .map_err(|error| format!("cannot open restore snapshot: {error}"))?;
+        let integrity: String = conn
+            .query_row("PRAGMA quick_check(1)", [], |row| row.get(0))
+            .map_err(|error| format!("cannot read restore snapshot: {error}"))?;
+        if integrity != "ok" {
+            return Err(format!("restore snapshot failed SQLite integrity check: {integrity}"));
+        }
+        Ok(())
+    }
+
     fn replace_database_from_staged(&self, temp: &Path, remove_staged: bool) -> Result<(), String> {
-        let mut guard = self.conn.lock().map_err(|error| error.to_string())?;
-        let _ = guard.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
-        // Close the old handle before copying over the database file.
-        *guard = Connection::open_in_memory().map_err(|error| error.to_string())?;
-        let wal = PathBuf::from(format!("{}-wal", self.path.display()));
-        let shm = PathBuf::from(format!("{}-shm", self.path.display()));
-        let _ = std::fs::remove_file(wal);
-        let _ = std::fs::remove_file(shm);
-        std::fs::copy(temp, &self.path).map_err(|error| error.to_string())?;
+        // Prepare and verify a sibling file BEFORE closing the live SQLite
+        // handle. Copy errors must never leave the store using :memory:.
+        // The final rename swaps a complete file rather than truncating the
+        // active database during a partial copy or a full-disk failure.
+        let prepared = self
+            .path
+            .with_extension(format!("restore-{}.tmp", uuid::Uuid::new_v4()));
+        let result = (|| {
+            std::fs::copy(temp, &prepared).map_err(|error| error.to_string())?;
+            std::fs::File::open(&prepared)
+                .and_then(|file| file.sync_all())
+                .map_err(|error| error.to_string())?;
+            Self::validate_restore_snapshot_file(&prepared)?;
+
+            let mut guard = self.conn.lock().map_err(|error| error.to_string())?;
+            guard
+                .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+                .map_err(|error| error.to_string())?;
+            *guard = Connection::open_in_memory().map_err(|error| error.to_string())?;
+            let wal = PathBuf::from(format!("{}-wal", self.path.display()));
+            let shm = PathBuf::from(format!("{}-shm", self.path.display()));
+            let _ = std::fs::remove_file(wal);
+            let _ = std::fs::remove_file(shm);
+            if let Err(error) = std::fs::rename(&prepared, &self.path) {
+                // No replacement happened: restore the original connection.
+                *guard = Connection::open(&self.path).map_err(|reopen| {
+                    format!("snapshot rename failed ({error}); original database could not reopen: {reopen}")
+                })?;
+                return Err(format!("snapshot rename failed: {error}"));
+            }
+            *guard = Connection::open(&self.path).map_err(|error| {
+                format!("snapshot was replaced but the new database could not reopen: {error}")
+            })?;
+            guard
+                .execute_batch(
+                    "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;",
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        })();
+        let _ = std::fs::remove_file(&prepared);
         if remove_staged {
             let _ = std::fs::remove_file(temp);
         }
-        *guard = Connection::open(&self.path).map_err(|error| error.to_string())?;
-        let _ = guard.execute_batch(
-            "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;",
-        );
-        Ok(())
+        result
     }
 
     /// Consistent online snapshot for a restore drill. `VACUUM INTO` includes
