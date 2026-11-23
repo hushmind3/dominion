@@ -730,17 +730,45 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  </div>
 }
 function Message({message,agentName,showReasoning}:{message:ChatMessage;agentName?:string;showReasoning?:boolean}){
- const [open,setOpen]=useState(true)
+ const [detail,setDetail]=useState<'reasoning'|'usage'|null>(null)
+ const [menuOpen,setMenuOpen]=useState(false)
+ const [copied,setCopied]=useState(false)
+ const menuRef=useRef<HTMLDivElement>(null)
  const human=message.role==='user'
+ const usage=message.metadata?.usage
+ const canShowReasoning=Boolean(showReasoning&&message.reasoning)
+ const canShowUsage=Boolean(usage?.totalTokens)
  const attached=(Array.isArray(message.metadata?.attachments)?message.metadata.attachments:[]) as {id:string;name:string;size?:number;isImage?:boolean}[]
  const sources=Array.isArray(message.metadata?.sources)
   ?message.metadata.sources.filter(source=>typeof source.title==='string'
    &&typeof source.url==='string'&&/^https?:\/\//i.test(source.url)).slice(0,8):[]
+ useEffect(()=>{
+  if(!menuOpen)return
+  const outside=(event:PointerEvent)=>{
+   if(menuRef.current&&!menuRef.current.contains(event.target as Node))setMenuOpen(false)
+  }
+  const escape=(event:globalThis.KeyboardEvent)=>{
+   if(event.key==='Escape')setMenuOpen(false)
+  }
+  document.addEventListener('pointerdown',outside)
+  document.addEventListener('keydown',escape)
+  return()=>{
+   document.removeEventListener('pointerdown',outside)
+   document.removeEventListener('keydown',escape)
+  }
+ },[menuOpen])
+ const toggleDetail=(next:'reasoning'|'usage')=>{
+  setDetail(current=>current===next?null:next)
+  setMenuOpen(false)
+ }
+ const copyAnswer=async()=>{
+  try{await navigator.clipboard.writeText(message.content||'');setCopied(true)}
+  catch{setCopied(false)}
+ }
  return <div className={'chat-turn '+(human?'chat-turn-owner':'chat-turn-assistant')} data-message data-role={message.role}>
-  {!human&&<div className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#F7E8E1] text-[#A94E30]"><Sparkles size={17}/></div>}
+  {!human&&<div className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#F3EEE5] text-[#72685E]"><Sparkles size={17}/></div>}
   <div className="chat-turn-body">
-   {!human&&<div className="chat-turn-byline">{agentName||'DOMINION'}<TokenUsage usage={message.metadata?.usage} className="ml-auto rounded border border-[#E7DDCC] bg-[#F7F1E6] px-1.5 py-0.5 text-[9px] font-medium text-[#8A775F]"/></div>}
-   {showReasoning&&message.reasoning&&<details className="mb-3 max-h-56 overflow-y-auto rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-[11px] leading-5 text-[#7C7469]" open={open}><summary className="cursor-pointer select-none" onClick={e=>{e.preventDefault();setOpen(v=>!v)}}><BrainCircuit size={14} className="inline"/> {t('chat.reasoningProcess',{count:message.reasoning.length.toLocaleString()})} <ChevronRight size={13} className="inline"/></summary><div className="mt-2 whitespace-pre-wrap">{message.reasoning}</div></details>}
+   {!human&&<div className="chat-turn-byline">{agentName||'DOMINION'}</div>}
    {(message.content||!human)&&<div className="chat-turn-text">{human?message.content:<MarkdownMessage text={message.content||(!human&&message.tool_calls?.length?t('chat.toolRequest'):'')}/>}</div>}
    {human&&attached.length>0&&<div className="chat-saved-attachments">{attached.map(file=><AttachmentLink key={file.id} file={file}/>)}</div>}
    {!human&&sources.length>0&&<details className="chat-web-sources" aria-label="웹 검색 결과">
@@ -751,7 +779,30 @@ function Message({message,agentName,showReasoning}:{message:ChatMessage;agentNam
      {source.published&&<small>{source.published}</small>}
     </a>)}</div>
    </details>}
-   {!human&&message.content&&<Button className="chat-turn-copy inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] text-[#7C7469] hover:bg-[#F3EEE5]" onClick={()=>void navigator.clipboard.writeText(message.content)} title={t('chat.copy')}><Copy size={14}/></Button>}
+   {!human&&detail==='reasoning'&&canShowReasoning&&<section className="chat-turn-detail" aria-label="추론 정보">
+    <div className="chat-turn-detail-heading"><BrainCircuit size={14}/> 추론 정보 <Button variant="bare" type="button" onClick={()=>setDetail(null)} aria-label="추론 정보 접기"><X size={14}/></Button></div>
+    <div className="max-h-56 overflow-auto whitespace-pre-wrap">{message.reasoning}</div>
+   </section>}
+   {!human&&detail==='usage'&&canShowUsage&&<section className="chat-turn-detail" aria-label="답변 토큰 사용량">
+    <div className="chat-turn-detail-heading">답변 토큰 사용량 <Button variant="bare" type="button" onClick={()=>setDetail(null)} aria-label="토큰 정보 접기"><X size={14}/></Button></div>
+    <TokenUsage usage={usage} className="block text-[11px] leading-6 text-[#6D6257]"/>
+   </section>}
+   {!human&&Boolean(message.content)&&<div className="chat-turn-actions" role="group" aria-label="답변 작업">
+    <Button type="button" variant="bare" className="chat-turn-action" onClick={()=>void copyAnswer()}
+     aria-label={copied?'답변 복사됨':'답변 복사'} title={copied?'복사됨':t('chat.copy')}>
+     {copied?<Check size={15}/>:<Copy size={15}/>}<span>{copied?'복사됨':'복사'}</span>
+    </Button>
+    {(canShowReasoning||canShowUsage)&&<div className="chat-turn-action-menu" ref={menuRef}>
+     <Button type="button" variant="bare" className="chat-turn-action" aria-label="답변 옵션"
+      aria-haspopup="menu" aria-expanded={menuOpen} title="추론·토큰 상세" onClick={()=>setMenuOpen(value=>!value)}>
+      <MoreHorizontal size={17}/>
+     </Button>
+     {menuOpen&&<div className="chat-turn-action-popover" role="menu" aria-label="답변 상세 옵션">
+      {canShowReasoning&&<button type="button" role="menuitem" onClick={()=>toggleDetail('reasoning')}><BrainCircuit size={14}/>{detail==='reasoning'?'추론 정보 접기':'추론 정보 보기'}</button>}
+      {canShowUsage&&<button type="button" role="menuitem" onClick={()=>toggleDetail('usage')}><Hash size={14}/>{detail==='usage'?'토큰 상세 접기':'토큰 사용량 보기'}</button>}
+     </div>}
+    </div>}
+   </div>}
   </div>
  </div>
 }

@@ -326,3 +326,17 @@
  .page-chat .conversation-composer-wrap{padding:7px 9px max(10px,env(safe-area-inset-bottom))}
  .page-chat .chat-execution-mode{padding:6px 8px 2px}
 }
+
+/* Compact assistant answer actions: primary copy + a discoverable detail menu.
+   Hide reasoning and token accounting until explicitly requested. */
+.page-chat .chat-turn-actions{display:flex;align-items:center;gap:2px;margin-top:12px;min-height:28px;color:#827970}
+.page-chat .chat-turn-action{display:inline-flex!important;align-items:center;gap:6px!important;min-height:28px!important;min-width:30px!important;border:0!important;border-radius:8px!important;background:transparent!important;padding:5px 8px!important;color:#817A71!important;font-size:11px!important}
+.page-chat .chat-turn-action:hover,.page-chat .chat-turn-action[aria-expanded=true]{background:#F1EEE8!important;color:#34312D!important}
+.page-chat .chat-turn-action-menu{position:relative}
+.page-chat .chat-turn-action-popover{position:absolute;bottom:calc(100% + 6px);left:0;z-index:15;display:flex;min-width:176px;flex-direction:column;gap:2px;border:1px solid #E7E2DA;border-radius:12px;background:#FFFDF9;padding:5px;box-shadow:0 10px 30px #27221A1C}
+.page-chat .chat-turn-action-popover button{display:flex;align-items:center;gap:9px;width:100%;min-height:35px;padding:7px 10px;border:0;border-radius:8px;background:transparent;color:#514B44;text-align:left;font-size:12px}
+.page-chat .chat-turn-action-popover button:hover,.page-chat .chat-turn-action-popover button:focus-visible{background:#F4F0EA}
+.page-chat .chat-turn-detail{margin-top:12px;border:1px solid #E7E2D9;border-radius:12px;background:#F8F6F2;padding:11px 13px;color:#675F57;font-size:12px;line-height:1.75}
+.page-chat .chat-turn-detail-heading{display:flex;align-items:center;gap:6px;margin-bottom:7px;color:#45403B;font-weight:650}
+.page-chat .chat-turn-detail-heading button{margin-left:auto;display:grid;place-items:center;min-width:25px;min-height:25px;border-radius:7px}
+.page-chat .chat-turn-detail-heading button:hover{background:#ECE7DF}
