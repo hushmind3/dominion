@@ -1156,7 +1156,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                     checked={x.enabled !== false} disabled={Boolean(mcpToggling) || mcpSaving}
                     aria-label={(loc === 'en' ? 'Enable MCP plugin ' : 'MCP 확장 기능 사용 ') + x.name}
                     onChange={event => void toggleMcp(x, event.target.checked)}/>
-                  {mcpToggling===x.id?<LoaderCircle size={14} className="animate-spin" aria-label={t('ext.saving')}/>:<span>{x.enabled !== false?(loc==='en'?'On':'사용 중'):(loc==='en'?'Off':'사용 안 함')}</span>}
+                  {mcpToggling===x.id?<LoaderCircle size={14} className="animate-spin" aria-label={t('models.saving')}/>:<span>{x.enabled !== false?(loc==='en'?'On':'사용 중'):(loc==='en'?'Off':'사용 안 함')}</span>}
                 </label>
                 <Button
                   size="icon"
