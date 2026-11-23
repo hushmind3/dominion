@@ -543,6 +543,17 @@ pub async fn restore_backup(
         )
             .into_response();
     }
+    // A malformed snapshot must not rotate the live secret key first and
+    // then fail while replacing the active SQLite database.
+    if let Err(error) = crate::storage::sqlite::Store::validate_restore_snapshot_file(
+        &database_path,
+    ) {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("SQLite 백업 데이터가 손상되었습니다: {error}. 현재 상태를 유지합니다.")})),
+        )
+            .into_response();
+    }
     if let Some(key) = embedded_key {
         if let Err(error) = state.vault.restore_primary(key) {
             return (
