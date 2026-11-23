@@ -385,7 +385,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   if(!found){setError(t('chat.cmd.invalid'));return;}
   const name=found[1].toLowerCase(),arg=(found[2]||'').trim();
   if(!slashCommands.some(x=>x.key===name)){setError(t('chat.cmd.unknown',{name}));return;}
-  if(['name','model','agent'].includes(name)&&!arg){
+  if(['name','model','agent','goal'].includes(name)&&!arg){
    setInput('/'+name+' ');setSlashOpen(name==='model'||name==='agent');inputRef.current?.focus({preventScroll:true});return;
   }
   setError('');setCommandInfo('');setInput('');setSlashOpen(false);
@@ -401,10 +401,11 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     chooseAgent(found.id);setCommandInfo(t('chat.cmd.agentSwitched',{agent:found.name}));return;
    }
    if(name==='think'){
+    if(arg&&!['on','off'].includes(arg))throw Error('사용법: /think on 또는 /think off');
     const enabled=arg==='on'?true:arg==='off'?false:!thinking;
     setThinking(enabled);setCommandInfo(t('chat.cmd.thinking',{state:enabled?t('chat.cmd.on'):t('chat.cmd.off')}));return;
    }
-   if(name==='help'){setCommandInfo(slashCommands.map(x=>x.command+' · '+slashCommandLabel(x,loc).name).join('\n'));return;}
+   if(name==='help'){setCommandInfo(slashCommands.map(x=>x.command+' · '+slashCommandLabel(x,loc).name).join('\n')+'\n/mcp search 검색어 · /mcp add 이름 https://주소 · /mcp enable/disable/remove 이름');return;}
    if(name==='stop'){await stopChat();return;}
    if(name==='status'){
     const state=await get<{agents:number;providers:number;jobs:number;executions:number}>('/api/status');
@@ -414,8 +415,21 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     const found=await get<{name:string}[]>('/api/tools');
     setCommandInfo(t('chat.cmd.tools',{count:found.filter(x=>x.name).length,list:found.filter(x=>x.name).map(x=>x.name).join(' · ')}));return;
    }
-   if(['mcp','skills','memory','agents','settings'].includes(name)){
-    const route=name==='mcp'||name==='skills'?'extensions':name;
+   if(name==='mcp'){await executeMcpCommand(arg);return;}
+   if(name==='goal'){
+    const job=await post<{id:string}>('/api/jobs',{kind:'prompt',input:{
+     prompt:arg,toolsEnabled,toolsExecutionEnabled:toolsEnabled,
+     ...(agentMode&&agentId?{agentId}:{}),
+     ...(providerId?{providerId}:{}),...(model?{model}:{}),
+     ...(current?{sessionId:current}:{})
+    }});
+    if(!job?.id)throw Error('작업 접수 응답에 실행 ID가 없습니다.');
+    setCommandInfo('자율 작업이 접수됐습니다 · '+job.id+' · /workflows로 진행 상태를 확인하세요.');
+    refresh('/api/jobs');return;
+   }
+   if(name==='workflows'){window.location.hash='#/tasks';return;}
+   if(['skills','memory','agents','settings'].includes(name)){
+    const route=name==='skills'?'extensions':name==='agents'?'prompts?view=personas':name;
     window.location.hash='#/'+route;return;
    }
    if(!current)throw Error(t('chat.cmd.noSession'));
@@ -635,6 +649,13 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     {visibleAlert&&<div role="alert" className="mb-3 rounded-xl border border-danger/20 bg-danger-soft p-3 text-xs text-danger"><CircleHelp size={16}/>{visibleAlert}<Button type="button" aria-label="오류 닫기" onClick={()=>setDismissedError({session:current,message:visibleAlert})}><X size={14}/></Button></div>}
     {modelError&&!model&&<div className="mb-3 text-xs text-muted">{t('welcome.modelError')} <Button onClick={chooseAI}>{t('chat.modelPick')} <ArrowRight size={13}/></Button></div>}
     {commandInfo&&<div role="status" className="mb-3 max-h-36 overflow-auto whitespace-pre-wrap rounded-xl border border-divider bg-brand-soft p-3 text-xs leading-6 text-ink">{commandInfo}</div>}
+    {mcpQuickOpen&&<McpQuickConnect installed={mcpInstalled} results={mcpResults} busy={mcpQuickBusy}
+     notice={mcpNotice} lastQuery={mcpLastQuery} onClose={()=>setMcpQuickOpen(false)}
+     onSearch={query=>void executeMcpCommand('search '+query)}
+     onAdd={entry=>void registerQuickMcp(entry)}
+     onToggle={(entry,enabled)=>void toggleQuickMcp(entry,enabled)}
+     onRemove={entry=>void removeQuickMcp(entry)}
+     onManage={openExtensions}/>}
     {toolsEnabled&&selectedProvider&&(((selectedProvider.local||selectedProvider.kind==='ollama')&&selectedProvider.toolMode==='compat')||selectedProvider.capabilities?.toolCalling===false||selectedProvider.modelCapabilities?.[model]?.toolCalling===false)&&<div role="status" className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-divider bg-canvas px-3 py-2 text-xs text-muted">
       <Wrench size={15} className="shrink-0"/>
       <span className="min-w-0 flex-1">{selectedProvider.capabilities?.toolCalling===false||selectedProvider.modelCapabilities?.[model]?.toolCalling===false
