@@ -46,6 +46,10 @@ export function parseMcpQuickCommand(input:string):McpQuickAction{
 }
 
 export function findInstalledMcp(items:InstalledMcp[],name:string):InstalledMcp|undefined{
- const needle=name.trim().toLocaleLowerCase()
- return items.find(item=>item.id===name)||items.find(item=>item.name.toLocaleLowerCase()===needle)
+ const key=name.trim()
+ const needle=key.toLocaleLowerCase()
+ // Names are owner-facing and IDs are internal. If either matches multiple
+ // registrations, refusing the action is safer than mutating the wrong MCP.
+ const matches=items.filter(item=>item.id===key||item.name.toLocaleLowerCase()===needle)
+ return matches.length===1?matches[0]:undefined
 }
