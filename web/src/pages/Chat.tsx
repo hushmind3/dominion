@@ -546,7 +546,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      options={<>
        <Button variant="ghost" size="icon" className="!h-7 !w-7 md:hidden" onClick={onOpenNavigation} aria-label={t('chat.listExpand')} title={t('chat.recent')}><Menu size={17}/></Button>
        <ConversationTargetPicker openRevision={pickerRevision} active={active} providers={enabledProviders} agents={agents.value} providerId={providerId} model={model} agentId={agentMode?agentId:''} catalogue={catalogue}
-        onModel={(provider,chosenModel)=>{setChatModeOverride({scope:current,mode:'chat'});setAgentChoice(undefined);setRoute(provider,chosenModel)}} onAgent={chooseAgent}/>
+        onModel={(provider,chosenModel)=>{setChatModeOverride({scope:current,mode:agentMode||Boolean(selectedSession?.agentId)?'agent':'chat'});if(!agentMode&&!selectedSession?.agentId)setAgentChoice(undefined);setRoute(provider,chosenModel)}} onAgent={chooseAgent}/>
        <Button type="button" variant="ghost" size="sm" aria-pressed={toolsEnabled}
         aria-label={loc==='en'?'Use built-in tools':'기본 도구 사용'}
         title={toolsEnabled?(loc==='en'?'Built-in search, files and code tools are ready. Connected MCP plugins are managed separately.':'검색·파일·코드 등 내장 도구를 사용할 수 있습니다. MCP는 확장 기능에서 별도로 관리합니다.'):(loc==='en'?'Enable built-in tools':'검색·파일·코드 도구 켜기')}
