@@ -1,6 +1,6 @@
 import {withBrowser,assert} from './ui-smoke-utils.mjs'
 await withBrowser('connection-visual',async({page,db,url})=>{
- await page.goto(url+'/#/models')
+ await page.goto(url+'/#/settings?view=ai')
  const settings=page.getByRole('button',{name:/Test Local 설정|Configure Test Local/})
  await settings.waitFor({state:'visible'})
  await settings.click()
