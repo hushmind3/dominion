@@ -10,7 +10,8 @@ const ko=readFileSync(root+'src/i18n/ko.ts','utf8')
 const en=readFileSync(root+'src/i18n/en.ts','utf8')
 
 test('busy chat has a keyboard-accessible real stop control instead of a disabled spinner',()=>{
- assert.match(chat,/busy\?<Button[^>]*type="button"[^>]*onClick=\{\(\)=>void stopChat\(\)\}/)
+ assert.match(chat,/busy\?<ComposerSendButton[^>]*type="button"[^>]*onClick=\{\(\)=>void stopChat\(\)\}/)
+ assert.match(chat,/disabled=\{stopping\}/)
  assert.match(chat,/aria-label=\{stopping\?t\('chat\.stopping'\):t\('chat\.stop'\)\}/)
  assert.match(chat,/<Square size=\{18\} fill="currentColor"\/>/)
  assert.doesNotMatch(chat,/disabled=\{busy\|\|Boolean\(selectedSession/)
