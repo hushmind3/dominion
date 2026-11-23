@@ -8,7 +8,7 @@ import {
   TextArea,
   SelectInput,
 } from "../components/Primitives";
-import {useEffect,useState} from "react";
+import {useEffect,useRef,useState} from "react";
 import {
   Activity,
   ArrowDownToLine,
@@ -429,6 +429,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
     [argText, setArgText] = useState(""),
     [skillEdit, setSkillEdit] = useState<Partial<Skill> | null>(null),
     [tools, setTools] = useState<any[]>([]);
+  const discoveryVersion = useRef(0);
   const install = async (entry: any) => {
     if (
       !confirm(
@@ -516,6 +517,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
   const toggleMcp = async (record:Mcp, enabled:boolean) => {
     if (mcpToggling || mcpSaving) return;
     setMcpToggling(record.id);
+    discoveryVersion.current += 1; // Invalidate older discovery responses before changing plugin availability.
     setError('');
     try {
       await post('/api/mcp', {...record, enabled});
@@ -615,8 +617,11 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
     }
   };
   const discover = async (silent = false) => {
+    const revision = ++discoveryVersion.current;
     try {
-      setTools(await get("/api/mcp/discover"));
+      const discovered = await get<any[]>("/api/mcp/discover");
+      if (revision !== discoveryVersion.current) return;
+      setTools(discovered);
       if (!silent) setMessage(t('ext.toolsFound'));
     } catch (e) {
       if (!silent) setError((e as Error).message);
