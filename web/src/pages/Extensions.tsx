@@ -667,7 +667,7 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
           </Action>
         }
       />}
-      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-divider bg-canvas px-4 py-3 text-[11px] text-muted">
+      {(!embedded||tab==='market'||tab==='installed')&&<div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-divider bg-canvas px-4 py-3 text-[11px] text-muted">
         <StatusLine label={t('ext.tab.servers')} value={mcp.value.length} />
         <StatusLine
           label={t('ext.tab.tools')}
@@ -681,7 +681,7 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
             skills.value.length
           }
         />}
-      </div>
+      </div>}
       {!embedded&&<div className="mb-6 flex flex-wrap items-center gap-2 border-b border-divider pb-3">
         <Button
           variant={tab === "market" ? "primary" : "ghost"}
