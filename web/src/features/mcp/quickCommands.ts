@@ -15,6 +15,15 @@ export type RegistryMcp = {
 }
 export type McpAvailableTool = {mcpId?:string;name?:string;error?:string}
 
+/** The installed record ID is the only unambiguous discovery correlation. */
+export function discoveryForMcp(items:readonly McpAvailableTool[],id:string){
+ const own=items.filter(item=>item.mcpId===id)
+ return {
+  tools:own.filter(item=>!item.error&&Boolean(item.name)),
+  error:own.find(item=>item.error)?.error,
+ }
+}
+
 export function validRemoteMcpUrl(input:string):boolean{
  try {
   const url=new URL(input)
