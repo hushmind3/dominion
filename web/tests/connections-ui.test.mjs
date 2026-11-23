@@ -84,6 +84,8 @@ test('each installed MCP plugin is independently switchable without removing it'
  assert.match(extensions,/await mcp\.reload\(\)/)
  assert.match(extensions,/setTools\(previous => previous\.filter\(tool => tool\.mcpId !== record\.id\)\)/)
  assert.match(extensions,/if \(enabled && tab === 'installed'\) void discover\(true\)/)
+ assert.match(extensions,/if \(revision !== discoveryVersion\.current\) return/)
+ assert.match(extensions,/useState<ExtensionTab>\("installed"\)/)
 })
 
 test('local model connections expose the saved tool adapter rather than hiding compat mode',()=>{
