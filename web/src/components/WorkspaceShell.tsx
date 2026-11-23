@@ -41,12 +41,9 @@ export function WorkspaceSidebar({page,open,collapsed,online,running,pending,onN
     aria-expanded={navOpen} onClick={onToggleNav}><Menu size={19}/></Button>
   </div>
   <nav className="workspace-settings-nav" aria-label={t('shell.mainNav')}>
-   {navigation.map(group=><section key={group.title} className="workspace-settings-group">
-    {!compact&&<h2 className="workspace-settings-group-title">{t(group.title)}</h2>}
-    <div className="workspace-settings-group-items">
-     {group.items.filter(item=>item.id!=='chat'&&item.id!=='rooms').map(renderItem)}
-    </div>
-   </section>)}
+   {navigation.flatMap(group=>group.items)
+    .filter(item=>item.id!=='chat'&&item.id!=='rooms')
+    .map(renderItem)}
   </nav>
   <div className="workspace-settings-footer">
    <span className="workspace-settings-connection" role="status"

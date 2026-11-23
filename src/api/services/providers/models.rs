@@ -86,7 +86,8 @@ pub async fn install_runtime(
     Json(body): Json<Value>,
 ) -> Response {
     let engine = body["engine"].as_str().unwrap_or("gguf");
-    match models::install_runtime(state, engine).await {
+    let repair = body["repair"].as_bool().unwrap_or(false);
+    match models::install_runtime_with_repair(state, engine, repair).await {
         Ok(result) => Json(result).into_response(),
         Err(error) => (StatusCode::BAD_REQUEST, Json(json!({ "error": error }))).into_response(),
     }

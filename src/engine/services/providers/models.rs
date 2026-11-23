@@ -651,10 +651,10 @@ fn mlx_runtime_python(state: &AppState) -> Option<PathBuf> {
     (python.is_file() && dir.join(".ready").is_file()).then_some(python)
 }
 
-fn mlx_installable(state: &AppState) -> bool {
-    mlx_runtime_python(state).is_none()
-        && cfg!(target_os = "macos")
-        && cfg!(target_arch = "aarch64")
+// Reinstall must remain possible after the ready marker becomes stale.
+// "installed" does not prove the Python environment can launch mlx_lm.server.
+fn mlx_installable(_state: &AppState) -> bool {
+    cfg!(target_os = "macos") && cfg!(target_arch = "aarch64")
 }
 
 /// Resolve a downloaded MLX repository below the managed models root.
@@ -688,8 +688,10 @@ fn mlx_model_dir(state: &AppState, repo: &str) -> Option<PathBuf> {
 fn mlx_runtime_snapshot(state: &AppState) -> Value {
     let standalone = mlx_runtime_python(state);
     json!({
-        "available": standalone.is_some() || lms_bin().is_some(),
-        "backend": if standalone.is_some() { "mlx-lm" } else if lms_bin().is_some() { "LM Studio MLX" } else { "" },
+        // The native mlx:* route requires DOMINION's own interpreter.
+        // An unrelated LM Studio binary cannot satisfy this capability.
+        "available": standalone.is_some(),
+        "backend": if standalone.is_some() { "mlx-lm" } else { "" },
         "standalone": standalone.is_some(),
         "installable": mlx_installable(state),
         "path": standalone.map(|path| path.to_string_lossy().to_string()),
@@ -697,7 +699,7 @@ fn mlx_runtime_snapshot(state: &AppState) -> Value {
     })
 }
 
-async fn install_mlx_runtime(state: &AppState) -> Result<Value, String> {
+async fn install_mlx_runtime(state: &AppState, repair: bool) -> Result<Value, String> {
     let dir = mlx_runtime_dir(state);
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     let _ = std::fs::remove_file(dir.join(".ready"));
@@ -707,9 +709,17 @@ async fn install_mlx_runtime(state: &AppState) -> Result<Value, String> {
         "tag": "mlx-lm", "downloaded": 0, "total": 0,
         "file": "python -m venv mlx-runtime", "error": "",
     }));
+    // A broken existing environment must be rebuilt, not accepted because
+    // .ready once existed. --clear re-creates this managed venv only; model
+    // files and external Python installations are untouched.
+    let mut venv_command = Command::new(&python);
+    venv_command.args(["-m", "venv"]);
+    if repair {
+        venv_command.arg("--clear");
+    }
     let venv = tokio::time::timeout(
         Duration::from_secs(180),
-        Command::new(&python).args(["-m", "venv"]).arg(&dir).output(),
+        venv_command.arg(&dir).output(),
     )
     .await
     .map_err(|_| "Python 가상환경 생성 시간 초과".to_string())?
@@ -757,12 +767,12 @@ async fn install_mlx_runtime(state: &AppState) -> Result<Value, String> {
     set_install(json!({
         "status": "verifying", "engine": "mlx", "backend": "mlx-lm",
         "tag": "mlx-lm", "downloaded": 0, "total": 0,
-        "file": "import mlx_lm", "error": "",
+        "file": "import mlx_lm.server", "error": "",
     }));
     let check = tokio::time::timeout(
         Duration::from_secs(120),
         Command::new(dir.join(if cfg!(windows) { "Scripts/python.exe" } else { "bin/python" }))
-            .args(["-c", "import mlx_lm; print(mlx_lm.__version__)"])
+            .args(["-c", "import mlx_lm.server; from importlib.metadata import version; print(version('mlx-lm'))"])
             .output(),
     )
     .await
@@ -1312,6 +1322,17 @@ pub fn runtimes(state: &AppState) -> Value {
 }
 
 pub async fn install_runtime(state: AppState, engine: &str) -> Result<Value, String> {
+    install_runtime_with_repair(state, engine, false).await
+}
+
+/// Only a deliberate repair can replace an environment with an existing
+/// .ready marker; repeated normal install requests remain idempotent.
+pub async fn install_runtime_with_repair(
+    state: AppState, engine: &str, repair: bool,
+) -> Result<Value, String> {
+    if repair && !matches!(engine, "mlx" | "mlx-lm") {
+        return Err("이 실행기의 자동 복구는 지원하지 않습니다.".into());
+    }
     if engine == "ollama" {
         if let Some(path) = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
             .map(|dir| dir.join("ollama"))
@@ -1373,7 +1394,11 @@ pub async fn install_runtime(state: AppState, engine: &str) -> Result<Value, Str
     if !matches!(engine, "mlx" | "mlx-lm") {
         return install_llama_server(state).await;
     }
-    if let Some(python) = mlx_runtime_python(&state) {
+    if install_active() {
+        return Ok(json!({"status": "installing", "setup": install_snapshot()}));
+    }
+    if !repair {
+      if let Some(python) = mlx_runtime_python(&state) {
         let version = std::fs::read_to_string(mlx_runtime_dir(&state).join(".ready"))
             .unwrap_or_default();
         set_install(json!({
@@ -1389,12 +1414,10 @@ pub async fn install_runtime(state: AppState, engine: &str) -> Result<Value, Str
             "setup": install_snapshot(),
             "capabilities": runtime_snapshot(&state)["capabilities"],
         }));
+      }
     }
     if !(cfg!(target_os = "macos") && cfg!(target_arch = "aarch64")) {
         return Err("MLX 실행기는 Apple Silicon macOS에서만 자동 설치할 수 있습니다.".into());
-    }
-    if install_active() {
-        return Ok(json!({"status": "installing", "setup": install_snapshot()}));
     }
     set_install(json!({
         "status": "checking", "engine": "mlx", "backend": "mlx-lm",
@@ -1403,7 +1426,7 @@ pub async fn install_runtime(state: AppState, engine: &str) -> Result<Value, Str
     }));
     let task_state = state.clone();
     tokio::spawn(async move {
-        let result = match install_mlx_runtime(&task_state).await {
+        let result = match install_mlx_runtime(&task_state, repair).await {
             Ok(result) => result,
             Err(error) => json!({
                 "status": "failed", "engine": "mlx", "backend": "mlx-lm",
@@ -1781,7 +1804,7 @@ pub async fn load(state: &AppState, id: &str, context: u64) -> Result<Value, Str
             return load_mlx_standalone(state, id, repo, context).await;
         }
         let key = find_lms_key(repo).ok_or(
-            "MLX 실행기가 없습니다. 모델 관리에서 MLX 실행기를 설치하거나 LM Studio를 설치하세요.",
+            "MLX 실행기가 없습니다. 모델 관리에서 MLX (mlx-lm) 실행기를 설치하거나 다시 설치하세요.",
         )?;
         return load_lmstudio(state, id, &key, context).await;
     }
@@ -2954,7 +2977,17 @@ mod tests {
         assert!(mlx_runtime_python(&state).is_none());
         std::fs::write(runtime.join(".ready"), b"0.32.2").unwrap();
         assert_eq!(mlx_runtime_python(&state), Some(python));
-        assert!(!mlx_installable(&state));
+        assert_eq!(mlx_installable(&state), cfg!(all(target_os = "macos", target_arch = "aarch64")));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn mlx_native_capability_is_not_faked_by_external_lm_studio() {
+        let (state, dir) = temp_state();
+        let snapshot = mlx_runtime_snapshot(&state);
+        assert_eq!(snapshot["standalone"], false);
+        assert_eq!(snapshot["available"], false);
+        assert_eq!(snapshot["installable"].as_bool(), Some(cfg!(all(target_os = "macos", target_arch = "aarch64"))));
         let _ = std::fs::remove_dir_all(dir);
     }
 

@@ -349,7 +349,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
     </div>
     <div className="flex flex-wrap items-center gap-2">
      {pendingEngineModel&&pendingEngineAction==='install'&&pendingEngineItem?.installable&&!installing&&<Button variant="bare" type="button" className={btn+' !border-[#C96442] !bg-[#C96442] !text-white'} disabled={Boolean(working)} onClick={()=>void safe('install-'+pendingEngineId,()=>post('/api/model-library/runtime/install',{engine:pendingEngineId}))}><ArrowDownToLine size={13}/>필요한 실행기 설치</Button>}
-     {pendingEngineAction==='repair'&&pendingEngineItem?.installable&&!installing&&<Button variant="bare" type="button" className={btn} disabled={Boolean(working)} onClick={()=>void safe('install-'+pendingEngineId,()=>post('/api/model-library/runtime/install',{engine:pendingEngineId}))}><ArrowDownToLine size={13}/>실행기 다시 설치</Button>}
+     {pendingEngineAction==='repair'&&pendingEngineItem?.installable&&!installing&&<Button variant="bare" type="button" className={btn} disabled={Boolean(working)} onClick={()=>void safe('repair-'+pendingEngineId,()=>post('/api/model-library/runtime/install',{engine:pendingEngineId,repair:true}))}><ArrowDownToLine size={13}/>실행기 다시 설치</Button>}
      {pendingEngineAction==='download'&&pendingEngineItem?.url&&<a className={btn} href={pendingEngineItem.url} target="_blank" rel="noreferrer">실행기 받기 <ExternalLink size={12}/></a>}
      <Button variant="bare" type="button" className={btn} disabled={Boolean(working)||installing} onClick={()=>void refresh()}><RefreshCw size={13}/>상태 확인</Button>
      {pendingEngineModel&&['retry','repair'].includes(pendingEngineAction)&&<Button variant="bare" type="button" className={btn+' !border-[#C96442] !bg-[#C96442] !text-white'} disabled={Boolean(working)||installing||runtime.status==='loading'} onClick={()=>void continueEngineLaunch()}><Play size={13}/>원래 모델 다시 실행</Button>}
@@ -376,7 +376,9 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
      {active?<div><div className="flex items-center justify-between text-[10px] text-[#7C7469]"><span>{item.name} · {t('models.runtime.installing')}</span><span>{setup?.total?percent+'%':''}</span></div><div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#E7E0D5]"><div className="h-full bg-[#C96442]" style={{width:Math.max(4,percent)+'%'}}/></div></div>:
       <div className="mt-auto flex items-center justify-between gap-2 border-t border-[#EFE9DF] pt-3">
        <small className="text-[10px] text-[#9C9388]">{!item.installed&&!item.installable?t('models.runtime.external'):''}</small>
-       {!item.installed&&(item.installable
+       {item.installed&&item.id==='mlx-lm'&&item.installable
+        ?<Button variant="bare" type="button" className={btn+' !border-[#C9A78C]'} disabled={Boolean(working)||installing||runtime.status==='loading'||(runtime.status==='ready'&&runtime.engine==='MLX')} onClick={()=>void safe('repair-'+item.id,()=>post('/api/model-library/runtime/install',{engine:item.id,repair:true}))}><RefreshCw size={13}/> MLX 실행기 재설치</Button>
+        :!item.installed&&(item.installable
         ?<Button variant="bare" type="button" className={btn+' !border-[#C96442] !bg-[#C96442] !text-white hover:!bg-[#A94E30]'} disabled={Boolean(working)||installing} onClick={()=>void safe('install-'+item.id,()=>post('/api/model-library/runtime/install',{engine:item.id}))}>{t('models.runtime.install')}</Button>
         :item.url?<a className={btn} href={item.url} target="_blank" rel="noreferrer">{t('models.runtime.download')} <ExternalLink size={12}/></a>:null)}
       </div>}
