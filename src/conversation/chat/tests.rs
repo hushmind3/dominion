@@ -858,7 +858,14 @@ async fn plain_chat_is_one_model_call_without_agent_or_tools_and_preserves_follo
         assert!(!system.contains("NEVER_SHOW_AGENT_SENTINEL"),"{body}");
         assert!(!system.contains("PRIVATE_AGENT_MEMORY_NOT_ALLOWED"),"{body}");
         if index==0 {
-            assert!(system.contains("사용자는 지하철을 선호합니다."),"{body}");
+            // Owner memory is now a separate low-trust system context segment.
+            // Verify retrieval without requiring it to be merged into owner instructions.
+            let memory_context=body["messages"].as_array().unwrap().iter()
+                .filter(|item|item["role"]=="system")
+                .filter_map(|item|item["content"].as_str())
+                .collect::<Vec<_>>().join("\n");
+            assert!(memory_context.contains("사용자는 지하철을 선호합니다."),"{body}");
+            assert!(!memory_context.contains("PRIVATE_AGENT_MEMORY_NOT_ALLOWED"),"{body}");
         }
         assert!(!system.contains("지속 에이전트"),"{body}");
         let messages=body["messages"].as_array().unwrap();
