@@ -22,8 +22,7 @@ type WorkspaceState = {
 
 /** Keep old links and chat shortcuts valid without rendering duplicate pages. */
 function canonicalHash(hash:string):string{
- const [rawName,rawQuery]=hash.replace(/^#\\/?/, '').split('?')
- const name=rawName.replace(/^\\//,'')
+ const [name,rawQuery]=hash.replace(/^#\/?/, '').split('?')
  const params=new URLSearchParams(rawQuery)
  if(name==='agents'||name==='prompts'){
   const view=name==='agents'?'personas':params.get('view')||'shared'
