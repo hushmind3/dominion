@@ -26,10 +26,11 @@ test('room chat uploads by room and forwards attachment ids',()=>{
  assert.match(rooms,/accept=\{ROOM_ATTACH_ALLOWED\.join\(','\)\}/)
 })
 
-test('the provider dialog persists the image declaration',()=>{
- assert.match(models,/'models\.dlg\.vision'/)
- assert.match(models,/capabilities:\{\.\.\.\(\(edit\?\.capabilities/)
- assert.match(models,/checked=\{vision\}/)
+test('the extracted provider dialog keeps the vision toggle and persists its capability',()=>{
+ assert.match(dialog,/'models\.dlg\.vision'/)
+ assert.match(dialog,/checked=\{vision\}/)
+ assert.match(modelHub,/capabilities:\{\.\.\.\(\(edit\?\.capabilities/)
+ assert.match(modelHub,/setVision\(p\?\.capabilities\?\.vision===true\)/)
 })
 
 test('uploads always go through the verified attachment endpoint',()=>{
