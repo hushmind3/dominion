@@ -1,5 +1,7 @@
 import {useEffect,useState} from 'react'
-import {BookOpenText,Check,Pencil,Plus,Trash2} from 'lucide-react'
+import {BookOpenText,Check,FileText,Pencil,Plus,Trash2,UsersRound} from 'lucide-react'
+import {ViewTabs} from '../components/ui/WorkspaceUI'
+import {PromptsPage} from './Prompts'
 import {del,post,type Agent} from '../api'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {Action,FormField,Headline,Notice,Panel,Subheading,useRemote} from '../components/UI'
@@ -18,7 +20,7 @@ const sourceLabels:Record<string,LocaleKey>={user:'memory.source.user',learn:'me
 const displayTime=(time?:string)=>time&&Number.isFinite(Date.parse(time))?new Date(time).toLocaleString():t('memory.time.none')
 const statusOf=(memory:Memory)=>memory.retrievalEligible?'active':memory.status&&memory.status!=='active'?memory.status:'excluded'
 
-export function MemoryPage(){
+function MemoryRecordsPage(){
  useLocale()
  const memories=useRemote<Memory[]>('/api/memories',[])
  const agents=useRemote<Agent[]>('/api/agents',[])
@@ -113,4 +115,45 @@ export function MemoryPage(){
    <GrowthDashboard/>
   </details>
  </div>
+}
+
+type MemoryView='memories'|'shared'|'personas'|'groups'
+function memoryViewFromHash():MemoryView{
+ const [path,query]=window.location.hash.split('?')
+ if(path!=='#/memory')return 'memories'
+ const view=new URLSearchParams(query).get('view')
+ return view==='shared'||view==='personas'||view==='groups'?view:'memories'
+}
+
+/** Memory is the single home for saved memories and prompt/persona editing. */
+export function MemoryPage(){
+ const en=useLocale()==='en';const tr=(ko:string,english:string)=>en?english:ko
+ const [view,setView]=useState<MemoryView>(memoryViewFromHash)
+ const [visited,setVisited]=useState<Set<MemoryView>>(()=>new Set([memoryViewFromHash()]))
+ useEffect(()=>{
+  const sync=()=>{
+   const next=memoryViewFromHash()
+   setView(next);setVisited(previous=>new Set([...previous,next]))
+  }
+  window.addEventListener('hashchange',sync);window.addEventListener('popstate',sync)
+  return()=>{window.removeEventListener('hashchange',sync);window.removeEventListener('popstate',sync)}
+ },[])
+ const choose=(next:MemoryView)=>{
+  setView(next);setVisited(previous=>new Set([...previous,next]))
+  window.location.hash=next==='memories'?'#/memory':'#/memory?view='+next
+ }
+ return <>
+  <div className="mx-auto w-full max-w-[1320px] px-5 pt-5 sm:px-7 lg:px-6">
+   <ViewTabs value={view} onChange={choose} label={tr('기억과 지침','Memory and instructions')} options={[
+    {id:'memories',label:tr('기억','Memories'),icon:BookOpenText},
+    {id:'shared',label:tr('공통·시스템 지침','Shared & system instructions'),icon:FileText},
+    {id:'personas',label:tr('AI·페르소나','AIs & personas'),icon:UsersRound},
+    {id:'groups',label:tr('그룹 지침','Group instructions'),icon:UsersRound},
+   ]}/>
+  </div>
+  {visited.has('memories')&&<div hidden={view!=='memories'}><MemoryRecordsPage/></div>}
+  {([...visited].some(item=>item!=='memories'))&&<div hidden={view==='memories'} className="mx-auto w-full max-w-[1320px] px-5 pb-8 sm:px-7 lg:px-6">
+   <PromptsPage section={view==='memories'?'shared':view} embedded/>
+  </div>}
+ </>
 }
