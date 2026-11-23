@@ -1134,18 +1134,18 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                     {x.transport === "stdio" ? x.command + " " + (x.args || []).join(" ") : x.url}
                   </p>
                   <small className="mt-1 block text-[11px] text-muted">
-                    {x.transport.toUpperCase()} · {x.enabled ? t('conn.enable') : t('conn.status.disabled')}
+                    {x.transport.toUpperCase()} · {x.enabled !== false ? t('conn.enable') : t('conn.status.disabled')}
                   </small>
                 </div>
                 <StateTag
-                  online={x.enabled && Boolean(
+                  online={x.enabled !== false && Boolean(
                     tools.find((t) => t.mcpId === x.id && !t.error),
                   )}
                 >
                   {(() => {
                     const own = tools.filter((t) => t.mcpId === x.id);
                     const ok = own.filter((t) => !t.error).length;
-                    if (!x.enabled) return t('conn.status.disabled');
+                    if (x.enabled === false) return t('conn.status.disabled');
                     if (own.some((t) => t.error)) return t('ext.connectionFailed');
                     if (ok) return t('ext.connectedTools', { count: ok });
                     return tools.length ? t('ext.checkConnection') : t('ext.checking');
