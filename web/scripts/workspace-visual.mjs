@@ -2,6 +2,12 @@ import {withBrowser,assert} from './ui-smoke-utils.mjs'
 await withBrowser('workspace-visual',async({page,db,url,viewport})=>{
  await page.goto(url+'/#/chat')
  await page.locator('.conversation-composer').waitFor({state:'visible'})
+ const welcome=page.getByRole('heading',{name:/오늘은 무엇을 함께 해볼까요\?|What shall we work on today\?/})
+ await welcome.waitFor({state:'visible'})
+ const idea=page.getByRole('button',{name:/아이디어 함께 찾기|Explore an idea/})
+ await idea.click()
+ assert.match(await page.locator('.conversation-composer-input').inputValue(),/머릿속에 있는 아이디어|Help me develop an idea/)
+ await page.locator('.conversation-composer-input').fill('')
  const nav=page.locator('#workspace-navigation')
  if(!(await nav.isVisible())){
   await page.locator('.conversation-composer-options button').first().click()
@@ -35,6 +41,9 @@ await withBrowser('workspace-visual',async({page,db,url,viewport})=>{
  await page.locator('.conversation-composer').waitFor({state:'visible'})
  await page.goto(url+'/#/settings?view=features')
  await page.getByRole('button',{name:/Web Search/}).waitFor({state:'visible'})
+ await page.goto(url+'/#/rooms')
+ await page.getByRole('heading',{name:/나도 대화의 한가운데|At the center of the conversation/}).waitFor({state:'visible'})
+ await page.getByRole('link',{name:/페르소나 만들기|Create persona/}).waitFor({state:'visible'})
  const width=await page.evaluate(()=>document.documentElement.scrollWidth-window.innerWidth)
  assert.ok(width<12,'horizontal overflow '+width+' at '+viewport.width)
 },[{width:1440,height:900},{width:820,height:820},{width:390,height:844}])
