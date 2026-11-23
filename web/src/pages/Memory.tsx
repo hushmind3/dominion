@@ -73,15 +73,17 @@ export function MemoryPage(){
   try{await del('/api/memories/'+encodeURIComponent(id));await memories.reload()}catch(e){setError((e as Error).message)}finally{setBusy(false)}
  }
  return <div className="mx-auto w-full max-w-[1320px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8">
-  <Headline eyebrow={t('ui.eyebrow.memory')} title={t('memory.title')} description={t('memory.description')}/>
-  <Notice message={error||memories.error||agents.error}/>
-  {notice&&<div role="status" className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{notice}</div>}
+  <Headline eyebrow={t('ui.eyebrow.memory')} title={tab==='harness'?'지침 관리':t('memory.title')}
+   description={tab==='harness'?'서브2 모델 실행에 사용되는 지침을 한곳에서 확인하고 수정합니다.':t('memory.description')}/>
+
   <div role="tablist" aria-label="기억·하네스 지침" className="mb-5 flex flex-wrap gap-2 border-b border-[#E7E0D5] pb-3">
    {([['memories','기억'],['harness','하네스 지침']] as const).map(([key,label])=>
     <button key={key} type="button" role="tab" aria-selected={tab===key} onClick={()=>chooseTab(key)}
      className={'rounded-lg px-4 py-2 text-[13px] font-semibold '+(tab===key?'bg-[#3A342D] text-white':'bg-[#F4F1EB] text-[#776E64]')}>{label}</button>)}
   </div>
   {tab==='harness'?<HarnessPromptsPanel/>:<>
+  <Notice message={error||memories.error||agents.error}/>
+  {notice&&<div role="status" className="my-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700"><Check size={16}/>{notice}</div>}
   <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
    <Panel className="min-w-0 p-5">
     <Subheading title={t('memory.new')} extra={<Action disabled={busy||!text.trim()} onClick={save}><Plus size={16}/> {t('memory.save')}</Action>}/>
