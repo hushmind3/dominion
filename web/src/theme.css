@@ -197,3 +197,16 @@
 .chat-web-source-number{display:inline-grid;place-items:center;flex:none;height:19px;min-width:19px;border:1px solid #DED4C6;border-radius:5px;font-size:10px;font-weight:700;color:#776C60}
 .chat-web-source-title{min-width:0;flex:1}
 .chat-web-sources small{font-size:10px;color:#9D9489}
+
+
+/* Sub4-inspired persistent desktop icon rail; the Sub2 conversation engine and
+ * existing conversation panels remain unchanged. */
+.conversation-rail{display:none}
+@media(min-width:768px){
+ .conversation-rail{display:flex;min-height:0;height:100dvh;flex:0 0 56px;flex-direction:column;align-items:center;gap:10px;border-right:1px solid #E7E0D5;background:#F3EFE7;padding:17px 5px}
+ .conversation-rail>button{flex:0 0 auto;color:#8A7762}
+ .conversation-rail>[aria-current]{background:#E9DFD0;color:#5B4836}
+ .conversation-rail>button:hover{background:#EAE2D6}
+}
+@media(max-width:839px){.rooms-app>.conversation-rail{display:none}}
+@media(prefers-reduced-motion:reduce){.conversation-rail *, .conversation-rail{transition:none!important}}

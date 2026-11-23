@@ -13,6 +13,7 @@ import {Agent,Approval,ChatMessage,ChatSession,Provider,get,post,del,resolveAppr
 import {Action,Empty,Notice,StateTag,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
 import {ConversationTargetPicker} from '../components/chat/ConversationTargetPicker'
+import {ConversationRail} from '../components/chat/ConversationRail'
 import {ReasoningSelect,reasoningOptions} from '../components/ReasoningSelect'
 import {useProviderModels} from '../hooks/useProviderModels'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
@@ -612,11 +613,17 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void send();}
  };
  useEffect(()=>{if(!active){setModelMenu(false);setPermissionOpen(false);setShowSettings(false);setSlashOpen(false)}else setReasoningKo(koreanReasoningEnabled())},[active]);
- return <div className={'relative grid h-dvh min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] bg-[#FFFDF9] '+(showHistory?'md:grid-cols-[232px_minmax(0,1fr)]':'')}>
+ return <div className={'relative grid h-dvh min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] bg-[#FFFDF9] '+(showHistory?'md:grid-cols-[232px_minmax(0,1fr)]':'md:grid-cols-[56px_minmax(0,1fr)]')}>
   {showHistory&&<Button type="button" aria-label={t('chat.listCollapse')} className="absolute inset-y-0 right-0 left-[232px] z-20 !h-auto !w-auto cursor-default !rounded-none !border-0 !bg-slate-900/30 md:hidden" onClick={()=>setShowHistory(false)}/>}
-  <aside className={'flex min-h-0 flex-col overflow-hidden border-r border-[#E7E0D5] bg-[#FAF7F1] '+(showHistory?'max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:w-[232px] max-md:shadow-2xl':'hidden')}>
-   <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-2"><div className="min-w-0"><span className="block text-[10px] font-extrabold uppercase tracking-widest text-[#C96442]">{t('ui.label.conversations')}</span><strong className="mt-1 block text-sm text-[#3A342D]">{t('chat.recent')}</strong></div><Button size="icon" variant="ghost" onClick={resetLocal} title={t('chat.newChat')}><Plus size={19}/></Button></div>
-   <Button className="mx-3 mb-3 inline-flex items-center justify-center gap-2 rounded-xl border border-[#EED9CC] bg-[#F7E8E1] px-4 py-2.5 text-xs font-bold text-[#A94E30] hover:bg-[#F1DCCF]" onClick={resetLocal}><Plus size={17}/> {t('chat.newChat')}</Button>
+  <aside id="conversation-sidebar" aria-label={t('chat.recent')} className={'flex min-h-0 flex-col overflow-hidden border-r border-[#E7E0D5] bg-[#FAF7F1] '+(showHistory?'max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:w-[232px] max-md:shadow-2xl':'hidden')}>
+   <div className="flex min-h-16 shrink-0 items-center gap-2 px-3">
+    <span className="grid size-8 shrink-0 place-items-center rounded-xl border border-[#EED0BC] bg-[#F7E8E1] text-lg font-bold text-[#C96442]">D</span>
+    <strong className="min-w-0 flex-1 truncate text-lg font-semibold tracking-tight text-[#24211D]">dominion</strong>
+    <Button size="icon" variant="ghost" type="button" onClick={()=>setShowHistory(false)}
+     aria-label={t('chat.listCollapse')} aria-controls="conversation-sidebar" aria-expanded={true} title={t('chat.listCollapse')}><Menu size={19}/></Button>
+   </div>
+   <Button className="mx-3 mb-3 inline-flex items-center justify-center gap-2 rounded-xl border border-[#EED9CC] bg-[#C96442] px-4 py-2.5 text-xs font-bold text-white hover:bg-[#A94E30]" onClick={resetLocal}><Plus size={17}/> {t('chat.newChat')}</Button>
+   <div className="mx-3 mb-3"><ConversationSwitch mode="chat" onChange={switchMode}/></div>
    <div className="chat-session-search"><Search size={14}/><input type="search" aria-label="대화 목록 검색" placeholder="대화 검색" value={sessionFilter} onChange={e=>setSessionFilter(e.target.value)}/>{sessionFilter&&<button type="button" aria-label="검색 지우기" onClick={()=>setSessionFilter('')}><X size={13}/></button>}</div>
    <div className="min-h-0 flex-1 overflow-y-auto px-2">{filteredSessions.map(s=><div key={s.id} className={'group flex min-w-0 items-center rounded-xl '+(current===s.id?'bg-[#F7E8E1]':'hover:bg-[#F7E8E1]')}>
      <Button variant="bare" onClick={()=>pickSession(s)} title={s.title} className={'!min-w-0 flex-1 !justify-start gap-3 !rounded-xl !px-3 !py-2.5 text-left text-xs '+(current===s.id?'font-bold text-[#A94E30]':'text-[#7C7469]')}><MessageCircle size={15} className="shrink-0"/><span className="min-w-0 truncate">{s.title}</span></Button>
@@ -624,6 +631,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     </div>)}{sessions.loading&&!filteredSessions.length?<div className="p-5 text-center text-xs leading-5 text-[#9C9388]">{t('chat.sessionsLoading')}</div>:sessions.error&&!filteredSessions.length?<div role="status" className="p-5 text-center text-xs leading-5 text-[#9C9388]">{t('chat.sessionsUnavailable')}</div>:!filteredSessions.length&&<div className="p-5 text-center text-xs leading-5 text-[#9C9388]">{sessionFilter.trim()?'일치하는 대화가 없습니다.':t('chat.first')}</div>}</div>
    <div className="shrink-0 border-t border-[#E7E0D5] p-2"><Button variant="ghost" onClick={openSettings} className="w-full !justify-start gap-2 !text-xs" aria-label={t('nav.settings')}><Settings size={17}/>{t('nav.settings')}</Button></div>
   </aside>
+  {!showHistory&&<ConversationRail sidebarId="conversation-sidebar" onExpand={()=>setShowHistory(true)}
+   onNew={resetLocal} onSwitchMode={switchMode} onSettings={openSettings}/>}
   <div className="flex min-h-0 min-w-0 flex-col">
    <header className="chat-header relative flex h-13 shrink-0 items-center justify-between gap-2 border-b border-[#E7E0D5] bg-[#FFFDF9] px-4">
     <Button size="icon" variant="ghost" onClick={()=>setShowHistory(x=>!x)} title={showHistory?t('chat.listCollapse'):t('chat.listExpand')} aria-label={showHistory?t('chat.listCollapse'):t('chat.listExpand')}><Menu size={18}/></Button>
