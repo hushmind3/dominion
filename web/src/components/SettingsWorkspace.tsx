@@ -1,4 +1,4 @@
-import {ArrowLeft,BookOpenText,CheckCircle2,RadioTower,Settings2,Workflow,X} from 'lucide-react'
+import {ArrowLeft,BookOpenText,RadioTower,Settings2,Workflow,X} from 'lucide-react'
 import {DialogBackdrop} from './Dialog'
 import {WorkspacePage} from './WorkspacePage'
 import {Button} from './Primitives'
