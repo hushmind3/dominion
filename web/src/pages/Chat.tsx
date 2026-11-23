@@ -6,7 +6,7 @@ import {ConversationTargetPicker} from '../components/chat/ConversationTargetPic
 import {ConversationSettings} from '../components/ConversationSettings'
 import {ChatRichText} from '../components/ChatRichText'
 import {usePersistentConversationToggle,usePersistentReasoningEffort,usePersistentKoreanReasoning} from '../hooks/usePersistentConversationPreference'
-import {compatibleConversationEffort} from '../conversationPreferences'
+import {compatibleConversationEffort,nextReasoningDisplayState} from '../conversationPreferences'
 import {ExecutionPermissionsSetting} from '../components/ExecutionPermissions'
 import {MessageInfo} from '../components/chat/MessageInfo'
 import {ExecutionInsights} from '../components/ExecutionInsights'
@@ -367,7 +367,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     return;
    }
    const target=findInstalledMcp(items,action.name);
-   if(!target)throw Error('등록된 MCP를 찾을 수 없습니다: '+action.name);
+   if(!target)throw Error('MCP가 없거나 이름이 중복됩니다. 연결 관리에서 대상을 직접 선택하세요: '+action.name);
    if(action.kind==='remove'){
     if(!window.confirm(target.name+' MCP 연결을 삭제하시겠습니까?')){setMcpNotice('삭제를 취소했습니다.');return;}
     await del('/api/mcp/'+encodeURIComponent(target.id));
@@ -401,9 +401,10 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     chooseAgent(found.id);setCommandInfo(t('chat.cmd.agentSwitched',{agent:found.name}));return;
    }
    if(name==='think'){
-    if(arg&&!['on','off'].includes(arg))throw Error('사용법: /think on 또는 /think off');
-    const enabled=arg==='on'?true:arg==='off'?false:!thinking;
-    setThinking(enabled);setCommandInfo(t('chat.cmd.thinking',{state:enabled?t('chat.cmd.on'):t('chat.cmd.off')}));return;
+    const enabled=nextReasoningDisplayState(arg,showReasoning);
+    if(enabled===null)throw Error('사용법: /think on 또는 /think off');
+    setShowReasoning(enabled);setThinking(enabled);
+    setCommandInfo(t('chat.cmd.thinking',{state:enabled?t('chat.cmd.on'):t('chat.cmd.off')}));return;
    }
    if(name==='help'){setCommandInfo(slashCommands.map(x=>x.command+' · '+slashCommandLabel(x,loc).name).join('\n')+'\n/mcp search 검색어 · /mcp add 이름 https://주소 · /mcp enable/disable/remove 이름');return;}
    if(name==='stop'){await stopChat();return;}
