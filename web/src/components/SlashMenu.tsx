@@ -51,6 +51,19 @@ export function slashCandidates(text:string,agents:Selectable[],models:Model[]):
   return agents.filter(a=>a.id.toLocaleLowerCase().includes(query)||a.name.toLocaleLowerCase().includes(query))
    .slice(0,30).map(a=>({key:'agent:'+a.id,command:'/agent '+a.id,name:a.name,description:a.id,group:t('slash.agents')}))
  }
+ if(/^\/mcp\s/i.test(text)){
+  const tail=text.replace(/^\/mcp\s+/i,'').trim().toLowerCase()
+  if(tail.includes(' '))return [];
+  const commands:SlashChoice[]=[
+   {key:'mcp:search',command:'/mcp search',name:'MCP 검색',description:'공식 레지스트리에서 서버 찾기',group:'도구 · 확장',requiresArg:true,hint:'검색어'},
+   {key:'mcp:add',command:'/mcp add',name:'MCP 직접 연결',description:'이름과 HTTPS 서버 주소로 등록',group:'도구 · 확장',requiresArg:true,hint:'이름 HTTPS주소'},
+   {key:'mcp:list',command:'/mcp list',name:'설치된 MCP',description:'등록된 서버와 연결 상태 확인',group:'도구 · 확장'},
+   {key:'mcp:enable',command:'/mcp enable',name:'MCP 사용',description:'등록된 서버 활성화',group:'도구 · 확장',requiresArg:true,hint:'서버 이름'},
+   {key:'mcp:disable',command:'/mcp disable',name:'MCP 사용 중지',description:'설치 유지하고 연결만 해제',group:'도구 · 확장',requiresArg:true,hint:'서버 이름'},
+   {key:'mcp:remove',command:'/mcp remove',name:'MCP 연결 삭제',description:'등록 정보 삭제',group:'도구 · 확장',requiresArg:true,hint:'서버 이름'},
+  ];
+  return commands.filter(item=>item.key.split(':')[1].includes(tail)||item.name.toLowerCase().includes(tail));
+ }
  if(/\s/.test(text))return [];
  const query=text.slice(1).toLocaleLowerCase()
  return defs.filter(item=>[item.key,item.name,item.description].some(s=>s.toLocaleLowerCase().includes(query)))
@@ -85,7 +98,7 @@ export function SlashMenu({items,active,onChoose}:{items:SlashChoice[];active:nu
    <p className="px-3 pb-1 pt-3 text-[10px] font-bold tracking-[.12em] text-muted">{group}</p>
    {localized.map((item,index)=>{
     if(item.group!==group)return null
-    const Icon=icons[item.key]|| (item.key.startsWith('model:')?BrainCircuit:Bot)
+    const Icon=icons[item.key]|| (item.key.startsWith('model:')?BrainCircuit:item.key.startsWith('mcp:')?Terminal:Bot)
     return <Button key={item.key} type="button" variant="ghost" role="option" ref={active===index?selected:undefined} aria-selected={active===index}
       onMouseDown={e=>e.preventDefault()} onClick={()=>onChoose(item)}
       className={'!flex !w-full !items-center !justify-start !gap-3 !rounded-lg !border-0 !px-3 !py-2 !text-left '+(active===index?'!bg-brand-soft !text-brand-hover':'!text-ink')}>
