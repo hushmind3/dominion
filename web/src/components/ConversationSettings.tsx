@@ -1,5 +1,5 @@
 import type {ReactNode} from 'react'
-import {BookOpenCheck,BrainCircuit,Eye,Languages,Wrench} from 'lucide-react'
+import {Blocks,BookOpenCheck,BrainCircuit,Eye,Languages,Wrench} from 'lucide-react'
 import {Button,TextInput} from './Primitives'
 import {t,useLocale} from '../i18n'
 
@@ -11,12 +11,12 @@ type Props={
  toolsEnabled:boolean;setToolsEnabled:(value:boolean)=>void
  autoLearn:boolean;setAutoLearn:(value:boolean)=>void
  learning:boolean;learnDisabled:boolean;onLearn:()=>void|Promise<void>
- optionsBusy?:boolean;notice?:string
+ optionsBusy?:boolean;notice?:string;onManageExtensions?:()=>void
  reasoningControl?:ReactNode;permissionControl?:ReactNode
 }
 /** Shared chat controls: readable labels, native checkboxes and unchanged
  * persistence callbacks for both single chat and nine-agent rooms. */
-export function ConversationSettings({showReasoning,setShowReasoning,reasoningKo,setReasoningKo,thinkingEnabled,setThinkingEnabled,canDisableThinking=true,reasoningEffort,setReasoningEffort,toolsEnabled,setToolsEnabled,autoLearn,setAutoLearn,learning,learnDisabled,onLearn,optionsBusy=false,notice,reasoningControl,permissionControl}:Props){
+export function ConversationSettings({showReasoning,setShowReasoning,reasoningKo,setReasoningKo,thinkingEnabled,setThinkingEnabled,canDisableThinking=true,reasoningEffort,setReasoningEffort,toolsEnabled,setToolsEnabled,autoLearn,setAutoLearn,learning,learnDisabled,onLearn,optionsBusy=false,notice,reasoningControl,permissionControl,onManageExtensions}:Props){
  const locale=useLocale()
  const en=locale==='en'
 
@@ -78,13 +78,17 @@ export function ConversationSettings({showReasoning,setShowReasoning,reasoningKo
      <span className="flex min-w-0 items-start gap-2.5"><Wrench size={18} className="mt-0.5 shrink-0 text-muted"/>
       <span><strong className="block text-[13px] font-semibold">{t('chat.useTools')}</strong>
        <small className="mt-1 block text-[12px] leading-5 text-muted">
-        {en?'Available tools are loaded only when tasks need them.':'작업이 필요할 때만 관련 도구를 불러옵니다.'}
+        {en?'Built-in search, files and code tools are available by default. MCP plugins are separate.':'검색·파일·코드는 기본 도구입니다. MCP 확장은 별도로 켜거나 끌 수 있습니다.'}
        </small>
       </span>
      </span>
      <TextInput type="checkbox" className={check} checked={toolsEnabled} disabled={optionsBusy}
       onChange={e=>setToolsEnabled(e.target.checked)}/>
     </label>
+    {onManageExtensions&&<Button type="button" variant="ghost" onClick={onManageExtensions}
+      className="mb-2 ml-2 !min-h-9 !gap-2 !px-2 !text-xs !text-muted hover:!text-ink">
+      <Blocks size={16}/>{en?'Manage MCP plugins':'MCP 확장 관리'}
+     </Button>}
     <label className={row}>
      <span className="flex min-w-0 items-start gap-2.5"><BookOpenCheck size={18} className="mt-0.5 shrink-0 text-muted"/>
       <span><strong className="block text-[13px] font-semibold">{t('chat.autoLearn')}</strong>
