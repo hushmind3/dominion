@@ -1,13 +1,17 @@
-// Opt-in, one real model call. Never selects a provider automatically,
+// Opt-in, one primary model round; provider auxiliary calls may occur. Never selects a provider automatically,
 // auto-approves a tool or changes global policy. Use a test account/workspace.
 import {DominionAgentClient} from '../dist/index.js'
 import assert from 'node:assert/strict'
 const {DOMINION_LIVE_BASE:base,DOMINION_LIVE_PROVIDER:providerId,DOMINION_LIVE_MODEL:model,DOMINION_LIVE_TOKEN:token,DOMINION_LIVE_CONFIRM:confirm}=process.env
-if(!base||!providerId||!model||confirm!=='one-model-call'){
- console.error('Set DOMINION_LIVE_BASE, DOMINION_LIVE_PROVIDER, DOMINION_LIVE_MODEL and DOMINION_LIVE_CONFIRM=one-model-call. Optional DOMINION_LIVE_TOKEN. No requests sent.')
+if(!base||!providerId||!model||confirm!=='one-primary-round'){
+ console.error('Set DOMINION_LIVE_BASE, DOMINION_LIVE_PROVIDER, DOMINION_LIVE_MODEL and DOMINION_LIVE_CONFIRM=one-primary-round. Optional DOMINION_LIVE_TOKEN. No requests sent.')
  process.exit(2)
 }
-const sdk=new DominionAgentClient({baseUrl:base,token})
+const sdk=new DominionAgentClient({baseUrl:base,adminToken:token})
+const policyResponse=await fetch(base.replace(/\/$/,'')+'/api/policy',{headers:token?{'x-dominion-token':token}:{},redirect:'error'})
+assert.ok(policyResponse.ok,'Cannot confirm test workspace policy')
+const policy=await policyResponse.json()
+assert.equal(Boolean(policy.autoApproveAll||policy.autoApproveMcp||(policy.autoApprove||[]).length),false,'Use an isolated test workspace without automatic tool approval')
 const route=await sdk.inferenceSupport({providerId,model})
 assert.equal(route.providerId,providerId)
 assert.equal(route.model,model)
