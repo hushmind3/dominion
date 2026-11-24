@@ -61,34 +61,11 @@ The mutable registry borrow prevents handler replacement during a run.
 Unknown grants and unadvertised tool calls fail closed. Handlers still enforce
 host-level authorization, schema validation and actual effect verification.
 
-This is runtime registration of trusted Rust adapters, not dynamic shared
-library loading, a package installer, or an app plugin marketplace. For
-independently distributed processes and untrusted extensions, use the app's
-existing MCP transport and approval boundaries instead. No new application
-execution loop or separate plugin daemon is introduced.
+This registry is for trusted host adapters. The separate
+`plugin_protocol` module defines the language-neutral extension package contract.
+The optional `dominion-extension-manager` crate implements package lifecycle.
+See [extension package specification](../../docs/EXTENSION-PACKAGES.md).
 
-## External executable MCP extensions
-
-The native app and independent SDK now share the same initialized stdio MCP
-transport. From an external Rust host, call
-`registry.register_mcp_stdio("my_plugin", &config, workspace).await` with a
-trusted explicit command/args/env object. It starts the process, discovers
-its tools and returns the exact grant names. Pass those grants to the
-existing `execute` API. Unregister closes the process; a timed-out or
-cancelled session cannot replay an uncertain call automatically. Discovery
-supports bounded pagination. Aliases accept lowercase ASCII letters,
-digits and single underscores, normalizing hyphens/dots; collisions or
-unsupported names require an explicit adapter instead of ambiguous dispatch.
-
-This shared path supports both initialized MCP stdio negotiation
-(2024-11-05 through 2025-11-25) and 2026-07-28 stateless tool discovery/calls.
-By default it probes server/discover with per-request metadata, then starts
-a fresh legacy process only when the read-only probe cannot establish the
-modern protocol. Recognized modern negotiation errors never downgrade.
-Set protocolVersion explicitly to force either era. Owner-input-required
-results are surfaced as errors, not silently accepted or replayed.
-The native HTTP transport retains its separate existing modern/legacy
-handling. The caller owns permission to start the executable; this is
-not an OS sandbox or a Rust dynamic-library ABI. The integration test
-runs the repository's existing Node stdio fixture through the actual
-SDK model/tool loop (Node is required for that test).
+MCP is independently supplied by `dominion-mcp-adapter`, which depends on
+the SDK, never the reverse. No protocol-specific connector is required by
+the runtime or the package manager.

@@ -9,7 +9,7 @@ const extra=source('src/api/addons.rs');
 const engine=source('src/engine/mod.rs');
 const port=source('src/engine/addons/mod.rs');
 const optionalPaths=[
- '/api/tools','/api/browser/status','/api/browser/screenshot','/api/browser/action',
+ '/api/tools','/api/extensions/registries','/api/extensions/catalog','/api/extensions','/api/extensions/:id','/api/extensions/:id/enable','/api/browser/status','/api/browser/screenshot','/api/browser/action',
  '/api/gateways/freellmapi','/api/providers/:id/gateway',
  '/api/skills/:id/export','/api/mcp/presets','/api/mcp/catalog',
  '/api/mcp/discover','/api/skill-catalog','/api/skill-catalog/meta',
@@ -22,7 +22,7 @@ const optionalPaths=[
 ];
 const routes=text=>[...text.matchAll(/\.route\(\s*["'](\/api\/[^"']+)["']/g)].map(x=>x[1]);
 
-test('27 legacy optional API paths stay intact and outside the core router',()=>{
+test('legacy and independent extension API paths stay outside the core router',()=>{
  assert.deepEqual(routes(extra),optionalPaths);
  for(const p of optionalPaths)assert.ok(!routes(core).includes(p),'core leaked '+p);
  assert.match(core,/router=router\.merge\(addons::routes\(\)\)/);
@@ -52,4 +52,19 @@ test('native model turn delegates all MCP tool operations through addon port',()
  assert.match(dispatcher,/addons::execute_tool/);
  assert.doesNotMatch(dispatcher,/mcp::(?:call|requires_approval)/);
  assert.match(port,/mcp::call/);
+});
+
+test('extension manager and SDK do not depend on MCP or model catalogs',()=>{
+ const sdk=source('crates/dominion-agent-sdk/src/lib.rs');
+ const sdkDeps=source('crates/dominion-agent-sdk/Cargo.toml');
+ const manager=source('crates/dominion-extension-manager/Cargo.toml');
+ const managerUi=source('web/src/pages/extensions/ExtensionPackagesPanel.tsx');
+ const adapter=source('crates/dominion-mcp-adapter/Cargo.toml');
+ assert.doesNotMatch(sdk,/pub mod mcp/);
+ assert.doesNotMatch(sdkDeps+manager,/dominion-mcp-adapter|huggingface|dominion-rust/);
+ assert.match(adapter,/dominion-agent-sdk/);
+ assert.doesNotMatch(managerUi,/\/api\/mcp|\/api\/model-library/);
+ assert.match(managerUi,/\/api\/extensions\/catalog/);
+ assert.match(managerUi,/\/api\/extensions\/registries/);
+ assert.match(source('src/engine/services/conversation/chat/runtime/tool_calls.rs'),/extension_manager::execute/);
 });

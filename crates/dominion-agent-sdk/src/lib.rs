@@ -18,7 +18,6 @@ pub use dominion_agent_loop::{run, select_named, ActiveLoop};
 use serde_json::Value;
 pub mod extensions;
 pub mod plugin_protocol;
-pub mod mcp_stdio;
 
 /// Explicit limits and permissions for one host-owned invocation.
 /// The driver enforces a model-round limit and its existing tool-proposal

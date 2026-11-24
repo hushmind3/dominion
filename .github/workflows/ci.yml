@@ -135,6 +135,7 @@ jobs:
           # Public integration tests are not covered by the workspace --lib gate.
           cargo test --locked -p dominion-agent-sdk --lib
           cargo test --locked -p dominion-extension-manager --lib
+          cargo test --locked -p dominion-mcp-adapter
           cargo test --locked -p dominion-agent-sdk --test external_host
           cargo test --lib engine::experience::tests
           cargo test --lib engine::tools::tests::room_source_reader_preserves_full_peer_history_and_private_scope

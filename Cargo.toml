@@ -5,10 +5,11 @@ edition = "2021"
 license = "Apache-2.0"
 
 [workspace]
-members = [".", "crates/dominion-agent-kernel", "crates/dominion-turn-core", "crates/dominion-agent-loop", "crates/dominion-context-policy", "crates/dominion-agent-sdk", "crates/dominion-extension-manager"]
-default-members = [".", "crates/dominion-agent-kernel", "crates/dominion-turn-core", "crates/dominion-agent-loop", "crates/dominion-context-policy", "crates/dominion-agent-sdk", "crates/dominion-extension-manager"]
+members = [".", "crates/dominion-agent-kernel", "crates/dominion-turn-core", "crates/dominion-agent-loop", "crates/dominion-context-policy", "crates/dominion-agent-sdk", "crates/dominion-extension-manager", "crates/dominion-mcp-adapter"]
+default-members = [".", "crates/dominion-agent-kernel", "crates/dominion-turn-core", "crates/dominion-agent-loop", "crates/dominion-context-policy", "crates/dominion-agent-sdk", "crates/dominion-extension-manager", "crates/dominion-mcp-adapter"]
 
 [dependencies]
+dominion-mcp-adapter = { path = "crates/dominion-mcp-adapter" }
 dominion-extension-manager = { path = "crates/dominion-extension-manager" }
 dominion-agent-sdk = { path = "crates/dominion-agent-sdk" }
 dominion-agent-kernel = { path = "crates/dominion-agent-kernel" }

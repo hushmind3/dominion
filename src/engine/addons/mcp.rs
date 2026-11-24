@@ -4,9 +4,9 @@ use crate::state::AppState;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use dominion_agent_sdk::mcp_stdio::StdioSession;
+use dominion_mcp_adapter::StdioSession;
 #[cfg(test)]
-use dominion_agent_sdk::mcp_stdio::read_stdio_frame;
+use dominion_mcp_adapter::read_stdio_frame;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool,Ordering};
 use tokio::sync::Mutex as AsyncMutex;

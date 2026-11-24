@@ -40,6 +40,7 @@ fn qualified(plugin:&str,tool:&str)->String { format!("ext__{plugin}__{tool}") }
 
 impl ExtensionRegistry {
     pub fn new()->Self {Self::default()}
+    pub fn contains_plugin(&self,plugin:&str)->bool{self.plugins.contains(plugin)}
 
     /// Atomic registration. No partial catalog if one definition is invalid.
     /// Tool names are namespaced and stable; duplicate identities are refused.
@@ -73,36 +74,6 @@ impl ExtensionRegistry {
         self.entries.extend(pending);
         self.plugins.insert(plugin.into());
         Ok(())
-    }
-    /// Launch an explicitly trusted external MCP server, discover its actual
-    /// tools, and register adapters atomically. No app/server dependency.
-    /// Each tool shares the same initialized child process. Unregistering
-    /// drops all handlers and terminates the child.
-    pub async fn register_mcp_stdio(&mut self,plugin:&str,record:&Value,
-        workspace:&std::path::Path)->Result<Vec<String>,String>{
-        if !valid_segment(plugin)||self.plugins.contains(plugin){
-            return Err("invalid or duplicate extension".into());
-        }
-        let mut session=crate::mcp_stdio::StdioSession::open(record,workspace).await?;
-        let list=session.list_tools().await?;
-        let tools=list["tools"].as_array().ok_or("MCP tools/list missing tools")?;
-        let session=std::rc::Rc::new(tokio::sync::Mutex::new(session));
-        let mut registrations=Vec::new();
-        let mut names=Vec::new();
-        for tool in tools{
-            let original=tool["name"].as_str().ok_or("MCP tool name missing")?;
-            let alias=original.to_ascii_lowercase().replace(['-', '.'], "_");
-            if !valid_segment(&alias){return Err(format!("MCP tool name requires explicit adapter: {original}"));}
-            names.push(qualified(plugin,&alias));
-            registrations.push(ToolRegistration{
-                name:alias,
-                description:tool["description"].as_str().unwrap_or("").into(),
-                parameters:tool["inputSchema"].clone(),
-                handler:Box::new(McpHandler{session:session.clone(),name:original.into()}),
-            });
-        }
-        self.register(plugin,registrations)?;
-        Ok(names)
     }
     pub fn unregister(&mut self,plugin:&str)->bool{
         if !self.plugins.remove(plugin){return false;}
@@ -162,18 +133,5 @@ impl ToolPort for RegistryPort<'_>{
                 "error":"extension arguments must be a JSON object"}));
         }
         entry.handler.call(&request.arguments).await
-    }
-}
-
-struct McpHandler{
-    session:std::rc::Rc<tokio::sync::Mutex<crate::mcp_stdio::StdioSession>>,
-    name:String,
-}
-impl ExtensionTool for McpHandler{
-    fn call<'a>(&'a mut self,arguments:&'a Value)->ToolFuture<'a>{
-        Box::pin(async move{
-            self.session.lock().await.request("tools/call",
-                json!({"name":self.name,"arguments":arguments})).await
-        })
     }
 }

@@ -1,4 +1,4 @@
-//! Shared MCP stdio transport for the native app and the standalone SDK.
+//! Standalone optional MCP stdio transport for native and external hosts.
 //! The host explicitly supplies a trusted executable, arguments and workspace.
 //! This is a process boundary, not a sandbox. The child inherits the host
 //! environment plus explicit overrides, as in the existing app transport.

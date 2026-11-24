@@ -371,6 +371,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dominion-mcp-adapter"
+version = "0.1.0"
+dependencies = [
+ "dominion-agent-sdk",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "dominion-rust"
 version = "0.3.0"
 dependencies = [
@@ -384,6 +393,7 @@ dependencies = [
  "dominion-agent-sdk",
  "dominion-context-policy",
  "dominion-extension-manager",
+ "dominion-mcp-adapter",
  "dominion-turn-core",
  "futures-util",
  "rand 0.8.8",
