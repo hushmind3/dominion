@@ -95,7 +95,8 @@ const normalize=(source:number,data:any):Row[]=>{
 
 export function LearningRecords(){
  const [source,setSource]=useState(0)
- const data=useRemote<any>(sources[source].endpoint,null)
+ const endpoint=source===0?'/api/experience':source===1?'/api/improvements':'/api/algorithms'
+ const data=useRemote<any>(endpoint,null)
  const [limit,setLimit]=useState(20)
  const rows=normalize(source,data.value)
  return <div className="mt-3 grid gap-2">

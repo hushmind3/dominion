@@ -116,6 +116,7 @@ pub(super) fn router() -> Router<AppState> {
         )
         .route("/api/executions", get(executions::list))
         .route("/api/executions/active", get(executions::active_executions))
+        .route("/api/executions/:id/events", get(executions::events))
         .route("/api/executions/:id", get(executions::one))
         .route("/api/executions/:id/cancel", post(executions::cancel))
 }

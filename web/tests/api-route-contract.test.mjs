@@ -64,6 +64,10 @@ function pathMatches(pattern,actual){
 test('frontend API calls resolve against Rust router and collection methods',t=>{
  const src=files(join(root,'web/src'),/\.tsx?$/)
  const calls=new Set(),failures=[],unresolved=[]
+ const forwarding=new Set([
+  'web/src/api/transport.ts fetch','web/src/api/transport.ts apiFetch','web/src/api/transport.ts request',
+  'web/src/hooks/useJob.ts useRemote','web/src/services/remoteStore.ts get',
+ ])
  for(const p of src){
   const source=ts.createSourceFile(p,read(p),ts.ScriptTarget.Latest,true,p.endsWith('.tsx')?ts.ScriptKind.TSX:ts.ScriptKind.TS)
   const bindings=new Map(),duplicate=new Set()
@@ -87,7 +91,7 @@ test('frontend API calls resolve against Rust router and collection methods',t=>
      for(const shape of shapes){
       const path=shape.split('?')[0].split('#')[0]
       if(!path.startsWith('/api/')){
-       if(shape===DYNAMIC)unresolved.push(location+' '+name)
+       if(shape===DYNAMIC&&!forwarding.has(relative(root,p)+' '+name))unresolved.push(location+' '+name)
        continue
       }
       const matching=routes.filter(r=>pathMatches(r.path,path))
@@ -112,4 +116,5 @@ test('frontend API calls resolve against Rust router and collection methods',t=>
  if(unresolved.length)t.diagnostic('Dynamic cases: '+unresolved.join('; '))
  assert.ok(calls.size>30,'route scanner must exercise real product calls')
  assert.deepEqual(failures,[],'frontend calls without a matching Rust route/method')
+ assert.deepEqual(unresolved,[],'unresolved product API expressions require explicit route coverage')
 })

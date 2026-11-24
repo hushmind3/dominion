@@ -73,3 +73,12 @@ test('native Team child events and saved memory edits invalidate real screen end
  const memory=classifyRefreshEvent({type:'record',kind:'memory',record:{id:'m'}})
  assert.ok(matchesRefreshTarget('/api/memories',memory.targets))
 })
+
+test('execution details and learning records refresh from their persisted records',()=>{
+ const execution=classifyRefreshEvent({type:'record',kind:'execution',record:{id:'run:1'}})
+ assert.ok(matchesRefreshTarget('/api/executions/run%3A1',execution.targets))
+ assert.equal(matchesRefreshTarget('/api/executions/other',execution.targets),false)
+ for(const [kind,endpoint] of [['improvement','/api/improvements'],['algorithm','/api/algorithms'],['algorithm_stat','/api/algorithms/evaluation']]){
+  assert.ok(matchesRefreshTarget(endpoint,classifyRefreshEvent({type:'record',kind,record:{id:'one'}}).targets))
+ }
+})

@@ -97,3 +97,59 @@ pub async fn execution_operations(
     // the requested run instead of parsing every operation in the database.
     query_result(state.store.execution_operations_recent(&id))
 }
+
+#[derive(Deserialize,Default)]
+pub struct EventPage {
+    pub after:Option<u64>,
+    pub limit:Option<usize>,
+}
+pub async fn events(State(state):State<AppState>,Path(id):Path<String>,
+    Query(page):Query<EventPage>)->Response{
+    if state.store.get("execution",&id).is_none(){
+        return super::response::error(StatusCode::NOT_FOUND,"실행 기록을 찾을 수 없습니다.");
+    }
+    let after=page.after.unwrap_or(0);
+    if after>i64::MAX as u64{
+        return super::response::error(StatusCode::BAD_REQUEST,"이벤트 위치가 올바르지 않습니다.");
+    }
+    match state.store.execution_event_page(&id,after,page.limit.unwrap_or(80)){
+        Ok(value)=>Json(value).into_response(),
+        Err(_)=>super::response::error(StatusCode::INTERNAL_SERVER_ERROR,"실행 이벤트를 조회할 수 없습니다."),
+    }
+}
+#[cfg(test)]
+mod event_tests {
+    use super::*;
+    use crate::{config::Config,db::Store,vault::Vault};
+    #[tokio::test]
+    async fn execution_events_are_scoped_paginated_and_redacted(){
+        let root=std::env::temp_dir().join(format!("dominion-execution-events-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let cfg=Config{port:0,data_dir:root.clone(),web_dir:root.join("web"),workspace:root.clone()};
+        let state=AppState::new(cfg.clone(),Store::open(&cfg.db_path()).unwrap(),Vault::open(&cfg.key_path()));
+        for id in ["a","b"]{
+            state.store.put("execution",&json!({"id":id,"status":"running"})).unwrap();
+        }
+        for (kind,id,status) in [("execution","a","running"),("execution","b","completed"),
+            ("job","a","running"),("execution","a","completed")]{
+            state.bus.record(kind,&json!({"id":id,"status":status,"secret":"PRIVATE"}));
+        }
+        let response=events(State(state.clone()),Path("a".into()),Query(EventPage{after:Some(0),limit:Some(1)})).await;
+        assert_eq!(response.status(),StatusCode::OK);
+        let page:Value=serde_json::from_slice(&axum::body::to_bytes(response.into_body(),usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(page["events"].as_array().unwrap().len(),1);
+        assert_eq!(page["events"][0]["runRef"]["runId"],"a");
+        assert_eq!(page["events"][0]["phase"],"running");
+        assert_eq!(page["hasMore"],true);
+        let cursor=page["nextAfter"].as_u64().unwrap();
+        let next=state.store.execution_event_page("a",cursor,1).unwrap();
+        assert_eq!(next["events"][0]["phase"],"succeeded");
+        assert_eq!(next["hasMore"],false);
+        assert!(!next.to_string().contains("PRIVATE"));
+        assert_eq!(state.store.execution_event_page("a",next["nextAfter"].as_u64().unwrap(),1).unwrap()["events"],json!([]));
+        assert_eq!(events(State(state.clone()),Path("missing".into()),Query(EventPage::default())).await.status(),StatusCode::NOT_FOUND);
+        for _ in 0..2300{state.bus.emit(json!({"type":"tick"}));}
+        assert_eq!(state.store.execution_event_page("a",0,80).unwrap()["historyTruncated"],true);
+        drop(state);let _=std::fs::remove_dir_all(root);
+    }
+}

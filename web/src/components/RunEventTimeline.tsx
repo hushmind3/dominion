@@ -3,13 +3,12 @@ import {Activity,ChevronDown,ChevronRight,LoaderCircle,RefreshCw} from 'lucide-r
 import {get} from '../api'
 import {useLocale} from '../i18n'
 
-type RunRef={executionId:string;sessionId?:string;agentId?:string;taskId?:string;jobId?:string;parentExecutionId?:string;externalRunId?:string;lifecycle?:string}
-type EventRow={seq:number;type:string;runRef:RunRef;kind?:string;record?:Record<string,unknown>;value?:Record<string,unknown>;[key:string]:unknown}
+type RunRef={version:number;surface:string;runId:string;parentRunId?:string|null}
+type EventRow={version:number;eventSeq:number;eventType:string;runRef:RunRef;sourceJournal:string;phase:string}
 type EventPage={executionId:string;events:EventRow[];nextAfter:number;hasMore:boolean;historyTruncated:boolean;earliestAvailableSeq?:number|null}
 const friendly=(event:EventRow,en:boolean)=>{
- const kind=typeof event.kind==='string'?event.kind:''
- if(event.type==='record')return kind?kind+(en?' updated':' 기록'):(en?'Record updated':'기록 변경')
- return event.type.replaceAll('_',' ')
+ const ko:Record<string,string>={queued:'대기 중',running:'실행 중',waiting_approval:'승인 대기',verifying:'검증 중',finalizing:'마무리 중',succeeded:'완료',failed:'실패',cancelled:'취소',interrupted:'중단',needs_review:'검토 필요'}
+ return en?event.phase.replaceAll('_',' '):(ko[event.phase]||event.phase)
 }
 /** Read-only, cursor-safe native event replay. A run ID is never inferred
  * from a room, SDK or job ID. Each page uses the execution's global cursor. */
@@ -43,10 +42,13 @@ export function RunEventTimeline({executionId}:{executionId:string}){
     controller.signal
    )
    if(controller.signal.aborted||token!==epoch.current)return
+   if(page.executionId!==executionId||!Array.isArray(page.events)||page.events.some(event=>
+    event.runRef?.runId!==executionId||event.sourceJournal!=='execution'||!Number.isSafeInteger(event.eventSeq)))
+    throw Error(en?'Execution event binding mismatch':'실행 이벤트 연결 정보가 일치하지 않습니다.')
    setRows(previous=>{
     const merged=reset?[]:previous
-    const seen=new Set(merged.map(event=>event.seq))
-    return [...merged,...page.events.filter(event=>!seen.has(event.seq))]
+    const seen=new Set(merged.map(event=>event.eventSeq))
+    return [...merged,...page.events.filter(event=>!seen.has(event.eventSeq))]
    })
    setCursor(page.nextAfter)
    setMore(page.hasMore)
@@ -78,16 +80,15 @@ export function RunEventTimeline({executionId}:{executionId:string}){
    </div>
    {truncated&&<p className="my-2 text-[11px] text-warning">{en?'Old events were truncated by retention; this history is incomplete.':'보관 기간으로 일부 과거 이벤트가 누락됐습니다.'}</p>}
    <div className="mt-1 max-h-72 space-y-1 overflow-y-auto">
-    {rows.map(event=><details key={event.seq} className="rounded-lg border border-canvas bg-surface px-2.5 py-2">
+    {rows.map(event=><details key={event.eventSeq} className="rounded-lg border border-canvas bg-surface px-2.5 py-2">
      <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-[11px] text-ink">
-      <span className="font-mono text-[10px] text-muted">#{event.seq}</span>
+      <span className="font-mono text-[10px] text-muted">#{event.eventSeq}</span>
       <strong>{friendly(event,en)}</strong>
-      {event.runRef.lifecycle&&<span className="rounded bg-canvas px-1.5 py-0.5 text-[10px]">{event.runRef.lifecycle}</span>}
+      {event.phase&&<span className="rounded bg-canvas px-1.5 py-0.5 text-[10px]">{event.phase}</span>}
      </summary>
      <div className="mt-2 text-[10px] text-muted">
-      {event.runRef.agentId&&<p>Agent: {event.runRef.agentId}</p>}
-      {event.runRef.taskId&&<p>Task: {event.runRef.taskId}</p>}
-      {event.runRef.externalRunId&&<p>External: {event.runRef.externalRunId}</p>}
+      <p>{en?'Execution':'실행'}: {event.runRef.runId}</p>
+      {event.runRef.parentRunId&&<p>{en?'Parent run':'상위 실행'}: {event.runRef.parentRunId}</p>}
       <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-surface p-2 text-[10px]">{JSON.stringify(event,null,2)}</pre>
      </div>
     </details>)}

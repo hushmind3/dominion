@@ -2292,6 +2292,46 @@ impl Store {
         .collect()
     }
 
+    /// Read only canonical events for the exact execution. The retention
+    /// bounds and page are captured in one SQLite read snapshot.
+    pub fn execution_event_page(&self,id:&str,after:u64,limit:usize)->Result<Value,String>{
+        let mut conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let tx=conn.transaction().map_err(|e|e.to_string())?;
+        let (earliest,latest):(Option<i64>,Option<i64>)=tx.query_row(
+            "SELECT MIN(seq),MAX(seq) FROM event_log",[],|row|Ok((row.get(0)?,row.get(1)?))
+        ).map_err(|e|e.to_string())?;
+        let limit=limit.clamp(1,200);
+        let after_i64=i64::try_from(after).map_err(|_|"Invalid event cursor")?;
+        let mut stmt=tx.prepare(
+            "SELECT seq,json_extract(data,'$.runEvent') FROM event_log
+             WHERE seq > ?1
+               AND json_extract(data,'$.runEvent.runRef.runId') = ?2
+               AND json_extract(data,'$.runEvent.sourceJournal') = 'execution'
+             ORDER BY seq ASC LIMIT ?3"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map(params![after_i64,id,(limit+1) as i64],|row|{
+            Ok((row.get::<_,i64>(0)?,row.get::<_,String>(1)?))
+        }).map_err(|e|e.to_string())?;
+        let mut events=Vec::new();
+        for row in rows {
+            let (seq,raw)=row.map_err(|e|e.to_string())?;
+            let event:dominion_agent_sdk::RunEvent=serde_json::from_str(&raw)
+                .map_err(|e|e.to_string())?;
+            if event.event_seq!=seq as u64||event.run_ref.run_id!=id
+                ||event.source_journal!="execution"{
+                return Err("Invalid durable execution event binding".into());
+            }
+            events.push(event);
+        }
+        let more=events.len()>limit;
+        events.truncate(limit);
+        let next=if more {events.last().map_or(after,|e|e.event_seq)}
+            else{after.max(latest.unwrap_or(0).max(0) as u64)};
+        let truncated=earliest.is_some_and(|seq|after.saturating_add(1)<seq as u64);
+        Ok(json!({"executionId":id,"events":events,"nextAfter":next,
+            "hasMore":more,"historyTruncated":truncated,"earliestAvailableSeq":earliest}))
+    }
+
     pub fn last_event_seq(&self) -> u64 {
         let conn = self.conn.lock().unwrap();
         conn.query_row("SELECT COALESCE(MAX(seq), 0) FROM event_log", [], |row| {

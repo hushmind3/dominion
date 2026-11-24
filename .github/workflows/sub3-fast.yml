@@ -100,6 +100,6 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci --prefix web
-      - run: node --experimental-strip-types --test web/tests/conversation-preferences.test.mjs web/tests/slash-mcp-contract.test.mjs web/tests/runtime-ux-contract.test.mjs
+      - run: node --experimental-strip-types --test web/tests/conversation-preferences.test.mjs web/tests/slash-mcp-contract.test.mjs web/tests/runtime-ux-contract.test.mjs web/tests/api-route-contract.test.mjs web/tests/refresh-events.test.mjs
       - run: npm run typecheck --prefix web
       - run: npm run build --prefix web

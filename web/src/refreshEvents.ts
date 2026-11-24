@@ -40,7 +40,7 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
      (field(row,'kind')==='team'?id:undefined)
     if(teamId)add('/api/jobs/'+encoded(teamId)+'/team-steps')
     break
-   case 'execution':add('/api/executions');break
+   case 'execution':add('/api/executions');if(id)add('/api/executions/'+encoded(id));break
    case 'execution_operation':
     add('/api/executions')
     const executionId=field(row,'executionId')
@@ -54,6 +54,8 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
    case 'sdk_run':add('/api/sdk/runs');if(id)add('/api/sdk/runs/'+encoded(id));break
    case 'memory':add('/api/memories','/api/memory/*');break
    case 'experience':add('/api/experience','/api/memory/*');break
+   case 'improvement':add('/api/improvements','/api/memory/*');break
+   case 'algorithm':case 'algorithm_stat':add('/api/algorithms','/api/algorithms/evaluation','/api/memory/*');break
    default:
     if(event.kind?.startsWith('model_'))add('/api/model-library/*')
     break
