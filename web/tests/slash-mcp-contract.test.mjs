@@ -114,3 +114,11 @@ test('standard MCP search preserves query; mutations do not dispatch to retired 
  assert.match(chat,/runtime.available!==true/)
  assert.match(chat,/standardMcpDestination\(action\)/)
 })
+
+import {importConfigItem} from '../src/pages/extensions/configurationImport.ts'
+test('configuration import adds only declared fields and creates a fresh identity',()=>{
+ const schema={type:'object',properties:{id:{type:'string',generated:true},name:{type:'string'},enabled:{type:'boolean',default:true},url:{type:'string'},apiKey:{type:'string',format:'password'},transport:{type:'string',enum:['http','stdio'],default:'http'},args:{type:'array',items:{type:'string'},maxItems:2}}}
+ assert.deepEqual(importConfigItem(schema,'{"name":"HF","url":"https://huggingface.co/mcp"}',()=>'new-id'),{id:'new-id',name:'HF',enabled:true,url:'https://huggingface.co/mcp',transport:'http'})
+ for(const raw of ['{"name":"X","id":"old"}','{"apiKey":"secret"}','{"__proto__":{}}','{"enabled":"true"}','{"transport":"shell"}','{"args":["a","b","c"]}','[]'])assert.throws(()=>importConfigItem(schema,raw,()=>'new-id'))
+ assert.deepEqual(importConfigItem(schema,'{"name":"local","transport":"stdio","args":["a","b"]}',()=>'next'),{id:'next',name:'local',enabled:true,transport:'stdio',args:['a','b']})
+})

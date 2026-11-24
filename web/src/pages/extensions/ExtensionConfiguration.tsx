@@ -1,4 +1,5 @@
 import {useState} from 'react'
+import {importConfigItem} from './configurationImport'
 import {get,post} from '../../api'
 import {Button,TextArea,TextInput,SelectInput} from '../../components/Primitives'
 import {DialogBackdrop,DialogPanel} from '../../components/Dialog'
@@ -28,6 +29,7 @@ function Field({schema:s,value,onChange,label,en,depth=0,disabled=false}:{schema
   const rows=Array.isArray(value)?value:[],item=s.items,max=typeof s.maxItems==='number'?Math.min(64,Math.max(0,s.maxItems)):64
   if(item.type==='string')return <label className="block space-y-1 text-sm"><span>{title}</span><TextArea disabled={disabled} aria-label={title} value={rows.map(String).join('\n')} onChange={e=>onChange(e.target.value.split('\n'))} rows={3}/><span className="block text-xs text-muted">{tr('한 줄에 한 항목','One item per line')}</span></label>
   return <section className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-semibold">{title} · {rows.length}</h4><Button size="sm" disabled={disabled||rows.length>=max} onClick={()=>onChange([...rows,initial(item)])}>{tr('추가','Add')}</Button></div>
+   {item.type==='object'&&item.properties&&<ImportItem schema={item} disabled={disabled||rows.length>=max} en={en} onAdd={v=>onChange([...rows,v])}/>}
    {rows.length===0&&<p className="rounded-lg bg-canvas p-3 text-sm text-muted">{tr('아직 등록된 항목이 없습니다. 추가 버튼을 누르세요.','No entries yet. Add an entry to begin.')}</p>}
    {rows.map((row,i)=><div key={i} className="space-y-3 rounded-xl border border-divider p-3"><div className="flex items-center justify-between"><strong>{i+1}. {String(object(row).name||title)}</strong><Button variant="ghost" size="sm" disabled={disabled} onClick={()=>onChange(rows.filter((_,j)=>i!==j))}>{tr('삭제','Remove')}</Button></div><Field schema={item} value={row} label={title} en={en} depth={depth+1} disabled={disabled} onChange={next=>onChange(rows.map((v,j)=>j===i?next:v))}/></div>)}
   </section>
@@ -36,6 +38,15 @@ function Field({schema:s,value,onChange,label,en,depth=0,disabled=false}:{schema
  if(Array.isArray(s.enum)&&s.enum.every(v=>typeof v==='string'))return <label className="block space-y-1 text-sm"><span>{title}</span><SelectInput disabled={disabled} value={typeof value==='string'?value:''} onChange={e=>onChange(e.target.value)}>{!s.enum.includes(String(value))&&<option value="">{tr('선택','Select')}</option>}{s.enum.slice(0,64).map((v,i)=><option key={v} value={v}>{(en?s.enumLabels:s.enumLabelsKo||s.enumLabels)?.[i]||v}</option>)}</SelectInput></label>
  if(s.type==='object'||s.type==='array')return <details className="rounded-lg border border-divider p-2"><summary className="cursor-pointer text-sm">{title} · {tr('고급 설정','Advanced settings')}</summary><JsonField value={value??(s.type==='array'?[]:{})} onChange={onChange} label={title} disabled={disabled}/></details>
  return <label className="block space-y-1 text-sm"><span>{title}</span><TextInput disabled={disabled} type={s.format==='password'?'password':s.type==='integer'||s.type==='number'?'number':'text'} autoComplete={s.format==='password'?'new-password':undefined} value={typeof value==='string'||typeof value==='number'?value:''} onChange={e=>onChange(s.type==='integer'||s.type==='number'?Number(e.target.value):e.target.value)}/>{s.description&&<span className="block text-xs text-muted">{s.description}</span>}</label>
+}
+function ImportItem({schema,disabled,en,onAdd}:{schema:Schema;disabled:boolean;en:boolean;onAdd:(v:unknown)=>void}){
+ const [open,setOpen]=useState(false),[draft,setDraft]=useState(''),[error,setError]=useState('')
+ return <div className="space-y-2 rounded-lg border border-divider p-2"><Button variant="ghost" size="sm" disabled={disabled} aria-expanded={open} onClick={()=>setOpen(v=>!v)}>{en?'Import item':'항목 가져오기'}</Button>
+ {open&&<><p className="text-xs text-muted">{en?'Paste one configuration object. Existing items are preserved; review and save separately.':'설정 객체 1개를 붙여넣으세요. 기존 항목은 유지되며 검토 후 별도로 저장합니다.'}</p>
+ <TextArea disabled={disabled} aria-label={en?'Configuration item JSON':'가져올 설정 JSON'} value={draft} onChange={e=>{setDraft(e.target.value);setError('')}} rows={4}/>
+ {error&&<p role="alert" className="text-xs text-danger">{error}</p>}
+ <Button size="sm" disabled={disabled||!draft.trim()} onClick={()=>{try{onAdd(importConfigItem(schema,draft,()=>crypto.randomUUID()));setDraft('');setError('');setOpen(false)}catch(e){setError((e as Error).message)}}}>{en?'Add to draft':'초안에 추가'}</Button></>}
+ </div>
 }
 function JsonField({value,onChange,label,disabled}:{value:unknown;onChange:(v:unknown)=>void;label:string;disabled:boolean}){
  const [draft,setDraft]=useState(JSON.stringify(value,null,2)),[error,setError]=useState(false)
