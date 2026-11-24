@@ -6,7 +6,7 @@ import {t,useLocale} from '../i18n'
 type Props={
  showReasoning:boolean;setShowReasoning:(value:boolean)=>void
  reasoningKo:boolean;setReasoningKo:(value:boolean)=>void
- thinkingEnabled:boolean;setThinkingEnabled:(value:boolean)=>void;canDisableThinking?:boolean
+ thinkingEnabled:boolean;setThinkingEnabled:(value:boolean)=>void;canDisableThinking?:boolean;thinkingNotice?:string
  reasoningEffort:string;setReasoningEffort:(value:string)=>void
  toolsEnabled:boolean;setToolsEnabled:(value:boolean)=>void
  autoLearn:boolean;setAutoLearn:(value:boolean)=>void
@@ -16,7 +16,7 @@ type Props={
 }
 /** Shared chat controls: readable labels, native checkboxes and unchanged
  * persistence callbacks for both single chat and nine-agent rooms. */
-export function ConversationSettings({showReasoning,setShowReasoning,reasoningKo,setReasoningKo,thinkingEnabled,setThinkingEnabled,canDisableThinking=true,reasoningEffort,setReasoningEffort,toolsEnabled,setToolsEnabled,autoLearn,setAutoLearn,learning,learnDisabled,onLearn,optionsBusy=false,notice,reasoningControl,permissionControl}:Props){
+export function ConversationSettings({showReasoning,setShowReasoning,reasoningKo,setReasoningKo,thinkingEnabled,setThinkingEnabled,canDisableThinking=true,thinkingNotice,reasoningEffort,setReasoningEffort,toolsEnabled,setToolsEnabled,autoLearn,setAutoLearn,learning,learnDisabled,onLearn,optionsBusy=false,notice,reasoningControl,permissionControl}:Props){
  const locale=useLocale()
  const en=locale==='en'
 
@@ -63,13 +63,13 @@ export function ConversationSettings({showReasoning,setShowReasoning,reasoningKo
      <span className="flex min-w-0 items-start gap-2.5"><BrainCircuit size={18} className="mt-0.5 shrink-0 text-[#957E65]"/>
       <span><strong className="block text-[13px] font-semibold">{t('chat.useThinking')}</strong>
        <small className="mt-1 block text-[12px] leading-5 text-[#81766A]">
-        {!canDisableThinking?(en?'The selected model cannot turn reasoning off.':'현재 모델은 추론 끄기를 지원하지 않습니다.'):
+        {!canDisableThinking?(thinkingNotice||(en?'The selected model cannot turn reasoning off.':'현재 모델은 추론 끄기를 지원하지 않습니다.')):
          (en?'Enable reasoning on supported models.':'지원하는 모델에서 추론을 사용합니다.')}
        </small>
       </span>
      </span>
      <TextInput type="checkbox" className={check} checked={canDisableThinking?thinkingEnabled:true}
-      disabled={!canDisableThinking} title={!canDisableThinking?'이 모델은 추론 끄기를 지원하지 않습니다. 낮은 강도를 선택하세요.':undefined}
+      disabled={!canDisableThinking} title={!canDisableThinking?(thinkingNotice||(en?'Reasoning off is unavailable.':'추론 끄기 미지원')):undefined}
       onChange={e=>{const on=e.target.checked;setThinkingEnabled(on);setReasoningEffort(on?'':'none')}}/>
     </label>
     {permissionControl&&<div className="px-3 py-3">{permissionControl}</div>}

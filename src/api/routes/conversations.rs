@@ -10,6 +10,7 @@ pub(super) fn router() -> Router<AppState> {
         .route("/api/attachments", post(attachments::upload))
         .route("/api/attachments/:id/content", get(attachments::content))
         .route("/api/chat", post(chat::chat))
+        .route("/api/chat/inference-support", get(chat::inference_support))
         .route("/api/translate", post(translation::translate))
         .route("/api/translate/config", get(translation::translate_config))
         .route(

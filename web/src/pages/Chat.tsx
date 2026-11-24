@@ -18,7 +18,7 @@ import {ArrowDown,ArrowRight,ArrowUp,BrainCircuit,Check,ChevronRight,CircleHelp,
 import {Agent,Approval,Attachment,ChatMessage,ChatSession,Provider,get,post,resolveApproval,streamChat,uploadAttachment} from '../api'
 import {Action,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
-import {ReasoningSelect,reasoningOptions} from '../components/ReasoningSelect'
+import {ReasoningSelect} from '../components/ReasoningSelect'
 import {useProviderModels} from '../hooks/useProviderModels'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
 import {useChatDraft} from '../hooks/useChatDraft'
@@ -76,7 +76,12 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    setOverride({scope:current,providerId,model:choice.id});
   }
  },[model,catalogue.loading,catalogue.error,models,providerId,current]);
- const canDisableThinking=selectedProvider?.kind!=='codex'||reasoningOptions(selectedModel,true).includes('none');
+ const inferenceSupport=useRemote<{providerId:string;model:string;thinkingToggle:boolean;reasoningEfforts:string[]}|null>(
+  active&&providerId&&model&&!catalogue.loading?'/api/chat/inference-support?providerId='+encodeURIComponent(providerId)+'&model='+encodeURIComponent(model):null,null,active);
+ const support=inferenceSupport.value?.providerId===providerId&&inferenceSupport.value?.model===model?inferenceSupport.value:null;
+ const supportedEfforts=support?.reasoningEfforts??[];
+ const canDisableThinking=support?.thinkingToggle===true;
+ const supportedModel=selectedModel?{...selectedModel,reasoningEfforts:supportedEfforts}:{id:model,reasoningEfforts:supportedEfforts};
  const setRoute=(providerId:string,model:string)=>setOverride({scope:current,providerId,model});
  useEffect(()=>{if(!current){setOverride(undefined);setAgentChoice(undefined)}},[initialAgent,initialProvider,initialModel]);
  const [turnSession,setTurnSession]=useState<string>();
@@ -101,7 +106,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  // A model without the 'none' tier cannot honor the off switch. Keep the
  // owner's stored preference so switching back does not silently erase it.
  const effectiveReasoningEffort=compatibleConversationEffort(
-  reasoningEffort,reasoningOptions(selectedModel,selectedProvider?.kind==='codex')
+  reasoningEffort,supportedEfforts
  );
  const effectiveThinkingEnabled=!canDisableThinking||thinkingEnabled;
  const [learning,setLearning]=useState(false);
@@ -434,7 +439,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     sessionId:id,clientTurnId,agentId:agentMode?agentId:undefined,directChat:!agentMode,
     providerId:agentMode?manual?.providerId:providerId,model:agentMode?manual?.model:model,input:text,
     toolsEnabled:agentMode&&toolsEnabled,toolsExecutionEnabled:agentMode&&toolsEnabled,autoLearning:agentMode&&autoLearn,attachmentIds,
-    reasoningLanguage:reasoningKo?'ko':'original',reasoningEffort:effectiveReasoningEffort||undefined,thinking:selectedProvider?.kind==='codex'?(effectiveReasoningEffort==='none'?false:canDisableThinking?effectiveThinkingEnabled:undefined):effectiveThinkingEnabled,
+    reasoningLanguage:reasoningKo?'ko':'original',reasoningEffort:effectiveReasoningEffort||undefined,thinking:canDisableThinking?(effectiveReasoningEffort==='none'?false:effectiveThinkingEnabled):undefined,
    },event=>{
     if(controller.signal.aborted||stoppingRef.current||stream.current!==controller)return;
     if(event.type==='owner_saved'){
@@ -573,7 +578,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     </form></div>
    </div></div>
   </div>
-  {settingsTarget&&createPortal(<ConversationSettings permissionControl={agentMode?<ExecutionPermissionsSetting/>:undefined} reasoningControl={<ReasoningSelect value={effectiveReasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} model={selectedModel} requireCatalog={selectedProvider?.kind==='codex'} className="w-full"/>} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={effectiveThinkingEnabled} setThinkingEnabled={setThinkingEnabled} canDisableThinking={canDisableThinking} reasoningEffort={effectiveReasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={agentMode&&toolsEnabled} setToolsEnabled={setToolsEnabled} autoLearn={agentMode&&autoLearn} setAutoLearn={setAutoLearn} optionsBusy={!agentMode} learning={learning} learnDisabled={!agentMode||!current||Boolean(selectedSession?.roomId)||busy} onLearn={learnSession}/>,settingsTarget)}
+  {settingsTarget&&createPortal(<ConversationSettings permissionControl={agentMode?<ExecutionPermissionsSetting/>:undefined} reasoningControl={supportedEfforts.length>0?<ReasoningSelect value={effectiveReasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} model={supportedModel} requireCatalog className="w-full"/>:undefined} thinkingNotice={inferenceSupport.loading||catalogue.loading?(loc==='ko'?'모델 실행 설정 확인 중':'Checking model controls'):inferenceSupport.error?(loc==='ko'?'실행 설정을 확인하지 못해 제공자 기본값을 사용합니다.':'Could not check controls; provider defaults apply.'):(loc==='ko'?'현재 실행 경로에서 지원이 확인된 추론 켜기·끄기 설정이 없습니다.':'This route has no confirmed reasoning on/off control.')} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={effectiveThinkingEnabled} setThinkingEnabled={setThinkingEnabled} canDisableThinking={canDisableThinking} reasoningEffort={effectiveReasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={agentMode&&toolsEnabled} setToolsEnabled={setToolsEnabled} autoLearn={agentMode&&autoLearn} setAutoLearn={setAutoLearn} optionsBusy={!agentMode} learning={learning} learnDisabled={!agentMode||!current||Boolean(selectedSession?.roomId)||busy} onLearn={learnSession}/>,settingsTarget)}
  </div>
 }
 function Message({message,agentName,showReasoning,active=true}:{message:ChatMessage;agentName?:string;showReasoning?:boolean;active?:boolean}){
