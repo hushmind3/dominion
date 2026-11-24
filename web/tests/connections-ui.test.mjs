@@ -147,8 +147,8 @@ test('health indicators never call disabled or broken channels connected',()=>{
 
 test('MCP discovery, native tools and plugin catalogs remain separated',()=>{
  assert.doesNotMatch(extensions,/pluginRemote|setPluginRemote/)
- assert.match(extensions,/if \(tab === "installed"\) void discover\(true\)/)
- assert.match(extensions,/if \(tab === "market"\) void loadCatalog\(\)/)
+ assert.match(extensions,/if \(tab === "installed"&&legacyRuntime\.value\.available===true\) void discover\(true\)/)
+ assert.match(extensions,/if \(tab === "market"&&legacyRuntime\.value\.available===true\) void loadCatalog\(\)/)
  assert.match(capabilities,/embedded\?\[\]:catalog\.value/)
  assert.match(extensions,/\{!embedded && <Headline/)
 })

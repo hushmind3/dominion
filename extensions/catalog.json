@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "packages": [
+    {
+      "name": "DOMINION Assistant",
+      "description": "Independent personal AI assistant, voice and task interface",
+      "repository": "hushmind3/dominion-assistant",
+      "sourceRef": "main",
+      "keywords": [
+        "assistant",
+        "voice",
+        "personal assistant",
+        "개인비서",
+        "음성",
+        "채팅"
+      ]
+    },
+    {
+      "name": "DOMINION MCP Connector",
+      "description": "Independent MCP server transport and tool provider",
+      "repository": "hushmind3/dominion-rust",
+      "sourceRef": "dominion-sub3",
+      "keywords": [
+        "mcp",
+        "connector",
+        "tools",
+        "도구",
+        "연결",
+        "MCP 서버"
+      ]
+    }
+  ]
+}

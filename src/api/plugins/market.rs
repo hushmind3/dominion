@@ -53,6 +53,39 @@ fn package_id(repo:&str,image:&str)->String{
     if path==prefix{install_id(repo)}else{install_id(path.trim_start_matches("ghcr.io/"))}
 }
 fn ref_ok(value:&str)->bool{!value.is_empty()&&value.len()<=120&&!value.contains("..")&&value.split('/').all(|p|!p.is_empty()&&!p.starts_with('.')&&p.bytes().all(|b|b.is_ascii_alphanumeric()||matches!(b,b'-'|b'_'|b'.')))}
+// Catalog entries are discovery metadata only. Installation always fetches
+// and validates the immutable package manifest, never trusting this index.
+const INDEX_URL:&str="https://raw.githubusercontent.com/hushmind3/dominion-rust/dominion-sub3/extensions/catalog.json";
+const INDEX_SEED:&str=include_str!("../../../extensions/catalog.json");
+fn index_cards(index:&Value,q:&str)->Result<Vec<Value>,String>{
+    if index["schemaVersion"]!=1{return Err("Unsupported extension index".into())}
+    let rows=index["packages"].as_array().ok_or("Invalid extension index")?;
+    if rows.len()>200{return Err("Extension index too large".into())}
+    let terms=q.split_whitespace().map(str::to_lowercase).collect::<Vec<_>>();
+    let mut seen=std::collections::HashSet::new();
+    let mut items=Vec::new();
+    for p in rows{
+        let Some(repo)=p["repository"].as_str().filter(|s|repository_ok(s))else{continue};
+        let Some(source_ref)=p["sourceRef"].as_str().filter(|s|ref_ok(s))else{continue};
+        let Some(name)=p["name"].as_str().filter(|s|text_ok(s,120))else{continue};
+        let Some(description)=p["description"].as_str().filter(|s|text_ok(s,1500))else{continue};
+        let keywords=p["keywords"].as_array().into_iter().flatten().take(32).filter_map(Value::as_str).filter(|s|text_ok(s,120)).collect::<Vec<_>>().join(" ");
+        let haystack=format!("{name} {description} {repo} {keywords}").to_lowercase();
+        if !terms.iter().all(|term|haystack.contains(term))||!seen.insert((repo.to_ascii_lowercase(),source_ref.to_owned())){continue}
+        items.push(json!({"repository":repo,"sourceRef":source_ref,"name":name,"description":description,
+            "url":format!("https://github.com/{repo}"),"indexed":true,"detailsLoaded":false,"manifest":null}));
+    }
+    Ok(items)
+}
+async fn indexed(client:&reqwest::Client,q:&str)->(Vec<Value>,bool){
+    let live=async{
+        let url=reqwest::Url::parse(INDEX_URL).map_err(|e|e.to_string())?;
+        index_cards(&read(client,url,256*1024).await?,q)
+    };
+    if let Ok(Ok(items))=tokio::time::timeout(Duration::from_secs(4),live).await{return (items,false)}
+    let seed:Value=serde_json::from_str(INDEX_SEED).expect("bundled index JSON");
+    (index_cards(&seed,q).unwrap_or_default(),true)
+}
 fn client()->Result<reqwest::Client,String>{
     reqwest::Client::builder().user_agent("DOMINION-package-market/1")
         .timeout(Duration::from_secs(12)).redirect(reqwest::redirect::Policy::none())
@@ -103,7 +136,7 @@ async fn resolve(client:&reqwest::Client,repo:&str,requested_ref:Option<&str>)->
         Ok(m)=>{item["manifestDigest"]=json!(digest(&m));item["installId"]=json!(package_id(repo,&m.image));item["manifest"]=json!(m); }
         Err(e)=>{item["manifestError"]=json!(e);}
     }
-    if requested_ref.is_some(){item["assets"]=json!([]);return Ok(item)}
+    if requested_ref.is_some_and(|r|Some(r)!=row["default_branch"].as_str()){item["assets"]=json!([]);return Ok(item)}
     match read(client,github_url(&format!("repos/{repo}/releases/latest"))?,2*1024*1024).await{
         Ok(r)=>{
             item["releaseTag"]=r["tag_name"].clone();
@@ -114,9 +147,9 @@ async fn resolve(client:&reqwest::Client,repo:&str,requested_ref:Option<&str>)->
     Ok(item)
 }
 #[derive(Deserialize)]
-pub struct Details{repository:String}
+pub struct Details{repository:String,#[serde(rename="sourceRef")] source_ref:Option<String>}
 pub async fn details(Query(input):Query<Details>)->Response{
-    let result=async{resolve(&client()?,input.repository.trim(),None).await}.await;
+    let result=async{resolve(&client()?,input.repository.trim(),input.source_ref.as_deref()).await}.await;
     match result{Ok(v)=>Json(v).into_response(),Err(e)=>error(StatusCode::BAD_GATEWAY,&e)}
 }
 pub async fn search(Query(input):Query<Search>)->Response{
@@ -135,9 +168,21 @@ pub async fn search(Query(input):Query<Search>)->Response{
         let query=if words.is_empty(){"topic:dominion-plugin archived:false".into()}else{format!("archived:false {words}")};
         let mut url=github_url("search/repositories")?;
         url.query_pairs_mut().append_pair("q",&query).append_pair("per_page","30");
-        let rows=read(&client,url,4*1024*1024).await?;
-        let items=rows["items"].as_array().ok_or("Invalid GitHub search response")?.iter().filter_map(card).collect::<Vec<_>>();
-        Ok(json!({"items":items,"errors":[]}))
+        let ((mut items,index_cached),remote)=tokio::join!(indexed(&client,q),read(&client,url,4*1024*1024));
+        let mut errors=Vec::new();
+        match remote{
+            Ok(rows)=>match rows["items"].as_array(){
+                Some(rows)=>{
+                    // A repository may publish several packages on distinct refs.
+                    // Keep indexed packages and suppress only generic duplicate repo cards.
+                    let known=items.iter().filter_map(|p|p["repository"].as_str().map(str::to_lowercase)).collect::<std::collections::HashSet<_>>();
+                    items.extend(rows.iter().filter_map(card).filter(|p|!known.contains(&p["repository"].as_str().unwrap_or("").to_lowercase())));
+                }
+                None=>errors.push(json!({"repository":"GitHub","message":"Invalid search response"})),
+            },
+            Err(e)=>errors.push(json!({"repository":"GitHub","message":e})),
+        }
+        Ok(json!({"items":items,"errors":errors,"indexCached":index_cached}))
     }.await;
     match result{Ok(v)=>Json(v).into_response(),Err(e)=>error(StatusCode::BAD_GATEWAY,&e)}
 }
@@ -156,6 +201,20 @@ mod tests{
     use super::*;
     fn sample()->Value{json!({"schemaVersion":1,"name":"Example","description":"Example independent app","version":"1.0.0",
         "image":format!("ghcr.io/example/app@sha256:{}","a".repeat(64)),"network":true,"port":8080})}
+    #[test]
+    fn catalog_search_uses_names_and_keywords_without_trusting_install_metadata(){
+        let index=json!({"schemaVersion":1,"packages":[
+            {"name":"Example connector","description":"Independent provider","repository":"example/app","sourceRef":"plugins","keywords":["도구","MCP"],"image":"untrusted"},
+            {"name":"Example assistant","description":"Conversation","repository":"example/app","sourceRef":"voice","keywords":["음성"]},
+            {"name":"Bad","description":"Invalid","repository":"example/../bad","sourceRef":"main"},
+            {"name":"Duplicate","description":"Duplicate","repository":"EXAMPLE/APP","sourceRef":"plugins"}
+        ]});
+        let all=index_cards(&index,"").unwrap();assert_eq!(all.len(),2);
+        let found=index_cards(&index,"mcp 도구").unwrap();assert_eq!(found.len(),1);
+        assert_eq!(found[0]["sourceRef"],"plugins");assert_eq!(found[0]["manifest"],Value::Null);
+        assert!(found[0].get("image").is_none());
+        assert!(index_cards(&index,"unrelated").unwrap().is_empty());
+    }
     #[test]
     fn only_same_repository_digest_pinned_declarative_package(){
         let m=parse("Example/App",sample()).unwrap();assert_eq!(digest(&m).len(),64);

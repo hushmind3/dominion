@@ -4,8 +4,9 @@ import {get,post} from '../../api'
 import {Button,TextInput} from '../../components/Primitives'
 import {useLocale} from '../../i18n'
 type Manifest={name:string;description:string;version:string;image:string;network:boolean;port:number|null}
-type Item={repository:string;description:string;stars:number;url:string;detailsLoaded:boolean;sourceRef?:string;commit?:string;manifestDigest?:string;manifest?:Manifest|null;sourceDownload?:string;releaseTag?:string;assets?:{name:string;url:string;size:number|null}[];releaseError?:string}
-type Page={items:Item[];errors:{repository:string;message:string}[]}
+type Item={repository:string;name?:string;indexed?:boolean;description:string;stars:number;url:string;detailsLoaded:boolean;sourceRef?:string;commit?:string;manifestDigest?:string;manifest?:Manifest|null;sourceDownload?:string;releaseTag?:string;assets?:{name:string;url:string;size:number|null}[];releaseError?:string}
+type Page={items:Item[];errors:{repository:string;message:string}[];indexCached?:boolean}
+const keyOf=(item:Item)=>item.repository+'@'+(item.sourceRef||'')
 export function PackageMarket({onInstalled}:{onInstalled:()=>void}){
  const en=useLocale()==='en',tr=(ko:string,eng:string)=>en?eng:ko
  const [q,setQ]=useState(''),[page,setPage]=useState<Page|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[selected,setSelected]=useState<Item|null>(null),[loading,setLoading]=useState(''),[review,setReview]=useState(false),[installing,setInstalling]=useState(false)
@@ -18,11 +19,11 @@ export function PackageMarket({onInstalled}:{onInstalled:()=>void}){
  }
  useEffect(()=>{void search('');return()=>{request.current?.abort();detailRequest.current?.abort()}},[])
  const open=async(p:Item)=>{
-  detailRequest.current?.abort();setError('');setReview(false);setSelected(null);setLoading(p.repository)
+  detailRequest.current?.abort();setError('');setReview(false);setSelected(null);setLoading(keyOf(p))
   if(p.detailsLoaded){setSelected(p);setLoading('');return}
   const controller=new AbortController();detailRequest.current=controller
-  try{const r=await get<Item>('/api/plugins/market/details?repository='+encodeURIComponent(p.repository),controller.signal)
-   if(detailRequest.current===controller&&!controller.signal.aborted){if(r.repository?.toLowerCase()!==p.repository.toLowerCase()||!r.detailsLoaded)throw Error(tr('배포 정보가 올바르지 않습니다.','Invalid release details'));setSelected(r)}}
+  try{const r=await get<Item>('/api/plugins/market/details?repository='+encodeURIComponent(p.repository)+(p.sourceRef?'&sourceRef='+encodeURIComponent(p.sourceRef):''),controller.signal)
+   if(detailRequest.current===controller&&!controller.signal.aborted){if(r.repository?.toLowerCase()!==p.repository.toLowerCase()||(p.sourceRef&&r.sourceRef!==p.sourceRef)||!r.detailsLoaded)throw Error(tr('배포 정보가 올바르지 않습니다.','Invalid release details'));setSelected(r)}}
   catch(e){if(detailRequest.current===controller&&!controller.signal.aborted)setError((e as Error).message)}
   finally{if(detailRequest.current===controller)setLoading('')}
  }
@@ -47,7 +48,7 @@ export function PackageMarket({onInstalled}:{onInstalled:()=>void}){
     {selected.sourceDownload&&<a className="inline-flex gap-2 items-center text-sm text-brand" href={selected.sourceDownload} target="_blank" rel="noopener noreferrer"><Download size={15}/>{tr('소스 ZIP 받기','Download source ZIP')}</a>}
    </div>
   </article>}
-  {page&&<><p className="text-xs text-muted">{tr('검색 결과','Results')} · {page.items.length}</p><div className="grid gap-3 lg:grid-cols-2">{page.items.map(p=><article key={p.repository} className="flex min-w-0 flex-col gap-3 rounded-xl border border-divider bg-canvas p-4"><div className="flex items-start gap-3"><div className="shrink-0 rounded-xl border border-divider bg-surface p-3"><Package size={24}/></div><div className="min-w-0 flex-1"><h3 className="break-all font-bold">{p.manifest?.name||p.repository}</h3><p className="flex items-center gap-1 text-xs text-muted"><Star size={12}/>{p.stars??0}{p.manifest?' · '+p.manifest.version:''}</p></div></div><p className="flex-1 break-words text-sm">{p.manifest?.description||p.description}</p><div className="flex flex-wrap items-center justify-between gap-2"><a href={p.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs text-brand">{tr('소스','Source')}<ExternalLink size={12}/></a><Button disabled={installing||loading===p.repository} onClick={()=>void open(p)}>{loading===p.repository?tr('불러오는 중…','Loading…'):tr('설치 · 다운로드','Install / download')}</Button></div></article>)}</div>
+  {page&&<><p className="text-xs text-muted">{tr('검색 결과','Results')} · {page.items.length}{page.indexCached?' · '+tr('저장된 카탈로그','Cached catalog'):''}</p><div className="grid gap-3 lg:grid-cols-2">{page.items.map(p=><article key={keyOf(p)} className="flex min-w-0 flex-col gap-3 rounded-xl border border-divider bg-canvas p-4"><div className="flex items-start gap-3"><div className="shrink-0 rounded-xl border border-divider bg-surface p-3"><Package size={24}/></div><div className="min-w-0 flex-1"><h3 className="break-all font-bold">{p.manifest?.name||p.name||p.repository}</h3><p className="flex items-center gap-1 text-xs text-muted">{p.indexed?tr('확장 카탈로그','Extension catalog'):<><Star size={12}/>{p.stars??0}</>}{p.manifest?' · '+p.manifest.version:''}</p></div></div><p className="flex-1 break-words text-sm">{p.manifest?.description||p.description}</p><div className="flex flex-wrap items-center justify-between gap-2"><a href={p.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs text-brand">{tr('소스','Source')}<ExternalLink size={12}/></a><Button disabled={installing||loading===keyOf(p)} onClick={()=>void open(p)}>{loading===keyOf(p)?tr('불러오는 중…','Loading…'):tr('설치 · 다운로드','Install / download')}</Button></div></article>)}</div>
    {!page.items.length&&<p className="rounded-xl border border-divider p-4 text-sm text-muted">{tr('검색 결과가 없습니다. 다른 이름을 입력하세요.','No results. Try another name.')}</p>}
    {page.errors.map(e=><p key={e.repository} className="break-all text-xs text-warning">{e.repository}: {e.message}</p>)}
   </>}
