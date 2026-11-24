@@ -1,0 +1,2 @@
+
+CREATE TABLE IF NOT EXISTS assistant_browser_quota (day TEXT PRIMARY KEY, used INTEGER NOT NULL DEFAULT 0);

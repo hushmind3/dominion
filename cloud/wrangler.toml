@@ -57,3 +57,16 @@ new_sqlite_classes = ["AssistantSocket"]
 # or provider key, and explicitly set ASSISTANT_SEARCH_ENABLED=1,
 # ASSISTANT_SEARCH_PROVIDER=exa (or ceramic/linkup), ASSISTANT_SEARCH_DAILY_LIMIT=20,
 # ASSISTANT_SEARCH_GATEWAY=default. No automatic paid fallback or mobile API credentials.
+
+# Browser Run trial: enable only after applying migration 0007.
+# ASSISTANT_BROWSER_ENABLED=1, ASSISTANT_BROWSER_DAILY_LIMIT=2 (global).
+# Optional ASSISTANT_BROWSER_EXTRA_HOSTS is JSON mapping site roots to verified
+# identity/CDN hosts. Never use a broad wildcard or disable site guardrails.
+[browser]
+binding = "BROWSER"
+[[durable_objects.bindings]]
+name = "ASSISTANT_BROWSER"
+class_name = "AssistantBrowser"
+[[migrations]]
+tag = "assistant-browser-v1"
+new_sqlite_classes = ["AssistantBrowser"]
