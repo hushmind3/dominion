@@ -29,7 +29,8 @@ export function browserScope(url,extras=''){
 }
 const sameSite=(url,root)=>{const u=safeUrl(url);return !!u&&hostWithin(u.hostname,root)};
 const displayUrl=url=>{const u=safeUrl(url);return u?u.origin+u.pathname:''};
-export function browserReady(e){return e.ASSISTANT_BROWSER_ENABLED==='1'&&!!e.DB&&!!e.ASSISTANT_BROWSER&&typeof e.BROWSER?.acquire==='function'&&typeof e.BROWSER?.connectSession==='function'&&typeof e.BROWSER?.closeSession==='function'&&Number.isInteger(Number(e.ASSISTANT_BROWSER_DAILY_LIMIT))&&Number(e.ASSISTANT_BROWSER_DAILY_LIMIT)>0&&Number(e.ASSISTANT_BROWSER_DAILY_LIMIT)<=20}
+const fingerprint=async x=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(x))),b=>b.toString(16).padStart(2,'0')).join('');
+export function browserReady(e){return e.ASSISTANT_BROWSER_ENABLED==='1'&&!!e.DB&&!!e.ASSISTANT_BROWSER&&typeof e.BROWSER?.acquire==='function'&&typeof e.BROWSER?.connectSession==='function'&&typeof e.BROWSER?.closeSession==='function'&&typeof e.BROWSER?.getLiveView==='function'&&typeof e.BROWSER?.devtools?.newTarget==='function'&&Number.isInteger(Number(e.ASSISTANT_BROWSER_DAILY_LIMIT))&&Number(e.ASSISTANT_BROWSER_DAILY_LIMIT)>0&&Number(e.ASSISTANT_BROWSER_DAILY_LIMIT)<=20}
 async function body(req){const raw=await req.text();if(raw.length>12000)throw Error('Request too large');return JSON.parse(raw)}
 export async function browserRoute(req,env,{account}){
  const user=await account(req,env);
@@ -51,21 +52,24 @@ export async function browserRoute(req,env,{account}){
  return env.ASSISTANT_BROWSER.get(env.ASSISTANT_BROWSER.idFromName(user.id)).fetch(new Request('https://internal/'+path,{method:'POST',body:JSON.stringify({...b,account:user.id,appSession:user.app_session_id})}));
 }
 function publicJob(j){
- return {id:j.id,goal:j.goal,site:j.root,status:j.status,message:j.message,steps:j.steps,createdAt:j.createdAt,updatedAt:j.updatedAt,...(j.status==='awaiting_approval'&&j.approval?{approval:{id:j.approval.id,label:j.approval.target.label,url:displayUrl(j.approval.url)}}:{}),...(j.result?{result:j.result}:{}),...(j.pageUrl?{pageUrl:displayUrl(j.pageUrl)}:{})};
+ return {id:j.id,goal:j.goal,site:j.root,status:j.status,message:j.message,steps:j.steps,createdAt:j.createdAt,updatedAt:j.updatedAt,...(j.status==='awaiting_approval'&&j.approval?{approval:{id:j.approval.id,label:j.approval.target.label,url:j.approval.displayUrl,preview:j.approval.preview}}:{}),...(j.result?{result:j.result}:{}),...(j.pageUrl?{pageUrl:displayUrl(j.pageUrl)}:{})};
 }
 // Inspect only visible page content; no input values, DOM HTML, cookies, screenshots or credentials.
 function collectPage(){
  const clean=(s,n=160)=>String(s??'').replace(/\s+/g,' ').trim().slice(0,n);
  const visible=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'&&s.opacity!=='0'&&!e.closest('[hidden],[aria-hidden="true"]')};
  const sensitive=/비밀번호|패스워드|인증번호|인증\s*코드|보안\s*코드|주민번호|주민등록번호|계좌번호|카드번호|카드\s*유효기간|cvc|cvv|password|passcode|one.time.code|verification.code|security.code|credit.card|otp|pin\b/i;
- const nodes=[...document.querySelectorAll('a[href],button,input:not([type=hidden]),textarea,select,[role=button]')].filter(e=>visible(e)&&!e.disabled&&!e.closest('[aria-disabled=true]')).slice(0,100);
+ const all=[...document.querySelectorAll('a[href],button,input:not([type=hidden]),textarea,select,[role=button]')].filter(e=>visible(e)&&!e.disabled&&!e.closest('[aria-disabled=true]'));
+ const sensitiveInput=e=>['INPUT','TEXTAREA','SELECT'].includes(e.tagName)&&!['submit','button','reset'].includes(e.type)&&((e.type==='password')||/one-time-code|current-password|new-password|cc-/.test(e.autocomplete||'')||sensitive.test([e.name,e.id,e.getAttribute('aria-label'),e.getAttribute('placeholder'),...Array.from(e.labels||[]).map(l=>l.innerText)].join(' '))||/auth.?code|verification|인증|본인확인/i.test([e.name,e.id,e.getAttribute('aria-label'),e.getAttribute('placeholder')].join(' ')));
+ const authPage=all.some(sensitiveInput)||/(?:^|\/)(?:login|signin|sign-in|oauth|authenticate)(?:\/|$)/i.test(location.pathname);
+ const nodes=all.slice(0,100);
  const elements=nodes.map((e,i)=>{
   const tag=e.tagName.toLowerCase(),type=String(e.type||'').toLowerCase();
   const label=clean(e.getAttribute('aria-label')||Array.from(e.labels||[]).map(l=>l.innerText).join(' ')||e.innerText||e.getAttribute('placeholder')||e.getAttribute('title')||e.name||((tag==='input'&&['submit','button','reset'].includes(type))?e.value:''));
-  const auth=type==='password'||/one-time-code|current-password|new-password|cc-/.test(e.autocomplete||'')||sensitive.test(label+' '+e.name+' '+e.id);
+  const auth=sensitiveInput(e);
   return {index:i,tag,type,label,href:tag==='a'?clean(e.href,2048):'',auth,filled:!auth&&['input','textarea','select'].includes(tag)&&!['submit','button','reset'].includes(type)?Boolean(e.value):undefined,options:tag==='select'?[...e.options].slice(0,30).map((o,k)=>({index:k,label:clean(o.text,100)})):undefined};
  });
- return {url:location.href,title:clean(document.title,180),auth:elements.some(e=>e.auth),text:elements.some(e=>e.auth)?'':clean(document.body?.innerText,5500),elements};
+ return {url:location.href,title:clean(document.title,180),auth:authPage,text:authPage?'':clean(document.body?.innerText,5500),elements};
 }
 function scrub(s,n=5500){return bounded(s,n).replace(/\b\d{6}[- ]?[1-4]\d{6}\b/g,'[가림]').replace(/(?:\d[ -]?){13,19}/g,'[가림]').replace(/(?:비밀번호|인증번호|password|otp)\s*[:：]\s*\S+/gi,'[인증정보 가림]')}
 export function decodePlan(raw,snap,root){
@@ -98,7 +102,8 @@ export function decodePlan(raw,snap,root){
  return {action:'click',target:e};
 }
 const sameTarget=(a,b)=>a&&b&&a.index===b.index&&a.tag===b.tag&&a.type===b.type&&a.label===b.label&&a.href===b.href&&!b.auth;
-function applyElement(index,expected,action,value,option){
+function applyElement(index,expected,action,value,option,expectedUrl){
+ if(location.href!==expectedUrl)return {ok:false};
  // Must match the inspected DOM again at action time. Code is fixed; all model values are JSON arguments.
  const clean=(s,n=160)=>String(s??'').replace(/\s+/g,' ').trim().slice(0,n);
  const nodes=[...document.querySelectorAll('a[href],button,input:not([type=hidden]),textarea,select,[role=button]')].filter(e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'&&s.opacity!=='0'&&!e.closest('[hidden],[aria-hidden="true"]')&&!e.disabled&&!e.closest('[aria-disabled=true]')}).slice(0,100);
@@ -106,7 +111,7 @@ function applyElement(index,expected,action,value,option){
  const tag=e.tagName.toLowerCase(),type=String(e.type||'').toLowerCase(),label=clean(e.getAttribute('aria-label')||Array.from(e.labels||[]).map(l=>l.innerText).join(' ')||e.innerText||e.getAttribute('placeholder')||e.getAttribute('title')||e.name||((tag==='input'&&['submit','button','reset'].includes(type))?e.value:''));
  const href=tag==='a'?clean(e.href,2048):'';
  if(tag!==expected.tag||type!==expected.type||label!==expected.label||href!==expected.href||type==='password'||/one-time-code|current-password|new-password|cc-/.test(e.autocomplete||''))return {ok:false};
- if(action==='click'){e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();return {ok:true,x:r.left+r.width/2,y:r.top+r.height/2}}
+ if(action==='click'){e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,hit=document.elementFromPoint(x,y);if(!hit||!(hit===e||e.contains(hit)))return {ok:false};return {ok:true,x,y}}
  if(action==='select'){if(tag!=='select'||e.options[option]?.text.trim().slice(0,100)!==expected.options?.find(x=>x.index===option)?.label)return {ok:false};e.selectedIndex=option;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return {ok:e.selectedIndex===option}}
  if(action==='fill'&&(tag==='input'||tag==='textarea')){
   const proto=tag==='textarea'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
@@ -136,7 +141,7 @@ export function createBrowserObject(runModel,driver=connect){
   get(id){return this.state.storage.get('job:'+id)}
   async save(j){j.updatedAt=Date.now();await this.state.storage.put('job:'+j.id,j)}
   async close(j){if(j.session)try{await this.env.BROWSER.closeSession(j.session)}catch{}j.session=null;j.target=null;j.approval=null}
-  async finish(j,status,message){j.status=status;j.message=message;await this.close(j);await this.save(j);if(await this.state.storage.get('active')===j.id)await this.state.storage.delete('active');await this.state.storage.deleteAlarm()}
+  async finish(j,status,message){j.status=status;j.message=message;await this.close(j);await this.save(j);if(await this.state.storage.get('active')===j.id){await this.state.storage.delete('active');await this.state.storage.deleteAlarm()}}
   async valid(j){return !!await this.env.DB.prepare("SELECT id FROM app_sessions WHERE id=? AND account_id=? AND status='approved' AND expires_at>? AND capability='assistant_remote'").bind(j.appSession,j.account,now()).first()}
   async next(ms=1000){await this.state.storage.setAlarm(Date.now()+ms)}
   async fetch(req){
@@ -197,7 +202,7 @@ export function createBrowserObject(runModel,driver=connect){
     }
     const snap=await c.evaluate('('+collectPage.toString()+')()');
     if(!snap||typeof snap.url!=='string'||!Array.isArray(snap.elements)||typeof snap.text!=='string')throw Error('실제 페이지를 읽지 못했습니다.');
-    j.pageUrl=snap.url;
+    j.pageUrl=displayUrl(snap.url);
     const handoff=async()=>{
      if(j.handoffs>=MAX_HANDOFFS)throw Error('사용자 인계 횟수를 초과했습니다.');
      await c.send('Cloudflare.handoff',{instructions:'로그인·본인확인 또는 필요한 화면 조작을 직접 마친 뒤 Done을 눌러 주세요. 민감한 인증정보는 채팅에 입력하지 마세요.',timeout:Math.max(1000,j.expiresAt-Date.now())});
@@ -208,7 +213,7 @@ export function createBrowserObject(runModel,driver=connect){
     let plan;
     if(j.status==='approved'){
      const a=j.approval,actual=snap.elements.find(e=>e.index===a?.target?.index);
-     if(!a||a.url!==snap.url||!sameTarget(a.target,actual)){j.approval=null;j.status='running';j.message='화면이 변경되어 다시 확인합니다.';await this.save(j);await this.next();return}
+     if(!a||a.fingerprint!==await fingerprint(JSON.stringify([snap.url,snap.text,actual]))||!sameTarget(a.target,actual)){j.approval=null;j.status='running';j.message='화면이 변경되어 다시 확인합니다.';await this.save(j);await this.next();return}
      plan={action:'click',target:a.target,approved:true};
     }else{
      j.steps++;j.status='running';j.message='페이지 내용을 확인하고 다음 행동을 결정합니다.';await this.save(j);
@@ -222,14 +227,15 @@ export function createBrowserObject(runModel,driver=connect){
     }
     if(plan.action==='handoff'){await handoff();return}
     if(plan.action==='click'&&!plan.approved){
-     j.approval={id:crypto.randomUUID(),target:plan.target,url:snap.url};j.status='awaiting_approval';j.message='다음 버튼의 실행을 확인해 주세요: '+plan.target.label;await this.save(j);await this.next(Math.max(1000,j.expiresAt-Date.now()));return;
+     j.approval={id:crypto.randomUUID(),target:plan.target,displayUrl:displayUrl(snap.url),fingerprint:await fingerprint(JSON.stringify([snap.url,snap.text,plan.target])),preview:scrub(snap.text,900)};j.status='awaiting_approval';j.message='다음 버튼의 실행을 확인해 주세요: '+plan.target.label;await this.save(j);await this.next(Math.max(1000,j.expiresAt-Date.now()));return;
     }
+    if(Date.now()>=j.expiresAt||!await this.valid(j)){await this.finish(j,'failed','실행 전에 업무 시간 또는 권한이 만료되었습니다.');return}
     // Persist before a potentially state-changing action. Never replay an uncertain action.
     j.status='action_inflight';await this.save(j);
     if(plan.action==='navigate'){
      const r=await c.send('Page.navigate',{url:plan.url});if(r.errorText)throw Error('페이지 이동 실패');
     }else{
-     const args=[plan.target.index,plan.target,plan.action,plan.value??null,plan.option??null];
+     const args=[plan.target.index,plan.target,plan.action,plan.value??null,plan.option??null,snap.url];
      const actual=await c.evaluate('('+applyElement.toString()+')('+args.map(x=>JSON.stringify(x)).join(',')+')');
      if(!actual?.ok)throw Error('페이지가 변경되었거나 입력을 확인하지 못했습니다.');
      if(plan.action==='click'){
