@@ -362,7 +362,8 @@ export function TeamRunStrip({sessionId,active:visible,onDraft}:{
  const en=useLocale()==='en'
  const activity=useRemote<ActivityData>(visible&&sessionId?'/api/activity/teams':null,empty)
  const [busy,setBusy]=useState(false),[error,setError]=useState('')
- const team=activity.value.teams.find(row=>row.leadSessionId===sessionId
+ const teams=Array.isArray(activity.value?.teams)?activity.value.teams:[]
+ const team=teams.find(row=>row.leadSessionId===sessionId
   && (row.status==='running'||row.status==='needs_review'))
  if(!team)return null
  const pending=team.pendingRemoteArtifactTaskIds.length

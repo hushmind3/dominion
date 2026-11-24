@@ -208,13 +208,19 @@ try{
    kind:'openai',model:'test-model',baseUrl:'http://127.0.0.1/v1'}]
   else if(path==='/api/agents')result=[]
   else if(path==='/api/approvals')result=[]
+  else if(path==='/api/activity/teams')result={teams:[],leadJobs:[],remoteWorkers:[],remoteConfigured:false}
+  else if(path==='/api/model-library/runtime')result={status:'idle'}
   else if(path==='/api/settings/owner-profile')result={id:'owner',name:'나'}
   else if(path==='/api/policy'||path.startsWith('/api/settings/'))result={}
   await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(result)})
  })
  await inspector.goto(origin+'/#/chat?session=menu-demo',{waitUntil:'domcontentloaded'})
  const answer=inspector.locator('[data-message][data-role="assistant"]').first()
- await answer.waitFor({state:'visible',timeout:15000})
+ await answer.waitFor({state:'visible',timeout:15000}).catch(async error=>{
+  console.error('Message toolbar fixture diagnosis',JSON.stringify({url:inspector.url(),errors:inspectionErrors,
+   text:(await inspector.locator('body').innerText()).slice(0,3000)}))
+  throw error
+ })
  assert.equal(await answer.getByText('추론 기록 예시').count(),0,
   'reasoning must not fill the transcript until requested')
  await answer.getByRole('button',{name:'답변 옵션'}).click()
@@ -227,8 +233,8 @@ try{
  await evidence.getByText('요청 구성').waitFor({state:'visible',timeout:5000})
  await evidence.getByText('모델 토큰 정산').waitFor({state:'visible',timeout:5000})
  await evidence.getByText('모델 호출별 사용량').waitFor({state:'visible',timeout:5000})
- assert.match(await evidence.innerText(),/첫 입력[sS]*60/)
- assert.match(await evidence.innerText(),/입력 합계[sS]*60/)
+ assert.match(await evidence.innerText(),/첫 입력[\s\S]*60/)
+ assert.match(await evidence.innerText(),/입력 합계[\s\S]*60/)
  await evidence.getByRole('button',{name:'실행·토큰 상세 닫기'}).click()
  await answer.getByRole('button',{name:'답변 복사'}).click()
  await answer.getByRole('button',{name:'답변 복사됨'}).waitFor({state:'visible',timeout:5000})

@@ -45,7 +45,7 @@ export function HarnessPromptsPanel(){
    setItems(response.items)
    const saved=response.items.find(item=>item.id===selected)
    if(saved)adopt(saved)
-   else if(result.items.length)adopt(result.items.find(item=>item.id==='chat.lightweight')||result.items[0])
+   else if(response.items.length)adopt(response.items.find(item=>item.id==='chat.lightweight')||response.items[0])
    setNotice(reset?'서브2 기본값을 복원했습니다.':'저장했습니다. 다음 모델 호출부터 반영됩니다.')
   }catch(e){
    setError((e as Error).message)

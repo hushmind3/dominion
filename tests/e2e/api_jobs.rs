@@ -966,7 +966,10 @@ fn explicit_direct_chat_does_not_inherit_a_saved_session_agent() {
     let wire=requests.lock().unwrap();
     assert_eq!(wire.len(),1,"direct Chat should use exactly one model call");
     let system=wire[0]["messages"][0]["content"].as_str().unwrap();
-    assert!(system.contains("일반 대화를 돕는"), "{system}");
+    assert!(system.contains("사용자의 최신 메시지에 해당 언어로 자연스럽고 정확하게 답하십시오."), "{system}");
+    assert_eq!(system.matches("DOMINION.").count(),1,"one conversation identity: {system}");
+    assert!(!system.contains("작업에 필요하면 사용 가능한 도구"), "{system}");
+    assert!(!system.contains("Internal execution plan"), "{system}");
     assert!(!system.contains("작업 공간 루트:"), "{system}");
     assert!(system.contains("현재 날짜:"), "{system}");
     assert!(!system.contains("workspace_write"),"{system}");
