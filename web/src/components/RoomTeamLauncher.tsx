@@ -189,7 +189,7 @@ export function RoomTeamLauncher({roomId,sessionId,participantCount,agents,tools
    {launchId&&launch.loading&&<p role="status" className="flex items-center gap-2 text-[12px] text-muted">
     <LoaderCircle size={15} className="animate-spin"/>{en?'Loading saved task…':'저장된 작업 상태 불러오는 중…'}
    </p>}
-   <TeamWorkflowPanel filterSessionId={sessionId} agentNames={Object.fromEntries(agents.map(a=>[a.id,a.name]))}/>
+   {(sessionId||(launch.value.id&&launch.value.sessionId))&&<TeamWorkflowPanel filterSessionId={sessionId||launch.value.sessionId} agentNames={Object.fromEntries(agents.map(a=>[a.id,a.name]))}/>}
   </section>
  </div>
 }
