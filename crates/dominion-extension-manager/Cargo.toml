@@ -1,0 +1,13 @@
+[package]
+name = "dominion-extension-manager"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Optional independent DOMINION extension package lifecycle"
+[dependencies]
+dominion-agent-sdk = { path = "../dominion-agent-sdk", version = "0.1.0" }
+serde_json = "1"
+sha2 = "0.10"
+reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
+tokio = { version = "1", features = ["fs", "process", "io-util", "time", "macros", "rt"] }
+uuid = { version = "1", features = ["v4"] }

@@ -346,6 +346,7 @@ dependencies = [
  "dominion-agent-loop",
  "dominion-context-policy",
  "dominion-turn-core",
+ "serde",
  "serde_json",
  "tokio",
 ]
@@ -355,6 +356,18 @@ name = "dominion-context-policy"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+]
+
+[[package]]
+name = "dominion-extension-manager"
+version = "0.1.0"
+dependencies = [
+ "dominion-agent-sdk",
+ "reqwest",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -370,6 +383,7 @@ dependencies = [
  "dominion-agent-loop",
  "dominion-agent-sdk",
  "dominion-context-policy",
+ "dominion-extension-manager",
  "dominion-turn-core",
  "futures-util",
  "rand 0.8.8",
