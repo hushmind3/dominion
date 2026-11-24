@@ -416,3 +416,48 @@ export class DominionAgentClient {
     );
   }
 }
+
+
+/** Scoped external SDK clients never need the owner's admin token on loopback. */
+export interface PluginClientOptions {
+  baseUrl?: string;
+  pluginId: string;
+  pluginToken: string;
+  fetch?: typeof fetch;
+}
+export interface PluginStartRun { instruction: string; idempotencyKey: string }
+export class DominionPluginClient {
+  private readonly url: string;
+  private readonly token: string;
+  private readonly transport: typeof fetch;
+  constructor(options: PluginClientOptions) {
+    if (!/^[A-Za-z0-9_.-]{1,96}$/.test(options.pluginId)
+        || ['.','..'].includes(options.pluginId) || !options.pluginToken)
+      throw new Error('Registered plugin ID and token are required');
+    this.url = (options.baseUrl ?? 'http://127.0.0.1:4317').replace(/\/$/,'')
+      + '/api/sdk/plugins/' + encodeURIComponent(options.pluginId);
+    this.token = options.pluginToken;
+    this.transport = options.fetch ?? fetch;
+  }
+  private async request<T>(method:'POST'|'GET',path:string,data?:unknown,signal?:AbortSignal):Promise<T>{
+    const headers:Record<string,string>={'x-dominion-plugin-token':this.token};
+    if(data!==undefined)headers['content-type']='application/json';
+    const response=await this.transport(this.url+path,{method,headers,
+      body:data===undefined?undefined:JSON.stringify(data),signal,redirect:'error'});
+    let result:unknown;
+    try{result=await response.json()}catch{throw new DominionSdkError('Non-JSON plugin API response',response.status)}
+    if(!response.ok)throw new DominionSdkError(result&&typeof result==='object'&&'error' in result
+      ?String(result.error):'HTTP '+response.status,response.status);
+    return result as T;
+  }
+  heartbeat(signal?:AbortSignal):Promise<{pluginId:string;authenticated:true;protocolVersion:number}>{
+    return this.request('POST','/heartbeat',undefined,signal);
+  }
+  startRun(input:PluginStartRun,signal?:AbortSignal):Promise<AgentRun>{
+    return this.request('POST','/runs',input,signal);
+  }
+  getRun(id:string,signal?:AbortSignal):Promise<AgentRun>{
+    if(!id||id==='.'||id==='..')throw new Error('Run ID required');
+    return this.request('GET','/runs/'+encodeURIComponent(id),undefined,signal);
+  }
+}

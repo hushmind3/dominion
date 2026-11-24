@@ -10,6 +10,10 @@ use sha2::{Digest,Sha256};
 use super::{response::error,sdk};
 
 const KIND:&str="sdk_plugin";
+fn valid_id(id:&str)->bool{
+    !id.is_empty()&&id.len()<=96&&id!="."&&id!=".."&&id.bytes()
+        .all(|b|b.is_ascii_alphanumeric()||matches!(b,b'-'|b'_'|b'.'))
+}
 
 pub(super) fn ingress(method:&Method,path:&str)->bool {
     // Only the exact credential-authenticated write routes bypass the owner
@@ -17,7 +21,7 @@ pub(super) fn ingress(method:&Method,path:&str)->bool {
     if method!=Method::POST {return false;}
     let parts=path.split('/').collect::<Vec<_>>();
     matches!(parts.as_slice(),["","api","sdk","plugins",id,"heartbeat"|"runs"]
-        if super::remote_registry::valid_id(id))
+        if valid_id(id))
 }
 fn digest(s:&str)->String{format!("{:x}",Sha256::digest(s.as_bytes()))}
 fn token()->String{format!("{}{}",uuid::Uuid::new_v4().simple(),uuid::Uuid::new_v4().simple())}
@@ -30,7 +34,7 @@ fn public(mut row:Value)->Value{
     row
 }
 fn authenticate(state:&AppState,id:&str,headers:&HeaderMap)->Result<Value,Response>{
-    if !super::remote_registry::valid_id(id){return Err(error(StatusCode::BAD_REQUEST,"Invalid SDK plugin ID"));}
+    if !valid_id(id){return Err(error(StatusCode::BAD_REQUEST,"Invalid SDK plugin ID"));}
     let secret=headers.get("x-dominion-plugin-token").and_then(|v|v.to_str().ok()).unwrap_or("");
     let Some(row)=state.store.get(KIND,id)else{return Err(error(StatusCode::UNAUTHORIZED,"Invalid SDK plugin credential"));};
     if !matches_hash(secret,row["tokenSha256"].as_str().unwrap_or("")) {
@@ -64,8 +68,8 @@ pub async fn list(State(state):State<AppState>)->Json<Value>{
     Json(json!(state.store.all(KIND).into_iter().map(public).collect::<Vec<_>>()))
 }
 pub async fn enroll(State(state):State<AppState>,Json(body):Json<Value>)->Response{
-    let Some(id)=body["pluginId"].as_str().filter(|id|super::remote_registry::valid_id(id))else{
-        return error(StatusCode::BAD_REQUEST,"Plugin ID must be 1..96 ASCII letters, digits, -_.:");
+    let Some(id)=body["pluginId"].as_str().filter(|id|valid_id(id))else{
+        return error(StatusCode::BAD_REQUEST,"Plugin ID must be 1..96 ASCII letters, digits, -_.");
     };
     let Some(name)=body["name"].as_str().map(str::trim).filter(|n|!n.is_empty()&&n.len()<=200&&!n.chars().any(char::is_control))else{
         return error(StatusCode::BAD_REQUEST,"Plugin name is required (max 200 bytes)");

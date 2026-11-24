@@ -102,3 +102,33 @@ A remote result is always `nativeVerified: false` at the coordinator;
 even an owner-reviewed report cannot impersonate local Tool Gateway evidence.
 
 Worker setup and lease recovery: [Remote Worker](../../docs/REMOTE-WORKER-2026.md).
+
+
+## Registered external SDK plugins (local server)
+
+In DOMINION, open Connections → Plugins → SDK integrations and register a
+plugin with an existing agent. Copy the one-time connection key securely.
+
+```ts
+import { DominionPluginClient } from '@hushmind3/dominion-sdk'
+const plugin = new DominionPluginClient({
+  pluginId: 'my-plugin',
+  pluginToken: process.env.DOMINION_PLUGIN_TOKEN!,
+})
+await plugin.heartbeat()
+const run = await plugin.startRun({
+  instruction: 'Inspect the project',
+  idempotencyKey: 'unique-logical-task-id',
+})
+console.log(await plugin.getRun(run.id))
+```
+
+Repeat heartbeat every 60 seconds while the process is active. Presence is
+recent authenticated traffic, not a remote process health assertion.
+The scoped credential cannot approve tools, change agents or read other
+plugins' tasks. Existing native permission and approval rules apply.
+The server enforces one active task, 20 submissions per rolling 24 hours,
+8 rounds and a 20,000-token limit per task; retries keep the same key.
+Disabling or rotating a key blocks new requests; already admitted tasks
+can be cancelled by the owner in the SDK run panel. Local loopback use is
+supported; the separate remote worker interface is for remote machines.

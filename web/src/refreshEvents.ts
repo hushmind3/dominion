@@ -47,6 +47,7 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
    case 'skill':add('/api/skills');break
    case 'channel':add('/api/channels');break
    case 'oauth_config':case 'oauth_connection':add('/api/oauth/providers','/api/oauth/connections');break
+   case 'sdk_plugin':add('/api/sdk/plugins');break
    case 'sdk_run':add('/api/sdk/runs');if(id)add('/api/sdk/runs/'+encoded(id));break
    case 'memory':case 'experience':add('/api/memory/*');break
    default:

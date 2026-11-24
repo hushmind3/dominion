@@ -4,6 +4,7 @@ import {Button,SelectInput,TextArea} from '../../components/Primitives'
 import {Panel,Notice,StateTag,useRemote} from '../../components/UI'
 import {post} from '../../api'
 import {useLocale} from '../../i18n'
+import {SdkPluginRegistry} from './SdkPluginRegistry'
 import {type SdkRun,sdkActive,sdkNeedsReview,sdkVerified,sdkSources,sdkControls} from '../../utils/sdkIntegration'
 
 const endpoint='/api/sdk/runs'
@@ -66,6 +67,7 @@ export function SdkIntegrationPanel(){
     <Button size="sm" onClick={()=>{void runs.reload();void detail.reload()}}><RefreshCw size={14}/>{tr('새로고침','Refresh')}</Button>
    </div>
   </div>
+  <SdkPluginRegistry onSelect={id=>{setSource(JSON.stringify(['sdk_plugin',id]));setSelected('');setLimit(15)}}/>
   {runs.error&&<Notice message={runs.error}/>}
   {error&&<Notice message={error}/>}
   {notice&&<p role="status" className="mt-2 text-xs text-[#5C544A]">{notice}</p>}

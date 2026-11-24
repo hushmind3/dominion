@@ -218,3 +218,17 @@ test('typed SDK start forwards retry identity and source without generating a ne
   assert.equal((await client.startRun(input)).id,'existing');
   assert.deepEqual(seen,[input,input]);
 });
+
+
+test('registered SDK client uses scoped credential and never owner endpoints',async()=>{
+ const {DominionPluginClient}=await import('../dist/index.js');
+ const calls=[];
+ const client=new DominionPluginClient({pluginId:'demo',pluginToken:'secret',fetch:async(url,request)=>{
+  calls.push({url:String(url),method:request.method,headers:request.headers,body:request.body,redirect:request.redirect});
+  return new Response(JSON.stringify({id:'r',authenticated:true}),{status:200});
+ }});
+ await client.heartbeat();await client.startRun({instruction:'inspect',idempotencyKey:'one'});await client.getRun('r');
+ assert.deepEqual(calls.map(c=>c.url.split('/api/')[1]),['sdk/plugins/demo/heartbeat','sdk/plugins/demo/runs','sdk/plugins/demo/runs/r']);
+ assert.ok(calls.every(c=>c.headers['x-dominion-plugin-token']==='secret'&&!c.headers['x-dominion-token']&&c.redirect==='error'));
+ assert.throws(()=>new DominionPluginClient({pluginId:'..',pluginToken:'x'}));
+});

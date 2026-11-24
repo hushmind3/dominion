@@ -94,3 +94,16 @@ test('SDK integration is visible inside existing plugin tab, not a fake installe
  assert.equal(sdkControls({id:'x',status:'running',readOnly:true,sessionId:'s'}).cancel,false)
  assert.equal(sdkControls({id:'x',status:'needs_review',sessionId:'s',failureClass:'completion_evidence_unavailable'}).recheck,true)
 })
+
+
+test('registered plugin presence requires authenticated recent activity, not source names',async()=>{
+ const {sdkPluginPresence}=await import('../src/utils/sdkPluginPresence.ts')
+ const now=Date.parse('2026-11-24T00:00:00Z')
+ assert.equal(sdkPluginPresence({status:'enabled'},now),'never')
+ assert.equal(sdkPluginPresence({status:'enabled',lastSeenAt:'2026-11-23T23:59:30Z'},now),'recent')
+ assert.equal(sdkPluginPresence({status:'enabled',lastSeenAt:'2026-11-23T23:57:00Z'},now),'stale')
+ assert.equal(sdkPluginPresence({status:'disabled',lastSeenAt:'2026-11-23T23:59:30Z'},now),'disabled')
+ const registry=readFileSync(resolve(dir,'../src/pages/extensions/SdkPluginRegistry.tsx'),'utf8')
+ assert.match(registry,/const endpoint='\/api\/sdk\/plugins'/)
+ assert.doesNotMatch(registry,/localStorage|sessionStorage/)
+})
