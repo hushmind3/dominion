@@ -124,3 +124,12 @@ grants only `web_search` and `http_fetch`. No file, shell, memory-writing,
 MCP or agent execution capabilities are exposed. Search availability depends
 on the network and the selected model's native/compatible tool calling.
 Omit webSearch for fast no-tool conversations.
+
+## Optional extension management
+
+`dominion.extensions` exposes list, registries, saveRegistries, search,
+install, importBundle, enable, disable, status and remove. Installation and
+activation require explicit owner confirmation; packages start disabled.
+Removing an extension deletes its data. The client never calls a package
+directly: agent tool execution goes through the existing host approval and
+receipt pipeline. See [the independent package format](../../docs/EXTENSION-PACKAGES.md).

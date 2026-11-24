@@ -85,6 +85,30 @@ export interface PromptJobInput {
   };
 }
 export type CreateJobInput = PromptJobInput;
+/** Extension package management is independent of MCP and model registries. */
+export interface ExtensionManifest {
+  sdkVersion: 1; id: string; name: string; version: string; description: string;
+  runtime: 'node'|'python'|'native'; targets?: string[];
+  artifact: {url:string;sha256:string};
+  tools: Array<{name:string;description:string;parameters:unknown}>;
+}
+export interface ExtensionCatalogEntry {
+  manifest: ExtensionManifest; source: string; revision: string; compatible: boolean;
+}
+export interface ExtensionCatalog {
+  items: ExtensionCatalogEntry[]; errors: Array<{source:string;error:string}>;
+}
+export interface ExtensionRegistries { urls: string[]; githubDiscovery: boolean }
+export interface InstalledExtension {
+  id:string; manifest:ExtensionManifest; source:string; revision:string; enabled:boolean;
+}
+export interface ExtensionStatus {
+  id:string; enabled:boolean; compatible:boolean; integrityOk:boolean; runtimeOk:boolean;
+  integrityError?:string|null; runtimeError?:string|null;
+}
+export interface ExtensionBundle {
+  bundleVersion:1; manifest:ExtensionManifest; artifactBase64:string;
+}
 export interface ClientOptions { baseUrl?: string; token?: string; fetch?: typeof globalThis.fetch }
 export interface RequestOptions { signal?: AbortSignal }
 export interface WaitOptions extends RequestOptions { intervalMs?: number; timeoutMs?: number }
@@ -197,6 +221,24 @@ export class Dominion {
   }
   readonly health = () => this.request<Health>('GET','/api/health');
   readonly status = () => this.request<Record<string,unknown>>('GET','/api/status');
+  /** The same owner-only extension lifecycle as the GUI. No direct tool
+   * invocation endpoint: execution stays inside the authorized agent run. */
+  readonly extensions = {
+    list: (options?:RequestOptions) => this.request<InstalledExtension[]>('GET','/api/extensions',undefined,options),
+    registries: (options?:RequestOptions) => this.request<ExtensionRegistries>('GET','/api/extensions/registries',undefined,options),
+    saveRegistries: (settings:ExtensionRegistries,options?:RequestOptions) => this.request<ExtensionRegistries>('POST','/api/extensions/registries',settings,options),
+    search: (query='',options?:RequestOptions) => this.request<ExtensionCatalog>('GET','/api/extensions/catalog?q='+encodeURIComponent(query),undefined,options),
+    install: (entry:Pick<ExtensionCatalogEntry,'source'|'manifest'>,confirmed:true,options?:RequestOptions) =>
+      this.request<InstalledExtension>('POST','/api/extensions',{source:entry.source,manifest:entry.manifest,confirmed},options),
+    importBundle: (bundle:ExtensionBundle,confirmed:true,options?:RequestOptions) =>
+      this.request<InstalledExtension>('POST','/api/extensions/import',{...bundle,confirmed},options),
+    enable: (key:string,confirmed:true,options?:RequestOptions) =>
+      this.request<InstalledExtension>('POST','/api/extensions/'+id(key)+'/enable',{enabled:true,confirmed},options),
+    disable: (key:string,options?:RequestOptions) =>
+      this.request<InstalledExtension>('POST','/api/extensions/'+id(key)+'/enable',{enabled:false},options),
+    status: (key:string,options?:RequestOptions) => this.request<ExtensionStatus>('GET','/api/extensions/'+id(key)+'/status',undefined,options),
+    remove: (key:string,options?:RequestOptions) => this.request<{removed:boolean}>('DELETE','/api/extensions/'+id(key),undefined,options),
+  };
   readonly evaluation = {
     /** Root-task outcomes from real Rust finalizers, not self-scoring. */
     summary:(options?:RequestOptions)=>this.request<Record<string,unknown>>(

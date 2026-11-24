@@ -343,3 +343,32 @@ test('distributed Rust Worker leases and receipts use the same typed durable SSE
   assert.equal(received[2].remoteUsage.totalTokens,1500);
   assert.equal(received[0].remoteWorkerId,'node-b');
 });
+
+test('extension lifecycle uses its own authenticated endpoints and explicit owner confirmation', async()=>{
+  const calls=[];
+  const d=new Dominion({token:'owner',fetch:async(url,init)=>{calls.push({url,init});return json({id:'fixture'});}});
+  const manifest={sdkVersion:1,id:'fixture',name:'Fixture',version:'1.0.0',description:'Test',runtime:'node',artifact:{url:'https://example.invalid/entry.mjs',sha256:'0'.repeat(64)},tools:[{name:'echo',description:'Echo',parameters:{type:'object'}}]};
+  const settings={urls:['https://example.invalid/catalog.json'],githubDiscovery:false};
+  await d.extensions.registries();
+  await d.extensions.saveRegistries(settings);
+  await d.extensions.search('한글 & echo');
+  await d.extensions.install({manifest,source:settings.urls[0]},true);
+  await d.extensions.importBundle({bundleVersion:1,manifest,artifactBase64:'YQ=='},true);
+  await d.extensions.enable('fixture',true);
+  await d.extensions.status('fixture');
+  await d.extensions.disable('fixture');
+  await d.extensions.list();
+  await d.extensions.remove('fixture');
+  assert.deepEqual(calls.map(c=>new URL(c.url).pathname),[
+    '/api/extensions/registries','/api/extensions/registries','/api/extensions/catalog',
+    '/api/extensions','/api/extensions/import','/api/extensions/fixture/enable',
+    '/api/extensions/fixture/status','/api/extensions/fixture/enable','/api/extensions','/api/extensions/fixture']);
+  assert.equal(new URL(calls[2].url).searchParams.get('q'),'한글 & echo');
+  assert.deepEqual(JSON.parse(calls[1].init.body),settings);
+  assert.equal(JSON.parse(calls[3].init.body).confirmed,true);
+  assert.equal(JSON.parse(calls[4].init.body).artifactBase64,'YQ==');
+  assert.deepEqual(JSON.parse(calls[5].init.body),{enabled:true,confirmed:true});
+  assert.deepEqual(JSON.parse(calls[7].init.body),{enabled:false});
+  assert.equal(calls[9].init.method,'DELETE');
+  assert.ok(calls.every(c=>c.init.headers.get('X-Dominion-Token')==='owner'));
+});

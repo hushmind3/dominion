@@ -68,3 +68,13 @@ extension's process runs with the user's OS permissions, not in a sandbox.
 The status check verifies artifact integrity and interpreter availability
 without running plugin code. Independent packages use independent lifecycle
 locks; calls within one package remain serialized with install/remove/update.
+
+## Host SDK access
+
+TypeScript clients use `Dominion.extensions` for the same management API as
+the GUI, including local bundles. Embedded Rust hosts use
+`sdk::Dominion::extensions`, `search_extensions`, `install_extension`,
+`import_extension`, `set_extension_enabled`, `extension_status`,
+`extension_registries`, `set_extension_registries` and `remove_extension`.
+Both reuse the native lifecycle store and maintenance admission. Neither
+exposes a direct tool invocation API that would bypass agent-run approval.

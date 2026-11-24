@@ -136,6 +136,7 @@ jobs:
           cargo test --locked -p dominion-agent-sdk --lib
           cargo test --locked -p dominion-extension-manager --lib
           cargo test --locked --lib extension_manager::tests::local_extension_lifecycle_is_independent_of_mcp_and_model_catalogs
+          cargo test --locked --lib sdk::tests::embedded_extension_lifecycle_reuses_host_store_and_maintenance_gate
           cargo test --locked -p dominion-mcp-adapter
           cargo test --locked -p dominion-agent-sdk --test external_host
           cargo test --lib engine::experience::tests

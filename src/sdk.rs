@@ -1,6 +1,8 @@
 //! Public embeddable Rust SDK over the same AppState, workers and SQLite as the GUI.
 /// Independent host-driven agent SDK: same runtime and algorithm types as the app.
 pub use dominion_agent_sdk as portable;
+pub use dominion_agent_sdk::plugin_protocol::Manifest as ExtensionManifest;
+use crate::extension_manager;
 use crate::{config::Config,db::Store,engine,migrations,state::AppState,vault::Vault};
 use serde_json::{json,Value};
 use std::{path::PathBuf,sync::{atomic::{AtomicBool,Ordering},Arc},time::Duration};
@@ -48,6 +50,12 @@ impl Prompt {
 pub struct Dominion {
     state:AppState,
     started:Arc<AtomicBool>,
+}
+// Use the same maintenance admission as HTTP writes and release it on
+// cancellation as well as on successful completion.
+struct ExtensionWriteLease(AppState);
+impl Drop for ExtensionWriteLease{
+    fn drop(&mut self){self.0.end_api_write();}
 }
 impl Dominion {
     pub fn open(options:EngineOptions)->Result<Self,String>{
@@ -185,6 +193,44 @@ impl Dominion {
     /// Persist a high-priority owner instruction for the next model turn.
     pub fn steer(&self,id:&str,instruction:&str)->Result<Value,String>{
         engine::jobs::steer(&self.state,id,instruction).map_err(|error|error.to_string())
+    }
+    // Embedded hosts and HTTP/GUI clients share one installed package store,
+    // lifecycle manager and execution authority. No direct invocation method.
+    fn extension_write_lease(&self)->Result<ExtensionWriteLease,String>{
+        if !self.state.begin_api_write(){return Err("engine is in maintenance".into());}
+        Ok(ExtensionWriteLease(self.state.clone()))
+    }
+    pub fn extensions(&self)->Vec<Value>{extension_manager::list(&self.state)}
+    pub fn extension_registries(&self)->Value{extension_manager::settings(&self.state)}
+    pub async fn search_extensions(&self,query:&str)->Result<Value,String>{
+        if query.chars().count()>256{return Err("search query too long".into());}
+        Ok(extension_manager::search(&self.state,query).await)
+    }
+    pub async fn set_extension_registries(&self,urls:Vec<String>,github_discovery:bool)->Result<Value,String>{
+        let _lease=self.extension_write_lease()?;
+        extension_manager::save_sources(&self.state,urls,Some(github_discovery)).await
+    }
+    pub async fn install_extension(&self,source:&str,manifest:ExtensionManifest,confirmed:bool)->Result<Value,String>{
+        if !confirmed{return Err("explicit owner confirmation required".into());}
+        let _lease=self.extension_write_lease()?;
+        extension_manager::install(&self.state,source,manifest).await
+    }
+    pub async fn import_extension(&self,manifest:ExtensionManifest,bytes:&[u8],confirmed:bool)->Result<Value,String>{
+        if !confirmed{return Err("explicit owner confirmation required".into());}
+        let _lease=self.extension_write_lease()?;
+        extension_manager::install_local(&self.state,manifest,bytes).await
+    }
+    pub async fn set_extension_enabled(&self,id:&str,enabled:bool,confirmed:bool)->Result<Value,String>{
+        if enabled&&!confirmed{return Err("explicit code execution consent required".into());}
+        let _lease=self.extension_write_lease()?;
+        extension_manager::enable(&self.state,id,enabled).await
+    }
+    pub async fn extension_status(&self,id:&str)->Result<Value,String>{
+        extension_manager::diagnose(&self.state,id).await
+    }
+    pub async fn remove_extension(&self,id:&str)->Result<Value,String>{
+        let _lease=self.extension_write_lease()?;
+        extension_manager::remove(&self.state,id).await
     }
     pub fn job(&self,id:&str)->Option<Value>{self.state.store.get("job",id)}
     pub fn jobs(&self)->Vec<Value>{self.state.store.all("job")}
@@ -349,6 +395,35 @@ mod tests {
         drop(sdk);let _=std::fs::remove_dir_all(dir);
     }
 
+    #[tokio::test]
+    async fn embedded_extension_lifecycle_reuses_host_store_and_maintenance_gate(){
+        use sha2::{Digest,Sha256};
+        let (sdk,dir)=sdk();
+        let bytes=b"export default 1;";
+        let m:ExtensionManifest=serde_json::from_value(json!({
+            "sdkVersion":1,"id":"sdk_fixture","name":"SDK fixture","version":"1.0.0","description":"fixture","runtime":"node",
+            "artifact":{"url":"https://example.invalid/entry.mjs","sha256":format!("{:x}",Sha256::digest(bytes))},
+            "tools":[{"name":"echo","description":"Echo","parameters":{"type":"object"}}]
+        })).unwrap();
+        assert!(sdk.import_extension(m.clone(),bytes,false).await.is_err());
+        assert!(sdk.extensions().is_empty());
+        sdk.set_extension_registries(vec![],false).await.unwrap();
+        assert_eq!(sdk.extension_registries()["githubDiscovery"],false);
+        assert!(sdk.state.set_maintenance(true));
+        assert!(sdk.import_extension(m.clone(),bytes,true).await.is_err());
+        assert!(sdk.state.set_maintenance(false));
+        let saved=sdk.import_extension(m.clone(),bytes,true).await.unwrap();
+        assert_eq!(saved["enabled"],false);
+        assert_eq!(extension_manager::list(&sdk.state).len(),1);
+        assert!(sdk.set_extension_enabled(&m.id,true,false).await.is_err());
+        assert_eq!(sdk.extension_status(&m.id).await.unwrap()["integrityOk"],true);
+        drop(sdk);
+        let reopened=Dominion::open(EngineOptions::new(&dir,dir.join("data"))).unwrap();
+        assert_eq!(reopened.extensions()[0]["id"],m.id);
+        reopened.remove_extension(&m.id).await.unwrap();
+        assert!(reopened.extensions().is_empty());
+        drop(reopened);let _=std::fs::remove_dir_all(dir);
+    }
     #[tokio::test]
     async fn direct_native_preview_and_event_subscription(){
         let (sdk,dir)=sdk();

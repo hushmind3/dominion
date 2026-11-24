@@ -4,13 +4,10 @@ import {get,post,del} from '../../api'
 import {useLocale} from '../../i18n'
 import {Button,TextInput,TextArea} from '../../components/Primitives'
 import {Notice,Panel,useRemote} from '../../components/UI'
-type Manifest={id:string;name:string;description:string;version:string;sdkVersion:number;runtime:'node'|'python'|'native';targets?:string[];artifact:{url:string;sha256:string};tools:{name:string;description:string;parameters:unknown}[]}
-type Entry={manifest:Manifest;source:string;revision:string;compatible:boolean}
-type Installed={id:string;manifest:Manifest;source:string;revision:string;enabled:boolean}
-type Results={items:Entry[];errors:{source:string;error:string}[]}
+import type {ExtensionManifest as Manifest,ExtensionCatalogEntry as Entry,InstalledExtension as Installed,ExtensionCatalog as Results,ExtensionStatus,ExtensionRegistries} from '../../../../sdk/typescript/src/index'
 export function ExtensionPackagesPanel(){
  const en=useLocale()==='en'
- const sources=useRemote<{urls:string[];githubDiscovery:boolean}>('/api/extensions/registries',{urls:[],githubDiscovery:true},false)
+ const sources=useRemote<ExtensionRegistries>('/api/extensions/registries',{urls:[],githubDiscovery:true},false)
  const installed=useRemote<Installed[]>('/api/extensions',[])
  const [sourceText,setSourceText]=useState('')
  const [githubDiscovery,setGithubDiscovery]=useState(true)
@@ -21,7 +18,7 @@ export function ExtensionPackagesPanel(){
  const [error,setError]=useState('')
  const [notice,setNotice]=useState('')
  const [searched,setSearched]=useState(false)
- const [diagnostics,setDiagnostics]=useState<Record<string,{integrityOk:boolean;runtimeOk:boolean;compatible:boolean;integrityError?:string;runtimeError?:string}>>({})
+ const [diagnostics,setDiagnostics]=useState<Record<string,ExtensionStatus>>({})
  useEffect(()=>{if(!sources.loading&&!sources.error){setSourceText(sources.value.urls.join('\n'));setGithubDiscovery(sources.value.githubDiscovery!==false)}},[sources.value,sources.loading,sources.error])
  const run=async(key:string,fn:()=>Promise<void>)=>{
   if(busy)return
@@ -61,7 +58,7 @@ export function ExtensionPackagesPanel(){
   await installed.reload()
  })
  const diagnose=(row:Installed)=>run(row.id,async()=>{
-  const status=await get<{integrityOk:boolean;runtimeOk:boolean;compatible:boolean;integrityError?:string;runtimeError?:string}>('/api/extensions/'+encodeURIComponent(row.id)+'/status')
+  const status=await get<ExtensionStatus>('/api/extensions/'+encodeURIComponent(row.id)+'/status')
   setDiagnostics(old=>({...old,[row.revision]:status}))
  })
  const remove=(row:Installed)=>run(row.id,async()=>{
