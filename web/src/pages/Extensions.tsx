@@ -1,5 +1,7 @@
 import { DialogBackdrop, DialogPanel } from "../components/Dialog";
 import { SkillsPanel } from "./extensions/SkillsPanel";
+import { SdkIntegrationPanel } from "./extensions/SdkIntegrationPanel";
+import { RemoteWorkPanel } from "../components/RemoteWorkPanel";
 import { t, useLocale } from "../i18n";
 import {
   Button,
@@ -922,6 +924,8 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
       )}
       {tab === "plugins" && (
         <>
+          <SdkIntegrationPanel />
+          <div className="mb-4"><RemoteWorkPanel /></div>
           <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
             <div>
               <h3 className="m-0 text-[15px] font-bold text-[#24211D]">
