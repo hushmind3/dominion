@@ -133,11 +133,6 @@ pub async fn start(State(state):State<AppState>,Path(id):Path<String>,headers:He
     let fingerprint=digest(instruction);
     // The source is bound to authenticated identity. The caller cannot
     // override workspace, agent, verification shell command or budgets.
-    let input:sdk::Start=match serde_json::from_value(json!({"instruction":instruction,
-        "agentId":plugin["agentId"],"source":{"kind":"sdk_plugin","id":id},
-        "maxRounds":8,"tokenBudget":20000,"shellSandbox":"required"})){
-        Ok(input)=>input,Err(_)=>return error(StatusCode::INTERNAL_SERVER_ERROR,"Invalid plugin configuration")
-    };
     // Resolve earlier requests even if the selected agent is currently gone.
     // A retry never starts another run; credential check still applies.
     if let Some(claim)=state.store.get("sdk_plugin_claim",&key){
@@ -146,6 +141,16 @@ pub async fn start(State(state):State<AppState>,Path(id):Path<String>,headers:He
         }
         return read_own(&state,&id,claim["runId"].as_str().unwrap_or(""));
     }
+    let Some(agent)=plugin["agentId"].as_str().and_then(|agent|state.store.get("agent",agent))else{
+        return error(StatusCode::CONFLICT,"The registered agent is no longer available");
+    };
+    let input:sdk::Start=match serde_json::from_value(json!({"instruction":instruction,
+        "agentId":plugin["agentId"],"providerId":agent["providerId"],
+        "model":agent["model"].as_str().filter(|m|!m.trim().is_empty()),
+        "source":{"kind":"sdk_plugin","id":id},
+        "maxRounds":8,"tokenBudget":20000,"shellSandbox":"required"})){
+        Ok(input)=>input,Err(_)=>return error(StatusCode::INTERNAL_SERVER_ERROR,"Invalid plugin configuration")
+    };
     let (session,mut run)=match sdk::prepare_start(&state,&input){
         Ok(pair)=>pair,Err(message)=>return error(StatusCode::BAD_REQUEST,&message)
     };

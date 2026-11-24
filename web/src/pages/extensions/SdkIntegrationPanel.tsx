@@ -5,7 +5,7 @@ import {Panel,Notice,StateTag,useRemote} from '../../components/UI'
 import {post} from '../../api'
 import {useLocale} from '../../i18n'
 import {SdkPluginRegistry} from './SdkPluginRegistry'
-import {type SdkRun,sdkActive,sdkNeedsReview,sdkVerified,sdkSources,sdkControls} from '../../utils/sdkIntegration'
+import {type SdkRun,sdkActive,sdkNeedsReview,sdkVerified,sdkSources,sdkControls,sdkSourceKey} from '../../utils/sdkIntegration'
 
 const endpoint='/api/sdk/runs'
 const labels:Record<string,[string,string]>={
@@ -31,7 +31,7 @@ export function SdkIntegrationPanel(){
  const [limit,setLimit]=useState(15)
  const groups=useMemo(()=>sdkSources(runs.value),[runs.value])
  const ordered=useMemo(()=>[...runs.value].sort((a,b)=>(b.updatedAt||b.createdAt||'').localeCompare(a.updatedAt||a.createdAt||'')),[runs.value])
- const filtered=source?ordered.filter(run=>JSON.stringify([run.source?.kind||'',run.source?.id||''])===source):ordered
+ const filtered=source?ordered.filter(run=>sdkSourceKey(run)===source):ordered
  const run=filtered.find(item=>item.id===selected)
  const detail=useRemote<SdkRun|null>(run?endpoint+'/'+encodeURIComponent(run.id):null,null)
  const current=detail.value?.id===run?.id?detail.value:run
@@ -67,7 +67,7 @@ export function SdkIntegrationPanel(){
     <Button size="sm" onClick={()=>{void runs.reload();void detail.reload()}}><RefreshCw size={14}/>{tr('새로고침','Refresh')}</Button>
    </div>
   </div>
-  <SdkPluginRegistry onSelect={id=>{setSource(JSON.stringify(['sdk_plugin',id]));setSelected('');setLimit(15)}}/>
+  <SdkPluginRegistry onSelect={id=>{setSource(JSON.stringify(['registered',id]));setSelected('');setLimit(15)}}/>
   {runs.error&&<Notice message={runs.error}/>}
   {error&&<Notice message={error}/>}
   {notice&&<p role="status" className="mt-2 text-xs text-[#5C544A]">{notice}</p>}
@@ -91,7 +91,8 @@ export function SdkIntegrationPanel(){
     <span className="text-xs font-semibold">{tr('실행 기록','Run history')}</span>
     <SelectInput className="!w-auto max-w-full !py-1.5" aria-label={tr('작업 출처 필터','Filter run source')} value={source} onChange={e=>{setSource(e.target.value);setSelected('');setLimit(15);setObservation('');setApplied('')}}>
      <option value="">{tr('모든 출처','All sources')}</option>
-     {groups.map(group=><option key={group.key} value={group.key}>{group.kind?group.kind+' / '+group.id:tr('출처 미지정','Unspecified source')} ({group.runs.length})</option>)}
+     {source&&!groups.some(group=>group.key===source)&&<option value={source}>{tr('선택한 플러그인 (기록 없음)','Selected plugin (no runs)')}</option>}
+     {groups.map(group=><option key={group.key} value={group.key}>{group.kind?group.kind+' / '+group.id:tr('출처 미지정','Unspecified source')}{group.runs.some(r=>!!r.sdkPluginId)?tr(' · 인증 등록',' · Enrolled'):''} ({group.runs.length})</option>)}
     </SelectInput>
    </div>
    {!filtered.length&&<p className="rounded-xl border border-dashed border-[#E7E0D5] p-4 text-center text-xs text-[#7C7469]">{tr('아직 기록된 SDK 작업이 없습니다. 외부 프로그램이 작업을 제출하면 여기에 표시됩니다.','No SDK runs recorded. Submitted external tasks will appear here.')}</p>}

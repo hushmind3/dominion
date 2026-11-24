@@ -82,7 +82,7 @@ export function SdkPluginRegistry({onSelect}:{onSelect:(id:string)=>void}){
      <p className="mt-1 text-[11px] text-[#7C7469]">{tr('마지막 인증','Last authenticated')}: {p.lastSeenAt?new Date(p.lastSeenAt).toLocaleString(en?'en-US':'ko-KR'):'—'}</p>
      <div className="mt-2 flex flex-wrap gap-1.5">
       <Button size="sm" onClick={()=>onSelect(p.id)}>{tr('작업 보기','View runs')}</Button>
-      <Button size="sm" disabled={busy} onClick={()=>void copy(apiBase+endpoint+'/'+encodeURIComponent(p.id))}><Copy size={13}/>{tr('주소 복사','Copy URL')}</Button>
+      <Button size="sm" disabled={busy} onClick={()=>void copy(apiBase+endpoint+'/'+encodeURIComponent(p.id)+'/heartbeat')}><Copy size={13}/>{tr('연결 확인 주소 복사','Copy heartbeat URL')}</Button>
       <Button size="sm" disabled={busy} onClick={()=>{if(window.confirm(tr('기존 키를 폐기하고 새 키를 발급하시겠습니까?','Revoke the old key and issue a new one?')))void act(async()=>setSecret(await post<Receipt>(endpoint+'/'+encodeURIComponent(p.id)+'/rotate',{})))}}><KeyRound size={13}/>{tr('키 재발급','Rotate key')}</Button>
       <Button size="sm" variant={p.status==='enabled'?'danger':'secondary'} disabled={busy} onClick={()=>{const enabled=p.status!=='enabled';if(enabled||window.confirm(tr('신규 요청과 인증을 차단합니다. 이미 접수된 작업은 실행 기록에서 별도로 중단하세요.','Block new requests and authentication. Cancel already-admitted runs separately in run history.')))void act(()=>post(endpoint+'/'+encodeURIComponent(p.id)+'/state',{enabled}))}}>{p.status==='enabled'?tr('연결 해제','Disable'):tr('다시 활성화','Enable')}</Button>
      </div>

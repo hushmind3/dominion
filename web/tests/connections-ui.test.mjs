@@ -107,3 +107,10 @@ test('registered plugin presence requires authenticated recent activity, not sou
  assert.match(registry,/const endpoint='\/api\/sdk\/plugins'/)
  assert.doesNotMatch(registry,/localStorage|sessionStorage/)
 })
+
+
+test('registered plugin filters cannot be spoofed by caller-supplied source labels',async()=>{
+ const {sdkSourceKey}=await import('../src/utils/sdkIntegration.ts')
+ assert.notEqual(sdkSourceKey({id:'1',status:'running',source:{kind:'sdk_plugin',id:'p'}}),
+  sdkSourceKey({id:'2',status:'running',sdkPluginId:'p',source:{kind:'sdk_plugin',id:'p'}}))
+})

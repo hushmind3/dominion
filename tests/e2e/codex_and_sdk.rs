@@ -506,3 +506,58 @@ fn owner_replacement_during_approval_cannot_write_the_old_goal_or_escape_workspa
     assert!(!project.join("stale-approved.md").exists());assert!(!app._root.join("current-approved.md").exists());
     assert_eq!(requests.lock().unwrap().len(),2);
 }
+
+
+#[test]
+fn registered_plugin_submits_real_native_task_and_revokes_its_own_key(){
+    let _serial=serial();
+    let (port,requests)=scripted_provider(|_|vec![json!({
+        "choices":[{"delta":{"tool_calls":[{"index":0,"id":"plugin-write","type":"function",
+          "function":{"name":"workspace_write","arguments":"{\"path\":\"plugin-verified.md\",\"content\":\"\"}"}}]},"finish_reason":"tool_calls"}],
+        "usage":{"prompt_tokens":40,"completion_tokens":10,"total_tokens":50}
+    })]);
+    let app=TestApp::new(port,"native");
+    let providers=app.get("/api/providers");
+    let agent=app.post("/api/agents",&json!({"name":"Plugin test agent",
+        "systemPrompt":"Use the requested workspace tool","providerId":providers[0]["id"],"model":"mock"}));
+    let enrolled=app.post("/api/sdk/plugins",&json!({"pluginId":"fixture","name":"Fixture","agentId":agent["id"]}));
+    let token=enrolled["token"].as_str().unwrap();
+    let base=format!("{}/api/sdk/plugins/fixture",app.base);
+    let ping=app.client.post(format!("{base}/heartbeat")).header("x-dominion-plugin-token",token).send().unwrap();
+    assert!(ping.status().is_success());
+    assert!(app.get("/api/sdk/plugins")[0]["lastSeenAt"].is_string());
+    let payload=json!({"instruction":"plugin-verified.md 파일을 만들어줘","idempotencyKey":"one"});
+    let submit=|| app.client.post(format!("{base}/runs")).header("x-dominion-plugin-token",token)
+        .json(&payload).send().unwrap().error_for_status().unwrap().json::<Value>().unwrap();
+    let first=submit();
+    let second=submit();
+    assert_eq!(first["id"],second["id"]);
+    assert_eq!(first["sdkPluginId"],"fixture");
+    assert_eq!(first["agentId"],agent["id"]);
+    let id=first["id"].as_str().unwrap();
+    let mut view=Value::Null;
+    for _ in 0..150 {
+        view=app.get(&format!("/api/sdk/runs/{id}"));
+        if view["status"]=="awaiting_approval"||view["status"]=="completed"||view["status"]=="failed"{break;}
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    if view["status"]=="awaiting_approval" {
+        assert!(!app._root.join("plugin-verified.md").exists());
+        app.post(&format!("/api/sdk/runs/{id}/approve"),&json!({"callId":view["checkpoint"]["pendingCall"]["id"]}));
+        for _ in 0..150 {
+            view=app.get(&format!("/api/sdk/runs/{id}"));
+            if view["status"]=="completed"||view["status"]=="failed"{break;}
+            std::thread::sleep(Duration::from_millis(30));
+        }
+    }
+    assert_eq!(view["status"],"completed","{view}");
+    assert_eq!(view["verified"],true,"{view}");
+    assert!(app._root.join("plugin-verified.md").is_file());
+    assert_eq!(requests.lock().unwrap().len(),1);
+    let own:Value=app.client.get(format!("{base}/runs/{id}")).header("x-dominion-plugin-token",token)
+        .send().unwrap().error_for_status().unwrap().json().unwrap();
+    assert_eq!(own["id"],first["id"]);
+    app.post("/api/sdk/plugins/fixture/state",&json!({"enabled":false}));
+    let denied=app.client.post(format!("{base}/heartbeat")).header("x-dominion-plugin-token",token).send().unwrap();
+    assert_eq!(denied.status().as_u16(),403);
+}
