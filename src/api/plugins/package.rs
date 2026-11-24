@@ -36,7 +36,7 @@ fn npm_version(value:&str)->bool{
     parts.len()==3&&parts.iter().all(|p|!p.is_empty()&&p.bytes().all(|c|c.is_ascii_digit()))
 }
 impl Spec{
-    fn valid(&self)->bool{
+    pub(super) fn valid(&self)->bool{
         let pkg=match self.runtime.as_str(){
             "npm"=>if let Some(s)=self.package.strip_prefix('@'){
                 s.split_once('/').is_some_and(|(a,b)|atom(a,100)&&atom(b,100))

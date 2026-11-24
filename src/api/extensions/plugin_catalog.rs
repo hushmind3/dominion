@@ -85,16 +85,20 @@ async fn lookup(client:&reqwest::Client,source:&str,q:&str)->Result<Vec<Value>,S
     project(source,&raw)
 }
 pub async fn search(Query(query):Query<Search>)->Response{
-    let q=query.q.trim();
-    let source=query.source.as_deref().unwrap_or("all");
+    match search_page(&query.q,query.source.as_deref().unwrap_or("all")).await{
+        Ok(v)=>Json(v).into_response(),Err(e)=>(StatusCode::BAD_REQUEST,Json(json!({"error":e}))).into_response()
+    }
+}
+pub(crate) async fn search_page(q:&str,source:&str)->Result<Value,String>{
+    let q=q.trim();
     if q.len()<2||q.len()>160||q.chars().any(char::is_control)||
         (source!="all"&&!SOURCES.contains(&source)){
-        return (StatusCode::BAD_REQUEST,Json(json!({"error":"Invalid search query or registry"}))).into_response();
+        return Err("Invalid search query or registry".into());
     }
     let client=match reqwest::Client::builder().user_agent("DOMINION-plugin-discovery/1")
         .timeout(Duration::from_secs(12)).redirect(reqwest::redirect::Policy::none()).build(){
         Ok(client)=>client,
-        Err(_)=>return (StatusCode::INTERNAL_SERVER_ERROR,Json(json!({"error":"Registry client unavailable"}))).into_response()
+        Err(_)=>return Err("Registry client unavailable".into())
     };
     let selected=SOURCES.into_iter().filter(|s|source=="all"||*s==source);
     let results=futures_util::future::join_all(selected.map(|s|{
@@ -109,7 +113,7 @@ pub async fn search(Query(query):Query<Search>)->Response{
             Err(message)=>errors.push(json!({"source":s,"message":message}))
         }
     }
-    Json(json!({"items":items,"errors":errors,"pypiMode":"exact_name","searchOnly":true})).into_response()
+    Ok(json!({"items":items,"errors":errors,"pypiMode":"exact_name","searchOnly":true}))
 }
 #[cfg(test)]
 mod tests{

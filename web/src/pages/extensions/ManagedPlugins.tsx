@@ -84,7 +84,7 @@ export function ManagedPlugins({selectedImage,onImageConsumed,selectedPackage,on
   <div className="flex flex-wrap items-center justify-between gap-3">
    <div><h3 className="flex items-center gap-2 text-base font-bold text-ink"><Box size={20}/>{tr('내 플러그인','My plugins')}{rows&&<span className="text-xs text-muted">· {rows.length}</span>}</h3>
     <p className="mt-1 text-xs text-muted">{tr('외부 프로그램을 Docker에서 독립 실행합니다. MCP·스킬과 별도로 관리됩니다.','Run external apps in Docker, independently of MCP and skills.')}</p></div>
-   <div className="flex gap-2"><Button variant="ghost" disabled={!!busy} onClick={()=>void load()}><RefreshCw size={15}/>{tr('새로고침','Refresh')}</Button><Button disabled={disabled} onClick={()=>{setRestoreId('');setShow(!show);setApproved(false)}}><Plus size={16}/>{tr('설치','Install')}</Button><Button disabled={disabled} variant="secondary" onClick={()=>openPackage()}>{tr('패키지 설치','Install package')}</Button></div>
+   <div className="flex flex-wrap gap-2"><Button variant="ghost" disabled={!!busy} onClick={()=>void load()}><RefreshCw size={15}/>{tr('새로고침','Refresh')}</Button><Button disabled={disabled} onClick={()=>{setRestoreId('');setShow(!show);setApproved(false)}}><Plus size={16}/>{tr('설치','Install')}</Button><Button disabled={disabled} variant="secondary" onClick={()=>openPackage()}>{tr('패키지 설치','Install package')}</Button></div>
   </div>
   <div className="my-3 rounded-lg bg-canvas p-3 text-xs">
    {!inventory?tr('Docker 확인 중…','Checking Docker…'):inventory.available?tr('Docker 연결됨 · 설치 후 직접 실행','Docker connected · explicit start'):tr('Docker 연결 필요: ','Docker unavailable: ')+inventory.error}

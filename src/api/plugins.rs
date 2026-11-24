@@ -12,6 +12,7 @@ pub mod bridge;
 pub mod versions;
 pub mod recipe;
 pub mod package;
+pub mod agent;
 
 const LIMIT:usize=1024*1024;
 const OWNER:&str="io.dominion.plugin.owner";
@@ -269,12 +270,14 @@ pub async fn install(State(state):State<AppState>,Json(input):Json<Install>)->Re
     }.await;
     match result{Ok(row)=>Json(row).into_response(),Err(e)=>failed(&e)}
 }
-async fn mutate(state:AppState,id:String,action:&str)->Response{
+async fn mutate(state:AppState,id:String,action:&str)->Response{mutate_checked(state,id,action,None).await}
+async fn mutate_checked(state:AppState,id:String,action:&str,expected:Option<&str>)->Response{
     let _lock=match state.integrations.plugin_mutations.try_lock(){Ok(g)=>g,Err(_)=>return error(StatusCode::CONFLICT,"다른 플러그인 변경이 진행 중입니다.")};
     let scope=match owner(&state){Ok(s)=>s,Err(e)=>return failed(&e)};
     let row=match inspect(&id,&scope).await{Ok(Some(r))=>r,Ok(None)=>return error(StatusCode::NOT_FOUND,"플러그인이 없습니다."),Err(e)=>return failed(&e)};
     let cid=row["containerId"].as_str().unwrap_or_default();
     if !container_id(cid){return failed("Invalid container identity")}
+    if expected.is_some_and(|e|e!=cid){return error(StatusCode::CONFLICT,"승인 대상 컨테이너가 변경되었습니다.")}
     if matches!(action,"start"|"remove")&&versions::pending(&state,&id){return error(StatusCode::CONFLICT,"진행 중인 버전 변경을 먼저 복구하세요.")}
     if action=="remove"&&row["running"]==true{return error(StatusCode::CONFLICT,"실행 중인 플러그인은 먼저 중지하세요.")}
     let args=match action{

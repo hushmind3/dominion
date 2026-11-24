@@ -17,6 +17,7 @@ use std::sync::Arc;
 pub struct IntegrationState {
     pub(crate) mcp_sessions: Arc<mcp::SessionPool>,
     pub(crate) plugin_mutations: Arc<tokio::sync::Mutex<()>>,
+    pub(crate) plugin_proposal_mutations: Arc<tokio::sync::Mutex<()>>,
     pub(crate) plugin_chat_grants: Arc<std::sync::Mutex<std::collections::HashMap<String,serde_json::Value>>>,
 }
 
