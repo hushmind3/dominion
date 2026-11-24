@@ -37,8 +37,10 @@ function fixture() {
   agents:[{id:'test-persona',name:'Test Persona',description:'Mock persona',systemPrompt:'Be clear.',providerId:'mock-local',model:'qwen-test',enabled:true}],
   sessions:[{id:'recent-chat',title:'Recent Test Chat',providerId:'mock-local',model:'qwen-test',createdAt:'2026-11-23T00:00:00Z'}],
   memories:[{id:'memory-one',text:'Remember test choice',scope:'shared',status:'active',source:'user',retrievalEligible:true,createdAt:'2026-11-23T00:00:00Z'}],
-  chatRequests:[],mcpWrites:[],providerWrites:[],memoryWrites:[],jobs:[],plugins:[],pluginWrites:[],
+  chatRequests:[],mcpWrites:[],providerWrites:[],memoryWrites:[],jobs:[],plugins:[],pluginWrites:[],marketWrites:[],marketVersion:1,
  }
+ const marketId='01234567-89ab-4def-8123-456789abcdef'
+ const manifest=()=>({name:'Independent fixture',description:'Generic SDK extension',version:String(db.marketVersion),image:'ghcr.io/example/fixture@sha256:'+String(db.marketVersion).repeat(64),network:true,port:8080})
  const ok=(route,value,status=200,headers={})=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(value),headers})
  const handler=async route=>{
   const request=route.request(),method=request.method(),url=new URL(request.url()),p=url.pathname
@@ -94,6 +96,14 @@ function fixture() {
    Object.assign(plugin,{state:pluginMatch[2]==='start'?'running':'exited',running:pluginMatch[2]==='start'})
    return ok(route,plugin)
   }
+  if(method==='POST'&&(p==='/api/plugins/market/install'||p==='/api/plugins/market/update')){
+   db.marketWrites.push({path:p,body})
+   const old=db.plugins.find(row=>row.id===marketId)
+   if(p.endsWith('/update')&&(!old||old.running||old.imageId!==body.expectedImageId))return ok(route,{error:'Update conflict'},409)
+   const m=manifest(),saved={id:marketId,name:m.name,image:m.image,network:m.network,requestedPort:m.port,state:'created',running:false,ports:[],exitCode:0,imageId:'sha256:'+String(db.marketVersion).repeat(64)}
+   db.plugins=db.plugins.filter(row=>row.id!==marketId).concat(saved)
+   return ok(route,saved)
+  }
   if(method!=='GET')return ok(route,{ok:true})
   if(p==='/api/health'||p==='/api/status')return ok(route,{ok:true,status:'running',engine:'mock'})
   if(p==='/api/sessions')return ok(route,db.sessions)
@@ -110,8 +120,12 @@ function fixture() {
   if(p==='/api/mcp/presets')return ok(route,[])
   if(p==='/api/mcp/catalog')return ok(route,[{name:'Parallel MCP 2.0',description:'2026 web search and fetching',url:'https://mcp.parallel.ai/mcp'}])
   if(p==='/api/plugins/managed')return ok(route,{available:true,items:db.plugins})
-  if(p==='/api/plugins/market')return ok(route,{items:[{repository:'example/fixture',description:'Fixture extension',stars:12,url:'https://github.com/example/fixture',detailsLoaded:false}],errors:[]})
-  if(p==='/api/plugins/market/details')return ok(route,{repository:'example/fixture',description:'Fixture extension',stars:12,url:'https://github.com/example/fixture',detailsLoaded:true,sourceDownload:'https://github.com/example/fixture/archive/abc.zip',assets:[{name:'fixture.zip',url:'https://github.com/example/fixture/releases/download/v1/fixture.zip',size:1234}]})
+  if(p==='/api/plugins/market')return ok(route,{items:[url.searchParams.get('q')==='independent'?{repository:'example/fixture',sourceRef:'plugins',name:'Independent fixture',indexed:true,description:'Generic SDK extension',url:'https://github.com/example/fixture',detailsLoaded:false}:{repository:'example/fixture',description:'Fixture extension',stars:12,url:'https://github.com/example/fixture',detailsLoaded:false}],errors:[]})
+  if(p==='/api/plugins/market/details'){
+   const card={repository:'example/fixture',description:'Fixture extension',stars:12,url:'https://github.com/example/fixture',detailsLoaded:true,sourceDownload:'https://github.com/example/fixture/archive/abc.zip',assets:[{name:'fixture.zip',url:'https://github.com/example/fixture/releases/download/v1/fixture.zip',size:1234}]}
+   if(url.searchParams.get('sourceRef')==='plugins')return ok(route,{...card,sourceRef:'plugins',installId:marketId,manifest:manifest(),commit:String(db.marketVersion).repeat(40),manifestDigest:String(db.marketVersion).repeat(64)})
+   return ok(route,card)
+  }
   if(p==='/api/plugins/search')return ok(route,{items:[{id:'npm:voice-fixture',source:'npm',name:'voice-fixture',kind:'package',version:'1.0.0',description:'Voice fixture',license:'MIT',url:'https://www.npmjs.com/package/voice-fixture',compatibility:'unverified'}],errors:[],pypiMode:'exact_name',searchOnly:true})
   if(p==='/api/skill-catalog')return ok(route,{items:[],total:0,updatedAt:''})
   if(p==='/api/model-library/runtime')return ok(route,{status:'idle'})

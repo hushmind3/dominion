@@ -7,7 +7,6 @@ import {fileURLToPath} from 'node:url';
 const root=resolve(fileURLToPath(new URL('..',import.meta.url)));
 const source=(p)=>readFileSync(join(root,p),'utf8');
 const moved=[
- ['mcp.rs','mcp.rs'],
  ['channel_adapter.rs','channels/adapter.rs'],
  ['bridge.rs','channels/bridge.rs'],
  ['discord.rs','channels/discord.rs'],
@@ -24,7 +23,12 @@ function rustFiles(dir){return readdirSync(join(root,dir),{withFileTypes:true}).
  const path=join(dir,entry.name);
  return entry.isDirectory()?rustFiles(path):entry.isFile()&&entry.name.endsWith('.rs')?[path]:[];
 });}
-test('external MCP, channel and account implementations live only in integrations',()=>{
+test('channel and account implementations live in integrations; MCP transport is independent',()=>{
+ assert.equal(existsSync(join(root,'src/integrations/mcp.rs')),false);
+ assert.equal(existsSync(join(root,'extensions/mcp-connector/src/mcp.rs')),true);
+ assert.match(source('Cargo.toml'),/default = \[\]/);
+ assert.match(source('src/integrations/mod.rs'),/#\[cfg\(feature = "legacy-mcp"\)\]/);
+ assert.doesNotMatch(source('src/integrations/mcp_disabled.rs'),/tokio::process|reqwest::Client|SessionPool/);
  for(const [oldPath,newPath] of moved){
   assert.equal(existsSync(join(root,'src/engine',oldPath)),false,'engine retained '+oldPath);
   assert.equal(existsSync(join(root,'src/integrations',newPath)),true,'missing '+newPath);
