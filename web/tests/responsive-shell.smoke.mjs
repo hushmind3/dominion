@@ -207,7 +207,7 @@ try{
  await mobileChat.locator('.conversation-topbar').getByRole('button',{name:'대화 목록 펼치기'}).click()
  await history.getByRole('button',{name:'그룹',exact:true}).click()
  await roomHistory.waitFor({state:'visible'})
- await roomHistory.getByRole('button',{name:'그룹 목록 접기'}).click()
+ await roomHistory.getByRole('button',{name:'대화방 목록 접기',exact:true}).click()
  await roomHistory.waitFor({state:'hidden'})
  await page.locator('.page-rooms .conversation-topbar .conversation-mobile-toggle').click()
  await roomHistory.waitFor({state:'visible'})
