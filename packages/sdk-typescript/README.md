@@ -100,3 +100,11 @@ A remote result is always `nativeVerified: false` at the coordinator;
 even an owner-reviewed report cannot impersonate local Tool Gateway evidence.
 
 Worker setup and lease recovery: [Remote Worker](../../docs/REMOTE-WORKER-2026.md).
+
+## Rust embedding and parity
+
+See [dominion-sdk](../../crates/dominion-sdk/README.md) for the native Rust library
+and its HTTP transport. Both clients expose `runsBySource` / `runs_by_source`
+and single/batch model route capability queries. The wait deadline covers
+in-flight HTTP reads and does not cancel server work. Explicit cancellation
+requires `cancelRun`. Owner approval remains an explicit caller action.

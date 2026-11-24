@@ -48,3 +48,9 @@ library does not grant access to the app database, model keys or tools.
 
 Run `cargo test --locked -p dominion-sdk` and
 `cargo check --locked -p dominion-sdk --no-default-features`.
+
+Both clients expose the existing source history and model inference support endpoints.
+Use `runs_by_source`, `inference_support`, and `inference_support_batch`
+without inventing model capabilities. The external-consumer tests in
+`tests/embedded.rs` and `tests/http.rs` exercise the public crate surface;
+they use a deterministic host and loopback HTTP fixture, not a paid provider.

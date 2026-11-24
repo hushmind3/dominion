@@ -211,3 +211,39 @@ test('start forwards caller retry identity and provenance',async()=>{
   }});
   await client.startRun({instruction:'goal',idempotencyKey:'retry-1',agentId:'a',source:{kind:'issue',id:'1'}});
 });
+
+test('wait deadline aborts an in-flight HTTP read without cancelling the run', async()=>{
+  let called=0;
+  const client=new DominionAgentClient({fetch:async(_url,request)=>{
+    called++;
+    assert.equal(request.method,'GET');
+    return new Promise((_resolve,reject)=>{
+      request.signal.addEventListener('abort',()=>reject(request.signal.reason),{once:true});
+    });
+  }});
+  await assert.rejects(client.waitForRun('r',{timeoutMs:25}), e=>e instanceof DominionSdkError&&e.status===408);
+  assert.equal(called,1);
+});
+test('caller abort reaches the HTTP read and retains its reason', async()=>{
+  const controller=new AbortController();
+  const reason=new Error('caller stopped waiting');
+  const client=new DominionAgentClient({fetch:async(_url,request)=>{
+    controller.abort(reason);
+    assert.equal(request.signal.aborted,true);
+    throw request.signal.reason;
+  }});
+  await assert.rejects(client.waitForRun('r',{signal:controller.signal}), e=>e===reason);
+});
+test('source history and route metadata use the existing server routes', async()=>{
+  const calls=[];
+  const client=new DominionAgentClient({fetch:async(url,request)=>{
+    calls.push({url:String(url),method:request.method,body:request.body});
+    return new Response(JSON.stringify(request.method==='POST'?[]:{}));
+  }});
+  await client.runsBySource('issue');
+  await client.inferenceSupport({providerId:'p/1',model:'m x'});
+  await client.inferenceSupportBatch([{providerId:'p/1',model:'m x'}]);
+  assert.match(calls[0].url,/\/api\/sdk\/runs\/source\/issue$/);
+  assert.match(calls[1].url,/\/api\/chat\/inference-support\?providerId=p%2F1&model=m\+x$/);
+  assert.deepEqual(JSON.parse(calls[2].body),[{providerId:'p/1',model:'m x'}]);
+});

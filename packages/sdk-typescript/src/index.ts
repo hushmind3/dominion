@@ -168,6 +168,13 @@ export interface AgentRun {
   runRef?: RunEventRef;
   checkpoint?: RunCheckpoint | null;
 }
+export interface RunSummary {
+  id: string; status: SdkRunStatus; sessionId?: string | null;
+  source?: {kind: string; id: string} | null; taskOutcome?: AgentRun['taskOutcome'];
+  verified?: boolean | null; createdAt?: string;
+}
+export interface InferenceRoute { providerId: string; model: string }
+export interface InferenceSupport extends InferenceRoute { thinkingToggle: boolean; reasoningEfforts: string[] }
 export interface StartRun {
   instruction: string;
   providerId?: string;
@@ -302,6 +309,15 @@ export class DominionAgentClient {
       `/api/remote/jobs/${encodeURIComponent(id)}/artifact/review`,{accept},signal);
   }
 
+  runsBySource(kind: string, signal?: AbortSignal): Promise<RunSummary[]> {
+    return this.request('GET', `/api/sdk/runs/source/${encodeURIComponent(kind)}`, undefined, signal);
+  }
+  inferenceSupport(route: InferenceRoute, signal?: AbortSignal): Promise<InferenceSupport> {
+    return this.request('GET', '/api/chat/inference-support?' + new URLSearchParams({providerId:route.providerId,model:route.model}).toString(), undefined, signal);
+  }
+  inferenceSupportBatch(routes: InferenceRoute[], signal?: AbortSignal): Promise<InferenceSupport[]> {
+    return this.request('POST', '/api/chat/inference-support', routes, signal);
+  }
   listRuns(signal?: AbortSignal): Promise<AgentRun[]> {
     return this.request('GET', '/api/sdk/runs', undefined, signal);
   }
@@ -387,33 +403,45 @@ export class DominionAgentClient {
    * inventing completion when approval or effect reconciliation is required.
    */
   async waitForRun(id: string, options: WaitRunOptions = {}): Promise<AgentRun> {
-    const timeoutMs = Math.max(0, options.timeoutMs ?? 30 * 60_000);
-    const intervalMs = Math.max(50, options.intervalMs ?? 1_000);
+    const timeoutMs = options.timeoutMs ?? 30 * 60_000;
+    const intervalMs = options.intervalMs ?? 1_000;
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 0 || timeoutMs > 2_147_483_647 ||
+        !Number.isFinite(intervalMs) || intervalMs < 0 || intervalMs > 2_147_483_647) {
+      throw new DominionSdkError('Invalid wait duration', 400);
+    }
     const deadline = Date.now() + timeoutMs;
-    for (;;) {
-      options.signal?.throwIfAborted();
-      const snapshot = await this.getRun(id, options.signal);
-      options.onUpdate?.(snapshot);
-      if (isRunSettled(snapshot)) return snapshot;
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) {
-        throw new DominionSdkError('Dominion run wait timed out; the remote run is still durable', 408);
+    const controller = new AbortController();
+    const timeout = new DominionSdkError('Dominion run wait timed out; the remote run is still durable', 408);
+    const callerAbort = () => controller.abort(options.signal?.reason);
+    options.signal?.throwIfAborted();
+    options.signal?.addEventListener('abort', callerAbort, {once:true});
+    const timer = setTimeout(() => controller.abort(timeout), timeoutMs);
+    try {
+      for (;;) {
+        controller.signal.throwIfAborted();
+        const snapshot = await this.getRun(id, controller.signal);
+        controller.signal.throwIfAborted();
+        options.onUpdate?.(snapshot);
+        if (isRunSettled(snapshot)) return snapshot;
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw timeout;
+        await new Promise<void>((resolve,reject) => {
+          const signal = controller.signal;
+          if (signal.aborted) { reject(signal.reason); return; }
+          const abort = () => { clearTimeout(delay); reject(signal.reason); };
+          const delay = setTimeout(() => {
+            signal.removeEventListener('abort',abort);
+            resolve();
+          }, Math.min(Math.max(50,intervalMs),remaining));
+          signal.addEventListener('abort',abort,{once:true});
+        });
       }
-      await new Promise<void>((resolve, reject) => {
-        const signal = options.signal;
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const abort = () => {
-          if (timer !== undefined) clearTimeout(timer);
-          signal?.removeEventListener('abort', abort);
-          reject(signal?.reason ?? new DOMException('Aborted', 'AbortError'));
-        };
-        if (signal?.aborted) { abort(); return; }
-        timer = setTimeout(() => {
-          signal?.removeEventListener('abort', abort);
-          resolve();
-        }, Math.min(intervalMs, remaining));
-        signal?.addEventListener('abort', abort, {once: true});
-      });
+    } catch (error) {
+      if (controller.signal.aborted) throw controller.signal.reason;
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      options.signal?.removeEventListener('abort',callerAbort);
     }
   }
 

@@ -62,6 +62,8 @@ pub struct AgentRun {
     #[serde(default)] pub error:Option<String>,
     #[serde(default)] pub task_outcome:Option<String>,
     #[serde(default)] pub verified:Option<bool>,
+    #[serde(default)] pub acceptance_passed:Option<bool>,
+    #[serde(default)] pub failure_class:Option<String>,
     #[serde(default)] pub actions:Option<RunActions>,
     #[serde(default)] pub checkpoint:Option<Value>,
     #[serde(default)] pub run_ref:Option<RunEventRef>,
@@ -75,6 +77,31 @@ impl AgentRun {
             && self.task_outcome.as_deref()==Some("succeeded")
     }
 }
+#[derive(Clone,Debug,Deserialize,Serialize)]
+pub struct SourceRef { pub kind:String, pub id:String }
+
+#[derive(Clone,Debug,Deserialize,Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct RunSummary {
+    pub id:String,
+    pub status:RunStatus,
+    #[serde(default)] pub session_id:Option<String>,
+    #[serde(default)] pub source:Option<Value>,
+    #[serde(default)] pub task_outcome:Option<String>,
+    #[serde(default)] pub verified:Option<bool>,
+    #[serde(default)] pub created_at:Option<String>,
+}
+#[derive(Clone,Debug,Deserialize,Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct InferenceRoute { pub provider_id:String, pub model:String }
+#[derive(Clone,Debug,Deserialize,Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct InferenceSupport {
+    pub provider_id:String,
+    pub model:String,
+    pub thinking_toggle:bool,
+    pub reasoning_efforts:Vec<String>,
+}
 #[derive(Clone,Debug,Default,Serialize)]
 #[serde(rename_all="camelCase")]
 pub struct StartRun {
@@ -82,6 +109,7 @@ pub struct StartRun {
     #[serde(skip_serializing_if="Option::is_none")] pub provider_id:Option<String>,
     #[serde(skip_serializing_if="Option::is_none")] pub model:Option<String>,
     #[serde(skip_serializing_if="Option::is_none")] pub agent_id:Option<String>,
+    #[serde(skip_serializing_if="Option::is_none")] pub source:Option<SourceRef>,
     #[serde(skip_serializing_if="Option::is_none")] pub idempotency_key:Option<String>,
     #[serde(skip_serializing_if="Option::is_none")] pub verify_command:Option<String>,
     #[serde(skip_serializing_if="Option::is_none")] pub max_rounds:Option<usize>,
@@ -139,6 +167,18 @@ impl Client {
         self.request(Method::POST,self.url(path)?,Some(body)).await
     }
     pub async fn list_runs(&self)->Result<Vec<AgentRun>,ClientError>{self.get(&["api","sdk","runs"]).await}
+    pub async fn runs_by_source(&self,kind:&str)->Result<Vec<RunSummary>,ClientError>{
+        self.get(&["api","sdk","runs","source",kind]).await
+    }
+    pub async fn inference_support(&self,route:&InferenceRoute)->Result<InferenceSupport,ClientError>{
+        let mut url=self.url(&["api","chat","inference-support"])?;
+        url.query_pairs_mut().append_pair("providerId",&route.provider_id).append_pair("model",&route.model);
+        self.request(Method::GET,url,None).await
+    }
+    pub async fn inference_support_batch(&self,routes:&[InferenceRoute])->Result<Vec<InferenceSupport>,ClientError>{
+        let value=serde_json::to_value(routes).map_err(|e|ClientError::Invalid(e.to_string()))?;
+        self.post(&["api","chat","inference-support"],value).await
+    }
     pub async fn get_run(&self,id:&str)->Result<AgentRun,ClientError>{self.get(&["api","sdk","runs",id]).await}
     pub async fn start_run(&self,input:&StartRun)->Result<AgentRun,ClientError>{
         let body=serde_json::to_value(input).map_err(|e|ClientError::Invalid(e.to_string()))?;
