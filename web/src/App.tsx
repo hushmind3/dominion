@@ -47,7 +47,7 @@ export default function App() {
     onSession={selectChatSession} openModels={()=>navigate('models')} openSettings={()=>navigate('settings')} openExtensions={()=>navigate('extensions')} switchMode={switchMode}/></AsyncPage></div>}
    {visited.rooms&&<div hidden={page!=='rooms'} className="h-full page-rooms"><AsyncPage label={t('shell.loadingChat')}><RoomsPage newRoomRevision={newRoomRevision} onOpenNavigation={openNavigation} selectedRoom={roomSelection} onSelectRoom={setRoomSelection} settingsTarget={mode==='rooms'?conversationSettingsTarget:null} active={page==='rooms'}
     openSession={id=>navigate('chat',id)}/></AsyncPage></div>}
-   {workspacePage&&<WorkspacePage conversationSettingsRef={setConversationSettingsTarget} page={page} onNavigate={navigate}/>}
+   {workspacePage&&<WorkspacePage conversationSettingsRef={setConversationSettingsTarget} page={page} mode={mode} onNavigate={navigate}/>}
    {navigation.mobile&&!navigation.open&&workspacePage&&<Button className="absolute bottom-5 left-4 z-30 !size-11 !p-0 shadow-lg" variant="secondary" onClick={openNavigation} aria-label={t('shell.showMenu')}><Menu size={20}/></Button>}
   </main>
  </div></OwnerProfileProvider>

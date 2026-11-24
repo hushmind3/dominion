@@ -1,4 +1,5 @@
 import {ViewTabs, SearchField, EmptyState} from '../components/ui/WorkspaceUI'
+import {workspaceView} from '../utils/workspaceRouting'
 import {lazy,Suspense,useEffect,useState} from 'react'
 import {Activity, ArrowRight, RefreshCw, Blocks, BookOpenText, Check, ExternalLink, Link2, LoaderCircle, MessageCircle, PackagePlus, Plus, RadioTower, Send, Settings2, ShieldCheck, Trash2, UsersRound, X} from 'lucide-react'
 import {DialogBackdrop, DialogPanel} from '../components/Dialog'
@@ -162,9 +163,7 @@ function ChannelEditor({editor,saving,error,rooms,agents,providers,onClose,onSav
 
 type ConnectionView='saved'|'add'|'accounts'|'mcp'|'registry'|'plugins'|'skills'
 function connectionViewFromHash():ConnectionView{
- const [path,query]=window.location.hash.split('?')
- if(path!=='#/connections')return 'saved'
- const view=new URLSearchParams(query).get('view')
+ const view=workspaceView(window.location.hash,'connections')
  return view==='add'||view==='accounts'||view==='mcp'||view==='registry'||view==='plugins'||view==='skills'?view:'saved'
 }
 

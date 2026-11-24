@@ -1,6 +1,7 @@
 import {useEffect,useState} from 'react'
 import {BookOpenText,Check,FileText,Pencil,Plus,Trash2,UsersRound} from 'lucide-react'
 import {ViewTabs} from '../components/ui/WorkspaceUI'
+import {workspaceView} from '../utils/workspaceRouting'
 import {PromptsPage} from './Prompts'
 import {del,post,type Agent} from '../api'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
@@ -119,9 +120,7 @@ function MemoryRecordsPage(){
 
 type MemoryView='memories'|'shared'|'personas'|'groups'
 function memoryViewFromHash():MemoryView{
- const [path,query]=window.location.hash.split('?')
- if(path!=='#/memory')return 'memories'
- const view=new URLSearchParams(query).get('view')
+ const view=workspaceView(window.location.hash,'memory')
  return view==='shared'||view==='personas'||view==='groups'?view:'memories'
 }
 

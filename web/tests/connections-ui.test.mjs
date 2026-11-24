@@ -6,7 +6,7 @@ import {resolve,dirname} from 'node:path'
 import {
  channelsByKind,visibleChannelCatalog,channelDraftMissing,channelStatusTone,
 } from '../src/utils/connectionState.ts'
-import {canonicalWorkspaceHash} from '../src/utils/workspaceRouting.ts'
+import {canonicalWorkspaceHash,workspaceView} from '../src/utils/workspaceRouting.ts'
 
 const dir=dirname(fileURLToPath(import.meta.url))
 const page=readFileSync(resolve(dir,'../src/pages/Connections.tsx'),'utf8')
@@ -178,4 +178,16 @@ test('local model connections expose the saved tool adapter rather than hiding c
  assert.match(modelDialog,/<option value="native">/)
  assert.match(modelDialog,/<option value="compat">/)
  assert.match(models,/provider\.toolMode==='compat'/)
+})
+
+test('subpage readers share canonical URLs and keep reply settings separate',()=>{
+ assert.equal(workspaceView('#/models','settings'),'ai')
+ assert.equal(workspaceView('#/extensions?tab=market','connections'),'registry')
+ assert.equal(workspaceView('#/agents?agent=a1','memory'),'personas')
+ assert.equal(workspaceView('#/settings?view=reply','settings'),'reply')
+ assert.equal(workspaceView('#/settings?view=reply','connections'),null)
+ assert.match(settings,/id:'reply'/)
+ const workspacePage=readFileSync(resolve(dir,'../src/components/WorkspacePage.tsx'),'utf8')
+ assert.match(workspacePage,/replyView&&<section className="workspace-reply-preferences/)
+ assert.match(workspacePage,/mode==='rooms'/)
 })

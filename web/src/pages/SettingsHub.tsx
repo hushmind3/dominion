@@ -1,7 +1,8 @@
 import {lazy,useEffect,useState} from 'react'
-import {Activity,Bot,Layers3,Settings2,ChartNoAxesCombined} from 'lucide-react'
+import {Activity,Bot,Layers3,Settings2,ChartNoAxesCombined,MessageSquare} from 'lucide-react'
 import {ViewTabs} from '../components/ui/WorkspaceUI'
 import {useLocale} from '../i18n'
+import {workspaceView} from '../utils/workspaceRouting'
 import type {PageId} from '../workspacePages'
 
 const OperationsPage=lazy(()=>import('./Operations').then(module=>({default:module.OperationsPage})))
@@ -9,12 +10,10 @@ const ModelHub=lazy(()=>import('./Models').then(module=>({default:module.ModelHu
 const CapabilitiesPage=lazy(()=>import('./Capabilities').then(module=>({default:module.CapabilitiesPage})))
 const HomePage=lazy(()=>import('./Home').then(module=>({default:module.HomePage})))
 
-type SettingsView='general'|'ai'|'features'|'overview'|'activity'
+type SettingsView='general'|'reply'|'ai'|'features'|'overview'|'activity'
 function readSettingsView():SettingsView{
- const [path,query]=window.location.hash.split('?')
- if(path!=='#/settings')return 'general'
- const view=new URLSearchParams(query).get('view')
- return view==='ai'||view==='features'||view==='overview'||view==='activity'?view:'general'
+ const view=workspaceView(window.location.hash,'settings')
+ return view==='reply'||view==='ai'||view==='features'||view==='overview'||view==='activity'?view:'general'
 }
 
 /** One settings entry point for model connections and native capability inventory.
@@ -37,6 +36,7 @@ export function SettingsHub({navigate}:{navigate:(page:PageId,sessionId?:string)
   <div className="mx-auto w-full max-w-[1320px] px-5 pt-5 sm:px-7 lg:px-6">
    <ViewTabs value={view} onChange={choose} label={tr('설정과 기능 관리','Settings and capabilities')} options={[
     {id:'general',label:tr('일반 설정','General settings'),icon:Settings2},
+    {id:'reply',label:tr('답변 설정','Reply settings'),icon:MessageSquare},
     {id:'ai',label:tr('AI 연결','AI connections'),icon:Bot},
     {id:'features',label:tr('기본 기능','Built-in capabilities'),icon:Layers3},
     {id:'overview',label:tr('사용 현황','Overview'),icon:ChartNoAxesCombined},
