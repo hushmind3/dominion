@@ -147,6 +147,8 @@ function RoomConversation({settingsTarget,room,agents,providers,openSession,onSa
  const [thinkingEnabled,setThinkingEnabled]=usePersistentConversationToggle('thinkingEnabled')
  const [reasoningEffort,setReasoningEffort]=usePersistentReasoningEffort()
  const [recipientsOpen,setRecipientsOpen]=useState(false)
+ const [membersOpen,setMembersOpen]=useState(true)
+ const [mobileMembersOpen,setMobileMembersOpen]=useState(false)
  const recipientsPanel=useAnchoredPanel(recipientsOpen,()=>setRecipientsOpen(false),280,'top')
  useEffect(()=>{if(!visibleView){setRecipientsOpen(false)}},[visibleView])
  const [input,setInput]=useChatDraft('room:'+room.id)
@@ -331,6 +333,15 @@ function RoomConversation({settingsTarget,room,agents,providers,openSession,onSa
  return <div className="room-conversation">
   {settingsTarget&&createPortal(<ConversationSettings permissionControl={<ExecutionPermissionsSetting/>} reasoningControl={<ReasoningSelect value={reasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} defaultLabel={current.reasoningEffort?`${t('rooms.reasoningDefault')} (${current.reasoningEffort})`:t('chat.reasoningAuto')} className="chat-reasoning !h-7 !w-auto !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-muted"/>} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={thinkingEnabled} setThinkingEnabled={setThinkingEnabled} reasoningEffort={reasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={current.toolsEnabled===true} setToolsEnabled={value=>void changeRoomOption('toolsEnabled',value)} autoLearn={current.autoLearning===true} setAutoLearn={value=>void changeRoomOption('autoLearning',value)} optionsBusy={optionsBusy} learning={knowledgeBusy} learnDisabled={!sessionId||running} onLearn={learnKnowledge} notice={knowledgeNotice}/>,settingsTarget)}
   <section className="room-main" aria-label={t('rooms.headerAria',{name:current.name})}>
+   <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-divider bg-surface px-3 py-2 sm:px-5">
+    <span className="min-w-0 flex-1 text-xs text-muted">{running?(speaker?.name||t('rooms.waitingSpeaker')):t(modes[mode].label)}</span>
+    <Button variant="secondary" size="sm" onClick={()=>{setTeamOpen(true);setInspector(false)}}><Workflow size={16}/>{t('rooms.taskAction')}</Button>
+    <Button variant="ghost" size="icon" className="!size-9" aria-label={t('rooms.activity')} title={t('rooms.activity')} onClick={()=>setShowActivity(true)}><Activity size={17}/></Button>
+    <Button variant="ghost" size="icon" className="!size-9" aria-label={t('rooms.sharedKnowledge')} title={t('rooms.sharedKnowledge')} onClick={()=>void openKnowledge()}><BookOpenText size={17}/></Button>
+    <Button variant="ghost" size="sm" className="xl:hidden" aria-expanded={mobileMembersOpen} onClick={()=>setMobileMembersOpen(v=>!v)}><UsersRound size={16}/>{roster.length}</Button>
+    <Button variant="ghost" size="sm" className="hidden xl:inline-flex" aria-expanded={membersOpen} onClick={()=>setMembersOpen(v=>!v)}><UsersRound size={16}/>{roster.length}</Button>
+   </div>
+   {mobileMembersOpen&&<div className="shrink-0 border-b border-divider px-3 py-2 xl:hidden"><div className="flex flex-wrap items-center justify-between gap-2"><strong className="text-sm">{t('rooms.roster')}</strong><Button size="sm" variant="secondary" onClick={()=>{setInspector(true);setMobileMembersOpen(false)}}>{t('rooms.editParticipants')}</Button></div><div className="mt-2 flex max-h-32 flex-wrap gap-1 overflow-y-auto"><Button size="sm" variant="ghost" aria-pressed={!targets.length} onClick={()=>setTargets([])}>{t('rooms.autoResponders')}</Button>{roster.map((agent,index)=><Button key={agent.id} variant="secondary" size="sm" aria-pressed={targets.includes(agent.id)} onClick={()=>mention(agent)} className="aria-pressed:!bg-selected"><Avatar agent={agent} size="small" index={index}/>{agent.name}{targets.includes(agent.id)&&<Check size={14}/>}</Button>)}</div></div>}
 
    <div className="room-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]" ref={scrollRef} onScroll={onScroll} role="log" aria-label={t('rooms.logAria')} aria-busy={loading}>
     <div className="mx-auto w-full max-w-conversation px-4 py-6 sm:px-6">
@@ -357,9 +368,6 @@ function RoomConversation({settingsTarget,room,agents,providers,openSession,onSa
     <ConversationComposer value={input} onChange={setInput} onSend={send} inputRef={inputRef} disabled={sending}
      label={t('rooms.messageAria')} placeholder={mode==='mentioned'?t('rooms.mentionPlaceholder'):t('rooms.composerPlaceholder',{name:current.name})}
      options={<>
-       <Button variant="ghost" className="!min-h-9 !gap-1.5 !px-2 !py-1.5 !text-xs !font-medium" onClick={()=>{setTeamOpen(true);setInspector(false)}}><Workflow size={16}/>{t('rooms.taskAction')}</Button>
-       <Button variant="ghost" size="sm" className="!min-h-9 !px-2 !font-medium" onClick={()=>{setInspector(true);setRecipientsOpen(false)}}><UsersRound size={16}/>{t('rooms.editParticipants')}</Button>
-       <Button variant="ghost" size="icon" className="!size-9" title={t('rooms.sharedKnowledge')} aria-label={t('rooms.sharedKnowledge')} onClick={()=>void openKnowledge()}><BookOpenText size={16}/></Button>
        <Button type="button" variant="ghost" size="icon" className="!h-7 !w-7 !border-0 !bg-transparent !text-muted" title={t('chat.attach')} aria-label={t('chat.attach')} onClick={()=>imageInputRef.current?.click()} disabled={sending||uploading}>{uploading?<LoaderCircle size={16} className="animate-spin"/>:<Paperclip size={16}/>}</Button>
        <input ref={imageInputRef} type="file" accept={ROOM_ATTACH_ALLOWED.join(',')} multiple className="sr-only" aria-label={t('chat.attach')} onChange={onPickImages}/>
 
@@ -379,6 +387,16 @@ function RoomConversation({settingsTarget,room,agents,providers,openSession,onSa
    </div>
    {visibleView&&showActivity&&<DialogBackdrop onDismiss={()=>setShowActivity(false)}><DialogPanel size="wide" aria-label={t('rooms.activityTitle')}><RoomActivity jobs={feed.jobs} executions={feed.executions} learningJobs={feed.learningJobs} recordedOperations={feed.operations} sessionId={sessionId} openSession={openSession} onClose={()=>setShowActivity(false)}/></DialogPanel></DialogBackdrop>}
   </section>
+  {membersOpen&&<aside className="room-member-panel hidden w-64 shrink-0 flex-col border-l border-divider bg-surface xl:flex" aria-label={t('rooms.roster')}>
+   <header className="flex items-center justify-between gap-2 border-b border-divider px-4 py-3"><div><h2 className="text-sm font-semibold">{t('rooms.roster')}</h2><p className="text-xs text-muted">{t('rooms.rosterCount',{count:roster.length,max:MAX_ROOM_PARTICIPANTS})}</p></div><Button variant="ghost" size="icon" className="!size-8" onClick={()=>setMembersOpen(false)} aria-label={t('rooms.close')}><X size={16}/></Button></header>
+   <div className="min-h-0 flex-1 overflow-y-auto p-3">
+    <Button variant="secondary" size="sm" className="mb-4 w-full" onClick={()=>{setInspector(true);setRecipientsOpen(false)}}><UsersRound size={16}/>{t('rooms.editParticipants')}</Button>
+    <p className="mb-2 text-xs font-semibold text-muted">{t('rooms.mentionOptions')}</p>
+    <div className="mb-3 grid grid-cols-2 gap-1"><Button size="sm" variant="ghost" aria-pressed={!targets.length} className="aria-pressed:!bg-selected" onClick={()=>setTargets([])}>{t('rooms.autoResponders')}</Button><Button size="sm" variant="ghost" aria-pressed={targets.length===roster.length&&targets.length>0} className="aria-pressed:!bg-selected" onClick={()=>setTargets(roster.map(agent=>agent.id))}>{t('rooms.everyone')}</Button></div>
+    <div className="grid gap-1">{roster.map((agent,index)=><Button key={agent.id} variant="bare" aria-pressed={targets.includes(agent.id)} onClick={()=>mention(agent)} className="flex min-h-14 w-full items-center gap-2 rounded-lg border border-transparent px-2 py-2 text-left hover:bg-canvas aria-pressed:border-divider aria-pressed:bg-selected"><Avatar agent={agent} size="small" index={index}/><span className="min-w-0 flex-1"><strong className="block truncate text-sm font-medium">{agent.name}</strong><small className="block truncate text-xs text-muted">{speaker?.id===agent.id&&running?t('rooms.live.responding'):agent.model||agent.role||''}</small></span>{targets.includes(agent.id)&&<Check size={16} className="shrink-0"/>}</Button>)}</div>
+   </div>
+   <footer className="grid gap-2 border-t border-divider p-3"><Button variant="secondary" className="w-full" onClick={()=>{setTeamOpen(true);setInspector(false)}}><Workflow size={16}/>{t('rooms.taskAction')}</Button><Button variant="ghost" onClick={()=>setShowActivity(true)}><Activity size={16}/>{t('rooms.activity')} · {feed.jobs.length}</Button></footer>
+  </aside>}
   {visibleView&&teamOpen&&<DialogBackdrop onDismiss={()=>setTeamOpen(false)}>
    <DialogPanel size="wide" className="room-team-dialog" aria-label={getLocale()==='en'?'AI collaboration':'AI 협업 작업'}>
     <header className="room-team-dialog-header">

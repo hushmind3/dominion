@@ -649,6 +649,13 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  useEffect(()=>{if(lastNewConversation.current!==newConversationRevision){lastNewConversation.current=newConversationRevision;resetLocal()}},[newConversationRevision]);
  return <div className="conversation-page flex h-full min-h-0">
   <div className="conversation-view relative flex h-full min-h-0 min-w-0 flex-1 flex-col">
+   <div className="chat-control-bar shrink-0 border-b border-divider bg-surface px-3 py-2 sm:px-6">
+    <div className="mx-auto flex max-w-conversation flex-wrap items-center justify-between gap-x-3 gap-y-2">
+     <div className="flex min-w-0 items-center gap-2"><span className="hidden text-xs text-muted sm:inline">{loc==='en'?'AI model':'대화 모델'}</span><ConversationTargetPicker placement="bottom" openRevision={pickerRevision} active={active} providers={enabledProviders} agents={agents.value} providerId={providerId} model={model} agentId={agentMode?agentId:''} catalogue={catalogue}
+        onModel={(provider,chosenModel)=>{setChatModeOverride({scope:current,mode:agentMode||Boolean(selectedSession?.agentId)?'agent':'chat'});if(!agentMode&&!selectedSession?.agentId)setAgentChoice(undefined);setRoute(provider,chosenModel)}} onAgent={chooseAgent}/></div>
+     <div className="flex min-w-0 items-center gap-2"><BrainCircuit size={16} className="shrink-0 text-muted"/><ReasoningSelect value={effectiveReasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} model={selectedModel} requireCatalog={selectedProvider?.kind==='codex'} disabled={busy} className="!min-h-9 !w-auto !max-w-[10rem] !rounded-lg !py-1.5 !text-xs"/></div>
+    </div>
+   </div>
 
    <div ref={scrollRef} onScroll={onScroll} data-chat-scroll aria-label={t('ui.label.conversations')} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{current&&transcript.loading?<div className="flex h-full min-h-52 items-center justify-center gap-3 text-sm text-muted" role="status"><LoaderCircle size={20} className="animate-spin"/>{t('history.loading')}</div>:!messages.length&&!showOptimisticOwner&&!(busy&&viewingTurn)?<ChatWelcome loading={sessions.loading||providers.loading||catalogue.loading} error={providers.error} onRetry={()=>{void providers.reload();void sessions.reload()}}
     />
@@ -683,8 +690,6 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     <ConversationComposer value={input} onChange={next=>{setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n')&&(!/\s/.test(next)||/^\/(?:model|agent|mcp)\s+\S*$/.test(next)));setSlashActive(0)}}
      onSend={send} inputRef={inputRef} label={t('chat.messageAria')} placeholder={t('chat.inputPlaceholder')} onKeyDown={appendKey} slashOpen={slashOpen}
      options={<>
-       <ConversationTargetPicker openRevision={pickerRevision} active={active} providers={enabledProviders} agents={agents.value} providerId={providerId} model={model} agentId={agentMode?agentId:''} catalogue={catalogue}
-        onModel={(provider,chosenModel)=>{setChatModeOverride({scope:current,mode:agentMode||Boolean(selectedSession?.agentId)?'agent':'chat'});if(!agentMode&&!selectedSession?.agentId)setAgentChoice(undefined);setRoute(provider,chosenModel)}} onAgent={chooseAgent}/>
        <Button type="button" variant="ghost" size="sm" aria-pressed={toolsEnabled}
         aria-label={loc==='en'?'Use built-in tools':'기본 도구 사용'}
         title={toolsEnabled?(loc==='en'?'Built-in search, files and code tools are ready. External tools are managed in Extensions.':'검색·파일·코드 등 내장 도구를 사용할 수 있습니다. 외부 도구는 확장 프로그램에서 관리합니다.'):(loc==='en'?'Enable built-in tools':'검색·파일·코드 도구 켜기')}

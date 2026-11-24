@@ -11,11 +11,11 @@ import {SearchField, ViewTabs} from '../ui/WorkspaceUI'
 
 const InlineConnectionDialog=lazy(()=>import('../../features/models/InlineConnectionDialog').then(module=>({default:module.InlineConnectionDialog})))
 
-type Props={openRevision?:number;active:boolean;providers:Provider[];agents:Agent[];providerId:string;model:string;agentId:string;
+type Props={openRevision?:number;placement?:'top'|'bottom';active:boolean;providers:Provider[];agents:Agent[];providerId:string;model:string;agentId:string;
  catalogue:ReturnType<typeof useProviderModels>;onModel:(providerId:string,model:string)=>void;onAgent:(id:string)=>void}
 
 /** Browsing a provider never changes the conversation route until a model is chosen. */
-export function ConversationTargetPicker({active,providers,agents,providerId,model,agentId,catalogue,onModel,onAgent,openRevision=0}:Props) {
+export function ConversationTargetPicker({active,providers,agents,providerId,model,agentId,catalogue,onModel,onAgent,openRevision=0,placement='top'}:Props) {
  const en=useLocale()==='en'
  const tr=(ko:string,english:string)=>en?english:ko
  const [open,setOpen]=useState(false)
@@ -25,7 +25,7 @@ export function ConversationTargetPicker({active,providers,agents,providerId,mod
  const [view,setView]=useState<'models'|'personas'>('models')
  const [browse,setBrowse]=useState(providerId)
  const [query,setQuery]=useState('')
- const panel=useAnchoredPanel(active&&open,()=>setOpen(false),400,'top')
+ const panel=useAnchoredPanel(active&&open,()=>setOpen(false),400,placement)
  const provider=providers.find(item=>item.id===browse)
  const models=useProviderModels(open&&view==='models'&&provider&&providerConfigured(provider)?browse:'',active&&open)
  const selectedAgent=agents.find(item=>item.id===agentId)
@@ -33,7 +33,7 @@ export function ConversationTargetPicker({active,providers,agents,providerId,mod
  const focusTarget=useRef<HTMLDivElement>(null)
  useEffect(()=>{if(!active)setOpen(false)},[active])
  useEffect(()=>{if(open){setQuery('');setBrowse(providerId||providers.find(providerConfigured)?.id||'');setView(agentId||(!providers.length&&agents.length)?'personas':'models')}},[open])
- useEffect(()=>{if(open&&panel.position)focusTarget.current?.querySelector<HTMLElement>('input,button')?.focus({preventScroll:true})},[open,Boolean(panel.position)])
+ useEffect(()=>{if(open&&panel.position)(focusTarget.current?.querySelector<HTMLElement>('input')||focusTarget.current?.querySelector<HTMLElement>('button'))?.focus({preventScroll:true})},[open,Boolean(panel.position)])
  const choose=()=>setOpen(value=>!value)
  const connect=(provider?:Provider)=>{setOpen(false);setConnecting({provider})}
  const closeConnection=()=>{setConnecting(null);panel.trigger.current?.focus({preventScroll:true})}
