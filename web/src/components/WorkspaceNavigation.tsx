@@ -37,21 +37,20 @@ export function WorkspaceNavigation({page,session,selectedRoom,open,mobile,onlin
   return()=>window.removeEventListener('keydown',shortcut)
  },[open,mobile,onToggle,onClose])
  const navigate=(target:PageId,id?:string)=>{onNavigate(target,id);if(mobile)onClose()}
- const main=[{id:'chat' as const,label:tr('대화','Chat'),icon:MessageSquare},{id:'rooms' as const,label:tr('그룹','Groups'),icon:UsersRound},{id:'home' as const,label:tr('작업 홈','Work home'),icon:House},{id:'tasks' as const,label:t('nav.tasks'),icon:Workflow}]
- const tools=[
-  {id:'models' as const,label:tr('AI 모델','AI models'),icon:Cpu},
-  {id:'agents' as const,label:tr('작업 도우미','Assistants'),icon:Bot},
-  {id:'extensions' as const,label:tr('기능 추가','Extensions'),icon:Blocks},
-  {id:'connections' as const,label:tr('서비스 연결','Connected services'),icon:RadioTower},
-  {id:'memory' as const,label:tr('기억·지침','Memory & instructions'),icon:BookOpenText},
- ]
+ const main=[{id:'chat' as const,label:tr('대화','Chat'),icon:MessageSquare},{id:'rooms' as const,label:tr('그룹','Groups'),icon:UsersRound},{id:'tasks' as const,label:t('nav.tasks'),icon:Workflow}]
+ const tools=[{id:'connections' as const,label:tr('서비스 연결','Connected services'),icon:RadioTower},{id:'memory' as const,label:tr('기억','Memory'),icon:BookOpenText}]
  const renderItem=({id,label,icon:Icon}:typeof main[number]|typeof tools[number])=><Button variant="bare" key={id} className={cn('flex min-h-11 w-full min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2 text-left text-sm text-ink/75 hover:bg-surface/75 aria-[current=page]:bg-selected aria-[current=page]:font-semibold aria-[current=page]:text-brand-hover [&>svg]:shrink-0 [&>span]:min-w-0 [&>span]:flex-1',!open&&'justify-center !px-2')} aria-current={page===id?'page':undefined} title={!open?label:undefined} aria-label={label} onClick={()=>navigate(id)}><Icon size={19}/>{open&&<span>{label}</span>}</Button>
  const needle=query.trim().toLocaleLowerCase()
- const destinations=[...main,...tools,
-  {id:'prompts' as const,label:tr('프롬프트·지침','Prompts'),icon:FileText},
-  {id:'settings' as const,label:tr('설정','Settings'),icon:Settings},
+ const destinations=[...main,...tools,{id:'settings' as const,label:tr('설정','Settings'),icon:Settings}]
+ const deepLinks=[
+  {label:tr('AI 모델 연결','AI connections'),terms:'ai model llm api 모델 연결',icon:Cpu,hash:'#/settings?view=ai'},
+  {label:tr('AI 도우미·페르소나','Assistants & personas'),terms:'agent bot 페르소나 에이전트 도우미',icon:Bot,hash:'#/memory?view=personas'},
+  {label:tr('MCP·플러그인','MCP & plugins'),terms:'mcp plugin extension 확장 플러그인 도구',icon:Blocks,hash:'#/connections?view=mcp'},
+  {label:tr('공통·시스템 지침','Shared instructions'),terms:'prompt 프롬프트 지침 시스템',icon:FileText,hash:'#/memory?view=shared'},
+  {label:tr('내 공간·사용 현황','Overview & usage'),terms:'home dashboard 대시보드 현황',icon:House,hash:'#/settings?view=overview'},
  ]
  const pageResults=needle?destinations.filter(item=>`${item.label} ${item.id}`.toLocaleLowerCase().includes(needle)):[]
+ const deepResults=needle?deepLinks.filter(item=>`${item.label} ${item.terms}`.toLocaleLowerCase().includes(needle)):[]
  const privateChats=sessions.value.filter(item=>!item.roomId&&(item.title||'').toLocaleLowerCase().includes(needle)).slice(0,50)
  const groups=rooms.value.filter(item=>item.name.toLocaleLowerCase().includes(needle))
  return <>
@@ -64,12 +63,12 @@ export function WorkspaceNavigation({page,session,selectedRoom,open,mobile,onlin
     <nav className="border-b border-divider pb-3" aria-label={tr('자주 쓰는 기능','Frequently used features')}>{open&&<h2 className="px-3 pb-2 text-xs font-medium text-muted">{tr('자주 쓰는 기능','Quick access')}</h2>}{tools.map(renderItem)}</nav>
     {open&&<>
      <div className="my-3 flex items-center gap-2 rounded-lg border border-divider bg-surface/50 px-2 text-muted focus-within:ring-2 focus-within:ring-brand/25 [&>svg]:shrink-0 [&_input]:!border-0 [&_input]:!bg-transparent [&_input]:!px-0 [&_input]:!text-xs [&_input]:!shadow-none [&_input]:!ring-0"><Search size={15}/><TextInput ref={searchRef} value={query} onChange={event=>setQuery(event.target.value)} placeholder={tr('메뉴·대화·그룹 검색  ⌘/Ctrl K','Find pages, chats, groups  ⌘/Ctrl K')} aria-label={tr('메뉴·대화·그룹 검색','Search pages, chats and groups')}/>{query&&<Button size="icon" variant="ghost" aria-label={tr('검색 지우기','Clear search')} onClick={()=>setQuery('')}><X size={14}/></Button>}</div>
-     {needle&&pageResults.length>0&&<section className="mb-4" aria-label={tr('화면 바로가기','Page shortcuts')}><h2 className="mb-2 px-3 text-xs font-medium text-muted">{tr('메뉴 검색 결과','Matching pages')}</h2><div className="grid gap-1">{pageResults.map(({id,label,icon:Icon})=><Button key={id} variant="bare" className="flex min-h-10 w-full items-center justify-start gap-3 rounded-lg px-3 py-2 text-left text-sm text-ink hover:bg-surface/75" onClick={()=>{setQuery('');navigate(id)}}><Icon size={16}/><span className="truncate">{label}</span></Button>)}</div></section>}
+     {needle&&(pageResults.length>0||deepResults.length>0)&&<section className="mb-4" aria-label={tr('화면 바로가기','Page shortcuts')}><h2 className="mb-2 px-3 text-xs font-medium text-muted">{tr('메뉴 검색 결과','Matching pages')}</h2><div className="grid gap-1">{pageResults.map(({id,label,icon:Icon})=><Button key={id} variant="bare" className="flex min-h-10 w-full items-center justify-start gap-3 rounded-lg px-3 py-2 text-left text-sm text-ink hover:bg-surface/75" onClick={()=>{setQuery('');navigate(id)}}><Icon size={16}/><span className="truncate">{label}</span></Button>)}{deepResults.map(({hash,label,icon:Icon})=><Button key={hash} variant="bare" className="flex min-h-10 w-full items-center justify-start gap-3 rounded-lg px-3 py-2 text-left text-sm text-ink hover:bg-surface/75" onClick={()=>{setQuery('');window.location.hash=hash;if(mobile)onClose()}}><Icon size={16}/><span className="truncate">{label}</span></Button>)}</div></section>}
      <div className="space-y-5 [&_h2]:mb-2 [&_h2]:px-3 [&_h2]:text-xs [&_h2]:font-medium [&_h2]:text-muted">
       {groups.length>0&&<section><h2>{tr('그룹 대화','Groups')}</h2>{groups.map(room=><Button key={room.id} variant="bare" className="flex min-h-10 w-full min-w-0 items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-muted hover:bg-surface/60 aria-[current=page]:bg-selected aria-[current=page]:font-semibold aria-[current=page]:text-brand-hover [&>svg]:shrink-0 [&>span]:min-w-0 [&>span]:flex-1 [&>span]:truncate [&>i]:size-1.5 [&>i]:rounded-full [&>i]:bg-success" aria-current={page==='rooms'&&room.id===selectedRoom?'page':undefined} onClick={()=>{onRoom(room.id);if(mobile)onClose()}}><UsersRound size={15}/><span>{room.name}</span>{room.status==='running'&&<i aria-label={tr('답변 중','Responding')}/>}</Button>)}</section>}
       {privateChats.length>0&&<section><h2>{tr('최근 대화','Recent conversations')}</h2>{privateChats.map(item=><Button key={item.id} variant="bare" className="flex min-h-10 w-full min-w-0 items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-muted hover:bg-surface/60 aria-[current=page]:bg-selected aria-[current=page]:font-semibold aria-[current=page]:text-brand-hover [&>svg]:shrink-0 [&>span]:min-w-0 [&>span]:flex-1 [&>span]:truncate [&>i]:size-1.5 [&>i]:rounded-full [&>i]:bg-success" title={item.title} aria-current={page==='chat'&&session===item.id?'page':undefined} onClick={()=>navigate('chat',item.id)}><MessageSquare size={15}/><span>{item.title||tr('새 대화','New conversation')}</span></Button>)}</section>}
       {(sessions.loading||rooms.loading)&&!privateChats.length&&!groups.length&&<div className="flex items-center justify-center gap-2 px-3 py-4 text-center text-xs leading-6 text-muted" role="status"><LoaderCircle size={15} className="animate-spin"/>{tr('대화 불러오는 중','Loading conversations')}</div>}
-      {!sessions.loading&&!rooms.loading&&!privateChats.length&&!groups.length&&!pageResults.length&&<p className="flex items-center justify-center gap-2 px-3 py-4 text-center text-xs leading-6 text-muted">{tr(query?'검색 결과가 없습니다.':'대화를 시작하면 여기에 저장됩니다.',query?'No matching conversations.':'Your conversations will appear here.')}</p>}
+      {!sessions.loading&&!rooms.loading&&!privateChats.length&&!groups.length&&!pageResults.length&&!deepResults.length&&<p className="flex items-center justify-center gap-2 px-3 py-4 text-center text-xs leading-6 text-muted">{tr(query?'검색 결과가 없습니다.':'대화를 시작하면 여기에 저장됩니다.',query?'No matching conversations.':'Your conversations will appear here.')}</p>}
       {(sessions.error||rooms.error)&&<Button variant="ghost" className="w-full !text-xs" onClick={()=>{void sessions.reload();void rooms.reload()}}>{tr('대화 목록 다시 불러오기','Reload conversations')}</Button>}
      </div>
     </>}
