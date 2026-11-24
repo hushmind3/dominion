@@ -25,10 +25,7 @@ fn agent_of(state: &AppState, execution: &Value) -> Option<String> {
 /// another agent's record and never changes the model.
 pub fn record(state: &AppState, execution: &Value) -> Option<Value> {
     let agent_id = agent_of(state, execution)?;
-    let mut growth = state
-        .store
-        .get("agent_growth", &agent_id)
-        .unwrap_or_else(|| {
+    let initial = {
             json!({
                 "id": agent_id,
                 "agentId": agent_id,
@@ -44,10 +41,14 @@ pub fn record(state: &AppState, execution: &Value) -> Option<Value> {
                 "guidance": [],
                 "createdAt": chrono::Utc::now().to_rfc3339(),
             })
-        });
+        };
     let operations=state.store.execution_operations(execution["id"].as_str().unwrap_or("")).ok()?;
-    dominion_algorithms::growth::update(&mut growth,&agent_id,execution,&operations,&chrono::Utc::now().to_rfc3339());
-    let saved = state.store.put("agent_growth", &growth)?;
+    // Serialize same-agent updates so concurrent executions do not lose
+    // another run's accumulated evidence through a read/modify/write race.
+    let saved=state.store.mutate_record("agent_growth",&agent_id,initial,|growth|{
+        dominion_algorithms::growth::update(growth,&agent_id,execution,&operations,&chrono::Utc::now().to_rfc3339());
+        Ok(vec![])
+    }).ok()?;
     state.bus.record("agent_growth", &saved);
     Some(saved)
 }
@@ -273,4 +274,22 @@ mod tests {
         assert_eq!(growth["successRate"], 1.0);
         let _ = std::fs::remove_dir_all(dir);
     }
+}
+
+#[cfg(test)]
+#[test]
+fn concurrent_growth_updates_preserve_both_runs(){
+    let dir=std::env::temp_dir().join(format!("dominion-growth-concurrent-{}",uuid::Uuid::new_v4()));
+    let cfg=crate::config::Config{port:0,data_dir:dir.clone(),web_dir:dir.clone(),workspace:dir.clone()};
+    let state=AppState::new(cfg.clone(),crate::db::Store::open(&cfg.db_path()).unwrap(),crate::vault::Vault::open(&cfg.key_path()));
+    std::thread::scope(|scope|{
+        let a=scope.spawn(||record(&state,&json!({"id":"one","agentId":"a","taskOutcome":"succeeded"})).unwrap());
+        let b=scope.spawn(||record(&state,&json!({"id":"two","agentId":"a","taskOutcome":"failed"})).unwrap());
+        a.join().unwrap();b.join().unwrap();
+    });
+    let saved=growth(&state,"a");
+    assert_eq!(saved["runs"],2);
+    assert_eq!(saved["succeeded"],1);
+    assert_eq!(saved["failed"],1);
+    let _=std::fs::remove_dir_all(dir);
 }

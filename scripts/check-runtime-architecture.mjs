@@ -330,7 +330,7 @@ if(!sdkApi.includes('state.store.sdk_evidence_rows()')||!store.includes('pub fn 
 // Old optimizer control loops must not creep back in behind the real journal.
 const selectedAlgorithms=readFileSync(path.join(root,'src/addons/strategies/algorithms.rs'),'utf8')
 const kernelSource=readFileSync(path.join(root,'crates/dominion-algorithms/src/kernels.rs'),'utf8')
-for(const [module,call] of [['memory','memory::rank_authorized'],['experience','rank_authorized(query'],['principle','principle::compose'],['agent_growth','growth::update']]){
+for(const [module,call] of [['memory','memory::rank_authorized'],['experience','rank_authorized(query'],['principle','principle::compose'],['agent_growth','growth::update'],['learning','dominion_algorithms::learning']]){
  const source=readFileSync(path.join(root,'src/addons/knowledge/'+module+'.rs'),'utf8')
  const algorithm=readFileSync(path.join(root,'crates/dominion-algorithms/src/'+(module==='agent_growth'?'growth':module)+'.rs'),'utf8')
  if(!source.includes(call)||/\bAppState\b|crate::db|crate::engine|std::fs/.test(algorithm))throw Error('Knowledge algorithm crossed host boundary: '+module)

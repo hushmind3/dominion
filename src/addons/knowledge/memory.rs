@@ -210,7 +210,6 @@ fn contains_secret(text: &str) -> bool {
 /// Character bigrams handle Korean particles/spacing without shipping a model
 /// or importing a tokenizer. Latin words keep whole-token matching.
 pub(crate) use dominion_algorithms::memory::terms;
-#[cfg(test)]
 pub(crate) use dominion_algorithms::memory::bm25_scores;
 
 fn active_kernel(store: &Store, kind: &str) -> Value {
