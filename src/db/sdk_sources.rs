@@ -41,6 +41,16 @@ impl Store {
         rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 
+    pub fn extension_requests(&self,app:&str,limit:usize)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='sdk_extension_request' AND json_extract(data,'$.appId')=?1
+             ORDER BY CASE WHEN json_extract(data,'$.status')='pending' THEN 0 ELSE 1 END,created_at DESC,id DESC LIMIT ?2"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map(params![app,limit.clamp(1,100) as i64],record_from_row).map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
     /// Only deserialize bounded runs for one source kind, not all historic SDK jobs.
     pub fn sdk_runs_by_source(&self, source_kind:&str, limit:usize)->Result<Vec<Value>,String>{
         let conn=self.conn.lock().map_err(|e|e.to_string())?;

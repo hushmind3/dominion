@@ -1,4 +1,4 @@
-use super::super::{browser, channels, cloud_auth, compat, extensions, extension_registry, extension_process, oauth};
+use super::super::{browser, channels, cloud_auth, compat, extensions, extension_registry, extension_process, extension_requests, oauth};
 use crate::state::AppState;
 use axum::{
     routing::{get, post},
@@ -13,6 +13,10 @@ pub(super) fn router() -> Router<AppState> {
         .route("/api/extensions/apps/:id/state", post(extension_registry::set_state))
         .route("/api/extensions/apps/:id/grant", get(extension_registry::grant_status).post(extension_registry::issue_grant).delete(extension_registry::revoke_grant))
         .route("/api/extensions/apps/:id/history", get(extension_registry::history))
+        .route("/api/extensions/apps/:id/requests", get(extension_requests::list).post(extension_requests::submit))
+        .route("/api/extensions/apps/:id/requests/:request", get(extension_requests::read))
+        .route("/api/extensions/apps/:id/requests/:request/review", post(extension_requests::review))
+        .route("/api/extensions/apps/:id/requests/:request/publish", post(extension_requests::publish))
         .route("/api/extensions/apps/:id/package", get(extension_process::status).post(extension_process::install).delete(extension_process::uninstall))
         .route("/api/extensions/apps/:id/process/start", post(extension_process::start))
         .route("/api/extensions/apps/:id/process/stop", post(extension_process::stop))

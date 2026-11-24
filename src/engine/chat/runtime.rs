@@ -566,7 +566,7 @@ async fn run_turn_body(
     let metadata = json!({"runtime":"dominion-core","authorKind":"agent","roomId":session.get("roomId"),"replyToMessageId":reply_to,"executionId":execution_id,"taskId":task_id,"reasoningLanguageRequested":request.reasoning_language,"reasoningLanguageEffective":request.effective_reasoning_language(),"reasoningTranslated":false});
 
     let provider = select_provider(state, request, &session)?;
-    let allow_provider_fallback = session["extension"]["capability"]!="isolated_chat";
+    let allow_provider_fallback = !matches!(session["extension"]["capability"].as_str(),Some("isolated_chat"|"owner_approved_task"));
     if !allow_provider_fallback && matches!(provider.kind.as_str(),"cli"|"codex") {return Err("Scoped text route is no longer eligible".into());}
     let intelligence=crate::addons::runtime_hooks::strategy_port(
         state,session_id,request.agent_id.as_deref(),execution_id,

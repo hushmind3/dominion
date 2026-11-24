@@ -48,12 +48,13 @@ export function SdkExtensionsPanel(){
     <Button variant="ghost" disabled={busy||app.enabled||Boolean(apps.error)} onClick={()=>remove(app)}>{en?'Unregister':'등록 해제'}</Button>
     <ManagedPackage app={app}/>
     <GrantPanel appId={app.id} enabled={app.enabled} onRun={id=>setSelectedRuns(previous=>({...previous,[app.id]:id}))}/>
+    <TaskRequests appId={app.id} enabled={app.enabled} onRun={id=>setSelectedRuns(previous=>({...previous,[app.id]:id}))}/>
     <AppRunHistory appId={app.id} selected={selectedRuns[app.id]||''} onSelect={id=>setSelectedRuns(previous=>({...previous,[app.id]:id}))}/>
   </Panel>)}</div>
  </section>
 }
 
-type Grant={providerId:string;model:string;tokenBudget:number;remainingRuns:number;capability:string;generation:string}
+type Grant={providerId:string;model:string;tokenBudget:number;remainingRuns:number;capability:string;generation:string;allowTaskRequests?:boolean}
 type Provider={id:string;name:string;kind?:string;enabled?:boolean;model?:string}
 function GrantPanel({appId,enabled,onRun}:{appId:string;enabled:boolean;onRun:(id:string)=>void}){
  const en=useLocale()==='en',path=endpoint+'/'+encodeURIComponent(appId)+'/grant'
@@ -61,7 +62,7 @@ function GrantPanel({appId,enabled,onRun}:{appId:string;enabled:boolean;onRun:(i
  const grant=useRemote<Grant|null>(opened?path:null,null)
  const providers=useRemote<Provider[]>(opened?'/api/providers':null,[])
  const [providerId,setProviderId]=useState(''),[model,setModel]=useState('')
- const [budget,setBudget]=useState('8192'),[maxRuns,setMaxRuns]=useState('10')
+ const [budget,setBudget]=useState('8192'),[maxRuns,setMaxRuns]=useState('10'),[allowTasks,setAllowTasks]=useState(false)
  const [token,setToken]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('')
  const inFlight=useRef(false)
  const catalogue=useProviderModels(opened?providerId:'')
@@ -87,7 +88,9 @@ function GrantPanel({appId,enabled,onRun}:{appId:string;enabled:boolean;onRun:(i
    <Notice message={catalogue.error}/>
    <div className="grid grid-cols-2 gap-2"><FormField label={en?'Tokens per request':'요청당 토큰 예산'}><TextInput type="number" min={1024} max={32768} value={budget} disabled={busy} onChange={e=>setBudget(e.target.value)}/></FormField>
    <FormField label={en?'Request allowance':'허용 요청 횟수'}><TextInput aria-label={en?'Request allowance':'허용 요청 횟수'} type="number" min={1} max={100} value={maxRuns} disabled={busy} onChange={e=>setMaxRuns(e.target.value)}/></FormField></div>
-   <div className="flex gap-2"><Action disabled={busy||!valid||grant.loading||Boolean(grant.error)} onClick={()=>{if(grant.value&&!confirm(en?'Rotate credential and reset request allowance?':'기존 인증키를 폐기하고 새 요청 한도를 발급할까요?'))return;void run(async()=>{const response=await post<{grant:Grant;token:string}>(path,{providerId,model,tokenBudget:Number(budget),maxRuns:Number(maxRuns)});setToken(response.token)})}}>{grant.value?(en?'Rotate key':'키 재발급'):(en?'Issue key':'키 발급')}</Action>
+   <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={allowTasks} disabled={busy} onChange={e=>setAllowTasks(e.target.checked)}/>{en?'Allow task proposals (owner review required)':'에이전트 작업 제안 허용 (사용자 승인 필요)'}</label>
+   {grant.value?.allowTaskRequests&&<p className="text-xs text-muted">{en?'Current key permits task proposals.':'현재 인증키는 작업 제안을 허용합니다.'}</p>}
+   <div className="flex gap-2"><Action disabled={busy||!valid||grant.loading||Boolean(grant.error)} onClick={()=>{if(grant.value&&!confirm(en?'Rotate credential and reset request allowance?':'기존 인증키를 폐기하고 새 요청 한도를 발급할까요?'))return;void run(async()=>{const response=await post<{grant:Grant;token:string}>(path,{providerId,model,tokenBudget:Number(budget),maxRuns:Number(maxRuns),allowTaskRequests:allowTasks});setToken(response.token)})}}>{grant.value?(en?'Rotate key':'키 재발급'):(en?'Issue key':'키 발급')}</Action>
    <Button variant="ghost" disabled={busy||!grant.value} onClick={()=>{if(confirm(en?'Revoke this credential?':'이 인증키를 폐기할까요?'))void run(async()=>{await del(path)})}}>{en?'Revoke key':'키 폐기'}</Button></div>
    {!enabled&&<p className="text-xs text-muted">{en?'Enable the app before testing its connection.':'연결 시험은 앱을 활성화한 뒤 사용할 수 있습니다.'}</p>}
    {token&&<div className="rounded-lg border border-divider p-3"><p className="text-xs">{en?'Copy this key now. It will not be shown again.':'한 번만 표시되는 인증키입니다. 지금 복사해 외부 앱에 설정하세요.'}</p><TextInput aria-label={en?'One-time credential':'일회 표시 인증키'} readOnly value={token}/><Button variant="ghost" onClick={()=>setToken('')}>{en?'Hide key':'키 숨기기'}</Button><ScopedConnectionTest appId={appId} token={token} enabled={enabled&&!busy&&!grant.error&&Boolean(grant.value)} remaining={grant.value?.remainingRuns??0} onRun={onRun}/></div>}
@@ -219,6 +222,40 @@ function ManagedPackage({app}:{app:App}){
     <Action disabled={!ready||busy||!trust||!grant.value||token.length!==64||!pkg.value?.filePresent} onClick={()=>void act(()=>post(root+'/process/start',{token,trustExecutable:true}))}>{en?'Start app':'앱 실행'}</Action></div>}
    {running&&<Button disabled={busy} onClick={()=>void act(()=>post(root+'/process/stop',{}))}>{en?'Stop app':'앱 종료'}</Button>}
    <Button variant="ghost" disabled={busy||pkg.refreshing} onClick={()=>void pkg.reload()}>{en?'Refresh process status':'실행 상태 새로고침'}</Button>
+  </div>}
+ </div>
+}
+
+type TaskRequest={id:string;instruction:string;status:string;model:string;tokenBudget:number;runId?:string;runStatus?:string;canApprove:boolean;canPublish:boolean;publishedMessage?:string}
+function TaskRequests({appId,enabled,onRun}:{appId:string;enabled:boolean;onRun:(id:string)=>void}){
+ const en=useLocale()==='en',path=endpoint+'/'+encodeURIComponent(appId)+'/requests'
+ const [open,setOpen]=useState(false),[selected,setSelected]=useState(''),[workspace,setWorkspace]=useState(''),[rounds,setRounds]=useState('8'),[message,setMessage]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false)
+ const requests=useRemote<TaskRequest[]>(open?path:null,[])
+ const row=requests.value.find(r=>r.id===selected)
+ const inFlight=useRef(false)
+ const act=async(suffix:string,body:unknown)=>{
+  if(inFlight.current||!row)return
+  inFlight.current=true;setBusy(true);setError('')
+  try{await post(path+'/'+row.id+'/'+suffix,body);await requests.reload();setMessage('')}
+  catch(e){setError((e as Error).message)}finally{inFlight.current=false;setBusy(false)}
+ }
+ return <div className="w-full border-t border-divider pt-2">
+  <Button variant="ghost" onClick={()=>setOpen(!open)}>{open?(en?'Close task requests':'작업 제안 닫기'):(en?'Task requests':'앱 작업 제안')}</Button>
+  {open&&<div className="mt-2 grid gap-2">
+   <p className="text-xs text-muted">{en?'An external app cannot start agent tools. Review its instruction and select a workspace. Native tool approvals still apply. Only your explicitly published message is returned.':'외부 앱의 제안은 직접 승인하기 전까지 실행되지 않습니다. 작업 공간을 지정하고 내용을 확인하세요. 기존 도구 승인 절차가 적용되며 직접 공유한 메시지만 앱에 전달됩니다.'}</p>
+   <Notice message={error||requests.error}/>
+   <Button variant="ghost" disabled={requests.refreshing||busy} onClick={()=>void requests.reload()}>{en?'Refresh requests':'제안 새로고침'}</Button>
+   {!requests.loading&&!requests.value.length&&<p className="text-xs text-muted">{en?'No task requests':'작업 제안 없음'}</p>}
+   <div className="grid max-h-64 gap-1 overflow-auto">{requests.value.map(r=><button type="button" key={r.id} disabled={busy} aria-pressed={selected===r.id} className="rounded-lg border border-divider p-2 text-left" onClick={()=>{setSelected(r.id);setMessage('');setError('')}}><StateTag online={r.status==='approved'}>{en?r.status:r.status==='pending'?'승인 대기':r.status==='approved'?'승인됨':'거절됨'}</StateTag><span className="ml-2 text-xs text-muted">{r.model} · {r.tokenBudget} tokens</span><p className="truncate text-sm">{r.instruction}</p></button>)}</div>
+   {row&&<Panel className="grid gap-2 p-3">
+    <strong>{en?'Requested instruction':'제안 원문'}</strong><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-sm">{row.instruction}</pre>
+    {row.status==='pending'&&<><FormField label={en?'Owner workspace':'승인 작업 공간'} hint={en?'Absolute path':'절대 경로'}><TextInput aria-label={en?'Owner workspace':'승인 작업 공간'} value={workspace} onChange={e=>setWorkspace(e.target.value)} disabled={busy}/></FormField>
+    <FormField label={en?'Maximum model rounds':'최대 모델 호출 횟수'}><TextInput type="number" min={1} max={24} value={rounds} onChange={e=>setRounds(e.target.value)} disabled={busy}/></FormField>
+    {!row.canApprove&&<p className="text-xs text-muted">{en?'Permission changed or app disabled. Reject and request a fresh proposal.':'인증 권한이 변경되었거나 앱이 비활성화되어 승인할 수 없습니다.'}</p>}
+    <div className="flex gap-2"><Action disabled={busy||!enabled||!row.canApprove||!workspace.trim()||!Number.isInteger(Number(rounds))||Number(rounds)<1||Number(rounds)>24} onClick={()=>{if(confirm(en?'Run the displayed instruction using native agent tools in this workspace?':'표시된 지시를 이 작업 공간에서 에이전트로 실행할까요?'))void act('review',{approve:true,workspaceDir:workspace.trim(),maxRounds:Number(rounds)})}}>{en?'Approve and run':'승인 및 실행'}</Action><Button disabled={busy} onClick={()=>void act('review',{approve:false})}>{en?'Reject':'거절'}</Button></div></>}
+    {row.runId&&<div className="flex items-center gap-2"><StateTag>{en?(row.runStatus||'queued'):(labels[row.runStatus||'queued']||row.runStatus)}</StateTag><Button onClick={()=>onRun(row.runId!)}>{en?'Inspect native run':'실행 결과 확인'}</Button></div>}
+    {row.publishedMessage!=null?<><strong>{en?'Published message':'공유한 메시지'}</strong><p className="whitespace-pre-wrap break-words text-sm">{row.publishedMessage}</p></>:row.canPublish&&<><FormField label={en?'Message to share':'앱에 공유할 메시지'}><TextArea value={message} onChange={e=>setMessage(e.target.value)} disabled={busy}/></FormField><Action disabled={busy||!message.trim()} onClick={()=>{if(confirm(en?'Publish this exact message to the external app?':'이 메시지를 외부 앱에 공유할까요?'))void act('publish',{message})}}>{en?'Share message':'메시지 공유'}</Action></>}
+   </Panel>}
   </div>}
  </div>
 }

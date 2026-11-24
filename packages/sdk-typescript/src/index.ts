@@ -179,8 +179,9 @@ export interface InferenceSupport extends InferenceRoute { thinkingToggle: boole
 export interface ExtensionManifest {
   schemaVersion: 1; id: string; name: string; version: string; description?: string;
 }
-export interface ExtensionGrantInput {providerId:string;model:string;tokenBudget:number;maxRuns:number}
-export interface ExtensionGrant {id:string;providerId:string;model:string;tokenBudget:number;remainingRuns:number;capability:'isolated_chat';generation:string}
+export interface ExtensionGrantInput {providerId:string;model:string;tokenBudget:number;maxRuns:number;allowTaskRequests?:boolean}
+export interface ExtensionGrant {id:string;providerId:string;model:string;tokenBudget:number;remainingRuns:number;capability:'isolated_chat';generation:string;allowTaskRequests?:boolean}
+export interface TaskRequestReceipt {id:string;status:'pending'|'approved'|'rejected';runStatus?:SdkRunStatus|null;taskOutcome?:string|null;verified?:boolean|null;message?:string|null}
 export interface ScopedRun {id:string;status:SdkRunStatus;answer?:string|null;taskOutcome?:string|null;verified?:boolean|null;providerId:string;model:string;extension:string}
 export interface ExtensionRegistration {
   id: string; manifest: ExtensionManifest; enabled: boolean;
@@ -507,14 +508,21 @@ export class DominionExtensionClient {
     this.base=url.toString().replace(/\/$/,'');
     this.id=options.id;this.token=options.token;this.transport=options.fetch??fetch;
   }
-  private async request(path:string,body?:{instruction:string;idempotencyKey:string},signal?:AbortSignal):Promise<ScopedRun>{
+  private async request<T=ScopedRun>(path:string,body?:{instruction:string;idempotencyKey:string},signal?:AbortSignal,family:'runs'|'requests'='runs'):Promise<T>{
     const headers:Record<string,string>={'x-dominion-extension-token':this.token,accept:'application/json'};
     if(body)headers['content-type']='application/json';
-    const r=await this.transport(this.base+'/api/extensions/apps/'+encodeURIComponent(this.id)+'/runs'+path,
+    const r=await this.transport(this.base+'/api/extensions/apps/'+encodeURIComponent(this.id)+'/'+family+path,
       {method:body?'POST':'GET',body:body?JSON.stringify(body):undefined,headers,signal,redirect:'error'});
     const v=await r.json().catch(()=>null);
     if(!r.ok)throw new DominionSdkError(typeof v?.error==='string'?v.error:'HTTP '+r.status,r.status);
-    return v as ScopedRun;
+    return v as T;
+  }
+  proposeTask(instruction:string,idempotencyKey:string,signal?:AbortSignal):Promise<TaskRequestReceipt>{
+    return this.request<TaskRequestReceipt>('',{instruction,idempotencyKey},signal,'requests');
+  }
+  taskRequest(id:string,signal?:AbortSignal):Promise<TaskRequestReceipt>{
+    if(!/^[0-9a-f]{64}$/i.test(id))throw new DominionSdkError('Invalid task request ID',400);
+    return this.request<TaskRequestReceipt>('/'+encodeURIComponent(id),undefined,signal,'requests');
   }
   start(instruction:string,idempotencyKey:string,signal?:AbortSignal):Promise<ScopedRun>{
     return this.request('',{instruction,idempotencyKey},signal);

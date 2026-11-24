@@ -619,3 +619,45 @@ fn scoped_extension_credentials_are_isolated_and_quota_is_durable(){
     assert!(observed[0]["tools"].as_array().is_none_or(|tools|tools.is_empty()));
     assert!(!observed[0].to_string().contains("PRIVATE_OWNER_ONLY_SENTINEL"));
 }
+
+#[test]
+fn extension_task_proposal_is_not_execution_and_requires_owner_review(){
+    use dominion_sdk::{Client,ClientError,GrantInput,extensions::Manifest};
+    let _serial=serial();
+    let (port,requests)=scripted_provider(|_|vec![json!({"choices":[{"delta":{"content":"Owner task answer"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14}})]);
+    let app=TestApp::new(port,"native");
+    let provider=app.get("/api/providers")[0]["id"].as_str().unwrap().to_owned();
+    let rt=tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    rt.block_on(async{
+        let owner=Client::connect(&app.base).unwrap();
+        let id="test.proposals";
+        owner.register_extension(&Manifest{schema_version:1,id:id.into(),name:id.into(),version:"1.0.0".into(),description:String::new()}).await.unwrap();
+        owner.set_extension_enabled(id,true).await.unwrap();
+        let settings=GrantInput{provider_id:provider,model:"mock".into(),token_budget:8192,max_runs:2};
+        let old=owner.issue_extension_grant(id,&settings).await.unwrap();
+        let denied=Client::scoped(&app.base,id,old.token).unwrap();
+        assert!(matches!(denied.propose_task("Do work","first").await,Err(ClientError::Api{status:403,..})));
+        let grant=owner.issue_task_request_grant(id,&settings).await.unwrap();
+        let client=Client::scoped(&app.base,id,grant.token.clone()).unwrap();
+        let proposal=client.propose_task("Do work","first").await.unwrap();
+        assert_eq!(proposal.status,"pending");
+        assert_eq!(client.propose_task("Do work","first").await.unwrap().id,proposal.id);
+        assert_eq!(owner.extension_grant(id).await.unwrap().unwrap().remaining_runs,1);
+        assert!(requests.lock().unwrap().is_empty());
+        let http=reqwest::Client::new();
+        let review=format!("{}/api/extensions/apps/{id}/requests/{}/review",app.base,proposal.id);
+        let denied=http.post(&review).header("x-dominion-extension-token",&grant.token).json(&json!({"approve":false})).send().await.unwrap();
+        assert_eq!(denied.status().as_u16(),403);
+        let rejected=http.post(&review).json(&json!({"approve":false})).send().await.unwrap();
+        assert!(rejected.status().is_success());
+        assert_eq!(client.task_request(&proposal.id).await.unwrap().status,"rejected");
+        let other=client.propose_task("Do another task","second").await.unwrap();
+        let rotated=owner.issue_task_request_grant(id,&settings).await.unwrap();
+        let review=format!("{}/api/extensions/apps/{id}/requests/{}/review",app.base,other.id);
+        let stale=http.post(&review).json(&json!({"approve":true,"workspaceDir":"/tmp"})).send().await.unwrap();
+        assert_eq!(stale.status().as_u16(),409);
+        let fresh=Client::scoped(&app.base,id,rotated.token).unwrap();
+        assert_eq!(fresh.task_request(&other.id).await.unwrap().status,"pending");
+        assert!(requests.lock().unwrap().is_empty());
+    });
+}

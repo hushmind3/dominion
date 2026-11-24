@@ -199,6 +199,11 @@ impl Client {
         let body=serde_json::to_value(input).map_err(|e|ClientError::Invalid(e.to_string()))?;
         self.post(&["api","extensions","apps",id,"grant"],body).await
     }
+    pub async fn issue_task_request_grant(&self,id:&str,input:&GrantInput)->Result<GrantIssued,ClientError>{
+        let mut body=serde_json::to_value(input).map_err(|e|ClientError::Invalid(e.to_string()))?;
+        body["allowTaskRequests"]=json!(true);
+        self.post(&["api","extensions","apps",id,"grant"],body).await
+    }
     pub async fn extension_grant(&self,id:&str)->Result<Option<Grant>,ClientError>{
         self.get(&["api","extensions","apps",id,"grant"]).await
     }
@@ -297,10 +302,19 @@ pub struct ScopedRun{
     pub task_outcome:Option<String>,pub verified:Option<bool>,
     pub provider_id:String,pub model:String,pub extension:String,
 }
+#[derive(Clone,Debug,Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct TaskRequestReceipt{pub id:String,pub status:String,pub run_status:Option<String>,pub task_outcome:Option<String>,pub verified:Option<bool>,pub message:Option<String>}
 /// Separate client: no owner management methods or owner token.
 #[derive(Clone)]
 pub struct ScopedClient{client:Client,id:String}
 impl ScopedClient{
+    pub async fn propose_task(&self,instruction:&str,retry_key:&str)->Result<TaskRequestReceipt,ClientError>{
+        self.client.post(&["api","extensions","apps",&self.id,"requests"],json!({"instruction":instruction,"idempotencyKey":retry_key})).await
+    }
+    pub async fn task_request(&self,id:&str)->Result<TaskRequestReceipt,ClientError>{
+        self.client.get(&["api","extensions","apps",&self.id,"requests",id]).await
+    }
     pub async fn start(&self,instruction:&str,retry_key:&str)->Result<ScopedRun,ClientError>{
         self.client.post(&["api","extensions","apps",&self.id,"runs"],
             json!({"instruction":instruction,"idempotencyKey":retry_key})).await

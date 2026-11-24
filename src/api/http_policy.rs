@@ -90,9 +90,13 @@ fn extension_ingress(method:&Method,path:&str)->bool{
     let parts=path.split('/').collect::<Vec<_>>();
     parts.len()>=5&&parts[0].is_empty()&&parts[1]=="api"&&parts[2]=="extensions"&&parts[3]=="apps"
         &&dominion_extensions::valid_id(parts[4])
-        &&parts.get(5)==Some(&"runs")
-        && ((parts.len()==6&&method==Method::POST)
-            ||(parts.len()==7&&method==Method::GET&&uuid::Uuid::parse_str(parts[6]).is_ok()))
+        && ((parts.get(5)==Some(&"runs")
+            && ((parts.len()==6&&method==Method::POST)
+                ||(parts.len()==7&&method==Method::GET&&uuid::Uuid::parse_str(parts[6]).is_ok())))
+            ||(parts.get(5)==Some(&"requests")
+                && ((parts.len()==6&&method==Method::POST)
+                    ||(parts.len()==7&&method==Method::GET&&parts[6].len()==64
+                        &&parts[6].bytes().all(|b|b.is_ascii_hexdigit())))))
 }
 fn worker_ingress(path: &str) -> bool {
     path == "/api/remote/claim"

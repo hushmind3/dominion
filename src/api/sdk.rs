@@ -474,6 +474,38 @@ fn start_impl(state:AppState,input:Start,scoped:Option<(dominion_extensions::Reg
     launch(state.clone(),saved.clone(),false);
     (StatusCode::ACCEPTED,Json(if is_scoped{scoped_view(&state,saved)}else{public_view(&state,saved)})).into_response()
 }
+/// Admit an owner-reviewed proposal through the same native SDK preparation
+/// and durable queue, with no second executor. The caller holds the app lock.
+pub(super) fn approve_extension_request(state:&AppState,proposal:&Value,registration:&dominion_extensions::Registration,workspace:&str,max_rounds:usize)->Result<Value,String>{
+    let input=Start{
+        instruction:proposal["instruction"].as_str().ok_or("Missing request instruction")?.into(),
+        provider_id:proposal["providerId"].as_str().map(str::to_owned),
+        model:proposal["model"].as_str().map(str::to_owned),agent_id:None,
+        source:Some(SourceRef{kind:dominion_extensions::SDK_SOURCE_KIND.into(),id:registration.id.clone()}),
+        idempotency_key:None,verify_command:None,max_rounds:Some(max_rounds),
+        options:json!({"tokenBudget":proposal["tokenBudget"],"workspaceDir":workspace,"shellSandbox":"required"})
+    };
+    let route=gateway::resolve(state,input.provider_id.as_deref().unwrap_or(""),input.model.as_deref())?;
+    if matches!(route.kind.as_str(),"cli"|"codex"){return Err("Requested model route is no longer eligible".into())}
+    let (mut session,mut run)=prepare_start(state,&input)?;
+    let extension=json!({"id":registration.id,"version":registration.manifest.version,"schemaVersion":registration.manifest.schema_version,
+        "capability":"owner_approved_task","requestId":proposal["id"]});
+    session["extension"]=extension.clone();
+    session["extensions"]=json!({"memory":false,"skills":false,"mcp":false,"strategies":false,"channels":false,"connectors":false});
+    run["extension"]=extension;
+    let mut approved=proposal.clone();
+    approved["status"]=json!("approved");
+    approved["runId"]=run["id"].clone();
+    approved["reviewedAt"]=json!(chrono::Utc::now().to_rfc3339());
+    let proposal_id=proposal["id"].as_str().ok_or("Missing proposal identity")?;
+    if !state.store.transaction_if_status(super::extension_requests::KIND,proposal_id,"pending",&[
+        ("session".into(),session),("sdk_run".into(),run.clone()),
+        (super::extension_requests::KIND.into(),approved.clone())
+    ])? {return Err("Request has already been reviewed".into())}
+    state.bus.record("sdk_run",&run);
+    launch(state.clone(),run,false);
+    Ok(approved)
+}
 pub(crate) fn launch(state:AppState,record:Value,resume:bool){
     tokio::spawn(async move{
         let id=record["id"].as_str().unwrap_or("");

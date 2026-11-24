@@ -55,7 +55,7 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
    case 'sdk_run':{
     add('/api/sdk/runs');if(id)add('/api/sdk/runs/'+encoded(id))
     const source=child(row,'source'),app=field(source,'id')
-    if(field(source,'kind')==='extension'&&app)add('/api/extensions/apps/'+encoded(app)+'/history')
+    if(field(source,'kind')==='extension'&&app){add('/api/extensions/apps/'+encoded(app)+'/history');add('/api/extensions/apps/'+encoded(app)+'/requests')}
     break
    }
    case 'memory':case 'experience':case 'improvement':case 'algorithm':case 'transfer':add('/api/memories','/api/experience','/api/improvements','/api/algorithms','/api/synergy','/api/transfer');break

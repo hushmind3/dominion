@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::{json,Value};
 use super::response::error;
 const KIND:&str="sdk_extension";
-const GRANT_KIND:&str="sdk_extension_grant";
+pub(super) const GRANT_KIND:&str="sdk_extension_grant";
 pub(crate) const TOKEN_HEADER:&str="x-dominion-extension-token";
 
 pub(crate) fn lock(state:&AppState,id:&str)->Result<SessionGuard,Response>{
@@ -82,11 +82,13 @@ pub struct GrantInput{
     model:String,
     token_budget:u64,
     max_runs:u64,
+    #[serde(default)] allow_task_requests:bool,
 }
 fn public_grant(row:&Value)->Value{
     json!({"id":row["id"],"providerId":row["providerId"],"model":row["model"],
         "tokenBudget":row["tokenBudget"],"remainingRuns":row["remainingRuns"],
-        "capability":"isolated_chat","generation":row["generation"]})
+        "capability":"isolated_chat","generation":row["generation"],
+        "allowTaskRequests":row["allowTaskRequests"]==true})
 }
 pub async fn grant_status(State(state):State<AppState>,Path(id):Path<String>)->Response{
     if let Err(response)=load(&state,&id){return response}
@@ -117,6 +119,7 @@ pub async fn issue_grant(State(state):State<AppState>,Path(id):Path<String>,Json
         .unwrap_or_else(||uuid::Uuid::new_v4().to_string());
     let row=json!({"id":id,"generation":generation,"providerId":route.id,"model":route.model,
         "tokenBudget":input.token_budget,"remainingRuns":input.max_runs,
+        "allowTaskRequests":input.allow_task_requests,"authorizationId":uuid::Uuid::new_v4().to_string(),
         "tokenSha256":format!("{:x}",Sha256::digest(token.as_bytes()))});
     let Some(saved)=state.store.put(GRANT_KIND,&row)else{return error(StatusCode::INTERNAL_SERVER_ERROR,"Credential save failed")};
     state.bus.record(KIND,&json!({"id":id,"grantChanged":true}));
@@ -132,7 +135,7 @@ pub async fn revoke_grant(State(state):State<AppState>,Path(id):Path<String>)->R
     state.bus.record(KIND,&json!({"id":id,"grantChanged":true}));
     Json(json!({"revoked":true})).into_response()
 }
-fn authenticated(state:&AppState,headers:&HeaderMap,id:&str)->Result<(SessionGuard,Registration,Value),Response>{
+pub(super) fn authenticated(state:&AppState,headers:&HeaderMap,id:&str)->Result<(SessionGuard,Registration,Value),Response>{
     let _guard=lock(state,id)?;
     let row=load(state,id).map_err(|_|error(StatusCode::UNAUTHORIZED,"Invalid extension credential"))?;
     let grant=state.store.get(GRANT_KIND,id).ok_or_else(||error(StatusCode::UNAUTHORIZED,"Invalid extension credential"))?;

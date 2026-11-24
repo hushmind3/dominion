@@ -1,0 +1,7 @@
+# External application task requests
+
+A scoped application can opt into a separate proposal capability when its owner issues a credential with allowTaskRequests=true. Submitting a proposal consumes one existing request allowance, but invokes no model and creates no executable task. Identical retry keys return the original receipt. The owner reviews the exact instruction, chooses an absolute workspace and 1–24 model rounds; the original pinned model and token budget are retained. Approval atomically creates a native SDK run and links the proposal. The normal native effect approvals, acceptance checks and cancellation apply. Optional memory, skills, MCP, strategies, channels and connectors are disabled for that run; built-in workspace tools remain available. This is an explicit owner task, not an autonomous third-party sandbox.
+
+The app sees only its proposal status, run status and verdict. The owner can inspect the actual run and explicitly publish one message after it terminates. Raw answers, file paths, errors, tool receipts and owner records are not automatically exposed to the requester. Credential rotation invalidates approval of previously pending requests; revocation prevents reads and submissions. Rejections do not refund proposal quota. Existing ordinary scoped chat and owner SDK routes are unchanged.
+
+Rust: Client::issue_task_request_grant; ScopedClient::propose_task and task_request. TypeScript: allowTaskRequests in ExtensionGrantInput; DominionExtensionClient.proposeTask and taskRequest. Owner UI: External apps > App task requests.
