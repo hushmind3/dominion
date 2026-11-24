@@ -1,7 +1,6 @@
 import {ConversationSettings} from '../components/ConversationSettings'
 import {ExecutionPermissions} from '../components/ExecutionPermissions'
 import {TeamRunStrip} from '../components/TeamActivity'
-import {ConversationSwitch} from '../components/WorkspaceShell'
 import {ConversationSidebarHeader} from '../components/chat/ConversationSidebarHeader'
 import {ExecutionTokenDetails} from '../components/chat/ExecutionTokenDetails'
 import {useAnchoredPanel} from '../hooks/useAnchoredPanel'
@@ -654,7 +653,6 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   <div className="flex min-h-0 min-w-0 flex-col">
    <div className="chat-usage-bar conversation-topbar">
     <Button variant="ghost" size="icon" className="conversation-mobile-toggle" aria-label={showHistory?t('chat.listCollapse'):t('chat.listExpand')} aria-controls="conversation-sidebar" aria-expanded={showHistory} onClick={()=>setShowHistory(value=>!value)}><Menu size={18}/></Button>
-    <ConversationSwitch mode="chat" onChange={switchMode}/>
     <span className="conversation-topbar-spacer"/>
     <details className="chat-usage-details">
      <summary aria-label={t('chat.cumulativeTokens',{count:totalUsedTokens.toLocaleString()})}

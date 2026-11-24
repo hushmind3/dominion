@@ -3,7 +3,6 @@ import {matchesRoomRefresh,type RefreshScope} from '../refreshEvents'
 import {ExecutionPermissions} from '../components/ExecutionPermissions'
 import {createPortal} from 'react-dom'
 import {useAnchoredPanel} from '../hooks/useAnchoredPanel'
-import {ConversationSwitch} from '../components/WorkspaceShell'
 import {ConversationSidebarHeader} from '../components/chat/ConversationSidebarHeader'
 import {ConversationRail} from '../components/chat/ConversationRail'
 import {TokenUsage} from '../components/TokenUsage'
@@ -106,7 +105,7 @@ export function RoomsPage({openSession,openSettings,switchMode,sidebarOpen:showL
   {!showList&&<ConversationRail mode="rooms" sidebarId="room-sidebar"
    onExpand={()=>setShowList(true)} onNew={()=>{setCreating(draftOf());setError('')}}
    onSwitchMode={switchMode} onSettings={openSettings}/>}
-  {current?<RoomConversation key={current.id} room={current} openSettings={openSettings} visibleView={visibleView} switchMode={switchMode} agents={agents.value} providers={providers.value} openList={()=>setShowList(v=>!v)} showList={showList} openSession={openSession} onSaved={async()=>{await rooms.reload();refresh()}} onRemoved={async()=>{setSelected('');await rooms.reload()}}/>:<div className="room-welcome"><header className="room-empty-header conversation-topbar"><Button variant="ghost" size="icon" className="conversation-mobile-toggle" aria-label={showList?t('rooms.listCollapse'):t('rooms.listExpand')} aria-controls="room-sidebar" aria-expanded={showList} onClick={()=>setShowList(value=>!value)}><Menu size={18}/></Button><ConversationSwitch mode="rooms" onChange={switchMode}/><Button variant="ghost" size="icon" className="conversation-settings" aria-label={t('nav.settings')} onClick={openSettings}><Settings size={18}/></Button></header><div className="room-welcome-mark"><UsersRound size={40}/></div><span className="room-eyebrow">{t('ui.label.teamPlace')}</span><h1>{t('rooms.welcome.title')}</h1><p>{t('rooms.welcome.line1')}<br/>{t('rooms.welcome.line2')}<br/>{t('rooms.welcome.line3')}</p><Button variant="primary" onClick={()=>{setCreating(draftOf());setError('')}}><Plus size={16}/> {t('rooms.create')}</Button><Button variant="bare" className="room-mobile-list-button" onClick={()=>setShowList(true)}>{t('rooms.viewSaved')}</Button></div>}
+  {current?<RoomConversation key={current.id} room={current} openSettings={openSettings} visibleView={visibleView} switchMode={switchMode} agents={agents.value} providers={providers.value} openList={()=>setShowList(v=>!v)} showList={showList} openSession={openSession} onSaved={async()=>{await rooms.reload();refresh()}} onRemoved={async()=>{setSelected('');await rooms.reload()}}/>:<div className="room-welcome"><header className="room-empty-header conversation-topbar"><Button variant="ghost" size="icon" className="conversation-mobile-toggle" aria-label={showList?t('rooms.listCollapse'):t('rooms.listExpand')} aria-controls="room-sidebar" aria-expanded={showList} onClick={()=>setShowList(value=>!value)}><Menu size={18}/></Button><span className="conversation-topbar-spacer"/></header><div className="room-welcome-mark"><UsersRound size={40}/></div><span className="room-eyebrow">{t('ui.label.teamPlace')}</span><h1>{t('rooms.welcome.title')}</h1><p>{t('rooms.welcome.line1')}<br/>{t('rooms.welcome.line2')}<br/>{t('rooms.welcome.line3')}</p><Button variant="primary" onClick={()=>{setCreating(draftOf());setError('')}}><Plus size={16}/> {t('rooms.create')}</Button><Button variant="bare" className="room-mobile-list-button" onClick={()=>setShowList(true)}>{t('rooms.viewSaved')}</Button></div>}
   {(error||rooms.error||agents.error||providers.error)&&!creating&&<div className="room-global-error"><Notice message={error||rooms.error||agents.error||providers.error}/></div>}
   {creating&&<DialogBackdrop onDismiss={()=>{if(!saving)setCreating(null)}}><DialogPanel size="wide" aria-label={t('rooms.newTitle')}><div className="room-dialog-header"><div><span className="room-eyebrow">{t('ui.label.startConversation')}</span><h2>{t('rooms.who')}</h2></div><Button size="icon" variant="ghost" aria-label={t('rooms.close')} onClick={()=>setCreating(null)} disabled={saving}><X size={18}/></Button></div><div className="room-dialog-body"><RoomSettings value={creating} onChange={setCreating} agents={agents.value} providers={providers.value} disabled={saving}/><Notice message={error}/></div><div className="room-dialog-footer"><span>{t('rooms.createHint')}</span><Button variant="primary" onClick={()=>void createRoom()} disabled={saving||!creating.name.trim()||!creating.agentIds.length}>{saving?<LoaderCircle size={15} className="animate-spin"/>:<Plus size={15}/>} {t('rooms.create')}</Button></div></DialogPanel></DialogBackdrop>}
  </div>
@@ -546,13 +545,31 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
   <section className="room-main" aria-label={t('rooms.headerAria',{name:current.name})}>
    <header className="room-header conversation-topbar">
     <Button variant="ghost" size="icon" className="conversation-mobile-toggle room-list-toggle" aria-label={showList?t('rooms.listCollapse'):t('rooms.listExpand')} aria-controls="room-sidebar" aria-expanded={showList} onClick={openList}><Menu size={18}/></Button>
-    <ConversationSwitch mode="rooms" onChange={switchMode}/>
-    <div className="room-header-copy"><h1 title={current.name}>{current.name}</h1><p title={current.topic}>{current.topic||t('rooms.topicFallback')}</p></div>
+    <span className="conversation-topbar-spacer"/>
     <div className="room-header-actions">
-     <span className={'room-status '+(running?'is-running':'')} role="status">{running&&<i/>}{labels[status]?t(labels[status]):status}</span>
+     <div className="room-route-bar" aria-label={t('rooms.routeTitle')}>
+    <details className="room-route-details">
+     <summary>
+      <span className="room-avatar-stack"><Avatar owner size="small"/>{roster.slice(0,3).map((agent,index)=><Avatar key={agent.id} agent={agent} size="small" index={index}/>)}</span>
+      <span className="room-route-summary"><strong>{roster.length}{getLocale()==='en'?' agents':'명'}</strong></span>
+      <ChevronDown size={14}/>
+     </summary>
+     <div className="room-route-popover"><div className="room-route-context"><strong>{current.name}</strong><small>{current.ownerName||t('rooms.me')}{t('rooms.withAgents',{count:roster.length})} · {t(modes[mode].label)}</small></div>
+     <div className="room-route-bar-items">
+      {activeRoutes.map(row=><span key={row.id}><b>{row.name}</b><small title={row.providerId+' / '+row.model}>{row.model||t('rooms.routeMissing')}</small></span>)}
+     </div>
+     <Button variant="ghost" size="sm" onClick={()=>setInspector(true)} aria-label={t('rooms.routeEdit')}><Settings2 size={14}/>{t('rooms.routeEdit')}</Button>
+     </div>
+    </details>
+   </div>
+     {running&&<span className="room-status is-running" role="status"><i/>{t('rooms.st.running')}</span>}
+     <details className="chat-usage-details room-token-details">
+      <summary aria-label={t('chat.cumulativeTokens',{count:usageTotal.toLocaleString()})} title={t('usage.sessionTotal',{count:usageTotal.toLocaleString()})}><Hash size={13}/><span>{t('chat.cumulativeTokens',{count:usageTotal.toLocaleString()})}</span></summary>
+      <div role="note" className="chat-usage-popover"><strong>{current.name}</strong><p>{t('usage.sessionTotal',{count:usageTotal.toLocaleString()})}</p></div>
+     </details>
      <Button variant="ghost" size="icon" className="room-header-more" ref={headerMenu.trigger} aria-label={getLocale()==='en'?'Room actions':'그룹 관리'} title={getLocale()==='en'?'Room actions':'그룹 관리'} aria-haspopup="dialog" aria-expanded={headerMenuOpen} onClick={()=>{setHeaderMenuOpen(value=>!value);setRecipientsOpen(false);setPermissionOpen(false);setShowSettings(false)}}><MoreHorizontal size={20}/></Button>
      {headerMenuOpen&&headerMenu.position&&createPortal(<div ref={headerMenu.panel} style={headerMenu.position} className="room-header-menu" role="dialog" aria-label={getLocale()==='en'?'Room actions':'그룹 관리'}>
-       <span className="room-header-usage">{t('usage.sessionTotal',{count:usageTotal.toLocaleString()})}</span>
+       <span className="room-header-usage"><strong>{current.name}</strong>{current.topic&&<span className="room-menu-topic">{current.topic}</span>}</span>
        <Button variant="ghost" onClick={()=>{setHeaderMenuOpen(false);void openKnowledge()}}><BookOpenText size={16}/>{t('rooms.sharedKnowledge')} ({knowledge.length||0})</Button>
        <Button variant="ghost" onClick={()=>{setHeaderMenuOpen(false);void openPrompt()}}><FileText size={16}/>{t('rooms.systemPrompt')}</Button>
        <Button variant="ghost" onClick={()=>{setHeaderMenuOpen(false);setShowActivity(true)}}><Activity size={16}/>{t('rooms.activity')}</Button>
@@ -561,21 +578,6 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
       </div>,document.body)}
     </div>
    </header>
-
-
-   <div className="room-route-bar" aria-label={t('rooms.routeTitle')}>
-    <details className="room-route-details">
-     <summary>
-      <span className="room-avatar-stack"><Avatar owner size="small"/>{roster.slice(0,3).map((agent,index)=><Avatar key={agent.id} agent={agent} size="small" index={index}/>)}</span>
-      <span className="room-route-summary"><strong>{current.ownerName||t('rooms.me')}{t('rooms.withAgents',{count:roster.length})}</strong><small>{t(modes[mode].label)}</small></span>
-      <ChevronDown size={14}/>
-     </summary>
-     <div className="room-route-bar-items">
-      {activeRoutes.map(row=><span key={row.id}><b>{row.name}</b><small title={row.providerId+' / '+row.model}>{row.model||t('rooms.routeMissing')}</small></span>)}
-     </div>
-    </details>
-    <Button variant="ghost" size="sm" onClick={()=>setInspector(true)} aria-label={t('rooms.routeEdit')}><Settings2 size={14}/>{t('rooms.routeEdit')}</Button>
-   </div>
    <div className="room-scroll" ref={scrollRef} onScroll={onScroll} role="log" aria-label={t('rooms.logAria')} aria-busy={loading}>
     {loading?<div className="room-feed-loading"><LoaderCircle size={20} className="animate-spin"/> {t('rooms.loading')}</div>:!visible.length?<div className="room-first-message"><div className="room-empty-avatars"><Avatar owner/>{roster.slice(0,3).map((agent,index)=><Avatar key={agent.id} agent={agent} index={index}/>)}</div><h2>{t('rooms.firstTitle')}</h2><p>{t('rooms.firstDesc')}<br/>{t('rooms.firstDesc2')}</p><div><span><AtSign size={14}/> {t('rooms.mentionOne')}</span><span><BookOpenText size={14}/> {t('rooms.roomContinues')}</span></div></div>:<>{visible.map(message=>{const owner=message.role==='user';const shared=message.metadata?.kind==='learning_report'&&(message.metadata?.learningScope==='room'||message.metadata?.source==='knowledge');const agent=shared?undefined:agents.find(item=>item.id===message.agent_id);return <TranscriptMessage key={message.id} message={message} showReasoning={showReasoning} agent={agent} name={shared?t('rooms.sharedKnowledge'):owner?(current.ownerName||t('rooms.me')):(agent?.name||message.agent_id||t('rooms.agentFallback'))} owner={owner} index={Math.max(0,current.agentIds.indexOf(message.agent_id||''))}/>})}</>}
     {live&&<div className="room-message room-message-agent room-message-live"><Avatar agent={agents.find(agent=>agent.id===live.agentId)}/><div className="room-message-main"><div className="room-message-byline"><strong>{agents.find(agent=>agent.id===live.agentId)?.name||live.agentId}</strong><span className="room-live-label">{!live.done&&<i/>}{live.error?t('rooms.live.stopped'):live.done?t('rooms.live.saving'):t('rooms.live.responding')}</span></div>{showReasoning&&live.reasoning&&<details className="room-reasoning"><summary>{t('rooms.live.showReasoning')}</summary><pre>{live.reasoning}</pre></details>}{live.text?<MessageBody text={live.text} streaming/>:!live.error&&<span className="room-typing"><i/><i/><i/></span>}{live.tool&&<div className="room-tool-live"><TerminalSquare size={13}/>{t('rooms.live.toolRunning',{tool:live.tool})}</div>}{live.error&&<p className="room-message-error">{translateError(live.error)}</p>}</div></div>}

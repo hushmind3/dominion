@@ -363,11 +363,14 @@
 .conversation-sidebar-header .conversation-switch{width:100%}
 .conversation-sidebar-header .conversation-switch>button{flex:1;justify-content:center}
 .conversation-topbar{display:flex;align-items:center;min-width:0;gap:8px;flex-shrink:0}
-.chat-usage-bar.conversation-topbar{height:44px;flex:0 0 44px;padding:0 16px;border-bottom:1px solid #EAE6DF}
+.chat-usage-bar.conversation-topbar{height:32px;flex:0 0 32px;padding:0 12px;border:0;background:transparent}
 .conversation-topbar-spacer{flex:1;min-width:0}
-.conversation-topbar>.conversation-switch{flex-shrink:0}
 .conversation-topbar>.conversation-mobile-toggle{display:none}
 @media(max-width:767px){
  .conversation-topbar>.conversation-mobile-toggle{display:inline-flex;flex-shrink:0}
  .chat-usage-bar.conversation-topbar{padding:0 8px;gap:5px}
 }
+
+/* Conversation content comes first. Only the compact utility controls remain. */
+.conversation-topbar .chat-usage-details summary{padding:2px 5px;line-height:20px;font-size:10px;gap:4px}
+.conversation-topbar>.conversation-mobile-toggle{width:28px;height:28px;min-height:28px}

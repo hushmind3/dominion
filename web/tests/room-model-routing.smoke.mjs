@@ -161,7 +161,9 @@ try{
   'each saved reply must expose its ACTUAL model, not just the configured route');
  // The configured model remains selectable when /models is not available.
  // The inspector is already closed above; use the visible model-change entry point.
+ await page.locator('.room-route-details > summary').click();
  await page.getByRole('button',{name:'모델 변경',exact:true}).click();
+ await page.locator('.room-route-details').evaluate(el=>el.open=false);
  await page.getByLabel('모델 제공자 선택').selectOption('offline');
  await page.getByText('configured-only-model',{exact:true}).first()
   .waitFor({state:'visible',timeout:10000});
@@ -279,6 +281,9 @@ try{
  assert.equal(afterReset.attempt,undefined);
  const sizes=await page.evaluate(()=>({screen:innerWidth,body:document.documentElement.scrollWidth}));
  assert.ok(sizes.body<=sizes.screen+2,'Room model UI overflows mobile: '+JSON.stringify(sizes));
+ assert.equal(await page.locator('.room-header .conversation-switch').count(),0,'no duplicated navigation');
+ assert.ok(await page.locator('.room-token-details > summary').isVisible(),'retain group cumulative tokens');
+ assert.ok((await page.locator('.room-header').boundingBox()).height<=32,'no large group header');
  const layout=await page.locator('.room-main').evaluate(main=>Object.fromEntries(['.room-header','.conversation-composer-controls'].map(selector=>{const el=main.querySelector(selector);return [selector,{width:el.clientWidth,scroll:el.scrollWidth}]})));
  for(const [name,box] of Object.entries(layout))assert.ok(box.scroll<=box.width+2,name+' horizontally overflows: '+JSON.stringify(box));
  assert.deepEqual(errors,[],'Room runtime errors');

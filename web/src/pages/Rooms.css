@@ -193,3 +193,26 @@
  .room-list{width:min(232px,85vw)}
  .room-header.conversation-topbar,.room-empty-header.conversation-topbar{height:44px;min-height:44px;padding:0 8px}
 }
+
+/* Group and private chat share a 32px borderless utility area. The roster
+   opens as a small floating disclosure rather than consuming transcript rows. */
+.room-header.conversation-topbar,.room-empty-header.conversation-topbar{height:32px;min-height:32px;flex:0 0 32px;padding:0 12px;border:0;background:transparent;gap:4px}
+.room-header-actions{gap:3px;min-width:0}
+.room-header .room-header-more{width:28px;height:28px;min-height:28px;padding:3px}
+.room-header .room-status{max-width:60px;font-size:10px}
+.room-header .room-route-bar{position:relative;display:block;flex:none;padding:0;border:0;background:transparent;z-index:12}
+.room-route-details{position:relative}
+.room-route-details>summary{min-height:26px;gap:4px;padding:0 3px;border-radius:6px}
+.room-route-details>summary:hover{background:#F1EEE8}
+.room-route-summary strong{font-size:10px;font-weight:500}
+.room-route-details .room-avatar-small{width:19px;height:19px;flex-basis:19px;border-radius:6px}
+.room-route-details .room-avatar-stack .room-avatar+.room-avatar{margin-left:-5px}
+.room-route-details>summary>svg{width:12px;height:12px}
+.room-route-popover{position:absolute;top:calc(100% + 4px);right:0;width:min(280px,calc(100vw - 24px));padding:10px;max-height:45vh;overflow:auto;border:1px solid #E7E2DA;border-radius:10px;background:#FFFDF9;box-shadow:0 8px 25px #27221A1C}
+.room-route-context{display:flex;flex-direction:column;gap:4px;padding:2px 4px 6px}
+.room-route-context strong{font-size:13px;overflow-wrap:anywhere}.room-route-context small{font-size:10px;overflow-wrap:anywhere}
+.room-route-popover .room-route-bar-items{display:grid;grid-template-columns:1fr;max-height:none;overflow:visible;padding:4px 0}
+.room-route-popover>button{width:100%;justify-content:flex-start}
+.room-menu-topic{display:block;margin-top:4px;overflow-wrap:anywhere;font-weight:400}
+.room-scroll{padding-top:12px}
+@media(max-width:767px){.room-header.conversation-topbar,.room-empty-header.conversation-topbar{padding:0 8px}.room-header .room-status{display:none}.room-header .room-avatar-stack .room-avatar:nth-child(n+3){display:none}.room-scroll{padding-top:12px}}
