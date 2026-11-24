@@ -170,7 +170,7 @@ pub async fn search(Query(input):Query<Search>)->Response{
         let words=safe.split_whitespace().map(|w|format!("\"{w}\"")).collect::<Vec<_>>().join(" ");
         let query=if words.is_empty(){"topic:dominion-plugin archived:false".into()}else{format!("archived:false {words}")};
         let mut url=github_url("search/repositories")?;
-        url.query_pairs_mut().append_pair("q",&query).append_pair("per_page","30");
+        url.query_pairs_mut().append_pair("q",&query).append_pair("per_page","30").append_pair("sort","stars").append_pair("order","desc");
         let ((mut items,index_cached),remote)=tokio::join!(indexed(&client,q),read(&client,url,4*1024*1024));
         let mut errors=Vec::new();
         match remote{
@@ -179,7 +179,13 @@ pub async fn search(Query(input):Query<Search>)->Response{
                     // A repository may publish several packages on distinct refs.
                     // Keep indexed packages and suppress only generic duplicate repo cards.
                     let known=items.iter().filter_map(|p|p["repository"].as_str().map(str::to_lowercase)).collect::<std::collections::HashSet<_>>();
+                    for item in &mut items {
+                        if let Some(row)=rows.iter().find(|r|r["full_name"].as_str().zip(item["repository"].as_str()).is_some_and(|(a,b)|a.eq_ignore_ascii_case(b))){
+                            item["stars"]=row["stargazers_count"].clone();
+                        }
+                    }
                     items.extend(rows.iter().filter_map(card).filter(|p|!known.contains(&p["repository"].as_str().unwrap_or("").to_lowercase())));
+                    items.sort_by(|a,b| (b["indexed"]==true).cmp(&(a["indexed"]==true)).then_with(||b["stars"].as_u64().cmp(&a["stars"].as_u64())));
                 }
                 None=>errors.push(json!({"repository":"GitHub","message":"Invalid search response"})),
             },
