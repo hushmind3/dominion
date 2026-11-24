@@ -1,5 +1,5 @@
 import {useEffect,useRef,useState} from 'react'
-import {del,post} from '../../api'
+import {del,get,post} from '../../api'
 import {useProviderModels} from '../../hooks/useProviderModels'
 import {useLocale} from '../../i18n'
 import {Action,FormField,Notice,Panel,StateTag,Subheading,useRemote,refresh} from '../../components/UI'
@@ -169,11 +169,19 @@ function ScopedConnectionTest({appId,token,enabled,remaining,onRun}:{appId:strin
  </div>
 }
 
+type ReleaseAsset={name:string;version:string;source:string;sha256:string;bytes:number}
 type PackageState={installed:boolean;filePresent:boolean;version?:string;sha256?:string;running:boolean;exitCode?:number|null;platform:string;arch:string}
 function ManagedPackage({app}:{app:App}){
  const en=useLocale()==='en',root=endpoint+'/'+encodeURIComponent(app.id),path=root+'/package'
  const [opened,setOpened]=useState(false),[source,setSource]=useState(''),[version,setVersion]=useState(app.manifest.version),[sha,setSha]=useState('')
  const [token,setToken]=useState(''),[trust,setTrust]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('')
+ const [repo,setRepo]=useState(''),[catalog,setCatalog]=useState<ReleaseAsset[]>([]),[lookup,setLookup]=useState(false),[catalogNote,setCatalogNote]=useState('')
+ const findRelease=async()=>{
+  if(lookup||!repo.trim())return
+  setLookup(true);setCatalog([]);setCatalogNote('');setError('')
+  try{const result=await get<{tag:string;assets:ReleaseAsset[]}>('/api/extensions/releases?repo='+encodeURIComponent(repo.trim()));setCatalog(result.assets);setCatalogNote(result.assets.length?(en?'Select the file matching your platform.':'현재 운영체제와 CPU에 맞는 실행 파일을 선택하세요.'):(en?'No standalone asset with a SHA-256 digest.':'SHA-256이 제공되는 단독 실행 파일이 없습니다.'))}
+  catch(e){setError((e as Error).message)}finally{setLookup(false)}
+ }
  const inFlight=useRef(false)
  const pkg=useRemote<PackageState|null>(opened?path:null,null)
  const grant=useRemote<Grant|null>(opened?root+'/grant':null,null)
@@ -195,6 +203,10 @@ function ManagedPackage({app}:{app:App}){
    <p className="text-xs text-muted">{en?'Install a trusted standalone executable (up to 64 MiB), not an archive. Runs with your OS user privileges; this is not a sandbox.':'신뢰하는 단독 실행 파일(최대 64MiB)을 설치합니다. 압축 파일은 지원하지 않습니다. 현재 OS 사용자 권한으로 실행되며 샌드박스가 아닙니다.'}</p>
    <label className="flex items-start gap-2 text-xs"><input type="checkbox" checked={trust} onChange={e=>setTrust(e.target.checked)} disabled={busy}/>{en?'I trust this executable and its publisher.':'이 실행 파일과 배포자를 신뢰하며 실행 권한을 허용합니다.'}</label>
    {!app.enabled&&<div className="grid gap-2">
+    <FormField label={en?'GitHub repository':'GitHub 저장소'} hint="owner/repository"><TextInput aria-label={en?'GitHub repository':'GitHub 저장소'} value={repo} disabled={lookup||busy} onChange={e=>{setRepo(e.target.value);setCatalog([]);setCatalogNote('')}}/></FormField>
+    <Button disabled={lookup||busy||!repo.trim()} onClick={()=>void findRelease()}>{lookup?(en?'Checking release…':'릴리스 확인 중…'):(en?'Find latest release':'최신 릴리스 확인')}</Button>
+    {catalogNote&&<p role="status" className="text-xs text-muted">{catalogNote}</p>}
+    {catalog.length>0&&<div className="grid gap-1 max-h-48 overflow-y-auto">{catalog.map(asset=><Button key={asset.source} variant="ghost" disabled={busy} className="justify-start whitespace-normal break-all text-left" onClick={()=>{setSource(asset.source);setVersion(asset.version);setSha(asset.sha256);setTrust(false)}}>{asset.name} · v{asset.version} · {(asset.bytes/1024/1024).toFixed(1)} MiB{pkg.value?.sha256===asset.sha256?(en?' · Installed':' · 현재 설치됨'):''}</Button>)}</div>}
     <FormField label={en?'Executable source':'실행 파일 출처'} hint={en?'Absolute local path or pinned GitHub release URL':'절대 로컬 경로 또는 버전이 지정된 GitHub 릴리스 URL'}><TextInput aria-label={en?'Executable source':'실행 파일 출처'} value={source} onChange={e=>setSource(e.target.value)} disabled={busy}/></FormField>
     <FormField label={en?'Package version':'설치 버전'}><TextInput aria-label={en?'Package version':'설치 버전'} value={version} onChange={e=>setVersion(e.target.value)} disabled={busy}/></FormField>
     <FormField label="SHA-256"><TextInput aria-label="SHA-256" value={sha} onChange={e=>setSha(e.target.value)} disabled={busy}/></FormField>
@@ -204,7 +216,7 @@ function ManagedPackage({app}:{app:App}){
    {app.enabled&&!running&&<p className="text-xs text-muted">{en?'Disable the app before installing or updating.':'설치하거나 업데이트하려면 먼저 앱을 비활성화하세요.'}</p>}
    {installed&&app.enabled&&!running&&<div className="grid gap-2"><FormField label={en?'App credential':'앱 실행 인증키'}><TextInput aria-label={en?'App credential':'앱 실행 인증키'} type="password" autoComplete="off" value={token} onChange={e=>setToken(e.target.value)} disabled={busy}/></FormField>
     {!grant.loading&&!grant.value&&<p className="text-xs text-muted">{en?'Issue an app credential below first.':'아래 앱별 인증키 관리에서 키를 먼저 발급하세요.'}</p>}
-    <Action disabled={!ready||busy||!trust||!grant.value||token.length!==64||!pkg.value?.filePresent} onClick={()=>void act(()=>post(root+'/process/start',{token,trust_executable:true}))}>{en?'Start app':'앱 실행'}</Action></div>}
+    <Action disabled={!ready||busy||!trust||!grant.value||token.length!==64||!pkg.value?.filePresent} onClick={()=>void act(()=>post(root+'/process/start',{token,trustExecutable:true}))}>{en?'Start app':'앱 실행'}</Action></div>}
    {running&&<Button disabled={busy} onClick={()=>void act(()=>post(root+'/process/stop',{}))}>{en?'Stop app':'앱 종료'}</Button>}
    <Button variant="ghost" disabled={busy||pkg.refreshing} onClick={()=>void pkg.reload()}>{en?'Refresh process status':'실행 상태 새로고침'}</Button>
   </div>}

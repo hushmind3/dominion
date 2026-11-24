@@ -1,7 +1,7 @@
 //! Owner-approved installation of standalone SDK executables.
 //! A native executable runs as the OS user; this is NOT a sandbox.
 use crate::state::AppState;
-use axum::{extract::{Path,State},http::StatusCode,response::{IntoResponse,Response},Json};
+use axum::{extract::{Path,Query,State},http::StatusCode,response::{IntoResponse,Response},Json};
 use serde::Deserialize;
 use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
@@ -17,8 +17,8 @@ pub struct Install{
     version:String,source:String,sha256:String,trust_executable:bool,
 }
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Start{token:String,trust_executable:bool}
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+pub struct Start{token:String,#[serde(alias="trust_executable")] trust_executable:bool}
 fn digest(bytes:&[u8])->String{format!("{:x}",Sha256::digest(bytes))}
 fn valid_digest(s:&str)->bool{s.len()==64&&s.bytes().all(|b|b.is_ascii_hexdigit())}
 fn release_url(url:&reqwest::Url)->bool{
@@ -34,6 +34,50 @@ fn release_url(url:&reqwest::Url)->bool{
 fn redirect_allowed(url:&reqwest::Url)->bool{
     url.scheme()=="https"&&url.port().is_none()&&url.username().is_empty()&&url.password().is_none()
         &&(release_url(url)||matches!(url.host_str(),Some("release-assets.githubusercontent.com"|"objects.githubusercontent.com")))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseQuery{repo:String}
+fn repo_parts(repo:&str)->Option<(&str,&str)>{
+    let (owner,name)=repo.split_once('/')?;
+    let valid=|s:&str|!s.is_empty()&&s.len()<=100&&s!="."&&s!=".."
+        &&s.bytes().all(|b|b.is_ascii_alphanumeric()||matches!(b,b'-'|b'_'|b'.'));
+    (valid(owner)&&valid(name)).then_some((owner,name))
+}
+fn release_assets(release:&Value,repo:&str)->Vec<Value>{
+    let Some(tag)=release["tag_name"].as_str()else{return vec![]};
+    let version=tag.strip_prefix('v').unwrap_or(tag);
+    let manifest=dominion_extensions::Manifest{schema_version:1,id:"release".into(),name:"Release".into(),version:version.into(),description:String::new()};
+    if manifest.validate().is_err()||release["draft"]==true||release["prerelease"]==true{return vec![]}
+    let prefix=format!("/{repo}/releases/download/");
+    release["assets"].as_array().into_iter().flatten().filter_map(|asset|{
+        let url=reqwest::Url::parse(asset["browser_download_url"].as_str()?).ok()?;
+        if !release_url(&url)||!url.path().to_ascii_lowercase().starts_with(&prefix.to_ascii_lowercase()){return None}
+        let sha=asset["digest"].as_str()?.strip_prefix("sha256:")?;
+        let size=asset["size"].as_u64()?;
+        let name=asset["name"].as_str()?;
+        if !valid_digest(sha)||size==0||size>MAX_BYTES as u64||asset["state"]!="uploaded"{return None}
+        // Only standalone artifacts; common archive/checksum types are not runnable.
+        let lower=name.to_ascii_lowercase();
+        if [".zip",".tar",".gz",".xz",".bz2",".7z",".sha256",".sig",".asc",".json",".txt",".md",".dmg",".msi",".pkg"].iter().any(|ext|lower.ends_with(ext)){return None}
+        Some(json!({"name":name,"version":version,"source":url.as_str(),"sha256":sha,"bytes":size}))
+    }).take(50).collect()
+}
+pub async fn releases(Query(input):Query<ReleaseQuery>)->Response{
+    let Some((owner,name))=repo_parts(&input.repo)else{return error(StatusCode::BAD_REQUEST,"Use GitHub owner/repository")};
+    let client=match reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none()).build(){Ok(c)=>c,Err(_)=>return error(StatusCode::BAD_GATEWAY,"Release catalog unavailable")};
+    let url=format!("https://api.github.com/repos/{owner}/{name}/releases/latest");
+    let mut res=match client.get(url).header("User-Agent","DOMINION-SDK").header("Accept","application/vnd.github+json").send().await{
+        Ok(r) if r.status().is_success()=>r,_=>return error(StatusCode::BAD_GATEWAY,"No accessible latest stable GitHub release")
+    };
+    let mut bytes=Vec::new();
+    loop{match res.chunk().await{
+        Ok(Some(chunk)) if bytes.len().saturating_add(chunk.len())<=2*1024*1024=>bytes.extend_from_slice(&chunk),
+        Ok(None)=>break,_=>return error(StatusCode::BAD_GATEWAY,"Release catalog too large or interrupted")
+    }}
+    let release:Value=match serde_json::from_slice(&bytes){Ok(v)=>v,Err(_)=>return error(StatusCode::BAD_GATEWAY,"Invalid release catalog")};
+    Json(json!({"tag":release["tag_name"],"assets":release_assets(&release,&input.repo)})).into_response()
 }
 async fn read_file(path:&FsPath)->Result<Vec<u8>,String>{
     let metadata=tokio::fs::symlink_metadata(path).await.map_err(|e|e.to_string())?;
@@ -138,6 +182,7 @@ pub async fn install(State(state):State<AppState>,Path(id):Path<String>,Json(inp
     let bytes=match fetch_package(&input.source).await{Ok(b)=>b,Err(e)=>return error(StatusCode::BAD_REQUEST,&e)};
     let expected=input.sha256.to_ascii_lowercase();
     if digest(&bytes)!=expected{return error(StatusCode::BAD_REQUEST,"Executable SHA-256 does not match")}
+    let _restore_guard=state.restore_guard.lock().await;
     if state.maintenance_mode(){return error(StatusCode::SERVICE_UNAVAILABLE,"Maintenance mode")}
     let row=json!({"id":id,"artifact":uuid::Uuid::new_v4().to_string(),"version":input.version,
         "sha256":expected,"bytes":bytes.len(),"platform":std::env::consts::OS,"arch":std::env::consts::ARCH});
@@ -168,6 +213,8 @@ pub async fn uninstall(State(state):State<AppState>,Path(id):Path<String>)->Resp
     let _guard=match registry::lock(&state,&id){Ok(g)=>g,Err(r)=>return r};
     let registration=match registry::load(&state,&id){Ok(r)=>r,Err(r)=>return r};
     if registration.enabled{return error(StatusCode::CONFLICT,"Disable the app before uninstalling")}
+    let _restore_guard=state.restore_guard.lock().await;
+    if state.maintenance_mode(){return error(StatusCode::SERVICE_UNAVAILABLE,"Maintenance mode")}
     if let Err(r)=stop_child(&state,&id).await{return r}
     if let Some(old)=state.store.get(PACKAGE_KIND,&id){
         if !state.store.remove(PACKAGE_KIND,&id){return error(StatusCode::INTERNAL_SERVER_ERROR,"Cannot remove package registration")}
@@ -192,6 +239,7 @@ pub async fn start(State(state):State<AppState>,Path(id):Path<String>,Json(input
     let bytes=match read_file(&path).await{Ok(b)=>b,Err(_)=>return error(StatusCode::CONFLICT,"Installed executable missing or unreadable")};
     if row["sha256"]!=digest(&bytes){return error(StatusCode::CONFLICT,"Installed executable changed; reinstall it")}
     let path=match tokio::fs::canonicalize(path).await{Ok(p)=>p,Err(_)=>return error(StatusCode::CONFLICT,"Cannot resolve executable")};
+    let _restore_guard=state.restore_guard.lock().await;
     let mut children=state.managed_apps.lock().await;
     if let Some(child)=children.get_mut(&id){
         match child.try_wait(){Ok(None)=>return error(StatusCode::CONFLICT,"App is already running"),Ok(Some(_))=>{},Err(_)=>return error(StatusCode::INTERNAL_SERVER_ERROR,"Cannot inspect app process")}
@@ -227,6 +275,20 @@ mod tests{
             assert!(!release_url(&reqwest::Url::parse(url).unwrap()));
         }
         assert!(!redirect_allowed(&reqwest::Url::parse("https://127.0.0.1/app").unwrap()));
+    }
+    #[test]
+    fn release_catalog_only_offers_pinned_hashed_standalone_assets(){
+        let asset=|name:&str,sha:Value|json!({"name":name,"state":"uploaded","size":100,
+            "digest":sha,"browser_download_url":format!("https://github.com/a/b/releases/download/v1.2.3/{name}")});
+        let sha=json!(format!("sha256:{}",digest(b"app")));
+        let release=json!({"tag_name":"v1.2.3","assets":[asset("app-macos",sha.clone()),asset("app.zip",sha),asset("unknown",Value::Null)]});
+        let result=release_assets(&release,"a/b");
+        assert_eq!(result.len(),1);
+        assert_eq!(result[0]["version"],"1.2.3");
+        assert!(release_assets(&release,"a/c").is_empty());
+        assert!(repo_parts("a/b").is_some());
+        assert!(repo_parts("a/../b").is_none());
+        assert!(repo_parts("../b").is_none());
     }
     #[tokio::test]
     async fn local_package_is_bounded_and_digest_checked(){

@@ -400,6 +400,7 @@ pub async fn maintenance(
     }
     let enabled = body["enabled"].as_bool().unwrap_or(false);
     state.set_maintenance(enabled);
+    if enabled { super::extension_process::stop_all(&state).await; }
     Json(json!({"maintenance": enabled})).into_response()
 }
 

@@ -9,3 +9,5 @@ The host tracks the direct child process, not arbitrary descendants. Native apps
 Owner routes: GET/POST/DELETE /api/extensions/apps/:id/package; POST /api/extensions/apps/:id/process/start (token, trust_executable); POST /api/extensions/apps/:id/process/stop. Package install uses source, version, sha256, trustExecutable. Scoped credentials cannot call these routes.
 
 Design references: https://docs.github.com/en/rest/releases/assets (release SHA-256); https://code.visualstudio.com/docs/configure/extensions/extension-runtime-security (explicit publisher trust). Digest pinning verifies bytes, not publisher identity.
+
+The manager can query the latest stable public GitHub release using owner/repository and populate the exact version, asset URL and digest. Assets with missing digests, oversized files and common archives are excluded; the owner selects the appropriate OS/CPU binary and confirms trust. No automatic installation or update occurs. Managed package files are outside the SQLite backup; after restoring an older database, a missing file must be reinstalled. Entering maintenance stops managed direct children.

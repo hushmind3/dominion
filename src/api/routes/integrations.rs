@@ -7,6 +7,7 @@ use axum::{
 
 pub(super) fn router() -> Router<AppState> {
     Router::new()
+        .route("/api/extensions/releases", get(extension_process::releases))
         .route("/api/extensions/apps", get(extension_registry::list).post(extension_registry::register))
         .route("/api/extensions/apps/:id", get(extension_registry::one).delete(extension_registry::remove))
         .route("/api/extensions/apps/:id/state", post(extension_registry::set_state))
