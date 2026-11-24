@@ -359,10 +359,11 @@ test('extension lifecycle uses its own authenticated endpoints and explicit owne
   await d.extensions.disable('fixture');
   await d.extensions.list();
   await d.extensions.remove('fixture');
+  await d.extensions.versions('fixture');
   assert.deepEqual(calls.map(c=>new URL(c.url).pathname),[
     '/api/extensions/registries','/api/extensions/registries','/api/extensions/catalog',
     '/api/extensions','/api/extensions/import','/api/extensions/fixture/enable',
-    '/api/extensions/fixture/status','/api/extensions/fixture/enable','/api/extensions','/api/extensions/fixture']);
+    '/api/extensions/fixture/status','/api/extensions/fixture/enable','/api/extensions','/api/extensions/fixture','/api/extensions/fixture/versions']);
   assert.equal(new URL(calls[2].url).searchParams.get('q'),'한글 & echo');
   assert.deepEqual(JSON.parse(calls[1].init.body),settings);
   assert.equal(JSON.parse(calls[3].init.body).confirmed,true);
