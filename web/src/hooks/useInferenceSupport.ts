@@ -8,7 +8,7 @@ const endpoint='/api/chat/inference-support'
 export function useInferenceSupport(providerId:string,model:string,active=true){
  const remote=useRemote<InferenceSupport|null>(active&&providerId&&model?
   endpoint+'?providerId='+encodeURIComponent(providerId)+'&model='+encodeURIComponent(model):null,null,active)
- const support=!remote.error&&remote.value?.providerId===providerId&&remote.value?.model===model?remote.value:null
+ const support=!remote.error&&!remote.loading&&remote.value?.providerId===providerId&&remote.value?.model===model?remote.value:null
  return {...remote,support}
 }
 export function useRoomInferenceSupport(routes:InferenceRoute[]){

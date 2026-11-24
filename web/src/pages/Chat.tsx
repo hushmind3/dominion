@@ -77,7 +77,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    setOverride({scope:current,providerId,model:choice.id});
   }
  },[model,catalogue.loading,catalogue.error,models,providerId,current]);
- const inferenceSupport=useInferenceSupport(providerId,model,active&&!catalogue.loading);
+ const inferenceSupport=useInferenceSupport(providerId,model,active&&(selectedProvider?.kind!=='codex'||!catalogue.loading));
  const support=inferenceSupport.support;
  const supportedEfforts=support?.reasoningEfforts??[];
  const canDisableThinking=support?.thinkingToggle===true;
@@ -373,6 +373,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   if(providerId&&!selectedProvider){setError(t('chat.err.agentApi'));return;}
   if(!providerId){openModels();return;}
   if(!model){setError(t('chat.err.pickModel'));return;}
+  if(inferenceSupport.loading||(selectedProvider?.kind==='codex'&&catalogue.loading)){setError(loc==='ko'?'모델 실행 설정 확인 중입니다.':'Checking the model execution controls.');return;}
   const previousTurn=pendingTurn.current;
   const clientTurnId=previousTurn&&previousTurn.scope===current&&previousTurn.text===text
    ?previousTurn.id
@@ -403,7 +404,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   try{
    if(!id){
     const session=await post<ChatSession>('/api/sessions',{title:t('chat.sessionTitle'),agentId:agentMode?agentId:undefined,
-     providerId:agentMode?manual?.providerId:providerId,model:agentMode?manual?.model:model});
+     providerId,model});
     if(controller.signal.aborted)return;
     id=session.id;
     if(clientTurnId&&pendingTurn.current?.id===clientTurnId)pendingTurn.current.scope=id;
@@ -437,7 +438,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    streamStarted=true;
    await streamChat({
     sessionId:id,clientTurnId,agentId:agentMode?agentId:undefined,directChat:!agentMode,
-    providerId:agentMode?manual?.providerId:providerId,model:agentMode?manual?.model:model,input:text,
+    providerId,model,input:text,
     toolsEnabled:agentMode&&toolsEnabled,toolsExecutionEnabled:agentMode&&toolsEnabled,autoLearning:agentMode&&autoLearn,attachmentIds,
     reasoningLanguage:reasoningKo?'ko':'original',reasoningEffort:effectiveReasoningEffort||undefined,thinking:canDisableThinking?(effectiveReasoningEffort==='none'?false:effectiveThinkingEnabled):undefined,
    },event=>{

@@ -625,22 +625,15 @@ async fn run_locked(
         let (provider_id, model) = (resolved_provider, resolved_model);
         // Per-model effort wins, then the message, the room and the agent.
         // "none" turns reasoning off; an explicit level turns it on.
-        let codex_route = provider_id.as_deref().and_then(|id|state.store.get("provider",id))
-            .is_some_and(|provider|provider["kind"] == "codex");
-        let effort_choice=rotated_effort
-            .or_else(||optional(input,"reasoningEffort"))
-            .or_else(||optional(&room,"reasoningEffort"))
-            .or_else(||optional(&agent,"reasoningEffort"))
-            .or_else(||provider_id.as_deref().and_then(|id|state.store.get("provider",id)).and_then(|provider|optional(&provider,"reasoningEffort")))
-            // Codex's default is model-specific. Do not convert a greeting's
-            // heuristic `none` into an unsupported effort on reasoning models.
-            .or_else(||(!codex_route).then(||auto_reasoning_effort(owner_text)));
-        let reasoning_effort=effort_choice.clone().filter(|effort|codex_route || effort != "none");
-        let thinking=input["thinking"].as_bool()
-            .or_else(||room["thinking"].as_bool())
-            .or_else(||agent["thinking"].as_bool())
-            .or_else(||effort_choice.as_deref().map(|effort| effort != "none"))
-            .or_else(||(!codex_route).then_some(false));
+        let provider_settings=provider_id.as_deref().and_then(|id|state.store.get("provider",id));
+        let automatic=provider_settings.as_ref().and_then(|provider|{
+            let route=crate::engine::gateway::route_from_provider(state,provider,model.as_deref()).ok()?;
+            if route.kind=="codex"{return None;}
+            let support=crate::engine::reasoning::route_controls(state,provider,&route);
+            Some(crate::engine::reasoning::automatic_room_reasoning(&support,&auto_reasoning_effort(owner_text)))
+        }).unwrap_or((None,None));
+        let (reasoning_effort,thinking)=crate::engine::reasoning::room_reasoning_choice(
+            rotated_effort,input,&room,&agent,provider_settings.as_ref(),automatic);
         let mut request=TurnRequest {
             session_id:Some(session_id.to_string()),client_turn_id:None,input:owner_text.to_string(),agent_id:Some(agent_id.clone()),provider_id,model,attachment_ids: Vec::new(),tools_enabled:room["toolsEnabled"].as_bool().unwrap_or(false),tools_execution_enabled:true,direct_chat:false,thinking,auto_learning:room["autoLearning"].as_bool().unwrap_or(false),reasoning_effort,reasoning_language: (input["reasoningLanguage"].as_str().unwrap_or("ko") == "ko").then(|| "ko".into()),
             task_id:Some(task_id.clone()),parent_task_id:None,task_revision:task_revision.clone(),verification_owner:Some("self".into()),
