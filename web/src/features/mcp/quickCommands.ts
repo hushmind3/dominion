@@ -11,7 +11,7 @@ export type InstalledMcp = {
  url?:string;command?:string;args?:string[];apiKey?:string
 }
 export type RegistryMcp = {
- name:string;description?:string;url?:string;packageName?:string
+ name:string;description?:string;url?:string;packageName?:string;stars?:number;repository?:string
  packageVersion?:string;packageRegistry?:'npm'|'pypi'
 }
 

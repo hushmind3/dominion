@@ -168,42 +168,15 @@ mod registry_package_tests {
     }
 }
 
-pub async fn mcp_catalog(Query(query): Query<HashMap<String, String>>) -> Response {
-    let mut endpoint =
-        match reqwest::Url::parse("https://registry.modelcontextprotocol.io/v0.1/servers") {
-            Ok(url) => url,
-            Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, &message.to_string()),
-        };
-    let search = query.get("q").cloned().unwrap_or_default();
-    if search.len()>160||search.chars().any(char::is_control){return error(StatusCode::BAD_REQUEST,"Invalid MCP registry query")}
-    if !search.trim().is_empty() {
-        endpoint.query_pairs_mut().append_pair("search", &search);
-    }
-    endpoint
-        .query_pairs_mut()
-        .append_pair("version", "latest")
-        .append_pair("limit", "60");
-
-    let response = reqwest::Client::new()
-        .get(endpoint)
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await;
-    let response = match response {
-        Ok(response) if response.status().is_success() => response,
-        Ok(response) => {
-            return error(
-                StatusCode::BAD_GATEWAY,
-                &format!("MCP registry HTTP {}", response.status()),
-            )
-        }
-        Err(message) => return error(StatusCode::BAD_GATEWAY, &message.to_string()),
-    };
-    let value: Value = match crate::integrations::network::read_bounded_json(
-        response,4*1024*1024,"MCP registry catalog").await {
-        Ok(value) => value,
-        Err(message) => return error(StatusCode::BAD_GATEWAY, &message.to_string()),
-    };
+async fn mcp_registry_page(client:&reqwest::Client,search:&str)->Result<Value,String>{
+    let mut endpoint=reqwest::Url::parse("https://registry.modelcontextprotocol.io/v0.1/servers").map_err(|e|e.to_string())?;
+    if !search.trim().is_empty(){endpoint.query_pairs_mut().append_pair("search",search);}
+    endpoint.query_pairs_mut().append_pair("version","latest").append_pair("limit","60");
+    let response=client.get(endpoint).send().await.map_err(|e|e.to_string())?;
+    if !response.status().is_success(){return Err(format!("MCP registry HTTP {}",response.status()))}
+    crate::integrations::network::read_bounded_json(response,4*1024*1024,"MCP registry catalog").await
+}
+fn mcp_registry_cards(value:&Value)->Vec<Value>{
     let mut seen = std::collections::HashSet::new();
     let items = value
         .get("servers")
@@ -235,6 +208,7 @@ pub async fn mcp_catalog(Query(query): Query<HashMap<String, String>>) -> Respon
                     Some(json!({
                         "name": name,
                         "description": server.get("description"),
+                        "repository": server.get("repository").and_then(|v| v.get("url")),
                         "packageName": package.as_ref().map(|p| p.1),
                         "packageVersion": package.as_ref().map(|p| p.2),
                         "packageRegistry": package.as_ref().map(|p| p.0),
@@ -244,7 +218,71 @@ pub async fn mcp_catalog(Query(query): Query<HashMap<String, String>>) -> Respon
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+
+    items
+}
+fn github_repository(url:&str)->Option<String>{
+    let u=reqwest::Url::parse(url).ok()?;
+    if u.scheme()!="https"||u.host_str()!=Some("github.com")||!u.username().is_empty()||u.password().is_some()||u.port().is_some(){return None}
+    let name=u.path().trim_matches('/').trim_end_matches(".git");
+    let mut parts=name.split('/');
+    let valid=|p:&str|!p.is_empty()&&p.len()<=100&&p.bytes().all(|b|b.is_ascii_alphanumeric()||matches!(b,b'-'|b'_'|b'.'));
+    if !parts.next().is_some_and(valid)||!parts.next().is_some_and(valid)||parts.next().is_some(){return None}
+    Some(name.to_ascii_lowercase())
+}
+// Only official registry entries whose repository matches GitHub's live
+// result receive a star count. Popular but unregistered code is never made
+// executable merely because its repository has stars.
+async fn popular_mcp(client:&reqwest::Client)->Vec<Value>{
+    let Ok(mut url)=reqwest::Url::parse("https://api.github.com/search/repositories")else{return vec![]};
+    url.query_pairs_mut().append_pair("q","topic:mcp-server archived:false fork:false").append_pair("sort","stars").append_pair("order","desc").append_pair("per_page","12");
+    let Ok(response)=client.get(url).send().await else{return vec![]};
+    if !response.status().is_success(){return vec![]}
+    let Ok(value)=crate::integrations::network::read_bounded_json(response,2*1024*1024,"MCP popularity").await else{return vec![]};
+    let mut tasks=tokio::task::JoinSet::new();
+    for row in value["items"].as_array().into_iter().flatten().take(12){
+        let Some(repo)=row["html_url"].as_str().and_then(github_repository)else{continue};
+        let Some(stars)=row["stargazers_count"].as_u64()else{continue};
+        let client=client.clone();
+        tasks.spawn(async move{
+            let term=repo.rsplit('/').next().unwrap_or(&repo);
+            let Ok(page)=mcp_registry_page(&client,term).await else{return vec![]};
+            let mut cards=mcp_registry_cards(&page);
+            cards.retain(|v|v["repository"].as_str().and_then(github_repository).as_deref()==Some(repo.as_str()));
+            for v in &mut cards{v["stars"]=json!(stars);}
+            cards
+        });
+    }
+    let mut items=Vec::new();
+    while let Some(result)=tasks.join_next().await{if let Ok(cards)=result{items.extend(cards)}}
+    items.sort_by(|a,b|b["stars"].as_u64().cmp(&a["stars"].as_u64()).then_with(||a["name"].as_str().cmp(&b["name"].as_str())));
+    items
+}
+pub async fn mcp_catalog(Query(query): Query<HashMap<String, String>>) -> Response {
+    let search=query.get("q").map(String::as_str).unwrap_or("").trim();
+    if search.len()>160||search.chars().any(char::is_control){return error(StatusCode::BAD_REQUEST,"Invalid MCP registry query")}
+    let client=match reqwest::Client::builder().user_agent("DOMINION-MCP-catalog/1").timeout(Duration::from_secs(8)).redirect(reqwest::redirect::Policy::none()).build(){
+        Ok(client)=>client,Err(e)=>return error(StatusCode::INTERNAL_SERVER_ERROR,&e.to_string())
+    };
+    let (page,mut items)=if search.is_empty(){
+        tokio::join!(mcp_registry_page(&client,search),async{tokio::time::timeout(Duration::from_secs(9),popular_mcp(&client)).await.unwrap_or_default()})
+    }else{(mcp_registry_page(&client,search).await,vec![])};
+    match page{
+        Ok(v)=>items.extend(mcp_registry_cards(&v)),
+        Err(e) if items.is_empty()=>return error(StatusCode::BAD_GATEWAY,&e),
+        Err(_)=>{}
+    }
+    let mut seen=std::collections::HashSet::new();
+    items.retain(|v|v["name"].as_str().is_some_and(|n|seen.insert(n.to_owned())));
     Json(json!(items)).into_response()
+}
+#[cfg(test)]
+mod mcp_popularity_tests{
+    use super::*;
+    #[test] fn repository_identity_is_exact(){
+        assert_eq!(github_repository("https://github.com/Owner/Repo.git").as_deref(),Some("owner/repo"));
+        for url in ["https://github.com.evil.test/a/b","https://github.com/a/b/tree/main","https://user@github.com/a/b","http://github.com/a/b"]{assert!(github_repository(url).is_none());}
+    }
 }
 
 /// Runtime toggles for optional extensions. The UI treats this as a replaceable

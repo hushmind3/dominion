@@ -25,7 +25,7 @@ export function PackageMarket({onInstalled,initialQuery=''}:{onInstalled:()=>voi
   catch(e){if(request.current===controller&&!controller.signal.aborted)setError((e as Error).message)}
   finally{if(request.current===controller)setBusy(false)}
  }
- useEffect(()=>{void search(initialQuery);return()=>{request.current?.abort();detailRequest.current?.abort()}},[])
+ useEffect(()=>{const timer=setTimeout(()=>void search(q),q.trim()?350:0);return()=>{clearTimeout(timer);request.current?.abort();detailRequest.current?.abort()}},[q])
  useEffect(()=>{if(q.trim()||selected||installing||loading||busy)return;const timer=setInterval(()=>{if(document.visibilityState==='visible'&&!activeInstall.current)void search('')},300000);return()=>clearInterval(timer)},[q,selected,installing,loading,busy])
  const open=async(p:Item)=>{
   detailRequest.current?.abort();setError('');setReview(false);setSelected(null);setLoading(keyOf(p))
@@ -45,7 +45,7 @@ export function PackageMarket({onInstalled,initialQuery=''}:{onInstalled:()=>voi
  }
  return <section className="space-y-4 rounded-xl border border-divider bg-surface p-4">
   <div><h2 className="text-xl font-bold text-ink">{tr('플러그인 마켓','Plugin marketplace')}</h2><p className="mt-1 text-sm text-muted">{tr('설치 가능한 프로그램을 바로 설치하세요. 다른 공개 저장소는 호환성을 확인한 뒤 표시합니다.','Install compatible apps directly. Other public repositories require compatibility checks.')}</p></div>
-  <form className="flex flex-wrap gap-2 sm:flex-nowrap" onSubmit={e=>{e.preventDefault();void search(q)}}><TextInput className="min-w-0 flex-1" aria-label={tr('플러그인 검색','Search plugins')} value={q} onChange={e=>setQ(e.target.value)} placeholder={tr('확장 프로그램 이름으로 검색','Search by extension name')}/><Button type="submit" disabled={busy||installing}><Search size={16}/>{tr('검색','Search')}</Button></form>
+  <form className="flex flex-wrap gap-2 sm:flex-nowrap" onSubmit={e=>{e.preventDefault();void search(q)}}><TextInput className="min-w-0 flex-1" aria-label={tr('플러그인 검색','Search plugins')} value={q} onChange={e=>setQ(e.target.value)} disabled={installing} placeholder={tr('확장 프로그램 이름으로 검색','Search by extension name')}/><Button type="submit" disabled={busy||installing}><Search size={16}/>{tr('검색','Search')}</Button></form>
   {notice&&<p role="status" className="text-sm text-success">{notice}</p>}{updated&&<p className="text-xs text-muted">{tr('최근 조회','Last fetched')} · {updated} · {tr('GitHub 별 순','GitHub stars')}</p>}{busy&&<p role="status" className="text-sm text-muted">{tr('공개 저장소 검색 중…','Searching public repositories…')}</p>}
   {error&&<p role="alert" className="break-words text-sm text-danger">{error}</p>}
   {selected&&<DialogBackdrop onDismiss={()=>{if(!installing){setSelected(null);setReview(false)}}}><DialogPanel aria-label={tr('배포 상세','Release details')} className="space-y-4 p-5">
