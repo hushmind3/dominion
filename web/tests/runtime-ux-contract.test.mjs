@@ -37,6 +37,16 @@ test('SDK usage preserves missing token data instead of crashing the panel',()=>
  assert.match(sdk,/selectionGeneration\.current/)
  assert.match(sdk,/selected===selectionGeneration\.current/)
 })
+test('SDK task selection discards stale history and polling responses',()=>{
+ assert.match(sdk,/selectedRunId=useRef<string\|null>\(null\)/)
+ assert.match(sdk,/selection===selectionGeneration\.current&&!selectedRunId\.current/)
+ assert.match(sdk,/selection===selectionGeneration\.current&&selectedRunId\.current===id/)
+ assert.match(sdk,/selection===selectionGeneration\.current&&selectedRunId\.current===current\.id/)
+ assert.match(sdk,/const controller=new AbortController\(\)/)
+ assert.match(sdk,/controller\.abort\(\)/)
+ assert.match(sdk,/if\(!alive\|\|reading\)return/)
+ assert.match(sdk,/stopPolling = new Set\(\[[^\n]*'needs_review'/)
+})
 test('run timeline ignores earlier execution fetches and retains truncation warnings',()=>{
  assert.match(timeline,/new AbortController\(\)/)
  assert.match(timeline,/inFlight\.current\?\.abort\(\)/)
