@@ -43,6 +43,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const selectionGeneration=useRef(0)
  const [selectionRevision,setSelectionRevision]=useState(0)
  const selectedRunId=useRef<string|null>(null)
+ const mutationRevision=useRef(0)
  const showRun=(next:SdkRun)=>{
   selectedRunId.current=next.id
   setRun(next)
@@ -85,13 +86,14 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   if(!run?.id || stopPolling.has(run.status)) return
   let alive=true, reading=false
   const id=run.id, selection=selectionGeneration.current
+  const mutation=mutationRevision.current
   const controller=new AbortController()
   const poll=async()=>{
    if(!alive||reading)return
    reading=true
    try{
     const next=await get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(id)}`,controller.signal)
-    if(alive&&selection===selectionGeneration.current&&selectedRunId.current===id)setRun(next)
+    if(alive&&selection===selectionGeneration.current&&mutation===mutationRevision.current&&selectedRunId.current===id)setRun(next)
    }catch(e){
     if(alive&&!controller.signal.aborted&&selection===selectionGeneration.current)setError((e as Error).message)
    }finally{reading=false}
@@ -122,6 +124,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const action=async(kind:'approve'|'deny'|'cancel'|'resume')=>{
   if(!run||busy)return
   const current=run, selection=selectionGeneration.current
+  ++mutationRevision.current
   setBusy(true);setError('')
   try{
    const call=current.checkpoint?.pendingCall
@@ -135,24 +138,26 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    const refreshed=await get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(current.id)}`)
    if(selection===selectionGeneration.current&&selectedRunId.current===current.id)showRun(refreshed)
    void refreshHistory().catch(()=>{})
-  }catch(e){setError((e as Error).message)}
-  finally{setBusy(false)}
+  }catch(e){if(selection===selectionGeneration.current)setError((e as Error).message)}
+  finally{setBusy(false);setSelectionRevision(value=>value+1)}
  }
  const reconcile=async(applied:boolean)=>{
   if(!run||busy||!observation.trim())return
   const current=run, selection=selectionGeneration.current
+  ++mutationRevision.current
   setBusy(true);setError('')
   try{
    const updated=await post<SdkRun>(`/api/sdk/runs/${encodeURIComponent(current.id)}/reconcile`,
     {applied,details:observation.trim()})
    if(selection===selectionGeneration.current&&selectedRunId.current===current.id){showRun(updated);setObservation('')}
    void refreshHistory().catch(()=>{})
-  }catch(e){setError((e as Error).message)}
-  finally{setBusy(false)}
+  }catch(e){if(selection===selectionGeneration.current)setError((e as Error).message)}
+  finally{setBusy(false);setSelectionRevision(value=>value+1)}
  }
  const followUp=async()=>{
   if(!run||busy||!steering.trim())return
   const current=run, selection=selectionGeneration.current
+  ++mutationRevision.current
   setBusy(true);setError('');setNotice('')
   try{
    await post(`/api/sdk/runs/${encodeURIComponent(current.id)}/steer`,{instruction:steering.trim(),mode:'append'})
@@ -162,7 +167,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     showRun(refreshed)
    }
   }catch(e){if(selection===selectionGeneration.current)setError((e as Error).message)}
-  finally{setBusy(false)}
+  finally{setBusy(false);setSelectionRevision(value=>value+1)}
  }
  const status=run?.status||''
  const call=run?.checkpoint?.pendingCall
