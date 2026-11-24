@@ -2,6 +2,15 @@ import {withBrowser,assert} from './ui-smoke-utils.mjs'
 await withBrowser('workspace-visual',async({page,db,url,viewport})=>{
  await page.goto(url+'/#/chat')
  await page.locator('.conversation-composer').waitFor({state:'visible'})
+ const quickReply=page.locator('.conversation-topbar').getByRole('button',{name:/^답변 설정$|^Reply settings$/})
+ const chatHash=new URL(page.url()).hash
+ await quickReply.click()
+ const replyDialog=page.getByRole('dialog',{name:/^답변 설정$|^Reply settings$/})
+ await replyDialog.locator('.conversation-settings-inline').waitFor({state:'visible'})
+ assert.equal(new URL(page.url()).hash,chatHash,'Reply settings must not leave the conversation')
+ await replyDialog.getByRole('button',{name:/대화로 돌아가기|Back to conversation/}).click()
+ await replyDialog.waitFor({state:'detached'})
+ assert.equal(new URL(page.url()).hash,chatHash)
  const nav=page.locator('#workspace-navigation')
  if(!(await nav.isVisible())){
   await page.locator('.conversation-topbar').getByRole('button').first().click()
