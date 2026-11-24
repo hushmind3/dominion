@@ -37,7 +37,7 @@ function fixture() {
   agents:[{id:'test-persona',name:'Test Persona',description:'Mock persona',systemPrompt:'Be clear.',providerId:'mock-local',model:'qwen-test',enabled:true}],
   sessions:[{id:'recent-chat',title:'Recent Test Chat',providerId:'mock-local',model:'qwen-test',createdAt:'2026-11-23T00:00:00Z'}],
   memories:[{id:'memory-one',text:'Remember test choice',scope:'shared',status:'active',source:'user',retrievalEligible:true,createdAt:'2026-11-23T00:00:00Z'}],
-  chatRequests:[],mcpWrites:[],providerWrites:[],memoryWrites:[],jobs:[],
+  chatRequests:[],mcpWrites:[],providerWrites:[],memoryWrites:[],jobs:[],plugins:[],pluginWrites:[],
  }
  const ok=(route,value,status=200,headers={})=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(value),headers})
  const handler=async route=>{
@@ -78,6 +78,22 @@ function fixture() {
   if(p==='/api/memories/memory-one/correct'&&method==='POST'){
    db.memoryWrites.push(body);db.memories[0]={...db.memories[0],text:body.text};return ok(route,db.memories[0])
   }
+  if(p==='/api/plugins/managed'&&method==='POST'){
+   db.pluginWrites.push({method,body})
+   const saved={...body,state:'created',running:false,ports:[],exitCode:0,imageId:'sha256:fixture',requestedPort:body.port}
+   db.plugins=db.plugins.filter(row=>row.id!==body.id).concat(saved)
+   return ok(route,saved)
+  }
+  const pluginMatch=p.match(/^\/api\/plugins\/managed\/([^/]+)(?:\/(start|stop|logs))?$/)
+  if(pluginMatch){
+   const plugin=db.plugins.find(row=>row.id===pluginMatch[1])
+   if(!plugin)return ok(route,{error:'Missing plugin'},404)
+   if(pluginMatch[2]==='logs')return ok(route,{stdout:'Voice fixture ready',stderr:'',truncated:false})
+   db.pluginWrites.push({method,id:plugin.id,action:pluginMatch[2]})
+   if(method==='DELETE'){Object.assign(plugin,{state:'retained',running:false});return ok(route,{removed:true,dataRetained:true,volume:'fixture-data'})}
+   Object.assign(plugin,{state:pluginMatch[2]==='start'?'running':'exited',running:pluginMatch[2]==='start'})
+   return ok(route,plugin)
+  }
   if(method!=='GET')return ok(route,{ok:true})
   if(p==='/api/health'||p==='/api/status')return ok(route,{ok:true,status:'running',engine:'mock'})
   if(p==='/api/sessions')return ok(route,db.sessions)
@@ -92,7 +108,7 @@ function fixture() {
   if(p==='/api/mcp/discover')return ok(route,db.mcp.filter(row=>row.enabled!==false).map(row=>({mcpId:row.id,name:'mcp__mock__search',description:'Mock plugin search'})))
   if(p==='/api/mcp/presets')return ok(route,[])
   if(p==='/api/mcp/catalog')return ok(route,[{name:'Parallel MCP 2.0',description:'2026 web search and fetching',url:'https://mcp.parallel.ai/mcp'}])
-  if(p==='/api/plugins/managed')return ok(route,{available:true,items:[]})
+  if(p==='/api/plugins/managed')return ok(route,{available:true,items:db.plugins})
   if(p==='/api/plugins/search')return ok(route,{items:[{id:'npm:voice-fixture',source:'npm',name:'voice-fixture',kind:'package',version:'1.0.0',description:'Voice fixture',license:'MIT',url:'https://www.npmjs.com/package/voice-fixture',compatibility:'unverified'}],errors:[],pypiMode:'exact_name',searchOnly:true})
   if(p==='/api/skill-catalog')return ok(route,{items:[],total:0,updatedAt:''})
   if(p==='/api/model-library/runtime')return ok(route,{status:'idle'})

@@ -15,6 +15,7 @@ const IDENT:&str="io.dominion.plugin.id";
 const TITLE:&str="io.dominion.plugin.name";
 const SOURCE:&str="io.dominion.plugin.source";
 const NET:&str="io.dominion.plugin.network";
+const PORT:&str="io.dominion.plugin.port";
 const MAX_PLUGINS:usize=32;
 
 #[derive(Deserialize)]
@@ -86,7 +87,7 @@ async fn drain<R:AsyncRead+Unpin>(mut r:R)->std::io::Result<(Vec<u8>,bool)>{
 async fn docker(args:&[String],seconds:u64)->Result<(String,String,bool),String>{
     let socket=local_socket()?;
     let mut child=Command::new(docker_bin()).arg("--host").arg(socket)
-        .env_remove("DOCKER_HOST").env_remove("DOCKER_CONTEXT")
+        .env_remove("DOCKER_HOST").env_remove("DOCKER_CONTEXT").env_remove("DOCKER_TLS_VERIFY").env_remove("DOCKER_CERT_PATH").env_remove("DOCKER_TLS")
         .args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .kill_on_drop(true).spawn().map_err(|e|format!("Docker 실행 실패: {e}"))?;
     let stdout=child.stdout.take().ok_or("Docker stdout unavailable")?;
@@ -110,8 +111,9 @@ fn project(raw:&Value,scope:&str)->Option<Value>{
     let labels=&raw["Config"]["Labels"];
     let id=labels[IDENT].as_str()?;
     let docker_id=raw["Id"].as_str()?;
+    let expected_name=format!("/{}",container_name(scope,id));
     if labels[OWNER].as_str()!=Some(scope)||!valid_id(id)||!container_id(docker_id)
-        ||raw["Name"].as_str()!=Some(&format!("/{}",container_name(scope,id))){return None}
+        ||raw["Name"].as_str()!=Some(expected_name.as_str()){return None}
     let ports=raw["NetworkSettings"]["Ports"].as_object().into_iter().flat_map(|map|map.values())
         .filter_map(Value::as_array).flatten().filter_map(|v|{
             if v["HostIp"]!="127.0.0.1"{return None}
@@ -120,7 +122,7 @@ fn project(raw:&Value,scope:&str)->Option<Value>{
         }).collect::<Vec<_>>();
     Some(json!({"id":id,"name":labels[TITLE],"image":labels[SOURCE],"imageId":raw["Image"],
         "state":raw["State"]["Status"],"exitCode":raw["State"]["ExitCode"],"running":raw["State"]["Running"],
-        "network":labels[NET]=="true","ports":ports,"containerId":docker_id}))
+        "network":labels[NET]=="true","requestedPort":labels[PORT].as_str().and_then(|p|p.parse::<u16>().ok()),"ports":ports,"containerId":docker_id}))
 }
 async fn inspect(id:&str,scope:&str)->Result<Option<Value>,String>{
     if !valid_id(id){return Err("Invalid plugin identity".into())}
@@ -144,12 +146,59 @@ async fn list_owned(scope:&str)->Result<Vec<Value>,String>{
     let raw:Vec<Value>=serde_json::from_str(&call(&args,15).await?).map_err(|e|e.to_string())?;
     raw.iter().map(|r|project(r,scope).ok_or_else(||"Invalid plugin ownership".into())).collect()
 }
+fn volume_name(scope:&str,id:&str)->String{format!("{}-data",container_name(scope,id))}
+fn project_volume(raw:&Value,scope:&str)->Option<Value>{
+    let labels=&raw["Labels"];
+    let id=labels[IDENT].as_str()?;
+    let expected=volume_name(scope,id);
+    if labels[OWNER].as_str()!=Some(scope)||!valid_id(id)||raw["Name"].as_str()!=Some(expected.as_str())
+        ||raw["Driver"]!="local"||raw["Options"].as_object().is_some_and(|o|!o.is_empty()){return None}
+    Some(json!({"id":id,"name":labels[TITLE],"image":labels[SOURCE],"network":labels[NET]=="true",
+        "requestedPort":labels[PORT].as_str().and_then(|p|p.parse::<u16>().ok()),
+        "state":"retained","running":false,"ports":[],"exitCode":null,"imageId":null}))
+}
+async fn volume_rows(scope:&str)->Result<Vec<Value>,String>{
+    let filter=format!("label={OWNER}={scope}");
+    let out=call(&["volume","ls","--filter",&filter,"--format","{{.Name}}"],12).await?;
+    let names=out.lines().filter(|s|!s.is_empty()).collect::<Vec<_>>();
+    if names.len()>MAX_PLUGINS{return Err("Retained volume limit exceeded".into())}
+    if names.is_empty(){return Ok(vec![])}
+    let prefix=format!("dominion-{scope}-");
+    if names.iter().any(|n|!n.strip_prefix(&prefix).and_then(|x|x.strip_suffix("-data")).is_some_and(valid_id)){
+        return Err("Invalid managed volume identity".into())
+    }
+    let mut args=vec!["volume","inspect"];args.extend(names);
+    let raw:Vec<Value>=serde_json::from_str(&call(&args,15).await?).map_err(|e|e.to_string())?;
+    raw.iter().map(|r|project_volume(r,scope).ok_or_else(||"Invalid managed volume ownership".into())).collect()
+}
+async fn ensure_volume(scope:&str,input:&Install)->Result<(),String>{
+    let name=volume_name(scope,&input.id);
+    let filter=format!("name={name}");
+    let out=call(&["volume","ls","--filter",&filter,"--format","{{.Name}}"],12).await?;
+    if !out.lines().any(|s|s==name){
+        let args=vec!["volume".into(),"create".into(),"--driver".into(),"local".into(),
+            "--name".into(),name.clone(),"--label".into(),format!("{OWNER}={scope}"),"--label".into(),format!("{IDENT}={}",input.id),
+            "--label".into(),format!("{TITLE}={}",input.name),"--label".into(),format!("{SOURCE}={}",input.image),
+            "--label".into(),format!("{NET}={}",input.network),"--label".into(),format!("{PORT}={}",input.port.map(|p|p.to_string()).unwrap_or_default())];
+        docker(&args,20).await?;
+    }
+    let raw:Vec<Value>=serde_json::from_str(&call(&["volume","inspect",&name],12).await?).map_err(|e|e.to_string())?;
+    if raw.first().and_then(|r|project_volume(r,scope)).is_none(){return Err("Foreign volume or unsupported volume driver".into())}
+    Ok(())
+}
+async fn inventory(scope:&str)->Result<Vec<Value>,String>{
+    let mut installed=list_owned(scope).await?;
+    for row in volume_rows(scope).await?{
+        if !installed.iter().any(|p|p["id"]==row["id"]){installed.push(row)}
+    }
+    Ok(installed)
+}
 fn creation_args(scope:&str,input:&Install,image_id:&str)->Vec<String>{
     let name=container_name(scope,&input.id);
     let mut args=vec!["container".into(),"create".into(),"--name".into(),name.clone(),
         "--label".into(),format!("{OWNER}={scope}"),"--label".into(),format!("{IDENT}={}",input.id),
         "--label".into(),format!("{TITLE}={}",input.name),"--label".into(),format!("{SOURCE}={}",input.image),
-        "--label".into(),format!("{NET}={}",input.network),
+        "--label".into(),format!("{NET}={}",input.network),"--label".into(),format!("{PORT}={}",input.port.map(|p|p.to_string()).unwrap_or_default()),
         "--pull=never".into(),"--restart=no".into(),"--cap-drop=ALL".into(),
         "--security-opt=no-new-privileges:true".into(),"--pids-limit=256".into(),
         "--memory=2g".into(),"--cpus=2".into(),"--read-only".into(),"--tmpfs".into(),"/tmp:rw,nosuid,nodev,size=128m".into(),
@@ -163,7 +212,7 @@ fn bad(message:&str)->Response{error(StatusCode::BAD_REQUEST,message)}
 fn failed(message:&str)->Response{error(StatusCode::BAD_GATEWAY,message)}
 pub async fn list(State(state):State<AppState>)->Response{
     let scope=match owner(&state){Ok(s)=>s,Err(e)=>return failed(&e)};
-    match list_owned(&scope).await{
+    match inventory(&scope).await{
         Ok(items)=>Json(json!({"available":true,"items":items})).into_response(),
         Err(e)=>Json(json!({"available":false,"items":null,"error":e})).into_response()
     }
@@ -178,16 +227,18 @@ pub async fn install(State(state):State<AppState>,Json(input):Json<Install>)->Re
     let scope=match owner(&state){Ok(s)=>s,Err(e)=>return failed(&e)};
     let result:Result<Value,String>=async{
         if let Some(existing)=inspect(&input.id,&scope).await?{
-            if existing["image"]==input.image && existing["name"]==input.name && existing["network"]==input.network{
+            if existing["image"]==input.image && existing["name"]==input.name && existing["network"]==input.network && existing["requestedPort"]==json!(input.port){
                 return Ok(existing)
             }
             return Err("같은 설치 요청 ID가 이미 다른 설정에 사용되었습니다.".into())
         }
-        if list_owned(&scope).await?.len()>=MAX_PLUGINS{return Err("플러그인 등록 한도에 도달했습니다.".into())}
+        let rows=inventory(&scope).await?;
+        if rows.len()>=MAX_PLUGINS&&!rows.iter().any(|r|r["id"]==input.id){return Err("플러그인 등록 한도에 도달했습니다.".into())}
         call(&["image","pull","--quiet",&input.image],300).await?;
         let image_id=call(&["image","inspect","--format","{{.Id}}",&input.image],15).await?;
         let image_id=image_id.trim();
         if !image_id.strip_prefix("sha256:").is_some_and(container_id){return Err("Invalid immutable image identity".into())}
+        ensure_volume(&scope,&input).await?;
         // Do not launch at install time. A separate owner action starts it.
         docker(&creation_args(&scope,&input,image_id),45).await?;
         inspect(&input.id,&scope).await?.ok_or_else(||"설치 결과를 확인하지 못했습니다. 새로고침하세요.".into())
@@ -257,6 +308,15 @@ mod tests{
         for flag in ["--pull=never","--restart=no","--read-only","--cap-drop=ALL","--security-opt=no-new-privileges:true","none"]{assert!(args.iter().any(|a|a==flag))}
         assert!(!args.iter().any(|s|s.contains("type=bind")||s.contains("docker.sock")||s=="--privileged"));
         assert_eq!(args.last().unwrap(),"sha256:abc");
+    }
+    #[test]
+    fn retained_data_requires_owned_local_volume(){
+        let id="01234567-89ab-4def-8123-456789abcdef";
+        let mut v=json!({"Name":volume_name("scope",id),"Driver":"local","Labels":{(OWNER):"scope",(IDENT):id}});
+        assert_eq!(project_volume(&v,"scope").unwrap()["state"],"retained");
+        assert!(project_volume(&v,"other").is_none());
+        v["Options"]=json!({"device":"/host","type":"none","o":"bind"});
+        assert!(project_volume(&v,"scope").is_none());
     }
     #[test]
     fn foreign_container_cannot_be_projected(){
