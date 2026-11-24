@@ -37,7 +37,8 @@ pub async fn change(State(state):State<AppState>,Path(id):Path<String>,Json(inpu
     }
     if !input.confirmed{return invalid("자동 대화와 외부 답변 전달을 승인하세요.")}
     let (row,_)=match target(&state,&id).await{Ok(v)=>v,Err(e)=>return upstream(&e)};
-    if state.integrations.plugin_chat_grants.lock().unwrap().len()>=4&&read_grant(&state,&id).is_none(){
+    let at_limit={let grants=state.integrations.plugin_chat_grants.lock().unwrap();grants.len()>=4&&!grants.contains_key(&id)};
+    if at_limit{
         return conflict("자동 대화 연결 한도에 도달했습니다.")
     }
     let grant=json!({"grantId":uuid::Uuid::new_v4().to_string(),"containerId":row["containerId"],"imageId":row["imageId"],
