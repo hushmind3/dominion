@@ -2,6 +2,9 @@ import {withBrowser,assert} from './ui-smoke-utils.mjs'
 await withBrowser('workspace-visual',async({page,db,url,viewport})=>{
  await page.goto(url+'/#/chat')
  await page.locator('.conversation-composer').waitFor({state:'visible'})
+ await page.locator('.chat-control-bar').getByRole('button',{name:/대화 상대 선택|Choose who to talk to/}).waitFor({state:'visible'})
+ assert.equal(await page.locator('.conversation-composer').getByRole('button',{name:/대화 상대 선택|Choose who to talk to/}).count(),0)
+ await page.locator('.chat-control-bar').getByRole('combobox').waitFor({state:'visible'})
  const quickReply=page.locator('.conversation-topbar').getByRole('button',{name:/^답변 설정$|^Reply settings$/})
  const chatHash=new URL(page.url()).hash
  await quickReply.click()
@@ -39,6 +42,7 @@ await withBrowser('workspace-visual',async({page,db,url,viewport})=>{
  await workModes.getByRole('button',{name:/^자동 작업$|^Autonomous work$/}).click()
  await page.waitForURL(/#\/tasks\?view=native/)
  await page.locator('#sdk-goal').waitFor({state:'visible'})
+ await page.locator('.native-workspace aside').waitFor({state:'visible'})
  await workModes.getByRole('button',{name:/^원격 작업$|^Remote work$/}).click()
  await page.waitForURL(/#\/tasks\?view=remote/)
  await page.getByRole('button',{name:/원격 워커·작업·결과물|Remote workers & evidence/}).waitFor({state:'visible'})

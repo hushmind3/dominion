@@ -36,7 +36,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [observation,setObservation]=useState('')
  const [run,setRun]=useState<SdkRun|null>(null)
  const [history,setHistory]=useState<SdkRun[]>([])
- const [historyOpen,setHistoryOpen]=useState(true)
+ const [historyOpen,setHistoryOpen]=useState(false)
  const [historyQuery,setHistoryQuery]=useState('')
  const [loadingRun,setLoadingRun]=useState(false)
  const [steering,setSteering]=useState('')

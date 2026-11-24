@@ -212,7 +212,9 @@ test('team outcomes prioritize saved agent answers over raw receipts',()=>{
 test('room configuration keeps recognizable icons and usable roster hit targets',()=>{
  const style=source('src/pages/Rooms.css')
  assert.match(style,/\.group-settings-trigger\{/)
- assert.match(rooms,/label:t\('rooms\.editParticipants'\)/)
+ assert.match(rooms,/room-member-panel/)
+ assert.match(rooms,/\{t\('rooms\.editParticipants'\)\}/)
+ assert.match(style,/\.rooms-app\{[^}]*height:100%;/)
  assert.doesNotMatch(rooms,/<Network size=\{14\}\/><span className="hidden sm:inline">/)
  assert.match(style,/\.room-roster-option input\{width:16px/)
  assert.match(style,/\.room-roster-option input\{width:16px;height:16px\}/)
@@ -557,4 +559,18 @@ test('workspace shell has a single mobile menu and direct task destinations',()=
  assert.match(tasks,/priority\[stateOf\(a\)\]-priority\[stateOf\(b\)\]/)
  assert.match(tasks,/<NativeAgentPanel providers=\{providers\.value\}\/>/)
  assert.match(tasks,/<RemoteWorkPanel initialOpen\/>/)
+})
+
+
+test('task and conversation workspaces have distinct functional layout regions',()=>{
+ const chat=source('src/pages/Chat.tsx')
+ const tasks=source('src/pages/Tasks.tsx')
+ assert.match(chat,/chat-control-bar[\s\S]*?<ConversationTargetPicker placement="bottom"/)
+ assert.match(tasks,/task-list-workspace/)
+ assert.match(tasks,/onClick=\{\(\)=>setSelectedId\(job\.id\)\}/)
+ assert.match(tasks,/<JobWorkflowCard key=\{selectedJob\.id\}/)
+ assert.match(sdk,/native-workspace/)
+ assert.match(sdk,/visibleHistory\.map/)
+ assert.match(rooms,/room-member-panel/)
+ assert.match(rooms,/onClick=\{\(\)=>mention\(agent\)\}/)
 })
