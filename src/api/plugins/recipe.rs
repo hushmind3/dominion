@@ -71,6 +71,8 @@ pub async fn install_voice(State(state):State<AppState>,Json(request):Json<Reque
         }
         ensure_volume(&scope,&input).await?;
         create_managed(&state,&scope,&input,exact).await?;
+        let volume=super::data::active(&state,&scope,&input.id)?;
+        super::data::bind(&state,&scope,&input,&volume)?;
         inspect(&request.id,&scope).await?.ok_or("음성 비서 설치 결과를 확인할 수 없습니다.".into())
     }.await;
     match result{Ok(row)=>Json(row).into_response(),Err(e)=>error(StatusCode::BAD_GATEWAY,&e)}

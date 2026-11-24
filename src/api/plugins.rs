@@ -14,6 +14,7 @@ pub mod recipe;
 pub mod package;
 pub mod agent;
 mod data;
+pub mod scheduled;
 
 const LIMIT:usize=1024*1024;
 const OWNER:&str="io.dominion.plugin.owner";
@@ -242,7 +243,7 @@ pub async fn list(State(state):State<AppState>)->Response{
     let scope=match owner(&state){Ok(s)=>s,Err(e)=>return failed(&e)};
     match inventory(&scope).await{
         Ok(mut items)=>{
-            for row in &mut items { data::attach(&state,row); versions::attach(&state,row); package::attach(&state,row); }
+            for row in &mut items { data::attach(&state,row); versions::attach(&state,row); package::attach(&state,row); scheduled::attach(&state,row); }
             Json(json!({"available":true,"items":items})).into_response()
         },
         Err(e)=>Json(json!({"available":false,"items":null,"error":e})).into_response()
@@ -274,6 +275,8 @@ pub async fn install(State(state):State<AppState>,Json(input):Json<Install>)->Re
         ensure_volume(&scope,&input).await?;
         // Do not launch at install time. A separate owner action starts it.
         create_managed(&state,&scope,&input,image_id).await?;
+        let volume=data::active(&state,&scope,&input.id)?;
+        data::bind(&state,&scope,&input,&volume)?;
         inspect(&input.id,&scope).await?.ok_or_else(||"설치 결과를 확인하지 못했습니다. 새로고침하세요.".into())
     }.await;
     match result{Ok(row)=>Json(row).into_response(),Err(e)=>failed(&e)}

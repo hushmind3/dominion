@@ -17,8 +17,8 @@ pub struct Update{image:String,expected_image_id:String,confirmed:bool}
 pub struct Rollback{confirmed:bool}
 fn failed(s:&str)->Response{error(StatusCode::BAD_GATEWAY,s)}
 fn conflict(s:&str)->Response{error(StatusCode::CONFLICT,s)}
-fn immutable(s:&str)->bool{s.strip_prefix("sha256:").is_some_and(container_id)}
-fn spec(row:&Value,image:&str)->Option<Install>{
+pub(super) fn immutable(s:&str)->bool{s.strip_prefix("sha256:").is_some_and(container_id)}
+pub(super) fn spec(row:&Value,image:&str)->Option<Install>{
     let id=row["id"].as_str()?;
     let name=row["name"].as_str()?;
     if !valid_id(id)||!valid_image(image)||name.is_empty()||name.len()>120||name.chars().any(char::is_control){return None}
@@ -27,7 +27,7 @@ fn spec(row:&Value,image:&str)->Option<Install>{
     if port.is_some()&&!network{return None}
     Some(Install{id:id.into(),name:name.into(),image:image.into(),network,port,confirmed:true})
 }
-fn image_id(row:&Value)->Option<&str>{row["imageId"].as_str().filter(|s|immutable(s))}
+pub(super) fn image_id(row:&Value)->Option<&str>{row["imageId"].as_str().filter(|s|immutable(s))}
 pub(crate) fn pending(state:&AppState,id:&str)->bool{
     state.store.get(KIND,id).is_some_and(|r|r["phase"]=="prepared")
 }
@@ -39,7 +39,7 @@ pub(crate) fn attach(state:&AppState,row:&mut Value){
             "previousImageId":r["old"]["imageId"],"targetImage":r["targetImage"],"dataRollback":r["oldDataVolume"].is_string()&&r["targetDataVolume"].is_string()});
     }
 }
-async fn pull(image:&str)->Result<String,String>{
+pub(super) async fn pull(image:&str)->Result<String,String>{
     call(&["image","pull","--quiet",image],300).await?;
     let output=call(&["image","inspect","--format","{{.Id}}",image],15).await?;
     let id=output.trim();
@@ -96,6 +96,7 @@ pub async fn update(State(state):State<AppState>,Path(id):Path<String>,Json(inpu
         let old=inspect(&id,&scope).await?.ok_or("설치된 플러그인이 없습니다.")?;
         if image_id(&old)!=Some(input.expected_image_id.as_str()){return Err("현재 이미지가 변경되었습니다. 새로고침하세요.".into())}
         removal_id(&old)?;
+        if old["image"].as_str().is_some_and(|s|super::recipe::voice_tag(s)||super::package::local_tag(s)){return Err("로컬 빌드 프로그램의 전용 업데이트를 이용하세요.".into())}
         let next=spec(&old,&input.image).ok_or("Invalid installed plugin metadata")?;
         // Download before replacing the working version. An unavailable
         // registry or image leaves the original container untouched.

@@ -6,7 +6,7 @@ import {useLocale} from '../../i18n'
 import {PluginBridgePanel} from './PluginBridgePanel'
 
 export type PackageSpec={runtime:'npm'|'pypi'|'crates';package:string;version:string;entry:string;args:string[]}
-type Plugin={packageSpec?:PackageSpec;id:string;name:string;image:string;imageId:string|null;state:string;running:boolean;network:boolean;ports:number[];exitCode:number|null;requestedPort?:number|null;versionChange?:{phase:'prepared'|'ready';previousImage:string;previousImageId:string;targetImage:string;dataRollback?:boolean}}
+type Plugin={scheduledUpdate?:{status:string;image:string;message?:string};packageSpec?:PackageSpec;id:string;name:string;image:string;imageId:string|null;state:string;running:boolean;network:boolean;ports:number[];exitCode:number|null;requestedPort?:number|null;versionChange?:{phase:'prepared'|'ready';previousImage:string;previousImageId:string;targetImage:string;dataRollback?:boolean}}
 const isVoice=(p:Plugin)=>['dominion-voice:0.1.0','dominion-voice:0.2.0'].includes(p.image)
 type Inventory={available:boolean;items:Plugin[]|null;error?:string}
 type Logs={stdout:string;stderr:string;truncated:boolean}
@@ -16,7 +16,7 @@ export function ManagedPlugins({selectedImage,onImageConsumed,selectedPackage,on
  const [show,setShow]=useState(false),[name,setName]=useState(''),[image,setImage]=useState(''),[network,setNetwork]=useState(false),[port,setPort]=useState(''),[approved,setApproved]=useState(false)
  const [logs,setLogs]=useState<{name:string;data:Logs}|null>(null)
  const [restoreId,setRestoreId]=useState('')
- const [updating,setUpdating]=useState<Plugin|null>(null),[newImage,setNewImage]=useState('')
+ const [updating,setUpdating]=useState<Plugin|null>(null),[newImage,setNewImage]=useState(''),[scheduleUpdate,setScheduleUpdate]=useState(false)
  const voiceRequest=useRef('')
  const [packageForm,setPackageForm]=useState<PackageSpec|null>(null),[packageArgs,setPackageArgs]=useState(''),[packageNetwork,setPackageNetwork]=useState(false),[packagePort,setPackagePort]=useState(''),[packageApproved,setPackageApproved]=useState(false),[packageRestore,setPackageRestore]=useState('')
  const packageRequest=useRef(''),packageFingerprint=useRef('')
@@ -72,9 +72,13 @@ export function ManagedPlugins({selectedImage,onImageConsumed,selectedPackage,on
   }
  })
  const updateVersion=()=>{if(!updating)return;const p=updating;void execute(p.id,async()=>{
-  if(!window.confirm(tr('중지된 프로그램을 새 버전으로 교체합니다. 기존 데이터 복사본을 보존하고 새 버전은 별도 복사본을 사용합니다.','Replace the stopped app? The old data is preserved and the new version uses a separate copy.')))return
-  await post('/api/plugins/managed/'+encodeURIComponent(p.id)+'/update',{image:newImage.trim(),expectedImageId:p.imageId,confirmed:true});setUpdating(null);setNotice(tr('버전 변경 완료. 실행을 눌러 확인하세요.','Version changed. Start to verify.'))
+  if(!window.confirm(scheduleUpdate?tr('승인한 이미지로 다음 중지 상태에서 자동 업데이트합니다. 기존 데이터는 보존됩니다.','Apply this exact image automatically next time stopped? Old data is preserved.'):tr('중지된 프로그램을 새 버전으로 교체합니다. 기존 데이터 복사본을 보존하고 새 버전은 별도 복사본을 사용합니다.','Replace the stopped app? The old data is preserved and the new version uses a separate copy.')))return
+  const body={image:newImage.trim(),expectedImageId:p.imageId,confirmed:true}
+  if(scheduleUpdate)await post('/api/plugins/managed/'+encodeURIComponent(p.id)+'/scheduled-update',body)
+  else await post('/api/plugins/managed/'+encodeURIComponent(p.id)+'/update',body)
+  setUpdating(null);setNotice(scheduleUpdate?tr('업데이트를 예약했습니다.','Update queued.'):tr('버전 변경 완료. 실행을 눌러 확인하세요.','Version changed. Start to verify.'))
  })}
+ const cancelScheduled=(p:Plugin)=>execute(p.id,async()=>{await del('/api/plugins/managed/'+encodeURIComponent(p.id)+'/scheduled-update');setNotice(tr('예약을 취소했습니다.','Update cancelled.'))})
  const rollback=(p:Plugin)=>execute(p.id,async()=>{
   if(!window.confirm(p.versionChange?.dataRollback?tr('이전 버전과 이전 데이터를 복구합니다. 새 버전의 데이터도 별도 보존됩니다.','Restore the previous version and its data? New-version data remains separately retained.'):tr('이전 실행 이미지로 복구합니다. 이 과거 변경에는 데이터 복사본이 없습니다.','Restore the previous image? This older update has no data snapshot.')))return
   await post('/api/plugins/managed/'+encodeURIComponent(p.id)+'/rollback',{confirmed:true});setNotice(tr('이전 실행 이미지 복구 완료.','Previous executable image restored.'))
@@ -119,7 +123,9 @@ export function ManagedPlugins({selectedImage,onImageConsumed,selectedPackage,on
    <strong className="text-sm">{updating.name} · {tr('버전 변경','Change version')}</strong>
    <p className="break-all text-xs text-muted">{tr('현재 버전','Current version')}: {updating.image}</p>
    <TextInput aria-label={tr('새 이미지 버전','New image version')} value={newImage} onChange={e=>setNewImage(e.target.value)} placeholder="owner/app:2.0"/>
-   <div className="flex gap-2"><Button size="sm" disabled={disabled||!newImage.trim()} onClick={updateVersion}>{tr('버전 교체','Replace version')}</Button><Button size="sm" variant="ghost" disabled={!!busy} onClick={()=>setUpdating(null)}>{tr('닫기','Close')}</Button></div>
+   <label className="flex gap-2 text-xs"><input type="checkbox" checked={scheduleUpdate} disabled={updating.running} onChange={e=>setScheduleUpdate(e.target.checked)}/>{tr('다음 중지 시 자동 적용 (sha256 주소 필요)','Apply automatically when stopped (sha256 required)')}</label>
+   {scheduleUpdate&&<p className="text-xs text-muted">{tr('예: owner/app@sha256:… · 실행 중인 프로그램을 강제로 중지하거나 새 버전을 자동 실행하지 않습니다.','e.g. owner/app@sha256:… · Never interrupts a running program or automatically starts the new version.')}</p>}
+   <div className="flex gap-2"><Button size="sm" disabled={disabled||!newImage.trim()||(scheduleUpdate&&!/@sha256:[a-fA-F0-9]{64}$/.test(newImage.trim()))} onClick={updateVersion}>{scheduleUpdate?tr('업데이트 예약','Schedule update'):tr('버전 교체','Replace version')}</Button><Button size="sm" variant="ghost" disabled={!!busy} onClick={()=>setUpdating(null)}>{tr('닫기','Close')}</Button></div>
   </div>}
   {error&&<p role="alert" className="my-2 break-words text-xs text-danger">{error}</p>}
   {notice&&<p role="status" className="my-2 break-all text-xs text-muted">{notice}</p>}
@@ -128,6 +134,7 @@ export function ManagedPlugins({selectedImage,onImageConsumed,selectedPackage,on
    <div className="flex flex-wrap justify-between gap-2"><strong className="break-all text-sm">{p.name}</strong><span className={p.running?'text-xs text-success':'text-xs text-muted'}>{p.running?tr('실행 중','Running'):p.state==='retained'?tr('데이터 보존됨','Data retained'):p.state==='created'?tr('설치됨','Installed'):p.state==='exited'?tr('중지됨','Stopped')+' · '+p.exitCode:p.state}</span></div>
    <p className="mt-1 break-all text-xs text-muted">{p.packageSpec?p.packageSpec.runtime+' · '+p.packageSpec.package+' @ '+p.packageSpec.version:p.image}</p>
    {p.versionChange&&<p className="mt-1 break-all text-xs text-muted">{tr('복구 가능 이미지','Previous image')}: {p.versionChange.previousImage} {p.versionChange.dataRollback&&tr('· 이전 데이터 포함','· previous data included')}</p>}
+   {p.scheduledUpdate&&<p className="mt-1 break-all text-xs text-muted">{tr('예약 업데이트','Scheduled update')}: {p.scheduledUpdate.message||p.scheduledUpdate.status}</p>}
    <p className="mt-1 text-xs text-muted">{p.network?tr('네트워크 허용','Network allowed'):tr('네트워크 차단','Network off')}</p>
    {p.running&&p.ports.map(port=><a key={port} href={'http://127.0.0.1:'+port} target="_blank" rel="noopener noreferrer" className="mt-1 flex gap-1 text-xs text-brand">{tr('서비스 열기','Open service')} · {port}<ExternalLink size={12}/></a>)}
    <div className="mt-3 flex flex-wrap gap-1.5">
@@ -137,7 +144,8 @@ export function ManagedPlugins({selectedImage,onImageConsumed,selectedPackage,on
     <Button size="sm" variant="ghost" disabled={disabled||p.running} onClick={()=>void operate(p,'remove')}><Trash2 size={14}/>{tr('제거','Remove')}</Button>
     {!p.running&&p.image==='dominion-voice:0.1.0'&&<Button size="sm" variant="secondary" disabled={disabled} onClick={()=>void installVoice(p.id)}>{tr('음성 비서 업데이트','Update voice assistant')}</Button>}
     {!p.running&&p.packageSpec&&<Button size="sm" variant="secondary" disabled={disabled} onClick={()=>openPackage(p.packageSpec,p)}>{tr('패키지 버전 변경','Change package version')}</Button>}
-    {!p.running&&!p.packageSpec&&!isVoice(p)&&<Button size="sm" variant="secondary" disabled={disabled||!p.imageId} onClick={()=>{setUpdating(p);setNewImage(p.image)}}>{tr('버전 변경','Change version')}</Button>}
+    {!p.packageSpec&&!isVoice(p)&&<Button size="sm" variant="secondary" disabled={disabled||!p.imageId} onClick={()=>{setUpdating(p);setNewImage(p.running?'':p.image);setScheduleUpdate(p.running)}}>{p.running?tr('업데이트 예약','Schedule update'):tr('버전 변경','Change version')}</Button>}
+    {p.scheduledUpdate?.status==='queued'&&<Button size="sm" variant="ghost" disabled={disabled} onClick={()=>void cancelScheduled(p)}>{tr('예약 취소','Cancel update')}</Button>}
     </>}
     {p.versionChange&&!p.running&&<Button size="sm" variant="secondary" disabled={disabled} onClick={()=>void rollback(p)}>{tr('이전 버전 복구','Restore previous version')}</Button>}
    </div>

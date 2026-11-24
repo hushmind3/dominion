@@ -68,7 +68,7 @@ pub(crate) async fn execute(state:&AppState,name:&str,args:&Value)->Option<Resul
     Some(async{
         match name{
             "plugin_search"=>crate::api::extensions::plugin_catalog::search_page(args["query"].as_str().unwrap_or(""),args["source"].as_str().unwrap_or("all")).await,
-            "plugin_list"=>Ok(json!({"items":inventory(&owner(state)?).await?})),
+            "plugin_list"=>{let mut rows=inventory(&owner(state)?).await?;for row in &mut rows{super::data::attach(state,row);super::package::attach(state,row);super::versions::attach(state,row);super::scheduled::attach(state,row);}Ok(json!({"items":rows}))},
             _=>{
                 let p=parse(args["proposal"].clone())?;
                 let _lock=state.integrations.plugin_proposal_mutations.try_lock().map_err(|_|"Plugin review busy")?;

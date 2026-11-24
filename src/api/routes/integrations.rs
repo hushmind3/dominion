@@ -27,6 +27,7 @@ pub(super) fn router() -> Router<AppState> {
         .route("/api/plugins/managed/:id/stop", post(plugins::stop))
         .route("/api/plugins/managed/:id/logs", get(plugins::logs))
         .route("/api/plugins/managed/:id/update", post(plugins::versions::update))
+        .route("/api/plugins/managed/:id/scheduled-update", post(plugins::scheduled::queue).delete(plugins::scheduled::cancel))
         .route("/api/plugins/managed/:id/rollback", post(plugins::versions::rollback))
         .route("/api/plugins/managed/:id/bridge/pull", post(plugins::bridge::pull))
         .route("/api/plugins/managed/:id/auto-chat", get(plugins::bridge::auto_chat::status).post(plugins::bridge::auto_chat::change))
