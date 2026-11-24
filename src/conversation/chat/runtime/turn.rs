@@ -126,7 +126,7 @@ pub(super) async fn run_turn_body(
         && acceptance.is_none() && discovery["ownerActivated"]!=true
         && (pure_greeting(&request.input)
             || standalone_explanation(&request.input));
-    // Connected MCP servers are discovered only for owner action requests,
+    // Connected external tools are discovered only for owner action requests,
     // attachments and followups. Casual conversation needs no network probe.
     let tool_opportunity = tool_catalog_needed(
         &request.input,is_room,acceptance.is_some(),
@@ -141,7 +141,7 @@ pub(super) async fn run_turn_body(
         Vec::new()
     };
     if enumerate_tools {
-        tool_definitions.extend(mcp::definitions(state).await);
+        tool_definitions.extend(external::external_definitions(state).await);
     }
     let full_catalog_size=tool_definitions.len();
     if is_room && enumerate_tools {

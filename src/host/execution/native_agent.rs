@@ -1,7 +1,7 @@
 //! Product adapter for the independent DOMINION Rust agent SDK.
 //!
 //! The Rust job worker, GUI and external TypeScript client all call this exact
-//! execution path. Existing provider, vault, SQLite, MCP, tool and approval
+//! execution path. Existing provider, vault, SQLite, tool and approval
 //! implementations are adapters, not owners of the new agent loop.
 use crate::host::journal::DurableJournal;
 use crate::{engine::{chat, gateway, jobs::JobContext, llm, tools, verification}, state::AppState};
@@ -187,29 +187,22 @@ impl Tools for NativeTools {
                 .ok_or("Native run record disappeared during tool dispatch")?;
             manual_recovery_guard(&current,&self.tool_specs,action)?;
             legacy_harness_shell_scope(&current,action)?;
-            if !crate::api::plugins::bridge::v2::job_authorized(&self.state,&current){return Err("Plugin connection was revoked".into())}
-            let mcp_spec=if action.tool.starts_with("mcp__") {
+            if !external::job_authorized(&self.state,&current){return Err("Plugin connection was revoked".into())}
+            let external_spec=if external::is_external(&action.tool) {
                 Some(self.tool_specs.iter().find(|spec|spec.name==action.tool)
-                    .ok_or("MCP operation not in the pinned authorized tool catalog")?)
+                    .ok_or("External operation not in the pinned authorized tool catalog")?)
             }else{None};
-            let mcp_contract=if let Some(spec)=mcp_spec {
-                let pinned=current["nativeMcpContracts"][&action.tool].as_str()
-                    .ok_or("MCP tool contract absent from durable native job")?;
-                let current_fingerprint=external::contract_fingerprint(
-                    &self.state,&action.tool,&spec.schema,&spec.description)?;
-                if pinned!=current_fingerprint {
-                    return Err("MCP server or tool identity changed after native run pin; review required".into())
-                }
-                Some(pinned.to_string())
+            let external_contract=if let Some(spec)=external_spec {
+                Some(external::verify_external_contract(&self.state,&current,spec)?)
             }else{None};
             let operation_id=format!("native-op-{}-{}",self.run_id,action.id);
             let op=json!({
                 "id": operation_id, "runId": self.run_id,
                 "sessionId":self.session, "tool":action.tool,
                 "args":action.arguments,"status":"running","outcomeUnknown":true,
-                "provenance":{"origin":if mcp_spec.is_some() {"external_mcp"} else {"builtin_host"},
+                "provenance":{"origin":if external_spec.is_some() {"external_tool"} else {"builtin_host"},
                     "trust":"tool_output_untrusted_as_instructions",
-                    "contractSha256":mcp_contract,
+                    "contractSha256":external_contract,
                     "argumentsSha256":super::native_evidence::digest(&action.arguments)},
                 "phase":"requested","startedAt":chrono::Utc::now().to_rfc3339()
             });
@@ -222,12 +215,7 @@ impl Tools for NativeTools {
             let planned_directive=self.state.store.get("job",&self.run_id)
                 .and_then(|job|job.get("nativeDirective").cloned())
                 .unwrap_or(Value::Null);
-            let approval_needed=if current["input"]["pluginBridgeV2"]==true {
-                // External app grants cannot bypass interactive effect review.
-                !matches!(action.tool.as_str(),"web_search"|"http_fetch")
-            } else if action.tool.starts_with("mcp__") {
-                external::external_requires_approval(&self.state,&action.tool)
-            } else { tools::requires_approval(&action.tool) };
+            let approval_needed=external::job_tool_requires_approval(&self.state,&current,&action.tool);
             let mut artifact_before=Value::Null;
             let mut artifact_after=Value::Null;
             let outcome = if approval_needed && !chat::approve_native_tool(
@@ -235,17 +223,15 @@ impl Tools for NativeTools {
                 &action.arguments,&self.run_id,&operation_id
             ).await {
                 Err("Tool execution was not approved".to_string())
-            } else if !crate::api::plugins::bridge::v2::job_authorized(&self.state,&current) {
+            } else if !external::job_authorized(&self.state,&current) {
                 Err("Plugin connection was revoked before tool dispatch".into())
             } else if !may_dispatch_native_action(
                 self.state.store.get("job",&self.run_id).as_ref(),
                 &planned_directive,self.state.is_cancelled(&self.session)) {
                 Err("Owner cancelled or changed the task before tool dispatch".into())
-            } else if let Some(spec)=mcp_spec {
-                // Re-list the tool on the SAME transport session as tools/call.
-                // A cached MCP manifest cannot authorize a changed endpoint.
-                external::call_pinned_external(&self.state,&action.tool,&action.arguments,
-                    &spec.schema,&spec.description).await
+            } else if let Some(spec)=external_spec {
+                // The adapter verifies its live contract before dispatch.
+                external::call_pinned_external(&self.state,spec,&action.arguments).await
                     .and_then(|value|verified_tool_result(&action.tool,value))
             } else {
                 let context=tools::ToolContext {
@@ -347,7 +333,7 @@ async fn allowed_tools(state:&AppState, input:&Value)->Vec<ToolSpec> {
         })
     });
     let mut collected: Vec<_> = builtin.collect();
-    // MCP tools use the same registry and authorization as interactive chat.
+    // External tools use the same registry and authorization as interactive chat.
     for item in external::native_external_tools(state).await {
         if requested.as_ref().is_some_and(|allowed| !allowed.contains(item.name.as_str())) {continue;}
         collected.push(item);
@@ -383,7 +369,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
         context.checkpoint(json!({"nativeAlgorithm":selected.binding()}))?;
     }
     let input=&job["input"];
-    if !crate::api::plugins::bridge::v2::job_authorized(&context.state,job){return Err("Plugin connection revoked before model dispatch".into())}
+    if !external::job_authorized(&context.state,job){return Err("Plugin connection revoked before model dispatch".into())}
     let workspace=crate::features::collaboration::worktree::for_job(&context.state,job)?;
     let task=input["prompt"].as_str().filter(|text|!text.trim().is_empty())
         .ok_or("Native agent prompt cannot be empty")?;
@@ -466,30 +452,23 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     } else {vec![]};
     let available=allowed_tools(&context.state,input).await;
     let allowed=available.iter().map(|spec|spec.name.clone()).collect::<Vec<_>>();
-    // A resumed task retains its original reviewed MCP declarations. An
-    // endpoint reconfiguration must not silently change its effect authority.
-    let mut contract_map=serde_json::Map::new();
-    for spec in available.iter().filter(|spec|spec.name.starts_with("mcp__")) {
-        let digest=external::contract_fingerprint(
-            &context.state,&spec.name,&spec.schema,&spec.description)?;
-        contract_map.insert(spec.name.clone(),json!(digest));
-    }
-    let contracts=Value::Object(contract_map);
+    // Pin the adapter contracts for recovery independently of transport.
+    let contracts=external::external_contracts(&context.state,&available)?;
     if previous.as_ref().is_some() {
-        let old=prior_job.as_ref().map(|job|&job["nativeMcpContracts"])
+        let old=prior_job.as_ref().map(external::saved_contracts)
             .unwrap_or(&Value::Null);
         if old.is_object() && old!=&contracts {
             return Ok(json!({"status":"needs_review",
-                "reason":"Pinned MCP contract changed across task recovery; manual review required",
+                "reason":"Pinned external tool contract changed across task recovery; manual review required",
                 "snapshot":previous}));
         }
         if !old.is_object() && !contracts.as_object().is_some_and(|o|o.is_empty()) {
             return Ok(json!({"status":"needs_review",
-                "reason":"Recovered MCP job has no pinned tool contracts; review required",
+                "reason":"Recovered external-tool job has no pinned tool contracts; review required",
                 "snapshot":previous}));
         }
     }
-    context.checkpoint(json!({"nativeMcpContracts":contracts}))?;
+    context.checkpoint(json!({"nativeExternalContracts":contracts}))?;
     let agent_id=input["agentId"].as_str();
     let scope=crate::engine::memory::MemoryScope::for_session(
         &context.state.store,&session,agent_id

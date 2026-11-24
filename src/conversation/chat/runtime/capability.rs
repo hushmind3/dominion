@@ -33,12 +33,12 @@ pub(super) fn definitions()->Vec<Value>{
 fn permitted(session:&Value,name:&str)->bool{
     if name.is_empty() || matches!(name,SEARCH|CALL){return false;}
     if session["readOnly"]==true &&
-        (name.starts_with("mcp__") ||
+        (external::is_external(name) ||
             !dominion_agent_sdk::runtime::builtin_is_read_only(name)){
         return false;
     }
     if session["delegationWorkspace"].is_object() &&
-        (name.starts_with("mcp__") ||
+        (external::is_external(name) ||
             name.starts_with("github_") || name.starts_with("google_") ||
             matches!(name,"browser_control"|"account_status")){
         return false;
@@ -64,7 +64,7 @@ async fn authorized_catalog(state:&AppState,session_id:&str)->Vec<Value>{
         }
     }
     let mut catalog=tools::definitions_for(state);
-    catalog.extend(mcp::definitions(state).await);
+    catalog.extend(external::external_definitions(state).await);
     let mut seen=HashSet::new();
     catalog.into_iter().filter(|definition|{
         let name=tool_name(definition);
@@ -113,9 +113,7 @@ pub(super) async fn search(
                 .chars().take(180).collect::<String>(),
             "parameters":schema,
             "schemaSha256":schema_sha(schema),
-            "requiresApproval": if name.starts_with("mcp__"){
-                mcp::requires_approval(state,name)
-            }else{tools::requires_approval(name)}
+            "requiresApproval": external::tool_requires_approval(state,name)
         }))
     }).collect::<Vec<_>>();
     Ok(json!({

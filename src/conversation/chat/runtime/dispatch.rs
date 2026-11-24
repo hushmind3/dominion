@@ -55,11 +55,7 @@ pub(crate) async fn dispatch_tool_call(
     let tool_started = std::time::Instant::now();
     let _ = tx.send(json!({ "type": "tool_start", "name": call.name, "id": call.id }));
 
-    let needs_approval = if call.name.starts_with("mcp__") {
-        mcp::requires_approval(state, &call.name)
-    } else {
-        tools::requires_approval(&call.name)
-    };
+    let needs_approval = external::tool_requires_approval(state,&call.name);
     let operation_id = format!("{execution_id}:{round}:{call_index}:{}", call.id);
     let allowed = if effect_block.is_some() {
         false
@@ -152,8 +148,8 @@ pub(crate) async fn dispatch_tool_call(
         };
         let outcome = if call.name==capability::SEARCH {
             capability::search(state,session_id,&arguments).await
-        } else if call.name.starts_with("mcp__") {
-            mcp::call(state, &call.name, &arguments).await
+        } else if external::is_external(&call.name) {
+            external::call_external(state, &call.name, &arguments).await
         } else {
             tools::execute(&context, &call.name, &arguments, execution_id).await
         };

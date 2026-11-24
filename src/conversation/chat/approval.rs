@@ -217,7 +217,7 @@ pub(super) async fn request_approval(
         .store
         .get("policy", "default")
         .unwrap_or_else(|| json!({}));
-    let external=state.store.get("job",execution_id).is_some_and(|j|j["input"]["pluginBridgeV2"]==true);
+    let external=state.store.get("job",execution_id).is_some_and(|j|crate::integrations::registry::requires_interactive_review(&j));
     if !external && policy
         .get("autoApproveAll")
         .and_then(|value| value.as_bool())
