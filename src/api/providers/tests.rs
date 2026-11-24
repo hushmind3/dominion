@@ -8,6 +8,7 @@ use super::{
         provider_slug,
     },
     models::parse_codex_models,
+    records::needs_account_discovery,
     pricing::{model_free_status, model_is_free},
 };
 use serde_json::{json, Value};

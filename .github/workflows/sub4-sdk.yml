@@ -8,6 +8,8 @@ on:
       - 'crates/dominion-algorithms/**'
       - 'packages/sdk-typescript/**'
       - 'src/api/sdk.rs'
+      - 'src/api/providers/**'
+      - 'tests/e2e/codex_and_sdk.rs'
       - 'src/engine/chat/runtime.rs'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -35,6 +37,8 @@ jobs:
         run: cargo check --locked --bin dominion-rust
       - name: Backend SDK status and recovery contracts
         run: cargo test --locked --bin dominion-rust api::sdk::view_tests
+      - name: External Rust client against the real product and scripted model
+        run: cargo test --locked --test e2e external_rust_sdk_runs_real_product_with_approval_and_retry -- --nocapture
   typescript-sdk:
     if: github.ref == 'refs/heads/dominion-sub4'
     runs-on: ubuntu-latest

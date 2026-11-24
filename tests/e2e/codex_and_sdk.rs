@@ -506,3 +506,46 @@ fn owner_replacement_during_approval_cannot_write_the_old_goal_or_escape_workspa
     assert!(!project.join("stale-approved.md").exists());assert!(!app._root.join("current-approved.md").exists());
     assert_eq!(requests.lock().unwrap().len(),2);
 }
+
+
+/// An external consumer must use the public SDK, not raw test HTTP helpers.
+/// The model is scripted; the product process, approval, file effect,
+/// database, retry receipt and execution event journal are real.
+#[test]
+fn external_rust_sdk_runs_real_product_with_approval_and_retry(){
+    use dominion_sdk::{Client,ClientError,RunStatus,SourceRef,StartRun};
+    let _serial=serial();
+    let (port,requests)=scripted_provider(|_|vec![json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"external-sdk-write","type":"function","function":{"name":"workspace_write","arguments":"{\"path\":\"external-sdk.md\",\"content\":\"\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":40,"completion_tokens":10,"total_tokens":50}})]);
+    let app=TestApp::new(port,"native");
+    let runtime=tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    runtime.block_on(async{
+        let sdk=Client::connect(&app.base).unwrap();
+        let input=StartRun{instruction:"external-sdk.md 파일을 만들어줘".into(),
+            idempotency_key:Some("external-consumer-1".into()),
+            source:Some(SourceRef{kind:"external_plugin".into(),id:"fixture-1".into()}),
+            ..Default::default()};
+        let start=sdk.start_run(&input).await.unwrap();
+        let duplicate=sdk.start_run(&input).await.unwrap();
+        assert_eq!(duplicate.id,start.id);
+        let conflict=StartRun{instruction:"different request".into(),..input.clone()};
+        assert!(matches!(sdk.start_run(&conflict).await,Err(ClientError::Api{status:409,..})));
+        let pending=sdk.wait_for_run(&start.id,Duration::from_secs(20),Duration::from_millis(50),|_|{}).await.unwrap();
+        assert_eq!(pending.status,RunStatus::AwaitingApproval);
+        assert!(pending.actions.as_ref().unwrap().approve);
+        assert!(!app._root.join("external-sdk.md").exists());
+        let call=pending.checkpoint.as_ref().unwrap()["pendingCall"]["id"].as_str().unwrap();
+        sdk.approve_call(&start.id,call).await.unwrap();
+        let completed=sdk.wait_for_verified_run(&start.id,Duration::from_secs(20),Duration::from_millis(50),|_|{}).await.unwrap();
+        assert!(completed.verified_success());
+        assert_eq!(std::fs::metadata(app._root.join("external-sdk.md")).unwrap().len(),0);
+        let history=sdk.runs_by_source("external_plugin").await.unwrap();
+        assert_eq!(history.len(),1);
+        assert_eq!(history[0].id,start.id);
+        let events=sdk.run_events(&start.id,0,100).await.unwrap();
+        assert!(!events.events.is_empty());
+        assert_eq!(events.execution_id,completed.run_ref.unwrap().execution_id);
+        assert_eq!(sdk.list_runs().await.unwrap().len(),1);
+    });
+    assert_eq!(requests.lock().unwrap().len(),1,"a retry or approval must not buy another model turn");
+    assert_eq!(app.get("/api/executions").as_array().unwrap().len(),1);
+}
