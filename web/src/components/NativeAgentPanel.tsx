@@ -41,16 +41,26 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [notice,setNotice]=useState('')
  // Guard every async response against switching to a different run.
  const selectionGeneration=useRef(0)
+ const [selectionRevision,setSelectionRevision]=useState(0)
  const selectedRunId=useRef<string|null>(null)
- const showRun=(next:SdkRun)=>{selectedRunId.current=next.id;setRun(next)}
+ const showRun=(next:SdkRun)=>{
+  selectedRunId.current=next.id
+  setRun(next)
+  // Selecting the same ID/status still needs to restart its guarded poll.
+  setSelectionRevision(value=>value+1)
+ }
  const selectHistory=async(id:string)=>{
+  const previousSelection=selectionGeneration.current
   const selected=++selectionGeneration.current
   setError('');setNotice('');setSteering('')
   try{
    const current=await get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(id)}`)
    if(selected===selectionGeneration.current)showRun(current)
   }catch(e){
-   if(selected===selectionGeneration.current)setError((e as Error).message)
+   if(selected===selectionGeneration.current){
+    selectionGeneration.current=previousSelection
+    setError((e as Error).message)
+   }
   }
  }
  const [busy,setBusy]=useState(false)
@@ -88,9 +98,10 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   }
   const timer=setInterval(()=>{void poll()},1500)
   return()=>{alive=false;clearInterval(timer);controller.abort()}
- },[run?.id,run?.status])
+ },[run?.id,run?.status,selectionRevision])
  const start=async()=>{
   if(!instruction.trim()||busy)return
+  const previousSelection=selectionGeneration.current
   const selection=++selectionGeneration.current
   setBusy(true);setError('')
   try{
@@ -100,7 +111,12 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    })
    if(selection===selectionGeneration.current){showRun(created);setHistoryOpen(false);setNotice('')}
    void refreshHistory().catch(()=>{})
-  }catch(e){setError((e as Error).message)}
+  }catch(e){
+   if(selection===selectionGeneration.current){
+    selectionGeneration.current=previousSelection
+    setError((e as Error).message)
+   }
+  }
   finally{setBusy(false)}
  }
  const action=async(kind:'approve'|'deny'|'cancel'|'resume')=>{
