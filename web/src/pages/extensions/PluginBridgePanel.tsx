@@ -4,6 +4,7 @@ import {Button} from '../../components/Primitives'
 import {useLocale} from '../../i18n'
 import {Link2,RefreshCw} from 'lucide-react'
 import {UniversalConnection} from './UniversalConnection'
+import {ExtensionTools} from './ExtensionTools'
 
 type Grant={enabled:boolean;expiresAt?:number;remaining:number;lastError?:string;activeRequest?:string}
 type Request={requestId:string;instruction:string;requestDigest:string;runId?:string;status:string;answer?:string;answerDigest?:string;delivery:string}
@@ -48,6 +49,7 @@ export function PluginBridgePanel({pluginId}:{pluginId:string}){
  return <div className="mt-3 border-t border-divider pt-2">
   <Button size="sm" variant="ghost" onClick={()=>setOpen(!open)}><Link2 size={15}/>{tr('도미니온 작업 연결','DOMINION task connection')}</Button>
   {open&&<div className="mt-2 space-y-2 text-xs">
+   <ExtensionTools pluginId={pluginId}/>
    <UniversalConnection pluginId={pluginId}/>
    <details><summary className="cursor-pointer text-muted">{tr('이전 SDK v1 연결 (구버전 앱)','Legacy SDK v1 connection')}</summary>
    <p className="text-muted">{tr('SDK 연결 규격을 지원하는 외부 프로그램에서 요청을 받아 도미니온이 처리합니다. 승인한 요청과 답변만 전달합니다.','Pull requests from compatible apps and send only owner-approved answers.')}</p>

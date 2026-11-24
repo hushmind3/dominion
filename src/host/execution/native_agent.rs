@@ -231,7 +231,7 @@ impl Tools for NativeTools {
                 Err("Owner cancelled or changed the task before tool dispatch".into())
             } else if let Some(spec)=external_spec {
                 // The adapter verifies its live contract before dispatch.
-                external::call_pinned_external(&self.state,spec,&action.arguments).await
+                external::call_pinned_external(&self.state,spec,&action.arguments,external_contract.as_deref().unwrap_or_default()).await
                     .and_then(|value|verified_tool_result(&action.tool,value))
             } else {
                 let context=tools::ToolContext {

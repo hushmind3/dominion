@@ -24,16 +24,9 @@ pub async fn list_tools(State(state): State<AppState>) -> Json<Value> {
         })
         .collect::<Vec<_>>();
 
-    for tool in crate::integrations::mcp::tools(&state).await {
-        let qualified = tool.qualified();
-        items.push(json!({
-            "name": qualified,
-            "description": format!("[MCP · {}] {}", tool.server_name, tool.description),
-            "parameters": tool.schema,
-            "approval": crate::integrations::mcp::requires_approval(&state, &qualified),
-            "source": "mcp",
-            "server": tool.server_name,
-        }));
+    for tool in crate::integrations::registry::native_external_tools(&state).await {
+        items.push(json!({"name":tool.name,"description":tool.description,"parameters":tool.schema,
+            "approval":crate::integrations::registry::tool_requires_approval(&state,&tool.name),"source":"external"}));
     }
     Json(json!(items))
 }

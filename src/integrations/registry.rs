@@ -49,7 +49,18 @@ impl ExternalAdapter for LegacyMcpAdapter {
  }
 }
 static LEGACY_MCP:LegacyMcpAdapter=LegacyMcpAdapter;
-fn adapters()->[&'static dyn ExternalAdapter;1]{[&LEGACY_MCP]}
+use crate::api::plugins::bridge::tools as installed;
+struct InstalledAdapter;
+static INSTALLED:InstalledAdapter=InstalledAdapter;
+impl ExternalAdapter for InstalledAdapter {
+ fn owns(&self,name:&str)->bool{installed::owns(name)}
+ fn list<'a>(&'a self,state:&'a AppState)->BoxFuture<'a,Vec<ToolSpec>>{Box::pin(installed::list(state))}
+ fn fingerprint(&self,state:&AppState,spec:&ToolSpec)->Result<String,String>{installed::fingerprint(state,spec)}
+ fn requires_approval(&self,_:&AppState,_:&str)->bool{true}
+ fn call<'a>(&'a self,state:&'a AppState,name:&'a str,args:&'a Value)->BoxFuture<'a,Result<Value,String>>{Box::pin(async move{let expected=installed::approval_binding(state,name)?;installed::call(state,name,args,Some(&expected)).await})}
+ fn call_pinned<'a>(&'a self,state:&'a AppState,spec:&'a ToolSpec,args:&'a Value)->BoxFuture<'a,Result<Value,String>>{Box::pin(async move{let expected=installed::fingerprint(state,spec)?;installed::call(state,&spec.name,args,Some(&expected)).await})}
+}
+fn adapters()->[&'static dyn ExternalAdapter;2]{[&INSTALLED,&LEGACY_MCP]}
 fn adapter(name:&str)->Option<&'static dyn ExternalAdapter>{adapters().into_iter().find(|a|a.owns(name))}
 pub fn is_external(name:&str)->bool{adapter(name).is_some()}
 pub async fn native_external_tools(state:&AppState)->Vec<ToolSpec>{
@@ -68,11 +79,18 @@ pub fn external_requires_approval(state:&AppState,name:&str)->bool{
 pub fn tool_requires_approval(state:&AppState,name:&str)->bool{
  adapter(name).map(|a|a.requires_approval(state,name)).unwrap_or_else(||crate::engine::tools::requires_approval(name))
 }
-pub async fn call_external(state:&AppState,name:&str,args:&Value)->Result<Value,String>{
+pub fn approval_binding(state:&AppState,name:&str)->Result<Option<String>,String>{
+ if installed::owns(name){installed::approval_binding(state,name).map(Some)}else{Ok(None)}
+}
+pub async fn call_external(state:&AppState,name:&str,args:&Value,expected:Option<&str>)->Result<Value,String>{
+ if installed::owns(name){return installed::call(state,name,args,expected).await}
  adapter(name).ok_or("External tool adapter unavailable")?.call(state,name,args).await
 }
-pub async fn call_pinned_external(state:&AppState,spec:&ToolSpec,args:&Value)->Result<Value,String>{
- adapter(&spec.name).ok_or("External tool adapter unavailable")?.call_pinned(state,spec,args).await
+pub async fn call_pinned_external(state:&AppState,spec:&ToolSpec,args:&Value,expected:&str)->Result<Value,String>{
+ let a=adapter(&spec.name).ok_or("External tool adapter unavailable")?;
+ if a.fingerprint(state,spec)?!=expected{return Err("External tool authorization changed after approval".into())}
+ if installed::owns(&spec.name){return installed::call(state,&spec.name,args,Some(expected)).await}
+ a.call_pinned(state,spec,args).await
 }
 pub fn external_contracts(state:&AppState,specs:&[ToolSpec])->Result<Value,String>{
  let mut out=serde_json::Map::new();
