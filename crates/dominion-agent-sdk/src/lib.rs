@@ -16,6 +16,7 @@ pub use dominion_turn_core::driver::{Driver, Step};
 pub use dominion_turn_core::{ExecutionPort, TurnStats, run_with_events};
 pub use dominion_agent_loop::{run, select_named, ActiveLoop};
 use serde_json::Value;
+pub mod extensions;
 
 /// Explicit limits and permissions for one host-owned invocation.
 /// The driver enforces a model-round limit and its existing tool-proposal

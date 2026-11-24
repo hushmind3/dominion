@@ -48,3 +48,21 @@ The integration tests exercise the public SDK from an independent host using
 deterministic model responses, an external algorithm, tool-admission
 restrictions and uncertain effects. Real providers and the desktop need
 separate integration verification.
+
+## Trusted Rust extensions
+
+The independent SDK provides `extensions::ExtensionRegistry`. A host registers
+named `ToolRegistration` values with actual `ExtensionTool` handlers, reads
+`names()` to select exact per-run grants, and calls `registry.execute(...)` or
+`registry.execute_compacted(...)`. Tools must also be enabled in RunOptions.
+Registration is atomic; names are stable `ext__plugin__tool` identifiers.
+Unregistering removes all tools of an extension before the next invocation.
+The mutable registry borrow prevents handler replacement during a run.
+Unknown grants and unadvertised tool calls fail closed. Handlers still enforce
+host-level authorization, schema validation and actual effect verification.
+
+This is runtime registration of trusted Rust adapters, not dynamic shared
+library loading, a package installer, or an app plugin marketplace. For
+independently distributed processes and untrusted extensions, use the app's
+existing MCP transport and approval boundaries instead. No new application
+execution loop or separate plugin daemon is introduced.

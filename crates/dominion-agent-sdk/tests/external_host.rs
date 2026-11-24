@@ -122,3 +122,45 @@ async fn compacted_sdk_requests_do_not_mutate_original_tool_receipts() {
     assert!(json!(provider.wire).to_string().len()<3000);
     assert_eq!(provider.wire[0]["content"],"original goal");
 }
+
+#[tokio::test]
+async fn extension_registration_executes_only_granted_tools_and_supports_removal(){
+    use dominion_agent_sdk::extensions::{ExtensionRegistry,ExtensionTool,ToolRegistration,ToolFuture};
+    use std::{cell::Cell,rc::Rc};
+    struct Count(Rc<Cell<usize>>);
+    impl ExtensionTool for Count{
+        fn call<'a>(&'a mut self,_:&'a Value)->ToolFuture<'a>{
+            Box::pin(async move{
+                self.0.set(self.0.get()+1);
+                Ok(json!({"ok":true,"count":self.0.get()}))
+            })
+        }
+    }
+    let count=Rc::new(Cell::new(0));
+    let tool=|name:&str|ToolRegistration{name:name.into(),description:"count".into(),
+        parameters:json!({"type":"object","properties":{}}),
+        handler:Box::new(Count(count.clone()))};
+    let mut registry=ExtensionRegistry::new();
+    assert!(registry.register("test",vec![tool("read"),tool("read")]).is_err());
+    assert!(registry.names().is_empty(),"failed registration must be atomic");
+    registry.register("test",vec![tool("read"),tool("write")]).unwrap();
+    assert!(registry.register("test",vec![tool("other")]).is_err());
+    let read=String::from("ext__test__read");
+    let grants=vec![read.clone()];
+    let mut algorithm=select_named(Some("react"),false);
+    let mut provider=model("ext__test__write");
+    assert!(registry.execute(&mut algorithm,&mut provider,&mut vec![],&grants,enabled()).await.is_err());
+    assert_eq!(count.get(),0);
+    let mut provider=model(&read);
+    let mut history=vec![];
+    let outcome=registry.execute_compacted(&mut algorithm,&mut provider,&mut history,&grants,enabled(),2048).await.unwrap();
+    assert_eq!(outcome.response,"finished");
+    assert_eq!(count.get(),1);
+    assert_eq!(provider.catalog_sizes,vec![1,1]);
+    assert!(registry.unregister("test"));
+    assert!(registry.names().is_empty());
+    let mut provider=model(&read);
+    assert!(registry.execute(&mut algorithm,&mut provider,&mut vec![],&grants,enabled()).await.is_err());
+    assert!(provider.catalog_sizes.is_empty(),"stale grant rejected before model request");
+    assert_eq!(count.get(),1);
+}
