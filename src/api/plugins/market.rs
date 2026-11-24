@@ -20,6 +20,9 @@ pub struct Search{q:Option<String>}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields,rename_all="camelCase")]
 pub struct Request{repository:String,commit:String,manifest_digest:String,confirmed:bool}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields,rename_all="camelCase")]
+pub struct UpdateRequest{repository:String,commit:String,manifest_digest:String,expected_image_id:String,confirmed:bool}
 fn repository_ok(repo:&str)->bool{
     repo.len()<=140&&repo.split('/').count()==2&&repo.split('/').all(|p|
         !p.is_empty()&&p!="."&&p!=".."&&p.bytes().all(|b|b.is_ascii_alphanumeric()||matches!(b,b'-'|b'_'|b'.')))
@@ -195,6 +198,17 @@ pub async fn install(State(state):State<AppState>,Json(input):Json<Request>)->Re
     };
     if digest(&m)!=input.manifest_digest{return error(StatusCode::CONFLICT,"검토한 패키지 내용이 변경되었습니다.")}
     super::install(State(state),Json(Install{id:package_id(&input.repository,&m.image),name:m.name,image:m.image,network:m.network,port:m.port,confirmed:true})).await
+}
+pub async fn update(State(state):State<AppState>,Json(input):Json<UpdateRequest>)->Response{
+    if !input.confirmed||!repository_ok(&input.repository)||!hex(&input.commit,40)||!hex(&input.manifest_digest,64)||!super::versions::immutable(&input.expected_image_id){
+        return error(StatusCode::BAD_REQUEST,"업데이트할 패키지와 현재 버전을 확인하세요.")
+    }
+    let m=match async{load(&client()?,&input.repository,&input.commit).await}.await{
+        Ok(m)=>m,Err(e)=>return error(StatusCode::BAD_GATEWAY,&e)
+    };
+    if digest(&m)!=input.manifest_digest{return error(StatusCode::CONFLICT,"검토한 패키지 내용이 변경되었습니다.")}
+    let next=Install{id:package_id(&input.repository,&m.image),name:m.name,image:m.image,network:m.network,port:m.port,confirmed:true};
+    super::versions::update_market(state,next,&input.expected_image_id).await
 }
 #[cfg(test)]
 mod tests{

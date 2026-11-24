@@ -20,3 +20,5 @@ A search may also use `owner/repo@branch` to resolve a public branch or tag expl
 
 ## Extension catalog
 The marketplace reads `extensions/catalog.json` as discovery metadata, with a local snapshot fallback. Each entry has name, description, repository, sourceRef and keywords; no application-specific code is needed. Search matches names and keywords, then also includes public GitHub repositories. Opening a result re-fetches the source commit and validates the real manifest. Index entries cannot grant permissions, select images or bypass installation review. Publishers can update the index independently of a host rebuild. Generic GitHub downloads remain available without a manifest.
+
+Marketplace details expose a stable installation identity. The UI checks installed packages and offers management or an update instead of duplicating installation. A marketplace update re-fetches the reviewed manifest and checks the exact existing image ID, stopped status, image repository and unchanged network/port permissions under the lifecycle lock. Previous version and data use the existing rollback snapshot mechanism. A changed permission scope is not automatically accepted.

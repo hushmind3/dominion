@@ -106,6 +106,31 @@ pub async fn update(State(state):State<AppState>,Path(id):Path<String>,Json(inpu
     }.await;
     match result{Ok(row)=>Json(row).into_response(),Err(e)=>failed(&e)}
 }
+fn same_market_scope(old:&Value,next:&Install)->bool{
+    let Some(current)=old["image"].as_str()else{return false};
+    // A marketplace update cannot silently change the publisher, service
+    // port, networking permissions, or data identity of an installation.
+    let Some((old_repo,_))=current.split_once("@sha256:")else{return false};
+    let Some((new_repo,_))=next.image.split_once("@sha256:")else{return false};
+    old_repo==new_repo&&old["id"]==next.id&&old["network"]==next.network&&old["requestedPort"]==json!(next.port)
+}
+pub(super) async fn update_market(state:AppState,next:Install,expected:&str)->Response{
+    if !valid_id(&next.id)||!valid_image(&next.image)||!immutable(expected){return error(StatusCode::BAD_REQUEST,"Invalid marketplace update")}
+    let _guard=match state.integrations.plugin_mutations.try_lock(){Ok(g)=>g,Err(_)=>return conflict("다른 플러그인 변경이 진행 중입니다.")};
+    if pending(&state,&next.id){return conflict("이전 버전 변경을 먼저 복구하세요.")}
+    let scope=match owner(&state){Ok(s)=>s,Err(e)=>return failed(&e)};
+    let result:Result<Value,String>=async{
+        let old=inspect(&next.id,&scope).await?.ok_or("설치된 플러그인이 없습니다.")?;
+        if image_id(&old)!=Some(expected){return Err("현재 이미지가 변경되었습니다. 새로고침하세요.".into())}
+        removal_id(&old)?;
+        if !same_market_scope(&old,&next){return Err("패키지 출처 또는 실행 권한이 바뀌었습니다. 기존 설치와 별도로 검토하세요.".into())}
+        let spec=spec(&old,&next.image).ok_or("Invalid installed plugin metadata")?;
+        let target=pull(&spec.image).await?;
+        if target==expected{return Ok(old)}
+        replace_stopped(&state,&scope,old,&spec,&target).await
+    }.await;
+    match result{Ok(row)=>Json(row).into_response(),Err(e)=>failed(&e)}
+}
 pub async fn rollback(State(state):State<AppState>,Path(id):Path<String>,Json(input):Json<Rollback>)->Response{
     if !input.confirmed||!valid_id(&id){return error(StatusCode::BAD_REQUEST,"이전 실행 이미지로 복구를 확인하세요.")}
     let _guard=match state.integrations.plugin_mutations.try_lock(){Ok(g)=>g,Err(_)=>return conflict("다른 플러그인 변경이 진행 중입니다.")};
@@ -146,6 +171,15 @@ pub async fn rollback(State(state):State<AppState>,Path(id):Path<String>,Json(in
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn market_update_keeps_publisher_and_permissions(){
+        let id="01234567-89ab-4def-8123-456789abcdef";
+        let old=json!({"id":id,"image":format!("ghcr.io/example/app@sha256:{}","a".repeat(64)),"network":true,"requestedPort":8080});
+        let mut next=Install{id:id.into(),name:"Example".into(),image:format!("ghcr.io/example/app@sha256:{}","b".repeat(64)),network:true,port:Some(8080),confirmed:true};
+        assert!(same_market_scope(&old,&next));next.port=Some(8081);assert!(!same_market_scope(&old,&next));next.port=Some(8080);
+        next.network=false;assert!(!same_market_scope(&old,&next));next.network=true;
+        next.image=format!("ghcr.io/other/app@sha256:{}","b".repeat(64));assert!(!same_market_scope(&old,&next));
+    }
     #[test]
     fn rollback_uses_exact_image_and_preserves_owner_settings(){
         let id="01234567-89ab-4def-8123-456789abcdef";
