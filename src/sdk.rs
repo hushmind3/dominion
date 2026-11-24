@@ -225,6 +225,12 @@ impl Dominion {
         let _lease=self.extension_write_lease()?;
         extension_manager::enable(&self.state,id,enabled).await
     }
+    /// Activate only the revision explicitly reviewed by the embedding host.
+    pub async fn enable_reviewed_extension(&self,id:&str,revision:&str,confirmed:bool)->Result<Value,String>{
+        if !confirmed||revision.is_empty(){return Err("explicit revision-bound code execution consent required".into());}
+        let _lease=self.extension_write_lease()?;
+        extension_manager::enable_reviewed(&self.state,id,true,Some(revision)).await
+    }
     pub async fn extension_versions(&self,id:&str)->Result<Value,String>{
         extension_manager::versions(&self.state,id).await
     }

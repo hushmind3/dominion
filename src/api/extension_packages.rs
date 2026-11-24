@@ -11,7 +11,7 @@ use super::response::error;
 #[derive(Deserialize)] pub struct Install{source:String,manifest:Manifest,confirmed:bool}
 #[derive(Deserialize)] #[serde(rename_all="camelCase",deny_unknown_fields)]
 pub struct LocalBundle{bundle_version:u32,manifest:Manifest,artifact_base64:String,confirmed:bool}
-#[derive(Deserialize)] pub struct Enable{enabled:bool,#[serde(default)] confirmed:bool}
+#[derive(Deserialize)] pub struct Enable{enabled:bool,#[serde(default)] confirmed:bool,#[serde(rename="expectedRevision")] expected_revision:Option<String>}
 fn result(value:Result<Value,String>)->Response{match value{Ok(v)=>Json(v).into_response(),Err(e)=>error(StatusCode::BAD_REQUEST,&e)}}
 pub async fn sources(State(state):State<AppState>)->Json<Value>{Json(manager::settings(&state))}
 pub async fn save_sources(State(state):State<AppState>,Json(input):Json<Sources>)->Response{result(manager::save_sources(&state,input.urls,input.github_discovery).await)}
@@ -36,7 +36,8 @@ pub async fn import_local(State(state):State<AppState>,Json(input):Json<LocalBun
 }
 pub async fn enable(State(state):State<AppState>,Path(id):Path<String>,Json(input):Json<Enable>)->Response{
     if input.enabled&&!input.confirmed{return error(StatusCode::BAD_REQUEST,"explicit code execution consent required");}
-    result(manager::enable(&state,&id,input.enabled).await)
+    if input.enabled&&input.expected_revision.as_deref().is_none_or(str::is_empty){return error(StatusCode::BAD_REQUEST,"reviewed extension revision required");}
+    result(manager::enable_reviewed(&state,&id,input.enabled,input.expected_revision.as_deref()).await)
 }
 pub async fn remove(State(state):State<AppState>,Path(id):Path<String>)->Response{result(manager::remove(&state,&id).await)}
 

@@ -235,8 +235,8 @@ export class Dominion {
       this.request<InstalledExtension>('POST','/api/extensions',{source:entry.source,manifest:entry.manifest,confirmed},options),
     importBundle: (bundle:ExtensionBundle,confirmed:true,options?:RequestOptions) =>
       this.request<InstalledExtension>('POST','/api/extensions/import',{...bundle,confirmed},options),
-    enable: (key:string,confirmed:true,options?:RequestOptions) =>
-      this.request<InstalledExtension>('POST','/api/extensions/'+id(key)+'/enable',{enabled:true,confirmed},options),
+    enable: (reviewed:Pick<InstalledExtension,'id'|'revision'>,confirmed:true,options?:RequestOptions) =>
+      this.request<InstalledExtension>('POST','/api/extensions/'+id(reviewed.id)+'/enable',{enabled:true,confirmed,expectedRevision:reviewed.revision},options),
     disable: (key:string,options?:RequestOptions) =>
       this.request<InstalledExtension>('POST','/api/extensions/'+id(key)+'/enable',{enabled:false},options),
     versions: (key:string,options?:RequestOptions) => this.request<ExtensionVersions>('GET','/api/extensions/'+id(key)+'/versions',undefined,options),

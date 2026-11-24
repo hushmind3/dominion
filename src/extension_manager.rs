@@ -152,8 +152,16 @@ async fn persist_install(state:&AppState,source:&str,requested:Manifest,bytes:Op
     Ok(saved)
 }
 pub async fn enable(state:&AppState,id:&str,enabled:bool)->Result<Value,String>{
+    enable_reviewed(state,id,enabled,None).await
+}
+/// Check the reviewed revision under the same lock as install and activation.
+pub async fn enable_reviewed(state:&AppState,id:&str,enabled:bool,expected_revision:Option<&str>)->Result<Value,String>{
     let _guard=package_lock(state,id).await?;
     let mut row=state.store.get(KIND,id).ok_or("extension not installed")?;
+    if let Some(expected)=expected_revision{
+        let current=manifest(&row).ok_or("invalid manifest")?;
+        if packages::revision(&current)!=expected{return Err("extension revision changed; refresh and review again".into());}
+    }
     if enabled{
         let m=manifest(&row).ok_or("invalid manifest")?;
         packages::check(&root(state),&m).await?;
@@ -251,7 +259,9 @@ mod tests{
             install_local(&state,next.clone(),bytes).await.unwrap();
             assert_eq!(std::fs::read(data.join("keep")).unwrap(),b"persistent");
             assert!(definitions(&state).is_empty());
-            enable(&state,&next.id,true).await.unwrap();
+            assert!(enable_reviewed(&state,&next.id,true,Some(&packages::revision(&m))).await.is_err());
+            assert!(definitions(&state).is_empty());
+            enable_reviewed(&state,&next.id,true,Some(&packages::revision(&next))).await.unwrap();
             assert!(execute(&state,&name,&json!({})).await.is_err());
             remove(&state,&next.id).await.unwrap();
             assert!(!data.exists());

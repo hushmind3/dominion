@@ -39,7 +39,12 @@ fn independent_extension_import_group_execution_and_removal_without_mcp(){
     let name=format!("ext__fixture__echo__{}",row["revision"].as_str().unwrap());
     let advertised=|tools:Value|tools.as_array().unwrap().iter().any(|tool|tool["name"]==name);
     assert!(!advertised(app.get("/api/tools")));
-    app.post("/api/extensions/fixture/enable",&json!({"enabled":true,"confirmed":true}));
+    for request in [json!({"enabled":true,"confirmed":true}),json!({"enabled":true,"confirmed":true,"expectedRevision":"stale"})]{
+        let rejected=app.client.post(format!("{}/api/extensions/fixture/enable",app.base)).json(&request).send().unwrap();
+        assert_eq!(rejected.status(),400);
+        assert!(!advertised(app.get("/api/tools")));
+    }
+    app.post("/api/extensions/fixture/enable",&json!({"enabled":true,"confirmed":true,"expectedRevision":row["revision"]}));
     assert!(advertised(app.get("/api/tools")));
     app.post("/api/agents",&json!({"id":"a","name":"Extension tester","systemPrompt":"Use available tools and report observed results."}));
     let room=app.post("/api/rooms",&json!({"name":"independent extension","agentIds":["a"],"rounds":1,"maxTurns":1,"toolsEnabled":true,"autoLearning":false}));

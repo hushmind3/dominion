@@ -354,7 +354,7 @@ test('extension lifecycle uses its own authenticated endpoints and explicit owne
   await d.extensions.search('한글 & echo');
   await d.extensions.install({manifest,source:settings.urls[0]},true);
   await d.extensions.importBundle({bundleVersion:1,manifest,artifactBase64:'YQ=='},true);
-  await d.extensions.enable('fixture',true);
+  await d.extensions.enable({id:'fixture',revision:'aaaa1111bbbb'},true);
   await d.extensions.status('fixture');
   await d.extensions.disable('fixture');
   await d.extensions.list();
@@ -368,7 +368,7 @@ test('extension lifecycle uses its own authenticated endpoints and explicit owne
   assert.deepEqual(JSON.parse(calls[1].init.body),settings);
   assert.equal(JSON.parse(calls[3].init.body).confirmed,true);
   assert.equal(JSON.parse(calls[4].init.body).artifactBase64,'YQ==');
-  assert.deepEqual(JSON.parse(calls[5].init.body),{enabled:true,confirmed:true});
+  assert.deepEqual(JSON.parse(calls[5].init.body),{enabled:true,confirmed:true,expectedRevision:'aaaa1111bbbb'});
   assert.deepEqual(JSON.parse(calls[7].init.body),{enabled:false});
   assert.equal(calls[9].init.method,'DELETE');
   assert.ok(calls.every(c=>c.init.headers.get('X-Dominion-Token')==='owner'));

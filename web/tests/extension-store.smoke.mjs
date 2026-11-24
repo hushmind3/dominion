@@ -56,6 +56,7 @@ try{
     }else body=installed
    }else if(path==='/api/extensions/fixture/enable'){
     assert.equal(data.confirmed,data.enabled)
+    if(data.enabled)assert.equal(data.expectedRevision,installed[0].revision)
     installed=[{...installed[0],enabled:data.enabled}];body=installed[0]
    }else if(path==='/api/extensions/fixture/status')body={id:'fixture',enabled:installed[0].enabled,compatible:true,integrityOk:true,runtimeOk:true}
    else if(path==='/api/extensions/fixture/versions')body={installedRevision:installed[0].revision,items:[updated],reason:'checked'}

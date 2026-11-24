@@ -104,3 +104,5 @@ Installed packages have a publisher-specific version check at
 without assuming all version strings are comparable. Local packages use a new
 file import instead. No package is silently updated or enabled; replacing a
 revision preserves its data and requires fresh activation.
+
+Activation from HTTP or TypeScript now requires the reviewed revision (`expectedRevision` in the enable request). TypeScript: `extensions.enable({id, revision}, true)`, using the installed record that the owner reviewed. The host checks the revision under the package lifecycle lock; a concurrent replacement cannot inherit consent. Missing or stale revision fails closed. Disable remains available by ID. Embedded Rust hosts can use `enable_reviewed_extension` for the same revision-bound review; the existing trusted-host method retains its contract.
