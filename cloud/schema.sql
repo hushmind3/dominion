@@ -94,3 +94,14 @@ CREATE TABLE IF NOT EXISTS assistant_rpc (
 CREATE INDEX IF NOT EXISTS assistant_rpc_queue ON assistant_rpc(device_id,state,created_at);
 CREATE INDEX IF NOT EXISTS assistant_rpc_account ON assistant_rpc(account_id,created_at);
 CREATE INDEX IF NOT EXISTS assistant_rpc_exp ON assistant_rpc(expires_at);
+
+-- At-most-once event relay admission metadata. No message payload or response retained.
+CREATE TABLE IF NOT EXISTS assistant_ws_requests (
+ id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),device_id TEXT NOT NULL REFERENCES assistant_devices(id),
+ client_id TEXT NOT NULL,device_connection TEXT NOT NULL,fingerprint TEXT NOT NULL,state TEXT NOT NULL,
+ created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS assistant_ws_account ON assistant_ws_requests(account_id,created_at);
+CREATE INDEX IF NOT EXISTS assistant_ws_device ON assistant_ws_requests(device_id,state,expires_at);
+CREATE INDEX IF NOT EXISTS assistant_ws_connection ON assistant_ws_requests(device_connection,state);
+CREATE INDEX IF NOT EXISTS assistant_ws_exp ON assistant_ws_requests(expires_at);

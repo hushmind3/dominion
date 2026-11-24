@@ -488,6 +488,7 @@ async function routeCompletion(request, env, user) {
   }
   return proxy(request, env, user);
 }
+export {AssistantSocket} from './assistant_socket.js';
 export default {
   async scheduled(_event, env, ctx) {
     ctx.waitUntil(availableModels(env, true));
@@ -503,7 +504,8 @@ export default {
     const sameOriginEmailConfirm = request.method === 'POST'
       && path === '/v1/auth/email/verify'
       && origin === new URL(request.url).origin;
-    if (origin && !isAllowedOrigin(origin, env) && !sameOriginEmailConfirm) return err('Origin not allowed', 403);
+    const sameOriginSocket = path==='/v1/assistant/socket' && request.headers.get('upgrade')?.toLowerCase()==='websocket' && origin===new URL(request.url).origin;
+    if (origin && !isAllowedOrigin(origin, env) && !sameOriginEmailConfirm && !sameOriginSocket) return err('Origin not allowed', 403);
     // Public OAuth metadata: Google client IDs are public identifiers, never secrets.
     // The browser uses this endpoint so login works without a compile-time VITE key.
     if (path === '/v1/public-config' && request.method === 'GET') {
@@ -575,6 +577,7 @@ export default {
         const user = await account(request, env);
         response = user ? await routeCompletion(request, env, user) : err('Unauthorized', 401);
       } else response = err('Not found', 404);
+      if(response.status===101)return response; // Preserve the upgraded WebSocket.
       const out = new Response(response.body, response);
       for (const [k, v] of Object.entries(headers)) out.headers.set(k, v);
       return out;

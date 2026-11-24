@@ -24,7 +24,8 @@ export async function cleanupAssistant(env){
  if(!ready(env))return;
  await env.DB.batch([
   env.DB.prepare('DELETE FROM assistant_login WHERE expires_at<?').bind(now()-60),
-  env.DB.prepare('DELETE FROM assistant_rpc WHERE expires_at<?').bind(now()-600)
+  env.DB.prepare('DELETE FROM assistant_rpc WHERE expires_at<?').bind(now()-600),
+  env.DB.prepare('DELETE FROM assistant_ws_requests WHERE expires_at<?').bind(now()-3600)
  ]);
 }
 async function auth(req,env,path,verifyGoogle){
@@ -92,10 +93,26 @@ async function device(req,env){
  if(!token)return null;
  return env.DB.prepare('SELECT id,account_id FROM assistant_devices WHERE token_hash=? AND revoked=0').bind(await hash(token)).first();
 }
+function socketStub(env,account){return env.ASSISTANT_SOCKET.get(env.ASSISTANT_SOCKET.idFromName(account))}
+async function socketCall(env,account,path,headers={}){
+ return socketStub(env,account).fetch(new Request('https://internal'+path,{headers:{'x-account':account,...headers}}));
+}
 export async function assistantRoute(req,env,{account,verifyGoogle}){
  const path=new URL(req.url).pathname.slice('/v1/assistant/'.length);
  if(path.startsWith('auth/'))return auth(req,env,path,verifyGoogle);
  if(!ready(env))return err('Assistant cloud not configured',503);
+ if(path==='socket'&&req.method==='GET'){
+  if(!env.ASSISTANT_SOCKET)return err('Socket relay not configured',503);
+  if(req.headers.get('upgrade')?.toLowerCase()!=='websocket')return err('WebSocket required',426);
+  const authorization=req.headers.get('authorization')||'';
+  if(authorization.startsWith('Device ')){
+   const d=await device(req,env);if(!d)return err('Unauthorized device',401);
+   return socketCall(env,d.account_id,'/connect',{'x-role':'pc','x-device':d.id,'x-key':await hash(authorization.slice(7)),upgrade:'websocket'});
+  }
+  const user=await account(req,env);if(!user)return err('Unauthorized',401);
+  return socketCall(env,user.id,'/connect',{'x-role':'mobile','x-key':await hash(authorization.slice(7)),upgrade:'websocket'});
+ }
+ if(env.ASSISTANT_SOCKET&&['device/pull','device/reply','rpc','rpc/status'].includes(path))return err('Use WebSocket relay',410);
  if(path.startsWith('device/')){
   const d=await device(req,env);if(!d)return err('Unauthorized device',401);
   if(req.method!=='POST')return err('Method not allowed',405);
@@ -115,12 +132,13 @@ export async function assistantRoute(req,env,{account,verifyGoogle}){
    return old&&old.status===b.status&&old.result===result?out({ok:true}):err('Request expired or changed',409);
   }
   if(path==='device/revoke'){
-   await env.DB.prepare('UPDATE assistant_devices SET revoked=1 WHERE id=?').bind(d.id).run();return out({ok:true});
+   await env.DB.prepare('UPDATE assistant_devices SET revoked=1 WHERE id=?').bind(d.id).run();if(env.ASSISTANT_SOCKET)await socketCall(env,d.account_id,'/revoke',{'x-device':d.id});return out({ok:true});
   }
   return err('Not found',404);
  }
  const user=await account(req,env);if(!user)return err('Unauthorized',401);
  if(path==='devices'&&req.method==='GET'){
+  if(env.ASSISTANT_SOCKET)return socketCall(env,user.id,'/presence');
   const rows=await env.DB.prepare('SELECT id,name,last_seen FROM assistant_devices WHERE account_id=? AND revoked=0 ORDER BY last_seen DESC LIMIT 20').bind(user.id).all();
   return out({devices:rows.results.map(r=>({...r,online:r.last_seen>now()-70}))});
  }
@@ -137,11 +155,11 @@ export async function assistantRoute(req,env,{account,verifyGoogle}){
  }
  if(path==='logout'){
   const token=/^Bearer ([A-Za-z0-9_-]{32,})$/.exec(req.headers.get('authorization')||'')?.[1];
-  if(token)await env.DB.prepare('DELETE FROM sessions WHERE token_hash=? AND account_id=?').bind(await hash(token),user.id).run();
+  if(token){const key=await hash(token);await env.DB.prepare('DELETE FROM sessions WHERE token_hash=? AND account_id=?').bind(key,user.id).run();if(env.ASSISTANT_SOCKET)await socketCall(env,user.id,'/revoke',{'x-key':key})}
   return out({ok:true});
  }
  if(path==='revoke'){
-  if(!uuid(b.deviceId))return err('Invalid device');await env.DB.prepare('UPDATE assistant_devices SET revoked=1 WHERE id=? AND account_id=?').bind(b.deviceId,user.id).run();return out({ok:true});
+  if(!uuid(b.deviceId))return err('Invalid device');await env.DB.prepare('UPDATE assistant_devices SET revoked=1 WHERE id=? AND account_id=?').bind(b.deviceId,user.id).run();if(env.ASSISTANT_SOCKET)await socketCall(env,user.id,'/revoke',{'x-device':b.deviceId});return out({ok:true});
  }
  if(path==='rpc'){
   if(!uuid(b.deviceId)||!uuid(b.id)||!validRoute(b.route)||(readRoute(b.route)?b.body!==null:!b.body||typeof b.body!=='object'||Array.isArray(b.body)))return err('Invalid operation');
