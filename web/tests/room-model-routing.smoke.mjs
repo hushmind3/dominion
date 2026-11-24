@@ -135,7 +135,10 @@ try{
  assert.equal(saved.models[0].providerId,'fixture');
  assert.equal(saved.models[0].model,'owner-picked-model');
  assert.equal(saved.models.length,1);
+ assert.equal(await page.locator('.room-route-details').getAttribute('open'),null,'routing details are initially collapsed');
+ await page.locator('.room-route-details > summary').click();
  const routes=await page.locator('.room-route-bar-items > span').allTextContents();
+ await page.locator('.room-route-details > summary').click();
  assert.equal(routes.length,2);
  assert.ok(routes.every(text=>text.includes('owner-picked-model')),JSON.stringify(routes));
  await page.locator('.room-message-owner .room-message-text').waitFor({timeout:10000});
@@ -181,6 +184,7 @@ try{
   'dominion.room.composer.v1:room-model-fixture')||'null'));
  assert.equal(persisted.text,'Room only: 검토 후 요약해 주세요');
  assert.deepEqual(persisted.targets,['lead']);
+ assert.ok(await page.locator('.room-target-chips').getByText('Lead A',{exact:false}).isVisible(),'explicit target is visible without opening the picker');
  await page.reload({waitUntil:'domcontentloaded'});
  await composer.waitFor({timeout:10000});
  assert.equal(await composer.inputValue(),'Room only: 검토 후 요약해 주세요');
@@ -260,6 +264,7 @@ try{
  page.once('dialog',dialog=>dialog.accept());
  const roomReset=page.waitForResponse(response=>
   new URL(response.url()).pathname==='/api/rooms/room-model-fixture/reset');
+ await page.locator('.room-header-more > summary').click();
  await page.getByRole('button',{name:'대화 초기화'}).click();
  await roomReset;
  await page.getByText('dropped.txt',{exact:true}).waitFor({state:'detached',timeout:10000});
@@ -270,6 +275,8 @@ try{
  assert.equal(afterReset.attempt,undefined);
  const sizes=await page.evaluate(()=>({screen:innerWidth,body:document.documentElement.scrollWidth}));
  assert.ok(sizes.body<=sizes.screen+2,'Room model UI overflows mobile: '+JSON.stringify(sizes));
+ const layout=await page.locator('.room-main').evaluate(main=>Object.fromEntries(['.room-header','.conversation-composer-controls'].map(selector=>{const el=main.querySelector(selector);return [selector,{width:el.clientWidth,scroll:el.scrollWidth}]})));
+ for(const [name,box] of Object.entries(layout))assert.ok(box.scroll<=box.width+2,name+' horizontally overflows: '+JSON.stringify(box));
  assert.deepEqual(errors,[],'Room runtime errors');
  console.log('PASS Room provider hydration, persisted model routing, per-reply model and mobile layout');
 }finally{
