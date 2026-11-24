@@ -563,7 +563,7 @@ async fn run_turn_body(
     let metadata = json!({"runtime":"dominion-core","authorKind":"agent","roomId":session.get("roomId"),"replyToMessageId":reply_to,"executionId":execution_id,"taskId":task_id,"reasoningLanguageRequested":request.reasoning_language,"reasoningLanguageEffective":request.effective_reasoning_language(),"reasoningTranslated":false});
 
     let provider = select_provider(state, request, &session)?;
-    let allow_provider_fallback = true;
+    let allow_provider_fallback = session["extension"]["capability"]!="isolated_chat";
     let intelligence=crate::addons::runtime_hooks::strategy_port(
         state,session_id,request.agent_id.as_deref(),execution_id,
     );

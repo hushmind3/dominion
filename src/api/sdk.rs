@@ -328,6 +328,9 @@ fn retry_identity(input:&Start)->Result<Option<(String,String)>,String>{
     Ok(Some((key.to_owned(),format!("{:x}",Sha256::digest(body.to_string().as_bytes())))))
 }
 fn earlier_run(state:&AppState,key:&str,fingerprint:&str)->Option<Response>{
+    earlier_run_view(state,key,fingerprint,false)
+}
+fn earlier_run_view(state:&AppState,key:&str,fingerprint:&str,scoped:bool)->Option<Response>{
     let claim=state.store.get("sdk_start_claim",key)?;
     if claim["fingerprint"]!=fingerprint{
         return Some(error(StatusCode::CONFLICT,"다른 요청에 사용한 idempotencyKey입니다."));
@@ -336,31 +339,57 @@ fn earlier_run(state:&AppState,key:&str,fingerprint:&str)->Option<Response>{
         return Some(error(StatusCode::CONFLICT,"기존 요청 기록이 불완전합니다."));
     };
     Some(match state.store.get("sdk_run",run_id){
-        Some(run)=>Json(public_view(state,run)).into_response(),
+        Some(run)=>Json(if scoped{scoped_view(state,run)}else{public_view(state,run)}).into_response(),
         None=>error(StatusCode::CONFLICT,"기존 SDK 작업이 누락됐습니다. 중복 실행하지 않습니다.")
     })
 }
 fn claim_run(state:&AppState,key:&str,fingerprint:&str,
     session:&Value,run:&Value)->Result<(),String>{
+    claim_run_extra(state,key,fingerprint,session,run,vec![])
+}
+fn claim_run_extra(state:&AppState,key:&str,fingerprint:&str,session:&Value,run:&Value,mut extra:Vec<(String,Value)>)->Result<(),String>{
     state.store.mutate_record("sdk_start_claim",key,json!({"id":key}),|claim|{
         if claim["runId"].is_string(){return Err("already_claimed".into());}
         claim["runId"]=run["id"].clone();
         claim["fingerprint"]=json!(fingerprint);
         claim["createdAt"]=json!(chrono::Utc::now().to_rfc3339());
-        Ok(vec![("session".into(),session.clone()),("sdk_run".into(),run.clone())])
+        extra.extend([("session".into(),session.clone()),("sdk_run".into(),run.clone())]);
+        Ok(extra)
     }).map(|_|())
 }
 
 pub async fn start(State(state):State<AppState>,Json(input):Json<Start>)->Response{
+    start_impl(state,input,None)
+}
+pub(crate) fn scoped_view(state:&AppState,record:Value)->Value{
+    let row=public_view(state,record);
+    // Never return provider configuration, owner approvals, prompt or other
+    // execution internals to the delegated application.
+    json!({"id":row["id"],"status":row["status"],"answer":row["answer"],
+        "taskOutcome":row["taskOutcome"],"verified":row["verified"],
+        "providerId":row["providerId"],"model":row["model"],"extension":row["extension"]["id"]})
+}
+pub(crate) fn start_scoped(state:AppState,registration:dominion_extensions::Registration,grant:Value,instruction:String,key:String)->Response{
+    let identity=format!("extension:{}",hex_digest(&format!("{}:{}:{}",registration.id,grant["generation"],key)));
+    let input=Start{instruction,provider_id:grant["providerId"].as_str().map(str::to_owned),
+        model:grant["model"].as_str().map(str::to_owned),agent_id:None,
+        source:Some(SourceRef{kind:dominion_extensions::SDK_SOURCE_KIND.into(),id:registration.id.clone()}),
+        idempotency_key:Some(identity),verify_command:None,max_rounds:Some(1),
+        options:json!({"tokenBudget":grant["tokenBudget"]})};
+    start_impl(state,input,Some((registration,grant)))
+}
+fn hex_digest(value:&str)->String{format!("{:x}",Sha256::digest(value.as_bytes()))}
+fn start_impl(state:AppState,input:Start,scoped:Option<(dominion_extensions::Registration,Value)>)->Response{
+    let is_scoped=scoped.is_some();
     let retry=match retry_identity(&input){
         Ok(value)=>value,Err(message)=>return error(StatusCode::BAD_REQUEST,&message),
     };
     if let Some((key,fingerprint))=&retry{
-        if let Some(response)=earlier_run(&state,key,fingerprint){return response;}
+        if let Some(response)=earlier_run_view(&state,key,fingerprint,is_scoped){return response;}
     }
     // The reserved extension source participates in lifecycle admission.
     // Generic owner SDK calls remain compatible; provenance is not a sandbox.
-    let extension_admission=if let Some(source)=input.source.as_ref().filter(|s|s.kind==dominion_extensions::SDK_SOURCE_KIND){
+    let extension_admission=if is_scoped{None}else if let Some(source)=input.source.as_ref().filter(|s|s.kind==dominion_extensions::SDK_SOURCE_KIND){
         match super::extension_registry::admit(&state,&source.id){Ok(value)=>Some(value),Err(response)=>return response}
     }else{None};
     let (mut session_row,mut record)=match prepare_start(&state,&input){
@@ -372,13 +401,32 @@ pub async fn start(State(state):State<AppState>,Json(input):Json<Start>)->Respon
         session_row["extension"]=snapshot.clone();
         record["extension"]=snapshot;
     }
+    let mut extra=vec![];
+    if let Some((registration,mut grant))=scoped{
+        let remaining=grant["remainingRuns"].as_u64().unwrap_or(0);
+        if remaining==0{return error(StatusCode::TOO_MANY_REQUESTS,"Extension request allowance exhausted")}
+        // Re-check the currently configured provider. Its implementation may
+        // have been changed since grant issuance.
+        let route=match gateway::resolve(&state,input.provider_id.as_deref().unwrap_or(""),input.model.as_deref()){
+            Ok(route)=>route,Err(e)=>return error(StatusCode::BAD_REQUEST,&e)
+        };
+        if matches!(route.kind.as_str(),"cli"|"codex"){return error(StatusCode::FORBIDDEN,"Scoped text provider is no longer eligible")}
+        let snapshot=json!({"id":registration.id,"version":registration.manifest.version,
+            "schemaVersion":registration.manifest.schema_version,"credentialGeneration":grant["generation"],
+            "capability":"isolated_chat"});
+        session_row["extension"]=snapshot.clone();
+        session_row["extensions"]=json!({"mcp":false,"memory":false,"skills":false,"channels":false,"strategies":false,"connectors":false});
+        record["extension"]=snapshot;
+        grant["remainingRuns"]=json!(remaining-1);
+        extra.push(("sdk_extension_grant".into(),grant));
+    }
     // The owner limits and SDK run commit atomically with an optional
     // retry receipt. No second engine or standalone storage is introduced.
     let persisted=if let Some((key,fingerprint))=&retry{
-        match claim_run(&state,key,fingerprint,&session_row,&record){
+        match claim_run_extra(&state,key,fingerprint,&session_row,&record,extra){
             Ok(())=>record.clone(),
             Err(message) if message=="already_claimed"=>{
-                return earlier_run(&state,key,fingerprint).unwrap_or_else(||
+                return earlier_run_view(&state,key,fingerprint,is_scoped).unwrap_or_else(||
                     error(StatusCode::CONFLICT,"기존 SDK 요청 기록을 찾을 수 없습니다."));
             },
             Err(message)=>{
@@ -401,7 +449,7 @@ pub async fn start(State(state):State<AppState>,Json(input):Json<Start>)->Respon
     let run_id=persisted["id"].as_str().unwrap_or_default();
     let saved=state.store.get("sdk_run",run_id).unwrap_or(persisted);
     launch(state.clone(),saved.clone(),false);
-    (StatusCode::ACCEPTED,Json(public_view(&state,saved))).into_response()
+    (StatusCode::ACCEPTED,Json(if is_scoped{scoped_view(&state,saved)}else{public_view(&state,saved)})).into_response()
 }
 pub(crate) fn launch(state:AppState,record:Value,resume:bool){
     tokio::spawn(async move{
@@ -410,7 +458,7 @@ pub(crate) fn launch(state:AppState,record:Value,resume:bool){
         let control=state.store.get("sdk_run",id).unwrap_or_else(||record.clone());
         let goal=engine::job_control::intent(record["instruction"].as_str().unwrap_or(""),&control);
         if let Some(session)=record["sessionId"].as_str(){state.store.patch_if("session",session,"id",&json!(session),&json!({"ownerAppliedRevision":control["steeringRevision"]}));}
-        let request=TurnRequest::from_value(&json!({"sessionId":record["sessionId"],"input":goal,"agentId":record["agentId"],"providerId":record["providerId"],"model":record["model"],"autoLearning":false}));
+        let request=TurnRequest::from_value(&json!({"sessionId":record["sessionId"],"input":goal,"agentId":record["agentId"],"providerId":record["providerId"],"model":record["model"],"autoLearning":false,"directChat":record["extension"]["capability"]=="isolated_chat"}));
         let outcome=match request{Ok(request)=>if resume{engine::run_quiet_resume(&state,&request).await}else{engine::run_quiet(&state,&request).await},Err(e)=>Err(e)};
         let Some(current)=state.store.get("sdk_run",id)else{return;};
         if current["status"]!="running"{return;}

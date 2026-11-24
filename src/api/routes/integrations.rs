@@ -10,6 +10,9 @@ pub(super) fn router() -> Router<AppState> {
         .route("/api/extensions/apps", get(extension_registry::list).post(extension_registry::register))
         .route("/api/extensions/apps/:id", get(extension_registry::one).delete(extension_registry::remove))
         .route("/api/extensions/apps/:id/state", post(extension_registry::set_state))
+        .route("/api/extensions/apps/:id/grant", get(extension_registry::grant_status).post(extension_registry::issue_grant).delete(extension_registry::revoke_grant))
+        .route("/api/extensions/apps/:id/runs", post(extension_registry::scoped_start))
+        .route("/api/extensions/apps/:id/runs/:run", get(extension_registry::scoped_one))
         .route("/api/tools", get(extensions::list_tools))
         .route(
             "/api/extensions/runtime",

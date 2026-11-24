@@ -110,6 +110,13 @@ pub(super) fn system_prompt_with_manifest_at(
     improvements: Option<&[Value]>,
     execution_id: Option<&str>,
 ) -> PromptContext {
+    // A delegated text application must never receive the owner's global
+    // system instructions, memory, skills or agent persona.
+    if state.store.get("session",session_id).is_some_and(|s|s["extension"]["capability"]=="isolated_chat"){
+        let prompt="You are DOMINION. Reply to this request only. Do not claim to perform external actions.".to_owned();
+        let digest=crate::engine::memory::stable_id(&[&prompt]);
+        return PromptContext{prompt,dynamic_context:String::new(),items:vec![json!({"kind":"system_prompt","digest":digest})],memory_watermark:digest};
+    }
     let private = !state.store.get("session",session_id)
         .is_some_and(|session|session["roomId"].is_string());
     let social = private && super::context_engine::is_social_turn(query);

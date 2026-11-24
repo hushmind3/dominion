@@ -35,6 +35,7 @@ pub(super) fn cors(port: u16) -> CorsLayer {
             header::CONTENT_TYPE,
             header::AUTHORIZATION,
             HeaderName::from_static("x-dominion-token"),
+            HeaderName::from_static(super::extension_registry::TOKEN_HEADER),
         ])
 }
 
@@ -85,6 +86,14 @@ pub(super) async fn maintenance_guard(
 
 /// Worker-only ingress has its own mandatory per-device or legacy secret.
 /// It must not require the separate owner admin credential.
+fn extension_ingress(method:&Method,path:&str)->bool{
+    let parts=path.split('/').collect::<Vec<_>>();
+    parts.len()>=5&&parts[0].is_empty()&&parts[1]=="api"&&parts[2]=="extensions"&&parts[3]=="apps"
+        &&dominion_extensions::valid_id(parts[4])
+        &&parts.get(5)==Some(&"runs")
+        && ((parts.len()==6&&method==Method::POST)
+            ||(parts.len()==7&&method==Method::GET&&uuid::Uuid::parse_str(parts[6]).is_ok()))
+}
 fn worker_ingress(path: &str) -> bool {
     path == "/api/remote/claim"
         || (path.starts_with("/api/remote/jobs/")
@@ -105,6 +114,12 @@ pub(super) async fn guard_owner_host(
     next: Next,
 ) -> Response {
     let path = request.uri().path();
+    let scoped=extension_ingress(request.method(),path);
+    if request.headers().contains_key(super::extension_registry::TOKEN_HEADER)&&!scoped{
+        return (StatusCode::FORBIDDEN,Json(json!({"error":"Extension credential is limited to its scoped run routes"}))).into_response();
+    }
+    // Scoped route handlers always authenticate independently of owner credentials.
+    if scoped{return next.run(request).await;}
     // Remote coordinator endpoints are handled by their dedicated admin token
     // guard; device ingress is authenticated by per-device credentials.
     if path.starts_with("/api/remote/") {
@@ -188,7 +203,7 @@ pub(super) async fn guard_writes(
                     .into_response();
             }
         }
-        if !is_worker && !configured.trim().is_empty() {
+        if !is_worker && !extension_ingress(&method,request.uri().path()) && !configured.trim().is_empty() {
             let token = configured;
             let provided = request
                 .headers()
