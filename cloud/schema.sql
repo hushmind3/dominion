@@ -104,3 +104,13 @@ CREATE INDEX IF NOT EXISTS assistant_ws_account ON assistant_ws_requests(account
 CREATE INDEX IF NOT EXISTS assistant_ws_device ON assistant_ws_requests(device_id,state,expires_at);
 CREATE INDEX IF NOT EXISTS assistant_ws_connection ON assistant_ws_requests(device_connection,state);
 CREATE INDEX IF NOT EXISTS assistant_ws_exp ON assistant_ws_requests(expires_at);
+
+CREATE TABLE IF NOT EXISTS assistant_messages (
+ id TEXT NOT NULL,account_id TEXT NOT NULL REFERENCES accounts(id),device_id TEXT NOT NULL REFERENCES assistant_devices(id),
+ text TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(device_id,id)
+);
+CREATE INDEX IF NOT EXISTS assistant_messages_account ON assistant_messages(account_id,created_at);
+CREATE TABLE IF NOT EXISTS assistant_push (
+ token TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),app_session_id TEXT NOT NULL REFERENCES app_sessions(id),created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS assistant_push_account ON assistant_push(account_id);

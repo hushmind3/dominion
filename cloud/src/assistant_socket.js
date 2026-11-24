@@ -40,6 +40,7 @@ export class AssistantSocket {
   // Only the public Worker constructs these internal requests after authenticating.
   const url=new URL(req.url),account=req.headers.get('x-account');
   if(!account)return out({error:'Missing account'},403);
+  if(url.pathname==='/message'){await this.broadcast(account,{type:'message'});return out({ok:true})}
   if(url.pathname==='/presence')return out({devices:await this.presence(account)});
   if(url.pathname==='/revoke'){
    const device=req.headers.get('x-device'),key=req.headers.get('x-key');

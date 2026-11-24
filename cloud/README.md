@@ -223,3 +223,6 @@ PC and mobile use the same Google sub account key. App sessions can read shared 
 
 ## Shared app authentication and assistant WebSocket integration
 The assistant uses the existing `/v1/apps/start`, `/connect`, `/v1/apps/status`, `/v1/me` and `dapp_` sessions. New opt-in capabilities `assistant_remote` and `assistant_pc` are displayed at approval. Existing inference-only grants cannot access PC operations. Apply migration 0002 after 0001 on existing D1 before deployment; fresh installations use schema.sql only. Set ASSISTANT_LINK_ENABLED=1 after configuring the Durable Object binding. No separate Google client secret or assistant login database is required. Current sessions are seven days. No deployment performed.
+
+### Assistant inbox and push
+Migration 0003 adds account-scoped messages (30-day retention) and opt-in Expo push registrations. A scoped PC may publish task-completion messages with idempotent IDs. Push previews intentionally omit private task content; clients retrieve the inbox using their existing app credential. Set ASSISTANT_PUSH_ENABLED=1 only after configuring native FCM/APNs credentials and the Expo project. Optional EXPO_PUSH_ACCESS_TOKEN is a Worker secret. Push submission is best effort, not proof of device delivery. No incoming native call push in this change.
