@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "name": "DOMINION MCP Connector",
   "description": "Independent MCP transport and tool provider, installed like any other extension.",
-  "version": "0.1.0-88c11051cd5a",
-  "image": "ghcr.io/hushmind3/dominion-rust/mcp-connector@sha256:591828372419a4481f097d1df3b38ed75ce6cc8d2a2cfef1656abc20ab9da180",
+  "version": "0.1.0-9ab7b5e6458c",
+  "image": "ghcr.io/hushmind3/dominion-rust/mcp-connector@sha256:269f2ffaabaf8cd03cc8acb64e7dffd2e267614c6b5dbc699602a57afaa0bd65",
   "network": true,
   "port": 8080
 }
