@@ -94,3 +94,13 @@ a named installed package can use that receipt to satisfy invocation
 acceptance. It cannot certify an external delivery, deployment, local file
 change, or an unrelated requested package. Missing or ambiguous outcomes
 remain blocked from blind retries.
+
+### Browsing and version management
+
+The extension store separates browsing from installed packages. Open a package
+to review its source, capabilities, runtime, platform and artifact digest.
+Installed packages have a publisher-specific version check at
+`GET /api/extensions/:id/versions`. It lists different published revisions
+without assuming all version strings are comparable. Local packages use a new
+file import instead. No package is silently updated or enabled; replacing a
+revision preserves its data and requires fresh activation.

@@ -9,7 +9,7 @@ const extra=source('src/api/addons.rs');
 const engine=source('src/engine/mod.rs');
 const port=source('src/engine/addons/mod.rs');
 const optionalPaths=[
- '/api/tools','/api/extensions/registries','/api/extensions/catalog','/api/extensions','/api/extensions/import','/api/extensions/:id','/api/extensions/:id/enable','/api/extensions/:id/status','/api/browser/status','/api/browser/screenshot','/api/browser/action',
+ '/api/tools','/api/extensions/registries','/api/extensions/catalog','/api/extensions','/api/extensions/import','/api/extensions/:id','/api/extensions/:id/enable','/api/extensions/:id/status','/api/extensions/:id/versions','/api/browser/status','/api/browser/screenshot','/api/browser/action',
  '/api/gateways/freellmapi','/api/providers/:id/gateway',
  '/api/skills/:id/export','/api/mcp/presets','/api/mcp/catalog',
  '/api/mcp/discover','/api/skill-catalog','/api/skill-catalog/meta',

@@ -83,6 +83,31 @@ pub async fn search(state:&AppState,q:&str)->Value{
     items.retain(|row|seen.insert((row["source"].to_string(),row["revision"].to_string())));
     json!({"items":items,"errors":errors})
 }
+/// Resolve available versions from the installed package's exact publisher,
+/// not a global fuzzy search. Local bundles never trigger a network request.
+pub async fn versions(state:&AppState,id:&str)->Result<Value,String>{
+    let row=state.store.get(KIND,id).ok_or("extension not installed")?;
+    let installed=manifest(&row).ok_or("invalid installed manifest")?;
+    let source=row["source"].as_str().ok_or("missing extension source")?;
+    let current=packages::revision(&installed);
+    let result=|items:Vec<Value>,reason:&str|json!({"installedRevision":current,"items":items,"reason":reason});
+    if source.starts_with("local:"){return Ok(result(vec![],"local"));}
+    let candidates=if packages::github_catalog::is_source(source){
+        if !github_enabled(state){return Ok(result(vec![],"source_disabled"));}
+        vec![packages::github_catalog::resolve(source).await?]
+    }else{
+        if !sources(state).iter().any(|s|s==source){return Ok(result(vec![],"source_disabled"));}
+        packages::catalog(source).await?
+    };
+    let mut seen=std::collections::HashSet::new();
+    let items=candidates.into_iter().filter(|m|m.id==installed.id).filter_map(|m|{
+        let revision=packages::revision(&m);
+        (revision!=current&&seen.insert(revision.clone())).then(||json!({
+            "manifest":m,"source":source,"revision":revision,"compatible":m.compatible()
+        }))
+    }).collect::<Vec<_>>();
+    Ok(result(items,"checked"))
+}
 pub async fn install(state:&AppState,source:&str,requested:Manifest)->Result<Value,String>{
     requested.validate()?;
     let _guard=package_lock(state,&requested.id).await?;

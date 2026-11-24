@@ -225,6 +225,9 @@ impl Dominion {
         let _lease=self.extension_write_lease()?;
         extension_manager::enable(&self.state,id,enabled).await
     }
+    pub async fn extension_versions(&self,id:&str)->Result<Value,String>{
+        extension_manager::versions(&self.state,id).await
+    }
     pub async fn extension_status(&self,id:&str)->Result<Value,String>{
         extension_manager::diagnose(&self.state,id).await
     }
@@ -417,6 +420,9 @@ mod tests {
         assert_eq!(extension_manager::list(&sdk.state).len(),1);
         assert!(sdk.set_extension_enabled(&m.id,true,false).await.is_err());
         assert_eq!(sdk.extension_status(&m.id).await.unwrap()["integrityOk"],true);
+        let versions=sdk.extension_versions(&m.id).await.unwrap();
+        assert_eq!(versions["reason"],"local");
+        assert_eq!(versions["items"],json!([]));
         drop(sdk);
         let reopened=Dominion::open(EngineOptions::new(&dir,dir.join("data"))).unwrap();
         assert_eq!(reopened.extensions()[0]["id"],m.id);

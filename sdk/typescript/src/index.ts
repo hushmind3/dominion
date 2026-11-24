@@ -98,6 +98,9 @@ export interface ExtensionCatalogEntry {
 export interface ExtensionCatalog {
   items: ExtensionCatalogEntry[]; errors: Array<{source:string;error:string}>;
 }
+export interface ExtensionVersions {
+  installedRevision:string; items:ExtensionCatalogEntry[]; reason:'local'|'source_disabled'|'checked';
+}
 export interface ExtensionRegistries { urls: string[]; githubDiscovery: boolean }
 export interface InstalledExtension {
   id:string; manifest:ExtensionManifest; source:string; revision:string; enabled:boolean;
@@ -236,6 +239,7 @@ export class Dominion {
       this.request<InstalledExtension>('POST','/api/extensions/'+id(key)+'/enable',{enabled:true,confirmed},options),
     disable: (key:string,options?:RequestOptions) =>
       this.request<InstalledExtension>('POST','/api/extensions/'+id(key)+'/enable',{enabled:false},options),
+    versions: (key:string,options?:RequestOptions) => this.request<ExtensionVersions>('GET','/api/extensions/'+id(key)+'/versions',undefined,options),
     status: (key:string,options?:RequestOptions) => this.request<ExtensionStatus>('GET','/api/extensions/'+id(key)+'/status',undefined,options),
     remove: (key:string,options?:RequestOptions) => this.request<{removed:boolean}>('DELETE','/api/extensions/'+id(key),undefined,options),
   };
