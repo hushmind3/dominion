@@ -240,7 +240,12 @@ fn registry_item(server:&Value,name:&str)->Value{
         };
         let Some(identifier)=package["identifier"].as_str() else{continue};
         let Some(version)=package["version"].as_str() else{continue};
-        if !package_identifier(identifier,kind)||!package_version(version)
+        let exact_npm=kind!="npm" || {
+            let core=version.split(['-','+']).next().unwrap_or("");
+            let fields=core.split('.').collect::<Vec<_>>();
+            fields.len()==3 && fields.iter().all(|part|!part.is_empty()&&part.bytes().all(|b|b.is_ascii_digit()))
+        };
+        if !package_identifier(identifier,kind)||!package_version(version)||!exact_npm
             || package["transport"]["type"]!="stdio"
             || package["runtimeHint"].as_str().is_some_and(|hint|hint!=runtime)
             || package["registryBaseUrl"].as_str().is_some_and(|url|url.trim_end_matches('/')!=base)
@@ -284,6 +289,7 @@ mod registry_tests{
             json!({"registryType":"npm","identifier":"--evil","version":"1.0.0","transport":{"type":"stdio"}}),
             json!({"registryType":"npm","identifier":"sample","version":"latest","transport":{"type":"stdio"}}),
             json!({"registryType":"npm","identifier":"sample","version":"1.x","transport":{"type":"stdio"}}),
+            json!({"registryType":"npm","identifier":"sample","version":"1.2","transport":{"type":"stdio"}}),
             json!({"registryType":"npm","identifier":"sample","version":"1.0.0","transport":{"type":"stdio"},
                 "environmentVariables":[{"name":"TOKEN","isRequired":true}]}),
             json!({"registryType":"npm","identifier":"sample","version":"1.0.0","transport":{"type":"stdio"},

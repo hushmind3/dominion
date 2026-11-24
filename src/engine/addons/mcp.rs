@@ -756,7 +756,7 @@ mod tests {
         }
         let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base=format!("http://{}",listener.local_addr().unwrap());
-        let app=Router::new().route("/{kind}",post(handler));
+        let app=Router::new().route("/:kind",post(handler));
         let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap();});
         let state=temp_state();
         let id=uuid::Uuid::new_v4().to_string();
