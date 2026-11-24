@@ -5,6 +5,9 @@ use crate::engine::memory::{self, MemoryScope};
 use crate::state::AppState;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
+// Serialize rule read/modify/write within the native process. The host store
+// still owns persistence; no external model/tool is called under this lock.
+static RULE_UPDATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn normalize(text: &str) -> String {
     text.to_lowercase()
@@ -684,6 +687,7 @@ pub fn learn_verified_adaptations(state: &AppState, execution: &Value) -> Vec<Va
         return Vec::new();
     };
     let scope = MemoryScope::for_session(&state.store, session_id, execution["agentId"].as_str());
+    let Ok(_rule_update) = RULE_UPDATE.lock() else { return Vec::new(); };
     let mut saved_rules = Vec::new();
     for adaptation in execution["adaptations"].as_array().into_iter().flatten().take(20) {
         let Some(failed_tool) = adaptation["observation"]["tool"].as_str() else {
@@ -753,66 +757,57 @@ pub fn learn_verified_adaptations(state: &AppState, execution: &Value) -> Vec<Va
             "confidence": 0.4,
             "supportingCases": [],
             "supportingAgents": [],
+            "independentSupports": [],
             "counterexamples": [],
             "createdAt": chrono::Utc::now().to_rfc3339(),
         }));
         if !rule["applicabilityPredicates"].is_array() {
             rule["applicabilityPredicates"] = json!(predicates);
         }
-        // Personal experience stays with its bot. Two different agents
-        // independently supporting the same verified method promotes it to
-        // shared, so the group benefits without trusting a single bot.
-        if let Some(agent) = scope.agent_id.clone() {
-            let mut agents = rule["supportingAgents"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default();
-            if !agents.iter().any(|value| value.as_str() == Some(agent.as_str())) {
-                agents.push(json!(agent));
-                agents.truncate(16);
-            }
-            rule["supportingAgents"] = json!(agents);
+        // Count an independently verified root task at most once, regardless
+        // of how many Room speakers, retries or copies reported it.
+        let case_id = execution["taskId"].as_str().filter(|id| !id.trim().is_empty())
+            .unwrap_or(execution_id);
+        let environment = before["environmentFingerprint"].as_str().unwrap_or("unknown");
+        let mut supports = rule["supportingCases"].as_array().cloned().unwrap_or_default();
+        let new_case = !supports.iter().any(|v| v.as_str() == Some(case_id));
+        if new_case && supports.len() < 24 {
+            supports.push(json!(case_id));
+            let previous = rule["effectByEnvironment"][environment].clone();
+            rule["effectByEnvironment"][environment] = json!({
+                "successes": previous["successes"].as_u64().unwrap_or(0).saturating_add(1),
+                "failures": previous["failures"].as_u64().unwrap_or(0),
+            });
         }
-        let distinct_agents = rule["supportingAgents"]
-            .as_array()
-            .map(|agents| {
-                agents
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .len()
-            })
-            .unwrap_or(0);
+        rule["supportingCases"] = json!(supports);
+        // Legacy supportingAgents did not prove distinct root tasks. Do not
+        // infer missing task-to-agent associations when upgrading a rule.
+        let mut independent = rule["independentSupports"].as_array().cloned().unwrap_or_default();
+        if new_case && supports.len() <= 24 {
+            if let Some(agent) = scope.agent_id.as_deref() {
+                if supports.iter().any(|v| v.as_str() == Some(case_id))
+                    && !independent.iter().any(|v|v["taskId"].as_str()==Some(case_id)) {
+                    independent.push(json!({"taskId":case_id,"agentId":agent}));
+                }
+            }
+        }
+        let distinct_agents = independent.iter().filter_map(|v|v["agentId"].as_str())
+            .collect::<std::collections::BTreeSet<_>>();
         let min_agents = crate::engine::algorithms::choose_for_agent(
-            state,
-            "multiagent.sharing",
-            scope.agent_id.as_deref(),
-            Some(execution_id),
-        )
-        .and_then(|algorithm| algorithm["parameters"]["minAgents"].as_u64())
-        .unwrap_or(2) as usize;
-        if distinct_agents >= min_agents.max(1) {
+            state, "multiagent.sharing", scope.agent_id.as_deref(), Some(execution_id),
+        ).and_then(|algorithm|algorithm["parameters"]["minAgents"].as_u64())
+            .unwrap_or(2) as usize;
+        if distinct_agents.len() >= min_agents.max(2) {
             rule["scope"] = json!("shared");
             rule["agentId"] = Value::Null;
             if rule["sharedAt"].is_null() {
                 rule["sharedAt"] = json!(chrono::Utc::now().to_rfc3339());
             }
         }
-        let environment = before["environmentFingerprint"]
-            .as_str()
-            .unwrap_or("unknown");
-        rule["effectByEnvironment"][environment] = json!({
-            "successes": rule["supportingCases"].as_array().map(Vec::len).unwrap_or(0) + 1,
-            "failures": rule["counterexamples"].as_array().map(Vec::len).unwrap_or(0),
-        });
-        // One root task, not one agent/room speaker, counts as one case.
-        let case_id = execution["taskId"].as_str().unwrap_or(execution_id);
-        let mut supports = rule["supportingCases"].as_array().cloned().unwrap_or_default();
-        if !supports.iter().any(|v| v.as_str() == Some(case_id)) {
-            supports.push(json!(case_id));
-            supports.truncate(24);
-        }
-        rule["supportingCases"] = json!(supports);
+        rule["supportingAgents"] = json!(distinct_agents);
+        rule["independentSupports"] = json!(independent);
+        rule["confidence"] = json!((1.0 + supports.len() as f64) /
+            (2.0 + supports.len() as f64 + rule["counterexamples"].as_array().map(Vec::len).unwrap_or(0) as f64));
         rule["revision"] = json!(memory::stable_id(&[
             &id, &rule["supportingCases"].to_string(), &rule["counterexamples"].to_string(),
         ]));
@@ -838,18 +833,11 @@ pub fn learn_verified_adaptations(state: &AppState, execution: &Value) -> Vec<Va
                 "improvedMethod": saved["intervention"],
                 "evidenceRefs": [execution_id, adaptation["id"]],
                 "environmentFeatures": before,
-                "scope": "shared",
+                "scope": saved["scope"],
                 "partitionKey": scope.partition_key,
                 "createdAt": chrono::Utc::now().to_rfc3339(),
             });
             state.store.put("learning_case", &learning_case);
-            rule["confidence"] = json!((
-                1.0 + rule["supportingCases"].as_array().map(Vec::len).unwrap_or(0) as f64
-            ) / (
-                2.0 + rule["supportingCases"].as_array().map(Vec::len).unwrap_or(0) as f64
-                    + rule["counterexamples"].as_array().map(Vec::len).unwrap_or(0) as f64
-            ));
-            state.store.put("experience_rule", &rule);
             saved_rules.push(saved);
         }
     }
@@ -1022,6 +1010,7 @@ pub fn record_rule_counterexamples(
         );
         return;
     }
+    let Ok(_rule_update) = RULE_UPDATE.lock() else { return; };
     let mut changed = false;
     for hint in considered {
         let Some(id) = hint["id"].as_str() else { continue };
@@ -1032,10 +1021,11 @@ pub fn record_rule_counterexamples(
             continue;
         }
         let mut examples = rule["counterexamples"].as_array().cloned().unwrap_or_default();
-        if !examples.iter().any(|v| v.as_str() == Some(execution_id)) {
-            examples.push(json!(execution_id));
-            examples.truncate(24);
+        if examples.iter().any(|v| v.as_str() == Some(execution_id)) {
+            continue; // idempotent delivery is not new negative evidence
         }
+        if examples.len() >= 24 { continue; }
+        examples.push(json!(execution_id));
         rule["counterexamples"] = json!(examples);
         // Narrow, do not discard: exclude the exact observed environment and
         // keep the method available where the failure was not reproduced.
@@ -1053,6 +1043,7 @@ pub fn record_rule_counterexamples(
                     predicate["type"].as_str() == Some("not")
                         && predicate["predicate"]["path"].as_str()
                             == Some("/environmentFingerprint")
+                        && predicate["predicate"]["value"].as_str()==Some(fingerprint)
                 });
                 if !already {
                     predicates.push(json!({
@@ -1075,6 +1066,9 @@ pub fn record_rule_counterexamples(
             // as an unresolved hypothesis rather than applying it.
             rule["status"] = json!("needs_split");
         }
+        let positive=rule["supportingCases"].as_array().map(Vec::len).unwrap_or(0) as f64;
+        let negative=rule["counterexamples"].as_array().map(Vec::len).unwrap_or(0) as f64;
+        rule["confidence"]=json!((1.0+positive)/(2.0+positive+negative));
         rule["revision"] = json!(memory::stable_id(&[
             id, &rule["supportingCases"].to_string(), &rule["counterexamples"].to_string()
         ]));
@@ -1272,6 +1266,34 @@ mod tests {
             &json!({"path":"second.txt"}), "no such file or directory", 3).len(), 1);
         let _ = a_scope;
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn same_root_task_and_duplicate_deliveries_cannot_promote_shared_experience() {
+        let (state,dir)=state();
+        let attempt=|agent:&str,id:&str,task:&str|json!({
+            "id":id,"taskId":task,"sessionId":"s","agentId":agent,"taskOutcome":"succeeded",
+            "adaptations":[{
+                "observation":{"tool":"workspace_read","arguments":{"path":"a"},"actual":"file not found"},
+                "selected":{"tool":"workspace_write","inputs":{"path":"a","content":"new"}},
+                "beforeObservation":{"environmentFingerprint":"same-env"},
+                "result":{"success":true}
+            }]
+        });
+        let first=learn_verified_adaptations(&state,&attempt("a","run-a","root-1"));
+        assert_eq!(first[0]["confidence"],json!(2.0/3.0));
+        let again=learn_verified_adaptations(&state,&attempt("a","run-a","root-1"));
+        assert_eq!(again[0]["effectByEnvironment"]["same-env"]["successes"],1);
+        let copied=learn_verified_adaptations(&state,&attempt("b","run-b","root-1"));
+        assert_eq!(copied[0]["scope"],"agent");
+        assert_eq!(copied[0]["independentSupports"].as_array().unwrap().len(),1);
+        let other=MemoryScope::for_session(&state.store,"s",Some("b"));
+        assert!(matching_rules(&state,&other,"workspace_read",&json!({"path":"z"}),"file not found",3).is_empty());
+        let verified=learn_verified_adaptations(&state,&attempt("b","run-c","root-2"));
+        assert_eq!(verified[0]["scope"],"shared");
+        assert_eq!(verified[0]["effectByEnvironment"]["same-env"]["successes"],2);
+        assert_eq!(matching_rules(&state,&other,"workspace_read",&json!({"path":"z"}),"file not found",3).len(),1);
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]

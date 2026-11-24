@@ -183,8 +183,11 @@ pub fn usage_delta(previous:&Value,current:&Value)->Value {
 }
 pub fn stalled(previous:&[String],current:&[String],new_evidence:usize,
     previous_error:Option<&str>,error:Option<&str>)->bool{
-    !current.is_empty() && previous==current
-        && new_evidence==0 && previous_error==error
+    if new_evidence!=0 || previous_error!=error
+        || (current.is_empty() && error.is_none()) {return false;}
+    let previous=previous.iter().map(|gap|gap.trim()).collect::<std::collections::BTreeSet<_>>();
+    let current=current.iter().map(|gap|gap.trim()).collect::<std::collections::BTreeSet<_>>();
+    previous==current
 }
 pub fn next_instruction(goal:&str,gaps:&[String],error:Option<&str>,round:usize)->String {
     let evidence=gaps.iter().take(6).map(|gap|format!("- {}",narrow(gap,300)))

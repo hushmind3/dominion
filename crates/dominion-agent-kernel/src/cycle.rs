@@ -153,6 +153,23 @@ mod tests{
         assert_eq!(cycle.assess(&o).decision,Decision::Repair);
     }
     #[test]
+    fn reordered_gaps_and_error_only_retries_cannot_evade_stall_detection(){
+        let mut cycle=policy(4);
+        cycle.next_attempt();
+        cycle.record_retry(&["missing a".into(),"missing b".into()],Some("same failure"));
+        cycle.next_attempt();
+        let reversed=vec!["missing b".into(),"missing a".into(),"missing a".into()];
+        let o=Observation{error:Some("same failure"),..observation(&reversed,&[])};
+        assert!(cycle.assess(&o).stalled);
+        assert_eq!(cycle.assess(&o).decision,Decision::Review);
+        cycle.record_retry(&[],Some("provider timeout"));
+        cycle.next_attempt();
+        let o=Observation{has_checks:false,error:Some("provider timeout"),..observation(&[],&[])};
+        assert!(cycle.assess(&o).stalled);
+        assert_eq!(cycle.assess(&o).decision,Decision::Review);
+        assert!(!cycle.assess(&Observation{new_evidence:1,..o}).stalled);
+    }
+    #[test]
     fn changed_owner_goal_never_replays_unknown_remote_effects(){
         let mut cycle=policy(3);
         assert_eq!(cycle.next_attempt(),Some(0));

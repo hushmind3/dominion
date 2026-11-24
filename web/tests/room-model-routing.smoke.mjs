@@ -152,8 +152,8 @@ try{
  }));
  const own=messageLayout.find(row=>row.owner),reply=messageLayout.find(row=>!row.owner);
  assert.ok(own&&reply,JSON.stringify(messageLayout));
- assert.ok(own.left>reply.left+40,
-  'Room owner must appear on right and AI reply on left: '+JSON.stringify(messageLayout));
+ assert.ok(own.left>reply.left&&own.right>=reply.right-2,
+  'Room owner must align to right edge and AI reply to left: '+JSON.stringify(messageLayout));
  assert.ok(own.right<=390,'Room bubble must fit mobile: '+JSON.stringify(messageLayout));
  assert.ok(own.fontSize>=15&&reply.fontSize>=15,
   'Room transcript text must remain readable on mobile: '+JSON.stringify(messageLayout));
