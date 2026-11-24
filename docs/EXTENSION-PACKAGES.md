@@ -78,3 +78,10 @@ the GUI, including local bundles. Embedded Rust hosts use
 `extension_registries`, `set_extension_registries` and `remove_extension`.
 Both reuse the native lifecycle store and maintenance admission. Neither
 exposes a direct tool invocation API that would bypass agent-run approval.
+
+Explicitly naming an installed extension by its display name or package ID
+helps both private and room agent tool discovery select the relevant
+revision-bound tool rather than ship every installed schema. Casual room
+greetings continue to omit tools. The end-to-end fixture exercises owner
+confirmation, import, visibility, actual Python process execution through a
+group agent approval, disable and removal without an MCP server.

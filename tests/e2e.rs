@@ -662,3 +662,6 @@ mod api_jobs;
 mod room_context_benchmark;
 #[path = "e2e/codex_transports.rs"]
 mod codex_transports;
+
+#[path = "e2e/extension_packages.rs"]
+mod extension_packages;

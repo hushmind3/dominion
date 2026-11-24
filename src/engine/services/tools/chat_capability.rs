@@ -13,7 +13,7 @@ const MAX_PROMOTED:usize=20;
 pub(super) fn definition()->Value{
     json!({"type":"function","function":{
         "name":SEARCH,
-        "description":"Discover additional owner-enabled native or MCP tools by intent. Search when a required tool is missing. The next model step receives the real tool schemas. Search never grants permissions or executes the discovered tool.",
+        "description":"Discover additional owner-enabled native, extension or MCP tools by intent. Search when a required tool is missing. The next model step receives the real tool schemas. Search never grants permissions or executes the discovered tool.",
         "parameters":{"type":"object","properties":{
             "query":{"type":"string","minLength":1,"maxLength":256,
                 "description":"Needed capability, tool or service"},
@@ -77,8 +77,9 @@ fn rank(def:&Value,query:&str,words:&HashSet<String>)->i32{
     let summary=def.pointer("/function/description")
         .and_then(Value::as_str).unwrap_or("").to_lowercase();
     if label.is_empty(){return 0;}
-    let mut score=0;
-    if query.to_lowercase().contains(&label){score+=40;}
+    let mut score=if dominion_agent_sdk::plugin_protocol::explicitly_requested(
+        name(def),def["function"]["description"].as_str().unwrap_or(""),query){80}else{0};
+    if requested.contains(&label){score+=40;}
     for word in words{
         if label.split(|ch:char|!ch.is_alphanumeric()).any(|part|part==word.as_str()){score+=12;}
         else if label.contains(word.as_str()){score+=7;}

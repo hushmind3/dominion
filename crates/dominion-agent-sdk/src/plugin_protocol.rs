@@ -48,6 +48,27 @@ impl Manifest{
     /// Names are revision-bound so updates cannot inherit stale approvals.
     pub fn qualified(&self,tool:&Tool,revision:&str)->String{format!("{PREFIX}{}__{}__{}",self.id,tool.name,revision)}
 }
+/// Match an installed package by its stable ID, display name, or exact tool
+/// name rather than requiring the owner to know a revision-qualified identifier.
+/// ASCII names use word boundaries; Korean display names can carry particles.
+pub fn explicitly_requested(name:&str,description:&str,query:&str)->bool{
+    let Some(rest)=name.strip_prefix(PREFIX)else{return false};
+    let Some((id,_))=rest.split_once("__")else{return false};
+    let q=query.to_lowercase();
+    let contains=|candidate:&str|{
+        let candidate=candidate.trim().to_lowercase();
+        if candidate.chars().count()<2{return false;}
+        if !candidate.is_ascii(){return q.contains(&candidate);}
+        q.match_indices(&candidate).any(|(at,found)|{
+            let before=q[..at].chars().next_back();
+            let after=q[at+found.len()..].chars().next();
+            !before.is_some_and(|c|c.is_ascii_alphanumeric()||c=='_')
+                && !after.is_some_and(|c|c.is_ascii_alphanumeric()||c=='_')
+        })
+    };
+    let display=description.strip_prefix('[').and_then(|s|s.split_once(']')).map(|(label,_)|label).unwrap_or("");
+    contains(name)||contains(id)||contains(display)
+}
 pub fn request(id:&str,tool:&str,arguments:&Value)->Result<Value,String>{
     if id.is_empty()||!segment(tool)||!arguments.is_object(){return Err("invalid extension invocation".into());}
     Ok(json!({"protocol":PROTOCOL,"id":id,"tool":tool,"arguments":arguments}))
@@ -62,6 +83,13 @@ pub fn response(id:&str,value:Value)->Result<Value,String>{
 }
 #[cfg(test)]
 mod tests{use super::*;
+ #[test]fn explicit_package_names_are_revision_independent(){
+    let name="ext__fixture__echo__abc123";
+    assert!(explicitly_requested(name,"[문서 도우미] Echo","문서 도우미로 해줘"));
+    assert!(explicitly_requested(name,"[Fixture] Echo","fixture를 사용해"));
+    assert!(!explicitly_requested(name,"[Fixture] Echo","fixtures are useful"));
+    assert!(!explicitly_requested("mcp__fixture__echo","[Fixture] Echo","fixture"));
+ }
  #[test]fn verifies_response_identity(){
     assert!(response("x",json!({"protocol":PROTOCOL,"id":"y","ok":true,"result":1})).is_err());
     assert!(request("x","../bad",&json!({})).is_err());

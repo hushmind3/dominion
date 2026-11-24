@@ -102,6 +102,10 @@ pub(super) fn recent_room_tools(state: &AppState, session_id: &str) -> std::coll
         .collect()
 }
 
+fn requested_extension(definition:&Value,query:&str)->bool{
+    dominion_agent_sdk::plugin_protocol::explicitly_requested(
+        tool_name(definition),definition["function"]["description"].as_str().unwrap_or(""),query)
+}
 pub(super) fn select_room_tools(
     definitions: Vec<Value>,
     query: &str,
@@ -112,7 +116,8 @@ pub(super) fn select_room_tools(
     if definitions.is_empty() {
         return Vec::new();
     }
-    if !acceptance && !room_tool_request(query) {
+    if !acceptance && !room_tool_request(query)
+        && !definitions.iter().any(|definition|requested_extension(definition,query)){
         return Vec::new();
     }
     let lower = query.to_lowercase();
@@ -181,7 +186,7 @@ pub(super) fn select_room_tools(
             let haystack = serde_json::to_string(definition)
                 .unwrap_or_default()
                 .to_lowercase();
-            let mut score = 0i32;
+            let mut score = if requested_extension(definition,query){80}else{0};
             if lower.contains(&name_lower) {
                 score += 30;
             }
@@ -376,7 +381,7 @@ pub(super) fn select_tool_definitions(
             let score = tokens
                 .iter()
                 .filter(|token| haystack.contains(token.as_str()))
-                .count();
+                .count()+if requested_extension(definition,query){64}else{0};
             (score, definition.clone())
         })
         .filter(|(score, _)| *score > 0)
@@ -420,6 +425,17 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn installed_extension_display_name_survives_bounded_room_projection(){
+        let extension=json!({"type":"function","function":{"name":"ext__fixture__echo__abcdef123456","description":"[문서 도우미] Echo","parameters":{"type":"object"}}});
+        let native=json!({"type":"function","function":{"name":"workspace_read","description":"read a file","parameters":{"type":"object"}}});
+        let catalog=vec![extension.clone(),native];
+        assert!(select_room_tools(catalog.clone(),"안녕",&Default::default(),false).is_empty());
+        let selected=select_room_tools(catalog.clone(),"문서 도우미로 해줘",&Default::default(),false);
+        assert_eq!(selected.first(),Some(&extension));
+        let selected=select_tool_definitions(catalog,"문서 도우미로 해줘",&json!({"implementation":"relevant","parameters":{"extra":1}}));
+        assert!(advertised_tool(&selected,tool_name(&extension)));
+    }
     #[test]
     fn real_team_and_peer_tools_are_advertised_for_explicit_room_intent(){
         let make=|name:&str|json!({"type":"function","function":{

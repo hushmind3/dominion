@@ -15,15 +15,17 @@ export function ExtensionPackagesPanel(){
  const [results,setResults]=useState<Results>({items:[],errors:[]})
  const [busy,setBusy]=useState('')
  const fileRef=useRef<HTMLInputElement>(null)
+ const running=useRef(false)
  const [error,setError]=useState('')
  const [notice,setNotice]=useState('')
  const [searched,setSearched]=useState(false)
  const [diagnostics,setDiagnostics]=useState<Record<string,ExtensionStatus>>({})
  useEffect(()=>{if(!sources.loading&&!sources.error){setSourceText(sources.value.urls.join('\n'));setGithubDiscovery(sources.value.githubDiscovery!==false)}},[sources.value,sources.loading,sources.error])
  const run=async(key:string,fn:()=>Promise<void>)=>{
-  if(busy)return
+  if(running.current)return
+  running.current=true
   setBusy(key);setError('');setNotice('')
-  try{await fn()}catch(e){setError((e as Error).message)}finally{setBusy('')}
+  try{await fn()}catch(e){setError((e as Error).message)}finally{running.current=false;setBusy('')}
  }
  const search=()=>run('search',async()=>{
   const next=await get<Results>('/api/extensions/catalog?q='+encodeURIComponent(query.trim()))
