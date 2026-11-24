@@ -5,6 +5,7 @@ import {useLocale} from '../../i18n'
 import {Link2,RefreshCw} from 'lucide-react'
 import {UniversalConnection} from './UniversalConnection'
 import {ExtensionTools} from './ExtensionTools'
+import {ExtensionConfiguration} from './ExtensionConfiguration'
 
 type Grant={enabled:boolean;expiresAt?:number;remaining:number;lastError?:string;activeRequest?:string}
 type Request={requestId:string;instruction:string;requestDigest:string;runId?:string;status:string;answer?:string;answerDigest?:string;delivery:string}
@@ -49,6 +50,7 @@ export function PluginBridgePanel({pluginId}:{pluginId:string}){
  return <div className="mt-3 border-t border-divider pt-2">
   <Button size="sm" variant="ghost" onClick={()=>setOpen(!open)}><Link2 size={15}/>{tr('도미니온 작업 연결','DOMINION task connection')}</Button>
   {open&&<div className="mt-2 space-y-2 text-xs">
+   <ExtensionConfiguration pluginId={pluginId}/>
    <ExtensionTools pluginId={pluginId}/>
    <UniversalConnection pluginId={pluginId}/>
    <details><summary className="cursor-pointer text-muted">{tr('이전 SDK v1 연결 (구버전 앱)','Legacy SDK v1 connection')}</summary>

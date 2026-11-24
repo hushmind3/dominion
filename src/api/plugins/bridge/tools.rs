@@ -3,7 +3,8 @@
 use super::*;
 use dominion_sdk::harness::ToolSpec;
 use std::collections::BTreeSet;
-const GRANT:&str="plugin_tool_grant";
+pub(super) const GRANT:&str="plugin_tool_grant";
+fn tool_client()->Result<reqwest::Client,String>{reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).timeout(Duration::from_secs(90)).build().map_err(|e|e.to_string())}
 const MAX_TOOLS:usize=64;
 const MAX_PROVIDERS:usize=8;
 #[derive(Clone,serde::Serialize,Deserialize,PartialEq)]
@@ -55,7 +56,7 @@ pub(crate) fn fingerprint(state:&AppState,s:&ToolSpec)->Result<String,String>{
 pub(crate) fn approval_binding(state:&AppState,name:&str)->Result<String,String>{let(g,_)=admitted(state,name)?;Ok(authorization(&g))}
 fn endpoint(port:u16,path:&str)->String{format!("http://127.0.0.1:{port}/dominion/v2/tools{path}")}
 async fn live_catalog(state:&AppState,row:&Value,port:u16)->Result<Vec<Declaration>,String>{
- let response=client()?.get(endpoint(port,"")).bearer_auth(v2::token(state,row)?).send().await.map_err(|e|e.to_string())?;
+ let response=tool_client()?.get(endpoint(port,"")).bearer_auth(v2::token(state,row)?).send().await.map_err(|e|e.to_string())?;
  if !response.status().is_success(){return Err(format!("Extension catalog HTTP {}",response.status()))}
  parse(crate::integrations::network::read_bounded_json(response,1024*1024,"extension catalog").await?)
 }
@@ -112,7 +113,7 @@ pub(crate) async fn call(state:&AppState,name:&str,args:&Value,expected:Option<&
  let fresh=live_catalog(state,&row,port).await?;
  if fresh!=declarations(&g)?{return Err("Extension catalog changed; reapprove tools".into())}
  let call_id=uuid::Uuid::new_v4().to_string();
- let response=client()?.post(endpoint(port,"/call")).bearer_auth(v2::token(state,&row)?)
+ let response=tool_client()?.post(endpoint(port,"/call")).bearer_auth(v2::token(state,&row)?)
   .json(&json!({"callId":call_id,"name":t.name,"arguments":args,"declaration":t}))
   .send().await.map_err(|e|format!("Extension call outcome uncertain: {e}"))?;
  if !response.status().is_success(){return Err(format!("Extension call HTTP {}; outcome may be uncertain",response.status()))}

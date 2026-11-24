@@ -11,6 +11,7 @@ use std::time::Duration;
 pub mod auto_chat;
 pub mod v2;
 pub mod tools;
+pub mod configuration;
 mod legacy;
 const KIND:&str="plugin_request";
 const MAX_INSTRUCTION:usize=16000;

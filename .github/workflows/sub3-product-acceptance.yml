@@ -124,6 +124,7 @@ jobs:
           cargo test --bin dominion-rust api::plugins::data::tests
           cargo test --bin dominion-rust api::plugins::scheduled::tests
           cargo test --bin dominion-rust api::plugins::bridge::v2::tests
+          cargo test --bin dominion-rust api::plugins::bridge::tools::tests
           cargo test --bin dominion-rust api::plugins::market::tests
           cargo test --bin dominion-rust api::plugins::package::tests
           cargo test --bin dominion-rust api::plugins::agent::tests

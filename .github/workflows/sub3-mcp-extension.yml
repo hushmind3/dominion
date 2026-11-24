@@ -1,0 +1,68 @@
+name: Independent MCP connector package
+on:
+  push:
+    branches: [dominion-sub3]
+    paths:
+      - 'extensions/mcp-connector/**'
+      - '.github/workflows/sub3-mcp-extension.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+  packages: write
+concurrency:
+  group: sub3-mcp-extension
+  cancel-in-progress: true
+jobs:
+  package:
+    if: github.ref == 'refs/heads/dominion-sub3'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Independent transport and SDK tests
+        working-directory: extensions/mcp-connector
+        run: cargo test -- --test-threads=1
+      - name: Build and exercise isolated connector
+        run: |
+          set -euo pipefail
+          docker build -t ghcr.io/hushmind3/dominion-rust/mcp-connector:sha-$GITHUB_SHA extensions/mcp-connector
+          docker run -d --name mcp-connector-ci --read-only --tmpfs /tmp:rw,nosuid,nodev,size=128m --cap-drop ALL --security-opt no-new-privileges:true --mount type=volume,source=mcp-ci-data,target=/data -p 127.0.0.1:18781:8080 -e DOMINION_BRIDGE_TOKEN=test-token-for-ci-only ghcr.io/hushmind3/dominion-rust/mcp-connector:sha-$GITHUB_SHA
+          trap 'docker logs mcp-connector-ci; docker rm -f mcp-connector-ci' EXIT
+          curl --retry 12 --retry-all-errors --retry-delay 1 -fsS http://127.0.0.1:18781/
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18781/dominion/v2/tools)" = 401
+          curl -fsS -H 'Authorization: Bearer test-token-for-ci-only' http://127.0.0.1:18781/dominion/v2/capabilities | python3 -c 'import json,sys; assert json.load(sys.stdin)["tools"] is True'
+          curl -fsS -H 'Authorization: Bearer test-token-for-ci-only' -H 'Content-Type: application/json' -d '{"confirmed":true,"values":{"servers":[]}}' http://127.0.0.1:18781/dominion/v2/configuration
+          curl -fsS -H 'Authorization: Bearer test-token-for-ci-only' http://127.0.0.1:18781/dominion/v2/tools | python3 -c 'import json,sys; assert json.load(sys.stdin)["tools"] == []'
+      - name: Publish independent image and verify anonymous pull
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/hushmind3/dominion-rust/mcp-connector:sha-$GITHUB_SHA"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE"
+          docker image inspect "$IMAGE" --format '{{json .RepoDigests}}' >/tmp/mcp-digests.json
+          docker logout ghcr.io
+          EXACT=$(python3 -c 'import json; print(next(x for x in json.load(open("/tmp/mcp-digests.json")) if x.startswith("ghcr.io/hushmind3/dominion-rust/mcp-connector@sha256:")))')
+          export DOCKER_CONFIG="$(mktemp -d)"
+          docker image rm "$IMAGE"
+          docker pull "$EXACT"
+          export EXACT
+          python3 - <<'PY'
+          import json,os
+          m={"schemaVersion":1,"name":"DOMINION MCP Connector","description":"Independent MCP transport and tool provider, installed like any other extension.","version":"0.1.0-"+os.environ["GITHUB_SHA"][:12],"image":os.environ["EXACT"],"network":True,"port":8080}
+          open("dominion-plugin.json","w").write(json.dumps(m,indent=2)+"\n")
+          PY
+      - name: Standalone source and manifest
+        run: |
+          tar -czf /tmp/dominion-mcp-connector.tar.gz -C extensions/mcp-connector --exclude=target .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dominion-mcp-connector
+          path: |
+            /tmp/dominion-mcp-connector.tar.gz
+            dominion-plugin.json
