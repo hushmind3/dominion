@@ -114,3 +114,26 @@ requires `cancelRun`. Owner approval remains an explicit caller action.
 Use a disposable DOMINION test workspace with an explicitly configured provider.
 Build the SDK, then run `DOMINION_LIVE_BASE=http://127.0.0.1:4317 DOMINION_LIVE_PROVIDER=<provider-id> DOMINION_LIVE_MODEL=<model-id> DOMINION_LIVE_CONFIRM=one-primary-round node packages/sdk-typescript/tests/live-provider.mjs`.
 Set `DOMINION_LIVE_TOKEN` only if the test server requires it. This invokes a real model with one primary round, may incur provider charges (including auxiliary calls), requires a workspace without automatic tool approval, and does not grant tool approvals or change permissions. A connectivity reply is not a verified artifact. No credentials are stored by this script.
+
+## External app registry (owner-managed)
+
+Use the same SDK from your own independently installed program. Register
+and enable once in Extensions > Installed > External SDK apps, or with:
+
+```ts
+await agent.registerExtension({
+  schemaVersion: 1, id: 'example.assistant', name: 'External assistant', version: '1.0.0'
+})
+await agent.setExtensionEnabled('example.assistant', true)
+const job = await agent.startExtensionRun('example.assistant', {
+  instruction: 'Inspect this project', idempotencyKey: 'assistant-request-1'
+})
+console.log((await agent.waitForRun(job.id)).status)
+```
+
+`listExtensions`, `setExtensionEnabled(id, false)`, and
+`unregisterExtension(id)` manage the persisted registration. Disable blocks
+new managed requests but does not cancel already admitted work. Existing
+retry receipts and job history remain available. No plugin source code is
+installed or executed by registration. Owner API credentials are trusted;
+this registry is not a sandbox or a per-app authentication service.

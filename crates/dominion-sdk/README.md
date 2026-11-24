@@ -3,7 +3,10 @@
 The app and external Rust integrations use the same native loop. No separate
 agent implementation is introduced.
 
-- `dominion-core`: runtime contracts, budget, journal, tool schemas and effects.
+- `dominion-contracts`: core types, budget, journal, tool/model capability contracts.
+- `dominion-harness`: native runtime and Host/Journal ports.
+- `dominion-core`: compatibility facade for the original public imports.
+- `dominion-extensions`: independent external application manifest contract.
 - `dominion-algorithms`: executable iteration algorithm.
 - `dominion-sdk`: public facade used by the app itself. Embedded hosts implement
   `Host` and `Journal` and supply model/tool/approval/verification adapters.
@@ -54,3 +57,39 @@ Use `runs_by_source`, `inference_support`, and `inference_support_batch`
 without inventing model capabilities. The external-consumer tests in
 `tests/embedded.rs` and `tests/http.rs` exercise the public crate surface;
 they use a deterministic host and loopback HTTP fixture, not a paid provider.
+
+## Register and run a separately installed app
+
+The owner can register and enable an app in Extensions > Installed > External
+SDK apps or with the SDK. The app owns its implementation and lifecycle
+outside Dominion. No source import or rebuild of the product is necessary.
+
+```rust,no_run
+use dominion_sdk::{Client, StartRun, extensions::Manifest};
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+let sdk = Client::connect("http://127.0.0.1:4317")?;
+// Owner setup: registration starts disabled, then explicit activation.
+let manifest = Manifest {
+    schema_version: 1,
+    id: "example.assistant".into(),
+    name: "External assistant".into(),
+    version: "1.0.0".into(),
+    description: "Independent app".into(),
+};
+sdk.register_extension(&manifest).await?;
+sdk.set_extension_enabled(&manifest.id, true).await?;
+// In the independently running app:
+let run = sdk.start_extension_run(&manifest.id, &StartRun {
+    instruction: "Inspect this project".into(),
+    idempotency_key: Some("assistant-request-1".into()),
+    ..Default::default()
+}).await?;
+println!("{:?}", sdk.get_run(&run.id).await?.status);
+# Ok(()) }
+```
+
+Disabling rejects new managed requests. Existing identical retries return
+existing runs, and the owner may recover/inspect them after unregistering.
+Unregister requires a disabled registration. Prior run/version history is
+retained. This owner API is for trusted apps, not a per-app credential or
+OS sandbox. Unmanaged owner SDK calls remain backward compatible.

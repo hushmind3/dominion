@@ -19,4 +19,4 @@ pub async fn run<H: Host>(host: &mut H, context: Context<'_>) -> Result<(), Stri
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "http")]
-pub use http::{Client, ClientError, StartRun, AgentRun, RunActions, RunStatus, RunSummary, SourceRef, InferenceRoute, InferenceSupport};
+pub use http::{Client, ClientError, StartRun, AgentRun, RunActions, RunStatus, RunSummary, SourceRef, InferenceRoute, InferenceSupport, ExtensionSnapshot};

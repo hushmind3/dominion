@@ -7,10 +7,10 @@ design notes and branch experiments are not the deployed product contract.
 
 The **single mandatory agent harness loop** is
 [`dominion_algorithms::engine::Engine::drive`](crates/dominion-algorithms/src/engine.rs).
-It implements [`dominion_core::runtime_port::AgentLoop`](crates/dominion-core/src/runtime_port.rs),
+It implements [`dominion_core::runtime_port::AgentLoop`](crates/dominion-harness/src/runtime_port.rs),
 where the core owns stable state, budgets, cancellations and journal contracts
 — not a competing execution loop. Optional strategies are selected by
-[`TurnStrategyPort`](crates/dominion-core/src/strategy.rs), implemented in
+[`TurnStrategyPort`](crates/dominion-contracts/src/strategy.rs), implemented in
 [`src/addons/strategies`](src/addons/strategies/turn_policy.rs).
 The [Rust chat adapter](src/engine/chat/runtime.rs) and
 [product host](src/addons/integrations/chat_product.rs) connect incoming
@@ -19,7 +19,7 @@ turns and model/tool callbacks to that **one** driver.
 A task consists of bounded model iterations, admitted tool proposals,
 durable approvals, committed effect receipts and independent verification.
 Unresolved mutating side effects cannot be silently retried. The
-[journal](crates/dominion-core/src/journal.rs) and
+[journal](crates/dominion-contracts/src/journal.rs) and
 [tool gateway](src/engine/chat/runtime/tool_dispatch.rs) preserve evidence
 for cancellation, reconciliation and recovery.
 
@@ -75,7 +75,7 @@ See [README](README.md), [한국어 README](README.ko.md) and
 
 ## 6. Versioned run/event correlation (2026-11-20)
 
-The native [`RunEventRef`](crates/dominion-core/src/run_event.rs)
+The native [`RunEventRef`](crates/dominion-contracts/src/run_event.rs)
 records `schemaVersion`, `executionId` and, when known, `sessionId`,
 `taskId`, `roomId`, `agentId`, `sourceMessageId` and lifecycle.
 The [event journal](src/events.rs) attaches this optional `runRef` to

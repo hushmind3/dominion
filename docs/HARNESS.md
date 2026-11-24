@@ -6,12 +6,9 @@
 
 - The **single mandatory Rust harness loop** is
   [`dominion-algorithms::engine::Engine::drive`](../crates/dominion-algorithms/src/engine.rs).
-- The **`dominion-core` crate** owns immutable execution contracts, budgets,
-  model-call admission, cancellation and replay-safe receipts. It owns **no
-  parallel agent loop**; product-specific approval/verification adapters
-  enforce the contract on all effects.
+- `dominion-contracts` owns immutable execution contracts, budgets and journal transitions; `dominion-harness` owns model-call admission, cancellation and replay-safe dispatch. `dominion-core` is the compatibility facade. Neither implementation owns a second agent loop; product Host approval/verification adapters enforce the contract on effects.
 - Optional planning, tool-selection, memory and model strategies belong to
-  `src/addons` and do not create new execution engines.
+  `dominion-algorithms` (pure decisions) or `src/addons` (Host-bound policy selection) and do not create new execution engines.
 - Product adapters own provider transport, task context, verification evidence and storage.
 - Tools are gated by approval, read-only delegation, cancellation and remaining budget.
 - Side-effect results that cannot be confirmed after a crash are marked **needs_review**, never silently replayed.

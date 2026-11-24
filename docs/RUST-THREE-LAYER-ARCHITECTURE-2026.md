@@ -1,81 +1,63 @@
-# Rust three-layer crate boundary — 2026-11-20
+# DOMINION modular Rust architecture — 2026-11-24
 
-## Concrete workspace
+## Concrete workspace and ownership
 
 ```text
-Cargo Workspace
-├── crates/dominion-core/          # infrastructure and traits
-│   └── src/runtime_port.rs         # Host, Context, Flow, ModelDecision, model_call
-├── crates/dominion-algorithms/    # agent iteration + algorithm tests
-│   ├── src/engine.rs              # sole Engine::drive loop
-│   └── src/engine_tests.rs        # former core loop regression suite
-└── dominion-rust (root package)   # gateway + application composition
-    ├── src/api/                   # HTTP / SSE and SDK-facing endpoints
-    ├── src/engine/chat/           # model & tool host adapters
-    └── src/addons/strategies/     # optional algorithms and policies
+External apps (separate repositories/processes)       MCP servers
+       | Rust / TypeScript SDK                              | MCP
+       v                                                     v
+   SDK app registration / owner API                 Native MCP adapter
+       |                                                     |
+       +------------------ product Host ---------------------+
+                                 |
+                           dominion-sdk
+                                 |
+                      dominion-algorithms
+                      (one Engine::drive)
+                                 |
+                       dominion-harness
+                 (admission, dispatch, host port)
+                                 |
+                      dominion-contracts
+              (journal, budgets, types, capabilities)
 ```
 
-Dependency direction is `dominion-rust -> dominion-algorithms -> dominion-core`.
-The gateway additionally imports core contracts directly for its adapters.
-No `dominion-core -> dominion-algorithms` import exists.
+| Package | Owns |
+|---|---|
+| `dominion-contracts` | Core types, model/tool capability contracts, durable journal transitions, budgets, stable IDs, delegation and strategy interfaces |
+| `dominion-harness` | Native runtime snapshot, ordered dispatch, model-call admission, Host/Journal ports |
+| `dominion-algorithms` | Sole iteration loop, context projection, task decomposition, plan scoring, planning decisions and reasoning policies |
+| `dominion-sdk` | Public native embedding and HTTP client; product chat calls the same SDK execution entry |
+| `dominion-extensions` | Versioned external application manifest and lifecycle validation; no model, database or runtime dependencies |
+| `dominion-core` | Compatibility re-export facade only; original public paths preserve type identity |
+| `dominion-rust` | Product Host, SQLite, actual provider/OS/approval adapters, UI/API and persisted extension registry |
 
-The **single production loop** is a mandatory harness implementation
-(package name `dominion-algorithms`) rather than an optional selectable
-agent execution kernel. Moving it did not create an additional loop.
-The one production loop moved, rather than being copied. The original
-engine tests moved alongside it, so no duplicate retry controller, approval
-path or effect execution path was introduced. `Host` remains a core trait;
-`Engine::drive` is now an algorithm implementation.
+Dependencies point from algorithms to harness and core contracts, never the
+other way. The product Host implements the shared ports. External SDK apps do
+not link the product binary or embed a second agent loop. The existing MCP
+transport remains distinct from the SDK task API.
 
-`runtime_port::model_call` remains in core because it only admits and
-journals model calls — it decides no prompts, strategies or loop phase order.
-The algorithm crate re-exports this function temporarily so existing
-auxiliary product callers use the same durable journal during migration.
+The original source files and tests were moved, not copied. The compatibility
+facade preserves the previously exported `dominion_core::hosted`,
+`dominion_core::runtime_port` and domain/journal/type paths. Serialized records,
+stable identity calculations, and the execution journal remain unchanged.
 
-## What has not changed
-
-Existing model providers, native tool admission, approval policy, SQLite
-execution snapshots, streamed user events, restart/cancel semantics,
-multiagent workspaces and React UI are unchanged.
-
-`src/addons/strategies/turn_policy.rs` remains a product-owned strategy
-implementation because it accesses app-specific SQLite state. The 
-standalone algorithms crate contains the model/tool iteration loop, not the
-entire portfolio of product policies.
-
-Rust compilation remains a **single application binary**, so this is
-package/ownership isolation, not a WASM sandbox or hot-reload boundary.
-Changes to the algorithm crate still rebuild dependent linked binaries;
-the gain today is test scope, ownership and independent runtime evolution.
+The standalone algorithms crate owns the pure algorithm implementations.
+Product-bound policy selection, memory retrieval and learning still use
+product Host adapters and SQLite. These are core product capabilities, not
+external apps. This change does not claim all Host-side policy or provider
+implementation has been extracted into independent crates.
 
 ## Checks
 
-- `cargo test --locked -p dominion-core --lib`
-- `cargo test --locked -p dominion-algorithms --lib`
-- `cargo test --locked --bin dominion-rust ...` (existing product regressions)
-- `node scripts/check-runtime-architecture.mjs` (reverse dependency / loop ownership)
-- CI macOS and Windows backend/frontend checks
+- `cargo test --locked -p dominion-contracts -p dominion-harness -p dominion-algorithms -p dominion-extensions -p dominion-core --lib`
+- `cargo test --locked -p dominion-sdk`
+- `cargo test --locked --test e2e external_rust_sdk_runs_real_product_with_approval_and_retry`
+- `npm test --prefix packages/sdk-typescript`
+- `npm run typecheck --prefix web`
 
-## References (architectural examples)
-
-- [ZeroClaw API/runtime crate ownership](https://github.com/zeroclaw-labs/zeroclaw/blob/master/docs/book/src/architecture/crates.md)
-- [ZeroClaw request lifecycle](https://github.com/zeroclaw-labs/zeroclaw/blob/master/docs/book/src/architecture/request-lifecycle.md)
-- [IronClaw runtime and WASM capability isolation](https://github.com/nearai/ironclaw)
-- [OpenCrust Rust workspace](https://github.com/opencrust-org/opencrust)
-
-These are patterns to compare, not source-code dependencies of DOMINION.
-
-## Stable iteration interface
-
-`dominion-core::runtime_port::AgentLoop<H>` is the gateway-visible iteration
-contract. `dominion-algorithms::engine::Engine` implements the trait while
-the product adapter invokes `AgentLoop::run(&Engine, host, context)`. The
-original loop regression suite also runs through this trait. Alternative
-implementations can be swapped at the product composition point without
-adding algorithm imports to the core crate.
-
-The algorithm remains in the same trusted Rust address space; the interface
-is not a sandbox and its type-level boundary must not be mistaken for one.
+The Rust app remains a single linked binary. This is compile-time ownership
+isolation, not a dynamic code loader or sandbox.
 
 ## Context compaction ownership
 
@@ -120,6 +102,6 @@ Registration is not package installation, a code loader, a sandbox, a scoped
 API credential or proof of caller identity. The owner API remains trusted.
 No personal assistant implementation is bundled by this change.
 
-Native SDK embedding, the execution harness and algorithm loop remain the
-same; product-bound model adapters, knowledge and strategy policies still
-live in the product host. They are not yet separate crates.
+Native SDK embedding uses the separated harness and core-contract packages.
+Product-bound model transport, knowledge and strategy selection remain Host
+adapters. No second execution loop is introduced.

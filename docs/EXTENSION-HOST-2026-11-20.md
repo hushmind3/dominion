@@ -2,8 +2,7 @@
 
 ## Where the kernel ends
 
-`crates/dominion-core/` owns contracts, durable journal admission, cancellation
-and budgets. The **single mandatory agent iteration loop** is now
+`crates/dominion-contracts/` owns stable types, budgets and journal transitions; `crates/dominion-harness/` owns runtime admission and the Host interface. `dominion-core` is a compatibility facade. The **single mandatory agent iteration loop** is now
 `crates/dominion-algorithms/src/engine.rs`; the product host wires the
 model and tool phases into it. Neither crate imports MCP, messenger,
 memory or skills clients.
@@ -191,3 +190,12 @@ owned by `native_web.rs` and `native_github.rs`; prior GitHub and delegation
 modules moved to integrations. Tool effects still pass through native approval,
 role admission and receipt tracking. The new `connectors=false` policy option
 hides and denies built-in web/browser/GitHub tools independently of external MCP.
+
+## Independently developed SDK applications
+
+The versioned contract is in `crates/dominion-extensions`. The product registry
+accepts owner registration, enable/disable and unregister requests through
+`/api/extensions/apps`. SDK jobs with source kind `extension` must reference
+an enabled registration. Existing MCP server controls are unchanged. See
+[modular architecture](RUST-THREE-LAYER-ARCHITECTURE-2026.md) and the SDK READMEs.
+Registration is not installation, process execution or scoped authentication.

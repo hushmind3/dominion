@@ -32,6 +32,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Independent Core, Harness, Algorithm and Extension contracts
+        run: cargo test --locked -p dominion-contracts -p dominion-harness -p dominion-algorithms -p dominion-extensions -p dominion-core --lib
       - name: Native embedding without HTTP dependencies
         run: cargo test --locked -p dominion-sdk --no-default-features
       - name: Public Rust SDK and HTTP contracts

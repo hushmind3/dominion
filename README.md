@@ -100,9 +100,9 @@ the provider-independent strategy port, optional decisions and ownership rules.
 
 | Layer | Implementation |
 | --- | --- |
-| Core execution and durable effects | [dominion-core contracts](crates/dominion-core/src/runtime_port.rs), [effect journal](crates/dominion-core/src/journal.rs) |
+| Core execution and durable effects | [dominion-harness host contract](crates/dominion-harness/src/runtime_port.rs), [effect journal](crates/dominion-contracts/src/journal.rs) |
 | Agent loop and orchestration | [dominion-algorithms](crates/dominion-algorithms/src/engine.rs), [agent-loop regression suite](crates/dominion-algorithms/src/engine_tests.rs) |
-| Algorithm/host contract | [TurnStrategyPort](crates/dominion-core/src/strategy.rs), [product composition](src/addons/runtime_hooks.rs), [replaceable decisions](src/addons/strategies/turn_policy.rs) |
+| Algorithm/host contract | [TurnStrategyPort](crates/dominion-contracts/src/strategy.rs), [product composition](src/addons/runtime_hooks.rs), [replaceable decisions](src/addons/strategies/turn_policy.rs) |
 | Agent orchestration and tool admission | [chat runtime](src/engine/chat/runtime.rs), [native gateway](src/engine/chat/runtime/tool_dispatch.rs) |
 | Private-chat context compilation | [Context Engine](src/engine/chat/context_engine.rs), [continuity](src/engine/chat/continuity.rs) |
 | Group state, memory and provider continuity | [rooms](src/addons/integrations/rooms.rs), [room context](src/addons/integrations/chat_room_context.rs), [continuity](src/engine/chat/continuity.rs) |
