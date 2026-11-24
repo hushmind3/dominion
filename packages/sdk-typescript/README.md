@@ -108,3 +108,9 @@ and its HTTP transport. Both clients expose `runsBySource` / `runs_by_source`
 and single/batch model route capability queries. The wait deadline covers
 in-flight HTTP reads and does not cancel server work. Explicit cancellation
 requires `cancelRun`. Owner approval remains an explicit caller action.
+
+### Opt-in real provider smoke
+
+Use a disposable DOMINION test workspace with an explicitly configured provider.
+Build the SDK, then run `DOMINION_LIVE_BASE=http://127.0.0.1:4317 DOMINION_LIVE_PROVIDER=<provider-id> DOMINION_LIVE_MODEL=<model-id> DOMINION_LIVE_CONFIRM=one-model-call node packages/sdk-typescript/tests/live-provider.mjs`.
+Set `DOMINION_LIVE_TOKEN` only if the test server requires it. This invokes a real model, may incur provider charges, and does not grant tool approvals or change permissions. A connectivity reply is not a verified artifact. No credentials are stored by this script.
