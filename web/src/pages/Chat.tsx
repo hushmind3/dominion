@@ -17,7 +17,7 @@ import {ArrowDown,ArrowRight,ArrowUp,BrainCircuit,Check,ChevronRight,CircleHelp,
 import {Agent,Approval,Attachment,ChatMessage,ChatSession,Provider,del,get,post,resolveApproval,streamChat,uploadAttachment} from '../api'
 import {Action,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
-import {parseMcpQuickCommand,findInstalledMcp,validRemoteMcpUrl,discoveryForMcp,type InstalledMcp,type RegistryMcp,type McpAvailableTool} from '../features/mcp/quickCommands'
+import {registryLaunch,parseMcpQuickCommand,findInstalledMcp,discoveryForMcp,type InstalledMcp,type RegistryMcp,type McpAvailableTool} from '../features/mcp/quickCommands'
 import {ReasoningSelect,reasoningOptions} from '../components/ReasoningSelect'
 import {useProviderModels} from '../hooks/useProviderModels'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
@@ -304,19 +304,12 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    const existing=await loadQuickMcp();
    if(existing.some(record=>record.name.toLocaleLowerCase()===entry.name.toLocaleLowerCase()))
     throw Error('이미 등록된 MCP입니다: '+entry.name);
-   const remote=Boolean(entry.url&&validRemoteMcpUrl(entry.url));
-   if(entry.url&&!remote)throw Error('원격 MCP는 HTTPS 주소와 인증정보가 없는 URL만 연결할 수 있습니다.');
-   if(!remote&&!entry.packageName)throw Error('이 항목에는 연결 가능한 MCP 주소 또는 패키지가 없습니다.');
-   if(!remote){
-    if(!/^(@[a-z0-9_.-]+\/)?[a-z0-9_.-]+(?:@[a-z0-9_.-]+)?$/i.test(entry.packageName||''))
-     throw Error('MCP 패키지 이름을 확인하세요.');
-    if(!window.confirm(entry.name+' 설치 시 외부 npm 프로그램이 실행됩니다. 설치하시겠습니까?')){
-     setMcpNotice('설치를 취소했습니다.');return;
-    }
+   const launch=registryLaunch(entry);
+   if(!launch)throw Error('이 항목은 설치 버전 또는 필수 설정을 확인해야 합니다. 연결 관리에서 직접 설정하세요.');
+   if(launch.transport==='stdio'&&!window.confirm(entry.name+' 외부 프로그램을 실행합니다.\n'+[launch.command,...launch.args].join(' ')+'\n계속하시겠습니까?')){
+    setMcpNotice('설치를 취소했습니다.');return;
    }
-   const payload=remote
-    ?{name:entry.name,transport:'http',url:entry.url,enabled:true}
-    :{name:entry.name,transport:'stdio',command:'npx',args:['-y',entry.packageName],enabled:true};
+   const payload={name:entry.name,...launch,enabled:true};
    const saved=await post<InstalledMcp>('/api/mcp',payload);
    await loadQuickMcp();
    refresh('/api/mcp','/api/tools');

@@ -12,6 +12,22 @@ export type InstalledMcp = {
 }
 export type RegistryMcp = {
  name:string;description?:string;url?:string;packageName?:string
+ packageVersion?:string;packageRegistry?:'npm'|'pypi'
+}
+
+/** Shared by the chat and connection manager. Never launch a catalog name
+ * without a version or reinterpret external metadata as a shell command. */
+export function registryLaunch(entry:RegistryMcp):
+ {transport:'http';url:string}|{transport:'stdio';command:'npx'|'uvx';args:string[]}|undefined{
+ if(entry.url&&validRemoteMcpUrl(entry.url))return {transport:'http',url:entry.url}
+ const name=entry.packageName||'',version=entry.packageVersion||''
+ if(name.length>214||version.length>100)return
+ if(entry.packageRegistry==='npm'&&/^(@[a-z0-9][a-z0-9_.-]*\/)?[a-z0-9][a-z0-9_.-]*$/i.test(name)
+  &&/^\d+\.\d+\.\d+(?:-[0-9a-z.-]+)?(?:\+[0-9a-z.-]+)?$/i.test(version))
+  return {transport:'stdio',command:'npx',args:['-y',name+'@'+version]}
+ if(entry.packageRegistry==='pypi'&&/^[a-z0-9][a-z0-9_.-]*$/i.test(name)
+  &&/^\d[0-9a-z.+!-]*$/i.test(version))
+  return {transport:'stdio',command:'uvx',args:[name+'=='+version]}
 }
 export type McpAvailableTool = {mcpId?:string;name?:string;error?:string}
 

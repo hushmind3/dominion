@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {fileURLToPath} from 'node:url'
 import {dirname,resolve} from 'node:path'
-import {parseMcpQuickCommand,validRemoteMcpUrl,findInstalledMcp,discoveryForMcp} from '../src/features/mcp/quickCommands.ts'
+import {parseMcpQuickCommand,validRemoteMcpUrl,findInstalledMcp,discoveryForMcp,registryLaunch} from '../src/features/mcp/quickCommands.ts'
 
 const dir=dirname(fileURLToPath(import.meta.url))
 const chat=readFileSync(resolve(dir,'../src/pages/Chat.tsx'),'utf8')
@@ -93,3 +93,14 @@ test('every advertised slash command dispatches to an implemented backend operat
  assert.match(statement,/await post<\{id:string\}>\('\/api\/jobs',\{kind:'prompt'/)
  assert.match(statement,/if\(name==='workflows'\)\{window.location.hash='#\/tasks'/)
 })
+
+ test('registry launches only explicit supported versions and prefers a valid remote',()=>{
+ const npm={name:'example',packageRegistry:'npm',packageName:'@scope/server',packageVersion:'1.2.3'}
+ assert.deepEqual(registryLaunch(npm),{transport:'stdio',command:'npx',args:['-y','@scope/server@1.2.3']})
+ assert.deepEqual(registryLaunch({name:'python',packageRegistry:'pypi',packageName:'mcp-server',packageVersion:'2.1.0'}),{transport:'stdio',command:'uvx',args:['mcp-server==2.1.0']})
+ for(const bad of ['latest','1','^1.2.3','1.2.3;echo',''])assert.equal(registryLaunch({...npm,packageVersion:bad}),undefined)
+ assert.equal(registryLaunch({...npm,packageName:'--evil'}),undefined)
+ assert.equal(registryLaunch({name:'legacy',packageName:'unversioned'}),undefined)
+ assert.deepEqual(registryLaunch({...npm,url:'https://example.org/mcp'}),{transport:'http',url:'https://example.org/mcp'})
+ assert.equal(registryLaunch({name:'invalid',url:'http://example.org'}),undefined)
+ })

@@ -108,6 +108,71 @@ pub async fn import_skill_repo(State(state): State<AppState>, Json(body): Json<V
     }
 }
 
+// Only project launchable, pinned packages. A manifest that declares
+// additional arguments, environment or integrity requirements needs manual
+// configuration; never silently drop those requirements.
+fn registry_package(package: &Value) -> Option<(&str, &str, &str)> {
+    let registry = package.get("registryType").or_else(||package.get("registry_type"))?.as_str()?;
+    let name = package.get("identifier")?.as_str()?;
+    let version = package.get("version")?.as_str()?;
+    let (runner, base) = match registry {
+        "npm" => ("npx", "https://registry.npmjs.org"),
+        "pypi" => ("uvx", "https://pypi.org"),
+        _ => return None,
+    };
+    if package.pointer("/transport/type").and_then(Value::as_str) != Some("stdio")
+        || package.get("runtimeHint").is_some_and(|v| v.as_str() != Some(runner))
+        || package.get("registryBaseUrl").is_some_and(|v| v.as_str().map(|s|s.trim_end_matches('/')) != Some(base))
+        || ["runtimeArguments","packageArguments","environmentVariables"].iter().any(|key|
+            package.get(*key).is_some_and(|v| !v.as_array().is_some_and(Vec::is_empty)))
+        || package.get("fileSha256").is_some()
+    { return None; }
+    let part = |s: &str| !s.is_empty() && s.as_bytes()[0].is_ascii_alphanumeric()
+        && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b,b'-'|b'_'|b'.'));
+    let name_ok = if registry == "npm" {
+        if let Some(scoped) = name.strip_prefix('@') {
+            scoped.split_once('/').is_some_and(|(scope, package)| part(scope) && part(package))
+        } else { part(name) }
+    } else { part(name) };
+    if !name_ok || name.len() > 214 || version.len() > 100
+        || !version.as_bytes().first().is_some_and(u8::is_ascii_digit)
+        || !version.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b,b'.'|b'-'|b'+'|b'!'))
+    { return None; }
+    // npm dist-tags, ranges and shorthand major/minor releases are not pins.
+    if registry == "npm" {
+        let core = version.split(['-','+']).next()?;
+        let parts = core.split('.').collect::<Vec<_>>();
+        if parts.len() != 3 || parts.iter().any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit())) {
+            return None;
+        }
+    }
+    Some((registry,name,version))
+}
+
+#[cfg(test)]
+mod registry_package_tests {
+    use super::*;
+    #[test]
+    fn only_pinned_simple_stdio_packages_are_projected() {
+        let mut npm = json!({"registryType":"npm","identifier":"@scope/server","version":"1.2.3","transport":{"type":"stdio"}});
+        assert_eq!(registry_package(&npm),Some(("npm","@scope/server","1.2.3")));
+        for bad in ["latest","1","1.2","^1.2.3","1.2.3;echo"] {
+            npm["version"]=json!(bad);
+            assert!(registry_package(&npm).is_none(),"{bad}");
+        }
+        npm["version"]=json!("1.2.3");
+        npm["environmentVariables"]=json!([{"name":"API_KEY","isRequired":true}]);
+        assert!(registry_package(&npm).is_none());
+        let mut py=json!({"registryType":"pypi","identifier":"mcp-server","version":"2.0.1","transport":{"type":"stdio"}});
+        assert_eq!(registry_package(&py),Some(("pypi","mcp-server","2.0.1")));
+        py["runtimeArguments"]=json!([{"type":"positional","value":"unreviewed"}]);
+        assert!(registry_package(&py).is_none());
+        py["runtimeArguments"]=json!([]);
+        py["fileSha256"]=json!("unverified");
+        assert!(registry_package(&py).is_none());
+    }
+}
+
 pub async fn mcp_catalog(Query(query): Query<HashMap<String, String>>) -> Response {
     let mut endpoint =
         match reqwest::Url::parse("https://registry.modelcontextprotocol.io/v0.1/servers") {
@@ -156,19 +221,9 @@ pub async fn mcp_catalog(Query(query): Query<HashMap<String, String>>) -> Respon
                     if !seen.insert(name.to_string()) {
                         return None;
                     }
-                    let packages = server
-                        .get("packages")
-                        .and_then(|value| value.as_array())
-                        .map(|items| {
-                            items.iter().find(|package| {
-                                package
-                                    .get("registryType")
-                                    .or_else(|| package.get("registry_type"))
-                                    .and_then(|value| value.as_str())
-                                    == Some("npm")
-                            })
-                        })
-                        .flatten();
+                    let package = server.get("packages")
+                        .and_then(Value::as_array)
+                        .and_then(|items| items.iter().find_map(registry_package));
                     let remote = server
                         .get("remotes")
                         .and_then(|value| value.as_array())
@@ -184,7 +239,9 @@ pub async fn mcp_catalog(Query(query): Query<HashMap<String, String>>) -> Respon
                     Some(json!({
                         "name": name,
                         "description": server.get("description"),
-                        "packageName": packages.and_then(|package| package.get("identifier")),
+                        "packageName": package.as_ref().map(|p| p.1),
+                        "packageVersion": package.as_ref().map(|p| p.2),
+                        "packageRegistry": package.as_ref().map(|p| p.0),
                         "url": remote.and_then(|remote| remote.get("url")),
                     }))
                 })

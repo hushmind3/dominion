@@ -1,7 +1,7 @@
 import {useState, type FormEvent} from 'react'
 import {CheckCircle2,LoaderCircle,Package,PlugZap,Search,Settings2,ShieldAlert,X} from 'lucide-react'
 import {Button,TextInput} from '../Primitives'
-import type {InstalledMcp,RegistryMcp} from '../../features/mcp/quickCommands'
+import {registryLaunch,type InstalledMcp,type RegistryMcp} from '../../features/mcp/quickCommands'
 
 type Props={
  installed:InstalledMcp[];results:RegistryMcp[];busy:boolean;notice:string;lastQuery:string
@@ -33,14 +33,15 @@ export function McpQuickConnect({installed,results,busy,notice,lastQuery,onClose
    <h3 className="px-2 pb-1 text-xs font-semibold">레지스트리 검색 결과 · {results.length}개</h3>
    {results.slice(0,20).map(item=>{
     const exists=installed.some(server=>server.name.toLowerCase()===item.name.toLowerCase())
+    const launch=registryLaunch(item)
     return <div key={item.name} className="flex items-center gap-2 border-t border-divider/60 px-2 py-2">
      <div className="min-w-0 flex-1"><strong className="block break-all text-xs">{item.name}</strong>
       {item.description&&<p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-muted">{item.description}</p>}
-      <p className="mt-0.5 break-all text-[10px] text-muted">{item.url||item.packageName||'설치 정보 없음'}</p>
+      <p className="mt-0.5 break-all text-[10px] text-muted">{item.url||(item.packageName&&item.packageVersion?item.packageName+' · '+item.packageVersion:'수동 설정 필요')}</p>
      </div>
-     <Button size="sm" disabled={busy||exists||(!item.url&&!item.packageName)} onClick={()=>onAdd(item)}>
-      {item.packageName&&!item.url?<Package size={14}/>:<PlugZap size={14}/>}
-      {exists?'등록됨':item.url?'연결':'설치'}
+     <Button size="sm" disabled={busy||exists||!launch} onClick={()=>onAdd(item)}>
+      {launch?.transport==='stdio'?<Package size={14}/>:<PlugZap size={14}/>}
+      {exists?'등록됨':!launch?'설정 필요':launch.transport==='http'?'연결':'설치'}
      </Button>
     </div>
    })}

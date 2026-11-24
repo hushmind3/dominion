@@ -1,5 +1,5 @@
 import { koreanToolSummary } from '../lib/toolSummary'
-import {discoveryForMcp} from '../features/mcp/quickCommands'
+import {discoveryForMcp,registryLaunch,type RegistryMcp} from '../features/mcp/quickCommands'
 import {DialogBackdrop,DialogPanel} from "../components/Dialog";
 import {SkillsPanel} from "./extensions/SkillsPanel";
 import {PluginDiscovery} from "./extensions/PluginDiscovery";
@@ -70,13 +70,7 @@ type Skill = {
   status?: string;
   source?: string;
 };
-type RegistryItem = {
-  name: string;
-  description: string;
-  url?: string;
-  packageName?: string;
-  transport?: string;
-};
+type RegistryItem = RegistryMcp;
 const featured = [
   {
     name: "Playwright Browser",
@@ -440,7 +434,7 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
   const install = async (entry: any) => {
     if (
       !confirm(
-        t('ext.confirmRegister'),
+        t('ext.confirmRegister')+(entry.transport==='stdio'?'\n'+[entry.command,...(entry.args||[])].join(' '):''),
       )
     )
       return;
@@ -780,22 +774,16 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
                         )}
                       </>
                     )}
-                    <small className="mt-1 block break-all text-[11px] text-muted">{x.packageName || x.url || t('ext.noInstallInfo')}</small>
+                    <small className="mt-1 block break-all text-[11px] text-muted">{x.url || (x.packageName&&x.packageVersion?x.packageName+' · '+x.packageVersion:t('ext.noInstallInfo'))}</small>
                   </div>
-                  {(x.packageName || x.url) &&
+                  {registryLaunch(x) &&
                     (mcp.value.some((r: any) => r.name === x.name) ? (
                       <StateTag online>{t('ext.registeredCheck')}</StateTag>
                     ) : (
                       <Button
                         variant="secondary"
                         onClick={() =>
-                          install({
-                            name: x.name,
-                            transport: x.packageName ? "stdio" : "http",
-                            command: "npx",
-                            args: x.packageName ? ["-y", x.packageName] : [],
-                            endpoint: x.url,
-                          })
+                          install({name:x.name,...registryLaunch(x)})
                         }
                       >
                         {t('ext.install')}
