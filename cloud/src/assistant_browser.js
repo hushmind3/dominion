@@ -1,3 +1,4 @@
+import {notifyAccount} from './assistant_notify.js';
 import {validUpload,acceptsFile,attachFile,MAX_UPLOAD} from './browser_upload.js';
 import {vaultReady,protect,reveal,reusableCookies,storeDocument,loadDocument,removeDocument,pruneVault,PROFILE_MS,MAX_PDF} from './browser_vault.js';
 // PC-independent browser execution. Only fixed CDP operations, never model-generated code.
@@ -160,7 +161,7 @@ export function createBrowserObject(runModel,driver=connect){
   get(id){return this.state.storage.get('job:'+id)}
   async save(j){j.updatedAt=Date.now();await this.state.storage.put('job:'+j.id,j)}
   async close(j){if(j.session)try{await this.env.BROWSER.closeSession(j.session)}catch{}j.session=null;j.target=null;j.approval=null}
-  async finish(j,status,message){j.status=status;j.message=message;await this.close(j);await this.save(j);if(await this.state.storage.get('active')===j.id){await this.state.storage.delete('active');await this.state.storage.deleteAlarm()}}
+  async finish(j,status,message){j.status=status;j.message=message;await this.close(j);await this.save(j);if(await this.state.storage.get('active')===j.id){await this.state.storage.delete('active');await this.state.storage.deleteAlarm()}if(['completed','failed','needs_review'].includes(status))await notifyAccount(this.env,j.account,'job')}
   async valid(j){return !!await this.env.DB.prepare("SELECT id FROM app_sessions WHERE id=? AND account_id=? AND status='approved' AND expires_at>? AND capability='assistant_remote'").bind(j.appSession,j.account,now()).first()}
   async next(ms=1000){await this.state.storage.setAlarm(Date.now()+ms)}
   async persistProfile(j,c,snap){
@@ -250,7 +251,7 @@ export function createBrowserObject(runModel,driver=connect){
     const handoff=async()=>{
      if(j.handoffs>=MAX_HANDOFFS)throw Error('사용자 인계 횟수를 초과했습니다.');
      await c.send('Cloudflare.handoff',{instructions:'로그인·본인확인 또는 필요한 화면 조작을 직접 마친 뒤 Done을 눌러 주세요. 민감한 인증정보는 채팅에 입력하지 마세요.',timeout:Math.max(1000,j.expiresAt-Date.now())});
-     j.handoffs++;j.status='awaiting_human';j.message='사용자 인증 또는 직접 확인이 필요합니다.';await this.save(j);await this.next(5000);
+     j.handoffs++;j.status='awaiting_human';j.message='사용자 인증 또는 직접 확인이 필요합니다.';await this.save(j);await this.next(5000);await notifyAccount(this.env,j.account,'auth');
     };
     if(snap.auth||!sameSite(snap.url,j.root)){await handoff();return}
     if(j.steps>=MAX_STEPS){await this.finish(j,'needs_review','정해진 실행 단계 안에 업무 완료 근거를 얻지 못했습니다.');return}
@@ -273,10 +274,10 @@ export function createBrowserObject(runModel,driver=connect){
     if(plan.action==='handoff'){await handoff();return}
     if(['download_pdf','save_pdf'].includes(plan.action)&&!vaultReady(this.env)){await this.finish(j,'needs_review','PDF 저장소가 아직 활성화되지 않았습니다.');return}
     if(plan.action==='upload'){
-     j.approval={id:crypto.randomUUID(),action:'upload',target:plan.target,displayUrl:displayUrl(snap.url),fingerprint:await fingerprint(JSON.stringify([snap.url,snap.text,plan.target])),preview:scrub(snap.text,900)};j.status='awaiting_file';j.message='첨부할 파일을 직접 선택해 주세요: '+plan.target.label;await this.save(j);await this.next(Math.max(1000,j.expiresAt-Date.now()));return;
+     j.approval={id:crypto.randomUUID(),action:'upload',target:plan.target,displayUrl:displayUrl(snap.url),fingerprint:await fingerprint(JSON.stringify([snap.url,snap.text,plan.target])),preview:scrub(snap.text,900)};j.status='awaiting_file';j.message='첨부할 파일을 직접 선택해 주세요: '+plan.target.label;await this.save(j);await this.next(Math.max(1000,j.expiresAt-Date.now()));await notifyAccount(this.env,j.account,'auth');return;
     }
     if(['click','download_pdf','save_pdf'].includes(plan.action)&&!plan.approved){
-     j.approval={id:crypto.randomUUID(),action:plan.action,target:plan.target,displayUrl:displayUrl(snap.url),fingerprint:await fingerprint(JSON.stringify([snap.url,snap.text,plan.target])),preview:scrub(snap.text,900)};j.status='awaiting_approval';j.message='다음 버튼의 실행을 확인해 주세요: '+plan.target.label;await this.save(j);await this.next(Math.max(1000,j.expiresAt-Date.now()));return;
+     j.approval={id:crypto.randomUUID(),action:plan.action,target:plan.target,displayUrl:displayUrl(snap.url),fingerprint:await fingerprint(JSON.stringify([snap.url,snap.text,plan.target])),preview:scrub(snap.text,900)};j.status='awaiting_approval';j.message='다음 버튼의 실행을 확인해 주세요: '+plan.target.label;await this.save(j);await this.next(Math.max(1000,j.expiresAt-Date.now()));await notifyAccount(this.env,j.account,'auth');return;
     }
     if(Date.now()>=j.expiresAt||!await this.valid(j)){await this.finish(j,'failed','실행 전에 업무 시간 또는 권한이 만료되었습니다.');return}
     // Persist before a potentially state-changing action. Never replay an uncertain action.

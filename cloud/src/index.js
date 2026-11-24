@@ -5,6 +5,7 @@ import {connectPage} from './connect_page.js';
 import {assistantRoute,cleanupAssistant,ready as assistantReady,revokeAppSocket} from './assistant_link.js';
 import {googleRoute,googleReady,cleanupGoogle,drainGoogleJobs} from './assistant_google.js';
 import {searchRoute,searchReady} from './assistant_search.js';
+import {mailWatchReady,mailWatchRoute,drainMailWatch} from './assistant_mail_watch.js';
 import {browserRoute,browserReady,createBrowserObject} from './assistant_browser.js';
 export {AssistantSocket} from './assistant_socket.js';
 // DOMINION account gateway: no Nous credentials and no shared client-side API key.
@@ -517,6 +518,7 @@ export default {
     ctx.waitUntil(cleanupAssistant(env));
     ctx.waitUntil(cleanupGoogle(env));
     ctx.waitUntil(drainGoogleJobs(env));
+    ctx.waitUntil(drainMailWatch(env));
   },
   async fetch(request, env, ctx) {
     const origin = request.headers.get('origin');
@@ -546,6 +548,7 @@ export default {
         app_pairing: true,
         assistant_link: assistantReady(env),
         assistant_google: googleReady(env),
+        assistant_mail_watch: mailWatchReady(env),
         assistant_search: searchReady(env),
         assistant_browser: browserReady(env),
         toss_available: Boolean(proPrice(env) && env.TOSS_CLIENT_KEY && env.TOSS_SECRET_KEY)
@@ -561,7 +564,8 @@ export default {
       // App sessions may never enter owner, billing or identity endpoints.
       const appAllowed=['/v1/me','/v1/models','/v1/billing','/v1/chat/completions','/v1/apps/status','/v1/apps/disconnect'];
       if(isAppRequest(request)&&!appAllowed.includes(path)&&!path.startsWith('/v1/assistant/'))return json({error:'Owner login required'},403,headers);
-      if(path.startsWith('/v1/assistant/browser/'))response=await browserRoute(request,env,{account});
+      if(path.startsWith('/v1/assistant/mail/'))response=await mailWatchRoute(request,env,{account,ctx});
+      else if(path.startsWith('/v1/assistant/browser/'))response=await browserRoute(request,env,{account});
       else if(path==='/v1/assistant/search')response=await searchRoute(request,env,{account});
       else if(path.startsWith('/v1/assistant/google/'))response=await googleRoute(request,env,{account,ctx});
       else if(path.startsWith('/v1/assistant/'))response=await assistantRoute(request,env,{account});

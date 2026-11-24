@@ -74,3 +74,6 @@ new_sqlite_classes = ["AssistantBrowser"]
 # Optional private browser vault: configure BROWSER_VAULT_SECRET as an operator secret
 # (random >=32 chars). Login cookies require explicit per-job opt-in. Documents
 # are encrypted in the account's Durable Object; no public bucket.
+
+# Mail watch: apply migration 0008 and explicitly set ASSISTANT_MAIL_WATCH_ENABLED=1.
+# Reuses existing 15-minute cron and Google Gmail readonly scope; no model inference.

@@ -1,0 +1,21 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {readFileSync} from 'node:fs';
+import {seal} from '../src/assistant_google.js';import {watchFilters,mailHeader,matchesMail,mailWatchRoute,drainMailWatch} from '../src/assistant_mail_watch.js';
+test('metadata-only filters use existing labels, no model',()=>{const m=mailHeader({id:'m',labelIds:['INBOX','IMPORTANT','UNREAD','CATEGORY_UPDATES'],payload:{headers:[{name:'Subject',value:'도미니온 계약'},{name:'From',value:'sender@example.com'}]}});assert.equal(m.category,'업데이트');assert.ok(matchesMail(m,watchFilters({mode:'important'})));assert.ok(matchesMail(m,watchFilters({mode:'matched',sender:'EXAMPLE',keyword:'계약'})));assert.ok(!matchesMail(m,watchFilters({mode:'matched',sender:'other'})));assert.throws(()=>watchFilters({mode:'matched'}))});
+test('watch persists only matching new mail once, stops and handles stale history',async()=>{
+ const db=new DatabaseSync(':memory:');db.exec(readFileSync(new URL('../schema.sql',import.meta.url),'utf8'));
+ const DB={prepare(sql){return{bind(...a){return{first:async()=>db.prepare(sql).get(...a)||null,all:async()=>({results:db.prepare(sql).all(...a)}),run:async()=>({meta:{changes:Number(db.prepare(sql).run(...a).changes)}})}}}},batch:async statements=>{db.exec('BEGIN');try{const out=[];for(const s of statements)out.push(await s.run());db.exec('COMMIT');return out}catch(e){db.exec('ROLLBACK');throw e}}};
+ const ts=Math.floor(Date.now()/1000);db.prepare('INSERT INTO accounts(id,created_at) VALUES(?,?)').run('google:a',ts);
+ db.prepare("INSERT INTO app_sessions(id,token_hash,app_name,capability,ip_hash,status,account_id,created_at,expires_at) VALUES(?,?,?,?,?,'approved',?,?,?)").run('session','hash','assistant','assistant_remote','ip','google:a',ts,ts+600);
+ const env={DB,ASSISTANT_GOOGLE_ENABLED:'1',ASSISTANT_MAIL_WATCH_ENABLED:'1',CONNECTOR_GOOGLE_CLIENT_ID:'client',CONNECTOR_GOOGLE_CLIENT_SECRET:'secret',CONNECTOR_TOKEN_SECRET:'x'.repeat(40)};
+ db.prepare('INSERT INTO assistant_google_grants VALUES(?,?,?,?)').run('google:a',await seal(env,'google:a','refresh'),JSON.stringify(['gmail']),ts);
+ const account=async()=>({id:'google:a',scope:'app',capability:'assistant_remote',app_session_id:'session'});
+ let stale=false,reads=0;
+ const send=async(url)=>{if(url.includes('/token'))return Response.json({access_token:'access'});if(url.includes('/profile?'))return Response.json({historyId:'100'});if(url.includes('/history?'))return stale?new Response(null,{status:404}):Response.json({historyId:'102',history:[{id:'101',messagesAdded:[{message:{id:'m1'}},{message:{id:'m2'}}]}]});if(url.includes('/messages/')){reads++;const important=url.includes('/m1?');return Response.json({id:important?'m1':'m2',labelIds:important?['INBOX','IMPORTANT']:['INBOX'],payload:{headers:[{name:'Subject',value:important?'중요한 메일':'일반 메일'}]}})}throw Error('unexpected URL')};
+ const call=(path,b)=>mailWatchRoute(new Request('https://example.com/v1/assistant/mail/'+path,b===undefined?{}:{method:'POST',body:JSON.stringify(b)}),env,{account,send});
+ const due=()=>db.prepare('UPDATE assistant_mail_watch SET next_check=0,lease_until=0').run();
+ assert.equal((await call('start',{mode:'important',confirmed:true})).status,200);assert.equal(reads,0);due();await drainMailWatch(env,null,send);
+ const alerts=(await (await call('alerts')).json()).alerts;assert.equal(alerts.length,1);assert.equal(alerts[0].subject,'중요한 메일');assert.equal(db.prepare('SELECT cursor FROM assistant_mail_watch').get().cursor,'102');assert.ok(!db.prepare('SELECT cipher FROM assistant_mail_alerts').get().cipher.includes('중요한 메일'));
+ due();await drainMailWatch(env,null,send);assert.equal((await (await call('alerts')).json()).alerts.length,1);
+ stale=true;due();await drainMailWatch(env,null,send);assert.equal((await (await call('status')).json()).state,'needs_resync');
+ await call('stop',{});assert.equal((await (await call('status')).json()).state,'disabled');
+});

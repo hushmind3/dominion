@@ -1,3 +1,4 @@
+import {notifyAccount} from './assistant_notify.js';
 // PC-independent Google connector. Provider credentials stay in the Worker.
 const te=new TextEncoder(),td=new TextDecoder(),now=()=>Math.floor(Date.now()/1000);
 const b64=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
@@ -19,6 +20,14 @@ const authPage=(message,status=200)=>new Response('<!doctype html><html lang="ko
 async function body(req){const text=await req.text();if(text.length>4096)throw Error('invalid body');return JSON.parse(text)}
 async function token(env,params,send=fetch){const r=await send('https://oauth2.googleapis.com/token',{method:'POST',redirect:'error',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:env.CONNECTOR_GOOGLE_CLIENT_ID,client_secret:env.CONNECTOR_GOOGLE_CLIENT_SECRET,...params}),signal:AbortSignal.timeout(15000)});if(!r.ok){const x=await r.json().catch(()=>({}));return {error:x.error==='invalid_grant'?'reauthorize':'provider_unavailable'}}return r.json()}
 async function api(url,access,send=fetch){const r=await send(url,{redirect:'error',headers:{authorization:'Bearer '+access},signal:AbortSignal.timeout(15000)});if(!r.ok)throw new Error(r.status===401||r.status===403?'google_permission':'google_unavailable');return r.json()}
+// Fixed Gmail routes use the same encrypted Google grant, never a mobile API key.
+export async function gmailAccess(env,accountId,send=fetch){
+ const row=await env.DB.prepare('SELECT refresh_cipher,scopes FROM assistant_google_grants WHERE account_id=?').bind(accountId).first();
+ if(!row||!JSON.parse(row.scopes).includes('gmail'))throw Error('reauthorize');
+ const t=await token(env,{grant_type:'refresh_token',refresh_token:await unseal(env,accountId,row.refresh_cipher)},send);
+ if(t.error==='reauthorize')throw Error('reauthorize');if(typeof t.access_token!=='string')throw Error('provider_unavailable');
+ const current=await env.DB.prepare('SELECT refresh_cipher FROM assistant_google_grants WHERE account_id=?').bind(accountId).first();if(current?.refresh_cipher!==row.refresh_cipher)throw Error('reauthorize');return {access:t.access_token,grant:row.refresh_cipher};
+}
 const clip=(v,n=300)=>String(v??'').slice(0,n);
 export async function readGoogle(operation,access,send=fetch){
  if(operation==='gmail_recent'){
@@ -78,6 +87,7 @@ export async function googleRoute(req,env,{account,send=fetch,ctx}){
  }
  if(p==='/v1/assistant/google/disconnect'){
   await env.DB.prepare('DELETE FROM assistant_google_pending WHERE account_id=?').bind(user.id).run();
+  await env.DB.prepare('DELETE FROM assistant_mail_watch WHERE account_id=?').bind(user.id).run();
   await env.DB.prepare("UPDATE assistant_google_jobs SET status='cancelled',lease=NULL,updated_at=? WHERE account_id=? AND status IN ('queued','running','awaiting_auth')").bind(now(),user.id).run();
   const row=await env.DB.prepare('DELETE FROM assistant_google_grants WHERE account_id=? RETURNING refresh_cipher').bind(user.id).first();
   let revoked=false;if(row)try{const refresh=await unseal(env,user.id,row.refresh_cipher);const r=await send('https://oauth2.googleapis.com/revoke',{method:'POST',redirect:'error',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({token:refresh}),signal:AbortSignal.timeout(15000)});revoked=r.ok}catch{}
@@ -116,7 +126,7 @@ export async function drainGoogleJobs(env,accountId=null,send=fetch){
   const lease=random(),ts=now();
   const claimed=await env.DB.prepare("UPDATE assistant_google_jobs SET status='running',lease=?,lease_until=?,attempts=attempts+1,updated_at=? WHERE account_id=? AND id=? AND status IN ('queued','running','awaiting_auth') AND lease_until<=? AND expires_at>? AND EXISTS(SELECT 1 FROM app_sessions s WHERE s.id=assistant_google_jobs.app_session_id AND s.account_id=assistant_google_jobs.account_id AND s.status='approved' AND s.expires_at>? AND s.capability='assistant_remote') RETURNING attempts").bind(lease,ts+120,ts,row.account_id,row.id,ts,ts,ts).first();
   if(!claimed)continue;
-  const finish=async(status,error=null,cipher=null,delay=0)=>env.DB.prepare("UPDATE assistant_google_jobs SET status=?,error=?,result_cipher=?,lease=NULL,lease_until=?,updated_at=? WHERE account_id=? AND id=? AND lease=? AND status='running'").bind(status,error,cipher,now()+delay,now(),row.account_id,row.id,lease).run();
+  const finish=async(status,error=null,cipher=null,delay=0)=>{const r=await env.DB.prepare("UPDATE assistant_google_jobs SET status=?,error=?,result_cipher=?,lease=NULL,lease_until=?,updated_at=? WHERE account_id=? AND id=? AND lease=? AND status='running'").bind(status,error,cipher,now()+delay,now(),row.account_id,row.id,lease).run();if(r.meta.changes&&['completed','failed','awaiting_auth'].includes(status))await notifyAccount(env,row.account_id,status==='awaiting_auth'?'auth':'job');return r};
   if(claimed.attempts>3){await finish('failed','재시도 횟수 초과');continue}
   try{
    const refresh=await unseal(env,row.account_id,grant.refresh_cipher),tokens=await token(env,{grant_type:'refresh_token',refresh_token:refresh},send);
