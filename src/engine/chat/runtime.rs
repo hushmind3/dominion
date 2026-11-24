@@ -1132,12 +1132,8 @@ async fn run_turn_body(
         model_round: product::ModelRound::default(),
         tool_round: product::ToolRound::default(),
     };
-    let context=dominion_algorithms::engine::Context{snapshot:kernel_state,budget:adapter.budget.clone(),round:0,journal:&kernel_journal};
-    dominion_core::runtime_port::AgentLoop::run(
-        &dominion_algorithms::engine::Engine,
-        &mut adapter,
-        context,
-    ).await?;
+    let context=dominion_agent_sdk::Context{snapshot:kernel_state,budget:adapter.budget.clone(),round:0,journal:&kernel_journal};
+    dominion_agent_sdk::run(&mut adapter, context).await?;
     adapter.save().await
 
 }

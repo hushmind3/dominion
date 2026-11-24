@@ -194,3 +194,27 @@ test('room cursor is scoped to the room and never aliases global SSE position', 
   assert.equal(page.events[0].originRun,'native-exec');
   assert.match(visited[0],/\/api\/rooms\/room%2Fa\/events\?after=120&limit=50$/);
 });
+
+
+test('completion evidence review is an owner-action boundary, not a poll timeout', async () => {
+  const {client, calls} = mockClient([{id:'run id',status:'needs_review',verified:false}]);
+  const run = await client.waitForRun('run id');
+  assert.equal(run.status, 'needs_review');
+  assert.equal(calls(), 1);
+  await assert.rejects(client.waitForVerifiedRun('run id'), error =>
+    error instanceof DominionSdkError && error.status === 409);
+});
+
+test('typed SDK start forwards retry identity and source without generating a new key', async () => {
+  const seen = [];
+  const client = new DominionAgentClient({fetch: async (url, request) => {
+    assert.match(String(url), /\/api\/sdk\/runs$/);
+    seen.push(JSON.parse(request.body));
+    return new Response(JSON.stringify({id:'existing',status:'queued'}),{status:200});
+  }});
+  const input = {instruction:'inspect',idempotencyKey:'job-42',agentId:'agent-1',
+    source:{kind:'plugin',id:'ticket-42'}};
+  assert.equal((await client.startRun(input)).id,'existing');
+  assert.equal((await client.startRun(input)).id,'existing');
+  assert.deepEqual(seen,[input,input]);
+});

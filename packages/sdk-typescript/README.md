@@ -45,7 +45,9 @@ sandbox backend is unavailable.
 silently repeats a potentially applied filesystem or shell operation.
 
 Build separately with `npm install && npm run build` inside this package.
-Publication is not implied. See [Rust SDK architecture](../../docs/HARNESS.md).
+An external local project can then run `npm install /absolute/path/to/dominion-rust/packages/sdk-typescript`.
+Publication is not implied. For in-process Rust embedding without the HTTP server,
+see the [Rust SDK](../../crates/dominion-agent-sdk/README.md).
 
 ## Optional source provenance
 

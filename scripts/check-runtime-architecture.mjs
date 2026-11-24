@@ -9,7 +9,16 @@ const members=meta.packages.filter(pkg=>meta.workspace_members.includes(pkg.id))
 const product=members.find(pkg=>pkg.name==='dominion-rust')
 const core=members.find(pkg=>pkg.name==='dominion-core')
 const algorithms=members.find(pkg=>pkg.name==='dominion-algorithms')
-if(!product||!core||!algorithms)throw Error('Missing product/native core/algorithm workspace member')
+const sdk=members.find(pkg=>pkg.name==='dominion-agent-sdk')
+if(!product||!core||!algorithms||!sdk)throw Error('Missing product/native core/algorithm/SDK workspace member')
+const dependsOn=(from,to)=>from.dependencies.some(dep=>dep.name===to.name&&dep.path===path.dirname(to.manifest_path))
+if(!dependsOn(product,sdk)||!dependsOn(sdk,core)||!dependsOn(sdk,algorithms)||
+   core.dependencies.some(dep=>dep.name===sdk.name)||algorithms.dependencies.some(dep=>dep.name===sdk.name)||
+   sdk.dependencies.some(dep=>dep.name===product.name))
+  throw Error('Native SDK must compose core and algorithms independently of the product')
+const sdkLib=readFileSync(path.join(root,'crates/dominion-agent-sdk/src/lib.rs'),'utf8')
+if(!sdkLib.includes('AgentLoop::run(&Engine, host, context)'))
+  throw Error('Native SDK must delegate to the one existing execution loop')
 for(const pkg of members)if(!existsSync(pkg.manifest_path))throw Error('Missing manifest: '+pkg.manifest_path)
 if(!product.dependencies.some(dep=>dep.name===core.name&&dep.path===path.dirname(core.manifest_path))||
    !product.dependencies.some(dep=>dep.name===algorithms.name&&dep.path===path.dirname(algorithms.manifest_path)))
@@ -264,7 +273,7 @@ if(!quietTurn||quietTurn.includes('run_quiet_with_stats(')||
    !quietTurn.includes('chat::run_turn_background(')||
    !quietTurn.includes('drain_quiet_events(receiver)'))
   throw Error('Quiet background turns must drain events without collecting discarded tool evidence')
-if(!runtime.includes('dominion_core::runtime_port::AgentLoop::run('))throw Error('Native driver must run product turns')
+if(!runtime.includes('dominion_agent_sdk::run('))throw Error('Native driver must run product turns')
 if(!outcome.includes('pub(super) fn determine_task_outcome(')||!runtime.includes('mod outcome;'))
   throw Error('Outcome policy must remain independently verifiable')
 if(/while\s+!\s*(?:self\.)?finished/.test(runtime+adapter))throw Error('Legacy model retry loop reintroduced')
@@ -360,7 +369,7 @@ if(!helperSource.includes('mod receipts;')||
    !store.includes('idx_aux_model_call_execution'))
   throw Error('Execution cost accounting no longer includes auxiliary upstream retries')
 if(!sdkApi.includes('engine::run_quiet(&state,&request).await')||
-   !runtime.includes('dominion_core::runtime_port::AgentLoop::run(')||
+   !runtime.includes('dominion_agent_sdk::run(')||
    !sdkApi.includes('record["modelAccounting"]=run["modelAccounting"].clone()'))
   throw Error('SDK/chat execution or cost semantics diverged from common Rust core')
 

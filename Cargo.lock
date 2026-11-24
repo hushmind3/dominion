@@ -322,6 +322,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dominion-agent-sdk"
+version = "0.1.0"
+dependencies = [
+ "dominion-algorithms",
+ "dominion-core",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "dominion-algorithms"
 version = "0.1.0"
 dependencies = [
@@ -351,6 +361,7 @@ dependencies = [
  "base64 0.22.1",
  "chacha20poly1305",
  "chrono",
+ "dominion-agent-sdk",
  "dominion-algorithms",
  "dominion-core",
  "futures-util",

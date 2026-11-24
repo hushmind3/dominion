@@ -1,0 +1,15 @@
+[package]
+name = "dominion-agent-sdk"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Embeddable DOMINION agent execution SDK with host-supplied model, tools and journal"
+readme = "README.md"
+
+[dependencies]
+dominion-core = { path = "../dominion-core", version = "0.3.0" }
+dominion-algorithms = { path = "../dominion-algorithms", version = "0.1.0" }
+
+[dev-dependencies]
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt"] }

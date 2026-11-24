@@ -5,7 +5,7 @@
 export type SdkRunStatus =
   | 'queued' | 'running' | 'awaiting_approval' | 'in_doubt'
   | 'interrupted' | 'completed' | 'cancelled' | 'exhausted'
-  | 'denied' | 'failed';
+  | 'denied' | 'failed' | 'needs_review';
 
 
 /** Identical execution identity emitted by the SQLite event bus and SDK. */
@@ -161,6 +161,10 @@ export interface AgentRun {
 }
 export interface StartRun {
   instruction: string;
+  /** Stable retry key: reuse only for the identical logical request. */
+  idempotencyKey?: string;
+  agentId?: string;
+  source?: { kind: string; id: string };
   providerId?: string;
   model?: string;
   verifyCommand?: string;
@@ -185,7 +189,7 @@ export interface WaitRunOptions {
 export const isRunSettled = (run: AgentRun): boolean =>
   new Set<SdkRunStatus>([
     'completed', 'failed', 'cancelled', 'exhausted', 'denied',
-    'awaiting_approval', 'in_doubt', 'interrupted',
+    'awaiting_approval', 'in_doubt', 'interrupted', 'needs_review',
   ]).has(run.status);
 
 export interface ClientOptions {
@@ -407,7 +411,8 @@ export class DominionAgentClient {
         && run.verified === true) return run;
     throw new DominionSdkError(
       run.error ?? `Dominion task is ${run.status}; verified success evidence is missing`,
-      run.status === 'awaiting_approval' || run.status === 'in_doubt' ? 409 : 422,
+      run.status === 'awaiting_approval' || run.status === 'in_doubt'
+        || run.status === 'needs_review' ? 409 : 422,
     );
   }
 }

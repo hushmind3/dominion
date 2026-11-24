@@ -197,7 +197,8 @@ not deleted as a side effect of upgrading the application.
 See [getting started](docs/GETTING-STARTED.md),
 [desktop setup](docs/DESKTOP.md), [engine architecture](ENGINE.md),
 [harness semantics](docs/HARNESS.md) and
-[TypeScript SDK](packages/sdk-typescript/README.md).
+[TypeScript SDK](packages/sdk-typescript/README.md) and
+[embeddable Rust SDK](crates/dominion-agent-sdk/README.md).
 
 ## Verification and release
 
