@@ -71,3 +71,26 @@ CREATE TABLE IF NOT EXISTS email_login_attempts (
 );
 CREATE INDEX IF NOT EXISTS email_login_attempts_rate_email ON email_login_attempts(email_hash,created_at);
 CREATE INDEX IF NOT EXISTS email_login_attempts_rate_ip ON email_login_attempts(ip_hash,created_at);
+
+-- Assistant uses the same accounts and sessions as desktop. Scoped device credentials
+-- are distinct from account sessions. No arbitrary PC endpoint is exposed.
+CREATE TABLE IF NOT EXISTS assistant_login (
+ id TEXT PRIMARY KEY,poll_hash TEXT NOT NULL,ticket_hash TEXT NOT NULL,nonce TEXT NOT NULL,
+ ip_hash TEXT NOT NULL,browser_hash TEXT,account_id TEXT REFERENCES accounts(id),session_until INTEGER,
+ status TEXT NOT NULL,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS assistant_login_ip ON assistant_login(ip_hash,created_at);
+CREATE INDEX IF NOT EXISTS assistant_login_exp ON assistant_login(expires_at);
+CREATE TABLE IF NOT EXISTS assistant_devices (
+ id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),name TEXT NOT NULL,
+ token_hash TEXT UNIQUE NOT NULL,last_seen INTEGER NOT NULL,revoked INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS assistant_devices_account ON assistant_devices(account_id,revoked);
+CREATE TABLE IF NOT EXISTS assistant_rpc (
+ id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),device_id TEXT NOT NULL REFERENCES assistant_devices(id),
+ route TEXT NOT NULL,payload TEXT NOT NULL,fingerprint TEXT NOT NULL,state TEXT NOT NULL,
+ status INTEGER,result TEXT,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS assistant_rpc_queue ON assistant_rpc(device_id,state,created_at);
+CREATE INDEX IF NOT EXISTS assistant_rpc_account ON assistant_rpc(account_id,created_at);
+CREATE INDEX IF NOT EXISTS assistant_rpc_exp ON assistant_rpc(expires_at);

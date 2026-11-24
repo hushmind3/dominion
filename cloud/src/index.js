@@ -1,5 +1,6 @@
 import {emailLoginReady, startEmailLogin, verifyEmailLogin, pollEmailLogin} from './email_auth.js';
 import {b64url, hash, randomToken} from './token_crypto.js';
+import {assistantRoute,cleanupAssistant,ready as assistantReady} from './assistant_link.js';
 // DOMINION account gateway: no Nous credentials and no shared client-side API key.
 // Cloudflare Worker + D1. Credits are integer micro-KRW (one KRW = 1,000 units).
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), {
@@ -490,6 +491,7 @@ async function routeCompletion(request, env, user) {
 export default {
   async scheduled(_event, env, ctx) {
     ctx.waitUntil(availableModels(env, true));
+    ctx.waitUntil(cleanupAssistant(env));
   },
   async fetch(request, env) {
     const origin = request.headers.get('origin');
@@ -506,6 +508,7 @@ export default {
     // The browser uses this endpoint so login works without a compile-time VITE key.
     if (path === '/v1/public-config' && request.method === 'GET') {
       const response = json({
+        assistant_link: assistantReady(env),
         google_client_id: env.GOOGLE_CLIENT_ID || null,
         google_desktop_client_id: env.GOOGLE_DESKTOP_CLIENT_ID || null,
         providers: {
@@ -524,7 +527,8 @@ export default {
     if (!env.DB || !env.ALLOWED_ORIGIN) return err('Service not configured', 503);
     try {
       let response;
-      if (path === '/v1/auth/email/start' && request.method === 'POST') response = await startEmailLogin(request, env);
+      if (path.startsWith('/v1/assistant/')) response = await assistantRoute(request,env,{account,verifyGoogle});
+      else if (path === '/v1/auth/email/start' && request.method === 'POST') response = await startEmailLogin(request, env);
       else if (path === '/v1/auth/email/status' && request.method === 'POST') response = await pollEmailLogin(request, env);
       else if (path === '/v1/auth/email/verify' && ['GET','POST'].includes(request.method)) response = await verifyEmailLogin(request, env);
       else if (path === '/v1/auth/google' && request.method === 'POST') response = await login(request, env);
