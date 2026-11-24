@@ -56,6 +56,8 @@ pub async fn install(root:&Path,m:&Manifest)->Result<(),String>{
 pub async fn install_bytes(root:&Path,m:&Manifest,bytes:&[u8])->Result<(),String>{
     m.validate()?;if !m.compatible(){return Err("extension platform mismatch".into());}
     if !verified(m,bytes){return Err("extension SHA-256 verification failed".into());}
+    // Avoid replacing an existing verified executable (also works on Windows).
+    if check(root,m).await.is_ok(){return Ok(());}
     let path=entry_path(root,m);let dir=path.parent().ok_or("invalid extension path")?;
     tokio::fs::create_dir_all(dir).await.map_err(|e|e.to_string())?;
     let temporary=dir.join(format!(".install-{}",uuid::Uuid::new_v4()));
@@ -63,6 +65,8 @@ pub async fn install_bytes(root:&Path,m:&Manifest,bytes:&[u8])->Result<(),String
         let mut file=tokio::fs::OpenOptions::new().create_new(true).write(true).open(&temporary).await?;
         file.write_all(bytes).await?;file.sync_all().await?;drop(file);
         #[cfg(unix)]{use std::os::unix::fs::PermissionsExt;tokio::fs::set_permissions(&temporary,std::fs::Permissions::from_mode(0o700)).await?;}
+        #[cfg(windows)]
+        if tokio::fs::symlink_metadata(&path).await.is_ok(){tokio::fs::remove_file(&path).await?;}
         tokio::fs::rename(&temporary,&path).await
     }.await;
     if result.is_err(){let _=tokio::fs::remove_file(&temporary).await;}
@@ -80,6 +84,29 @@ pub async fn check(root:&Path,m:&Manifest)->Result<(),String>{
     let bytes=tokio::fs::read(path).await.map_err(|_|"extension artifact unreadable")?;
     if !verified(m,&bytes){return Err("extension artifact integrity check failed".into());}Ok(())
 }
+/// Runtime lookup does not start the interpreter or execute package code.
+fn interpreter(runtime:Runtime)->Result<Option<PathBuf>,String>{
+    let name=match runtime{Runtime::Node=>"node",Runtime::Python if cfg!(windows)=>"python",Runtime::Python=>"python3",Runtime::Native=>return Ok(None)};
+    let path=std::env::var_os("PATH").ok_or_else(||format!("runtime missing: {name}"))?;
+    for dir in std::env::split_paths(&path).filter(|dir|dir.is_absolute()){
+        let candidate=dir.join(if cfg!(windows){format!("{name}.exe")}else{name.to_string()});
+        if let Ok(meta)=std::fs::metadata(&candidate){
+            if !meta.is_file(){continue;}
+            #[cfg(unix)]{use std::os::unix::fs::PermissionsExt;if meta.permissions().mode()&0o111==0{continue;}}
+            if let Ok(path)=candidate.canonicalize(){return Ok(Some(path));}
+        }
+    }
+    Err(format!("runtime missing: {name}; install it and restart DOMINION"))
+}
+pub fn check_runtime(m:&Manifest)->Result<(),String>{interpreter(m.runtime).map(|_|())}
+/// Persistent package data is distinct from revision-bound executable files.
+fn data_path(root:&Path,m:&Manifest)->PathBuf{root.join(&m.id).join("data")}
+pub async fn remove_data(root:&Path,m:&Manifest)->Result<(),String>{
+    m.validate()?;
+    match tokio::fs::remove_dir_all(data_path(root,m)).await{
+        Ok(())=>Ok(()),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Ok(()),Err(e)=>Err(e.to_string())
+    }
+}
 fn unknown(error:String)->Value{json!({"success":false,"outcomeUnknown":true,"error":error})}
 /// Child process is not a sandbox. Owner admission is required. No application
 /// credentials are passed; after dispatch a missing receipt is uncertain.
@@ -89,12 +116,18 @@ pub async fn invoke(root:&Path,m:&Manifest,tool:&Tool,args:&Value)->Result<Value
     let mut request=serde_json::to_vec(&protocol::request(&id,&tool.name,args)?).map_err(|e|e.to_string())?;
     if request.len()>MAX_OUTPUT{return Err("extension input exceeds limit".into());}request.push(b'\n');
     let entry=entry_path(root,m).canonicalize().map_err(|_|"extension entry missing")?;
-    let mut command=match m.runtime{
-        Runtime::Node=>{let mut c=tokio::process::Command::new("node");c.arg(&entry);c},
-        Runtime::Python=>{let mut c=tokio::process::Command::new(if cfg!(windows){"python"}else{"python3"});c.arg("-I").arg(&entry);c},
-        Runtime::Native=>tokio::process::Command::new(&entry),
+    let executable=interpreter(m.runtime)?;
+    let mut command=match (m.runtime,executable){
+        (Runtime::Node,Some(path))=>{let mut c=tokio::process::Command::new(path);c.arg(&entry);c},
+        (Runtime::Python,Some(path))=>{let mut c=tokio::process::Command::new(path);c.arg("-I").arg(&entry);c},
+        (Runtime::Native,None)=>tokio::process::Command::new(&entry),
+        _=>return Err("invalid extension runtime".into()),
     };
-    command.current_dir(entry.parent().ok_or("invalid extension entry")?).env_clear();
+    let data=data_path(root,m);
+    tokio::fs::create_dir_all(&data).await.map_err(|e|e.to_string())?;
+    let data=data.canonicalize().map_err(|_|"extension data directory unavailable")?;
+    command.current_dir(entry.parent().ok_or("invalid extension entry")?).env_clear()
+        .env("DOMINION_EXTENSION_DATA_DIR",data);
     if let Some(path)=std::env::var_os("PATH"){command.env("PATH",path);}
     #[cfg(windows)] if let Some(root)=std::env::var_os("SystemRoot"){command.env("SystemRoot",root);}
     command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);

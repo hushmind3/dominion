@@ -17,6 +17,7 @@ pub(super) fn routes()->Router<AppState>{
         .route("/api/extensions/import", post(extension_packages::import_local))
         .route("/api/extensions/:id", axum::routing::delete(extension_packages::remove))
         .route("/api/extensions/:id/enable", post(extension_packages::enable))
+        .route("/api/extensions/:id/status", get(extension_packages::diagnose))
         .route("/api/browser/status", get(browser::status))
         .route("/api/browser/screenshot", get(browser::screenshot))
         .route("/api/browser/action", post(browser::action))

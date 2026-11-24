@@ -27,6 +27,8 @@ pub struct AppState {
     pub active: Arc<Mutex<HashSet<String>>>,
     /// Coordinates checked and unchecked writes to the same canonical path.
     pub file_mutations: FileMutations,
+    /// Per-package lifecycle gates; unrelated extensions never block each other.
+    pub(crate) extension_gates: Arc<Mutex<HashMap<String,Weak<tokio::sync::Mutex<()>>>>>,
     pub principle_learning: Arc<Mutex<()>>,
     pub policy_settlement: Arc<Mutex<()>>,
     /// Identity of this engine process, used to own durable run leases.
@@ -59,6 +61,7 @@ impl AppState {
             provider_gates: Arc::new(Mutex::new(HashMap::new())),
             active: Arc::new(Mutex::new(HashSet::new())),
             file_mutations: Arc::new(Mutex::new(HashMap::new())),
+            extension_gates: Arc::new(Mutex::new(HashMap::new())),
             principle_learning: Arc::new(Mutex::new(())),
             policy_settlement: Arc::new(Mutex::new(())),
             instance_id,

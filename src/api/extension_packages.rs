@@ -39,3 +39,5 @@ pub async fn enable(State(state):State<AppState>,Path(id):Path<String>,Json(inpu
     result(manager::enable(&state,&id,input.enabled).await)
 }
 pub async fn remove(State(state):State<AppState>,Path(id):Path<String>)->Response{result(manager::remove(&state,&id).await)}
+
+pub async fn diagnose(State(state):State<AppState>,Path(id):Path<String>)->Response{result(manager::diagnose(&state,&id).await)}

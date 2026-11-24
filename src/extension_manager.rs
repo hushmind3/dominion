@@ -4,7 +4,20 @@ use dominion_agent_sdk::plugin_protocol::{Manifest,PREFIX};
 use dominion_extension_manager as packages;
 use serde_json::{json,Value};
 use std::path::PathBuf;
-static LIFECYCLE:tokio::sync::Mutex<()>=tokio::sync::Mutex::const_new(());
+static SOURCES_LOCK:tokio::sync::Mutex<()>=tokio::sync::Mutex::const_new(());
+async fn package_lock(state:&AppState,id:&str)->Result<tokio::sync::OwnedMutexGuard<()>,String>{
+    if !dominion_agent_sdk::plugin_protocol::segment(id){return Err("invalid extension id".into());}
+    let gate={
+        let mut gates=state.extension_gates.lock().map_err(|_|"extension lock unavailable")?;
+        gates.retain(|_,gate|gate.strong_count()>0);
+        if let Some(gate)=gates.get(id).and_then(std::sync::Weak::upgrade){gate}
+        else{
+            let gate=std::sync::Arc::new(tokio::sync::Mutex::new(()));
+            gates.insert(id.to_string(),std::sync::Arc::downgrade(&gate));gate
+        }
+    };
+    Ok(gate.lock_owned().await)
+}
 const KIND:&str="extension_package";
 const SOURCES:&str="extension_registry";
 fn root(state:&AppState)->PathBuf{state.config.data_dir.join("extensions")}
@@ -26,7 +39,7 @@ pub fn settings(state:&AppState)->Value{
     json!({"urls":sources(state),"githubDiscovery":github_enabled(state)})
 }
 pub async fn save_sources(state:&AppState,urls:Vec<String>,github_discovery:Option<bool>)->Result<Value,String>{
-    let _guard=LIFECYCLE.lock().await;
+    let _guard=SOURCES_LOCK.lock().await;
     if urls.len()>5{return Err("maximum 5 extension registries".into());}
     let mut unique=Vec::new();
     for url in urls{packages::validate_url(&url)?;if !unique.contains(&url){unique.push(url)}}
@@ -71,8 +84,8 @@ pub async fn search(state:&AppState,q:&str)->Value{
     json!({"items":items,"errors":errors})
 }
 pub async fn install(state:&AppState,source:&str,requested:Manifest)->Result<Value,String>{
-    let _guard=LIFECYCLE.lock().await;
     requested.validate()?;
+    let _guard=package_lock(state,&requested.id).await?;
     let unchanged=if packages::github_catalog::is_source(source){
         if !github_enabled(state){return Err("public repository discovery disabled".into());}
         packages::github_catalog::resolve(source).await?==requested
@@ -86,8 +99,8 @@ pub async fn install(state:&AppState,source:&str,requested:Manifest)->Result<Val
 /// A package file is an independent distribution channel. It is never fetched
 /// or executed during import, and cannot overwrite a different publisher.
 pub async fn install_local(state:&AppState,requested:Manifest,bytes:&[u8])->Result<Value,String>{
-    let _guard=LIFECYCLE.lock().await;
     requested.validate()?;
+    let _guard=package_lock(state,&requested.id).await?;
     packages::validate_url(&requested.artifact.url)?;
     if bytes.is_empty()||bytes.len()>8*1024*1024{return Err("local extension artifact exceeds 8 MiB or is empty".into());}
     let source=format!("local:{}",requested.id);
@@ -114,23 +127,38 @@ async fn persist_install(state:&AppState,source:&str,requested:Manifest,bytes:Op
     Ok(saved)
 }
 pub async fn enable(state:&AppState,id:&str,enabled:bool)->Result<Value,String>{
-    let _guard=LIFECYCLE.lock().await;
+    let _guard=package_lock(state,id).await?;
     let mut row=state.store.get(KIND,id).ok_or("extension not installed")?;
-    if enabled{packages::check(&root(state),&manifest(&row).ok_or("invalid manifest")?).await?;}
+    if enabled{
+        let m=manifest(&row).ok_or("invalid manifest")?;
+        packages::check(&root(state),&m).await?;
+        packages::check_runtime(&m)?;
+    }
     row["enabled"]=json!(enabled);
     let saved=state.store.put(KIND,&row).ok_or("cannot save extension state")?;
     state.store.audit("extension.enable",json!({"id":id,"enabled":enabled}));
     Ok(saved)
 }
 pub async fn remove(state:&AppState,id:&str)->Result<Value,String>{
-    let _guard=LIFECYCLE.lock().await;
+    let _guard=package_lock(state,id).await?;
     let mut row=state.store.get(KIND,id).ok_or("extension not installed")?;
     let m=manifest(&row).ok_or("invalid installed manifest")?;
     row["enabled"]=json!(false);state.store.put(KIND,&row).ok_or("cannot disable extension")?;
     packages::remove(&root(state),&m).await?;
+    packages::remove_data(&root(state),&m).await?;
     if !state.store.remove(KIND,id){return Err("cannot remove extension record".into());}
     state.store.audit("extension.remove",json!({"id":id}));
     Ok(json!({"removed":true}))
+}
+pub async fn diagnose(state:&AppState,id:&str)->Result<Value,String>{
+    let _guard=package_lock(state,id).await?;
+    let row=state.store.get(KIND,id).ok_or("extension not installed")?;
+    let m=manifest(&row).ok_or("invalid manifest")?;
+    let integrity=packages::check(&root(state),&m).await;
+    let runtime=packages::check_runtime(&m);
+    Ok(json!({"id":id,"enabled":row["enabled"],"compatible":m.compatible(),
+        "integrityOk":integrity.is_ok(),"runtimeOk":runtime.is_ok(),
+        "integrityError":integrity.err(),"runtimeError":runtime.err()}))
 }
 pub fn definitions(state:&AppState)->Vec<Value>{
     let mut out=Vec::new();
@@ -146,17 +174,18 @@ pub fn definitions(state:&AppState)->Vec<Value>{
     out
 }
 pub async fn execute(state:&AppState,name:&str,args:&Value)->Result<Value,String>{
-    if !name.starts_with(PREFIX){return Err("invalid extension tool name".into());}
-    // A lifecycle operation cannot replace/remove an executable mid-call.
-    let _guard=LIFECYCLE.lock().await;
-    for row in list(state).into_iter().filter(|v|v["enabled"]==true){
-        let Some(m)=manifest(&row)else{continue};
-        let revision=packages::revision(&m);
-        if let Some(tool)=m.tools.iter().find(|t|m.qualified(t,&revision)==name){
-            return packages::invoke(&root(state),&m,tool,args).await;
-        }
-    }
-    Err("extension tool disabled, removed or changed; rediscover it".into())
+    let id=name.strip_prefix(PREFIX).and_then(|s|s.split_once("__")).map(|(id,_)|id)
+        .ok_or("invalid extension tool name")?;
+    // Only this package is locked during execution. A stale approval cannot
+    // invoke a different revision after an update or disable.
+    let _guard=package_lock(state,id).await?;
+    let row=state.store.get(KIND,id).filter(|v|v["enabled"]==true)
+        .ok_or("extension tool disabled or removed; rediscover it")?;
+    let m=manifest(&row).ok_or("invalid manifest")?;
+    let revision=packages::revision(&m);
+    let tool=m.tools.iter().find(|t|m.qualified(t,&revision)==name)
+        .ok_or("extension tool changed; rediscover it")?;
+    packages::invoke(&root(state),&m,tool,args).await
 }
 
 #[cfg(test)]
@@ -183,20 +212,32 @@ mod tests{
             let name=m.qualified(&m.tools[0],&packages::revision(&m));
             assert!(execute(&state,&name,&json!({})).await.is_err());
             enable(&state,&m.id,true).await.unwrap();
+            let status=diagnose(&state,&m.id).await.unwrap();
+            assert_eq!(status["integrityOk"],true);assert_eq!(status["runtimeOk"],true);
             assert_eq!(definitions(&state)[0]["function"]["name"],name);
             assert!(crate::engine::tools::requires_approval(&name));
             assert!(!crate::engine::tools::parallel_read_only_tool(&name));
             assert!(!crate::engine::tools::ui_tool_allowed(&json!({"mcpEnabled":true}),&name));
             assert!(crate::engine::tools::ui_tool_allowed(&json!({"mcpEnabled":false,"extensionsEnabled":true}),&name));
             assert_eq!(execute(&state,&name,&json!({"text":"real child process"})).await.unwrap()["result"]["text"],"real child process");
+            let data=root(&state).join(&m.id).join("data");
+            std::fs::write(data.join("keep"),b"persistent").unwrap();
             let mut next=m.clone();next.version="2.0.0".into();
             install_local(&state,next.clone(),bytes).await.unwrap();
+            assert_eq!(std::fs::read(data.join("keep")).unwrap(),b"persistent");
             assert!(definitions(&state).is_empty());
             enable(&state,&next.id,true).await.unwrap();
             assert!(execute(&state,&name,&json!({})).await.is_err());
             remove(&state,&next.id).await.unwrap();
+            assert!(!data.exists());
             assert!(definitions(&state).is_empty());
         }
+        // Unrelated package operations proceed even while another gate is held.
+        let held=package_lock(&state,"first").await.unwrap();
+        let independent=tokio::time::timeout(std::time::Duration::from_millis(100),package_lock(&state,"second")).await;
+        assert!(independent.is_ok());
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(10),package_lock(&state,"first")).await.is_err());
+        drop(held);
         assert!(list(&state).is_empty());
         assert!(state.store.all("mcp").is_empty());
         drop(state);let _=std::fs::remove_dir_all(dir);

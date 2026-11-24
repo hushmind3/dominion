@@ -21,6 +21,7 @@ export function ExtensionPackagesPanel(){
  const [error,setError]=useState('')
  const [notice,setNotice]=useState('')
  const [searched,setSearched]=useState(false)
+ const [diagnostics,setDiagnostics]=useState<Record<string,{integrityOk:boolean;runtimeOk:boolean;compatible:boolean;integrityError?:string;runtimeError?:string}>>({})
  useEffect(()=>{if(!sources.loading&&!sources.error){setSourceText(sources.value.urls.join('\n'));setGithubDiscovery(sources.value.githubDiscovery!==false)}},[sources.value,sources.loading,sources.error])
  const run=async(key:string,fn:()=>Promise<void>)=>{
   if(busy)return
@@ -59,8 +60,12 @@ export function ExtensionPackagesPanel(){
   await post('/api/extensions/'+encodeURIComponent(row.id)+'/enable',{enabled,confirmed:enabled})
   await installed.reload()
  })
+ const diagnose=(row:Installed)=>run(row.id,async()=>{
+  const status=await get<{integrityOk:boolean;runtimeOk:boolean;compatible:boolean;integrityError?:string;runtimeError?:string}>('/api/extensions/'+encodeURIComponent(row.id)+'/status')
+  setDiagnostics(old=>({...old,[row.revision]:status}))
+ })
  const remove=(row:Installed)=>run(row.id,async()=>{
-  if(!window.confirm((en?'Remove installed extension?':'설치된 확장 프로그램을 삭제할까요?')+'\n'+row.manifest.name))return
+  if(!window.confirm((en?'Remove this extension and its stored data?':'이 확장 프로그램과 저장된 확장 데이터를 삭제할까요?')+'\n'+row.manifest.name))return
   await del('/api/extensions/'+encodeURIComponent(row.id));await installed.reload()
  })
  const byId=new Map(installed.value.map(row=>[row.id,row]))
@@ -104,8 +109,12 @@ export function ExtensionPackagesPanel(){
    {!installed.loading&&!installed.value.length&&<p className="text-xs text-[#7C7469]">{en?'Nothing installed. The core works independently.':'설치된 확장이 없습니다. 본체는 확장 없이 정상 작동합니다.'}</p>}
    {installed.value.map(row=><div key={row.id} className="flex flex-wrap items-center gap-3 border-t border-[#E7E0D5] py-3">
     <div className="min-w-0 flex-1"><strong className="text-sm">{row.manifest.name}</strong><p className="text-xs text-[#7C7469]">{row.manifest.version} · {row.manifest.runtime} · {row.enabled?(en?'Enabled':'활성'):(en?'Disabled':'비활성')}</p></div>
+    <Button variant="ghost" disabled={Boolean(busy)} onClick={()=>void diagnose(row)}>{en?'Check status':'상태 확인'}</Button>
     <Button variant="secondary" disabled={Boolean(busy)} onClick={()=>void enable(row)}>{row.enabled?(en?'Disable':'비활성화'):(en?'Enable':'활성화')}</Button>
     <Button variant="ghost" disabled={Boolean(busy)} onClick={()=>void remove(row)}><Trash2 size={15}/>{en?'Remove':'삭제'}</Button>
+    {diagnostics[row.revision]&&<div role="status" className="w-full break-words text-xs text-[#7C7469]">
+     {diagnostics[row.revision].integrityOk?(en?'Artifact verified':'파일 무결성 정상'):diagnostics[row.revision].integrityError} · {diagnostics[row.revision].runtimeOk?(en?'Runtime found':'실행 환경 확인됨'):diagnostics[row.revision].runtimeError}
+    </div>}
    </div>)}
   </Panel>
  </div>

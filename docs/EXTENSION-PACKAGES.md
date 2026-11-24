@@ -57,3 +57,14 @@ a separate local package identity; it cannot replace a package installed
 from another publisher or registry. A local version update requires a new
 file and activation. Scripts and executable artifacts are never started by
 installation. Node/Python runtime availability is required at execution.
+
+## Runtime and data lifecycle
+
+Extensions may store their own durable data at the directory supplied in the
+`DOMINION_EXTENSION_DATA_DIR` environment variable. That directory is separate
+from revision-specific executable files and survives version changes. Removing
+a package deletes its stored data; export anything important first. An
+extension's process runs with the user's OS permissions, not in a sandbox.
+The status check verifies artifact integrity and interpreter availability
+without running plugin code. Independent packages use independent lifecycle
+locks; calls within one package remain serialized with install/remove/update.
