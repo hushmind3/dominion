@@ -93,3 +93,9 @@ existing runs, and the owner may recover/inspect them after unregistering.
 Unregister requires a disabled registration. Prior run/version history is
 retained. This owner API is for trusted apps, not a per-app credential or
 OS sandbox. Unmanaged owner SDK calls remain backward compatible.
+
+### Scoped application credentials
+
+The owner can issue, rotate and revoke a per-app credential from Extensions > Installed > External SDK apps. The delegated mode is isolated text chat only: pinned provider/model, per-run token budget and 1–100 new requests per issuance; no tools, global instructions, other app results or owner API. Existing managed owner SDK jobs retain full native execution and approval semantics. Tokens are returned once, stored as hashes, and never sent to the model. Revocation/disable blocks new scoped requests; existing owner work remains recoverable. A scoped credential is an HTTP capability, not an OS sandbox for local processes. Do not give untrusted programs the owner's loopback access or admin token; use OS isolation or a restricted proxy for them.
+
+Owner: `Client::issue_extension_grant(id, &GrantInput { provider_id, model, token_budget, max_runs })` returns a one-time token. The delegated app uses `Client::scoped(base, id, token)`, then `start(instruction, retry_key)` and `wait(run_id, deadline)`. The owner may query the grant balance or revoke the grant.

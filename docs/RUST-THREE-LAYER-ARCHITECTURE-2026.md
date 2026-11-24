@@ -105,3 +105,10 @@ No personal assistant implementation is bundled by this change.
 Native SDK embedding uses the separated harness and core-contract packages.
 Product-bound model transport, knowledge and strategy selection remain Host
 adapters. No second execution loop is introduced.
+
+### Scoped application credentials
+
+The owner can issue, rotate and revoke a per-app credential from Extensions > Installed > External SDK apps. The delegated mode is isolated text chat only: pinned provider/model, per-run token budget and 1–100 new requests per issuance; no tools, global instructions, other app results or owner API. Existing managed owner SDK jobs retain full native execution and approval semantics. Tokens are returned once, stored as hashes, and never sent to the model. Revocation/disable blocks new scoped requests; existing owner work remains recoverable. A scoped credential is an HTTP capability, not an OS sandbox for local processes. Do not give untrusted programs the owner's loopback access or admin token; use OS isolation or a restricted proxy for them.
+
+Pure lexical memory ranking, experience similarity and bounded learning-candidate parsing now live in `dominion-algorithms`. Host-side visibility and source verification, learning job execution, persistence and receipt attribution remain product adapters. No algorithm reads SQLite directly.
+Architecture references consulted 2026-11-24: MCP 2026-07-28 authorization/security considerations (audience separation, no credential passthrough) and Octos embeddable Rust runtime (shared contracts and plugin boundary); this is a local scoped capability protocol, not an implementation of MCP OAuth.

@@ -137,3 +137,9 @@ new managed requests but does not cancel already admitted work. Existing
 retry receipts and job history remain available. No plugin source code is
 installed or executed by registration. Owner API credentials are trusted;
 this registry is not a sandbox or a per-app authentication service.
+
+### Scoped application credentials
+
+The owner can issue, rotate and revoke a per-app credential from Extensions > Installed > External SDK apps. The delegated mode is isolated text chat only: pinned provider/model, per-run token budget and 1–100 new requests per issuance; no tools, global instructions, other app results or owner API. Existing managed owner SDK jobs retain full native execution and approval semantics. Tokens are returned once, stored as hashes, and never sent to the model. Revocation/disable blocks new scoped requests; existing owner work remains recoverable. A scoped credential is an HTTP capability, not an OS sandbox for local processes. Do not give untrusted programs the owner's loopback access or admin token; use OS isolation or a restricted proxy for them.
+
+Owner: `agent.issueExtensionGrant(id,{providerId,model,tokenBudget:8192,maxRuns:10})`. Pass only the returned token to the independent app. It uses `new DominionExtensionClient({id,token})`, then `start(instruction,retryKey)` and `get(runId)`. The app cannot approve effects, choose another model, or increase its allowance.

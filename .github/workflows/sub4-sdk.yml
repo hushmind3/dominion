@@ -44,6 +44,8 @@ jobs:
         run: cargo test --locked --bin dominion-rust api::sdk::view_tests
       - name: External Rust client against the real product and scripted model
         run: cargo test --locked --test e2e external_rust_sdk_runs_real_product_with_approval_and_retry -- --nocapture
+      - name: Scoped application credential and quota isolation
+        run: cargo test --locked --test e2e scoped_extension_credentials_are_isolated_and_quota_is_durable -- --nocapture
   typescript-sdk:
     if: github.ref == 'refs/heads/dominion-sub4'
     runs-on: ubuntu-latest
