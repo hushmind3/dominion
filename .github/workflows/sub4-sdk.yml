@@ -48,4 +48,5 @@ jobs:
         run: |
           npm install --prefix packages/sdk-typescript --no-audit --no-fund
           npm test --prefix packages/sdk-typescript
-          npm pack --dry-run --prefix packages/sdk-typescript
+          cd packages/sdk-typescript
+          npm pack --dry-run
