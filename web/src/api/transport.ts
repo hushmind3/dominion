@@ -3,7 +3,13 @@ import {plainError} from '../i18n/plain'
 import {t} from '../i18n'
 
 let authToken = ''
-export function setAuthToken(value: string) { authToken = value.trim() }
+export function setAuthToken(value: string) {
+ const next = value.trim()
+ if (next === authToken) return
+ authToken = next
+ // Credentials changed: clear privileged cached reads before refetching.
+ if (typeof window !== 'undefined') window.dispatchEvent(new Event('dominion-auth-changed'))
+}
 
 export async function apiFetch(url: string, init: RequestInit = {}) {
  const headers = new Headers(init.headers)
