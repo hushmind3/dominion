@@ -327,6 +327,19 @@ impl ScopedClient{
     pub async fn task_request(&self,id:&str)->Result<TaskRequestReceipt,ClientError>{
         self.client.get(&["api","extensions","apps",&self.id,"requests",id]).await
     }
+    /// Wait on durable receipts without starting, approving or cancelling work.
+    /// With require_message, a completed run alone is not a delivery receipt.
+    pub async fn wait_task_request(&self,id:&str,max_wait:Duration,require_message:bool)->Result<TaskRequestReceipt,ClientError>{
+        let deadline=Instant::now().checked_add(max_wait).ok_or_else(||ClientError::Invalid("Invalid deadline".into()))?;
+        timeout_at(deadline,async{
+            loop{
+                let row=self.task_request(id).await?;
+                let terminal=matches!(row.run_status.as_deref(),Some("completed"|"failed"|"cancelled"|"interrupted"|"in_doubt"|"needs_review"|"denied"|"exhausted"));
+                if row.status=="rejected"||row.message.is_some()||(!require_message&&terminal){return Ok(row)}
+                sleep(Duration::from_millis(250)).await;
+            }
+        }).await.map_err(|_|ClientError::Timeout)?
+    }
     pub async fn start(&self,instruction:&str,retry_key:&str)->Result<ScopedRun,ClientError>{
         self.client.post(&["api","extensions","apps",&self.id,"runs"],
             json!({"instruction":instruction,"idempotencyKey":retry_key})).await

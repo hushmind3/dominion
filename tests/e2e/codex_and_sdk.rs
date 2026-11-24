@@ -686,11 +686,11 @@ fn extension_task_proposal_is_not_execution_and_requires_owner_review(){
         assert!(view["verified"]==true);
         assert!(app._root.join("proposal-result.md").is_file());
         assert_eq!(requests.lock().unwrap().len(),1);
-        let receipt=fresh.task_request(&proposal.id).await.unwrap();
+        let receipt=fresh.wait_task_request(&proposal.id,Duration::from_secs(5),false).await.unwrap();
         assert_eq!(receipt.run_status.as_deref(),Some("completed"));
         assert!(receipt.message.is_none());
         http.post(format!("{request_root}/publish")).json(&json!({"message":"The approved file was created."})).send().await.unwrap().error_for_status().unwrap();
-        assert_eq!(fresh.task_request(&proposal.id).await.unwrap().message.as_deref(),Some("The approved file was created."));
+        assert_eq!(fresh.wait_task_request(&proposal.id,Duration::from_secs(5),true).await.unwrap().message.as_deref(),Some("The approved file was created."));
         assert!(fresh.task_request(&proposal.id).await.unwrap().artifacts.is_empty());
         let artifact:Value=http.post(format!("{request_root}/artifacts")).json(&json!({"name":"result.txt","contentBase64":"aGVsbG8="})).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
         let artifact_id=artifact["id"].as_str().unwrap();

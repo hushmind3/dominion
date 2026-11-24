@@ -262,17 +262,20 @@ function TaskRequests({appId,enabled,onRun}:{appId:string;enabled:boolean;onRun:
   if(!file||!row?.canShareArtifact||busy)return
   if(file.size>2*1024*1024){setError(en?'Maximum file size: 2 MiB':'파일 크기는 최대 2MiB입니다.');return}
   if(!confirm(en?'Share this exact file with the external app?':'선택한 파일을 외부 앱에 전달할까요?'))return
+  if(inFlight.current)return
+  inFlight.current=true;setBusy(true);setError('')
   try{
    const bytes=new Uint8Array(await file.arrayBuffer())
    let binary=''
    for(let offset=0;offset<bytes.length;offset+=8192)binary+=String.fromCharCode(...bytes.subarray(offset,offset+8192))
-   await act('artifacts',{name:file.name,contentBase64:btoa(binary)})
-  }catch(e){setError((e as Error).message)}
+   await post(path+'/'+row.id+'/artifacts',{name:file.name,contentBase64:btoa(binary)})
+   await requests.reload();setFile(null);if(fileInput.current)fileInput.current.value=''
+  }catch(e){setError((e as Error).message)}finally{inFlight.current=false;setBusy(false)}
  }
  return <div className="w-full border-t border-divider pt-2">
   <Button variant="ghost" onClick={()=>setOpen(!open)}>{open?(en?'Close task requests':'작업 제안 닫기'):(en?'Task requests':'앱 작업 제안')}{pendingCount>0&&<span className="rounded-full bg-brand px-2 text-white">{pendingCount}</span>}</Button>
   {open&&<div className="mt-2 grid gap-2">
-   <p className="text-xs text-muted">{en?'An external app cannot start agent tools. Review its instruction and select a workspace. Native tool approvals still apply. Only your explicitly published message is returned.':'외부 앱의 제안은 직접 승인하기 전까지 실행되지 않습니다. 작업 공간을 지정하고 내용을 확인하세요. 기존 도구 승인 절차가 적용되며 직접 공유한 메시지만 앱에 전달됩니다.'}</p>
+   <p className="text-xs text-muted">{en?'An external app cannot start agent tools. Review its instruction and select a workspace. Native tool approvals still apply. Only your explicitly shared message and files are returned.':'외부 앱의 제안은 직접 승인하기 전까지 실행되지 않습니다. 작업 공간을 지정하고 내용을 확인하세요. 기존 도구 승인 절차가 적용되며 직접 공유한 메시지와 파일만 앱에 전달됩니다.'}</p>
    <Notice message={error||requests.error}/>
    <Button variant="ghost" disabled={requests.refreshing||busy} onClick={()=>void requests.reload()}>{en?'Refresh requests':'제안 새로고침'}</Button>
    {requests.loading&&<p role="status" className="text-xs text-muted">{en?'Loading requests…':'작업 제안 불러오는 중…'}</p>}

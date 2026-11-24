@@ -217,6 +217,7 @@ export interface WaitRunOptions {
 export const isRunSettled = (run: AgentRun): boolean =>
   run.status !== 'queued' && run.status !== 'running';
 
+export interface WaitTaskRequestOptions {timeoutMs?:number;intervalMs?:number;signal?:AbortSignal;requireMessage?:boolean;onUpdate?:(receipt:TaskRequestReceipt)=>void}
 export interface ClientOptions {
   baseUrl?: string;
   adminToken?: string;
@@ -533,6 +534,39 @@ export class DominionExtensionClient {
   taskRequest(id:string,signal?:AbortSignal):Promise<TaskRequestReceipt>{
     if(!/^[0-9a-f]{64}$/i.test(id))throw new DominionSdkError('Invalid task request ID',400);
     return this.request<TaskRequestReceipt>('/'+encodeURIComponent(id),undefined,signal,'requests');
+  }
+  /** Poll only the scoped receipt; owner approval and result release remain explicit. */
+  async waitTaskRequest(id:string,options:WaitTaskRequestOptions={}):Promise<TaskRequestReceipt>{
+    const timeoutMs=options.timeoutMs??30*60_000,intervalMs=options.intervalMs??1000;
+    if(!Number.isFinite(timeoutMs)||timeoutMs<0||timeoutMs>2_147_483_647||
+       !Number.isFinite(intervalMs)||intervalMs<0||intervalMs>2_147_483_647)
+      throw new DominionSdkError('Invalid wait duration',400);
+    const deadline=Date.now()+timeoutMs,controller=new AbortController();
+    const timeout=new DominionSdkError('Task receipt wait timed out; request was not cancelled',408);
+    const callerAbort=()=>controller.abort(options.signal?.reason);
+    options.signal?.throwIfAborted();
+    options.signal?.addEventListener('abort',callerAbort,{once:true});
+    const timer=setTimeout(()=>controller.abort(timeout),timeoutMs);
+    try{
+      for(;;){
+        controller.signal.throwIfAborted();
+        const row=await this.taskRequest(id,controller.signal);
+        controller.signal.throwIfAborted();
+        options.onUpdate?.(row);
+        if(row.status==='rejected'||row.message!=null||(!options.requireMessage&&
+          ['completed','failed','cancelled','interrupted','in_doubt','needs_review','denied','exhausted'].includes(row.runStatus??'')))return row;
+        const remaining=deadline-Date.now();
+        if(remaining<=0)throw timeout;
+        await new Promise<void>((resolve,reject)=>{
+          const signal=controller.signal;
+          if(signal.aborted){reject(signal.reason);return;}
+          const abort=()=>{clearTimeout(delay);reject(signal.reason)};
+          const delay=setTimeout(()=>{signal.removeEventListener('abort',abort);resolve()},Math.min(Math.max(50,intervalMs),remaining));
+          signal.addEventListener('abort',abort,{once:true});
+        });
+      }
+    }catch(error){if(controller.signal.aborted)throw controller.signal.reason;throw error}
+    finally{clearTimeout(timer);options.signal?.removeEventListener('abort',callerAbort)}
   }
   start(instruction:string,idempotencyKey:string,signal?:AbortSignal):Promise<ScopedRun>{
     return this.request('',{instruction,idempotencyKey},signal);

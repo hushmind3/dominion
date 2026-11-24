@@ -46,6 +46,8 @@ jobs:
         run: cargo test --locked --test e2e external_rust_sdk_runs_real_product_with_approval_and_retry -- --nocapture
       - name: Scoped application credential and quota isolation
         run: cargo test --locked --test e2e scoped_extension_credentials_are_isolated_and_quota_is_durable -- --nocapture
+      - name: External task proposals, native execution, artifact delivery and follow-up
+        run: cargo test --locked --test e2e extension_task_proposal_is_not_execution_and_requires_owner_review -- --nocapture
   typescript-sdk:
     if: github.ref == 'refs/heads/dominion-sub4'
     runs-on: ubuntu-latest

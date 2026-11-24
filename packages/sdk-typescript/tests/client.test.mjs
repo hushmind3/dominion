@@ -285,3 +285,37 @@ test('scoped extension sends no admin credential or owner options',async()=>{
  assert.deepEqual(calls,[['/api/extensions/apps/example.assistant/runs','POST',{instruction:'hello',idempotencyKey:'retry'}],['/api/extensions/apps/example.assistant/runs/'+run,'GET',null]])
  assert.throws(()=>client.get('../settings'))
 })
+
+test('scoped task workflow uses explicit follow-up and immutable artifact routes',async()=>{
+ const {DominionExtensionClient}=await import('../dist/index.js')
+ const id='a'.repeat(64),artifact='12345678-1234-1234-1234-123456789012',token='b'.repeat(64),calls=[]
+ const client=new DominionExtensionClient({id:'example.assistant',token,fetch:async(url,request)=>{
+  assert.equal(request.headers['x-dominion-extension-token'],token)
+  assert.equal(request.headers['x-dominion-token'],undefined)
+  calls.push([new URL(url).pathname,request.method,request.body?JSON.parse(request.body):null])
+  return new Response(JSON.stringify({id,status:'approved',runStatus:'completed',message:'released'}))
+ }})
+ await client.proposeTask('first','key')
+ await client.proposeFollowUp(id,'second','next')
+ await client.artifact(id,artifact)
+ await client.waitTaskRequest(id,{requireMessage:true,timeoutMs:1000})
+ assert.deepEqual(calls,[
+ ['/api/extensions/apps/example.assistant/requests','POST',{instruction:'first',idempotencyKey:'key'}],
+ ['/api/extensions/apps/example.assistant/requests','POST',{instruction:'second',idempotencyKey:'next',parentRequestId:id}],
+ ['/api/extensions/apps/example.assistant/requests/'+id+'/artifacts/'+artifact,'GET',null],
+ ['/api/extensions/apps/example.assistant/requests/'+id,'GET',null]
+ ])
+ assert.throws(()=>client.artifact(id,'../private'))
+})
+test('scoped publication wait does not mistake completion for released data',async()=>{
+ const {DominionExtensionClient}=await import('../dist/index.js')
+ let reads=0
+ const id='a'.repeat(64)
+ const client=new DominionExtensionClient({id:'example.assistant',token:'b'.repeat(64),fetch:async(_url,request)=>{
+  assert.equal(request.method,'GET');reads++
+  return new Response(JSON.stringify({id,status:'approved',runStatus:'completed',message:reads===1?null:'released'}))
+ }})
+ const receipt=await client.waitTaskRequest(id,{requireMessage:true,intervalMs:50,timeoutMs:1000})
+ assert.equal(reads,2)
+ assert.equal(receipt.message,'released')
+})
