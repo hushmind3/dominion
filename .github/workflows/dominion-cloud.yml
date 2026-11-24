@@ -33,6 +33,8 @@ jobs:
           node --check cloud/src/index.js
           node --check cloud/src/email_auth.js
           node --check cloud/src/token_crypto.js
+          node --check cloud/src/app_auth.js
+          node --check cloud/src/connect_page.js
       - name: Verify gateway routing, paid-budget guards and single model circuit breaker
         run: |
           node --input-type=module <<'EOF'
@@ -45,14 +47,14 @@ jobs:
           assert.equal((code.match(/const modelFailures = new Map\(\)/g)||[]).length,1,'Duplicate model circuit breaker')
           EOF
       - name: Verify email magic-link security and D1 claim transactions
-        run: node --test cloud/tests/email-auth.test.mjs
+        run: node --test cloud/tests/*.test.mjs
       - name: Validate SQL and Worker configuration
         run: |
           python3 - <<'PY'
           import sqlite3, pathlib, tomllib
           db = sqlite3.connect(':memory:')
           db.executescript(pathlib.Path('cloud/schema.sql').read_text())
-          assert {'accounts', 'sessions', 'usage', 'free_quota'}.issubset(
+          assert {'accounts', 'sessions', 'usage', 'free_quota', 'app_sessions'}.issubset(
               {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")})
           conf = tomllib.loads(pathlib.Path('cloud/wrangler.toml').read_text())
           assert conf['name'] == 'dominion-cloud'

@@ -21,4 +21,4 @@ jobs:
           node --check cloud/src/index.js
           node --check cloud/src/assistant_link.js
           node --check cloud/src/assistant_socket.js
-          node --test cloud/tests/assistant-link.test.mjs cloud/tests/email-auth.test.mjs cloud/tests/assistant-socket.test.mjs
+          node --test cloud/tests/app-auth.test.mjs cloud/tests/email-auth.test.mjs cloud/tests/assistant-socket.test.mjs cloud/tests/assistant-shared-auth.test.mjs

@@ -72,30 +72,29 @@ CREATE TABLE IF NOT EXISTS email_login_attempts (
 CREATE INDEX IF NOT EXISTS email_login_attempts_rate_email ON email_login_attempts(email_hash,created_at);
 CREATE INDEX IF NOT EXISTS email_login_attempts_rate_ip ON email_login_attempts(ip_hash,created_at);
 
--- Assistant uses the same accounts and sessions as desktop. Scoped device credentials
--- are distinct from account sessions. No arbitrary PC endpoint is exposed.
-CREATE TABLE IF NOT EXISTS assistant_login (
- id TEXT PRIMARY KEY,poll_hash TEXT NOT NULL,ticket_hash TEXT NOT NULL,nonce TEXT NOT NULL,
- ip_hash TEXT NOT NULL,browser_hash TEXT,account_id TEXT REFERENCES accounts(id),session_until INTEGER,
- status TEXT NOT NULL,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL
+-- An external app generates its own bearer locally. Only the hash reaches D1.
+-- Pending pairings are not accounts, and cannot invoke inference.
+CREATE TABLE IF NOT EXISTS app_sessions (
+  id TEXT PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE,
+  app_name TEXT NOT NULL,
+  capability TEXT NOT NULL DEFAULT 'inference' CHECK(capability IN ('inference','assistant_remote','assistant_pc')),
+  ip_hash TEXT NOT NULL,
+  account_id TEXT REFERENCES accounts(id),
+  status TEXT NOT NULL CHECK(status IN ('pending','approved','revoked')),
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  approved_at INTEGER
 );
-CREATE INDEX IF NOT EXISTS assistant_login_ip ON assistant_login(ip_hash,created_at);
-CREATE INDEX IF NOT EXISTS assistant_login_exp ON assistant_login(expires_at);
+CREATE INDEX IF NOT EXISTS app_sessions_owner ON app_sessions(account_id,created_at);
+CREATE INDEX IF NOT EXISTS app_sessions_rate ON app_sessions(ip_hash,created_at);
+
 CREATE TABLE IF NOT EXISTS assistant_devices (
  id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),name TEXT NOT NULL,
+ app_session_id TEXT REFERENCES app_sessions(id),
  token_hash TEXT UNIQUE NOT NULL,last_seen INTEGER NOT NULL,revoked INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS assistant_devices_account ON assistant_devices(account_id,revoked);
-CREATE TABLE IF NOT EXISTS assistant_rpc (
- id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),device_id TEXT NOT NULL REFERENCES assistant_devices(id),
- route TEXT NOT NULL,payload TEXT NOT NULL,fingerprint TEXT NOT NULL,state TEXT NOT NULL,
- status INTEGER,result TEXT,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS assistant_rpc_queue ON assistant_rpc(device_id,state,created_at);
-CREATE INDEX IF NOT EXISTS assistant_rpc_account ON assistant_rpc(account_id,created_at);
-CREATE INDEX IF NOT EXISTS assistant_rpc_exp ON assistant_rpc(expires_at);
-
--- At-most-once event relay admission metadata. No message payload or response retained.
 CREATE TABLE IF NOT EXISTS assistant_ws_requests (
  id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),device_id TEXT NOT NULL REFERENCES assistant_devices(id),
  client_id TEXT NOT NULL,device_connection TEXT NOT NULL,fingerprint TEXT NOT NULL,state TEXT NOT NULL,

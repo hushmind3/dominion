@@ -461,3 +461,5 @@ export class DominionPluginClient {
     return this.request('GET','/runs/'+encodeURIComponent(id),undefined,signal);
   }
 }
+
+export * from './cloud.js';

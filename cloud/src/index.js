@@ -1,6 +1,9 @@
 import {emailLoginReady, startEmailLogin, verifyEmailLogin, pollEmailLogin} from './email_auth.js';
 import {b64url, hash, randomToken} from './token_crypto.js';
-import {assistantRoute,cleanupAssistant,ready as assistantReady} from './assistant_link.js';
+import {appAccount,isAppRequest,startApp,appStatus,disconnectApp,manageApps,pendingApp,approveApp} from './app_auth.js';
+import {connectPage} from './connect_page.js';
+import {assistantRoute,cleanupAssistant,ready as assistantReady,revokeAppSocket} from './assistant_link.js';
+export {AssistantSocket} from './assistant_socket.js';
 // DOMINION account gateway: no Nous credentials and no shared client-side API key.
 // Cloudflare Worker + D1. Credits are integer micro-KRW (one KRW = 1,000 units).
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), {
@@ -28,6 +31,7 @@ function cors(origin, env) {
     'access-control-allow-methods': 'POST, GET, OPTIONS',
     'access-control-allow-headers': 'content-type, authorization',
     'access-control-max-age': '600',
+    'access-control-expose-headers': 'x-dominion-free-remaining',
     vary: 'Origin'
   } : {};
 }
@@ -50,6 +54,7 @@ async function verifyGoogle(idToken, env) {
   return claims;
 }
 async function account(request, env) {
+  if(isAppRequest(request))return appAccount(request,env);
   const token = /^Bearer ([A-Za-z0-9_-]{32,})$/.exec(request.headers.get('authorization') || '')?.[1];
   if (!token) return null;
   return env.DB.prepare('SELECT a.id, a.credits FROM sessions s JOIN accounts a ON a.id=s.account_id WHERE s.token_hash=? AND s.expires_at>?')
@@ -137,10 +142,20 @@ function proPrice(env) {
 }
 async function billingSummary(env, user) {
   const subscription = await env.DB.prepare('SELECT plan,status,current_period_end FROM subscriptions WHERE account_id=?').bind(user.id).first();
-  const freeDailyLimit = Math.max(1, Math.min(1000, Number(env.FREE_DAILY_LIMIT || 20)));
+  const isPro=subscription?.status==='active'&&subscription.current_period_end>now();
+  const configured=Number(isPro?env.PRO_DAILY_LIMIT||50:env.FREE_DAILY_LIMIT||20);
+  const freeDailyLimit=Number.isSafeInteger(configured)?Math.max(1,Math.min(1000,configured)):20;
+  const configuredMonth=Number(env.PRO_MONTHLY_LIMIT||500);
+  const monthlyLimit=Number.isSafeInteger(configuredMonth)?Math.max(1,Math.min(10000,configuredMonth)):500;
   const quotaDay = new Date().toISOString().slice(0, 10);
   const freeUsage = await env.DB.prepare('SELECT used FROM free_quota WHERE account_day=?').bind(user.id + ':' + quotaDay).first();
+  const monthlyUsage=isPro?await env.DB.prepare('SELECT used FROM free_quota WHERE account_day=?').bind(user.id+':pro-month:'+quotaDay.slice(0,7)).first():null;
   return json({
+    account_id:user.id,
+    credits_micro_krw:user.credits,
+    free_monthly_limit:isPro?monthlyLimit:null,
+    free_monthly_used:isPro?Math.min(monthlyLimit,monthlyUsage?.used||0):null,
+    free_monthly_remaining:isPro?Math.max(0,monthlyLimit-(monthlyUsage?.used||0)):null,
     free_daily_limit: freeDailyLimit,
     free_daily_used: Math.min(freeDailyLimit, freeUsage?.used || 0),
     free_daily_remaining: Math.max(0, freeDailyLimit - (freeUsage?.used || 0)),
@@ -148,8 +163,8 @@ async function billingSummary(env, user) {
     plan: subscription?.status === 'active' && subscription?.current_period_end > now() ? subscription.plan : 'free',
     valid_until: subscription?.current_period_end || null,
     pro_price_krw: proPrice(env),
-    checkout_enabled: Boolean(proPrice(env) && env.TOSS_CLIENT_KEY && env.TOSS_SECRET_KEY),
-    toss_client_key: proPrice(env) && env.TOSS_SECRET_KEY ? (env.TOSS_CLIENT_KEY || null) : null
+    checkout_enabled: user.scope!=='app'&&Boolean(proPrice(env) && env.TOSS_CLIENT_KEY && env.TOSS_SECRET_KEY),
+    toss_client_key: user.scope!=='app'&&proPrice(env) && env.TOSS_SECRET_KEY ? (env.TOSS_CLIENT_KEY || null) : null
   });
 }
 // Account-scoped payment ledger. Settlement is performed by the contracted PG,
@@ -486,9 +501,9 @@ async function routeCompletion(request, env, user) {
     }
     return err('All free models temporarily unavailable', 503);
   }
+  if(user.scope==='app')return err('External app credentials permit free models only',403);
   return proxy(request, env, user);
 }
-export {AssistantSocket} from './assistant_socket.js';
 export default {
   async scheduled(_event, env, ctx) {
     ctx.waitUntil(availableModels(env, true));
@@ -504,13 +519,13 @@ export default {
     const sameOriginEmailConfirm = request.method === 'POST'
       && path === '/v1/auth/email/verify'
       && origin === new URL(request.url).origin;
-    const sameOriginSocket = path==='/v1/assistant/socket' && request.headers.get('upgrade')?.toLowerCase()==='websocket' && origin===new URL(request.url).origin;
-    if (origin && !isAllowedOrigin(origin, env) && !sameOriginEmailConfirm && !sameOriginSocket) return err('Origin not allowed', 403);
+    const sameOriginGoogleApprove=request.method==='POST'&&path==='/v1/apps/google/approve'&&origin===new URL(request.url).origin;
+    const sameOriginSocket=path==='/v1/assistant/socket'&&request.headers.get('upgrade')?.toLowerCase()==='websocket'&&origin===new URL(request.url).origin;
+    if (origin && !isAllowedOrigin(origin, env) && !sameOriginEmailConfirm && !sameOriginGoogleApprove && !sameOriginSocket) return err('Origin not allowed', 403);
     // Public OAuth metadata: Google client IDs are public identifiers, never secrets.
     // The browser uses this endpoint so login works without a compile-time VITE key.
     if (path === '/v1/public-config' && request.method === 'GET') {
       const response = json({
-        assistant_link: assistantReady(env),
         google_client_id: env.GOOGLE_CLIENT_ID || null,
         google_desktop_client_id: env.GOOGLE_DESKTOP_CLIENT_ID || null,
         providers: {
@@ -519,6 +534,8 @@ export default {
           kakao: Boolean(env.KAKAO_CLIENT_ID && env.KAKAO_CLIENT_SECRET),
           naver: Boolean(env.NAVER_CLIENT_ID && env.NAVER_CLIENT_SECRET)
         },
+        app_pairing: true,
+        assistant_link: assistantReady(env),
         toss_available: Boolean(proPrice(env) && env.TOSS_CLIENT_KEY && env.TOSS_SECRET_KEY)
       });
       const out = new Response(response.body, response);
@@ -529,7 +546,26 @@ export default {
     if (!env.DB || !env.ALLOWED_ORIGIN) return err('Service not configured', 503);
     try {
       let response;
-      if (path.startsWith('/v1/assistant/')) response = await assistantRoute(request,env,{account,verifyGoogle});
+      // App sessions may never enter owner, billing or identity endpoints.
+      const appAllowed=['/v1/me','/v1/models','/v1/billing','/v1/chat/completions','/v1/apps/status','/v1/apps/disconnect'];
+      if(isAppRequest(request)&&!appAllowed.includes(path)&&!path.startsWith('/v1/assistant/'))return json({error:'Owner login required'},403,headers);
+      if(path.startsWith('/v1/assistant/'))response=await assistantRoute(request,env,{account});
+      else if(path==='/connect'&&request.method==='GET')response=await connectPage(request,env);
+      else if(path==='/v1/apps/google/approve'&&request.method==='POST'){
+        if(!sameOriginGoogleApprove)return err('Same-origin approval required',403);
+        const body=await maxBody(request,12000);
+        if(!await pendingApp(env,body.id)||typeof body.credential!=='string'||body.credential.length>10000)return err('Pairing unavailable',404);
+        const identity=await verifyGoogle(body.credential,env);
+        if(identity.nonce!==body.id)return err('Google token not bound to this pairing',403);
+        const id='google:'+identity.sub;
+        await env.DB.prepare("INSERT INTO accounts(id,email,credits,created_at) VALUES(?,?,0,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email").bind(id,String(identity.email||'').slice(0,320),now()).run();
+        response=await approveApp(env,body.id,id);
+      }
+      else if(path==='/v1/apps/start'&&request.method==='POST')response=await startApp(request,env);
+      else if(path==='/v1/apps/status'&&request.method==='GET')response=await appStatus(request,env);
+      else if(path==='/v1/apps/disconnect'&&request.method==='POST'){const user=await account(request,env);response=await disconnectApp(request,env);if(user&&response.ok)await revokeAppSocket(env,user.id,await hash((request.headers.get('authorization')||'').slice(7)));}
+      else if((path==='/v1/apps'&&request.method==='GET')||(['/v1/apps/inspect','/v1/apps/approve','/v1/apps/revoke'].includes(path)&&request.method==='POST'))
+        {const user=await account(request,env);response=await manageApps(request,env,user,path);if(path==='/v1/apps/revoke'&&user&&response.ok&&assistantReady(env))await revokeAppSocket(env,user.id,'');}
       else if (path === '/v1/auth/email/start' && request.method === 'POST') response = await startEmailLogin(request, env);
       else if (path === '/v1/auth/email/status' && request.method === 'POST') response = await pollEmailLogin(request, env);
       else if (path === '/v1/auth/email/verify' && ['GET','POST'].includes(request.method)) response = await verifyEmailLogin(request, env);
@@ -540,7 +576,7 @@ export default {
         response = await oauthCallback(request,env,path.split('/')[3]);
       else if (path === '/v1/models' && request.method === 'GET') {
         const user = await account(request, env);
-        response = user ? json({ data: [{ id: 'dominion/free-auto', name: 'DOMINION Free Auto', object: 'model', free: true }, ...(await availableModels(env)).map(x => ({ id: x.id, name: x.name || x.id, object: 'model', free: true })), ...paidModels(env).map(x => ({ id: x.id, name: x.name, object: 'model', free: false, provider: x.provider, input_micro_krw: x.input_micro_krw, output_micro_krw: x.output_micro_krw }))] }) : err('Unauthorized', 401);
+        response = user ? json({ data: [{ id: 'dominion/free-auto', name: 'DOMINION Free Auto', object: 'model', free: true }, ...(await availableModels(env)).map(x => ({ id: x.id, name: x.name || x.id, object: 'model', free: true })), ...(user.scope==='app'?[]:paidModels(env)).map(x => ({ id: x.id, name: x.name, object: 'model', free: false, provider: x.provider, input_micro_krw: x.input_micro_krw, output_micro_krw: x.output_micro_krw }))] }) : err('Unauthorized', 401);
       }
       else if (path === '/v1/billing' && request.method === 'GET') {
         const user = await account(request, env);
@@ -572,12 +608,12 @@ export default {
         }
       } else if (path === '/v1/me' && request.method === 'GET') {
         const user = await account(request, env);
-        response = user ? json({ account_id: user.id, credits_micro_krw: user.credits }) : err('Unauthorized', 401);
+        response = user ? json(user.scope==='app'?{account_id:user.id,credits_micro_krw:user.credits,scope:'free_inference',app_session_id:user.app_session_id}:{account_id: user.id, credits_micro_krw: user.credits}) : err('Unauthorized', 401);
       } else if (path === '/v1/chat/completions' && request.method === 'POST') {
         const user = await account(request, env);
         response = user ? await routeCompletion(request, env, user) : err('Unauthorized', 401);
       } else response = err('Not found', 404);
-      if(response.status===101)return response; // Preserve the upgraded WebSocket.
+      if(response.status===101)return response;
       const out = new Response(response.body, response);
       for (const [k, v] of Object.entries(headers)) out.headers.set(k, v);
       return out;

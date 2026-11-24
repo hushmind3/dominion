@@ -20,8 +20,8 @@ export class AssistantSocket {
  async authorized(m){
   if(!m||!m.account||!m.key)return false;
   const q=m.role==='pc'
-   ?this.env.DB.prepare('SELECT id FROM assistant_devices WHERE id=? AND account_id=? AND token_hash=? AND revoked=0').bind(m.device,m.account,m.key)
-   :this.env.DB.prepare('SELECT account_id FROM sessions WHERE account_id=? AND token_hash=? AND expires_at>?').bind(m.account,m.key,now());
+   ?this.env.DB.prepare("SELECT d.id FROM assistant_devices d LEFT JOIN app_sessions s ON s.id=d.app_session_id WHERE d.id=? AND d.account_id=? AND d.token_hash=? AND d.revoked=0 AND (d.app_session_id IS NULL OR (s.status='approved' AND s.expires_at>? AND s.capability='assistant_pc'))").bind(m.device,m.account,m.key,now())
+   :m.sessionKind==='app'?this.env.DB.prepare("SELECT account_id FROM app_sessions WHERE account_id=? AND token_hash=? AND expires_at>? AND status='approved' AND capability='assistant_remote'").bind(m.account,m.key,now()):this.env.DB.prepare('SELECT account_id FROM sessions WHERE account_id=? AND token_hash=? AND expires_at>?').bind(m.account,m.key,now());
   return Boolean(await q.first());
  }
  async sendMember(ws,data){
@@ -30,7 +30,7 @@ export class AssistantSocket {
  }
  async presence(account){
   const rows=await this.env.DB.prepare('SELECT id,name,last_seen FROM assistant_devices WHERE account_id=? AND revoked=0 ORDER BY last_seen DESC LIMIT 20').bind(account).all();
-  return rows.results.map(r=>({...r,online:Boolean(this.pc(r.id))}));
+  return Promise.all(rows.results.map(async r=>{const ws=this.pc(r.id);return {...r,online:Boolean(ws&&await this.authorized(this.meta(ws)))}}));
  }
  async broadcast(account,event){
   await Promise.all(this.sockets('mobile').filter(w=>this.meta(w)?.account===account).map(w=>this.sendMember(w,event)));
@@ -45,14 +45,14 @@ export class AssistantSocket {
    const device=req.headers.get('x-device'),key=req.headers.get('x-key');
    for(const ws of this.ctx.getWebSockets()){
     const m=this.meta(ws);
-    if(m?.account===account&&((device&&m.device===device)||(key&&m.key===key)))close(ws);
+    if(m?.account===account&&((device&&m.device===device)||(key&&m.key===key)||!await this.authorized(m)))close(ws);
    }
    await this.broadcastPresence(account);return out({ok:true});
   }
   if(url.pathname!=='/connect')return out({error:'Not found'},404);
   const role=req.headers.get('x-role'),device=req.headers.get('x-device'),key=req.headers.get('x-key');
   if(!['pc','mobile'].includes(role))return out({error:'Invalid role'},403);
-  const m={role,account,device,key,cid:crypto.randomUUID()};
+  const m={role,account,device,key,sessionKind:req.headers.get('x-session-kind')||'owner',cid:crypto.randomUUID()};
   if(!await this.authorized(m))return out({error:'Unauthorized'},401);
   if(role==='mobile'&&this.sockets('mobile').length>=10)return out({error:'Too many connections'},429);
   if(role==='pc'){
@@ -90,7 +90,7 @@ export class AssistantSocket {
   const fp=await hash(x.route+'\n'+payload);
   const t=now();
   // The durable admission receipt precedes delivery. Never replay uncertain side effects.
-  const inserted=await this.env.DB.prepare("INSERT OR IGNORE INTO assistant_ws_requests(id,account_id,device_id,client_id,device_connection,fingerprint,state,created_at,expires_at) SELECT ?,?,?,?,?,?,'running',?,? WHERE (SELECT COUNT(*) FROM assistant_ws_requests WHERE account_id=? AND created_at>?)<400 AND (SELECT COUNT(*) FROM assistant_ws_requests WHERE device_id=? AND state='running' AND expires_at>?)<8 AND EXISTS(SELECT 1 FROM assistant_devices WHERE id=? AND account_id=? AND revoked=0) AND EXISTS(SELECT 1 FROM sessions WHERE account_id=? AND token_hash=? AND expires_at>?)").bind(x.id,m.account,x.deviceId,m.cid,target.cid,fp,t,t+180,m.account,t-3600,x.deviceId,t,x.deviceId,m.account,m.account,m.key,t).run();
+  const inserted=await this.env.DB.prepare("INSERT OR IGNORE INTO assistant_ws_requests(id,account_id,device_id,client_id,device_connection,fingerprint,state,created_at,expires_at) SELECT ?,?,?,?,?,?,'running',?,? WHERE (SELECT COUNT(*) FROM assistant_ws_requests WHERE account_id=? AND created_at>?)<400 AND (SELECT COUNT(*) FROM assistant_ws_requests WHERE device_id=? AND state='running' AND expires_at>?)<8 AND EXISTS(SELECT 1 FROM assistant_devices WHERE id=? AND account_id=? AND revoked=0) AND (EXISTS(SELECT 1 FROM sessions WHERE account_id=? AND token_hash=? AND expires_at>?) OR EXISTS(SELECT 1 FROM app_sessions WHERE account_id=? AND token_hash=? AND expires_at>? AND status='approved' AND capability='assistant_remote'))").bind(x.id,m.account,x.deviceId,m.cid,target.cid,fp,t,t+180,m.account,t-3600,x.deviceId,t,x.deviceId,m.account,m.account,m.key,t,m.account,m.key,t).run();
   if(inserted.meta.changes!==1)return fail(409,'Duplicate request or queue full; check history');
   if(!safeSend(pc,{type:'request',id:x.id,route:x.route,body:x.body})){
    await this.env.DB.prepare("UPDATE assistant_ws_requests SET state='uncertain' WHERE id=? AND state='running'").bind(x.id).run();
