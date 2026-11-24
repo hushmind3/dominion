@@ -136,3 +136,5 @@ CREATE TABLE IF NOT EXISTS assistant_google_jobs (
  PRIMARY KEY(account_id,id)
 );
 CREATE INDEX IF NOT EXISTS assistant_google_jobs_due ON assistant_google_jobs(status,lease_until,expires_at);
+
+CREATE TABLE IF NOT EXISTS assistant_search_quota (day TEXT PRIMARY KEY, used INTEGER NOT NULL DEFAULT 0);

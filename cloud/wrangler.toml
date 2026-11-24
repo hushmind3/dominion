@@ -52,3 +52,8 @@ new_sqlite_classes = ["AssistantSocket"]
 # redirect URI in the web OAuth client. Set CONNECTOR_GOOGLE_CLIENT_ID as variable;
 # CONNECTOR_GOOGLE_CLIENT_SECRET and CONNECTOR_TOKEN_SECRET (random >=32 chars) as secrets.
 # ASSISTANT_GOOGLE_ENABLED=1. No provider credentials in the app.
+
+# Optional billable public web search: apply migration 0006, configure AI Gateway credits
+# or provider key, and explicitly set ASSISTANT_SEARCH_ENABLED=1,
+# ASSISTANT_SEARCH_PROVIDER=exa (or ceramic/linkup), ASSISTANT_SEARCH_DAILY_LIMIT=20,
+# ASSISTANT_SEARCH_GATEWAY=default. No automatic paid fallback or mobile API credentials.
