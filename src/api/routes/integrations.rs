@@ -18,6 +18,7 @@ pub(super) fn router() -> Router<AppState> {
         .route("/api/mcp/catalog", get(extensions::mcp_catalog))
         .route("/api/plugins/search", get(extensions::plugin_search))
         .route("/api/plugins/market", get(plugins::market::search))
+        .route("/api/plugins/market/details", get(plugins::market::details))
         .route("/api/plugins/market/install", post(plugins::market::install))
         .route("/api/plugins/managed", get(plugins::list).post(plugins::install))
         .route("/api/plugins/package/install", post(plugins::package::install))

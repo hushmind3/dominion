@@ -157,3 +157,10 @@ for(const p of ['crates/dominion-agent-runtime/src/contracts.rs',
       p+' illegally imports Host or storage: '+forbidden);
 }
 console.log('Architecture source contracts present (no build; Chat upper-loop still separate)');
+
+for(const p of ['src/host/execution/native_agent.rs','src/host/execution/effect.rs','src/conversation/chat/runtime/dispatch.rs','src/conversation/chat/runtime/capability.rs','src/conversation/chat/runtime/turn.rs']){
+ const production=text(p).split('#[cfg(test)]')[0];
+ for(const forbidden of ['mcp::','integrations::mcp','starts_with("mcp__")','personal_voice','recipe::voice_tag'])assert.ok(!production.includes(forbidden),p+' leaked connector identity '+forbidden);
+}
+assert.ok(!existsSync(path.join(root,'plugins/dominion-voice')),'Independent applications must not be embedded');
+assert.ok(!existsSync(path.join(root,'src/api/plugins/personal_voice.rs')),'Independent app host handler must not return');

@@ -13,3 +13,5 @@ A manifest is not proof of runtime compatibility or trust. The installer pins th
 
 
 Application implementations are maintained independently. The host never includes an application-specific build recipe. Legacy installations retain their data; install a published replacement using the market.
+
+Named marketplace searches include ordinary public GitHub repositories without the topic. Details resolve the current commit and latest published release assets; direct source ZIP and release links remain available when a manifest is absent. A generic download is not registered as an installed SDK extension. No LLM is involved.

@@ -62,40 +62,66 @@ async fn load(client:&reqwest::Client,repo:&str,commit:&str)->Result<Manifest,St
     let url=reqwest::Url::parse(&format!("https://raw.githubusercontent.com/{repo}/{commit}/dominion-plugin.json")).map_err(|e|e.to_string())?;
     parse(repo,read(client,url,16384).await?)
 }
+fn card(row:&Value)->Option<Value>{
+    let repo=row["full_name"].as_str().filter(|s|repository_ok(s))?;
+    if row["private"]!=false{return None}
+    Some(json!({"repository":repo,"description":row["description"].as_str().unwrap_or("").chars().take(1000).collect::<String>(),
+        "stars":row["stargazers_count"].as_u64().unwrap_or(0),"url":format!("https://github.com/{repo}"),
+        "manifest":null,"detailsLoaded":false}))
+}
+fn release_asset(repo:&str,asset:&Value)->Option<Value>{
+    let name=asset["name"].as_str().filter(|s|text_ok(s,250))?;
+    let url=reqwest::Url::parse(asset["browser_download_url"].as_str()?).ok()?;
+    if url.scheme()!="https"||url.host_str()!=Some("github.com")||!url.username().is_empty()
+        ||url.password().is_some()||url.port().is_some()||!url.path().to_ascii_lowercase().starts_with(&format!("/{}/releases/download/",repo.to_ascii_lowercase())){return None}
+    Some(json!({"name":name,"url":url.as_str(),"size":asset["size"].as_u64()}))
+}
 async fn resolve(client:&reqwest::Client,repo:&str)->Result<Value,String>{
     if !repository_ok(repo){return Err("Invalid repository".into())}
     let row=read(client,github_url(&format!("repos/{repo}"))?,512*1024).await?;
-    if row["private"]!=false||row["full_name"].as_str().is_none_or(|s|!s.eq_ignore_ascii_case(repo)){
-        return Err("Only public repositories are supported".into())
-    }
+    if row["full_name"].as_str().is_none_or(|s|!s.eq_ignore_ascii_case(repo)){return Err("Repository identity changed".into())}
+    let mut item=card(&row).ok_or("Only public repositories are supported")?;
     let branch=row["default_branch"].as_str().filter(|s|!s.is_empty()&&s.len()<200).ok_or("No default branch")?;
     let mut url=github_url(&format!("repos/{repo}/commits/"))?;
     url.path_segments_mut().map_err(|_|"Invalid branch URL")?.pop_if_empty().push(branch);
     let commit=read(client,url,4*1024*1024).await?["sha"].as_str().filter(|s|hex(s,40)).ok_or("Invalid commit")?.to_owned();
-    let m=load(client,repo,&commit).await?;
-    Ok(json!({"repository":repo,"commit":commit,"manifestDigest":digest(&m),"manifest":m,
-        "installId":install_id(repo),"url":format!("https://github.com/{repo}")}))
+    item["commit"]=json!(commit);
+    item["sourceDownload"]=json!(format!("https://github.com/{repo}/archive/{commit}.zip"));
+    item["detailsLoaded"]=json!(true);
+    match load(client,repo,&commit).await{
+        Ok(m)=>{item["manifestDigest"]=json!(digest(&m));item["manifest"]=json!(m);item["installId"]=json!(install_id(repo));}
+        Err(e)=>{item["manifestError"]=json!(e);}
+    }
+    match read(client,github_url(&format!("repos/{repo}/releases/latest"))?,2*1024*1024).await{
+        Ok(r)=>{
+            item["releaseTag"]=r["tag_name"].clone();
+            item["assets"]=json!(r["assets"].as_array().into_iter().flatten().filter_map(|a|release_asset(repo,a)).take(40).collect::<Vec<_>>());
+        }
+        Err(e)=>{item["assets"]=json!([]);if !e.contains("HTTP 404"){item["releaseError"]=json!(e);}}
+    }
+    Ok(item)
+}
+#[derive(Deserialize)]
+pub struct Details{repository:String}
+pub async fn details(Query(input):Query<Details>)->Response{
+    let result=async{resolve(&client()?,input.repository.trim()).await}.await;
+    match result{Ok(v)=>Json(v).into_response(),Err(e)=>error(StatusCode::BAD_GATEWAY,&e)}
 }
 pub async fn search(Query(input):Query<Search>)->Response{
     let result:Result<Value,String>=async{
         let q=input.q.as_deref().unwrap_or("").trim();
         if q.len()>160||q.chars().any(char::is_control){return Err("Invalid search".into())}
         let client=client()?;
-        if repository_ok(q){
-            return Ok(json!({"items":[resolve(&client,q).await?],"errors":[]}))
-        }
-        // Quote free-form words so no user-supplied qualifier can override the topic.
+        let repo=q.strip_prefix("https://github.com/").unwrap_or(q).trim_end_matches('/');
+        if repository_ok(repo){return Ok(json!({"items":[resolve(&client,repo).await?],"errors":[]}))}
         let safe=q.replace(['"','\\',':']," ");
-        let query=format!("topic:dominion-plugin archived:false {}",safe.split_whitespace().map(|w|format!("\"{w}\"")).collect::<Vec<_>>().join(" "));
+        let words=safe.split_whitespace().map(|w|format!("\"{w}\"")).collect::<Vec<_>>().join(" ");
+        let query=if words.is_empty(){"topic:dominion-plugin archived:false".into()}else{format!("archived:false {words}")};
         let mut url=github_url("search/repositories")?;
-        url.query_pairs_mut().append_pair("q",&query).append_pair("per_page","8");
-        let rows=read(&client,url,2*1024*1024).await?;
-        let repos=rows["items"].as_array().ok_or("Invalid GitHub search response")?.iter()
-            .filter(|r|r["private"]==false).filter_map(|r|r["full_name"].as_str()).filter(|s|repository_ok(s)).take(8).collect::<Vec<_>>();
-        let results=futures_util::future::join_all(repos.iter().map(|repo|{let client=&client;async move{(*repo,resolve(client,repo).await)}})).await;
-        let mut items=vec![];let mut errors=vec![];
-        for (repo,r) in results{match r{Ok(v)=>items.push(v),Err(e)=>errors.push(json!({"repository":repo,"message":e}))}}
-        Ok(json!({"items":items,"errors":errors}))
+        url.query_pairs_mut().append_pair("q",&query).append_pair("per_page","30");
+        let rows=read(&client,url,4*1024*1024).await?;
+        let items=rows["items"].as_array().ok_or("Invalid GitHub search response")?.iter().filter_map(card).collect::<Vec<_>>();
+        Ok(json!({"items":items,"errors":[]}))
     }.await;
     match result{Ok(v)=>Json(v).into_response(),Err(e)=>error(StatusCode::BAD_GATEWAY,&e)}
 }

@@ -79,7 +79,7 @@ pub fn resource_key(tool: &str, arguments: &Value) -> Option<String> {
                 .map(normalize_path)
                 .unwrap_or_else(|| "default".into())
         )),
-        tool if tool.starts_with("mcp__") => {
+        tool if crate::integrations::registry::is_external(tool) => {
             let target = ["key", "id", "path", "resource"]
                 .iter()
                 .find_map(|key| arguments[*key].as_str())
@@ -124,7 +124,7 @@ fn is_read(tool: &str, arguments: &Value) -> bool {
     if tool == "github_api" {
         return !is_effectful(tool, arguments);
     }
-    if tool.starts_with("mcp__") {
+    if crate::integrations::registry::is_external(tool) {
         let lower = tool.to_ascii_lowercase();
         return ["read", "get", "list", "search", "inspect"]
             .iter()
@@ -147,12 +147,12 @@ fn replay_is_safe(tool: &str) -> bool {
 }
 
 /// Only tools whose target can be observed again are allowed to block a retry.
-/// File writes are idempotent; shell effects are opaque; API and MCP mutations
+/// File writes are idempotent; shell effects are opaque; API and external-tool mutations
 /// expose a resource that an observation can resolve.
 fn gated(tool: &str, arguments: &Value) -> bool {
     is_effectful(tool, arguments)
         && (tool == "github_api"
-            || tool.starts_with("mcp__")
+            || crate::integrations::registry::is_external(tool)
             || tool.contains("http_request"))
 }
 

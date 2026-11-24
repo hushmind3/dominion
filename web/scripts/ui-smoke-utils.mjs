@@ -109,6 +109,8 @@ function fixture() {
   if(p==='/api/mcp/presets')return ok(route,[])
   if(p==='/api/mcp/catalog')return ok(route,[{name:'Parallel MCP 2.0',description:'2026 web search and fetching',url:'https://mcp.parallel.ai/mcp'}])
   if(p==='/api/plugins/managed')return ok(route,{available:true,items:db.plugins})
+  if(p==='/api/plugins/market')return ok(route,{items:[{repository:'example/fixture',description:'Fixture extension',stars:12,url:'https://github.com/example/fixture',detailsLoaded:false}],errors:[]})
+  if(p==='/api/plugins/market/details')return ok(route,{repository:'example/fixture',description:'Fixture extension',stars:12,url:'https://github.com/example/fixture',detailsLoaded:true,sourceDownload:'https://github.com/example/fixture/archive/abc.zip',assets:[{name:'fixture.zip',url:'https://github.com/example/fixture/releases/download/v1/fixture.zip',size:1234}]})
   if(p==='/api/plugins/search')return ok(route,{items:[{id:'npm:voice-fixture',source:'npm',name:'voice-fixture',kind:'package',version:'1.0.0',description:'Voice fixture',license:'MIT',url:'https://www.npmjs.com/package/voice-fixture',compatibility:'unverified'}],errors:[],pypiMode:'exact_name',searchOnly:true})
   if(p==='/api/skill-catalog')return ok(route,{items:[],total:0,updatedAt:''})
   if(p==='/api/model-library/runtime')return ok(route,{status:'idle'})
