@@ -9,6 +9,8 @@ const origin='https://dominion-cloud.dominion-hushmind.workers.dev';
 const callback=origin+'/v1/assistant/auth/callback';
 const routes=new Set(['history','phone','send','cancel','profile','attachment','phone/start','phone/stop','voice/start','voice/stop']);
 const reads=new Set(['history','phone']);
+const readRoute=r=>reads.has(r)||typeof r==='string'&&/^attachment\/[a-f0-9]{64}$/.test(r);
+const validRoute=r=>routes.has(r)||readRoute(r);
 const page=(ok)=>new Response('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>DOMINION</title><h1>'+(ok?'로그인 완료':'로그인 실패')+'</h1><p>DOMINION 앱으로 돌아가세요.</p>',{status:ok?200:400,headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer','content-security-policy':"default-src 'none'; frame-ancestors 'none'"}});
 const cookie=(v,age=600)=>'dominion_assistant_oauth='+v+'; Secure; HttpOnly; SameSite=Lax; Path=/v1/assistant/auth/; Max-Age='+age;
 async function body(req,limit=950000){
@@ -73,9 +75,14 @@ async function auth(req,env,path,verifyGoogle){
   const ph=await hash(b.poll_token),row=await env.DB.prepare('SELECT status,account_id,session_until,expires_at FROM assistant_login WHERE id=? AND poll_hash=?').bind(b.id,ph).first();
   if(!row||row.expires_at<=now())return err('Login expired',410);
   if(row.status==='failed')return err('Google login failed',400);
-  if(row.status!=='verified')return out({status:'waiting'});
+  if(!['verified','issued'].includes(row.status))return out({status:'waiting'});
   const token=await hash('dominion-assistant-session:'+b.id+':'+b.poll_token);
-  await env.DB.prepare('INSERT OR IGNORE INTO sessions(token_hash,account_id,expires_at) VALUES(?,?,?)').bind(await hash(token),row.account_id,row.session_until).run();
+  await env.DB.batch([
+   env.DB.prepare("INSERT OR IGNORE INTO sessions(token_hash,account_id,expires_at) SELECT ?,account_id,session_until FROM assistant_login WHERE id=? AND poll_hash=? AND status='verified' AND expires_at>?").bind(await hash(token),b.id,ph,now()),
+   env.DB.prepare("UPDATE assistant_login SET status='issued' WHERE id=? AND poll_hash=? AND status='verified' AND expires_at>?").bind(b.id,ph,now())
+  ]);
+  const session=await env.DB.prepare('SELECT account_id FROM sessions WHERE token_hash=? AND expires_at>?').bind(await hash(token),now()).first();
+  if(!session||session.account_id!==row.account_id)return err('Login session revoked',401);
   return out({status:'done',token,account_id:row.account_id,expires_in:row.session_until-now()});
  }
  return err('Not found',404);
@@ -128,11 +135,16 @@ export async function assistantRoute(req,env,{account,verifyGoogle}){
   const inserted=await env.DB.prepare("INSERT OR IGNORE INTO assistant_devices(id,account_id,name,token_hash,last_seen,revoked) SELECT ?,?,?,?,?,0 WHERE (SELECT COUNT(*) FROM assistant_devices WHERE account_id=? AND revoked=0)<10").bind(id,user.id,b.name.trim(),th,now(),user.id).run();
   return inserted.meta.changes===1?out({id,account_id:user.id},201):err('Device limit or duplicate',409);
  }
+ if(path==='logout'){
+  const token=/^Bearer ([A-Za-z0-9_-]{32,})$/.exec(req.headers.get('authorization')||'')?.[1];
+  if(token)await env.DB.prepare('DELETE FROM sessions WHERE token_hash=? AND account_id=?').bind(await hash(token),user.id).run();
+  return out({ok:true});
+ }
  if(path==='revoke'){
   if(!uuid(b.deviceId))return err('Invalid device');await env.DB.prepare('UPDATE assistant_devices SET revoked=1 WHERE id=? AND account_id=?').bind(b.deviceId,user.id).run();return out({ok:true});
  }
  if(path==='rpc'){
-  if(!uuid(b.deviceId)||!uuid(b.id)||!routes.has(b.route)||(reads.has(b.route)?b.body!==null:!b.body||typeof b.body!=='object'||Array.isArray(b.body)))return err('Invalid operation');
+  if(!uuid(b.deviceId)||!uuid(b.id)||!validRoute(b.route)||(readRoute(b.route)?b.body!==null:!b.body||typeof b.body!=='object'||Array.isArray(b.body)))return err('Invalid operation');
   const d=await env.DB.prepare('SELECT id,last_seen FROM assistant_devices WHERE id=? AND account_id=? AND revoked=0').bind(b.deviceId,user.id).first();
   if(!d)return err('Device not found',404);
   const payload=JSON.stringify(b.body);if(size(payload)>850000)return err('Attachment or request too large',413);
