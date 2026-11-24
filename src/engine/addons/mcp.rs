@@ -4,16 +4,17 @@ use crate::state::AppState;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::path::Path;
+use dominion_agent_sdk::mcp_stdio::StdioSession;
+#[cfg(test)]
+use dominion_agent_sdk::mcp_stdio::read_stdio_frame;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool,Ordering};
 use tokio::sync::Mutex as AsyncMutex;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+#[cfg(test)]
+use tokio::io::{AsyncWriteExt,BufReader};
 
 const CACHE_TTL: Duration = Duration::from_secs(120);
-const MAX_STDIO_FRAME_BYTES:usize=4*1024*1024;
 
 #[derive(Clone)]
 pub struct McpTool {
@@ -22,30 +23,6 @@ pub struct McpTool {
     pub tool: String,
     pub description: String,
     pub schema: Value,
-}
-
-/// Read one newline-delimited MCP frame without allowing a child process to
-/// grow memory without bound. Returns `None` only for EOF before any bytes.
-async fn read_stdio_frame<R:AsyncBufRead+Unpin>(
-    reader:&mut R,max_bytes:usize,
-)->std::io::Result<Option<Vec<u8>>>{
-    let mut frame=Vec::new();
-    loop{
-        let available=reader.fill_buf().await?;
-        if available.is_empty(){
-            return if frame.is_empty(){Ok(None)}else{Ok(Some(frame))};
-        }
-        let count=available.iter().position(|byte|*byte==b'\n')
-            .map(|index|index+1).unwrap_or(available.len());
-        if frame.len().saturating_add(count)>max_bytes{
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData,
-                format!("MCP stdio frame exceeds {max_bytes} bytes")));
-        }
-        let ended=available[count-1]==b'\n';
-        frame.extend_from_slice(&available[..count]);
-        reader.consume(count);
-        if ended{return Ok(Some(frame));}
-    }
 }
 
 impl McpTool {
@@ -173,7 +150,7 @@ async fn list_server(state: &AppState, server: &Value, server_slug:&str) -> Resu
         http_request(state,server,"tools/list",json!({})).await?
     } else {
         let mut session = StdioSession::open(server, &state.config.workspace).await?;
-        let result = session.request("tools/list", json!({})).await;
+        let result = session.list_tools().await;
         drop(session);
         result?
     };
@@ -291,132 +268,6 @@ pub async fn call(state: &AppState, qualified: &str, args: &Value) -> Result<Val
 }
 
 // ------------------------------------------------------------------ stdio
-
-struct StdioSession {
-    _child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    next_id: u64,
-}
-
-impl StdioSession {
-    async fn open(record: &Value, workspace: &Path) -> Result<Self, String> {
-        let command = record
-            .get("command")
-            .and_then(|value| value.as_str())
-            .filter(|value| !value.is_empty())
-            .ok_or("MCP stdio 서버에 command 가 없습니다.")?;
-        let args = record
-            .get("args")
-            .and_then(|value| value.as_array())
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| item.as_str().map(str::to_string))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-
-        let mut child = Command::new(command);
-        child
-            .args(&args)
-            .current_dir(workspace)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            // Stderr is diagnostic output, never protocol data. Piping it
-            // without draining lets a noisy child block once the pipe fills.
-            .stderr(std::process::Stdio::null())
-            .kill_on_drop(true);
-        if let Some(env) = record.get("env").and_then(|value| value.as_object()) {
-            for (key, value) in env {
-                if let Some(value) = value.as_str() {
-                    child.env(key, value);
-                }
-            }
-        }
-
-        let mut child = child
-            .spawn()
-            .map_err(|error| format!("MCP 서버 실행 실패 ({command}): {error}"))?;
-        let stdin = child.stdin.take().ok_or("MCP stdin 을 열 수 없습니다.")?;
-        let stdout = child.stdout.take().ok_or("MCP stdout 을 열 수 없습니다.")?;
-        let mut session = Self {
-            _child: child,
-            stdin,
-            stdout: BufReader::new(stdout),
-            next_id: 1,
-        };
-        session
-            .request(
-                "initialize",
-                json!({
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": { "name": "dominion-rust", "version": env!("CARGO_PKG_VERSION") }
-                }),
-            )
-            .await?;
-        session
-            .notify("notifications/initialized", json!({}))
-            .await?;
-        Ok(session)
-    }
-
-    async fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
-        let payload = json!({ "jsonrpc": "2.0", "method": method, "params": params });
-        self.send(&payload).await
-    }
-
-    async fn send(&mut self, payload: &Value) -> Result<(), String> {
-        let mut frame=serde_json::to_vec(payload).map_err(|error|error.to_string())?;
-        if frame.len()>MAX_STDIO_FRAME_BYTES{
-            return Err(format!("MCP stdio request exceeds {MAX_STDIO_FRAME_BYTES} bytes"));
-        }
-        frame.push(b'\n');
-        self.stdin
-            .write_all(&frame)
-            .await
-            .map_err(|error| error.to_string())?;
-        self.stdin.flush().await.map_err(|error| error.to_string())
-    }
-
-    async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
-        let id = self.next_id;
-        self.next_id += 1;
-        let payload = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        });
-        self.send(&payload).await?;
-
-        loop {
-            let frame=tokio::time::timeout(Duration::from_secs(40),
-                read_stdio_frame(&mut self.stdout,MAX_STDIO_FRAME_BYTES))
-                .await.map_err(|_|format!("MCP 응답 시간 초과: {method}"))?
-                .map_err(|error|error.to_string())?;
-            let Some(frame)=frame else{
-                return Err("MCP 서버가 응답 없이 종료되었습니다.".into());
-            };
-            let line=String::from_utf8(frame).map_err(|error|error.to_string())?;
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
-                continue;
-            };
-            if value.get("id").and_then(|item| item.as_u64()) != Some(id) {
-                continue;
-            }
-            if let Some(error) = value.get("error") {
-                return Err(format!("MCP 오류: {error}"));
-            }
-            return Ok(value.get("result").cloned().unwrap_or_else(|| json!({})));
-        }
-    }
-}
 
 // ------------------------------------------------------------------- http
 

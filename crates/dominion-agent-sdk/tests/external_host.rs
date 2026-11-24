@@ -164,3 +164,22 @@ async fn extension_registration_executes_only_granted_tools_and_supports_removal
     assert!(provider.catalog_sizes.is_empty(),"stale grant rejected before model request");
     assert_eq!(count.get(),1);
 }
+
+#[tokio::test]
+async fn standalone_sdk_connects_real_stdio_process_and_dispatches_through_harness(){
+    use dominion_agent_sdk::extensions::ExtensionRegistry;
+    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixture=root.join("scripts/mcp-echo-server.mjs").canonicalize().unwrap();
+    let config=json!({"command":"node","args":[fixture]});
+    let mut registry=ExtensionRegistry::new();
+    let grants=registry.register_mcp_stdio("echo",&config,&root).await.unwrap();
+    assert_eq!(grants,vec!["ext__echo__echo"]);
+    let mut provider=model("ext__echo__echo");
+    let mut history=vec![json!({"role":"user","content":"echo hello"})];
+    let mut algorithm=select_named(Some("react"),false);
+    let result=registry.execute(&mut algorithm,&mut provider,&mut history,&grants,enabled()).await.unwrap();
+    assert_eq!(result.response,"finished");
+    assert!(json!(history).to_string().contains("MCP_ECHO:"));
+    assert!(registry.unregister("echo"));
+    assert!(registry.names().is_empty());
+}
