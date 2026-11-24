@@ -19,20 +19,30 @@ pub fn sources(state:&AppState)->Vec<String>{
     }
     urls
 }
-pub async fn save_sources(state:&AppState,urls:Vec<String>)->Result<Value,String>{
+pub fn github_enabled(state:&AppState)->bool{
+    state.store.get(SOURCES,"catalog").and_then(|v|v["githubDiscovery"].as_bool()).unwrap_or(true)
+}
+pub fn settings(state:&AppState)->Value{
+    json!({"urls":sources(state),"githubDiscovery":github_enabled(state)})
+}
+pub async fn save_sources(state:&AppState,urls:Vec<String>,github_discovery:Option<bool>)->Result<Value,String>{
     let _guard=LIFECYCLE.lock().await;
     if urls.len()>5{return Err("maximum 5 extension registries".into());}
     let mut unique=Vec::new();
     for url in urls{packages::validate_url(&url)?;if !unique.contains(&url){unique.push(url)}}
-    state.store.put(SOURCES,&json!({"id":"catalog","urls":unique})).ok_or("cannot save registries")?;
-    Ok(json!({"urls":sources(state)}))
+    let enabled=github_discovery.unwrap_or_else(||github_enabled(state));
+    state.store.put(SOURCES,&json!({"id":"catalog","urls":unique,"githubDiscovery":enabled})).ok_or("cannot save registries")?;
+    Ok(settings(state))
 }
 pub fn list(state:&AppState)->Vec<Value>{state.store.all(KIND)}
 pub async fn search(state:&AppState,q:&str)->Value{
     let q=q.trim().to_lowercase();let mut items=Vec::new();let mut errors=Vec::new();
     // Separate bounded requests, no installer or process is launched on search.
     let urls=sources(state);
-    let results=futures_util::future::join_all(urls.iter().map(|source|packages::catalog(source))).await;
+    let (results,public)=tokio::join!(
+        futures_util::future::join_all(urls.iter().map(|source|packages::catalog(source))),
+        async{if github_enabled(state){Some(packages::github_catalog::search(&q).await)}else{None}}
+    );
     for (source,result) in urls.iter().zip(results){
         match result{
             Ok(rows)=>for m in rows{
@@ -43,18 +53,38 @@ pub async fn search(state:&AppState,q:&str)->Value{
             Err(error)=>errors.push(json!({"source":source,"error":error}))
         }
     }
+    if let Some(public)=public{
+        match public{
+            Ok(rows)=>for (source,result) in rows{
+                match result{
+                    Ok(m) if items.len()<200=>items.push(json!({"manifest":m,"source":source,"revision":packages::revision(&m),"compatible":m.compatible()})),
+                    Ok(_)=>{},
+                    Err(error)=>errors.push(json!({"source":source,"error":error})),
+                }
+            },
+            Err(error)=>errors.push(json!({"source":"GitHub","error":error}))
+        }
+    }
+    // A catalog may duplicate a package; never silently merge distinct publishers.
+    let mut seen=std::collections::HashSet::new();
+    items.retain(|row|seen.insert((row["source"].to_string(),row["revision"].to_string())));
     json!({"items":items,"errors":errors})
 }
 pub async fn install(state:&AppState,source:&str,requested:Manifest)->Result<Value,String>{
     let _guard=LIFECYCLE.lock().await;
     requested.validate()?;
-    if !sources(state).iter().any(|s|s==source){return Err("extension registry not configured".into());}
-    if !packages::catalog(source).await?.iter().any(|m|m==&requested){return Err("catalog changed; search and review again".into());}
+    let unchanged=if packages::github_catalog::is_source(source){
+        if !github_enabled(state){return Err("public repository discovery disabled".into());}
+        packages::github_catalog::resolve(source).await?==requested
+    }else{
+        if !sources(state).iter().any(|s|s==source){return Err("extension registry not configured".into());}
+        packages::catalog(source).await?.iter().any(|m|m==&requested)
+    };
+    if !unchanged{return Err("catalog changed; search and review again".into());}
     let old=state.store.get(KIND,&requested.id);
     if let Some(row)=&old{
         if row["source"].as_str()!=Some(source){return Err("extension identity belongs to a different registry".into());}
-        if row["manifest"]==json!(requested){
-            packages::check(&root(state),&requested).await?;
+        if row["manifest"]==json!(requested)&&packages::check(&root(state),&requested).await.is_ok(){
             return Ok(row.clone());
         }
     }

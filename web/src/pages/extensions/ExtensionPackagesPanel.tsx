@@ -10,16 +10,17 @@ type Installed={id:string;manifest:Manifest;source:string;revision:string;enable
 type Results={items:Entry[];errors:{source:string;error:string}[]}
 export function ExtensionPackagesPanel(){
  const en=useLocale()==='en'
- const sources=useRemote<{urls:string[]}>('/api/extensions/registries',{urls:[]},false)
+ const sources=useRemote<{urls:string[];githubDiscovery:boolean}>('/api/extensions/registries',{urls:[],githubDiscovery:true},false)
  const installed=useRemote<Installed[]>('/api/extensions',[])
  const [sourceText,setSourceText]=useState('')
+ const [githubDiscovery,setGithubDiscovery]=useState(true)
  const [query,setQuery]=useState('')
  const [results,setResults]=useState<Results>({items:[],errors:[]})
  const [busy,setBusy]=useState('')
  const [error,setError]=useState('')
  const [notice,setNotice]=useState('')
  const [searched,setSearched]=useState(false)
- useEffect(()=>{if(!sources.loading&&!sources.error)setSourceText(sources.value.urls.join('\n'))},[sources.value,sources.loading,sources.error])
+ useEffect(()=>{if(!sources.loading&&!sources.error){setSourceText(sources.value.urls.join('\n'));setGithubDiscovery(sources.value.githubDiscovery!==false)}},[sources.value,sources.loading,sources.error])
  const run=async(key:string,fn:()=>Promise<void>)=>{
   if(busy)return
   setBusy(key);setError('');setNotice('')
@@ -30,7 +31,7 @@ export function ExtensionPackagesPanel(){
   setResults(next);setSearched(true)
  })
  const save=()=>run('sources',async()=>{
-  await post('/api/extensions/registries',{urls:sourceText.split('\n').map(s=>s.trim()).filter(Boolean)})
+  await post('/api/extensions/registries',{urls:sourceText.split('\n').map(s=>s.trim()).filter(Boolean),githubDiscovery})
   await sources.reload();setResults({items:[],errors:[]});setSearched(false)
   setNotice(en?'Registry sources saved.':'레지스트리 주소를 저장했습니다.')
  })
@@ -58,18 +59,19 @@ export function ExtensionPackagesPanel(){
   <Notice message={error||sources.error||installed.error}/>
   {notice&&<p role="status" className="text-xs text-emerald-800">{notice}</p>}
   <Panel className="grid gap-3 p-4">
-   <details open={!sources.loading&&!sources.value.urls.length?true:undefined}>
-    <summary className="cursor-pointer text-sm font-semibold">{en?'Registry sources':'확장 레지스트리'} · {sources.value.urls.length}</summary>
-    <p className="my-2 text-xs text-[#7C7469]">{en?'Add trusted HTTPS registry JSON URLs, one per line. No public registry is bundled.':'신뢰하는 확장 레지스트리 JSON의 HTTPS 주소를 한 줄씩 입력하세요. 기본 공개 레지스트리는 아직 등록되어 있지 않습니다.'}</p>
+   <details>
+    <summary className="cursor-pointer text-sm font-semibold">{en?'Search sources':'검색 출처'} · {sources.value.urls.length+(sources.value.githubDiscovery?1:0)}</summary>
+    <label className="mt-3 flex items-center gap-2 text-xs"><input type="checkbox" checked={githubDiscovery} onChange={e=>setGithubDiscovery(e.target.checked)}/>{en?'Public GitHub repositories (dominion-extension topic)':'GitHub 공개 확장 검색 (dominion-extension 태그)'}</label>
+    <p className="my-2 text-xs text-[#7C7469]">{en?'Add optional trusted HTTPS registry JSON URLs, one per line.':'필요한 경우 신뢰하는 확장 레지스트리 JSON의 HTTPS 주소를 한 줄씩 입력하세요.'}</p>
     <TextArea rows={3} aria-label={en?'Registry URLs':'확장 레지스트리 주소'} value={sourceText} onChange={e=>setSourceText(e.target.value)} placeholder="https://example.com/dominion-registry.json"/>
     <Button disabled={Boolean(busy)||sources.loading} onClick={()=>void save()}>{en?'Save sources':'주소 저장'}</Button>
    </details>
    <form className="flex items-center gap-2" onSubmit={e=>{e.preventDefault();void search()}}>
     <Search size={17}/><TextInput aria-label={en?'Search extensions':'확장 프로그램 검색'} value={query} maxLength={256} onChange={e=>setQuery(e.target.value)} placeholder={en?'Search by name or capability':'이름 또는 기능 검색'}/>
-    <Button type="submit" disabled={Boolean(busy)||!sources.value.urls.length}>{busy==='search'?(en?'Searching…':'검색 중…'):(en?'Search':'검색')}</Button>
+    <Button type="submit" disabled={Boolean(busy)||sources.loading||Boolean(sources.error)||(!sources.value.githubDiscovery&&!sources.value.urls.length)}>{busy==='search'?(en?'Searching…':'검색 중…'):(en?'Search':'검색')}</Button>
    </form>
    {results.errors.map((e,i)=><p key={i} role="alert" className="break-all text-xs text-rose-700">{e.source}: {e.error}</p>)}
-   {searched&&!results.items.length&&<p className="text-xs text-[#7C7469]">{en?'No matching compatible registry entries.':'검색 결과가 없습니다.'}</p>}
+   {searched&&!results.items.length&&<p className="text-xs text-[#7C7469]">{results.errors.length?(en?'No results from successful sources. Review source errors.':'정상 응답 출처의 검색 결과가 없습니다. 출처 오류를 확인하세요.'):(en?'No published extensions matched.':'검색 조건에 맞는 공개 확장이 없습니다.')}</p>}
    <div className="grid gap-2">{results.items.map(row=>{
     const m=row.manifest,existing=byId.get(m.id)
     const same=existing?.revision===row.revision

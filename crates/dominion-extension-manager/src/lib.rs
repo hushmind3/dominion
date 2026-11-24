@@ -5,6 +5,7 @@ use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
 use std::{path::{Path,PathBuf},process::Stdio,time::Duration};
 use tokio::io::{AsyncReadExt,AsyncWriteExt};
+pub mod github_catalog;
 const MAX_ARTIFACT:usize=64*1024*1024;
 const MAX_INDEX:usize=2*1024*1024;
 const MAX_OUTPUT:usize=1024*1024;
@@ -15,7 +16,7 @@ pub fn validate_url(raw:&str)->Result<reqwest::Url,String>{
     Ok(url)
 }
 async fn fetch(raw:&str,limit:usize)->Result<Vec<u8>,String>{
-    let client=reqwest::Client::builder().timeout(Duration::from_secs(25))
+    let client=reqwest::Client::builder().user_agent("DOMINION-Extension-Manager/1").timeout(Duration::from_secs(25))
       .redirect(reqwest::redirect::Policy::custom(|a|{if a.previous().len()>=5||a.url().scheme()!="https"||!a.url().username().is_empty()||a.url().password().is_some(){a.error("invalid redirect")}else{a.follow()}}))
       .build().map_err(|_|"extension network client unavailable")?;
     let mut response=client.get(validate_url(raw)?).send().await.map_err(|_|"extension download unavailable")?.error_for_status().map_err(|_|"extension HTTP error")?;
@@ -28,7 +29,10 @@ async fn fetch(raw:&str,limit:usize)->Result<Vec<u8>,String>{
     Ok(bytes)
 }
 pub async fn catalog(url:&str)->Result<Vec<Manifest>,String>{
-    let data:Value=serde_json::from_slice(&fetch(url,MAX_INDEX).await?).map_err(|_|"invalid registry JSON")?;
+    parse_catalog(&fetch(url,MAX_INDEX).await?)
+}
+fn parse_catalog(bytes:&[u8])->Result<Vec<Manifest>,String>{
+    let data:Value=serde_json::from_slice(bytes).map_err(|_|"invalid registry JSON")?;
     if data["schemaVersion"]!=1{return Err("unsupported extension registry version".into());}
     let items=data["items"].as_array().ok_or("registry items missing")?;
     if items.len()>1000{return Err("registry exceeds 1000 entries".into());}
@@ -49,7 +53,8 @@ pub async fn install(root:&Path,m:&Manifest)->Result<(),String>{
     install_bytes(root,m,&fetch(&m.artifact.url,MAX_ARTIFACT).await?).await
 }
 async fn install_bytes(root:&Path,m:&Manifest,bytes:&[u8])->Result<(),String>{
-    m.validate()?;if !verified(m,bytes){return Err("extension SHA-256 verification failed".into());}
+    m.validate()?;if !m.compatible(){return Err("extension platform mismatch".into());}
+    if !verified(m,bytes){return Err("extension SHA-256 verification failed".into());}
     let path=entry_path(root,m);let dir=path.parent().ok_or("invalid extension path")?;
     tokio::fs::create_dir_all(dir).await.map_err(|e|e.to_string())?;
     let temporary=dir.join(format!(".install-{}",uuid::Uuid::new_v4()));

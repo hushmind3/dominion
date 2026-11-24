@@ -6,12 +6,12 @@ use serde::Deserialize;
 use serde_json::{json,Value};
 use super::response::error;
 #[derive(Deserialize)] pub struct Search{#[serde(default)] q:String}
-#[derive(Deserialize)] pub struct Sources{urls:Vec<String>}
+#[derive(Deserialize)] pub struct Sources{urls:Vec<String>,#[serde(rename="githubDiscovery")] github_discovery:Option<bool>}
 #[derive(Deserialize)] pub struct Install{source:String,manifest:Manifest,confirmed:bool}
 #[derive(Deserialize)] pub struct Enable{enabled:bool,#[serde(default)] confirmed:bool}
 fn result(value:Result<Value,String>)->Response{match value{Ok(v)=>Json(v).into_response(),Err(e)=>error(StatusCode::BAD_REQUEST,&e)}}
-pub async fn sources(State(state):State<AppState>)->Json<Value>{Json(json!({"urls":manager::sources(&state)}))}
-pub async fn save_sources(State(state):State<AppState>,Json(input):Json<Sources>)->Response{result(manager::save_sources(&state,input.urls).await)}
+pub async fn sources(State(state):State<AppState>)->Json<Value>{Json(manager::settings(&state))}
+pub async fn save_sources(State(state):State<AppState>,Json(input):Json<Sources>)->Response{result(manager::save_sources(&state,input.urls,input.github_discovery).await)}
 pub async fn catalog(State(state):State<AppState>,Query(input):Query<Search>)->Response{
     if input.q.chars().count()>256{return error(StatusCode::BAD_REQUEST,"search query too long");}
     Json(manager::search(&state,&input.q).await).into_response()

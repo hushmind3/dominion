@@ -32,4 +32,13 @@ the same tool discovery, approvals and receipt pipeline. Ordinary chat remains
 tool-free. SDK panel runs opt in with extensionsEnabled separately from mcpEnabled.
 
 The registry and installed package APIs use /api/extensions/*, not /api/mcp/*.
-No actual public registry is bundled yet; a registry URL must be configured.
+Public repository discovery is enabled by default. Publish a public repository
+with topic `dominion-extension` and a root `dominion-extension.json` containing
+one Manifest object (the item inside the registry example above). Search uses
+the public GitHub repository API, then reads each matching manifest. It never
+installs arbitrary repositories, and requires review and exact manifest
+re-validation before downloading the SHA-256-pinned artifact. GitHub is an
+optional discovery adapter: disable it in Search sources and add independent
+HTTPS registries instead. No fake or built-in product listings are supplied.
+Public discovery is bounded to 20 repositories per query and can encounter
+public API rate limits; registry errors are shown separately from empty results.
