@@ -882,6 +882,10 @@ mod view_tests{
                 "id":"sdk-1","sessionId":"sdk-session","status":status
             }),&index);
             assert_eq!(viewed["status"],"in_doubt", "{status}");
+            assert_eq!(viewed["actions"]["resume"],false);
+            assert_eq!(viewed["actions"]["cancel"],status=="running");
+            assert_eq!(viewed["actions"]["reconcile"],status!="running");
+            assert_eq!(viewed["uncertainEffectCount"],1);
             assert_eq!(viewed["runRef"]["schemaVersion"],1);
             assert_eq!(viewed["runRef"]["executionId"],"execution-1");
             assert_eq!(viewed["runRef"]["lifecycle"],"interrupted");
@@ -896,6 +900,8 @@ mod view_tests{
             "id":"sdk-1","sessionId":"sdk-session","status":"interrupted"
         }),&clear);
         assert_eq!(resumable["status"],"interrupted");
+        assert_eq!(resumable["actions"]["resume"],true);
+        assert_eq!(resumable["actions"]["reconcile"],false);
         let _=std::fs::remove_dir_all(&state.config.data_dir);
     }
     #[test]
@@ -912,6 +918,8 @@ mod view_tests{
             "id":"sdk","sessionId":"s","status":"completed","verified":true
         }),&index);
         assert_eq!(row["status"],"completed");
+        assert_eq!(row["actions"]["approve"],false);
+        assert_eq!(row["actions"]["cancel"],false);
         let _=std::fs::remove_dir_all(state_root);
     }
     #[test]
