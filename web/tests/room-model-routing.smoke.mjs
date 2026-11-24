@@ -135,6 +135,7 @@ try{
  assert.equal(saved.models[0].providerId,'fixture');
  assert.equal(saved.models[0].model,'owner-picked-model');
  assert.equal(saved.models.length,1);
+ await page.getByRole('button',{name:'설정 닫기',exact:true}).click();
  assert.equal(await page.locator('.room-route-details').getAttribute('open'),null,'routing details are initially collapsed');
  await page.locator('.room-route-details > summary').click();
  const routes=await page.locator('.room-route-bar-items > span').allTextContents();
@@ -159,9 +160,7 @@ try{
  assert.ok(await page.getByText('recorded-model',{exact:true}).first().isVisible(),
   'each saved reply must expose its ACTUAL model, not just the configured route');
  // The configured model remains selectable when /models is not available.
- // The settings panel remains open after Save; close it before exercising
- // the visible per-Room model-change entry point.
- await page.getByRole('button',{name:'설정 닫기',exact:true}).click();
+ // The inspector is already closed above; use the visible model-change entry point.
  await page.getByRole('button',{name:'모델 변경',exact:true}).click();
  await page.getByLabel('모델 제공자 선택').selectOption('offline');
  await page.getByText('configured-only-model',{exact:true}).first()

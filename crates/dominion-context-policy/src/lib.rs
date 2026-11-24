@@ -15,6 +15,7 @@ struct Span{
     frame_bytes:usize,
     note:Option<Value>,
     mode:u8, // 0 ordinary, 1 full frame, 2 summary, 3 omit
+    priority:u8, // 0 ordinary, 1 failed, 2 uncertain external effect
 }
 
 fn narrow(text:&str,max:usize)->String{
@@ -50,16 +51,58 @@ fn completed_frame_end(messages:&[Value],start:usize)->Option<usize>{
     Some(end)
 }
 
+// Inspect typed outcomes, not arbitrary text such as a source file mentioning
+// "error". Unknown effects have priority over known failures and ordinary reads.
+fn outcome_priority(row:&Value)->u8{
+    fn priority(value:&Value)->u8{
+        if value["outcomeUnknown"]==true || value["effectUnknown"]==true
+            || matches!(value["status"].as_str(),Some("outcome_unknown"|"effect_unknown")){
+            return 2;
+        }
+        if value["ok"]==false || value["success"]==false || value["dispatched"]==false
+            || value["isError"]==true
+            || matches!(value["status"].as_str(),Some("failed"|"error"|"not_dispatched"|"cancelled"))
+            || value.get("error").is_some_and(|error|!error.is_null() && error!=false
+                && error.as_str()!=Some("")){
+            return 1;
+        }
+        0
+    }
+    let outer=priority(row);
+    let inner=match &row["content"]{
+        Value::String(text)=>serde_json::from_str::<Value>(text).ok()
+            .map(|parsed|priority(&parsed)).unwrap_or(0),
+        Value::Object(_)=>priority(&row["content"]),
+        _=>0,
+    };
+    outer.max(inner)
+}
+fn frame_priority(messages:&[Value],start:usize,end:usize)->u8{
+    messages[start+1..end].iter().map(outcome_priority).max().unwrap_or(0)
+}
+
 fn note(messages:&[Value],start:usize,end:usize)->Value{
     let assistant=&messages[start];
     let calls=assistant["tool_calls"].as_array().expect("completed tool group");
     let results=&messages[start+1..end];
     let mut lines=Vec::new();
+    let unknown=results.iter().filter(|row|outcome_priority(row)==2).count();
+    let failed=results.iter().filter(|row|outcome_priority(row)==1).count();
+    if unknown>0{
+        lines.push(format!("[outcome_unknown: {unknown}개] 외부 효과 발생 여부 불명. 원본 기록으로 확인하기 전 동일 효과를 재실행하지 마세요."));
+    }
+    if failed>0{
+        lines.push(format!("[failed_or_not_dispatched: {failed}개] 성공으로 간주하지 마세요."));
+    }
     let content=assistant["content"].as_str().unwrap_or("");
     if !content.trim().is_empty(){
         lines.push(format!("모델 설명: {}",narrow(content,160)));
     }
-    for call in calls.iter().take(8){
+    let mut ordered=calls.iter().collect::<Vec<_>>();
+    ordered.sort_by_key(|call|std::cmp::Reverse(results.iter()
+        .find(|row|row["tool_call_id"]==call["id"])
+        .map(outcome_priority).unwrap_or(0)));
+    for call in ordered.into_iter().take(8){
         let id=call["id"].as_str().unwrap_or("");
         let name=call["function"]["name"].as_str().unwrap_or("unknown");
         let raw=call["function"]["arguments"].as_str().unwrap_or("");
@@ -111,17 +154,25 @@ pub fn bounded_tool_trace(messages:&[Value],budget_bytes:usize)->Vec<Value>{
             let size=messages[cursor..end].iter()
                 .map(|row|row.to_string().len()).sum::<usize>();
             spans.push(Span{start:cursor,end,frame_bytes:size,
-                note:None,mode:1});
+                note:None,mode:1,priority:frame_priority(messages,cursor,end)});
             cursor=end;
         }else{
             spans.push(Span{start:cursor,end:cursor+1,frame_bytes:0,
-                note:None,mode:0});
+                note:None,mode:0,priority:0});
             cursor+=1;
         }
     }
     let mut remaining=budget_bytes.max(1024);
-    for span in spans.iter_mut().rev(){
-        if span.mode==0{continue;}
+    // The next model call needs the latest observation first. Remaining
+    // budget prioritizes unresolved effects and failures over older successes.
+    let mut order=(0..spans.len()).filter(|&index|spans[index].mode==1)
+        .collect::<Vec<_>>();
+    let latest=order.last().copied();
+    order.sort_by_key(|&index|std::cmp::Reverse((
+        Some(index)==latest,spans[index].priority,index
+    )));
+    for index in order{
+        let span=&mut spans[index];
         if span.frame_bytes<=remaining
             && (span.frame_bytes<=MAX_INLINE_FRAME_BYTES
                 || current_source_read(messages,span)){
@@ -156,22 +207,29 @@ pub fn bounded_tool_trace(messages:&[Value],budget_bytes:usize)->Vec<Value>{
 /// receipt; only the most recent relevant receipts enter the model context.
 /// Complete results and arguments remain in the durable original transcript.
 pub fn compact_historical(messages:&[Value],max_receipts:usize)->Vec<Value>{
-    let mut full=0usize;
+    let mut frames=Vec::new();
     let mut i=0usize;
     while i<messages.len(){
         if let Some(end)=completed_frame_end(messages,i){
-            full+=1;
+            frames.push((i,frame_priority(messages,i,end)));
             i=end;
         }else{i+=1;}
     }
-    let first_kept=full.saturating_sub(max_receipts);
-    let mut visited=0usize;
+    // Keep the newest receipt for continuity, then allocate remaining
+    // slots to unresolved effects, failures and finally ordinary results.
+    // Keep output chronological, even though selection is priority-based.
+    let latest=frames.last().map(|(start,_)|*start);
+    frames.sort_by_key(|&(start,priority)|std::cmp::Reverse((
+        Some(start)==latest,priority,start
+    )));
+    let kept=frames.into_iter().take(max_receipts)
+        .map(|(start,_)|start).collect::<HashSet<_>>();
     let mut omitted=false;
     let mut out=Vec::with_capacity(messages.len().min(32));
     i=0;
     while i<messages.len(){
         if let Some(end)=completed_frame_end(messages,i){
-            if visited>=first_kept{
+            if kept.contains(&i){
                 let mut summary=note(messages,i,end);
                 if let Some(source)=messages[i]["_dominion_frame"].as_str(){
                     summary["_dominion_frame"]=json!(source);
@@ -182,7 +240,6 @@ pub fn compact_historical(messages:&[Value],max_receipts:usize)->Vec<Value>{
                 out.push(json!({"role":"assistant",
                     "content":"[이전 도구 기록은 SQLite에 보존됨. 필요한 원문은 해당 파일 또는 출처를 다시 조회하세요.]" }));
             }
-            visited+=1;
             i=end;
             continue;
         }
@@ -309,6 +366,60 @@ mod tests{
         assert_eq!(wire.len(),2);
         assert_eq!(wire[1]["_dominion_trace_compacted"],true);
         assert!(!json!(wire).to_string().contains("LARGE_WRITE_CONTENT_LARGE_WRITE_CONTENT_"));
+    }
+    #[test]
+    fn historical_selection_preserves_uncertain_effect_before_ordinary_reads(){
+        let mut messages=vec![json!({"role":"user","content":"Finish task"})];
+        messages.extend(pair("unknown-write","workspace_write","{}",
+            r#"{"outcomeUnknown":true,"error":"connection lost"}"#));
+        for index in 0..6{
+            messages.extend(pair(&format!("read-{index}"),"workspace_read","{}","ordinary result"));
+        }
+        let original=messages.clone();
+        let wire=compact_historical(&messages,2);
+        let text=json!(wire).to_string();
+        assert!(text.contains("unknown-write"));
+        assert!(text.contains("[outcome_unknown: 1"));
+        assert!(text.contains("read-5"));
+        assert!(!text.contains("read-4"));
+        assert_eq!(messages,original);
+    }
+    #[test]
+    fn bounded_trace_spends_remaining_budget_on_failure_before_success(){
+        let mut messages=vec![json!({"role":"user","content":"Continue"})];
+        messages.extend(pair("uncertain-write","workspace_write","{}",
+            r#"{"status":"outcome_unknown","error":"connection lost"}"#));
+        for index in 0..8{
+            messages.extend(pair(&format!("read-{index}"),"workspace_read","{}",&"x".repeat(700)));
+        }
+        messages.extend(pair("latest","workspace_read","{}","next observation"));
+        let wire=bounded_tool_trace(&messages,1024);
+        let text=json!(wire).to_string();
+        assert!(text.contains("uncertain-write"),"{text}");
+        assert!(text.contains("latest"));
+        assert!(!text.contains("read-7"));
+        assert!(text.contains("outcome_unknown"));
+    }
+    #[test]
+    fn summary_prioritizes_uncertain_call_even_after_first_eight_batch_members(){
+        let calls=(0..12).map(|index|call(&format!("id-{index}"),"workspace_write","{}"))
+            .collect::<Vec<_>>();
+        let mut messages=vec![json!({"role":"assistant","tool_calls":calls})];
+        for index in 0..12{
+            messages.push(json!({"role":"tool","tool_call_id":format!("id-{index}"),
+                "content":if index==11{r#"{"effectUnknown":true}"#}else{r#"{"ok":true}"#}}));
+        }
+        let wire=compact_historical(&messages,1);
+        let summary=wire[0]["content"].as_str().unwrap();
+        assert!(summary.contains("[outcome_unknown: 1"));
+        assert!(summary.contains("id-11"));
+        assert!(!summary.contains("id-10"));
+    }
+    #[test]
+    fn source_text_mentioning_errors_is_not_mistaken_for_failed_execution(){
+        assert_eq!(outcome_priority(&json!({"content":"fn error() { panic!(); }"})),0);
+        assert_eq!(outcome_priority(&json!({"content":r#"{"ok":false,"error":"missing"}"#})),1);
+        assert_eq!(outcome_priority(&json!({"content":r#"{"ok":false,"outcomeUnknown":true}"#})),2);
     }
     #[test]
     fn incomplete_or_duplicated_tool_frames_are_never_rewritten(){
