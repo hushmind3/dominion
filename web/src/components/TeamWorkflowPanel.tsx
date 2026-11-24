@@ -4,6 +4,7 @@ import {get,post} from '../api'
 import {useLocale} from '../i18n'
 import {Panel,useRemote} from './UI'
 import {classifyTeamReview} from './teamOutcome'
+import {dependencyLevels} from '../utils/intelligenceView'
 
 type Job={
  id:string;kind?:string;status?:string;error?:string;result?:Record<string,unknown>|null;
@@ -121,6 +122,7 @@ function TeamCard({team,summary,onCreated,initiallyOpen=false,agentNames}:{team:
  const details=useRemote<TeamSteps>(open?'/api/jobs/'+encodeURIComponent(team.id)+'/team-steps':null,
   {teamId:team.id,jobs:[],missing:[]})
  const plan=team.input?.plan||[]
+ const graph=dependencyLevels(plan)
  const fresh=open&&!details.loading&&!details.error&&details.value.teamId===team.id
  const records=fresh?new Map(details.value.jobs.map(j=>[j.id,j])):summary
  const statuses=Object.fromEntries(plan.map(step=>[step.id,records.get(step.jobId)?.status||'unknown']))
@@ -184,6 +186,14 @@ function TeamCard({team,summary,onCreated,initiallyOpen=false,agentNames}:{team:
    {details.error&&<p role="alert" className="text-[11px] text-rose-700">{en?'Detailed Worker status could not be loaded':'Worker 상세 기록 조회 실패'}: {details.error}
     <button type="button" onClick={()=>void details.reload()} className="ml-2 underline">{en?'Retry':'다시 조회'}</button></p>}
    {fresh&&details.value.missing.length>0&&<p role="alert" className="text-[11px] text-rose-700">{en?'Missing or mismatched Worker records':'누락되거나 소유권이 일치하지 않는 Worker 기록'}: {details.value.missing.length}</p>}
+   {plan.length>0&&<section className="rounded-lg border border-[#E7E0D5] bg-white p-3 text-xs">
+    <strong>{en?'Dependency map':'작업 의존성 흐름'}</strong>
+    <div className="mt-2 space-y-2">{graph.levels.map((level,i)=><div key={i}>
+     {i>0&&<div className="mb-1 text-center text-[#8A8176]">↓</div>}
+     <div className="flex flex-wrap gap-2">{level.map(step=><div key={step.id} className={'min-w-28 flex-1 rounded-lg border p-2 '+stateClass(statuses[step.id])}>
+      <strong className="block break-all">{step.id} · {humanRole(step.profile,en)}</strong><span>{humanStatus(statuses[step.id],en)}</span><p className="break-all text-[10px]">{(step.dependsOn||[]).join(', ')||'—'}</p></div>)}</div></div>)}</div>
+    {graph.unresolved.length>0&&<p role="alert" className="mt-2 text-amber-800">{en?'Unresolved dependency records':'의존성 기록 확인 필요'}: {graph.unresolved.map(s=>s.id).join(', ')}</p>}
+   </section>}
    {plan.map((step,index)=><WorkerStep key={step.id} index={index} agentNames={agentNames} step={step} job={records.get(step.jobId)} ids={statuses} onCreated={onCreated}/>)}
    <p className="mt-2 text-[10px] text-[#8A8176]">{en?'States come from persisted Worker jobs; a completed step does not mean its patch was integrated.':'단계 상태는 저장된 Worker 기록 기준입니다. 완료된 단계가 패치 병합까지 뜻하지는 않습니다.'}</p>
    {team.error&&<p role="alert" className="text-[11px] text-rose-700">{team.error}</p>}

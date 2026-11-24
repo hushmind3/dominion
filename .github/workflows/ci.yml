@@ -247,6 +247,7 @@ jobs:
         run: |
           cargo test --locked --bin dominion-rust api::sdk::view_tests
           cargo test --locked --bin dominion-rust api::sdk_plugins::tests
+          cargo test --locked --bin dominion-rust api::executions::tests::decision_view_is_scoped_to_exact_native_execution
       - name: External inspection resume ownership guards (dev profile)
         run: cargo test --locked --bin dominion-rust api::jobs::external_resume_ui_tests
 

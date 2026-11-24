@@ -1,6 +1,7 @@
 import {formatDateTime} from '../../i18n'
 import {AlgorithmManager} from './AlgorithmManager'
 import {useState} from 'react'
+import {post} from '../../api'
 import {Button} from '../../components/Primitives'
 import {Notice,useRemote} from '../../components/UI'
 
@@ -98,14 +99,20 @@ export function LearningRecords(){
  const [source,setSource]=useState(0)
  const data=useRemote<any>(source===2?null:sources[source].endpoint,null)
  const [limit,setLimit]=useState(20)
+ const [busy,setBusy]=useState(false),[error,setError]=useState('')
+ const decide=async(id:string,action:'approve'|'reject')=>{
+  if(busy||!id||!window.confirm(action==='approve'?'이 개선안을 채택하시겠습니까?':'이 개선안을 거절하시겠습니까?'))return
+  setBusy(true);setError('');try{await post('/api/improvements/'+encodeURIComponent(id)+'/'+action,{});await data.reload()}catch(e){setError((e as Error).message)}finally{setBusy(false)}
+ }
  const rows=normalize(source,data.value)
  return <div className="mt-3 grid gap-2">
   <div className="flex flex-wrap gap-2">{sources.map((item,i)=><Button key={item.label} variant={source===i?'primary':'ghost'} onClick={()=>{setSource(i);setLimit(20)}}>{item.label}</Button>)}</div>
   {source===2?<AlgorithmManager/>:<>
-  <Notice message={data.error}/>
+  <Notice message={error||data.error}/>
   {data.loading?<p>기록을 불러오는 중…</p>:!data.error&&!rows.length?<p>저장된 기록이 없습니다.</p>:rows.slice(0,limit).map(row=><details key={row.key} className="rounded-lg border border-[#EFE9DF] p-2">
    <summary className="cursor-pointer text-sm"><strong>{row.title}</strong>{row.subtitle&&<span className="text-[#7C7469]"> · {row.subtitle}</span>}{row.tags.map(tag=><span key={tag} className="ml-2 rounded bg-[#F7E8E1] px-1.5 py-0.5 text-[10px] font-semibold text-[#A94E30]">{tag}</span>)}</summary>
    {row.facts.length>0&&<dl className="mt-2 grid grid-cols-1 gap-1 text-xs sm:grid-cols-[9rem_minmax(0,1fr)]">{row.facts.map(([label,value])=><div key={label} className="contents"><dt className="font-semibold text-[#7C7469]">{label}</dt><dd className="break-all text-[#4A443C]">{value}</dd></div>)}</dl>}
+   {source===1&&row.raw.status==='proposed'&&typeof row.raw.id==='string'&&<div className="mt-2 flex gap-2"><Button size="sm" disabled={busy||!!data.error} onClick={()=>void decide(row.raw.id,'approve')}>채택</Button><Button size="sm" variant="danger" disabled={busy||!!data.error} onClick={()=>void decide(row.raw.id,'reject')}>거절</Button></div>}
    <details className="mt-2 text-xs text-[#5C544A]"><summary className="cursor-pointer">원본 JSON</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(row.raw,null,2)}</pre></details>
   </details>)}
   {rows.length>limit&&<Button variant="secondary" onClick={()=>setLimit(n=>n+20)}>더 보기</Button>}

@@ -1,9 +1,9 @@
 import {useState} from 'react'
-import {Button,SelectInput} from '../../components/Primitives'
+import {Button,SelectInput,TextInput,TextArea} from '../../components/Primitives'
 import {Notice,useRemote} from '../../components/UI'
 import {get,post} from '../../api'
 import {useLocale} from '../../i18n'
-import {rows,scalar,observedRate,type EvidenceRow} from '../../utils/intelligenceView'
+import {rows,strings,scalar,observedRate,type EvidenceRow} from '../../utils/intelligenceView'
 export function AlgorithmManager(){
  const en=useLocale()==='en',tr=(ko:string,eng:string)=>en?eng:ko
  const data=useRemote<{kinds?:EvidenceRow[]}>('/api/algorithms',{})
@@ -12,6 +12,8 @@ export function AlgorithmManager(){
  const [report,setReport]=useState<EvidenceRow|null>(null)
  const kinds=rows(data.value.kinds),group=kinds.find(k=>k.kind===kind)||kinds[0]
  const current=report||rows(history.value.items)[0]
+ const [name,setName]=useState(''),[kernel,setKernel]=useState(''),[parameters,setParameters]=useState('{}'),[evidence,setEvidence]=useState('')
+ const kernels=strings(group?.kernels),implementation=kernels.includes(kernel)?kernel:kernels[0]||''
  const perform=async(action:()=>Promise<void>)=>{
   if(busy)return
   setBusy(true);setError('');setNotice('')
@@ -30,6 +32,28 @@ export function AlgorithmManager(){
   <Notice message={error||data.error||history.error}/>{notice&&<p role="status" className="text-xs">{notice}</p>}
   {data.loading?<p>{tr('조회 중','Loading')}</p>:group?<><label className="text-xs">{tr('알고리즘 종류','Algorithm category')}<SelectInput value={String(group.kind)} onChange={e=>setKind(e.target.value)}>{kinds.map(k=><option key={k.kind} value={k.kind}>{k.label||k.kind}</option>)}</SelectInput></label>
   <p className="rounded-lg bg-[#F3EEE5] p-2 text-xs">{tr('현재 활성화','Currently active')}: {scalar(group.active?.name||group.active?.implementation)}</p>
+  <details className="rounded-lg border border-[#EFE9DF] p-3 text-xs">
+   <summary className="cursor-pointer font-semibold">{tr('알고리즘 후보 등록·생성','Register or generate candidates')}</summary>
+   <form className="mt-2 grid gap-2" onSubmit={e=>{e.preventDefault();if(!name.trim()||!implementation||busy)return;void perform(async()=>{
+    const parsed=JSON.parse(parameters);if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw new Error(tr('파라미터는 JSON 객체여야 합니다.','Parameters must be a JSON object.'))
+    await post('/api/algorithms',{kind:group.kind,name:name.trim(),implementation,parameters:parsed});setName('')
+   })}}>
+    <TextInput aria-label={tr('후보 이름','Candidate name')} placeholder={tr('후보 이름','Candidate name')} value={name} onChange={e=>setName(e.target.value)} maxLength={120}/>
+    <SelectInput aria-label={tr('실행 커널','Executable kernel')} value={implementation} onChange={e=>setKernel(e.target.value)}>{kernels.map(k=><option key={k}>{k}</option>)}</SelectInput>
+    <TextArea aria-label={tr('파라미터 JSON','Parameter JSON')} value={parameters} onChange={e=>setParameters(e.target.value)} maxLength={8000}/>
+    <Button type="submit" size="sm" disabled={busy||!!data.error||!name.trim()||!implementation}>{tr('후보 등록','Register candidate')}</Button>
+   </form>
+   <div className="mt-3 grid gap-2 border-t border-[#EFE9DF] pt-3">
+    <TextArea value={evidence} onChange={e=>setEvidence(e.target.value)} maxLength={4000} placeholder={tr('실제 실패 증거 또는 기록 ID','Observed failure evidence or record IDs')} aria-label={tr('후보 생성 근거','Generation evidence')}/>
+    <Button size="sm" disabled={busy||!!data.error||!evidence.trim()} onClick={()=>void perform(async()=>{
+      const result=await post<EvidenceRow>('/api/algorithms/generate',{kind:group.kind,evidence:[evidence.trim()]})
+      if(result.error)throw new Error(String(result.error))
+      if(!rows(result.created).length)throw new Error(tr('생성된 후보가 없습니다.','No candidates returned.'))
+      setEvidence('')
+    })}>{tr('기존 커널 기반 후보 생성','Generate kernel candidates')}</Button>
+    <p className="text-[#7C7469]">{tr('새 후보는 등록 상태로만 저장되며 자동 활성화하지 않습니다.','Candidates are registered, not automatically activated.')}</p>
+   </div>
+  </details>
   {rows(group.algorithms).map(r=><article key={r.id} className="rounded-lg border border-[#EFE9DF] p-3 text-xs">
    <div className="flex flex-wrap justify-between gap-2"><strong>{scalar(r.name||r.implementation)}</strong><span>{r.retired?tr('지원 종료','Retired'):scalar(r.status)}</span></div><p className="mt-1 break-words text-[#7C7469]">{r.description||r.implementation}</p>
    <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">{[[tr('관측 성공률','Observed success'),observedRate(r.stats)],[tr('실패','Failures'),scalar(r.stats?.failures)],[tr('에이전트','Agents'),scalar(r.stats?.agents)],[tr('리비전','Revision'),scalar(r.revision)]].map(([label,value])=><div key={label}><small className="block text-[#8A8176]">{label}</small><strong className="break-all">{value}</strong></div>)}</div>

@@ -60,6 +60,17 @@ pub async fn one(State(state): State<AppState>, Path(id): Path<String>) -> Respo
 }
 
 
+/// Inspect only the requested run's persisted decisions and algorithm usage.
+pub async fn decisions(State(state):State<AppState>,Path(id):Path<String>)->Response {
+    if state.store.get("execution",&id).is_none(){
+        return (StatusCode::NOT_FOUND,Json(json!({"error":"실행 기록을 찾을 수 없습니다."}))).into_response();
+    }
+    match state.store.algorithm_usages_for_execution(&id){
+        Ok(usages)=>Json(json!({"executionId":id,"strategyDecision":state.store.get("strategy_decision",&id),"algorithmUsages":usages})).into_response(),
+        Err(_)=>(StatusCode::INTERNAL_SERVER_ERROR,Json(json!({"error":"알고리즘 사용 기록 조회 실패"}))).into_response()
+    }
+}
+
 #[derive(Deserialize,Default)]
 pub struct EventCursor {
     pub after:Option<u64>,
@@ -175,6 +186,29 @@ mod tests {
     use super::*;
     use crate::{config::Config, db::Store, vault::Vault};
 
+
+    #[tokio::test]
+    async fn decision_view_is_scoped_to_exact_native_execution(){
+        let dir=std::env::temp_dir().join(format!("dominion-decision-view-{}",uuid::Uuid::new_v4()));
+        let cfg=Config{port:0,data_dir:dir.clone(),web_dir:dir.join("web"),workspace:dir.clone()};
+        let state=AppState::new(cfg.clone(),Store::open(&cfg.db_path()).unwrap(),Vault::open(&cfg.key_path()));
+        for id in ["a","b"]{
+            state.store.put("execution",&json!({"id":id})).unwrap();
+            state.store.put("strategy_decision",&json!({"id":id,"selected":format!("bundle:{id}")})).unwrap();
+            state.store.put("algorithm_usage",&json!({"id":format!("usage:{id}"),"executionId":id,"kind":"memory.retrieval"})).unwrap();
+        }
+        let response=decisions(State(state.clone()),Path("a".into())).await;
+        assert_eq!(response.status(),StatusCode::OK);
+        let bytes=axum::body::to_bytes(response.into_body(),65536).await.unwrap();
+        let view:Value=serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(view["executionId"],"a");
+        assert_eq!(view["strategyDecision"]["selected"],"bundle:a");
+        assert_eq!(view["algorithmUsages"].as_array().unwrap().len(),1);
+        assert_eq!(view["algorithmUsages"][0]["executionId"],"a");
+        assert_eq!(decisions(State(state.clone()),Path("missing".into())).await.status(),StatusCode::NOT_FOUND);
+        drop(state);
+        let _=std::fs::remove_dir_all(dir);
+    }
 
     #[tokio::test]
     async fn execution_timeline_pages_do_not_leak_other_runs_or_replay_duplicates(){

@@ -136,3 +136,11 @@ test('decision UI uses recorded evidence and native steering gates',async()=>{
  const steering=readFileSync(resolve(dir,'../src/components/SdkSteering.tsx'),'utf8')
  assert.match(steering,/\+'\/steer'/)
 })
+
+
+test('collaboration map preserves dependency edges without guessing statuses',async()=>{
+ const {dependencyLevels}=await import('../src/utils/intelligenceView.ts')
+ const graph=dependencyLevels([{id:'b',dependsOn:['a']},{id:'a'},{id:'c',dependsOn:['missing']}])
+ assert.deepEqual(graph.levels.map(level=>level.map(s=>s.id)),[['a'],['b']])
+ assert.deepEqual(graph.unresolved.map(s=>s.id),['c'])
+})

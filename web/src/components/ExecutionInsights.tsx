@@ -54,7 +54,7 @@ export function ExecutionInsights({executionId,compact=false}:{executionId:strin
  const en=locale==='en'
  const [open,setOpen]=useState(false)
  const remote=useRemote<ExecutionEvidence|null>(
-  open?'/api/executions/'+encodeURIComponent(executionId):null,null,false)
+  open?'/api/executions/'+encodeURIComponent(executionId):null,null)
  const record=remote.value
  const ctx=record?.inputContext
  const calls=Array.isArray(ctx?.modelCallUsage)?ctx.modelCallUsage:[]

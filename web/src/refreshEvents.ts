@@ -43,6 +43,8 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
    case 'execution':add('/api/executions');if(id)add('/api/executions/'+encoded(id));break
    case 'algorithm':add('/api/algorithms');break
    case 'algorithm_eval':add('/api/algorithms/evaluations');break
+   case 'algorithm_usage':case 'strategy_decision':{const executionId=field(row,'executionId')||(event.kind==='strategy_decision'?id:undefined);if(executionId)add('/api/executions/'+encoded(executionId)+'/decisions');break}
+   case 'improvement':add('/api/improvements');break
    case 'algorithm_stat':add('/api/algorithms','/api/synergy');break
    case 'agent_growth':add('/api/synergy');break
    case 'experience_principle':case 'experience_rule':case 'principle_usage':case 'learning_case':add('/api/transfer');break

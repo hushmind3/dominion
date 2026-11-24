@@ -11,3 +11,15 @@ export function sdkSteeringAllowed(run:{status?:string;sessionId?:string;readOnl
  return Boolean(run.sessionId)&&!run.readOnly&&['queued','running'].includes(run.status||'')&&run.steeringGate?.closed!==true&&(run.steering?.length||0)<8
 }
 export const steeringBytes=(text:string)=>new TextEncoder().encode(text.trim()).length
+
+/** Layout only: preserve recorded dependency edges and never infer execution state. */
+export function dependencyLevels<T extends {id:string;dependsOn?:string[]}>(steps:T[]):{levels:T[][];unresolved:T[]}{
+ const levels:T[][]=[],known=new Set<string>(),remaining=[...steps]
+ while(remaining.length){
+  const ready=remaining.filter(s=>(s.dependsOn||[]).every(dep=>known.has(dep)))
+  if(!ready.length)break
+  levels.push(ready)
+  for(const s of ready){known.add(s.id);remaining.splice(remaining.indexOf(s),1)}
+ }
+ return {levels,unresolved:remaining}
+}

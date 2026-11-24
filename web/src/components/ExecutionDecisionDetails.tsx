@@ -1,8 +1,12 @@
 import type {ReactNode} from 'react'
 import {useLocale} from '../i18n'
+import {Notice,useRemote} from './UI'
 import {rows,obj,scalar,strings,type EvidenceRow} from '../utils/intelligenceView'
 export function ExecutionDecisionDetails({record}:{record:EvidenceRow}){
  const en=useLocale()==='en',tr=(ko:string,eng:string)=>en?eng:ko
+ const trace=useRemote<{executionId:string;strategyDecision?:EvidenceRow|null;algorithmUsages?:EvidenceRow[]}|null>(record.id?'/api/executions/'+encodeURIComponent(record.id)+'/decisions':null,null)
+ const actual=trace.value?.executionId===record.id?trace.value:null
+ const usages=rows(actual?.algorithmUsages),chosen=actual?.strategyDecision
  const subtasks=rows(obj(record.decomposition).subtasks),program=obj(record.programCheckpoint)
  const adaptations=rows(record.adaptations),diagnostics=rows(record.adaptationDiagnosticHistory),strategies=rows(record.strategyCandidates),compliance=rows(record.strategyCompliance),checks=rows(record.acceptanceChecks)
  const gaps=Array.isArray(record.acceptanceFinalGaps)?record.acceptanceFinalGaps:[]
@@ -10,7 +14,13 @@ export function ExecutionDecisionDetails({record}:{record:EvidenceRow}){
  const section=(label:string,children:ReactNode)=><section className="rounded-lg border border-[#EFE9DF] bg-white p-3"><strong className="text-xs">{label}</strong>{children}</section>
  return <div className="mt-3 grid gap-2">
   <h4 className="text-xs font-bold">{tr('하네스 판단과 복구 기록','Harness decisions and recovery')}</h4>
-  {!record.plan&&!subtasks.length&&!adaptations.length&&!diagnostics.length&&!strategies.length&&!compliance.length&&!checks.length&&!Object.keys(program).length&&<p>{tr('저장된 상세 판단 기록이 없습니다.','No detailed decisions recorded.')}</p>}
+  <Notice message={trace.error}/>
+  {trace.loading&&<p role="status">{tr('판단 기록 조회 중','Loading decisions')}</p>}
+  {(usages.length>0||chosen)&&section(tr('실제 사용 알고리즘과 선택 근거','Recorded algorithms & strategy selection'),<>
+   {chosen&&<><p className="mt-1">{tr('선택된 정책','Selected policy')}: {scalar(chosen.selected)} · {tr('리비전','Revision')}: {scalar(chosen.policyRevision)}</p><details><summary>{tr('선택 후보 및 근거','Decision candidates')}</summary>{raw(chosen)}</details></>}
+   {usages.map((u,i)=><article key={u.id||i} className="mt-2 rounded border border-[#EFE9DF] p-2"><strong>{scalar(u.kind)}</strong><p>{tr('리비전','Revision')}: {scalar(u.revision)} · {tr('평가 상태','Rating status')}: {scalar(u.status)}</p><details><summary>{tr('실제 사용 영수증','Usage receipt')}</summary>{raw(u)}</details></article>)}
+  </>)}
+  {!record.plan&&!subtasks.length&&!adaptations.length&&!diagnostics.length&&!strategies.length&&!compliance.length&&!checks.length&&!Object.keys(program).length&&!usages.length&&!chosen&&!trace.loading&&!trace.error&&<p>{tr('저장된 상세 판단 기록이 없습니다.','No detailed decisions recorded.')}</p>}
   {record.plan&&section(tr('실행 계획','Execution plan'),<><p className="mt-1 whitespace-pre-wrap break-words">{scalar(record.plan)}</p>{record.planQuality!=null&&<details><summary>{tr('계획 품질','Plan quality')}</summary>{raw(record.planQuality)}</details>}</>)}
   {subtasks.length>0&&section(tr('작업 분해와 의존성','Task decomposition & dependencies'),<div className="mt-2 grid gap-1">{subtasks.map((s,i)=><article key={s.id||i} className="rounded border border-[#EFE9DF] p-2"><strong>{i+1}. {scalar(s.text||s.title||s.id)}</strong><p>{tr('상태','Status')}: {scalar(s.status)} · {tr('선행 작업','Depends on')}: {strings(s.dependsOn).join(', ')||'—'}</p>{s.obligation&&<details><summary>{tr('완료 조건','Obligation')}</summary>{raw(s.obligation)}</details>}</article>)}</div>)}
   {(strategies.length>0||compliance.length>0)&&section(tr('선택된 전략과 절차 검증','Selected strategies & procedure verification'),<>{strategies.map((s,i)=><article key={s.id||i} className="mt-2 border-t border-[#EFE9DF] pt-2"><strong>{scalar(s.name||s.id)}</strong><p className="whitespace-pre-wrap break-words">{scalar(s.text)}</p><p>{tr('리비전','Revision')}: {scalar(s.revision)} · {tr('권한','Authority')}: {scalar(s.authority)}</p></article>)}{compliance.map((c,i)=><details key={i}><summary>{tr('절차 평가','Procedure evaluation')} · {scalar(c.strategyId)} · {scalar(c.status||c.verification?.status)}</summary>{raw(c)}</details>)}</>)}
