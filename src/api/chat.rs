@@ -62,14 +62,11 @@ pub struct InferenceQuery {
     model: String,
 }
 
-pub async fn inference_support(State(state): State<AppState>, Query(query): Query<InferenceQuery>) -> Response {
+fn support_for_route(state: &AppState, query: &InferenceQuery) -> Result<Value, String> {
     let Some(provider) = state.store.get("provider", &query.provider_id) else {
-        return error(StatusCode::NOT_FOUND, "제공자를 찾을 수 없습니다.");
+        return Err("제공자를 찾을 수 없습니다.".into());
     };
-    let route = match engine::gateway::route_from_provider(&state, &provider, Some(&query.model)) {
-        Ok(route) => route,
-        Err(message) => return error(StatusCode::BAD_REQUEST, &message),
-    };
+    let route = engine::gateway::route_from_provider(state, &provider, Some(&query.model))?;
     let caps = engine::gateway::ModelCapabilities::for_route(&provider, &route.model);
     let catalog = if route.kind == "codex" {
         state.store.get("codex_model_catalog", &route.id).filter(|catalog| {
@@ -92,7 +89,26 @@ pub async fn inference_support(State(state): State<AppState>, Query(query): Quer
         declared.map(Vec::as_slice).unwrap_or_default(), caps.reasoning);
     result["providerId"] = json!(route.id);
     result["model"] = json!(route.model);
-    Json(result).into_response()
+    Ok(result)
+}
+
+pub async fn inference_support(State(state): State<AppState>, Query(query): Query<InferenceQuery>) -> Response {
+    match support_for_route(&state, &query) {
+        Ok(result) => Json(result).into_response(),
+        Err(message) => error(StatusCode::BAD_REQUEST, &message),
+    }
+}
+
+/// Check every candidate route with the same native transport contract.
+/// This is a local metadata operation; it does not generate or bill tokens.
+pub async fn inference_support_batch(State(state): State<AppState>, Json(queries): Json<Vec<InferenceQuery>>) -> Response {
+    if queries.len() > 256 {
+        return error(StatusCode::BAD_REQUEST, "한 번에 확인할 모델은 최대 256개입니다.");
+    }
+    match queries.iter().map(|query| support_for_route(&state, query)).collect::<Result<Vec<_>,_>>() {
+        Ok(rows) => Json(json!(rows)).into_response(),
+        Err(message) => error(StatusCode::BAD_REQUEST, &message),
+    }
 }
 
 #[cfg(test)]

@@ -244,6 +244,11 @@ pub async fn provider_models(State(state): State<AppState>, Path(id): Path<Strin
                                     for row in &mut rows {
                                         row["catalogStale"] = json!(true);
                                     }
+                                    // The account-matched fallback is also the execution contract.
+                                    state.store.put("codex_model_catalog", &json!({
+                                        "id":id,"accountId":account,"models":rows,
+                                        "fetchedAt":chrono::Utc::now().to_rfc3339(),"catalogStale":true
+                                    }));
                                     return Json(json!(rows)).into_response();
                                 }
                             }
