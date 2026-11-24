@@ -1,6 +1,6 @@
 //! Evidence falsification: a successful model/tool claim is not an accepted artifact.
 use dominion_agent_sdk::{Action,BoxFuture,Criterion,CriterionKind,Evidence,Journal,
- Kernel,Limits,Model,ModelReply,Receipt,RunRequest,Snapshot,Status,Strategy,ToolSpec,Tools};
+ Kernel,Limits,Model,ModelReply,RunRequest,Snapshot,Status,Strategy,ToolSpec,Tools};
 use serde_json::{json,Value};
 use std::{collections::VecDeque,sync::Mutex};
 

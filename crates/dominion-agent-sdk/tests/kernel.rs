@@ -1,6 +1,6 @@
 use dominion_agent_sdk::*;
 use serde_json::{json, Value};
-use std::{collections::VecDeque, path::PathBuf, sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}}};
+use std::{collections::VecDeque, path::PathBuf, sync::{Mutex, atomic::{AtomicUsize, Ordering}}};
 
 struct Responses(Mutex<VecDeque<String>>);
 impl Model for Responses {
