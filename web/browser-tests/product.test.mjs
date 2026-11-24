@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import {chromium} from 'playwright'
 import {createServer} from 'node:http'
 import {spawn} from 'node:child_process'
-import {mkdtemp,rm,stat} from 'node:fs/promises'
+import {mkdtemp,rm,stat,writeFile} from 'node:fs/promises'
+import {createHash} from 'node:crypto'
 import {tmpdir} from 'node:os'
 import {join,resolve} from 'node:path'
 import {setTimeout as delay} from 'node:timers/promises'
@@ -179,6 +180,17 @@ test('desktop app: actual model selection, persistent chat, settings and room na
   await extensions.getByLabel('앱 이름',{exact:true}).fill('Browser external assistant')
   await extensions.getByRole('button',{name:'등록 저장',exact:true}).click()
   await extensions.getByText('Browser external assistant',{exact:true}).waitFor({state:'visible'})
+  const executable=join(directory,'managed-fixture')
+  const binary=Buffer.from('#!/bin/sh\nexec /bin/sleep 60\n')
+  const digest=createHash('sha256').update(binary).digest('hex')
+  await writeFile(executable,binary)
+  await extensions.getByRole('button',{name:'설치·실행 관리',exact:true}).click()
+  await extensions.getByLabel('실행 파일 출처',{exact:true}).fill(executable)
+  await extensions.getByLabel('SHA-256',{exact:true}).fill(digest)
+  await extensions.getByLabel('이 실행 파일과 배포자를 신뢰하며 실행 권한을 허용합니다.').check()
+  await extensions.getByRole('button',{name:'설치',exact:true}).click()
+  const packagePath='/api/extensions/apps/browser.assistant/package'
+  await until(async()=> (await api(packagePath)).installed)
   await extensions.getByRole('button',{name:'활성화',exact:true}).click()
   await until(async()=> (await api('/api/extensions/apps')).some(row=>row.id==='browser.assistant'&&row.enabled))
   await extensions.getByRole('button',{name:'앱별 인증키 관리',exact:true}).click()
@@ -190,6 +202,11 @@ test('desktop app: actual model selection, persistent chat, settings and room na
   await key.waitFor({state:'visible'})
   const token=await key.inputValue()
   assert.match(token,/^[a-f0-9]{64}$/)
+  await extensions.getByLabel('앱 실행 인증키',{exact:true}).fill(token)
+  await extensions.getByRole('button',{name:'앱 실행',exact:true}).click()
+  await until(async()=> (await api(packagePath)).running)
+  await extensions.getByRole('button',{name:'앱 종료',exact:true}).click()
+  await until(async()=> !(await api(packagePath)).running)
   const grantPath='/api/extensions/apps/browser.assistant/grant'
   const grant=await api(grantPath)
   assert.equal(grant.remainingRuns,1)
@@ -218,6 +235,12 @@ test('desktop app: actual model selection, persistent chat, settings and room na
   await until(async()=>await api(grantPath)===null)
   await extensions.getByRole('button',{name:'비활성화',exact:true}).click()
   await until(async()=> (await api('/api/extensions/apps')).some(row=>row.id==='browser.assistant'&&!row.enabled))
+  await extensions.getByLabel('설치 버전',{exact:true}).fill('1.1.0')
+  await extensions.getByRole('button',{name:'업데이트',exact:true}).click()
+  await until(async()=> (await api(packagePath)).version==='1.1.0')
+  page.once('dialog',dialog=>dialog.accept())
+  await extensions.getByRole('button',{name:'설치 제거',exact:true}).click()
+  await until(async()=> !(await api(packagePath)).installed)
   page.once('dialog',dialog=>dialog.accept())
   await extensions.getByRole('button',{name:'등록 해제',exact:true}).click()
   await until(async()=> (await api('/api/extensions/apps')).every(row=>row.id!=='browser.assistant'))

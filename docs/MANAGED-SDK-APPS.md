@@ -1,0 +1,11 @@
+# Managed standalone SDK apps
+
+A registered external application may remain externally hosted or be managed as a standalone native executable. The owner explicitly installs a prebuilt binary from an absolute local path or a version-pinned public GitHub release asset (64 MiB maximum), with the expected SHA-256 from a trusted publisher. Installation and updates never launch code. Disable the app first. The installed version and binary digest are committed together; a failed download or digest check leaves the previous package untouched.
+
+Enable the app, issue a scoped credential, and paste it into the process start form. The process receives DOMINION_BASE_URL, DOMINION_EXTENSION_ID and DOMINION_EXTENSION_TOKEN. No owner credential or inherited environment is supplied (Windows SystemRoot is retained). The token is not persisted by the launcher. Use the existing Rust or TypeScript scoped SDK client. The process can be stopped, or is stopped on disable, key rotation/revocation and normal host shutdown. Uninstall preserves the app registration and run history; unregister is separate.
+
+The host tracks the direct child process, not arbitrary descendants. Native apps run with the OS user's permissions, **not in a sandbox**. The SDK credential restricts SDK calls, not native code's OS or loopback access. Trust the publisher before installing or running. Do not fork or daemonize; honor stdin EOF and exit when the host closes the pipe. Abrupt host termination is not a process-tree cleanup guarantee. No automatic restart, archive extraction, package manager, signature verification or source build is provided.
+
+Owner routes: GET/POST/DELETE /api/extensions/apps/:id/package; POST /api/extensions/apps/:id/process/start (token, trust_executable); POST /api/extensions/apps/:id/process/stop. Package install uses source, version, sha256, trustExecutable. Scoped credentials cannot call these routes.
+
+Design references: https://docs.github.com/en/rest/releases/assets (release SHA-256); https://code.visualstudio.com/docs/configure/extensions/extension-runtime-security (explicit publisher trust). Digest pinning verifies bytes, not publisher identity.

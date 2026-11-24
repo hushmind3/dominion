@@ -46,6 +46,7 @@ export function SdkExtensionsPanel(){
     <div className="min-w-0 flex-1"><strong>{app.manifest.name}</strong><p className="break-all text-xs text-muted">{app.id} · {app.manifest.version}</p><p className="text-xs text-muted">{app.manifest.description}</p><p className="text-xs">{app.enabled?(en?'Enabled for new SDK requests':'SDK 요청 허용'):(en?'Disabled':'비활성')}</p></div>
     <Button disabled={busy||Boolean(apps.error)} onClick={()=>void change(()=>post(endpoint+'/'+encodeURIComponent(app.id)+'/state',{enabled:!app.enabled}))}>{app.enabled?(en?'Disable':'비활성화'):(en?'Enable':'활성화')}</Button>
     <Button variant="ghost" disabled={busy||app.enabled||Boolean(apps.error)} onClick={()=>remove(app)}>{en?'Unregister':'등록 해제'}</Button>
+    <ManagedPackage app={app}/>
     <GrantPanel appId={app.id} enabled={app.enabled} onRun={id=>setSelectedRuns(previous=>({...previous,[app.id]:id}))}/>
     <AppRunHistory appId={app.id} selected={selectedRuns[app.id]||''} onSelect={id=>setSelectedRuns(previous=>({...previous,[app.id]:id}))}/>
   </Panel>)}</div>
@@ -165,5 +166,47 @@ function ScopedConnectionTest({appId,token,enabled,remaining,onRun}:{appId:strin
   {enabled&&remaining===0&&!submitted&&<p className="text-xs text-muted">{replay?(en?'No allowance remains. Retrying the same receipt will not create a new request.':'남은 횟수는 0회입니다. 같은 요청의 접수 기록만 다시 확인할 수 있습니다.'):(en?'Request allowance exhausted.':'허용 요청 횟수를 모두 사용했습니다.')}</p>}
   <Notice message={error}/>
   {submitted&&<p role="status" className="text-xs">{en?'Request accepted. See run history for the actual response.':'요청이 접수됐습니다. 아래 실행 기록에서 실제 응답을 확인하세요.'}</p>}
+ </div>
+}
+
+type PackageState={installed:boolean;filePresent:boolean;version?:string;sha256?:string;running:boolean;exitCode?:number|null;platform:string;arch:string}
+function ManagedPackage({app}:{app:App}){
+ const en=useLocale()==='en',root=endpoint+'/'+encodeURIComponent(app.id),path=root+'/package'
+ const [opened,setOpened]=useState(false),[source,setSource]=useState(''),[version,setVersion]=useState(app.manifest.version),[sha,setSha]=useState('')
+ const [token,setToken]=useState(''),[trust,setTrust]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('')
+ const inFlight=useRef(false)
+ const pkg=useRemote<PackageState|null>(opened?path:null,null)
+ const grant=useRemote<Grant|null>(opened?root+'/grant':null,null)
+ useEffect(()=>{if(!opened||!pkg.value?.running)return;const timer=window.setInterval(()=>void pkg.reload(),2000);return()=>window.clearInterval(timer)},[opened,pkg.value?.running,pkg.reload])
+ const act=async(fn:()=>Promise<unknown>)=>{
+  if(inFlight.current)return
+  inFlight.current=true;setBusy(true);setError('')
+  try{await fn();await pkg.reload();refresh(endpoint)}
+  catch(e){setError((e as Error).message)}finally{inFlight.current=false;setBusy(false);setToken('')}
+ }
+ const installed=Boolean(pkg.value?.installed),running=Boolean(pkg.value?.running),ready=opened&&!pkg.loading&&!pkg.error&&Boolean(pkg.value)
+ return <div className="w-full border-t border-divider pt-2">
+  <Button variant="ghost" disabled={busy} onClick={()=>{setOpened(!opened);setToken('');setTrust(false)}}>{opened?(en?'Close installation':'설치 관리 닫기'):(en?'Installation and process':'설치·실행 관리')}</Button>
+  {opened&&<div className="mt-2 grid gap-3">
+   <Notice message={error||pkg.error||grant.error}/>
+   {pkg.loading?<p role="status" className="text-xs text-muted">{en?'Checking installation…':'설치 상태 확인 중…'}</p>:pkg.value&&<div className="flex flex-wrap items-center gap-2"><StateTag online={installed&&pkg.value.filePresent}>{installed?(en?'Installed':'설치됨'):(en?'Not installed':'미설치')}</StateTag><StateTag online={running}>{running?(en?'Running':'실행 중'):(en?'Stopped':'정지')}</StateTag><span className="text-xs text-muted">{pkg.value.platform}/{pkg.value.arch} {pkg.value.version||''} {pkg.value.exitCode!=null?' · exit '+pkg.value.exitCode:''}</span></div>}
+   {installed&&!pkg.value?.filePresent&&<Notice message={en?'Executable missing. Reinstall the package.':'실행 파일이 없습니다. 다시 설치하세요.'}/>}
+   {installed&&<p className="break-all text-xs text-muted">SHA-256: {pkg.value?.sha256}</p>}
+   <p className="text-xs text-muted">{en?'Install a trusted standalone executable (up to 64 MiB), not an archive. Runs with your OS user privileges; this is not a sandbox.':'신뢰하는 단독 실행 파일(최대 64MiB)을 설치합니다. 압축 파일은 지원하지 않습니다. 현재 OS 사용자 권한으로 실행되며 샌드박스가 아닙니다.'}</p>
+   <label className="flex items-start gap-2 text-xs"><input type="checkbox" checked={trust} onChange={e=>setTrust(e.target.checked)} disabled={busy}/>{en?'I trust this executable and its publisher.':'이 실행 파일과 배포자를 신뢰하며 실행 권한을 허용합니다.'}</label>
+   {!app.enabled&&<div className="grid gap-2">
+    <FormField label={en?'Executable source':'실행 파일 출처'} hint={en?'Absolute local path or pinned GitHub release URL':'절대 로컬 경로 또는 버전이 지정된 GitHub 릴리스 URL'}><TextInput aria-label={en?'Executable source':'실행 파일 출처'} value={source} onChange={e=>setSource(e.target.value)} disabled={busy}/></FormField>
+    <FormField label={en?'Package version':'설치 버전'}><TextInput aria-label={en?'Package version':'설치 버전'} value={version} onChange={e=>setVersion(e.target.value)} disabled={busy}/></FormField>
+    <FormField label="SHA-256"><TextInput aria-label="SHA-256" value={sha} onChange={e=>setSha(e.target.value)} disabled={busy}/></FormField>
+    <div className="flex flex-wrap gap-2"><Action disabled={!ready||busy||!trust||!source.trim()||!version.trim()||!/^[a-f0-9]{64}$/i.test(sha)} onClick={()=>void act(()=>post(path,{source:source.trim(),version:version.trim(),sha256:sha,trustExecutable:true}))}>{installed?(en?'Update package':'업데이트'):(en?'Install package':'설치')}</Action>
+    {installed&&<Button disabled={busy||!ready} variant="ghost" onClick={()=>{if(confirm(en?'Uninstall the executable? App registration and run history remain.':'실행 파일만 제거할까요? 앱 등록과 실행 기록은 유지됩니다.'))void act(()=>del(path))}}>{en?'Uninstall':'설치 제거'}</Button>}</div>
+   </div>}
+   {app.enabled&&!running&&<p className="text-xs text-muted">{en?'Disable the app before installing or updating.':'설치하거나 업데이트하려면 먼저 앱을 비활성화하세요.'}</p>}
+   {installed&&app.enabled&&!running&&<div className="grid gap-2"><FormField label={en?'App credential':'앱 실행 인증키'}><TextInput aria-label={en?'App credential':'앱 실행 인증키'} type="password" autoComplete="off" value={token} onChange={e=>setToken(e.target.value)} disabled={busy}/></FormField>
+    {!grant.loading&&!grant.value&&<p className="text-xs text-muted">{en?'Issue an app credential below first.':'아래 앱별 인증키 관리에서 키를 먼저 발급하세요.'}</p>}
+    <Action disabled={!ready||busy||!trust||!grant.value||token.length!==64||!pkg.value?.filePresent} onClick={()=>void act(()=>post(root+'/process/start',{token,trust_executable:true}))}>{en?'Start app':'앱 실행'}</Action></div>}
+   {running&&<Button disabled={busy} onClick={()=>void act(()=>post(root+'/process/stop',{}))}>{en?'Stop app':'앱 종료'}</Button>}
+   <Button variant="ghost" disabled={busy||pkg.refreshing} onClick={()=>void pkg.reload()}>{en?'Refresh process status':'실행 상태 새로고침'}</Button>
+  </div>}
  </div>
 }

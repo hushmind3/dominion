@@ -16,7 +16,7 @@ pub(crate) fn lock(state:&AppState,id:&str)->Result<SessionGuard,Response>{
     if !state.begin_session(&key){return Err(error(StatusCode::CONFLICT,"Extension state is changing"));}
     Ok(state.session_guard(&key))
 }
-fn load(state:&AppState,id:&str)->Result<Registration,Response>{
+pub(super) fn load(state:&AppState,id:&str)->Result<Registration,Response>{
     let row=state.store.get(KIND,id).ok_or_else(||error(StatusCode::NOT_FOUND,"Extension not registered"))?;
     serde_json::from_value(row).map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Invalid extension registration"))
 }
@@ -48,6 +48,7 @@ pub struct SetState{enabled:bool}
 pub async fn set_state(State(state):State<AppState>,Path(id):Path<String>,Json(input):Json<SetState>)->Response{
     let _guard=match lock(&state,&id){Ok(guard)=>guard,Err(response)=>return response};
     let mut row=match load(&state,&id){Ok(row)=>row,Err(response)=>return response};
+    if !input.enabled {if let Err(r)=super::extension_process::stop_child(&state,&id).await{return r}}
     row.enabled=input.enabled;
     if row.manifest.validate().is_err()||row.id!=id||row.manifest.id!=id{return error(StatusCode::CONFLICT,"Invalid extension registration")}
     let Some(saved)=state.store.put(KIND,&json!(row))else{return error(StatusCode::INTERNAL_SERVER_ERROR,"Extension state save failed")};
@@ -58,6 +59,8 @@ pub async fn remove(State(state):State<AppState>,Path(id):Path<String>)->Respons
     let _guard=match lock(&state,&id){Ok(guard)=>guard,Err(response)=>return response};
     let row=match load(&state,&id){Ok(row)=>row,Err(response)=>return response};
     if row.enabled{return error(StatusCode::CONFLICT,"Disable extension before unregistering")}
+    if state.store.get(super::extension_process::PACKAGE_KIND,&id).is_some(){return error(StatusCode::CONFLICT,"Uninstall the managed package before unregistering")}
+    if let Err(r)=super::extension_process::stop_child(&state,&id).await{return r}
     // Revoke credentials before removing the registration; a failed removal stays disabled.
     if state.store.get(GRANT_KIND,&id).is_some()&&!state.store.remove(GRANT_KIND,&id){return error(StatusCode::INTERNAL_SERVER_ERROR,"Extension credential revocation failed")}
     if !state.store.remove(KIND,&id){return error(StatusCode::INTERNAL_SERVER_ERROR,"Extension unregister failed")}
@@ -105,6 +108,7 @@ pub async fn issue_grant(State(state):State<AppState>,Path(id):Path<String>,Json
     if route.kind=="cli" || route.kind=="codex"{
         return error(StatusCode::BAD_REQUEST,"Scoped text apps require a native text API provider")
     }
+    if let Err(r)=super::extension_process::stop_child(&state,&id).await{return r}
     let mut random=[0u8;32];
     OsRng.fill_bytes(&mut random);
     let token=random.iter().map(|b|format!("{b:02x}")).collect::<String>();
@@ -121,6 +125,7 @@ pub async fn issue_grant(State(state):State<AppState>,Path(id):Path<String>,Json
 pub async fn revoke_grant(State(state):State<AppState>,Path(id):Path<String>)->Response{
     let _guard=match lock(&state,&id){Ok(g)=>g,Err(r)=>return r};
     if let Err(r)=load(&state,&id){return r}
+    if let Err(r)=super::extension_process::stop_child(&state,&id).await{return r}
     if state.store.get(GRANT_KIND,&id).is_some()&&!state.store.remove(GRANT_KIND,&id){
         return error(StatusCode::INTERNAL_SERVER_ERROR,"Credential revocation failed")
     }

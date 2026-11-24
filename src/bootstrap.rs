@@ -78,7 +78,7 @@ async fn serve(mut config: Config, open_browser: bool, parent_bound: bool) -> Re
     engine::maintenance::start(state.clone());
     // Messaging is an optional extension supervisor, never a core service.
     engine::extensions::channels::start_inbound(state.clone());
-    let app = api::router(state);
+    let app = api::router(state.clone());
     println!(
         "DOMINION (rust engine) listening on http://127.0.0.1:{}",
         config.port
@@ -89,7 +89,7 @@ async fn serve(mut config: Config, open_browser: bool, parent_bound: bool) -> Re
     if open_browser {
         platform::open_url(config.port);
     }
-    if parent_bound {
+    let result=if parent_bound {
         serve_until_parent_disconnect(listener, app, tokio::io::stdin()).await
     } else {
         axum::serve(listener, app)
@@ -98,7 +98,9 @@ async fn serve(mut config: Config, open_browser: bool, parent_bound: bool) -> Re
             })
             .await
             .map_err(|error| format!("server error: {error}"))
-    }
+    };
+    api::extension_process::stop_all(&state).await;
+    result
 }
 async fn serve_until_parent_disconnect(
     input_listener: tokio::net::TcpListener,

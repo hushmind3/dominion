@@ -16,6 +16,7 @@ pub mod experience;
 pub mod experiments;
 pub mod extensions;
 pub mod extension_registry;
+pub mod extension_process;
 pub mod gateways;
 pub mod improvements;
 pub mod jobs;
