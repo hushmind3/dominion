@@ -26,7 +26,7 @@ const englishCommands:Record<string,EnglishCommand>={
  model:{name:'Switch model',description:'Choose a model from the current provider',group:'Model · agents'},
  agent:{name:'Switch agent',description:'Choose the agent that runs work',group:'Model · agents'},
  tools:{name:'Tool list',description:'List built-in and MCP tools',group:'Tools · extensions'},
- mcp:{name:'MCP settings',description:'Open MCP connections and servers',group:'Tools · extensions'},
+ mcp:{name:'MCP extensions',description:'Find MCP servers and manage installed extensions',group:'Tools · extensions'},
  skills:{name:'Manage skills',description:'Manage installed skills and extensions',group:'Tools · extensions'},
  memory:{name:'Manage memory',description:'Open saved long-term memories',group:'Tools · extensions'},
  agents:{name:'Manage agents',description:'Open agent settings',group:'Screens'},
@@ -39,7 +39,7 @@ export function slashCommandLabel(item:SlashChoice,locale:'ko'|'en'):SlashChoice
 }
 export const slashCommands=defs
 export const normalizeSlashName=(text:string)=>text.trim().split(/\s+/)[0]?.slice(1).toLowerCase()||''
-export function slashCandidates(text:string,agents:Selectable[],models:Model[]):SlashChoice[]{
+export function slashCandidates(text:string,agents:Selectable[],models:Model[],legacyMcp=false):SlashChoice[]{
  if(!text.startsWith('/')||text.includes('\n'))return [];
  if(/^\/model\s/i.test(text)){
   const query=text.replace(/^\/model\s+/i,'').trim().toLocaleLowerCase()
@@ -57,12 +57,12 @@ export function slashCandidates(text:string,agents:Selectable[],models:Model[]):
   const commands:SlashChoice[]=[
    {key:'mcp:search',command:'/mcp search',name:'MCP 검색',description:'공식 레지스트리에서 서버 찾기',group:'도구 · 확장',requiresArg:true,hint:'검색어'},
    {key:'mcp:add',command:'/mcp add',name:'MCP 직접 연결',description:'이름과 HTTPS 서버 주소로 등록',group:'도구 · 확장',requiresArg:true,hint:'이름 HTTPS주소'},
-   {key:'mcp:list',command:'/mcp list',name:'설치된 MCP',description:'등록된 서버와 연결 상태 확인',group:'도구 · 확장'},
+   {key:'mcp:list',command:'/mcp list',name:'설치된 MCP',description:legacyMcp?'등록된 서버와 연결 상태 확인':'설치된 확장 관리',group:'도구 · 확장'},
    {key:'mcp:enable',command:'/mcp enable',name:'MCP 사용',description:'등록된 서버 활성화',group:'도구 · 확장',requiresArg:true,hint:'서버 이름'},
    {key:'mcp:disable',command:'/mcp disable',name:'MCP 사용 중지',description:'설치 유지하고 연결만 해제',group:'도구 · 확장',requiresArg:true,hint:'서버 이름'},
    {key:'mcp:remove',command:'/mcp remove',name:'MCP 연결 삭제',description:'등록 정보 삭제',group:'도구 · 확장',requiresArg:true,hint:'서버 이름'},
   ];
-  return commands.filter(item=>item.key.split(':')[1].includes(tail)||item.name.toLowerCase().includes(tail));
+  return commands.filter(item=>(legacyMcp||item.key==='mcp:search'||item.key==='mcp:list')).filter(item=>item.key.split(':')[1].includes(tail)||item.name.toLowerCase().includes(tail));
  }
  if(/\s/.test(text))return [];
  const query=text.slice(1).toLocaleLowerCase()

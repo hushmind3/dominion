@@ -10,9 +10,9 @@ type Page={items:Item[];errors:{repository:string;message:string}[];indexCached?
 type Installed={id:string;state?:string;image:string;imageId:string|null;running:boolean;network:boolean;requestedPort?:number|null}
 type Inventory={available:boolean;items:Installed[]|null;error?:string}
 const keyOf=(item:Item)=>item.repository+'@'+(item.sourceRef||'')
-export function PackageMarket({onInstalled}:{onInstalled:()=>void}){
+export function PackageMarket({onInstalled,initialQuery=''}:{onInstalled:()=>void;initialQuery?:string}){
  const en=useLocale()==='en',tr=(ko:string,eng:string)=>en?eng:ko
- const [q,setQ]=useState(''),[page,setPage]=useState<Page|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[selected,setSelected]=useState<Item|null>(null),[loading,setLoading]=useState(''),[review,setReview]=useState(false),[installing,setInstalling]=useState(false)
+ const [q,setQ]=useState(initialQuery),[page,setPage]=useState<Page|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[selected,setSelected]=useState<Item|null>(null),[loading,setLoading]=useState(''),[review,setReview]=useState(false),[installing,setInstalling]=useState(false)
  const request=useRef<AbortController|null>(null),detailRequest=useRef<AbortController|null>(null)
  const [inventory,setInventory]=useState<Inventory|null>(null)
  const installed=selected?.installId?inventory?.items?.find(p=>p.id===selected.installId&&p.state!=='retained'):undefined
@@ -25,7 +25,7 @@ export function PackageMarket({onInstalled}:{onInstalled:()=>void}){
   catch(e){if(request.current===controller&&!controller.signal.aborted)setError((e as Error).message)}
   finally{if(request.current===controller)setBusy(false)}
  }
- useEffect(()=>{void search('');return()=>{request.current?.abort();detailRequest.current?.abort()}},[])
+ useEffect(()=>{void search(initialQuery);return()=>{request.current?.abort();detailRequest.current?.abort()}},[])
  const open=async(p:Item)=>{
   detailRequest.current?.abort();setError('');setReview(false);setSelected(null);setLoading(keyOf(p))
   if(p.detailsLoaded){setSelected(p);setLoading('');return}

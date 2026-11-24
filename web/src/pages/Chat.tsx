@@ -17,7 +17,7 @@ import {ArrowDown,ArrowRight,ArrowUp,BrainCircuit,Check,ChevronRight,CircleHelp,
 import {Agent,Approval,Attachment,ChatMessage,ChatSession,Provider,del,get,post,resolveApproval,streamChat,uploadAttachment} from '../api'
 import {Action,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
-import {registryLaunch,parseMcpQuickCommand,findInstalledMcp,discoveryForMcp,type InstalledMcp,type RegistryMcp,type McpAvailableTool} from '../features/mcp/quickCommands'
+import {registryLaunch,parseMcpQuickCommand,standardMcpDestination,findInstalledMcp,discoveryForMcp,type InstalledMcp,type RegistryMcp,type McpAvailableTool} from '../features/mcp/quickCommands'
 import {ReasoningSelect,reasoningOptions} from '../components/ReasoningSelect'
 import {useProviderModels} from '../hooks/useProviderModels'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
@@ -35,6 +35,7 @@ const ATTACH_ALLOWED=['image/png','image/jpeg','image/webp','image/gif']
 const ATTACH_LIMIT=8
 export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,onSession,openModels,openSettings,openExtensions,switchMode,settingsTarget,active=true,onOpenNavigation,newConversationRevision=0}:{sessionId?:string;initialAgent?:string;initialProvider?:string;initialModel?:string;onSession:(x:string|undefined)=>void;openModels:()=>void;openSettings:()=>void;openExtensions:()=>void;switchMode:(mode:'chat'|'rooms')=>void;settingsTarget?:HTMLElement|null;active?:boolean;onOpenNavigation?:()=>void;newConversationRevision?:number}){
  const loc=useLocale()
+ const legacyMcpRuntime=useRemote<{available:boolean}>('/api/mcp/runtime',{available:false},active)
  const sessions=useRemote<ChatSession[]>('/api/sessions',[],active);
  const agents=useRemote<Agent[]>('/api/agents',[],active);
  const providers=useRemote<Provider[]>('/api/providers',[],active);
@@ -189,7 +190,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    ?message.id===optimisticOwner.persistedId
    :index>lastSeenOwnerIndex&&message.role==='user'&&message.content===optimisticOwner.content));
  const showOptimisticOwner=Boolean(optimisticOwner?.sessionId===current&&!ownerReceived&&(busy||optimisticOwner?.persistedId||savedMessageId));
- const slashItems=slashOpen?slashCandidates(input,agents.value,models):[];
+ const slashItems=slashOpen?slashCandidates(input,agents.value,models,legacyMcpRuntime.value.available):[];
  const transcriptRevision=JSON.stringify([messages.at(-1)?.id,messages.length,showOptimisticOwner,busy&&viewingTurn,viewingTurn?live.length:0,viewingTurn?thought.length:0,viewingTurn?toolStatus:'',approval?.id]);
  const alertMessage=error||transcript.error||translateError(job.error||'');
  const visibleAlert=alertMessage&&!(dismissedError?.session===current&&dismissedError?.message===alertMessage)?alertMessage:'';
@@ -339,9 +340,15 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   finally{setMcpQuickBusy(false);}
  };
  const executeMcpCommand=async(input:string)=>{
-  try{const runtime=await get<{available:boolean}>('/api/mcp/runtime');if(!runtime.available){window.location.hash='#/connections?view=plugins';return}}catch{window.location.hash='#/connections?view=plugins';return}
   const action=parseMcpQuickCommand(input);
   if(action.kind==='invalid')throw Error(action.message);
+  const runtime=await get<{available:boolean}>('/api/mcp/runtime');
+  if(runtime.available!==true){
+   const destination=standardMcpDestination(action);
+   if(destination){window.location.hash=destination;return}
+   if(action.kind==='help'){setCommandInfo('/mcp · 확장 마켓 /mcp search 검색어 · 서버 레지스트리 /mcp list · 설치된 확장');return}
+   throw Error('기본 MCP 엔진은 분리되었습니다. /mcp list에서 설치된 커넥터의 설정과 도구를 관리하세요.');
+  }
   setMcpQuickOpen(true);
   if(action.kind==='add'){await registerQuickMcp({name:action.name,url:action.url});return;}
   setMcpQuickBusy(true);
@@ -402,7 +409,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     setShowReasoning(enabled);setThinking(enabled);
     setCommandInfo(t('chat.cmd.thinking',{state:enabled?t('chat.cmd.on'):t('chat.cmd.off')}));return;
    }
-   if(name==='help'){setCommandInfo(slashCommands.map(x=>x.command+' · '+slashCommandLabel(x,loc).name).join('\n')+'\n/mcp search 검색어 · /mcp add 이름 https://주소 · /mcp enable/disable/remove 이름');return;}
+   if(name==='help'){setCommandInfo(slashCommands.map(x=>x.command+' · '+slashCommandLabel(x,loc).name).join('\n')+(legacyMcpRuntime.value.available?'\n/mcp search 검색어 · /mcp add 이름 https://주소 · /mcp enable/disable/remove 이름':'\n/mcp search 검색어 · /mcp list'));return;}
    if(name==='stop'){await stopChat();return;}
    if(name==='status'){
     const state=await get<{agents:number;providers:number;jobs:number;executions:number}>('/api/status');

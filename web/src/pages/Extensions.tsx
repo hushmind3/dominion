@@ -2,6 +2,7 @@ import { koreanToolSummary } from '../lib/toolSummary'
 import {discoveryForMcp,registryLaunch,type RegistryMcp} from '../features/mcp/quickCommands'
 import {DialogBackdrop,DialogPanel} from "../components/Dialog";
 import {SkillsPanel} from "./extensions/SkillsPanel";
+import {McpRegistryPreview} from './extensions/McpRegistryPreview';
 import {PluginDiscovery} from "./extensions/PluginDiscovery";
 import {CapabilitiesPage} from './Capabilities';
 import {t,useLocale} from "../i18n";
@@ -343,7 +344,7 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
   // Services embeds only MCP management: do not load unrelated skill data
   // or show the native tool inventory in a connection management screen.
   const mcpOnlyEmbed=embedded&&(tab==='market'||tab==='installed');
-  const legacyRuntime=useRemote<{available:boolean|null}>(tab==='market'||tab==='installed'?'/api/mcp/runtime':null,{available:null});
+  const legacyRuntime=useRemote<{available:boolean|null}>('/api/mcp/runtime',{available:null});
   const mcp = useRemote<Mcp[]>("/api/mcp", []),
     skills = useRemote<Skill[]>(mcpOnlyEmbed?null:"/api/skills", []),
     presets = useRemote<any[]>(tab === "market"&&!mcpOnlyEmbed ? "/api/mcp/presets" : null, []);
@@ -646,9 +647,10 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
       <h3 className="font-bold">{en?'Independent MCP extension':'독립 MCP 확장 프로그램'}</h3>
       {legacyRuntime.value.available===null?<p className="text-sm text-muted">{legacyRuntime.error||(en?'Checking runtime…':'실행 환경 확인 중…')}</p>:<>
        <p className="text-sm">{en?'MCP transport is no longer built into the standard application. Install a tool-provider extension and register its tools. Existing records and keys are retained.':'기본 도미니온에 MCP 전송 엔진을 내장하지 않습니다. 확장 프로그램을 설치하고 제공 도구를 등록하세요. 기존 연결 기록과 키는 보존됩니다.'}</p>
-       <a href="#/connections?view=plugins" className="inline-flex rounded-lg border border-divider bg-canvas px-3 py-2 text-sm text-brand">{en?'Open extension marketplace':'확장 프로그램 마켓 열기'}</a>
+       <a href="#/connections?view=plugins&q=MCP" className="inline-flex rounded-lg border border-divider bg-canvas px-3 py-2 text-sm text-brand">{en?'Open extension marketplace':'확장 프로그램 마켓 열기'}</a>
        {!embedded&&<Button variant="secondary" onClick={()=>setTab('plugins')}>{en?'Extensions':'확장 프로그램'}</Button>}
-       {retained.length>0&&<details><summary className="cursor-pointer text-sm">{en?'Retained connections (non-secret migration settings)':'보존된 연결 설정 (이전용, 비밀키 제외)'} · {retained.length}</summary><p className="my-2 text-xs text-muted">{en?'Copy these records into the installed connector settings. Review container-local commands and re-enter credentials; no automatic transfer.':'설치한 연결 확장의 설정에 복사하세요. 컨테이너 내부 실행 명령을 확인하고 키·환경변수는 직접 입력해야 합니다.'}</p><textarea className="w-full rounded-lg border border-divider bg-canvas p-2 font-mono text-xs" readOnly rows={10} value={JSON.stringify({servers:retained},null,2)}/></details>}
+       {tab==='market'&&<McpRegistryPreview/>}
+       {retained.length>0&&<details><summary className="cursor-pointer text-sm">{en?'Retained connections (review URLs and arguments before copying)':'보존된 연결 설정 (URL·실행 옵션의 비밀정보 확인 필요)'} · {retained.length}</summary><p className="my-2 text-xs text-muted">{en?'Copy these records into the installed connector settings. Review container-local commands and re-enter credentials; no automatic transfer.':'설치한 연결 확장의 설정에 복사하세요. 컨테이너 내부 실행 명령을 확인하고 키·환경변수는 직접 입력해야 합니다.'}</p><textarea className="w-full rounded-lg border border-divider bg-canvas p-2 font-mono text-xs" readOnly rows={10} value={JSON.stringify({servers:retained},null,2)}/></details>}
       </>}
     </section>
   }
@@ -658,7 +660,7 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
         eyebrow={t('ui.eyebrow.marketplace')}
         title={t('ext.title')}
         description={t('ext.description')}
-        actions={
+        actions={legacyRuntime.value.available===true ?
           <Action
             variant="secondary"
             onClick={() => {
@@ -673,7 +675,7 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
             }}
           >
             <Plus size={17} /> {t('ext.addMcp')}
-          </Action>
+          </Action> : <Action variant="secondary" onClick={()=>setTab('plugins')}><PackagePlus size={17}/>{loc==='en'?'Extensions':'확장 프로그램'}</Action>
         }
       />}
       {(!embedded||tab==='market'||tab==='installed')&&<div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-divider bg-canvas px-4 py-3 text-[11px] text-muted">

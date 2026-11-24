@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {fileURLToPath} from 'node:url'
 import {dirname,resolve} from 'node:path'
-import {parseMcpQuickCommand,validRemoteMcpUrl,findInstalledMcp,discoveryForMcp,registryLaunch} from '../src/features/mcp/quickCommands.ts'
+import {parseMcpQuickCommand,validRemoteMcpUrl,findInstalledMcp,discoveryForMcp,registryLaunch,standardMcpDestination,registryDraft} from '../src/features/mcp/quickCommands.ts'
 
 const dir=dirname(fileURLToPath(import.meta.url))
 const chat=readFileSync(resolve(dir,'../src/pages/Chat.tsx'),'utf8')
@@ -104,3 +104,13 @@ test('every advertised slash command dispatches to an implemented backend operat
  assert.deepEqual(registryLaunch({...npm,url:'https://example.org/mcp'}),{transport:'http',url:'https://example.org/mcp'})
  assert.equal(registryLaunch({name:'invalid',url:'http://example.org'}),undefined)
  })
+
+test('standard MCP search preserves query; mutations do not dispatch to retired runtime',()=>{
+ assert.equal(standardMcpDestination(parseMcpQuickCommand('search Hugging Face & tools')),'#/connections?view=registry&q=Hugging%20Face%20%26%20tools')
+ assert.equal(standardMcpDestination(parseMcpQuickCommand('list')),'#/connections?view=plugins&extensionView=installed')
+ assert.equal(standardMcpDestination(parseMcpQuickCommand('add Example https://example.org/mcp')),undefined)
+ assert.deepEqual(registryDraft({name:'HF',url:'https://huggingface.co/mcp'}),{name:'HF',enabled:true,protocolMode:'auto',transport:'http',url:'https://huggingface.co/mcp'})
+ assert.equal(registryDraft({name:'unsafe',url:'https://user:pass@example.org/mcp'}),undefined)
+ assert.match(chat,/runtime.available!==true/)
+ assert.match(chat,/standardMcpDestination\(action\)/)
+})

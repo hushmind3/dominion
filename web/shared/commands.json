@@ -107,7 +107,7 @@
     "key": "mcp",
     "command": "/mcp",
     "name": "MCP 빠른 연결",
-    "description": "채팅에서 MCP 검색·등록·연결 확인·활성화·삭제",
+    "description": "MCP 서버 검색 및 독립 확장 관리",
     "group": "도구 · 확장"
   },
   {

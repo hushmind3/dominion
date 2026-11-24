@@ -78,3 +78,17 @@ export function findInstalledMcp(items:InstalledMcp[],name:string):InstalledMcp|
  const matches=items.filter(item=>item.id===key||item.name.toLocaleLowerCase()===needle)
  return matches.length===1?matches[0]:undefined
 }
+
+/** Standard builds never mutate the retired host MCP collection. */
+export function standardMcpDestination(action:McpQuickAction):string|undefined{
+ const base='#/connections?view='
+ if(action.kind==='open')return base+'plugins&q=MCP'
+ if(action.kind==='list')return base+'plugins&extensionView=installed'
+ if(action.kind==='search')return base+'registry&q='+encodeURIComponent(action.query)
+ return undefined
+}
+export function registryDraft(entry:RegistryMcp):Record<string,unknown>|undefined{
+ const launch=registryLaunch(entry)
+ if(!launch||!entry.name.trim()||entry.name.length>100)return
+ return {name:entry.name,enabled:true,protocolMode:'auto',...launch}
+}

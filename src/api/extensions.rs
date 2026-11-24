@@ -175,7 +175,8 @@ pub async fn mcp_catalog(Query(query): Query<HashMap<String, String>>) -> Respon
             Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, &message.to_string()),
         };
     let search = query.get("q").cloned().unwrap_or_default();
-    if search.len() >= 3 {
+    if search.len()>160||search.chars().any(char::is_control){return error(StatusCode::BAD_REQUEST,"Invalid MCP registry query")}
+    if !search.trim().is_empty() {
         endpoint.query_pairs_mut().append_pair("search", &search);
     }
     endpoint
@@ -224,11 +225,11 @@ pub async fn mcp_catalog(Query(query): Query<HashMap<String, String>>) -> Respon
                         .and_then(|value| value.as_array())
                         .and_then(|items| {
                             items.iter().find(|remote| {
-                                remote
-                                    .get("url")
-                                    .and_then(|value| value.as_str())
-                                    .map(|url| url.starts_with("https://"))
-                                    .unwrap_or(false)
+                                remote["type"]=="streamable-http"
+                                    && remote.get("headers").is_none_or(|v|v.as_array().is_some_and(Vec::is_empty))
+                                    && remote.get("url").and_then(Value::as_str).is_some_and(|url|
+                                        !url.contains(['{','}']) && reqwest::Url::parse(url).is_ok_and(|u|
+                                            u.scheme()=="https"&&u.host_str().is_some()&&u.username().is_empty()&&u.password().is_none()&&u.fragment().is_none()))
                             })
                         });
                     Some(json!({
