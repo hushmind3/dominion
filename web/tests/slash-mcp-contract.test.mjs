@@ -122,3 +122,17 @@ test('configuration import adds only declared fields and creates a fresh identit
  for(const raw of ['{"name":"X","id":"old"}','{"apiKey":"secret"}','{"__proto__":{}}','{"enabled":"true"}','{"transport":"shell"}','{"args":["a","b","c"]}','[]'])assert.throws(()=>importConfigItem(schema,raw,()=>'new-id'))
  assert.deepEqual(importConfigItem(schema,'{"name":"local","transport":"stdio","args":["a","b"]}',()=>'next'),{id:'next',name:'local',enabled:true,transport:'stdio',args:['a','b']})
 })
+
+test('standard extension catalog exposes direct install and automatic connection, not clipboard setup',()=>{
+ const preview=readFileSync(resolve(dir,'../src/pages/extensions/McpRegistryPreview.tsx'),'utf8')
+ const market=readFileSync(resolve(dir,'../src/pages/extensions/PackageMarket.tsx'),'utf8')
+ assert.match(preview,/void connect\(row\)/)
+ assert.match(preview,/\/api\/plugins\/market\/install/)
+ assert.match(preview,/post\(root\+'\/start'/)
+ assert.match(preview,/post\(configPath,\{confirmed:true,values:/)
+ assert.match(preview,/get<Grant>\(toolPath\+'\/discover'\)/)
+ assert.match(preview,/digest:catalog.digest/)
+ assert.doesNotMatch(preview,/navigator\.clipboard/)
+ assert.match(market,/void install\(p\)/)
+ assert.match(market,/manifestDigest:item.manifestDigest/)
+})

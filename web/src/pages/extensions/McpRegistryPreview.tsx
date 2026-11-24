@@ -58,6 +58,7 @@ export function McpRegistryPreview(){
    if(collision)throw Error(tr('동일한 이름의 다른 연결이 있습니다. 기존 연결은 변경하지 않았습니다.','A different connection has this name; existing settings were not changed.'))
    if(!existing&&servers.length>=8)throw Error(tr('이 커넥터의 연결 한도(8개)에 도달했습니다.','This connector has reached its eight-server limit.'))
    const grant=await get<Grant>(toolPath),key=keys[row.name]?.trim()||''
+   if(existing&&existing.enabled!==false&&grant.enabled&&key&&typeof existing.apiKey==='string'&&existing.apiKey){throw Error(tr('이미 연결된 인증키는 고급 설정에서 변경할 수 있습니다. 기존 연결을 보호하기 위해 현재 키는 변경하지 않았습니다.','Change an existing credential in advanced settings; the current credential was not changed.'))}
    if(existing&&existing.enabled!==false&&grant.enabled&&!key){const live=await get<Grant>(toolPath+'/discover');if(live.digest&&live.digest===grant.digest){setSaved(s=>[...new Set([...s,row.name])]);setNotice(tr('이미 연결되어 있습니다.','Already connected.'));return}}
    if(!existing||existing.enabled===false||key){
     if(grant.enabled){await post(toolPath,{enabled:false,confirmed:true,digest:null});revoked=true}

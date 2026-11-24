@@ -82,10 +82,10 @@ export function ManagedPlugins({selectedImage,onImageConsumed,selectedPackage,on
   <div className="flex flex-wrap items-center justify-between gap-3">
    <div><h3 className="flex items-center gap-2 text-base font-bold text-ink"><Box size={20}/>{tr('내 플러그인','My plugins')}{rows&&<span className="text-xs text-muted">· {rows.length}</span>}</h3>
     <p className="mt-1 text-xs text-muted">{tr('설치한 확장 프로그램을 실행하고 설정하거나 업데이트할 수 있습니다.','Start, configure and update installed extensions.')}</p></div>
-   <div className="flex flex-wrap gap-2"><Button variant="ghost" disabled={!!busy} onClick={()=>void load()}><RefreshCw size={15}/>{tr('새로고침','Refresh')}</Button><Button disabled={disabled} onClick={()=>{setRestoreId('');setShow(!show);setApproved(false)}}><Plus size={16}/>{tr('설치','Install')}</Button><Button disabled={disabled} variant="secondary" onClick={()=>openPackage()}>{tr('패키지 설치','Install package')}</Button></div>
+   <div className="flex flex-wrap gap-2"><Button variant="ghost" disabled={!!busy} onClick={()=>void load()}><RefreshCw size={15}/>{tr('새로고침','Refresh')}</Button><a href="#/connections?view=plugins" className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-sm text-brand"><Plus size={16}/>{tr('마켓에서 찾기','Discover apps')}</a><details className="self-center"><summary className="cursor-pointer px-2 py-2 text-sm text-muted">{tr('수동 설치','Manual install')}</summary><div className="flex flex-wrap gap-2"><Button disabled={disabled} size="sm" onClick={()=>{setRestoreId('');setShow(!show);setApproved(false);setPackageForm(null)}}>{tr('Docker 이미지','Docker image')}</Button><Button disabled={disabled} size="sm" variant="secondary" onClick={()=>{setShow(false);openPackage()}}>{tr('패키지','Package')}</Button></div></details></div>
   </div>
   <div className="my-3 rounded-lg bg-canvas p-3 text-xs">
-   {!inventory?tr('Docker 확인 중…','Checking Docker…'):inventory.available?tr('Docker 연결됨 · 설치 후 직접 실행','Docker connected · explicit start'):tr('Docker 연결 필요: ','Docker unavailable: ')+inventory.error}
+   {!inventory?tr('Docker 확인 중…','Checking Docker…'):inventory.available?tr('설치 환경 정상','Installation available'):tr('Docker 연결 필요: ','Docker unavailable: ')+inventory.error}
   </div>
   {show&&<div ref={formRef} className="mb-4 space-y-3 rounded-xl border border-divider p-3">
    <h4 className="text-sm font-semibold">{restoreId?tr('데이터를 유지하고 다시 설치','Reinstall with retained data'):tr('새 플러그인 설치','Install a plugin')}</h4>
@@ -131,11 +131,11 @@ export function ManagedPlugins({selectedImage,onImageConsumed,selectedPackage,on
    <div className="mt-3 flex flex-wrap gap-1.5">
     {p.versionChange?.phase==='prepared'?<p className="text-xs text-warning">{tr('버전 변경 복구 필요','Version recovery required')}</p>:p.state==='retained'?<Button size="sm" disabled={disabled} onClick={()=>p.packageSpec?openPackage(p.packageSpec,p):restore(p)}><Plus size={14}/>{tr('다시 설치·버전 변경','Reinstall / change version')}</Button>:<>
     <Button size="sm" disabled={disabled} onClick={()=>void operate(p,p.running?'stop':'start')}>{p.running?<Square size={14}/>:<Play size={14}/>} {p.running?tr('중지','Stop'):tr('실행','Start')}</Button>
-    <Button size="sm" variant="secondary" disabled={disabled} onClick={()=>void operate(p,'logs')}><FileText size={14}/>{tr('로그','Logs')}</Button>
+    <details className="self-center"><summary className="cursor-pointer text-sm text-muted px-2 py-1">{tr('관리','Manage')}</summary><div className="flex flex-wrap gap-1.5 pt-1"><Button size="sm" variant="secondary" disabled={disabled} onClick={()=>void operate(p,'logs')}><FileText size={14}/>{tr('로그','Logs')}</Button>
     <Button size="sm" variant="ghost" disabled={disabled||p.running} onClick={()=>void operate(p,'remove')}><Trash2 size={14}/>{tr('제거','Remove')}</Button>
     {!p.running&&p.packageSpec&&<Button size="sm" variant="secondary" disabled={disabled} onClick={()=>openPackage(p.packageSpec,p)}>{tr('패키지 버전 변경','Change package version')}</Button>}
     {!p.packageSpec&&<Button size="sm" variant="secondary" disabled={disabled||!p.imageId} onClick={()=>{setUpdating(p);setNewImage(p.running?'':p.image);setScheduleUpdate(p.running)}}>{p.running?tr('업데이트 예약','Schedule update'):tr('버전 변경','Change version')}</Button>}
-    {p.scheduledUpdate?.status==='queued'&&<Button size="sm" variant="ghost" disabled={disabled} onClick={()=>void cancelScheduled(p)}>{tr('예약 취소','Cancel update')}</Button>}
+    {p.scheduledUpdate?.status==='queued'&&<Button size="sm" variant="ghost" disabled={disabled} onClick={()=>void cancelScheduled(p)}>{tr('예약 취소','Cancel update')}</Button>}</div></details>
     </>}
     {p.versionChange&&!p.running&&<Button size="sm" variant="secondary" disabled={disabled} onClick={()=>void rollback(p)}>{tr('이전 버전 복구','Restore previous version')}</Button>}
    </div>
