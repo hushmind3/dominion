@@ -17,7 +17,7 @@ export async function unseal(env,account,cipher){const [iv,body]=cipher.split('.
 const callbackUrl=req=>new URL(cb,req.url).href;
 const authPage=(message,status=200)=>new Response('<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DOMINION 연결</title><body><h2>'+message+'</h2><p>이 창을 닫고 DOMINION 앱으로 돌아가세요.</p></body></html>',{status,headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'none'; frame-ancestors 'none'; base-uri 'none'","referrer-policy":"no-referrer"}});
 async function body(req){const text=await req.text();if(text.length>4096)throw Error('invalid body');return JSON.parse(text)}
-async function token(env,params,send=fetch){const r=await send('https://oauth2.googleapis.com/token',{method:'POST',redirect:'error',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:env.CONNECTOR_GOOGLE_CLIENT_ID,client_secret:env.CONNECTOR_GOOGLE_CLIENT_SECRET,...params}),signal:AbortSignal.timeout(15000)});if(!r.ok)return {error:r.status===400?'reauthorize':'provider_unavailable'};return r.json()}
+async function token(env,params,send=fetch){const r=await send('https://oauth2.googleapis.com/token',{method:'POST',redirect:'error',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:env.CONNECTOR_GOOGLE_CLIENT_ID,client_secret:env.CONNECTOR_GOOGLE_CLIENT_SECRET,...params}),signal:AbortSignal.timeout(15000)});if(!r.ok){const x=await r.json().catch(()=>({}));return {error:x.error==='invalid_grant'?'reauthorize':'provider_unavailable'}}return r.json()}
 async function api(url,access,send=fetch){const r=await send(url,{redirect:'error',headers:{authorization:'Bearer '+access},signal:AbortSignal.timeout(15000)});if(!r.ok)throw new Error(r.status===401||r.status===403?'google_permission':'google_unavailable');return r.json()}
 const clip=(v,n=300)=>String(v??'').slice(0,n);
 export async function readGoogle(operation,access,send=fetch){
@@ -46,8 +46,9 @@ export async function googleRoute(req,env,{account,send=fetch}){
  if(p===cb&&req.method==='GET'){
   const u=new URL(req.url),state=u.searchParams.get('state')||'',code=u.searchParams.get('code')||'';
   if(!/^[A-Za-z0-9_-]{43}$/.test(state)||!code||code.length>2048)return authPage('Google 연결이 취소되었거나 만료되었습니다.',400);
-  // Consume exactly once. The live mobile session must still own this attempt.
-  const row=await env.DB.prepare("DELETE FROM assistant_google_pending WHERE state_hash=? AND expires_at>? AND EXISTS(SELECT 1 FROM app_sessions s WHERE s.id=assistant_google_pending.app_session_id AND s.account_id=assistant_google_pending.account_id AND s.status='approved' AND s.expires_at>? AND s.capability='assistant_remote') RETURNING account_id,app_session_id,verifier").bind(await digest(state),now(),now()).first();
+  // Atomically claim exactly once; keep the row until completion so disconnect can invalidate the in-flight exchange.
+  const stateHash=await digest(state);
+  const row=await env.DB.prepare("UPDATE assistant_google_pending SET claimed=1 WHERE state_hash=? AND claimed=0 AND expires_at>? AND EXISTS(SELECT 1 FROM app_sessions s WHERE s.id=assistant_google_pending.app_session_id AND s.account_id=assistant_google_pending.account_id AND s.status='approved' AND s.expires_at>? AND s.capability='assistant_remote') RETURNING account_id,app_session_id,verifier").bind(stateHash,now(),now()).first();
   if(!row)return authPage('연결 요청이 만료되었습니다.',403);
   try{
    const t=await token(env,{grant_type:'authorization_code',code,redirect_uri:callbackUrl(req),code_verifier:await unseal(env,row.account_id,row.verifier)},send);
@@ -57,9 +58,9 @@ export async function googleRoute(req,env,{account,send=fetch}){
    const granted=String(t.scope||'').split(/\s+/),allowed=Object.keys(scopes).filter(k=>granted.includes(scopes[k]));
    if(!allowed.length)return authPage('서비스 조회 권한을 선택해 주세요.',403);
    const cipher=await seal(env,row.account_id,t.refresh_token);
-   const result=await env.DB.prepare("INSERT INTO assistant_google_grants(account_id,refresh_cipher,scopes,updated_at) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM app_sessions WHERE id=? AND account_id=? AND status='approved' AND expires_at>? AND capability='assistant_remote') ON CONFLICT(account_id) DO UPDATE SET refresh_cipher=excluded.refresh_cipher,scopes=excluded.scopes,updated_at=excluded.updated_at").bind(row.account_id,cipher,JSON.stringify(allowed),now(),row.app_session_id,row.account_id,now()).run();
+   const result=await env.DB.prepare("INSERT INTO assistant_google_grants(account_id,refresh_cipher,scopes,updated_at) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM app_sessions WHERE id=? AND account_id=? AND status='approved' AND expires_at>? AND capability='assistant_remote') AND EXISTS(SELECT 1 FROM assistant_google_pending WHERE state_hash=? AND claimed=1 AND expires_at>?) ON CONFLICT(account_id) DO UPDATE SET refresh_cipher=excluded.refresh_cipher,scopes=excluded.scopes,updated_at=excluded.updated_at").bind(row.account_id,cipher,JSON.stringify(allowed),now(),row.app_session_id,row.account_id,now(),stateHash,now()).run();
    return result.meta.changes?authPage('Google 서비스 연결 완료'):authPage('연결 세션이 만료되었습니다.',403);
-  }catch{return authPage('Google 연결에 실패했습니다. 다시 시도해 주세요.',502)}
+  }catch{return authPage('Google 연결에 실패했습니다. 다시 시도해 주세요.',502)}finally{await env.DB.prepare('DELETE FROM assistant_google_pending WHERE state_hash=?').bind(stateHash).run()}
  }
  const user=await account(req,env);if(!mobile(user))return fail('Assistant Google permission required',403);
  if(p==='/v1/assistant/google/status'&&req.method==='GET'){
