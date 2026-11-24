@@ -120,3 +120,19 @@ test('registered namespace cannot collide with arbitrary source kind',async()=>{
  const {sdkSourceKey}=await import('../src/utils/sdkIntegration.ts')
  assert.notEqual(sdkSourceKey({id:'a',status:'running',source:{kind:'registered',id:'p'}}),sdkSourceKey({id:'b',status:'running',sdkPluginId:'p'}))
 })
+
+
+test('decision UI uses recorded evidence and native steering gates',async()=>{
+ const {observedRate,sdkSteeringAllowed,steeringBytes}=await import('../src/utils/intelligenceView.ts')
+ assert.equal(observedRate({uses:0,successes:0}),'—')
+ assert.equal(observedRate({uses:4,successes:3}),'75% (3/4)')
+ assert.equal(sdkSteeringAllowed({status:'running',sessionId:'s'}),true)
+ assert.equal(sdkSteeringAllowed({status:'awaiting_approval',sessionId:'s'}),false)
+ assert.equal(sdkSteeringAllowed({status:'running',sessionId:'s',steeringGate:{closed:true}}),false)
+ assert.equal(sdkSteeringAllowed({status:'queued',sessionId:'s',steering:Array(8)}),false)
+ assert.equal(steeringBytes('한'),3)
+ const manager=readFileSync(resolve(dir,'../src/pages/memory/AlgorithmManager.tsx'),'utf8')
+ assert.match(manager,/\/api\/algorithms\/evaluate/)
+ const steering=readFileSync(resolve(dir,'../src/components/SdkSteering.tsx'),'utf8')
+ assert.match(steering,/\+'\/steer'/)
+})

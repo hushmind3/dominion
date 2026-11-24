@@ -40,7 +40,12 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
      (field(row,'kind')==='team'?id:undefined)
     if(teamId)add('/api/jobs/'+encoded(teamId)+'/team-steps')
     break
-   case 'execution':add('/api/executions');break
+   case 'execution':add('/api/executions');if(id)add('/api/executions/'+encoded(id));break
+   case 'algorithm':add('/api/algorithms');break
+   case 'algorithm_eval':add('/api/algorithms/evaluations');break
+   case 'algorithm_stat':add('/api/algorithms','/api/synergy');break
+   case 'agent_growth':add('/api/synergy');break
+   case 'experience_principle':case 'experience_rule':case 'principle_usage':case 'learning_case':add('/api/transfer');break
    case 'execution_operation':add('/api/executions');break
    case 'approval':add('/api/approvals');break
    case 'mcp':add('/api/mcp','/api/mcp/discover');break

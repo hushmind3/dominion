@@ -5,6 +5,9 @@ import {Panel,Notice,StateTag,useRemote} from '../../components/UI'
 import {post} from '../../api'
 import {useLocale} from '../../i18n'
 import {SdkPluginRegistry} from './SdkPluginRegistry'
+import {SdkSteering} from '../../components/SdkSteering'
+import {ExecutionInsights} from '../../components/ExecutionInsights'
+import {RunEventTimeline} from '../../components/RunEventTimeline'
 import {type SdkRun,sdkActive,sdkNeedsReview,sdkVerified,sdkSources,sdkControls,sdkSourceKey} from '../../utils/sdkIntegration'
 
 const endpoint='/api/sdk/runs'
@@ -108,6 +111,8 @@ export function SdkIntegrationPanel(){
    <div className="flex flex-wrap items-center justify-between gap-2"><strong className="text-sm">{tr('작업 상세','Run details')}</strong><StateTag online={sdkVerified(current)}>{state(current)}</StateTag></div>
    <p className="mt-2 break-all text-[11px] text-[#7C7469]">ID: {current.id}{current.runRef?.executionId&&' · '+current.runRef.executionId}</p>
    <p className="mt-1 text-xs">{tr('모델 호출','Model calls')}: {current.checkpoint?.rounds??'—'} · {tr('도구 호출','Tool calls')}: {current.checkpoint?.toolCalls??'—'}</p>
+   <SdkSteering key={current.id} run={current} disabled={busy||detail.loading||!!detail.error||detail.value?.id!==current.id} onChanged={()=>Promise.all([runs.reload(),detail.reload()])}/>
+   {current.runRef?.executionId&&<><ExecutionInsights key={current.runRef.executionId} executionId={current.runRef.executionId}/><RunEventTimeline executionId={current.runRef.executionId}/></>}
    {current.error&&<Notice message={current.error}/>}
    {detail.error&&<Notice message={detail.error}/>}
    {detail.loading&&<p className="text-xs">{tr('상세 조회 중','Loading details')}</p>}

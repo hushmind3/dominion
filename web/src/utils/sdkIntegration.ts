@@ -1,6 +1,7 @@
 /** SDK source metadata is provenance, never a verified plugin identity. */
 export type SdkRun = {
  id:string;status:string;instruction?:string;providerId?:string;model?:string;sdkPluginId?:string;
+ steeringGate?:{closed?:boolean};steeringRevision?:number;steering?:{revision:number;instruction:string;mode:string;at?:string}[];
  createdAt?:string;updatedAt?:string;sessionId?:string;readOnly?:boolean;
  source?:{kind?:string;id?:string;verified?:boolean}|null;
  answer?:string|null;error?:string|null;verified?:boolean;taskOutcome?:string|null;

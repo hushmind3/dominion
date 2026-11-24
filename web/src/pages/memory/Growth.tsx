@@ -1,5 +1,6 @@
 import {t, useLocale, formatDateTime} from '../../i18n'
 import {statusLabel} from '../../components/StatusPill'
+import {rows,strings,scalar} from '../../utils/intelligenceView'
 import {useRemote,Notice,Panel,Subheading} from '../../components/UI'
 
 type Growth={
@@ -19,7 +20,7 @@ const percent=(value:any)=>`${Math.round(number(value)*100)}%`
 const label=(value:any,fallback=t('growth.none'))=>typeof value==='string'&&value?value:fallback
 
 export function GrowthDashboard(){
- useLocale()
+ const en=useLocale()==='en'
  const synergy=useRemote<Synergy>('/api/synergy',{agents:[],sharedMethods:[],algorithmStats:[]})
  const usage=useRemote<Usage>('/api/model-usage',{groups:[]})
  const transfer=useRemote<Transfer>('/api/transfer',{principles:[],rules:[],usages:[],learningCases:[]})
@@ -82,8 +83,10 @@ export function GrowthDashboard(){
     <div className="flex flex-wrap items-center gap-2"><strong className="min-w-0 flex-1 truncate">{label(usage.principle,t('growth.principle'))}</strong><span className="rounded bg-[#F7E8E1] px-1.5 py-0.5 text-[10px] text-[#A94E30]">{statusLabel(usage.outcome||usage.status)||t('growth.none')}</span></div>
     <p className="mt-1 text-[10px] text-[#8A8176]">{t('growth.usageReused',{model:label(usage.model,t('growth.modelUnknown'))})} · {t('growth.usageContributed',{models:(usage.contributingModels||[]).join(', ')||t('growth.none')})} · {t('growth.usageAgent',{agent:label(usage.agentId,t('growth.none'))})}</p>
     <p className="text-[10px] text-[#9C9388]">{formatDateTime(usage.execution?.startedAt||usage.createdAt)}</p>
+    <div className="mt-2 flex flex-wrap items-center gap-2"><span className="rounded bg-[#F3EEE5] p-1">{strings(usage.contributingAgents).join(', ')||'—'}</span><span>→</span><span className="rounded bg-[#F3EEE5] p-1">{scalar(usage.agentId)}</span><span>{scalar(usage.execution?.taskOutcome)}</span></div>
    </div>)}</div>}
   </Panel>
 
+  <Panel className="min-w-0 p-4"><Subheading title={en?'Learning case evidence':'학습 사례 및 근거'}/>{rows(transfer.value.learningCases).length?rows(transfer.value.learningCases).slice(0,20).map((c,i)=><details key={c.id||i} className="border-b border-[#EFE9DF] p-2 text-xs"><summary>{scalar(c.id)} · {scalar(c.status||c.outcome)}</summary><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(c,null,2)}</pre></details>):<p className="text-xs">—</p>}</Panel>
  </div>
 }

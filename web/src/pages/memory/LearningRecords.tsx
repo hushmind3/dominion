@@ -1,4 +1,5 @@
 import {formatDateTime} from '../../i18n'
+import {AlgorithmManager} from './AlgorithmManager'
 import {useState} from 'react'
 import {Button} from '../../components/Primitives'
 import {Notice,useRemote} from '../../components/UI'
@@ -95,11 +96,12 @@ const normalize=(source:number,data:any):Row[]=>{
 
 export function LearningRecords(){
  const [source,setSource]=useState(0)
- const data=useRemote<any>(sources[source].endpoint,null)
+ const data=useRemote<any>(source===2?null:sources[source].endpoint,null)
  const [limit,setLimit]=useState(20)
  const rows=normalize(source,data.value)
  return <div className="mt-3 grid gap-2">
   <div className="flex flex-wrap gap-2">{sources.map((item,i)=><Button key={item.label} variant={source===i?'primary':'ghost'} onClick={()=>{setSource(i);setLimit(20)}}>{item.label}</Button>)}</div>
+  {source===2?<AlgorithmManager/>:<>
   <Notice message={data.error}/>
   {data.loading?<p>기록을 불러오는 중…</p>:!data.error&&!rows.length?<p>저장된 기록이 없습니다.</p>:rows.slice(0,limit).map(row=><details key={row.key} className="rounded-lg border border-[#EFE9DF] p-2">
    <summary className="cursor-pointer text-sm"><strong>{row.title}</strong>{row.subtitle&&<span className="text-[#7C7469]"> · {row.subtitle}</span>}{row.tags.map(tag=><span key={tag} className="ml-2 rounded bg-[#F7E8E1] px-1.5 py-0.5 text-[10px] font-semibold text-[#A94E30]">{tag}</span>)}</summary>
@@ -107,5 +109,6 @@ export function LearningRecords(){
    <details className="mt-2 text-xs text-[#5C544A]"><summary className="cursor-pointer">원본 JSON</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all">{JSON.stringify(row.raw,null,2)}</pre></details>
   </details>)}
   {rows.length>limit&&<Button variant="secondary" onClick={()=>setLimit(n=>n+20)}>더 보기</Button>}
+  </>}
  </div>
 }

@@ -1,4 +1,5 @@
 import {useState} from 'react'
+import {ExecutionDecisionDetails} from './ExecutionDecisionDetails'
 import {Activity,ChevronDown,ChevronRight,LoaderCircle} from 'lucide-react'
 import {useLocale} from '../i18n'
 import {useRemote} from './UI'
@@ -148,6 +149,7 @@ export function ExecutionInsights({executionId,compact=false}:{executionId:strin
       ?'Breakdown values are pre-send estimates. Per-call values use provider reports when available; cache misses are never inferred from missing data.'
       :'구성별 숫자는 전송 전 추정치입니다. 호출별 수치는 가능한 경우 공급자 실측값을 사용하며, 캐시 정보가 없으면 0으로 표시하지 않습니다.'}</p>
     {ctx?.requiredOverBudget&&<p className="mt-2 text-[10px] text-amber-800">{en?'Pre-send compiler estimated a capacity overflow; the provider wire is checked separately.':'컨텍스트 컴파일 단계에서 한도 초과가 추정됐습니다. 실제 전송 요청은 별도로 검사합니다.'}</p>}
+    <ExecutionDecisionDetails record={record}/>
     {calls.length>0&&<div className="mt-3 border-t border-[#E7E0D5] pt-2">
      <strong>{en?'Model call ledger':'모델 호출별 사용량'}</strong>
      <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">
