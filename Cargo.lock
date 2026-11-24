@@ -325,21 +325,28 @@ dependencies = [
 name = "dominion-algorithms"
 version = "0.1.0"
 dependencies = [
- "dominion-core",
+ "dominion-contracts",
+ "dominion-harness",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "dominion-contracts"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "uuid",
 ]
 
 [[package]]
 name = "dominion-core"
 version = "0.3.0"
 dependencies = [
- "futures-util",
- "serde",
- "serde_json",
- "sha2",
- "tokio",
- "uuid",
+ "dominion-contracts",
+ "dominion-harness",
 ]
 
 [[package]]
@@ -347,6 +354,19 @@ name = "dominion-extensions"
 version = "0.1.0"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "dominion-harness"
+version = "0.1.0"
+dependencies = [
+ "dominion-contracts",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

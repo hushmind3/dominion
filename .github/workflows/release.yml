@@ -62,7 +62,7 @@ jobs:
       - name: Shared kernel regression for Intel release
         if: matrix.target == 'x86_64-apple-darwin'
         run: |
-          cargo test --locked -p dominion-core --lib
+          cargo test --locked -p dominion-core -p dominion-contracts -p dominion-harness --lib
           cargo test --locked -p dominion-algorithms --lib
       - name: Build Rust sidecar and native installers
         run: node scripts/build-desktop.mjs --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}

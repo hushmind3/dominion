@@ -8,6 +8,9 @@ on:
     paths:
       - 'src/**'
       - 'crates/dominion-core/**'
+      - 'crates/dominion-contracts/**'
+      - 'crates/dominion-harness/**'
+      - 'crates/dominion-extensions/**'
       - 'crates/dominion-algorithms/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -22,6 +25,9 @@ on:
     paths:
       - 'src/**'
       - 'crates/dominion-core/**'
+      - 'crates/dominion-contracts/**'
+      - 'crates/dominion-harness/**'
+      - 'crates/dominion-extensions/**'
       - 'crates/dominion-algorithms/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -49,7 +55,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Native infrastructure contracts (dev profile)
-        run: cargo test --locked -p dominion-core --lib
+        run: cargo test --locked -p dominion-core -p dominion-contracts -p dominion-harness --lib
       - name: Model endpoint capability and cache negotiation
         run: |
           cargo test --locked --bin dominion-rust addons::gateway::model_capabilities::tests
@@ -212,7 +218,7 @@ jobs:
           cargo test --locked --bin dominion-rust addons::extensions::tests
           cargo test --locked --bin dominion-rust addons::runtime_hooks::tests
           cargo test --locked --bin dominion-rust addons::turn_policy::tests
-          cargo test --locked -p dominion-core strategy::tests
+          cargo test --locked -p dominion-contracts strategy::tests
           cargo test --locked --test e2e room_identity::backend_extensions_are_isolated_from_the_core_conversation -- --nocapture
       - name: Explicit public web search requires verified tool evidence (dev profile)
         run: |
@@ -254,7 +260,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: SQLite, native runtime and Windows toolchain validation
         run: |
-          cargo test --locked -p dominion-core --lib
+          cargo test --locked -p dominion-core -p dominion-contracts -p dominion-harness --lib
           cargo test --locked --bin dominion-rust engine::capability::tests
           cargo test --locked --bin dominion-rust api::sdk::view_tests
       - name: Release version parity

@@ -1,21 +1,14 @@
-//! Native Rust execution harness. The product supplies SQLite, model and tool adapters.
-pub mod domain;
-pub mod journal;
-pub mod tool_schema;
-pub mod policy;
-pub mod hosted;
-pub mod runtime_port;
-pub mod run_event;
-pub mod strategy;
-pub mod budget;
-mod mcp {
-    pub fn request_identity(run:uuid::Uuid,call:&crate::domain::ToolCall)->String {
-        use sha2::{Digest,Sha256};
-        format!("dominion-{:x}",Sha256::digest(format!("{run}:{}:{}:{}",call.id,call.name,call.arguments)))
+//! Compatibility facade for the original public dominion-core paths.
+//! Implementation lives exactly once in dominion-contracts and dominion-harness.
+pub use dominion_contracts::*;
+pub use dominion_harness::{hosted,runtime_port};
+
+#[cfg(test)]
+mod compatibility {
+    #[test]
+    fn facade_and_split_packages_share_types(){
+        let snapshot:dominion_harness::hosted::Snapshot=super::hosted::Snapshot::new("facade","test",3).unwrap();
+        let _:dominion_contracts::domain::Run=snapshot.native;
+        assert_eq!(super::identity::stable_id(&["same"]),dominion_contracts::identity::stable_id(&["same"]));
     }
 }
-
-pub mod delegation;
-
-pub mod identity;
-pub mod model_capabilities;

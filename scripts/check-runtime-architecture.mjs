@@ -14,9 +14,15 @@ for(const pkg of members)if(!existsSync(pkg.manifest_path))throw Error('Missing 
 if(!product.dependencies.some(dep=>dep.name===core.name&&dep.path===path.dirname(core.manifest_path))||
    !product.dependencies.some(dep=>dep.name===algorithms.name&&dep.path===path.dirname(algorithms.manifest_path)))
   throw Error('Product gateway must compose core and algorithms')
-if(!algorithms.dependencies.some(dep=>dep.name===core.name&&dep.path===path.dirname(core.manifest_path))||
+const contracts=members.find(pkg=>pkg.name==='dominion-contracts')
+const harness=members.find(pkg=>pkg.name==='dominion-harness')
+if(!contracts||!harness||!algorithms.dependencies.some(dep=>dep.name===harness.name)||
+   !algorithms.dependencies.some(dep=>dep.name===contracts.name)||
+   !harness.dependencies.some(dep=>dep.name===contracts.name)||
+   contracts.dependencies.some(dep=>dep.name.startsWith('dominion-'))||
+   harness.dependencies.some(dep=>dep.name.startsWith('dominion-')&&dep.name!==contracts.name)||
    core.dependencies.some(dep=>dep.name===algorithms.name))
-  throw Error('Algorithm dependency must point towards core, never backwards')
+  throw Error('Independent algorithm, harness and core-contract graph was violated')
 // Keep real-process E2E contracts focused while preventing a silent loss
 // of the original cases during test refactors.
 const e2eModules=['room_identity','room_collaboration','run_recovery',
@@ -72,7 +78,7 @@ if(!taskDag.includes('pub fn ready_or_block(')||
    !delegated.includes('crate::addons::team_dag::validate_edges(')||
    !readFileSync(path.join(root,'src/db.rs'),'utf8').includes('idx_team_parent_jobs'))
   throw Error('Lead/Worker DAG lost dependency scheduler or scoped graph index')
-const capabilityNegotiation=readFileSync(path.join(root,'crates/dominion-core/src/model_capabilities.rs'),'utf8')
+const capabilityNegotiation=readFileSync(path.join(root,'crates/dominion-contracts/src/model_capabilities.rs'),'utf8')
 const providerGateway=readFileSync(path.join(root,'src/addons/integrations/gateway.rs'),'utf8')
 const chatProvider=readFileSync(path.join(root,'src/engine/chat/provider.rs'),'utf8')
 if(!capabilityNegotiation.includes('pub fn negotiate_tool_mode(')||
@@ -185,9 +191,9 @@ for(const source of [activeContract,harnessContract,extensionContract]){
 }
 const outcome=readFileSync(path.join(root,'src/engine/chat/outcome.rs'),'utf8')
 const driver=readFileSync(path.join(root,'crates/dominion-algorithms/src/engine.rs'),'utf8')
-const nativePort=readFileSync(path.join(root,'crates/dominion-core/src/runtime_port.rs'),'utf8')
+const nativePort=readFileSync(path.join(root,'crates/dominion-harness/src/runtime_port.rs'),'utf8')
 const executionEvents=readFileSync(path.join(root,'src/events.rs'),'utf8')
-if(!existsSync(path.join(root,'crates/dominion-core/src/run_event.rs'))||
+if(!existsSync(path.join(root,'crates/dominion-contracts/src/run_event.rs'))||
    !executionEvents.includes('reference.parent_execution_id=pick(value,"parentExecutionId")')||
    !executionEvents.includes('RunEventRef')||
    !executionEvents.includes('value["runRef"]=json!(reference)'))
@@ -199,13 +205,13 @@ if(coreLib.includes('pub mod context;')||
    !existsSync(path.join(root,'crates/dominion-algorithms/src/context.rs')))
   throw Error('Context projection algorithm returned to infrastructure core')
 if(coreLib.includes('pub mod engine;')||
-   !coreLib.includes('pub mod runtime_port;')||
+   !coreLib.includes('pub use dominion_harness::{hosted,runtime_port};')||
    nativePort.includes('pub struct Engine;')||
    !nativePort.includes('pub trait Host: Send')||
    !nativePort.includes('pub trait AgentLoop<H: Host>')||
-   !driver.includes('impl<H: Host> dominion_core::runtime_port::AgentLoop<H> for Engine')||
+   !driver.includes('impl<H: Host> dominion_harness::runtime_port::AgentLoop<H> for Engine')||
    !driver.includes('pub async fn drive<H: Host>')||
-   !driver.includes('dominion_core::runtime_port::'))
+   !driver.includes('dominion_harness::runtime_port::'))
   throw Error('Agent iteration logic leaked into core or algorithm crate missing')
 const modules=readFileSync(path.join(root,'src/engine/mod.rs'),'utf8')
 const allowedExecutionModules=new Set(["effect","chat","capability","verification","recovery","lease","llm","policy","router","run_state","tools","execution_budget","sandbox","workspace_scope"])
@@ -214,7 +220,7 @@ if(declaredExecutionModules.length!==allowedExecutionModules.size||
    declaredExecutionModules.some(m=>!allowedExecutionModules.has(m)))
   throw Error('Optional module added to native execution core; register it under src/addons instead')
 const addonIndex=readFileSync(path.join(root,'src/addons/mod.rs'),'utf8')
-const strategyPort=readFileSync(path.join(root,'crates/dominion-core/src/strategy.rs'),'utf8')
+const strategyPort=readFileSync(path.join(root,'crates/dominion-contracts/src/strategy.rs'),'utf8')
 const strategyOwner=readFileSync(path.join(root,'src/addons/strategies/turn_policy.rs'),'utf8')
 if(!strategyPort.includes('pub trait TurnStrategyPort')||
    !strategyPort.includes('pub struct DiscoveryDecision')||
@@ -264,7 +270,7 @@ if(!quietTurn||quietTurn.includes('run_quiet_with_stats(')||
    !quietTurn.includes('chat::run_turn_background(')||
    !quietTurn.includes('drain_quiet_events(receiver)'))
   throw Error('Quiet background turns must drain events without collecting discarded tool evidence')
-if(!runtime.includes('dominion_core::runtime_port::AgentLoop::run('))throw Error('Native driver must run product turns')
+if(!runtime.includes('dominion_sdk::run('))throw Error('Native driver must run product turns')
 if(!outcome.includes('pub(super) fn determine_task_outcome(')||!runtime.includes('mod outcome;'))
   throw Error('Outcome policy must remain independently verifiable')
 if(/while\s+!\s*(?:self\.)?finished/.test(runtime+adapter))throw Error('Legacy model retry loop reintroduced')
@@ -360,7 +366,7 @@ if(!helperSource.includes('mod receipts;')||
    !store.includes('idx_aux_model_call_execution'))
   throw Error('Execution cost accounting no longer includes auxiliary upstream retries')
 if(!sdkApi.includes('engine::run_quiet(&state,&request).await')||
-   !runtime.includes('dominion_core::runtime_port::AgentLoop::run(')||
+   !runtime.includes('dominion_sdk::run(')||
    !sdkApi.includes('record["modelAccounting"]=run["modelAccounting"].clone()'))
   throw Error('SDK/chat execution or cost semantics diverged from common Rust core')
 
@@ -444,7 +450,7 @@ const sdk=members.find(pkg=>pkg.name==='dominion-sdk')
 const extensions=members.find(pkg=>pkg.name==='dominion-extensions')
 if(!sdk||!extensions||!sdk.dependencies.some(dep=>dep.name===extensions.name)||!product.dependencies.some(dep=>dep.name===sdk.name))
   throw Error('Missing independent SDK extension contract')
-for(const pkg of [core,algorithms,extensions]){
+for(const pkg of [contracts,harness,core,algorithms,extensions]){
   if(pkg.dependencies.some(dep=>dep.name===product.name||dep.name===sdk.name))
     throw Error('Core/algorithm/extension contracts must not depend on product or SDK')
 }

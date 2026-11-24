@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/dominion-core", "crates/dominion-algorithms", "crates/dominion-sdk", "crates/dominion-extensions"]
+members = [".", "crates/dominion-core", "crates/dominion-algorithms", "crates/dominion-sdk", "crates/dominion-extensions", "crates/dominion-contracts", "crates/dominion-harness"]
 
 [package]
 name = "dominion-rust"

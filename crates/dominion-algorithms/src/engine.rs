@@ -1,14 +1,13 @@
 //! Separate agent iteration algorithm, composed by the product gateway.
 //! All effect, cancellation, budget and journal authority stays in core.
-pub use dominion_core::runtime_port::{Context,Flow,Host,ModelDecision,model_call};
-use dominion_core::domain::RunStatus;
+pub use dominion_harness::runtime_port::{Context,Flow,Host,ModelDecision,model_call};
+use dominion_contracts::domain::RunStatus;
 #[cfg(test)]
 use serde_json::{json,Value};
 #[cfg(test)]
-use dominion_core::{
-    budget::BudgetLedger,
-    hosted::{BoxFuture,Journal,Snapshot},
-};
+use dominion_contracts::budget::BudgetLedger;
+#[cfg(test)]
+use dominion_harness::hosted::{BoxFuture,Journal,Snapshot};
 
 pub struct Engine;
 impl Engine {
@@ -113,12 +112,12 @@ impl Engine {
 }
 
 /// The default ReAct-style agent loop implements the native interface.
-impl<H: Host> dominion_core::runtime_port::AgentLoop<H> for Engine {
+impl<H: Host> dominion_harness::runtime_port::AgentLoop<H> for Engine {
     fn run<'a>(
         &'a self,
         host: &'a mut H,
         ctx: Context<'a>,
-    ) -> dominion_core::hosted::BoxFuture<'a, Result<(), String>> {
+    ) -> dominion_harness::hosted::BoxFuture<'a, Result<(), String>> {
         Box::pin(Engine::drive(host, ctx))
     }
 }

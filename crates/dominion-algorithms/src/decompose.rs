@@ -280,7 +280,7 @@ pub fn decompose_with_acceptance(input: &str, algorithm: &Value, checks: &Value)
             "tool_succeeded" | "command_succeeded");
         if !recognized { unsupported += 1; }
         if check["inferred"] == true { inferred += 1; }
-        let check_id = format!("obligation-{}", dominion_core::identity::stable_id(
+        let check_id = format!("obligation-{}", dominion_contracts::identity::stable_id(
             &[input, canonical.as_str()]
         ));
         let subject = check["path"].as_str().or_else(||

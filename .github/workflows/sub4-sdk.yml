@@ -5,6 +5,9 @@ on:
     paths:
       - 'crates/dominion-sdk/**'
       - 'crates/dominion-core/**'
+      - 'crates/dominion-contracts/**'
+      - 'crates/dominion-harness/**'
+      - 'crates/dominion-extensions/**'
       - 'crates/dominion-algorithms/**'
       - 'packages/sdk-typescript/**'
       - 'src/api/sdk.rs'

@@ -1,6 +1,6 @@
 use super::*;
-use dominion_core::hosted::{self, Action, DispatchResult, Dispatcher};
-use dominion_core::runtime_port::AgentLoop;
+use dominion_harness::hosted::{self, Action, DispatchResult, Dispatcher};
+use dominion_harness::runtime_port::AgentLoop;
 use std::{
     collections::VecDeque,
     sync::{
@@ -298,12 +298,12 @@ async fn kernel_never_reconciles_an_uncertain_tool_intent() {
     host.reconcile_on_receipt = true;
     {
         let mut stored = host.store.saved.lock().unwrap();
-        stored.native.in_flight = Some(dominion_core::domain::ToolCall {
+        stored.native.in_flight = Some(dominion_contracts::domain::ToolCall {
             id: "uncertain".into(),
             name: "workspace_write".into(),
             arguments: json!({"path":"x"}),
         });
-        stored.receipts.push(dominion_core::hosted::Receipt {
+        stored.receipts.push(dominion_harness::hosted::Receipt {
             id: "earlier".into(),
             tool: "workspace_write".into(),
             arguments: json!({"path":"x"}),

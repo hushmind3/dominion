@@ -1,0 +1,12 @@
+[package]
+name = "dominion-contracts"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Pure Dominion core contracts and deterministic effect journal transitions"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+sha2 = "0.10"

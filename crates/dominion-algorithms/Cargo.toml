@@ -6,7 +6,8 @@ license = "MIT"
 description = "Dominion agent-loop algorithm atop the native core"
 
 [dependencies]
-dominion-core = { path = "../dominion-core" }
+dominion-contracts = { path = "../dominion-contracts" }
+dominion-harness = { path = "../dominion-harness" }
 serde_json = "1"
 
 [dev-dependencies]
