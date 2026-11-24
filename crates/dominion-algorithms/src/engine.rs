@@ -32,6 +32,9 @@ impl Engine {
         if !complete && host.wants_plan() {
             ctx.snapshot = host.reload()?;
             ctx.check_cancelled()?;
+            if ctx.snapshot.native.status != RunStatus::Running {
+                return Err("실행 중인 작업만 계획을 시작할 수 있습니다.".into());
+            }
             ctx.phase("planning")?;
             ctx.snapshot.begin_model(ctx.journal)?;
             let plan = host.plan(&mut ctx).await;
@@ -44,6 +47,9 @@ impl Engine {
         while !complete {
             ctx.snapshot = host.reload()?;
             ctx.check_cancelled()?;
+            if ctx.snapshot.native.status != RunStatus::Running {
+                return Err("실행 중인 작업만 다음 실행 단계를 진행할 수 있습니다.".into());
+            }
             // A completed tool round may have met all frozen postconditions.
             // Reconcile before reserving the next model call, including when
             // the last paid round was used to perform the successful mutation.
@@ -58,6 +64,9 @@ impl Engine {
             }
             ctx.snapshot = host.reload()?;
             ctx.check_cancelled()?;
+            if ctx.snapshot.native.status != RunStatus::Running {
+                return Err("실행 중인 작업만 다음 실행 단계를 진행할 수 있습니다.".into());
+            }
             let Some(round) = ctx.snapshot.next_round(&mut ctx.budget, ctx.journal)? else {
                 host.exhausted()?;
                 if host.confirm_completion()? != Flow::Complete {

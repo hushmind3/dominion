@@ -55,6 +55,7 @@ struct Fixture {
     shortcut: bool,
     cancel_after_model: bool,
     fail_during_prepare: bool,
+    expire_during_prepare: bool,
     confirmations: VecDeque<Flow>,
     reconcile_on_receipt: bool,
     reconcile_calls: usize,
@@ -77,6 +78,7 @@ impl Fixture {
             shortcut: false,
             cancel_after_model: false,
             fail_during_prepare: false,
+            expire_during_prepare: false,
             confirmations: VecDeque::new(),
             reconcile_on_receipt: false,
             reconcile_calls: 0,
@@ -128,9 +130,13 @@ impl Host for Fixture {
     }
     fn prepare_model<'a>(
         &'a mut self,
-        _: &'a mut Context<'_>,
+        ctx: &'a mut Context<'_>,
     ) -> BoxFuture<'a, Result<Vec<Value>, String>> {
         Box::pin(async move {
+            if self.expire_during_prepare {
+                ctx.budget = BudgetLedger::new(4, 8, Duration::ZERO);
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
             if self.fail_during_prepare {
                 self.store.saved.lock().unwrap().native.status = hosted::Status::Failed;
             }
@@ -459,6 +465,18 @@ async fn failed_during_preparation_never_buys_a_model_call() {
     assert_eq!(host.models, 0);
     let saved = host.store.saved.lock().unwrap();
     assert_eq!(saved.native.status, hosted::Status::Failed);
+    assert_eq!(saved.model_calls, 0);
+    assert!(!saved.model_in_flight);
+}
+
+
+#[tokio::test]
+async fn expired_during_preparation_never_buys_a_model_call() {
+    let mut host = Fixture::new();
+    host.expire_during_prepare = true;
+    assert!(host.drive(4).await.unwrap_err().contains("시간 제한"));
+    assert_eq!(host.models, 0);
+    let saved = host.store.saved.lock().unwrap();
     assert_eq!(saved.model_calls, 0);
     assert!(!saved.model_in_flight);
 }
