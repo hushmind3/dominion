@@ -1,4 +1,4 @@
-import {useEffect,useState} from 'react'
+import {useEffect,useRef,useState} from 'react'
 import {Check,ChevronDown,ChevronRight,Cloud,Copy,FileDiff,KeyRound,LoaderCircle,RefreshCw,ShieldAlert} from 'lucide-react'
 import {get,post} from '../api'
 import {useLocale} from '../i18n'
@@ -97,6 +97,7 @@ export function RemoteWorkPanel(){
  const [busy,setBusy]=useState(false)
  const [error,setError]=useState('')
  const [notice,setNotice]=useState('')
+ const actionLock=useRef(false)
  const [showWorkers,setShowWorkers]=useState(false)
  const [showCreate,setShowCreate]=useState(false)
  const selectedJob=jobs.value.find(job=>job.id===selected)||jobs.value[0]
@@ -107,11 +108,11 @@ export function RemoteWorkPanel(){
   return()=>window.clearInterval(timer)
  },[open,workers.reload,jobs.reload])
  const act=async(task:()=>Promise<unknown>,message:string)=>{
-  if(busy)return
-  setBusy(true);setError('');setNotice('')
+  if(actionLock.current)return
+  actionLock.current=true;setBusy(true);setError('');setNotice('')
   try{await task();setNotice(message);refreshAll()}
   catch(e){setError((e as Error).message)}
-  finally{setBusy(false)}
+  finally{actionLock.current=false;setBusy(false)}
  }
  const register=()=>{
   const caps=workerCaps.split(',').map(s=>s.trim()).filter(Boolean)

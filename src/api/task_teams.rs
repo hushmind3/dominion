@@ -201,11 +201,15 @@ pub async fn retry_team(
         return error(StatusCode::CONFLICT,
             "Only failed/interrupted/review-needed Teams can be replayed");
     }
-    let team=match Team::parse(&old["input"]){
+    let mut team=match Team::parse(&old["input"]){
         Ok(team)=>team,Err(reason)=>return error(StatusCode::CONFLICT,reason),
     };
     // Each worker receives a new parent-scoped ID; no old native receipts or
     // uncertain prior external session are copied into the new run.
+    for task in &mut team.tasks {task.resume_id=None;}
+    // Old presentation job IDs belong to the old parent. The new native
+    // projection derives IDs from the new parent and immutable tasks.
+    team.plan=None;
     let input=serde_json::to_value(team).expect("validated Team roundtrip");
     let Some(new_job)=engine::jobs::enqueue(&state,"team",input) else{
         return error(StatusCode::INTERNAL_SERVER_ERROR,"Could not enqueue a new Team");

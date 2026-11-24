@@ -1,6 +1,6 @@
-import {useEffect,useMemo,useState} from 'react'
+import {useEffect,useMemo,useRef,useState} from 'react'
 import {Check,ChevronDown,ChevronRight,GitBranch,Layers3,MessageSquare,RefreshCw,ShieldCheck} from 'lucide-react'
-import {post} from '../api'
+import {get,post} from '../api'
 import {useLocale} from '../i18n'
 import {Panel,useRemote} from './UI'
 import {classifyTeamReview} from './teamOutcome'
@@ -17,11 +17,12 @@ type Job={
  }
 }
 type NativeTask={id:string;prompt:string;agentId?:string;dependsOn?:string[];mode?:string;runtime?:string}
-type Step={id:string;jobId:string;agentId?:string;profile?:string;dependsOn?:string[];remoteWorker?:boolean;prompt?:string;runtime?:string;recordState?:string;status?:string;dependencySatisfied?:boolean;evidenceGrade?:string;verified?:boolean}
-type ProjectedTask={taskId:string;childJobId:string;prompt?:string;agentId?:string;dependsOn?:string[];mode?:string;runtime?:string;status?:string|null;recordState:string;dependencySatisfied:boolean;evidenceGrade?:string|null;verified:boolean;answerExcerpt?:string|null}
+type Worktree={id:string;status:string;mergeStatus:string;path:string;baseCommit:string}
+type Step={id:string;worktree?:Worktree|null;jobId:string;agentId?:string;profile?:string;dependsOn?:string[];remoteWorker?:boolean;prompt?:string;runtime?:string;recordState?:string;status?:string;dependencySatisfied?:boolean;evidenceGrade?:string;verified?:boolean}
+type ProjectedTask={taskId:string;worktree?:Worktree|null;childJobId:string;prompt?:string;agentId?:string;dependsOn?:string[];mode?:string;runtime?:string;status?:string|null;recordState:string;dependencySatisfied:boolean;evidenceGrade?:string|null;verified:boolean;answerExcerpt?:string|null}
 type TeamSteps={teamId:string;jobs:Job[];missing:string[];tasks?:ProjectedTask[];status?:string}
 const nativeStep=(task:NativeTask,teamId:string):Step=>({id:task.id,jobId:'team-child:'+teamId+':'+task.id,prompt:task.prompt,agentId:task.agentId,dependsOn:task.dependsOn,profile:task.mode,runtime:task.runtime,remoteWorker:task.runtime==='remote'})
-const projectedStep=(task:ProjectedTask):Step=>({id:task.taskId,jobId:task.childJobId,prompt:task.prompt,agentId:task.agentId,dependsOn:task.dependsOn,profile:task.mode,runtime:task.runtime,remoteWorker:task.runtime==='remote',recordState:task.recordState,status:task.status||undefined,dependencySatisfied:task.dependencySatisfied,evidenceGrade:task.evidenceGrade||undefined,verified:task.verified})
+const projectedStep=(task:ProjectedTask):Step=>({id:task.taskId,worktree:task.worktree,jobId:task.childJobId,prompt:task.prompt,agentId:task.agentId,dependsOn:task.dependsOn,profile:task.mode,runtime:task.runtime,remoteWorker:task.runtime==='remote',recordState:task.recordState,status:task.status||undefined,dependencySatisfied:task.dependencySatisfied,evidenceGrade:task.evidenceGrade||undefined,verified:task.verified})
 const externalJob=(job?:Job)=>Boolean(job?.input?.externalRuntime||(job?.input?.bridgeRuntime&&job.input.bridgeRuntime!=='native'))
 const compact=(value:unknown)=>typeof value==='string'?value:'—'
 const humanStatus=(status:string|undefined,en:boolean)=>({not_started:en?'Not started':'실행 대기',queued:en?'Waiting':'대기 중',running:en?'Working':'작업 중',completed:en?'Finished':'완료',failed:en?'Failed':'실패',cancelled:en?'Stopped':'중단됨',needs_review:en?'Review needed':'검토 필요',interrupted:en?'Interrupted':'중단됨'} as Record<string,string>)[status||'']||(en?'Checking…':'확인 중…')
@@ -51,7 +52,52 @@ function ExternalReceipt({job}:{job:Job}){
   </div>
  </div>
 }
-function WorkerStep({step,job,ids,onCreated,index=0,agentNames}:{step:Step;job?:Job;ids:Record<string,string>;onCreated:()=>void;index?:number;agentNames?:Record<string,string>}){
+type WorktreePreview={teamId:string;taskId:string;worktreeId:string;baseCommit:string;diffSha256:string;patchBytes:number;files:string[];fileCount:number}
+function WorktreeReview({teamId,step,teamStatus,onChanged}:{teamId:string;step:Step;teamStatus?:string;onChanged:()=>void}){
+ const en=useLocale()==='en'
+ const tree=step.worktree!
+ const [preview,setPreview]=useState<WorktreePreview|null>(null)
+ const [reviewed,setReviewed]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[applied,setApplied]=useState(false)
+ const inFlight=useRef(false)
+ const eligible=teamStatus==='completed'&&step.dependencySatisfied===true&&step.verified===true&&tree.status==='ready'&&tree.mergeStatus==='pending'&&!applied
+ const endpoint='/api/task-teams/'+encodeURIComponent(teamId)+'/worktrees/'+encodeURIComponent(step.id)
+ const read=async()=>{
+  if(inFlight.current||!eligible)return
+  inFlight.current=true;setBusy(true);setError('');setPreview(null);setReviewed(false)
+  try{
+   const value=await get<WorktreePreview>(endpoint+'/preview')
+   if(value.teamId!==teamId||value.taskId!==step.id||value.worktreeId!==tree.id||value.baseCommit!==tree.baseCommit||!/^[a-f0-9]{64}$/i.test(value.diffSha256)||!Array.isArray(value.files))throw Error(en?'Worktree review identity mismatch':'작업 사본의 검토 정보가 일치하지 않습니다.')
+   setPreview(value)
+  }catch(e){setError((e as Error).message)}
+  finally{inFlight.current=false;setBusy(false)}
+ }
+ const apply=async()=>{
+  if(inFlight.current||!eligible||!preview||!reviewed||!window.confirm(en?'Apply the reviewed patch to the source index? This does not commit or push.':'검토한 패치를 원본 작업 폴더와 Git 스테이징 영역에 적용할까요? 커밋이나 푸시는 하지 않습니다.'))return
+  inFlight.current=true;setBusy(true);setError('')
+  try{
+   const result=await post<{status:string;diffSha256:string;requiresOwnerCommit:boolean}>(endpoint+'/promote',{confirm:true,expectedDiffSha256:preview.diffSha256})
+   if(result.status!=='applied'||result.diffSha256!==preview.diffSha256)throw Error(en?'Check the source before retrying':'재시도하기 전에 원본 상태를 확인하세요.')
+   setApplied(true);setPreview(null);onChanged()
+  }catch(e){setError((e as Error).message);setPreview(null);setReviewed(false);onChanged()}
+  finally{inFlight.current=false;setBusy(false)}
+ }
+ return <div className="mt-3 rounded-lg border border-divider p-3 text-[12px]">
+  <strong>{en?'Isolated worktree':'격리된 작업 사본'}</strong>
+  <p className="mt-1 break-all text-muted">{tree.path}</p>
+  <p className="mt-1 text-muted">{en?'Apply status':'반영 상태'}: {applied||tree.mergeStatus==='applied'?(en?'Staged; owner commit required':'스테이징 완료 · 직접 커밋 필요'):tree.mergeStatus}</p>
+  {eligible&&<button type="button" disabled={busy} onClick={()=>void read()} className="mt-2 rounded-lg border border-divider px-3 py-2 disabled:opacity-50">{en?'Review changed files':'변경 파일 확인'}</button>}
+  {eligible&&preview&&<div className="mt-2 space-y-2">
+   <p>{preview.fileCount}{en?' changed files':'개 변경 파일'} · {preview.patchBytes.toLocaleString()} bytes</p>
+   <ul className="max-h-36 overflow-auto break-all text-muted">{preview.files.map((file,i)=><li key={i}>{file}</li>)}</ul>
+   <p className="break-all text-muted">SHA-256: {preview.diffSha256}</p>
+   <p className="text-muted">{en?'This is a file list, not the full diff. Inspect the actual diff in the worktree path above before approving.':'파일 목록이며 전체 변경 내용은 아닙니다. 위 작업 사본 경로에서 실제 변경 내용을 검토한 뒤 승인하세요.'}</p>
+   <label className="flex items-start gap-2"><input type="checkbox" checked={reviewed} disabled={busy} onChange={e=>setReviewed(e.target.checked)}/>{en?'I reviewed the actual changes.':'실제 변경 내용을 검토했습니다.'}</label>
+   <button type="button" disabled={busy||!reviewed} onClick={()=>void apply()} className="rounded-lg border border-brand px-3 py-2 font-semibold text-brand-hover disabled:opacity-50">{en?'Apply reviewed patch':'검토한 변경 반영'}</button>
+  </div>}
+  {error&&<p role="alert" className="mt-2 break-words text-danger">{error}</p>}
+ </div>
+}
+function WorkerStep({step,job,ids,onCreated,index=0,agentNames,teamId,teamStatus}:{step:Step;job?:Job;ids:Record<string,string>;onCreated:()=>void;index?:number;agentNames?:Record<string,string>;teamId?:string;teamStatus?:string}){
  const en=useLocale()==='en'
  const [showResult,setShowResult]=useState(false)
  const done=step.dependencySatisfied===true
@@ -93,6 +139,7 @@ function WorkerStep({step,job,ids,onCreated,index=0,agentNames}:{step:Step;job?:
   </a>}
   {showResult&&job?.result&&<pre aria-label={en?'Raw native job receipt':'원본 작업 영수증'} className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-canvas p-3 text-[12px] leading-5">{JSON.stringify(job.result,null,2)}</pre>}
   {job&&<details className="mt-2 text-[11px] text-muted"><summary className="cursor-pointer py-1 focus-visible:outline-2">{en?'Technical job ID':'기술 정보'}</summary><code className="break-all text-[11px]">{job.id}</code></details>}
+  {teamId&&step.worktree&&<WorktreeReview key={step.worktree.id+':'+step.worktree.mergeStatus} teamId={teamId} step={step} teamStatus={teamStatus} onChanged={onCreated}/>}
   {done&&<span className="sr-only">{en?'Completed':'완료'}</span>}
  </div>
 }
@@ -101,12 +148,24 @@ function TeamCard({team,summary,onCreated,initiallyOpen=false,agentNames}:{team:
  const [open,setOpen]=useState(initiallyOpen)
  const [showAllReports,setShowAllReports]=useState(false)
  const [actionBusy,setActionBusy]=useState(false),[actionError,setActionError]=useState('')
+ const actionLock=useRef(false)
+ const [actionInfo,setActionInfo]=useState('')
  const stopTeam=async()=>{
-  if(actionBusy||!window.confirm(en?'Stop this Team and its active workers?':'협업 작업과 진행 중인 하위 작업을 중단하시겠습니까?'))return
-  setActionBusy(true);setActionError('')
+  if(actionLock.current||!window.confirm(en?'Stop this Team and its active workers?':'협업 작업과 진행 중인 하위 작업을 중단하시겠습니까?'))return
+  actionLock.current=true;setActionBusy(true);setActionError('');setActionInfo('')
   try{await post('/api/task-teams/'+encodeURIComponent(team.id)+'/cancel',{});await details.reload();onCreated()}
   catch(error){setActionError((error as Error).message)}
-  finally{setActionBusy(false)}
+  finally{actionLock.current=false;setActionBusy(false)}
+ }
+ const retryTeam=async()=>{
+  if(actionLock.current||!window.confirm(en?'Start a new execution of this team? Model usage and external actions may incur costs.':'기존 작업을 새 실행으로 다시 시작할까요? 모델 사용 비용이 발생할 수 있습니다.'))return
+  actionLock.current=true;setActionBusy(true);setActionError('');setActionInfo('')
+  try{
+   const result=await post<{newTeamId:string;retryOf:string;freshRun:boolean}>('/api/task-teams/'+encodeURIComponent(team.id)+'/retry',{confirm:true})
+   if(result.retryOf!==team.id||!result.freshRun||!result.newTeamId)throw Error(en?'Check the job list before retrying':'다시 실행하기 전에 작업 목록을 확인하세요.')
+   setActionInfo((en?'New team queued: ':'새 협업 작업 접수: ')+result.newTeamId);onCreated()
+  }catch(error){setActionError((error as Error).message)}
+  finally{actionLock.current=false;setActionBusy(false)}
  }
  const details=useRemote<TeamSteps>('/api/jobs/'+encodeURIComponent(team.id)+'/team-steps',
   {teamId:team.id,jobs:[],missing:[]})
@@ -144,6 +203,8 @@ function TeamCard({team,summary,onCreated,initiallyOpen=false,agentNames}:{team:
   <progress className="mt-3 block h-2 w-full accent-[var(--color-brand)]" value={fresh?complete:undefined} max={Math.max(1,plan.length)}
    aria-label={en?'Team steps completed':'완료된 협업 작업 단계'}/>
   {fresh&&['queued','running'].includes(currentStatus||'')&&<button type="button" disabled={actionBusy} onClick={()=>void stopTeam()} className="mt-3 rounded-lg border border-divider px-3 py-2 text-[11px] text-danger disabled:opacity-50">{en?'Stop team and workers':'협업 및 하위 작업 중단'}</button>}
+  {fresh&&['failed','interrupted','needs_review'].includes(currentStatus||'')&&<button type="button" disabled={actionBusy} onClick={()=>void retryTeam()} className="mt-3 rounded-lg border border-divider px-3 py-2 text-[11px] text-brand-hover disabled:opacity-50">{en?'Retry as a new task':'새 작업으로 다시 실행'}</button>}
+  {actionInfo&&<p role="status" className="mt-2 break-all text-[11px] text-success">{actionInfo}</p>}
   {actionError&&<p role="alert" className="mt-2 text-[11px] text-danger">{actionError}</p>}
   {reports.length>0&&<section className="mt-4 rounded-xl border border-success-soft bg-surface p-4" aria-label={en?'Recorded worker answers':'저장된 AI 작업 결과'}>
    <div className="flex flex-wrap items-center justify-between gap-2">
@@ -185,7 +246,7 @@ function TeamCard({team,summary,onCreated,initiallyOpen=false,agentNames}:{team:
    {details.error&&<p role="alert" className="text-[11px] text-danger">{en?'Detailed Worker status could not be loaded':'Worker 상세 기록 조회 실패'}: {details.error}
     <button type="button" onClick={()=>void details.reload()} className="ml-2 underline">{en?'Retry':'다시 조회'}</button></p>}
    {fresh&&details.value.missing.length>0&&<p role="alert" className="text-[11px] text-danger">{en?'Missing or mismatched Worker records':'누락되거나 소유권이 일치하지 않는 Worker 기록'}: {details.value.missing.length}</p>}
-   {plan.map((step,index)=><WorkerStep key={step.id} index={index} agentNames={agentNames} step={step} job={records.get(step.jobId)} ids={statuses} onCreated={onCreated}/>)}
+   {plan.map((step,index)=><WorkerStep key={step.id} index={index} agentNames={agentNames} step={step} job={records.get(step.jobId)} ids={statuses} onCreated={()=>{void details.reload();onCreated()}} teamId={team.id} teamStatus={currentStatus}/>)}
    <p className="mt-2 text-[10px] text-muted">{en?'States come from persisted Worker jobs; a completed step does not mean its patch was integrated.':'단계 상태는 저장된 Worker 기록 기준입니다. 완료된 단계가 패치 병합까지 뜻하지는 않습니다.'}</p>
    {team.error&&<p role="alert" className="text-[11px] text-danger">{team.error}</p>}
    <span className="block break-all font-mono text-[10px] text-muted">{team.id}</span>
@@ -194,7 +255,7 @@ function TeamCard({team,summary,onCreated,initiallyOpen=false,agentNames}:{team:
 }
 /** Reads existing team job plan and the child job journal. No new planner,
  * no second DAG state and no mutation of the engine's dependency graph. */
-export function TeamWorkflowPanel({jobs,filterSessionId,agentNames}:{jobs?:Job[];filterSessionId?:string;agentNames?:Record<string,string>}){
+export function TeamWorkflowPanel({jobs,filterSessionId,agentNames,visibleIds}:{jobs?:Job[];filterSessionId?:string;agentNames?:Record<string,string>;visibleIds?:string[]}){
  const en=useLocale()==='en'
  const [expanded,setExpanded]=useState(Boolean(filterSessionId))
  // Room panels own the job subscription when no parent supplies one.
@@ -204,13 +265,13 @@ export function TeamWorkflowPanel({jobs,filterSessionId,agentNames}:{jobs?:Job[]
   :'/api/jobs'):null
  const remote=useRemote<Job[]>(endpoint,[])
  const rows=jobs??remote.value
- const parentTeams=useMemo(()=>rows.filter(j=>j.kind==='team'&&(Array.isArray(j.input?.tasks)||Array.isArray(j.input?.plan))
-  &&(!filterSessionId||j.input?.sessionId===filterSessionId)).sort((a,b)=>(b.queuedAt||'').localeCompare(a.queuedAt||'')).slice(0,8),[rows,filterSessionId])
- const standaloneExternal=useMemo(()=>rows.filter(j=>externalJob(j)&&!j.input?.teamJobId&&!j.input?.parentRunId
-  &&(!filterSessionId||j.input?.parentSessionId===filterSessionId)).slice(0,10),[rows,filterSessionId])
- const dependentJobs=useMemo(()=>rows.filter(j=>j.input?.delegation===true&&!j.input?.teamJobId&&!j.input?.parentRunId
+ const parentTeams=useMemo(()=>rows.filter(j=>j.kind==='team'&&(!visibleIds||visibleIds.includes(j.id))&&(Array.isArray(j.input?.tasks)||Array.isArray(j.input?.plan))
+  &&(!filterSessionId||j.input?.sessionId===filterSessionId)).sort((a,b)=>(b.queuedAt||'').localeCompare(a.queuedAt||'')).slice(0,8),[rows,filterSessionId,visibleIds])
+ const standaloneExternal=useMemo(()=>rows.filter(j=>(!visibleIds||visibleIds.includes(j.id))&&externalJob(j)&&!j.input?.teamJobId&&!j.input?.parentRunId
+  &&(!filterSessionId||j.input?.parentSessionId===filterSessionId)).slice(0,10),[rows,filterSessionId,visibleIds])
+ const dependentJobs=useMemo(()=>rows.filter(j=>(!visibleIds||visibleIds.includes(j.id))&&j.input?.delegation===true&&!j.input?.teamJobId&&!j.input?.parentRunId
   &&(j.input?.dependsOnJobIds?.length||0)>0
-  &&(!filterSessionId||j.input?.parentSessionId===filterSessionId)).slice(0,18),[rows,filterSessionId])
+  &&(!filterSessionId||j.input?.parentSessionId===filterSessionId)).slice(0,18),[rows,filterSessionId,visibleIds])
  const independentStates=useMemo(()=>Object.fromEntries(rows.map(j=>[j.id,j.status||'queued'])),[rows])
  const jobMap=useMemo(()=>new Map(rows.map(j=>[j.id,j])),[rows])
  const refresh=()=>{if(jobs===undefined)void remote.reload()}

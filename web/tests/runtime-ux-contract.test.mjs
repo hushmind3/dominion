@@ -487,3 +487,14 @@ test('room collaboration advertises the actual bounded server launch contract',(
  assert.ok(launcher.includes('launch.value.taskCount'))
  assert.ok(!launcher.includes('AI가 작업 계획을 만드는 중'))
 })
+
+test('team retry and isolated changes require owner confirmation and backend-bound review',()=>{
+ const panel=source('src/components/TeamWorkflowPanel.tsx')
+ assert.ok(panel.includes("'/retry',{confirm:true}"))
+ assert.ok(panel.includes('result.retryOf!==team.id'))
+ assert.ok(panel.includes('expectedDiffSha256:preview.diffSha256'))
+ assert.ok(panel.includes('value.worktreeId!==tree.id'))
+ assert.ok(panel.includes('!preview||!reviewed'))
+ const tasks=source('src/pages/Tasks.tsx')
+ assert.ok(tasks.includes('visibleIds={filtered.map(job=>job.id)}'))
+})
