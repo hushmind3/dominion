@@ -191,3 +191,10 @@ test('subpage readers share canonical URLs and keep reply settings separate',()=
  assert.match(workspacePage,/replyView&&<section className="workspace-reply-preferences/)
  assert.match(workspacePage,/mode==='rooms'/)
 })
+
+test('direct chat cannot advertise automatic learning when execution will ignore it',()=>{
+ const chat=readFileSync(resolve(dir,'../src/pages/Chat.tsx'),'utf8')
+ const prefs=readFileSync(resolve(dir,'../src/components/ConversationSettings.tsx'),'utf8')
+ assert.ok(chat.includes('autoLearnUnavailable={!agentMode}'))
+ assert.ok(prefs.includes('checked={autoLearn} disabled={optionsBusy||autoLearnUnavailable}'))
+})

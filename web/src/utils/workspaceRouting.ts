@@ -22,6 +22,6 @@ export function canonicalWorkspaceHash(hash:string):string{
 
 /** Read the visible subpage from the same canonical URL as the workspace. */
 export function workspaceView(hash:string,page:string):string|null {
- const [name,query]=canonicalWorkspaceHash(hash).replace(/^#\\/?/,'').split('?')
+ const [name,query]=canonicalWorkspaceHash(hash).replace(/^#\/?/,'').split('?')
  return name===page?new URLSearchParams(query).get('view'):null
 }

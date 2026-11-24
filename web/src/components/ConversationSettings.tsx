@@ -9,14 +9,14 @@ type Props={
  thinkingEnabled:boolean;setThinkingEnabled:(value:boolean)=>void;canDisableThinking?:boolean
  reasoningEffort:string;setReasoningEffort:(value:string)=>void
  toolsEnabled:boolean;setToolsEnabled:(value:boolean)=>void
- autoLearn:boolean;setAutoLearn:(value:boolean)=>void
+ autoLearn:boolean;setAutoLearn:(value:boolean)=>void;autoLearnUnavailable?:boolean
  learning:boolean;learnDisabled:boolean;onLearn:()=>void|Promise<void>
  optionsBusy?:boolean;notice?:string;onManageExtensions?:()=>void
  reasoningControl?:ReactNode;permissionControl?:ReactNode
 }
 /** Shared chat controls: readable labels, native checkboxes and unchanged
  * persistence callbacks for both single chat and nine-agent rooms. */
-export function ConversationSettings({showReasoning,setShowReasoning,reasoningKo,setReasoningKo,thinkingEnabled,setThinkingEnabled,canDisableThinking=true,reasoningEffort,setReasoningEffort,toolsEnabled,setToolsEnabled,autoLearn,setAutoLearn,learning,learnDisabled,onLearn,optionsBusy=false,notice,reasoningControl,permissionControl,onManageExtensions}:Props){
+export function ConversationSettings({showReasoning,setShowReasoning,reasoningKo,setReasoningKo,thinkingEnabled,setThinkingEnabled,canDisableThinking=true,reasoningEffort,setReasoningEffort,toolsEnabled,setToolsEnabled,autoLearn,setAutoLearn,autoLearnUnavailable=false,learning,learnDisabled,onLearn,optionsBusy=false,notice,reasoningControl,permissionControl,onManageExtensions}:Props){
  const locale=useLocale()
  const en=locale==='en'
 
@@ -92,10 +92,10 @@ export function ConversationSettings({showReasoning,setShowReasoning,reasoningKo
     <label className={row}>
      <span className="flex min-w-0 items-start gap-2.5"><BookOpenCheck size={18} className="mt-0.5 shrink-0 text-muted"/>
       <span><strong className="block text-[13px] font-semibold">{t('chat.autoLearn')}</strong>
-       <small className="mt-1 block text-[12px] leading-5 text-muted">{t('chat.autoLearnDesc')}</small>
+       <small className="mt-1 block text-[12px] leading-5 text-muted">{autoLearnUnavailable?(en?'Select an AI persona to enable automatic learning.':'AI 페르소나를 선택하면 자동 학습을 사용할 수 있습니다.'):t('chat.autoLearnDesc')}</small>
       </span>
      </span>
-     <TextInput type="checkbox" className={check} checked={autoLearn} disabled={optionsBusy}
+     <TextInput type="checkbox" className={check} checked={autoLearn} disabled={optionsBusy||autoLearnUnavailable}
       onChange={e=>setAutoLearn(e.target.checked)}/>
     </label>
     <div className="mt-2 border-t border-canvas pt-3">
