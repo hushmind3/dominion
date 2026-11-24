@@ -12,6 +12,7 @@ on:
       - 'sdk/**'
       - 'web/**'
       - 'scripts/**'
+      - 'plugins/**'
   workflow_dispatch:
 
 permissions:
@@ -124,7 +125,7 @@ jobs:
           cargo test --bin dominion-rust api::plugins::package::tests
           cargo test --bin dominion-rust api::plugins::agent::tests
           python3 -m unittest discover -s plugins/dominion-voice -p 'test_*.py'
-          python3 -m py_compile plugins/dominion-voice/app.py plugins/dominion-voice/voice.py
+          python3 -m py_compile plugins/dominion-voice/app.py plugins/dominion-voice/voice.py plugins/dominion-voice/session.py
           node --check plugins/dominion-voice/app.js
           cargo test --bin dominion-rust api::extensions::registry_package_tests
           cargo test --bin dominion-rust api::executions::event_tests

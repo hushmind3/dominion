@@ -6,7 +6,7 @@ credentials stay within this process. A private single-user room is required.
 import asyncio
 import time
 
-async def run_live(conversation, config, stop):
+async def run_live(conversation, config, stop, report=lambda state: None):
     from pipecat.audio.vad.silero import SileroVADAnalyzer
     from pipecat.frames.frames import LLMContextFrame, TTSSpeakFrame
     from pipecat.pipeline.pipeline import Pipeline
@@ -79,16 +79,84 @@ async def run_live(conversation, config, stop):
 
     worker = PipelineWorker(Pipeline([transport.input(), stt, user, Dominion(), tts, transport.output()]),
         params=PipelineParams(enable_metrics=True, enable_usage_metrics=True))
-    runner = WorkerRunner()
+    runner = WorkerRunner(handle_sigint=False)
     await runner.add_workers(worker)
+    ready = asyncio.Event()
+    participants = set()
+    first = asyncio.Event()
+    mode = config.get("mode", "manual")
+
+    @transport.event_handler("on_connected")
+    async def connected(transport):
+        ready.set()
+
+    @transport.event_handler("on_participant_connected")
+    async def joined(transport, participant_id):
+        participants.add(participant_id)
+        if mode == "mobile" and participant_id != config["peer"]:
+            stop.set()
+            return
+        if mode == "outbound" and participant_id != config["peer"]:
+            stop.set()
+            return
+        if len(participants) > 1:
+            stop.set()
+            return
+        first.set()
+        if mode == "inbound":
+            report("connected")
+
+    @transport.event_handler("on_participant_disconnected")
+    async def left(transport, participant_id):
+        participants.discard(participant_id)
+        if mode != "manual":
+            stop.set()
+
+    @transport.event_handler("on_disconnected")
+    async def disconnected(transport):
+        stop.set()
+
     task = asyncio.create_task(runner.run())
-    deadline = time.monotonic() + 1800
+    deadline = time.monotonic() + (600 if mode in ("outbound", "inbound") else 1800)
+    dial = None
     try:
+        while not ready.is_set() and not task.done() and not stop.is_set():
+            if time.monotonic() > deadline - (570 if mode in ("outbound", "inbound") else 1770):
+                raise RuntimeError("LiveKit connection timeout")
+            await asyncio.sleep(0.1)
+        if task.done():
+            await task
+            raise RuntimeError("Voice worker exited before connection")
+        if stop.is_set():
+            return
+        if mode == "outbound":
+            from session import dial_once
+            report("dialing")
+            dial = asyncio.create_task(dial_once(config))
+        else:
+            report("waiting" if mode in ("mobile","inbound") else "running")
         while not task.done() and not stop.is_set() and time.monotonic() < deadline:
-            await asyncio.sleep(0.5)
+            if dial is not None and dial.done():
+                await dial
+                report("connected")
+                dial = None
+            if mode == "mobile" and first.is_set():
+                report("connected")
+            await asyncio.sleep(0.25)
         if task.done():
             await task
     finally:
-        if not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        # Never issue a second dial on an uncertain result. Terminate the
+        # uniquely allocated outbound room, even after timeout or cancellation.
+        if dial is not None:
+            if not dial.done():
+                dial.cancel()
+            await asyncio.gather(dial, return_exceptions=True)
+        try:
+            if not task.done():
+                await runner.cancel()
+                await asyncio.wait_for(task, timeout=15)
+        finally:
+            if mode in ("outbound","inbound"):
+                from session import close_phone
+                await close_phone(config, participants)

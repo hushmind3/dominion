@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "DOMINION Voice",
+    "slug": "dominion-voice-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.dominion.voice",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "도미니온 음성 대화에 마이크를 사용합니다."
+      }
+    },
+    "android": {
+      "package": "com.dominion.voice",
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.ACCESS_NETWORK_STATE"
+      ]
+    },
+    "plugins": [
+      "@livekit/react-native-expo-plugin",
+      "@config-plugins/react-native-webrtc"
+    ]
+  }
+}

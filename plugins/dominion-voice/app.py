@@ -44,6 +44,13 @@ class Conversation:
                             "text": text.strip(), "source": source}
             return rid
 
+    def reset(self):
+        with self.lock:
+            self.pending = None
+            self.answers.clear()
+            self.history.clear()
+            self.last = None
+
     def request(self):
         with self.lock:
             if not self.pending:
@@ -98,32 +105,45 @@ live = {"state": "stopped"}
 live_stop = threading.Event()
 
 
-def live_start(config):
+def live_start(config, managed=False):
     names = ("url", "room", "token", "sttKey", "ttsKey", "voice", "language")
+    from session import prepare
+    pairing = None
+    if managed:
+        config, pairing = prepare(config)
     if not all(isinstance(config.get(k), str) and 0 < len(config[k]) <= 4096 for k in names):
         raise ValueError("LiveKit와 음성 모델 설정을 입력하세요.")
     if not config["url"].startswith("wss://") or config["language"] not in ("ko", "en"):
         raise ValueError("LiveKit은 wss:// 주소와 ko/en 언어를 사용하세요.")
     with live_lock:
-        if live["state"] in ("starting", "running"):
+        if live["state"] not in ("stopped", "failed"):
             raise ValueError("먼저 기존 음성 세션을 중지하세요.")
-        live["state"] = "starting"
+        if conversation.request():
+            raise ValueError("대기 중인 대화 요청을 먼저 처리하세요.")
+        conversation.reset()
+        live.clear()
+        live.update(state="starting", mode=config.get("mode", "manual"), room=config["room"])
         live_stop.clear()
+    def report(status):
+        with live_lock:
+            if live["state"] != "stopping":
+                live["state"] = status
     def run():
+        failed = False
         try:
             import asyncio
             from voice import run_live
-            with live_lock:
-                live["state"] = "running"
-            asyncio.run(run_live(conversation, {k: config[k] for k in names}, live_stop))
-            with live_lock:
-                live["state"] = "stopped"
+            asyncio.run(run_live(conversation, config, live_stop, report))
         except Exception:
-            # Do not disclose provider credentials or signed room URLs.
+            failed = True
+        finally:
             with live_lock:
-                live["state"] = "failed"
-                live["error"] = "LiveKit 또는 음성 공급자 연결 실패. 설정과 로그를 확인하세요."
+                conversation.reset()
+                live["state"] = "failed" if failed else "stopped"
+                if failed:
+                    live["error"] = "음성 연결 또는 통화 종료 확인 실패. LiveKit 콘솔에서 방과 통화 상태를 확인하세요."
     threading.Thread(target=run, daemon=True).start()
+    return {"state":"starting", "pairing":pairing, "room":config["room"]}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -211,16 +231,27 @@ class Handler(BaseHTTPRequestHandler):
                 return
             data = self.body()
             if self.path == "/submit":
-                self.reply(201, {"requestId": conversation.submit(data.get("text"), "browser")})
+                with live_lock:
+                    if live["state"] not in ("stopped", "failed"):
+                        raise ValueError("모바일·전화 대화 중에는 브라우저 대화를 사용할 수 없습니다.")
+                    rid = conversation.submit(data.get("text"), "browser")
+                self.reply(201, {"requestId": rid})
             elif self.path == "/discard":
                 conversation.discard(data.get("requestId"))
                 self.reply(200, {"ok": True})
             elif self.path == "/live/start":
-                live_start(data)
-                self.reply(202, {"state": "starting"})
+                self.reply(202, live_start(data))
+            elif self.path == "/live/managed":
+                if data.get("confirmed") is not True:
+                    raise ValueError("음성 연결 및 통화 비용을 확인하세요.")
+                self.reply(202, live_start(data, managed=True))
             elif self.path == "/live/stop":
-                live_stop.set()
-                self.reply(200, {"state": "stopping"})
+                with live_lock:
+                    if live["state"] not in ("stopped", "failed"):
+                        live["state"] = "stopping"
+                        live_stop.set()
+                    status = live["state"]
+                self.reply(200, {"state": status})
             else:
                 self.reply(404, {"error": "Not found"})
         except (ValueError, UnicodeError, json.JSONDecodeError) as exc:

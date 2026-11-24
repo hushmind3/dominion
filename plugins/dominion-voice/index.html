@@ -18,7 +18,7 @@
 </section>
 <section class="card"><h2>최근 답변</h2><pre id="answer">아직 답변이 없습니다.</pre><button id="speak" disabled>다시 듣기</button></section>
 <details class="card"><summary>실시간 모바일 연결 (Pipecat · LiveKit)</summary>
-<p class="note">개인용 LiveKit 방의 봇 토큰과 음성 공급자 키가 필요합니다. 휴대폰은 같은 비공개 방에 별도 참가자 토큰으로 연결하세요. 이 버전은 STT→도미니온→TTS 방식이며 전화망과 네이티브 앱은 포함하지 않습니다. 키는 이 프로세스 메모리에만 저장됩니다.</p>
+<p class="note">개인용 LiveKit 방의 봇 토큰과 음성 공급자 키가 필요합니다. 휴대폰은 같은 비공개 방에 별도 참가자 토큰으로 연결하세요. STT→도미니온→TTS 방식입니다. 직접 토큰을 사용하는 고급 모드입니다. 키는 이 프로세스 메모리에만 저장됩니다.</p>
 <label>LiveKit URL<input id="url" type="url" placeholder="wss://..." autocomplete="off"></label>
 <label>방 이름<input id="room" autocomplete="off"></label>
 <label>봇 참가 토큰<input id="token" type="password" autocomplete="off"></label>
@@ -27,4 +27,20 @@
 <label>Cartesia 음성 ID<input id="voice" autocomplete="off"></label>
 <label>언어 <select id="language"><option value="ko">한국어</option><option value="en">English</option></select></label>
 <div class="row"><button class="primary" id="liveStart">연결 시작</button><button id="liveStop">연결 중지</button></div><p class="status" id="liveStatus">중지됨</p>
-</details></main><script src="/app.js"></script></body></html>
+</details>
+<section class="card"><h2>휴대폰 연결 · 전화</h2>
+<p class="note">휴대폰 앱에는 임시 접속 정보만 전달합니다. 전화는 LiveKit SIP 트렁크가 필요합니다. 도미니온 자동 대화를 먼저 허용하세요. 통화 상대에게 AI임을 알리고 필요한 동의를 얻으세요.</p>
+<label>LiveKit API 키<input id="lkKey" type="password" autocomplete="off"></label>
+<label>LiveKit API 비밀키<input id="lkSecret" type="password" autocomplete="off"></label>
+<p class="note">위 고급 모드의 LiveKit URL·Deepgram·Cartesia·음성 ID·언어를 사용합니다. 봇 토큰은 직접 입력할 필요가 없습니다.</p>
+<div class="row"><button class="primary" id="pairStart">휴대폰 연결 만들기</button></div>
+<label>휴대폰 앱에 붙여넣을 임시 연결 정보<textarea id="pairing" readonly placeholder="휴대폰 연결 만들기를 누르세요"></textarea></label><button id="pairCopy">연결 정보 복사</button>
+<hr><label>발신 트렁크 ID<input id="sipTrunk" placeholder="ST_..." autocomplete="off"></label>
+<label>전화번호<input id="sipNumber" type="tel" placeholder="+82..." autocomplete="off"></label>
+<button id="dial">전화 걸기</button>
+<hr><label>수신 전용 방 이름<input id="inboundRoom" placeholder="dominion-inbound-..." autocomplete="off"></label>
+<label><input id="inboundConfirm" type="checkbox" style="width:auto"> 수신 트렁크가 이 전용 방으로 연결되고 허용 발신자가 제한되어 있습니다.</label>
+<button id="listen">전화 받기 대기</button>
+<div class="row"><button id="endSession">연결·통화 종료</button><span class="status" id="managedStatus" role="status">중지됨</span></div>
+<p class="note">전화는 최대 10분, 모바일 연결 정보는 10분 동안 새로 입장할 수 있습니다. 실제 통화 종료를 확인할 수 없으면 LiveKit 콘솔에서 확인하세요.</p></section>
+</main><script src="/app.js"></script></body></html>

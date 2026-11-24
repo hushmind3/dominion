@@ -8,8 +8,9 @@ use serde::Deserialize;
 use std::path::PathBuf;
 
 pub(crate) const VOICE_IMAGE:&str="dominion-voice:0.1.0";
-const FILES:[(&str,&str);5]=[
+const FILES:[(&str,&str);6]=[
     ("Dockerfile",include_str!(concat!(env!("CARGO_MANIFEST_DIR"),"/plugins/dominion-voice/Dockerfile"))),
+    ("session.py",include_str!(concat!(env!("CARGO_MANIFEST_DIR"),"/plugins/dominion-voice/session.py"))),
     ("app.py",include_str!(concat!(env!("CARGO_MANIFEST_DIR"),"/plugins/dominion-voice/app.py"))),
     ("voice.py",include_str!(concat!(env!("CARGO_MANIFEST_DIR"),"/plugins/dominion-voice/voice.py"))),
     ("index.html",include_str!(concat!(env!("CARGO_MANIFEST_DIR"),"/plugins/dominion-voice/index.html"))),
@@ -72,7 +73,7 @@ mod tests{
     use super::*;
     #[test]
     fn recipe_has_fixed_context_and_no_host_mount(){
-        assert_eq!(FILES.len(),5);
+        assert_eq!(FILES.len(),6);
         assert!(FILES[0].1.contains("pipecat-ai[livekit,deepgram,cartesia,silero]==1.17.0"));
         assert!(FILES[0].1.contains("USER 10001"));
         assert!(!FILES.iter().any(|(name,_)|name.contains('/')||name.contains("..")));

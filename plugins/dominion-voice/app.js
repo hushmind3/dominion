@@ -17,7 +17,8 @@ async function update(){
   const data=await api('/status');
   pendingId=data.pending?.requestId||'';
   $('status').textContent=pendingId?'도미니온 답변 대기 중 · 작업 연결에서 진행을 확인하세요.':'대화할 준비가 되었습니다.';
-  $('send').disabled=busy||!!pendingId;
+  const liveActive=!['stopped','failed'].includes(data.live.state);
+  $('send').disabled=busy||!!pendingId||liveActive;
   $('discard').hidden=!pendingId;
   if(data.last){
    lastAnswer=data.last.answer;$('answer').textContent=lastAnswer;$('speak').disabled=false;
@@ -25,7 +26,10 @@ async function update(){
    lastId=data.last.requestId;
   }else if(!lastId){lastId='initial'}
   $('liveStatus').textContent=data.live.state+(data.live.error?' · '+data.live.error:'');
-  $('liveStart').disabled=['starting','running'].includes(data.live.state);
+  $('liveStart').disabled=liveActive;
+  $('managedStatus').textContent=$('liveStatus').textContent;
+  ['pairStart','dial','listen'].forEach(id=>$(id).disabled=liveActive||busy);
+  if(!liveActive)$('pairing').value='';
  }catch(e){error(e);$('send').disabled=true;}
 }
 $('send').onclick=async()=>{
@@ -54,4 +58,25 @@ $('liveStart').onclick=async()=>{
  try{await api('/live/start',config);['token','sttKey','ttsKey'].forEach(id=>$(id).value='');await update()}catch(e){$('liveStatus').textContent=e.message}
 };
 $('liveStop').onclick=async()=>{try{await api('/live/stop',{});$('liveStatus').textContent='중지 중'}catch(e){$('liveStatus').textContent=e.message}};
+async function managed(mode){
+ if(busy)return;
+ if(mode==='outbound'&&!confirm('다음 번호로 AI 전화를 걸까요? 통화료가 발생할 수 있습니다.\n'+$('sipNumber').value.trim()))return;
+ if(mode==='inbound'&&!confirm('전용 SIP 방에서 수신을 대기할까요? 허용 발신자와 통화 동의를 확인하세요.'))return;
+ if(mode==='mobile'&&!confirm('휴대폰 전용 비공개 음성 방을 만들까요? 음성 공급자 요금이 발생할 수 있습니다.'))return;
+ busy=true;['pairStart','dial','listen'].forEach(id=>$(id).disabled=true);
+ const config=Object.fromEntries(['url','sttKey','ttsKey','voice','language'].map(id=>[id,$(id).value.trim()]));
+ Object.assign(config,{mode,confirmed:true,apiKey:$('lkKey').value.trim(),apiSecret:$('lkSecret').value.trim(),trunk:$('sipTrunk').value.trim(),number:$('sipNumber').value.trim(),room:$('inboundRoom').value.trim(),dedicatedRoomConfirmed:$('inboundConfirm').checked});
+ try{
+  const r=await api('/live/managed',config);
+  $('pairing').value=r.pairing?JSON.stringify(r.pairing):'';
+  ['lkKey','lkSecret','sttKey','ttsKey'].forEach(id=>$(id).value='');
+  $('managedStatus').textContent='연결 중…';
+ }catch(e){$('managedStatus').textContent=e.message}
+ finally{busy=false}
+}
+$('pairStart').onclick=()=>void managed('mobile');
+$('dial').onclick=()=>void managed('outbound');
+$('listen').onclick=()=>void managed('inbound');
+$('pairCopy').onclick=async()=>{if(!$('pairing').value)return;try{await navigator.clipboard.writeText($('pairing').value);$('managedStatus').textContent='복사했습니다. 본인의 휴대폰에만 전달하세요.'}catch(e){$('pairing').select();$('managedStatus').textContent='선택된 정보를 직접 복사하세요.'}};
+$('endSession').onclick=async()=>{try{await api('/live/stop',{});$('pairing').value='';$('managedStatus').textContent='종료 중…'}catch(e){$('managedStatus').textContent=e.message}};
 void update();setInterval(update,1500);
