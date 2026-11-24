@@ -624,7 +624,7 @@ fn scoped_extension_credentials_are_isolated_and_quota_is_durable(){
 fn extension_task_proposal_is_not_execution_and_requires_owner_review(){
     use dominion_sdk::{Client,ClientError,GrantInput,extensions::Manifest};
     let _serial=serial();
-    let (port,requests)=scripted_provider(|_|vec![json!({"choices":[{"delta":{"content":"Owner task answer"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14}})]);
+    let (port,requests)=scripted_provider(|_|vec![json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"proposal-write","type":"function","function":{"name":"workspace_write","arguments":"{\"path\":\"proposal-result.md\",\"content\":\"\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":40,"completion_tokens":10,"total_tokens":50}})]);
     let app=TestApp::new(port,"native");
     let provider=app.get("/api/providers")[0]["id"].as_str().unwrap().to_owned();
     let rt=tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
@@ -659,5 +659,37 @@ fn extension_task_proposal_is_not_execution_and_requires_owner_review(){
         let fresh=Client::scoped(&app.base,id,rotated.token).unwrap();
         assert_eq!(fresh.task_request(&other.id).await.unwrap().status,"pending");
         assert!(requests.lock().unwrap().is_empty());
+        let proposal=fresh.propose_task("proposal-result.md 파일을 만들어줘","third").await.unwrap();
+        let request_root=format!("{}/api/extensions/apps/{id}/requests/{}",app.base,proposal.id);
+        let approve=json!({"approve":true,"workspaceDir":app._root.to_string_lossy(),"maxRounds":8});
+        let approved:Value=http.post(format!("{request_root}/review")).json(&approve).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+        let duplicate:Value=http.post(format!("{request_root}/review")).json(&approve).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+        let run_id=approved["runId"].as_str().unwrap();
+        assert_eq!(duplicate["runId"],run_id);
+        let mut view=Value::Null;
+        for _ in 0..200 {
+            view=http.get(format!("{}/api/sdk/runs/{run_id}",app.base)).send().await.unwrap().json().await.unwrap();
+            if view["status"]=="awaiting_approval"{break}
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(view["status"],"awaiting_approval","{view}");
+        assert!(!app._root.join("proposal-result.md").exists());
+        let early=http.post(format!("{request_root}/publish")).json(&json!({"message":"not yet"})).send().await.unwrap();
+        assert_eq!(early.status().as_u16(),409);
+        http.post(format!("{}/api/sdk/runs/{run_id}/approve",app.base)).json(&json!({"callId":view["checkpoint"]["pendingCall"]["id"]})).send().await.unwrap().error_for_status().unwrap();
+        for _ in 0..200 {
+            view=http.get(format!("{}/api/sdk/runs/{run_id}",app.base)).send().await.unwrap().json().await.unwrap();
+            if matches!(view["status"].as_str(),Some("completed"|"failed")){break}
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(view["status"],"completed","{view}");
+        assert!(view["verified"]==true);
+        assert!(app._root.join("proposal-result.md").is_file());
+        assert_eq!(requests.lock().unwrap().len(),1);
+        let receipt=fresh.task_request(&proposal.id).await.unwrap();
+        assert_eq!(receipt.run_status.as_deref(),Some("completed"));
+        assert!(receipt.message.is_none());
+        http.post(format!("{request_root}/publish")).json(&json!({"message":"The approved file was created."})).send().await.unwrap().error_for_status().unwrap();
+        assert_eq!(fresh.task_request(&proposal.id).await.unwrap().message.as_deref(),Some("The approved file was created."));
     });
 }

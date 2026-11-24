@@ -291,6 +291,7 @@ pub struct GrantInput{
 pub struct Grant{
     pub id:String,pub provider_id:String,pub model:String,pub token_budget:u64,
     pub remaining_runs:u64,pub capability:String,pub generation:String,
+    #[serde(default)] pub allow_task_requests:bool,
 }
 // Deliberately not Debug: the one-time plaintext token must not be logged.
 #[derive(Deserialize)]

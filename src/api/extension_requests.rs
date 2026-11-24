@@ -50,7 +50,7 @@ fn owner_view(state:&AppState,mut row:Value)->Value{
     row["canApprove"]=json!(row["status"]=="pending"&&grant.as_ref().is_some_and(|g|current_authority(&row,g))
         &&registry::load(state,row["appId"].as_str().unwrap_or("")).is_ok_and(|r|r.enabled));
     row["runStatus"]=run.as_ref().map(|r|r["status"].clone()).unwrap_or(Value::Null);
-    row["canPublish"]=json!(row["publishedMessage"].is_null()&&run.as_ref().is_some_and(|r|
+    row["canPublish"]=json!(row["publishedMessage"].is_null()&&grant.as_ref().is_some_and(|g|g["generation"]==row["credentialGeneration"])&&run.as_ref().is_some_and(|r|
         matches!(r["status"].as_str(),Some("completed"|"failed"|"cancelled"))));
     if let Some(obj)=row.as_object_mut(){obj.remove("authorizationId");obj.remove("credentialGeneration");}
     row
@@ -138,6 +138,9 @@ pub async fn publish(State(state):State<AppState>,Path((app,id)):Path<(String,St
     if !row["publishedMessage"].is_null(){
         if row["publishedMessage"]==input.message{return Json(owner_view(&state,row)).into_response()}
         return error(StatusCode::CONFLICT,"A message has already been released")
+    }
+    if !state.store.get(registry::GRANT_KIND,&app).is_some_and(|g|g["generation"]==row["credentialGeneration"]){
+        return error(StatusCode::CONFLICT,"Original app credential was revoked; cannot deliver this message")
     }
     if !linked_run(&state,&row).is_some_and(|r|matches!(r["status"].as_str(),Some("completed"|"failed"|"cancelled"))){
         return error(StatusCode::CONFLICT,"Wait until the native task finishes")

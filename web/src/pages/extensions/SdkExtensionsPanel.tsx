@@ -99,7 +99,7 @@ function GrantPanel({appId,enabled,onRun}:{appId:string;enabled:boolean;onRun:(i
 }
 
 type HistoryRow={id:string;status:string;model?:string;instruction?:string;createdAt?:string;scoped:boolean;taskOutcome?:string;verified?:boolean}
-type RunDetail=HistoryRow&{answer?:string;error?:string;actions?:{cancel?:boolean}}
+type RunDetail=HistoryRow&{answer?:string;error?:string;actions?:{cancel?:boolean;approve?:boolean;deny?:boolean};checkpoint?:{pendingCall?:{id:string;name:string;arguments:unknown}|null}}
 const labels:Record<string,string>={queued:'대기',running:'실행 중',completed:'응답 완료',failed:'실패',cancelled:'취소',interrupted:'중단',awaiting_approval:'승인 대기',needs_review:'검토 필요',in_doubt:'실행 확인 필요'}
 function AppRunHistory({appId,selected,onSelect}:{appId:string;selected:string;onSelect:(id:string)=>void}){
  const en=useLocale()==='en',path=endpoint+'/'+encodeURIComponent(appId)+'/history'
@@ -108,6 +108,18 @@ function AppRunHistory({appId,selected,onSelect}:{appId:string;selected:string;o
  const history=useRemote<HistoryRow[]>(opened?path:null,[])
  const detail=useRemote<RunDetail|null>(opened&&selected?'/api/sdk/runs/'+encodeURIComponent(selected):null,null)
  const status=(value:string)=>en?value:(labels[value]||value)
+ const live=Boolean(detail.value&&['queued','running','awaiting_approval'].includes(detail.value.status))
+ useEffect(()=>{if(!opened||!live)return;const timer=window.setInterval(()=>void detail.reload(),2000);return()=>window.clearInterval(timer)},[opened,live,detail.reload])
+ const pending=detail.value?.checkpoint?.pendingCall
+ const decide=async(allow:boolean)=>{
+  if(busy||!pending||!(allow?detail.value?.actions?.approve:detail.value?.actions?.deny))return
+  setBusy(true);setError('')
+  try{
+   if(allow)await post('/api/sdk/runs/'+encodeURIComponent(selected)+'/approve',{callId:pending.id})
+   else await post('/api/approvals',{id:pending.id,allow:false})
+   await Promise.all([history.reload(),detail.reload()])
+  }catch(e){setError((e as Error).message)}finally{setBusy(false)}
+ }
  const cancel=async()=>{
   if(!detail.value?.actions?.cancel||busy||!confirm(en?'Cancel this run?':'이 작업을 취소할까요?'))return
   setBusy(true);setError('')
@@ -131,6 +143,10 @@ function AppRunHistory({appId,selected,onSelect}:{appId:string;selected:string;o
     <p className="break-all text-xs text-muted">{detail.value.id}</p>
     {detail.value.answer&&<pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-sm">{detail.value.answer}</pre>}
     <Notice message={detail.value.error||''}/>
+    {pending&&(detail.value.actions?.approve||detail.value.actions?.deny)&&<div className="grid gap-2 rounded-lg border border-divider p-3">
+     <strong>{en?'Tool approval required':'도구 실행 승인 필요'}</strong><p className="text-xs">{pending.name}</p><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs">{JSON.stringify(pending.arguments,null,2)}</pre>
+     <div className="flex gap-2"><Action disabled={busy||!detail.value.actions?.approve} onClick={()=>void decide(true)}>{en?'Approve tool once':'도구 1회 승인'}</Action><Button disabled={busy||!detail.value.actions?.deny} onClick={()=>void decide(false)}>{en?'Deny tool':'도구 거절'}</Button></div>
+    </div>}
     {detail.value.actions?.cancel&&<Button disabled={busy} onClick={()=>void cancel()}>{en?'Cancel run':'실행 취소'}</Button>}
    </div>}
   </div>}
@@ -230,7 +246,8 @@ type TaskRequest={id:string;instruction:string;status:string;model:string;tokenB
 function TaskRequests({appId,enabled,onRun}:{appId:string;enabled:boolean;onRun:(id:string)=>void}){
  const en=useLocale()==='en',path=endpoint+'/'+encodeURIComponent(appId)+'/requests'
  const [open,setOpen]=useState(false),[selected,setSelected]=useState(''),[workspace,setWorkspace]=useState(''),[rounds,setRounds]=useState('8'),[message,setMessage]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false)
- const requests=useRemote<TaskRequest[]>(open?path:null,[])
+ const requests=useRemote<TaskRequest[]>(path,[])
+ const pendingCount=requests.value.filter(r=>r.status==='pending'&&r.canApprove).length
  const row=requests.value.find(r=>r.id===selected)
  const inFlight=useRef(false)
  const act=async(suffix:string,body:unknown)=>{
@@ -240,11 +257,12 @@ function TaskRequests({appId,enabled,onRun}:{appId:string;enabled:boolean;onRun:
   catch(e){setError((e as Error).message)}finally{inFlight.current=false;setBusy(false)}
  }
  return <div className="w-full border-t border-divider pt-2">
-  <Button variant="ghost" onClick={()=>setOpen(!open)}>{open?(en?'Close task requests':'작업 제안 닫기'):(en?'Task requests':'앱 작업 제안')}</Button>
+  <Button variant="ghost" onClick={()=>setOpen(!open)}>{open?(en?'Close task requests':'작업 제안 닫기'):(en?'Task requests':'앱 작업 제안')}{pendingCount>0&&<span className="rounded-full bg-brand px-2 text-white">{pendingCount}</span>}</Button>
   {open&&<div className="mt-2 grid gap-2">
    <p className="text-xs text-muted">{en?'An external app cannot start agent tools. Review its instruction and select a workspace. Native tool approvals still apply. Only your explicitly published message is returned.':'외부 앱의 제안은 직접 승인하기 전까지 실행되지 않습니다. 작업 공간을 지정하고 내용을 확인하세요. 기존 도구 승인 절차가 적용되며 직접 공유한 메시지만 앱에 전달됩니다.'}</p>
    <Notice message={error||requests.error}/>
    <Button variant="ghost" disabled={requests.refreshing||busy} onClick={()=>void requests.reload()}>{en?'Refresh requests':'제안 새로고침'}</Button>
+   {requests.loading&&<p role="status" className="text-xs text-muted">{en?'Loading requests…':'작업 제안 불러오는 중…'}</p>}
    {!requests.loading&&!requests.value.length&&<p className="text-xs text-muted">{en?'No task requests':'작업 제안 없음'}</p>}
    <div className="grid max-h-64 gap-1 overflow-auto">{requests.value.map(r=><button type="button" key={r.id} disabled={busy} aria-pressed={selected===r.id} className="rounded-lg border border-divider p-2 text-left" onClick={()=>{setSelected(r.id);setMessage('');setError('')}}><StateTag online={r.status==='approved'}>{en?r.status:r.status==='pending'?'승인 대기':r.status==='approved'?'승인됨':'거절됨'}</StateTag><span className="ml-2 text-xs text-muted">{r.model} · {r.tokenBudget} tokens</span><p className="truncate text-sm">{r.instruction}</p></button>)}</div>
    {row&&<Panel className="grid gap-2 p-3">
@@ -254,7 +272,7 @@ function TaskRequests({appId,enabled,onRun}:{appId:string;enabled:boolean;onRun:
     {!row.canApprove&&<p className="text-xs text-muted">{en?'Permission changed or app disabled. Reject and request a fresh proposal.':'인증 권한이 변경되었거나 앱이 비활성화되어 승인할 수 없습니다.'}</p>}
     <div className="flex gap-2"><Action disabled={busy||!enabled||!row.canApprove||!workspace.trim()||!Number.isInteger(Number(rounds))||Number(rounds)<1||Number(rounds)>24} onClick={()=>{if(confirm(en?'Run the displayed instruction using native agent tools in this workspace?':'표시된 지시를 이 작업 공간에서 에이전트로 실행할까요?'))void act('review',{approve:true,workspaceDir:workspace.trim(),maxRounds:Number(rounds)})}}>{en?'Approve and run':'승인 및 실행'}</Action><Button disabled={busy} onClick={()=>void act('review',{approve:false})}>{en?'Reject':'거절'}</Button></div></>}
     {row.runId&&<div className="flex items-center gap-2"><StateTag>{en?(row.runStatus||'queued'):(labels[row.runStatus||'queued']||row.runStatus)}</StateTag><Button onClick={()=>onRun(row.runId!)}>{en?'Inspect native run':'실행 결과 확인'}</Button></div>}
-    {row.publishedMessage!=null?<><strong>{en?'Published message':'공유한 메시지'}</strong><p className="whitespace-pre-wrap break-words text-sm">{row.publishedMessage}</p></>:row.canPublish&&<><FormField label={en?'Message to share':'앱에 공유할 메시지'}><TextArea value={message} onChange={e=>setMessage(e.target.value)} disabled={busy}/></FormField><Action disabled={busy||!message.trim()} onClick={()=>{if(confirm(en?'Publish this exact message to the external app?':'이 메시지를 외부 앱에 공유할까요?'))void act('publish',{message})}}>{en?'Share message':'메시지 공유'}</Action></>}
+    {row.publishedMessage!=null?<><strong>{en?'Published message':'공유한 메시지'}</strong><p className="whitespace-pre-wrap break-words text-sm">{row.publishedMessage}</p></>:row.canPublish&&<><FormField label={en?'Message to share':'앱에 공유할 메시지'}><TextArea aria-label={en?'Message to share':'앱에 공유할 메시지'} value={message} onChange={e=>setMessage(e.target.value)} disabled={busy}/></FormField><Action disabled={busy||!message.trim()} onClick={()=>{if(confirm(en?'Publish this exact message to the external app?':'이 메시지를 외부 앱에 공유할까요?'))void act('publish',{message})}}>{en?'Share message':'메시지 공유'}</Action></>}
    </Panel>}
   </div>}
  </div>

@@ -38,9 +38,10 @@ test('desktop app: actual model selection, persistent chat, settings and room na
   for await(const chunk of req)body+=chunk
   const parsed=JSON.parse(body)
   calls.push(parsed)
-  if(parsed.stream&&JSON.stringify(parsed.messages||[]).includes('browser-sdk.md 파일을 만들어줘')){
+  if(parsed.stream&&['browser-sdk.md','browser-proposal.md'].some(file=>JSON.stringify(parsed.messages||[]).includes(file+' 파일을 만들어줘'))){
+   const target=JSON.stringify(parsed.messages||[]).includes('browser-proposal.md 파일을 만들어줘')?'browser-proposal.md':'browser-sdk.md'
    res.setHeader('Content-Type','text/event-stream')
-   res.end('data: '+JSON.stringify({choices:[{delta:{tool_calls:[{index:0,id:'browser-sdk-write',type:'function',function:{name:'workspace_write',arguments:JSON.stringify({path:'browser-sdk.md',content:''})}}]},finish_reason:'tool_calls'}],usage:{prompt_tokens:40,completion_tokens:10,total_tokens:50}})+'\n\ndata: [DONE]\n\n')
+   res.end('data: '+JSON.stringify({choices:[{delta:{tool_calls:[{index:0,id:'browser-sdk-write',type:'function',function:{name:'workspace_write',arguments:JSON.stringify({path:target,content:''})}}]},finish_reason:'tool_calls'}],usage:{prompt_tokens:40,completion_tokens:10,total_tokens:50}})+'\n\ndata: [DONE]\n\n')
    return
   }
   if(parsed.stream){
@@ -232,6 +233,34 @@ test('desktop app: actual model selection, persistent chat, settings and room na
   await extensions.getByText('응답 완료',{exact:true}).first().waitFor({state:'visible'})
   await extensions.getByRole('button',{name:'키 숨기기',exact:true}).click()
   assert.equal(await key.count(),0)
+  await extensions.getByLabel('에이전트 작업 제안 허용 (사용자 승인 필요)',{exact:true}).check()
+  page.once('dialog',dialog=>dialog.accept())
+  await extensions.getByRole('button',{name:'키 재발급',exact:true}).click()
+  await key.waitFor({state:'visible'})
+  const taskToken=await key.inputValue()
+  const requestsPath='/api/extensions/apps/browser.assistant/requests'
+  const proposalResponse=await fetch(base+requestsPath,{method:'POST',headers:{'Content-Type':'application/json','x-dominion-extension-token':taskToken},body:JSON.stringify({instruction:'browser-proposal.md 파일을 만들어줘',idempotencyKey:'browser-proposal'})})
+  assert.ok(proposalResponse.ok)
+  const proposal=await proposalResponse.json()
+  assert.equal(proposal.status,'pending')
+  await extensions.getByRole('button',{name:/앱 작업 제안/}).click()
+  await extensions.getByRole('button',{name:/browser-proposal.md 파일을 만들어줘/}).click()
+  await extensions.getByLabel('승인 작업 공간',{exact:true}).fill(directory)
+  page.once('dialog',dialog=>dialog.accept())
+  await extensions.getByRole('button',{name:'승인 및 실행',exact:true}).click()
+  await extensions.getByRole('button',{name:'실행 결과 확인',exact:true}).click()
+  await extensions.getByRole('button',{name:'도구 1회 승인',exact:true}).waitFor({state:'visible',timeout:30000})
+  await assert.rejects(stat(join(directory,'browser-proposal.md')),e=>e.code==='ENOENT')
+  await extensions.getByRole('button',{name:'도구 1회 승인',exact:true}).click()
+  await extensions.getByLabel('앱에 공유할 메시지',{exact:true}).waitFor({state:'visible',timeout:30000})
+  assert.equal((await stat(join(directory,'browser-proposal.md'))).size,0)
+  const prePublish=await fetch(base+requestsPath+'/'+proposal.id,{headers:{'x-dominion-extension-token':taskToken}})
+  assert.equal((await prePublish.json()).message,null)
+  await extensions.getByLabel('앱에 공유할 메시지',{exact:true}).fill('File created')
+  page.once('dialog',dialog=>dialog.accept())
+  await extensions.getByRole('button',{name:'메시지 공유',exact:true}).click()
+  await until(async()=>{const res=await fetch(base+requestsPath+'/'+proposal.id,{headers:{'x-dominion-extension-token':taskToken}});return (await res.json()).message==='File created'})
+  await extensions.getByRole('button',{name:'키 숨기기',exact:true}).click()
   page.once('dialog',dialog=>dialog.accept())
   await extensions.getByRole('button',{name:'키 폐기',exact:true}).click()
   await until(async()=>await api(grantPath)===null)
