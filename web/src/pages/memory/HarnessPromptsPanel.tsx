@@ -4,7 +4,7 @@ import {get,post,ApiError} from '../../api'
 import {Button,TextArea} from '../../components/Primitives'
 import {Notice,Panel} from '../../components/UI'
 
-type Template={id:string;title:string;category:string;location:string;default:string;text:string;revision:string;customized:boolean;required:string[]}
+type Template={id:string;title:string;category:string;location:string;default:string;text:string;revision:string;customized:boolean;legacy?:boolean;required:string[]}
 type Catalog={items:Template[];scope:string;runtimeGuardsEditable:boolean}
 const api='/api/settings/harness-prompts'
 const categories=['전체','대화','에이전트','실행','판단','검증','복구','학습','로컬 모델']
@@ -25,7 +25,7 @@ export function HarnessPromptsPanel(){
   try{
    const data=await get<Catalog>(api)
    setItems(data.items)
-   if(first&&data.items[0])adopt(data.items[0])
+   if(first&&data.items.length)adopt(data.items.find(item=>item.id==='chat.lightweight')||data.items[0])
    return data
   }catch(e){setError((e as Error).message);return undefined}
   finally{setLoading(false)}
@@ -45,6 +45,7 @@ export function HarnessPromptsPanel(){
    setItems(response.items)
    const saved=response.items.find(item=>item.id===selected)
    if(saved)adopt(saved)
+   else if(result.items.length)adopt(result.items.find(item=>item.id==='chat.lightweight')||result.items[0])
    setNotice(reset?'서브2 기본값을 복원했습니다.':'저장했습니다. 다음 모델 호출부터 반영됩니다.')
   }catch(e){
    setError((e as Error).message)
@@ -58,7 +59,7 @@ export function HarnessPromptsPanel(){
  return <div className="space-y-4">
   <div className="flex flex-wrap items-start justify-between gap-3">
    <div><h2 className="text-lg font-bold">서브2 하네스 실행 지침</h2>
-    <p className="mt-1 max-w-2xl text-[12px] leading-6 text-[#81786D]">하네스의 실제 모델 지침을 단계별로 수정합니다. 기본 문구는 보존됩니다. 도구 권한과 실행 승인·검증 판정은 Rust에서 그대로 관리합니다.</p></div>
+    <p className="mt-1 max-w-2xl text-[12px] leading-6 text-[#81786D]">하네스의 실제 모델 지침을 단계별로 수정합니다. 중복 기본 지침은 통합했으며 이전에 수정한 문구는 보존합니다. 도구 권한과 실행 승인·검증 판정은 Rust에서 그대로 관리합니다.</p></div>
    <Button variant="secondary" disabled={busy} onClick={()=>void reload()}>새로고침</Button>
   </div>
   <Notice message={error}/>
@@ -75,7 +76,7 @@ export function HarnessPromptsPanel(){
      {visible.map(item=><button key={item.id} type="button" role="listitem" aria-current={selected===item.id?'true':undefined}
       onClick={()=>choose(item)} className={'flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2.5 text-left '+(selected===item.id?'bg-[#EEEAE4]':'hover:bg-[#F5F2ED]')}>
       <span className="min-w-0"><span className="block text-[12px] font-semibold">{item.title}</span><small className="block truncate text-[10px] text-[#8B8176]">{item.id}</small></span>
-      {item.customized&&<span className="rounded bg-[#E9DFD2] px-1.5 py-0.5 text-[9px] font-semibold">수정</span>}
+      {item.customized&&<span className="rounded bg-[#E9DFD2] px-1.5 py-0.5 text-[9px] font-semibold">{item.legacy?'이전 수정본':'수정'}</span>}
      </button>)}
      {visible.length===0&&<p className="p-4 text-[12px] text-[#8A8177]">해당 지침이 없습니다.</p>}
     </div>

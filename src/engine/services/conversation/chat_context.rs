@@ -3,13 +3,49 @@ use super::{TurnRequest, HISTORY_LIMIT};
 use crate::state::AppState;
 use serde_json::{json, Value};
 
+fn conversational(request:&TurnRequest)->bool{
+    request.direct_chat || (request.agent_id.is_none()
+        && !request.tools_enabled && !request.tools_execution_enabled)
+}
+fn web_available(request:&TurnRequest)->bool{
+    request.direct_chat && request.web_search && request.tools_enabled
+        && request.tools_execution_enabled
+}
+fn append_customized(prompt:&mut String,state:&AppState,id:&str){
+    if let Some(text)=super::harness_prompts::customized_text(state,id){
+        if !text.trim().is_empty(){prompt.push('\n');prompt.push_str(&text);}
+    }
+}
+fn conversation_base(state:&AppState,request:&TurnRequest,lightweight:bool)->String{
+    let mut text=super::harness_prompts::effective(state,"chat.lightweight");
+    // Keep explicit edits from older versions without stacking duplicate defaults.
+    if lightweight {
+        if !request.direct_chat {
+            append_customized(&mut text,state,"chat.lightweight_alt");
+        }
+    }else{
+        append_customized(&mut text,state,if web_available(request){"identity.web"}else{"identity.chat"});
+        append_customized(&mut text,state,"chat.general");
+    }
+    text
+}
+fn append_language(prompt:&mut String,state:&AppState,request:&TurnRequest,lightweight:bool){
+    if request.reasoning_language.as_deref()!=Some("ko"){return;}
+    let text=if lightweight{
+        super::harness_prompts::customized_text(state,"chat.lightweight_ko")
+            .unwrap_or_else(||super::harness_prompts::effective(state,"chat.reasoning_ko"))
+    }else{super::harness_prompts::effective(state,"chat.reasoning_ko")};
+    if !text.trim().is_empty(){prompt.push('\n');prompt.push_str(&text);}
+}
+
 /// One identity prefix per bot, shared by private chat, rooms and channels.
 /// Conversation-specific instructions follow this prefix, never precede it.
 pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec<Value>){
-    let mut text=super::harness_prompts::effective(state,if request.direct_chat || (request.agent_id.is_none()
-        && !request.tools_enabled && !request.tools_execution_enabled) {
-        if request.web_search && request.direct_chat {"identity.web"}else{"identity.chat"}
-    }else{"identity.agent"});
+    let mut text=if conversational(request){
+        conversation_base(state,request,false)
+    }else{
+        super::harness_prompts::effective(state,"identity.agent")
+    };
     let mut items=Vec::new();
     if let Some(agent)=request.agent_id.as_deref().and_then(|id|state.store.get("agent",id)) {
         text.push_str(&format!("\n활성 에이전트: {} (id: {}).",agent["name"].as_str().unwrap_or(""),agent["id"].as_str().unwrap_or("")));
@@ -33,7 +69,7 @@ pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec
 /// do not attach an unrelated operation manual or memory retrieval batch.
 /// Long owner instructions remain exact even when this costs more tokens.
 pub(super) fn lightweight_chat_prompt(state:&AppState,request:&TurnRequest)->PromptContext{
-    let mut prompt=super::harness_prompts::effective(state,if request.direct_chat{"chat.lightweight"}else{"chat.lightweight_alt"});
+    let mut prompt=conversation_base(state,request,true);
     if request.direct_chat {
         prompt.push_str(&format!(
             "\n현재 날짜: {}",chrono::Local::now().format("%Y-%m-%d")
@@ -59,9 +95,7 @@ pub(super) fn lightweight_chat_prompt(state:&AppState,request:&TurnRequest)->Pro
                 "digest":crate::engine::memory::stable_id(&[instructions])}));
         }
     }
-    if request.reasoning_language.as_deref()==Some("ko"){
-        prompt.push('\n');prompt.push_str(&super::harness_prompts::effective(state,"chat.lightweight_ko"));
-    }
+    append_language(&mut prompt,state,request,true);
     let watermark=crate::engine::memory::stable_id(&[&prompt]);
     PromptContext{prompt,dynamic_context:String::new(),
         source_instructions:String::new(),items,memory_watermark:watermark}
@@ -168,18 +202,23 @@ pub(super) fn system_prompt_with_manifest_at(
         let (prompt,items)=identity_prefix(state,request);
         (prompt,String::new(),items)
     };
-    if request.direct_chat || (request.agent_id.is_none() && !request.tools_enabled
-        && !request.tools_execution_enabled) {
-        prompt.push('\n');prompt.push_str(&super::harness_prompts::effective(state,"chat.general"));
-    } else {
-        prompt.push('\n');prompt.push_str(&super::harness_prompts::effective(state,"agent.general"));
+    // Plain chat never receives the work-agent manual, even if a client
+    // sends stale toolsEnabled flags. Only the actual public web capability
+    // is described when it is available.
+    if request.direct_chat {
+        if web_available(request){
+            prompt.push('\n');prompt.push_str(&super::harness_prompts::effective(state,"chat.web_scope"));
+        }else if request.web_search{
+            prompt.push('\n');prompt.push_str(&super::harness_prompts::effective(state,"chat.no_tools"));
+        }else{
+            append_customized(&mut prompt,state,"chat.no_tools");
         }
-    if request.direct_chat && request.web_search {
-        prompt.push(' ');prompt.push_str(&super::harness_prompts::effective(state,"chat.web_scope"));
-    } else if request.tools_enabled && request.tools_execution_enabled {
-        prompt.push(' ');prompt.push_str(&super::harness_prompts::effective(state,"agent.tools"));
-    } else {
-        prompt.push(' ');prompt.push_str(&super::harness_prompts::effective(state,"chat.no_tools"));
+    }else{
+        if !conversational(request){append_customized(&mut prompt,state,"agent.general");}
+        let instruction=if request.tools_enabled && request.tools_execution_enabled{
+            "agent.tools"
+        }else{"chat.no_tools"};
+        prompt.push('\n');prompt.push_str(&super::harness_prompts::effective(state,instruction));
     }
     if request.direct_chat {
         // Direct conversation does not need the user's local directory in the
@@ -197,7 +236,7 @@ pub(super) fn system_prompt_with_manifest_at(
     let mut dynamic = String::new();
     let mut items = Vec::new();
     items.append(&mut identity_items);
-    if let Some(agent_id) = &request.agent_id {
+    if let Some(agent_id) = request.agent_id.as_ref().filter(|_|!request.direct_chat) {
         if let Some((growth, growth_items)) =
             crate::engine::agent_growth::context_block(state, agent_id)
         {
@@ -206,12 +245,15 @@ pub(super) fn system_prompt_with_manifest_at(
             items.extend(growth_items);
         }
     }
-    if let Some((context, mut context_items, watermark)) =
+    let selected_context=if request.direct_chat{
+        conversation_memory(state,session_id,request.agent_id.as_deref(),query,execution_id)
+    }else{
         context_block_with_manifest(
-            state, session_id, request.agent_id.as_deref(), query, improvements, execution_id,
+            state,session_id,request.agent_id.as_deref(),query,improvements,execution_id,
             request.tools_enabled && request.tools_execution_enabled,
         )
-    {
+    };
+    if let Some((context, mut context_items, watermark))=selected_context {
         dynamic.push_str("\n\n");
         dynamic.push_str(&context);
         items.append(&mut context_items);
@@ -233,9 +275,7 @@ pub(super) fn system_prompt_with_manifest_at(
         scope.agent_id.as_deref().unwrap_or(""),
         &serde_json::to_string(&items).unwrap_or_default(),
     ]);
-    if request.reasoning_language.as_deref() == Some("ko") {
-        prompt.push_str("\n\n");prompt.push_str(&super::harness_prompts::effective(state,"chat.reasoning_ko"));
-    }
+    append_language(&mut prompt,state,request,false);
     if let Some(extra) = &request.system_override {
         prompt.push_str("\n\n");
         prompt.push_str(extra);
@@ -252,6 +292,26 @@ pub(super) fn system_prompt_with_manifest_at(
         items,
         memory_watermark: watermark,
     }
+}
+
+/// Conversational recall does not inherit work skills, tool statistics,
+/// execution procedures, or adopted agent repair strategies.
+fn conversation_memory(state:&AppState,session_id:&str,agent_id:Option<&str>,query:&str,
+    execution_id:Option<&str>)->Option<(String,Vec<Value>,String)>{
+    let scope=crate::engine::memory::MemoryScope::for_session(&state.store,session_id,agent_id);
+    let (memory,mut items)=crate::engine::memory::context_block_with_manifest_at(state,&scope,query,execution_id);
+    let (experience,mut experience_items)=crate::engine::experience::context_block_with_manifest_at(state,&scope,query,execution_id);
+    items.append(&mut experience_items);
+    if memory.is_none() && experience.is_none(){return None;}
+    let mut text=memory.unwrap_or_default();
+    if let Some(experience)=experience{
+        if !text.is_empty(){text.push_str("\n\n");}
+        text.push_str(&experience);
+    }
+    let watermark=crate::engine::memory::stable_id(&[
+        scope.partition_key.as_str(),scope.session_id.as_str(),
+        scope.agent_id.as_deref().unwrap_or(""),&serde_json::to_string(&items).unwrap_or_default()]);
+    Some((text,items,watermark))
 }
 
 #[allow(dead_code)] // compatibility wrapper for old callers

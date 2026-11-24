@@ -12,13 +12,13 @@ pub(crate) struct PromptSpec {
 pub(crate) const SPECS:&[PromptSpec]=&[
     PromptSpec{id:"identity.chat",category:"대화",title:"일반 대화 정체성",location:"chat_context.rs",default:"DOMINION 대화형 AI입니다. 사용자의 질문에 자연스럽게 답하십시오. 이번 대화에는 도구나 외부 실행 권한이 없습니다.",required:&[]} ,
     PromptSpec{id:"identity.web",category:"대화",title:"웹 검색 대화 정체성",location:"chat_context.rs",default:"DOMINION 대화형 AI입니다. 사용자 요청 시 공개 웹 검색과 페이지 읽기만 할 수 있습니다. 파일·셸·MCP·메모리 쓰기·외부 작업 권한은 없습니다.",required:&[]} ,
-    PromptSpec{id:"identity.agent",category:"에이전트",title:"에이전트 정체성",location:"chat_context.rs / chat_prompt_sources.rs",default:"DOMINION 지속 에이전트. 정체성과 개인 경험은 에이전트 ID에 속하며 대화 장소가 바뀌어도 유지한다. 실제 권한과 도구는 현재 실행 경계에 따른다.",required:&[]} ,
-    PromptSpec{id:"chat.lightweight",category:"대화",title:"짧은 대화 시작",location:"chat_context.rs",default:"DOMINION. 당신은 사용자의 일반 대화를 돕는 AI 어시스턴트입니다. 사용자의 언어로 자연스럽고 정확하게 답하십시오.",required:&[]} ,
+    PromptSpec{id:"identity.agent",category:"에이전트",title:"에이전트 정체성",location:"chat_context.rs / chat_prompt_sources.rs",default:"DOMINION 지속 에이전트. 정체성과 개인 경험은 에이전트 ID에 속하며 대화 장소가 바뀌어도 유지한다. 실제 권한과 도구는 현재 실행 경계에 따른다. 사용자의 언어로 답하십시오.",required:&[]} ,
+    PromptSpec{id:"chat.lightweight",category:"대화",title:"공통 대화 기본 지침",location:"chat_context.rs",default:"DOMINION. 사용자의 최신 메시지에 해당 언어로 자연스럽고 정확하게 답하십시오. 대화 맥락과 질문의 깊이에 맞춰 자신의 답변만 작성하십시오.",required:&[]} ,
     PromptSpec{id:"chat.lightweight_alt",category:"대화",title:"간단 호출의 시작",location:"chat_context.rs",default:"DOMINION. 사용자의 언어로 자연스럽고 간결하게 답하십시오.",required:&[]} ,
     PromptSpec{id:"chat.general",category:"대화",title:"일반 대화 기본",location:"chat_context.rs",default:"당신은 사용자의 일반 대화를 돕는 AI 어시스턴트입니다. 사용자의 언어로 대답하십시오.",required:&[]} ,
     PromptSpec{id:"chat.web_scope",category:"대화",title:"웹 검색 설명",location:"chat_context.rs",default:"이번 턴에는 공개 웹 검색(web_search)과 해당 웹페이지 읽기(http_fetch)만 허용됩니다. 검색 결과의 출처 URL을 명시하십시오. 파일·셸·계정·MCP·자동 실행 권한은 없습니다.",required:&[]} ,
     PromptSpec{id:"chat.no_tools",category:"대화",title:"도구 비활성 안내",location:"chat_context.rs",default:"이번 턴에는 도구가 비활성화되어 있습니다. 외부 작업을 수행했다고 말하지 마십시오.",required:&[]} ,
-    PromptSpec{id:"chat.reasoning_ko",category:"대화",title:"한국어 추론 지침",location:"chat_context.rs",default:"Write every internal reasoning / thinking step in Korean (한국어). The final answer must also be in Korean unless the user asks otherwise.",required:&[]} ,
+    PromptSpec{id:"chat.reasoning_ko",category:"대화",title:"한국어 추론 지침",location:"chat_context.rs",default:"다른 언어 요청이 없으면 답변과 필요한 추론을 한국어로 작성하십시오.",required:&[]} ,
     PromptSpec{id:"chat.lightweight_ko",category:"대화",title:"간단 한국어 추론",location:"chat_context.rs",default:"추론과 최종 답변은 다른 언어 요청이 없으면 한국어로 작성하십시오.",required:&[]} ,
     PromptSpec{id:"agent.general",category:"에이전트",title:"작업 에이전트 역할",location:"chat_context.rs",default:"당신은 Rust 엔진에서 동작하는 에이전트형 AI 작업 공간 DOMINION입니다. 사용자가 다른 언어로 쓰지 않는 한 한국어로 답하십시오.",required:&[]} ,
     PromptSpec{id:"agent.tools",category:"에이전트",title:"도구 사용·결과 보고",location:"chat_context.rs",default:"작업에 필요하면 사용 가능한 도구를 사용하십시오. 도구 결과를 정확히 보고하십시오.",required:&[]} ,
@@ -50,6 +50,15 @@ fn stored(state:&AppState,id:&str)->Option<Value>{
     spec(id)?;
     state.store.get("harness_prompt_override",id)
 }
+// Superseded built-in slots are not sent or listed by default. Existing
+// user edits retain their own IDs and continue to be applied on their old route.
+pub(crate) fn legacy_slot(id:&str)->bool{
+    matches!(id,"identity.chat"|"identity.web"|"chat.lightweight_alt"|
+        "chat.general"|"chat.lightweight_ko"|"agent.general")
+}
+pub(crate) fn customized_text(state:&AppState,id:&str)->Option<String>{
+    stored(state,id).and_then(|v|v["text"].as_str().map(str::to_string))
+}
 pub(crate) fn revision(state:&AppState,id:&str)->String{
     stored(state,id).and_then(|v|v["revision"].as_str().map(str::to_string))
         .unwrap_or_else(||"builtin".to_string())
@@ -74,12 +83,12 @@ pub(crate) fn validate(spec:&PromptSpec,text:&str)->Result<(),String>{
     Ok(())
 }
 pub(crate) fn catalog(state:&AppState)->Value{
-    json!({"items":SPECS.iter().map(|item|{
+    json!({"items":SPECS.iter().filter(|item|!legacy_slot(item.id)||stored(state,item.id).is_some()).map(|item|{
         let row=stored(state,item.id);
         json!({"id":item.id,"title":item.title,"category":item.category,"location":item.location,
             "default":item.default,
             "text":row.as_ref().and_then(|v|v["text"].as_str()).unwrap_or(item.default),
-            "customized":row.is_some(),
+            "customized":row.is_some(),"legacy":legacy_slot(item.id),
             "revision":row.as_ref().and_then(|v|v["revision"].as_str()).unwrap_or("builtin"),
             "required":item.required,
             "updatedAt":row.as_ref().and_then(|v|v.get("updatedAt")).cloned().unwrap_or(Value::Null)})

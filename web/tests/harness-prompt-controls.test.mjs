@@ -22,6 +22,7 @@ test('Sub2 owns an editable registry and every registered model instruction is w
  assert.match(root,/harness_prompt_override/)
  assert.match(root,/pub\(crate\) fn render/)
  assert.match(root,/pub\(crate\) fn validate/)
+ assert.match(root,/filter\(\|item\|!legacy_slot\(item\.id\)\|\|stored\(state,item\.id\)\.is_some\(\)\)/)
 })
 
 test('Sub2 Memory presents the real harness templates and saves with conflict checks',()=>{
@@ -41,4 +42,14 @@ test('Sub2 Memory presents the real harness templates and saves with conflict ch
  assert.match(routes,/\/api\/settings\/harness-prompts/)
  assert.match(api,/begin_session\(&key\)/)
  assert.match(api,/validate\(spec,content\)/)
+})
+
+test('plain conversation uses one shared base and memory rather than agent work manuals',()=>{
+ const context=read('../../src/engine/services/conversation/chat_context.rs')
+ assert.match(context,/let mut prompt=conversation_base\(state,request,true\)/)
+ assert.match(context,/conversation_base\(state,request,false\)/)
+ assert.match(context,/if request\.direct_chat \{\s*if web_available\(request\)/)
+ assert.match(context,/if request\.direct_chat\{\s*conversation_memory\(/)
+ assert.doesNotMatch(context,/effective\(state,"chat\.general"\)/)
+ assert.doesNotMatch(context,/effective\(state,"agent\.general"\)/)
 })
