@@ -137,6 +137,9 @@ pub(super) async fn catalog(state:&AppState,session_id:&str)->Vec<Value>{
     if session["sdkUiPolicy"].is_null() || session["sdkUiPolicy"]["mcpEnabled"]==true{
         definitions.extend(addons::tool_definitions(state).await);
     }
+    if session["sdkUiPolicy"].is_null()||session["sdkUiPolicy"]["extensionsEnabled"]==true{
+        definitions.extend(crate::extension_manager::definitions(state));
+    }
     tools::retain_connected_account_tools(state,&mut definitions);
     if session["parallelReadOnly"]==true || session["readOnly"]==true {
         definitions.retain(|definition|tools::parallel_read_only_tool(name(definition)));

@@ -6,6 +6,7 @@ pub mod build_identity;
 mod config;
 mod db;
 mod engine;
+mod extension_manager;
 mod events;
 mod migrations;
 mod platform;

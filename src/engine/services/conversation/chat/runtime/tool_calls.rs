@@ -169,6 +169,9 @@ pub(super) async fn dispatch_tool_call(
             capability::search(state,session_id,execution_id,&arguments).await
         } else if call.name.starts_with("mcp__") {
             crate::engine::addons::execute_tool(state, &call.name, &arguments).await
+        } else if call.name.starts_with(dominion_agent_sdk::plugin_protocol::PREFIX) {
+            // Same approval and durable effect receipt path as native tools.
+            crate::extension_manager::execute(state,&call.name,&arguments).await
         } else {
             tools::execute(&context, &call.name, &arguments, execution_id).await
         };

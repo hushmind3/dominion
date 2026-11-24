@@ -264,6 +264,7 @@ pub fn retain_connected_account_tools(state:&crate::state::AppState,defs:&mut Ve
     });
 }
 pub fn requires_approval(name: &str) -> bool {
+    if name.starts_with(dominion_agent_sdk::plugin_protocol::PREFIX){return true;}
     matches!(
         name,
         "workspace_write"
@@ -304,6 +305,7 @@ pub fn ui_tool_allowed(policy:&Value,name:&str)->bool{
     if policy.is_null(){return true;}
     if name.starts_with("skill_") && policy["skillsEnabled"]==false{return false;}
     if name.starts_with("mcp__") && policy["mcpEnabled"]!=true{return false;}
+    if name.starts_with(dominion_agent_sdk::plugin_protocol::PREFIX) && policy["extensionsEnabled"]!=true{return false;}
     if matches!(name,"web_search"|"http_fetch") && policy["webEnabled"]!=true{return false;}
     if matches!(name,"delegate_task"|"delegate_parallel"|"task_status"|"task_result"|
         "team_execute"|"team_remote_apply"|"team_status"|"team_workers"|"external_harness_sessions"|"external_harness_run") && policy["subagentsEnabled"]!=true{return false;}

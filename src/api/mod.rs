@@ -25,6 +25,7 @@ pub mod memory;
 pub mod browser;
 #[path = "addons/extensions.rs"]
 pub mod extensions;
+mod extension_packages;
 pub mod approvals;
 #[path = "services/conversation/sessions.rs"]
 pub mod sessions;

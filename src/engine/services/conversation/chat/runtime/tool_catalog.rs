@@ -108,6 +108,11 @@ pub(super) async fn prepare(
         && (session["sdkUiPolicy"].is_null() || session["sdkUiPolicy"]["mcpEnabled"]==true){
         tool_definitions.extend(crate::engine::addons::tool_definitions(state).await);
     }
+    // Installed native extensions are unrelated to MCP transport or grants.
+    if request.tools_enabled && request.tools_execution_enabled && !lightweight_only
+        && (session["sdkUiPolicy"].is_null() || session["sdkUiPolicy"]["extensionsEnabled"]==true){
+        tool_definitions.extend(crate::extension_manager::definitions(state));
+    }
     // Account-specific API tools require a real OAuth/CLI grant. A Google
     // login in our visible browser profile only grants browser_control UI
     // access; it must not be mistaken for a REST API bearer grant.

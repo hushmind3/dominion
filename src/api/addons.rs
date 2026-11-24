@@ -6,11 +6,16 @@
 //! integration can install a second independent server or permission policy.
 use crate::state::AppState;
 use axum::{routing::{get,post},Router};
-use super::{browser,channels,compat,extensions,gateways,oauth};
+use super::{browser,channels,compat,extensions,extension_packages,gateways,oauth};
 
 pub(super) fn routes()->Router<AppState>{
     Router::<AppState>::new()
         .route("/api/tools", get(extensions::list_tools))
+        .route("/api/extensions/registries", get(extension_packages::sources).post(extension_packages::save_sources))
+        .route("/api/extensions/catalog", get(extension_packages::catalog))
+        .route("/api/extensions", get(extension_packages::list).post(extension_packages::install))
+        .route("/api/extensions/:id", axum::routing::delete(extension_packages::remove))
+        .route("/api/extensions/:id/enable", post(extension_packages::enable))
         .route("/api/browser/status", get(browser::status))
         .route("/api/browser/screenshot", get(browser::screenshot))
         .route("/api/browser/action", post(browser::action))
