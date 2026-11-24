@@ -142,7 +142,15 @@ pub async fn invoke(root:&Path,m:&Manifest,tool:&Tool,args:&Value)->Result<Value
         if !child.wait().await.map_err(|e|e.to_string())?.success(){return Err("extension process exited unsuccessfully".into());}
         protocol::response(&id,serde_json::from_slice(&bytes).map_err(|_|"invalid extension JSON response")?)
     }).await;
-    match result{Ok(Ok(value))=>Ok(value),Ok(Err(error))=>{let _=child.kill().await;Ok(unknown(error))},
+    match result{Ok(Ok(mut value))=>{
+        // Host-generated receipt, not a statement supplied by the plugin.
+        // The process exited successfully and its reply matched this request.
+        // This confirms invocation only, never an external business effect.
+        value["extensionExecution"]=json!({"protocol":protocol::PROTOCOL,"requestId":id,
+            "packageId":m.id,"packageName":m.name,"revision":revision(m),
+            "tool":tool.name,"exitCode":0,"responseMatched":true});
+        Ok(value)
+    },Ok(Err(error))=>{let _=child.kill().await;Ok(unknown(error))},
         Err(_)=>{let _=child.kill().await;Ok(unknown("extension deadline exceeded; do not replay automatically".into()))}}
 }
 #[cfg(test)]
@@ -154,7 +162,11 @@ mod tests{use super::*;
       "artifact":{"url":"https://example.invalid/plugin.mjs","sha256":format!("{:x}",Sha256::digest(bytes))},"tools":[{"name":"echo","description":"Echo a message","parameters":{"type":"object"}}]})).unwrap();
     assert!(install_bytes(&root,&m,b"tampered").await.is_err());
     install_bytes(&root,&m,bytes).await.unwrap();
-    assert_eq!(invoke(&root,&m,&m.tools[0],&json!({"text":"hello"})).await.unwrap()["result"]["text"],"hello");
+    let output=invoke(&root,&m,&m.tools[0],&json!({"text":"hello"})).await.unwrap();
+    assert_eq!(output["result"]["text"],"hello");
+    assert_eq!(output["extensionExecution"]["revision"],revision(&m));
+    assert_eq!(output["extensionExecution"]["responseMatched"],true);
+    assert_eq!(output["extensionExecution"]["exitCode"],0);
     let mut updated=m.clone();updated.version="2.0.0".into();assert_ne!(revision(&m),revision(&updated));
     tokio::fs::write(entry_path(&root,&m),b"tampered").await.unwrap();assert!(invoke(&root,&m,&m.tools[0],&json!({})).await.is_err());
     remove(&root,&m).await.unwrap();assert!(check(&root,&m).await.is_err());let _=tokio::fs::remove_dir_all(root).await;

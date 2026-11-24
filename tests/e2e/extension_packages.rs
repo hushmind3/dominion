@@ -51,13 +51,14 @@ fn independent_extension_import_group_execution_and_removal_without_mcp(){
     loop{
         let job=app.get(&format!("/api/jobs/{}",sent["jobId"].as_str().unwrap()));
         if job["status"]=="completed"{break;}
-        assert!(matches!(job["status"].as_str(),Some("queued"|"running")),"{job}");
+        assert!(matches!(job["status"].as_str(),Some("queued"|"running")),
+            "{job}; model requests: {:?}; server: {}",requests.lock().unwrap(),app.server_diagnostics());
         assert!(Instant::now()<deadline,"{job}");
         std::thread::sleep(Duration::from_millis(30));
     }
     let seen=requests.lock().unwrap();
     assert!(seen.iter().any(|r|r["messages"].as_array().unwrap().iter().any(|m|
-        m["role"]=="tool"&&m["content"].as_str().is_some_and(|v|v.contains("EXTENSION_ACTUAL_PROCESS")&&v.contains("success")))),"{seen:?}");
+        m["role"]=="tool"&&m["content"].as_str().is_some_and(|v|v.contains("EXTENSION_ACTUAL_PROCESS")&&v.contains("extensionExecution")&&v.contains("responseMatched")))),"{seen:?}");
     drop(seen);
     app.post("/api/extensions/fixture/enable",&json!({"enabled":false}));
     assert!(!advertised(app.get("/api/tools")));

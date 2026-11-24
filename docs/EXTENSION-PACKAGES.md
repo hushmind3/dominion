@@ -85,3 +85,12 @@ revision-bound tool rather than ship every installed schema. Casual room
 greetings continue to omit tools. The end-to-end fixture exercises owner
 confirmation, import, visibility, actual Python process execution through a
 group agent approval, disable and removal without an MCP server.
+
+## Invocation evidence
+
+The package runner adds a host-generated extensionExecution receipt only after
+a successful process exit and matching response ID. A direct request to run
+a named installed package can use that receipt to satisfy invocation
+acceptance. It cannot certify an external delivery, deployment, local file
+change, or an unrelated requested package. Missing or ambiguous outcomes
+remain blocked from blind retries.

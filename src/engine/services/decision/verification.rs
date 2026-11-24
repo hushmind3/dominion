@@ -390,6 +390,35 @@ pub(crate) fn tool_name(item: &Value) -> &str {
         .and_then(Value::as_str)
         .unwrap_or("")
 }
+/// An explicitly requested package invocation can be proven by the native
+/// process receipt. This is intentionally narrower than proof of a file edit,
+/// deployment, message delivery or any other outside-world change.
+fn extension_invocation_evidence(goal:&str,item:&Value)->bool{
+    let goal_lower=goal.to_lowercase();
+    if !["실행","run ","execute ","invoke "].iter().any(|word|goal_lower.contains(word))
+        || ["만들","생성","저장","작성","수정","편집","삭제","제거","설치","복사","이동","다운로드","빌드","커밋","배포",
+            "create","write","save","edit","delete","remove","install","build","update","deploy","commit","send","publish"]
+            .iter().any(|word|goal_lower.contains(word)){
+        return false;
+    }
+    if item["status"]!="completed"||item["dispatched"]==false||!successful_evidence(item)
+        || item["result"]["success"]!=true||item["result"]["outcomeUnknown"]==true
+        ||item["result"]["effectUnknown"]==true{return false;}
+    let receipt=&item["result"]["extensionExecution"];
+    let Some(package)=receipt["packageId"].as_str()else{return false;};
+    let Some(tool)=receipt["tool"].as_str()else{return false;};
+    let Some(revision)=receipt["revision"].as_str()else{return false;};
+    let Some(name)=receipt["packageName"].as_str()else{return false;};
+    use dominion_agent_sdk::plugin_protocol as protocol;
+    if !protocol::segment(package)||!protocol::segment(tool)||revision.len()!=12
+        ||!revision.bytes().all(|b|b.is_ascii_hexdigit())
+        ||receipt["protocol"]!=protocol::PROTOCOL||receipt["exitCode"]!=0||receipt["responseMatched"]!=true
+        ||!receipt["requestId"].as_str().is_some_and(|id|uuid::Uuid::parse_str(id).is_ok()){
+        return false;
+    }
+    let qualified=format!("{}{}__{}__{}",protocol::PREFIX,package,tool,revision);
+    qualified==tool_name(item)&&protocol::explicitly_requested(&qualified,&format!("[{name}]"),goal)
+}
 pub(crate) fn is_action_evidence(item: &Value) -> bool {
     if !successful_evidence(item) {
         return false;
@@ -643,6 +672,7 @@ pub(crate) fn acceptance_gaps(
         )
     });
     if looks_actionable(goal) && !evidence.iter().any(is_action_evidence)
+        && !evidence.iter().any(|item|extension_invocation_evidence(goal,item))
         && !has_explicit_tool && !creation_exists {
         gaps.push("변경 또는 실행을 입증하는 성공한 도구 결과가 없습니다. 조회 결과만으로 행동 목표를 완료할 수 없습니다.".into());
     }
@@ -795,6 +825,26 @@ mod verified_patch_tests {
             crate::db::Store::open(&config.db_path()).unwrap(),
             crate::vault::Vault::open(&config.key_path()));
         (state,dir)
+    }
+    #[test]
+    fn extension_process_receipt_proves_only_named_invocation(){
+        let (state,dir)=state();
+        let mut item=json!({"status":"completed","tool":"ext__fixture__echo__abcdef123456",
+            "result":{"success":true,"result":{"text":"ok"},"extensionExecution":{
+                "protocol":"dominion.extension.v1","requestId":uuid::Uuid::new_v4().to_string(),
+                "packageId":"fixture","packageName":"문서 도우미","revision":"abcdef123456",
+                "tool":"echo","exitCode":0,"responseMatched":true}}});
+        let goal="문서 도우미로 실행해";
+        assert!(check_acceptance(&state,goal,&json!([]),&[item.clone()]).is_empty());
+        assert!(!is_action_evidence(&item));
+        assert!(!extension_invocation_evidence("다른 확장을 실행해",&item));
+        assert!(!extension_invocation_evidence("문서 도우미로 파일을 수정하고 실행해",&item));
+        item["result"]["extensionExecution"]["revision"]=json!("000000000000");
+        assert!(!extension_invocation_evidence(goal,&item));
+        item["result"]["extensionExecution"]["revision"]=json!("abcdef123456");
+        item["result"]["outcomeUnknown"]=json!(true);
+        assert!(!extension_invocation_evidence(goal,&item));
+        let _=std::fs::remove_dir_all(dir);
     }
     #[test]
     fn no_op_or_forged_write_cannot_mark_local_fix_complete(){
