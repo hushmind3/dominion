@@ -1,6 +1,6 @@
 //! Stopped-container replacement with a durable rollback descriptor.
 //! Rollback restores the immutable executable image, not mutable /data.
-use super::{call,docker,creation_args,inspect,owner,ensure_volume,container_id,valid_image,valid_id,Install};
+use super::{call,create_managed,inspect,owner,ensure_volume,container_id,valid_image,valid_id,Install};
 use crate::state::AppState;
 use crate::api::response::error;
 use axum::{extract::{Path,State},http::StatusCode,response::{IntoResponse,Response},Json};
@@ -45,12 +45,12 @@ async fn pull(image:&str)->Result<String,String>{
     if !immutable(id){return Err("Invalid immutable image identity".into())}
     Ok(id.into())
 }
-async fn create(scope:&str,input:&Install,exact:&str)->Result<Value,String>{
+async fn create(state:&AppState,scope:&str,input:&Install,exact:&str)->Result<Value,String>{
     // Do not fall back to mutable tags or fetch a different image on rollback.
     let output=call(&["image","inspect","--format","{{.Id}}",exact],15).await?;
     if output.trim()!=exact{return Err("Original image is not available locally".into())}
     ensure_volume(scope,input).await?;
-    docker(&creation_args(scope,input,exact),45).await?;
+    create_managed(state,scope,input,exact).await?;
     let row=inspect(&input.id,scope).await?.ok_or("Replacement container not found")?;
     if image_id(&row)!=Some(exact)||row["running"]!=false{return Err("Replacement image/status verification failed".into())}
     Ok(row)
@@ -63,6 +63,7 @@ fn removal_id(row:&Value)->Result<&str,String>{
     row["containerId"].as_str().filter(|s|container_id(s)).ok_or("Invalid container identity".into())
 }
 pub async fn update(State(state):State<AppState>,Path(id):Path<String>,Json(input):Json<Update>)->Response{
+    if input.image==super::recipe::VOICE_IMAGE{return error(StatusCode::BAD_REQUEST,"음성 비서 전용 설치를 이용하세요.")}
     if !input.confirmed||!valid_id(&id)||!valid_image(&input.image)||!immutable(&input.expected_image_id){
         return error(StatusCode::BAD_REQUEST,"새 이미지 버전과 현재 버전을 확인하세요.")
     }
@@ -83,7 +84,7 @@ pub async fn update(State(state):State<AppState>,Path(id):Path<String>,Json(inpu
             "targetImage":input.image,"targetImageId":target});
         save(&state,&record)?;
         call(&["container","rm",&cid],30).await?;
-        let mut installed=create(&scope,&next,&target).await?;
+        let mut installed=create(&state,&scope,&next,&target).await?;
         record["phase"]=json!("ready");save(&state,&record)?;
         attach(&state,&mut installed);
         Ok(installed)
@@ -117,7 +118,7 @@ pub async fn rollback(State(state):State<AppState>,Path(id):Path<String>,Json(in
             record["phase"]=json!("prepared");save(&state,&record)?;
             call(&["container","rm",&cid],30).await?;
         }
-        let installed=create(&scope,&previous,&exact).await?;
+        let installed=create(&state,&scope,&previous,&exact).await?;
         record["phase"]=json!("rolled_back");save(&state,&record)?;
         Ok(installed)
     }.await;

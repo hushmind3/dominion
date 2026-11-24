@@ -120,6 +120,10 @@ jobs:
           cargo test --bin dominion-rust api::plugins::bridge::tests
           cargo test --bin dominion-rust api::plugins::bridge::auto_chat::tests
           cargo test --bin dominion-rust api::plugins::versions::tests
+          cargo test --bin dominion-rust api::plugins::recipe::tests
+          python3 -m unittest discover -s plugins/dominion-voice -p 'test_*.py'
+          python3 -m py_compile plugins/dominion-voice/app.py plugins/dominion-voice/voice.py
+          node --check plugins/dominion-voice/app.js
           cargo test --bin dominion-rust api::extensions::registry_package_tests
           cargo test --bin dominion-rust api::executions::event_tests
           cargo test --bin dominion-rust api::jobs::algorithm_profile_api_tests

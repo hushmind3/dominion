@@ -10,6 +10,7 @@ use tokio::{io::{AsyncRead,AsyncReadExt},process::Command};
 use super::response::error;
 pub mod bridge;
 pub mod versions;
+pub mod recipe;
 
 const LIMIT:usize=1024*1024;
 const OWNER:&str="io.dominion.plugin.owner";
@@ -87,8 +88,14 @@ async fn drain<R:AsyncRead+Unpin>(mut r:R)->std::io::Result<(Vec<u8>,bool)>{
     Ok((out,truncated))
 }
 async fn docker(args:&[String],seconds:u64)->Result<(String,String,bool),String>{
+    docker_with_token(args,seconds,None).await
+}
+async fn docker_with_token(args:&[String],seconds:u64,token:Option<&str>)->Result<(String,String,bool),String>{
     let socket=local_socket()?;
-    let mut child=Command::new(docker_bin()).arg("--host").arg(socket)
+    let mut command=Command::new(docker_bin());
+    command.env_remove("DOMINION_BRIDGE_TOKEN");
+    if let Some(value)=token{command.env("DOMINION_BRIDGE_TOKEN",value);}
+    let mut child=command.arg("--host").arg(socket)
         .env_remove("DOCKER_HOST").env_remove("DOCKER_CONTEXT").env_remove("DOCKER_TLS_VERIFY").env_remove("DOCKER_CERT_PATH").env_remove("DOCKER_TLS")
         .args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .kill_on_drop(true).spawn().map_err(|e|format!("Docker 실행 실패: {e}"))?;
@@ -210,6 +217,15 @@ fn creation_args(scope:&str,input:&Install,image_id:&str)->Vec<String>{
     if let Some(port)=input.port{args.extend(["--publish".into(),format!("127.0.0.1::{port}/tcp")]);}
     args.push(image_id.into());args
 }
+async fn create_managed(state:&AppState,scope:&str,input:&Install,image_id:&str)->Result<(),String>{
+    let mut args=creation_args(scope,input,image_id);
+    if input.image==recipe::VOICE_IMAGE{
+        let token=recipe::bridge_token(state,&input.id).ok_or("Voice bridge credential missing")?;
+        let pos=args.len()-1;args.splice(pos..pos,["--env".into(),"DOMINION_BRIDGE_TOKEN".into()]);
+        docker_with_token(&args,45,Some(&token)).await?;
+    }else{docker(&args,45).await?;}
+    Ok(())
+}
 fn bad(message:&str)->Response{error(StatusCode::BAD_REQUEST,message)}
 fn failed(message:&str)->Response{error(StatusCode::BAD_GATEWAY,message)}
 pub async fn list(State(state):State<AppState>)->Response{
@@ -223,6 +239,7 @@ pub async fn list(State(state):State<AppState>)->Response{
     }
 }
 pub async fn install(State(state):State<AppState>,Json(input):Json<Install>)->Response{
+    if input.image==recipe::VOICE_IMAGE{return bad("음성 비서는 전용 설치 버튼을 이용하세요.")}
     if !input.confirmed||!valid_id(&input.id)||!valid_image(&input.image)||input.name.trim().is_empty()
         ||input.name.len()>120||input.name.chars().any(char::is_control)
         ||input.port==Some(0)||input.port.is_some()&&!input.network{
@@ -246,7 +263,7 @@ pub async fn install(State(state):State<AppState>,Json(input):Json<Install>)->Re
         if !image_id.strip_prefix("sha256:").is_some_and(container_id){return Err("Invalid immutable image identity".into())}
         ensure_volume(&scope,&input).await?;
         // Do not launch at install time. A separate owner action starts it.
-        docker(&creation_args(&scope,&input,image_id),45).await?;
+        create_managed(&state,&scope,&input,image_id).await?;
         inspect(&input.id,&scope).await?.ok_or_else(||"설치 결과를 확인하지 못했습니다. 새로고침하세요.".into())
     }.await;
     match result{Ok(row)=>Json(row).into_response(),Err(e)=>failed(&e)}

@@ -88,8 +88,16 @@ fn view(state:&AppState,record:&Value)->Value{
         "answerDigest":answer.as_ref().map(|s|digest(s)),"answer":answer,
         "delivery":record["delivery"].as_str().unwrap_or("not_sent")})
 }
+fn bridge_auth(state:&AppState,row:&Value,request:reqwest::RequestBuilder)->Result<reqwest::RequestBuilder,String>{
+    if row["image"]==super::recipe::VOICE_IMAGE{
+        let id=row["id"].as_str().ok_or("Invalid voice identity")?;
+        let token=super::recipe::bridge_token(state,id).ok_or("Voice bridge credential missing")?;
+        Ok(request.bearer_auth(token))
+    }else{Ok(request)}
+}
 async fn fetch_record(state:&AppState,id:&str,row:&Value,port:u16)->Result<Option<Value>,String>{
-    let response=client()?.get(format!("http://127.0.0.1:{port}/dominion/v1/request")).send().await
+    let request=bridge_auth(state,row,client()?.get(format!("http://127.0.0.1:{port}/dominion/v1/request")))?;
+    let response=request.send().await
         .map_err(|e|e.to_string())?;
     if response.status()==StatusCode::NO_CONTENT{return Ok(None)}
     if !response.status().is_success(){return Err("플러그인이 DOMINION 요청 규격에 응답하지 않았습니다.".into())}
@@ -149,8 +157,8 @@ async fn send_answer(state:&AppState,mut r:Value,row:&Value,port:u16,expected_di
     let request=r["requestId"].as_str().ok_or("Invalid request ID")?.to_owned();
     r["delivery"]=json!("delivery_unknown");
     if state.store.put(KIND,&r).is_none(){return Err("전달 기록을 저장하지 못했습니다.".into())}
-    let response=client()?.post(format!("http://127.0.0.1:{port}/dominion/v1/result"))
-        .json(&json!({"requestId":request,"answer":current["answer"],"answerDigest":expected_digest}))
+    let outbound=bridge_auth(state,row,client()?.post(format!("http://127.0.0.1:{port}/dominion/v1/result")))?;
+    let response=outbound.json(&json!({"requestId":request,"answer":current["answer"],"answerDigest":expected_digest}))
         .send().await.map_err(|e|e.to_string())?;
     if !response.status().is_success(){return Err("외부 프로그램이 답변을 받았는지 확인되지 않았습니다.".into())}
     let ack=crate::integrations::network::read_bounded_json(response,8192,"plugin result acknowledgement").await?;
