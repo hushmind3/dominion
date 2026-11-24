@@ -16,3 +16,6 @@ mod mcp {
 }
 
 pub mod delegation;
+
+pub mod identity;
+pub mod model_capabilities;

@@ -202,21 +202,7 @@ pub fn normalize(text: &str) -> String {
 
 /// Stable deterministic IDs make replayed extraction jobs harmless. This is an
 /// identifier, never a password digest or other security primitive.
-pub fn stable_id(parts: &[&str]) -> String {
-    let mut first = 0xcbf29ce484222325u64;
-    let mut second = 0x84222325cbf29ce4u64;
-    for part in parts {
-        for byte in (part.len() as u64)
-            .to_le_bytes()
-            .into_iter()
-            .chain(part.bytes())
-        {
-            first = (first ^ u64::from(byte)).wrapping_mul(0x100000001b3);
-            second = (second ^ u64::from(byte)).wrapping_mul(0x100000001e7);
-        }
-    }
-    format!("{first:016x}{second:016x}")
-}
+pub use dominion_core::identity::stable_id;
 
 /// Stable content revision. Identity fields that do not change the remembered
 /// value (timestamps, counters) are excluded, so a re-save of identical content

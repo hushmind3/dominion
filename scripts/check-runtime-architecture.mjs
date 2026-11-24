@@ -72,7 +72,7 @@ if(!taskDag.includes('pub fn ready_or_block(')||
    !delegated.includes('crate::addons::team_dag::validate_edges(')||
    !readFileSync(path.join(root,'src/db.rs'),'utf8').includes('idx_team_parent_jobs'))
   throw Error('Lead/Worker DAG lost dependency scheduler or scoped graph index')
-const capabilityNegotiation=readFileSync(path.join(root,'src/addons/integrations/model_capabilities.rs'),'utf8')
+const capabilityNegotiation=readFileSync(path.join(root,'crates/dominion-core/src/model_capabilities.rs'),'utf8')
 const providerGateway=readFileSync(path.join(root,'src/addons/integrations/gateway.rs'),'utf8')
 const chatProvider=readFileSync(path.join(root,'src/engine/chat/provider.rs'),'utf8')
 if(!capabilityNegotiation.includes('pub fn negotiate_tool_mode(')||
@@ -439,3 +439,16 @@ if(!bootstrap.includes('extensions::channels::start_inbound(')||
    !apiRoutes.includes('/api/extensions/runtime')||
    !apiRoutes.includes('/api/sessions/:id/extensions'))
   throw Error('Messenger or extension policy is no longer owned by the backend extension host')
+
+const sdk=members.find(pkg=>pkg.name==='dominion-sdk')
+const extensions=members.find(pkg=>pkg.name==='dominion-extensions')
+if(!sdk||!extensions||!sdk.dependencies.some(dep=>dep.name===extensions.name)||!product.dependencies.some(dep=>dep.name===sdk.name))
+  throw Error('Missing independent SDK extension contract')
+for(const pkg of [core,algorithms,extensions]){
+  if(pkg.dependencies.some(dep=>dep.name===product.name||dep.name===sdk.name))
+    throw Error('Core/algorithm/extension contracts must not depend on product or SDK')
+}
+for(const name of ['decompose','plan_quality','planning','reasoning']){
+  const source=readFileSync(path.join(root,'crates/dominion-algorithms/src',name+'.rs'),'utf8')
+  if(/crate::(?:engine|state|addons)|AppState|rusqlite/.test(source))throw Error('Pure algorithm imports product host: '+name)
+}

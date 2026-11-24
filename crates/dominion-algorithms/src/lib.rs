@@ -1,3 +1,8 @@
 //! Agent loop algorithm; the product gateway composes it with dominion-core.
 pub mod engine;
 pub mod context;
+
+pub mod decompose;
+pub mod plan_quality;
+pub mod planning;
+pub mod reasoning;
