@@ -51,13 +51,16 @@ mod tests{
     fn stopped_adapter_never_admits_or_executes_a_step(){
         let mut drive=runtime::HarnessDrive::new(8).unwrap();
         let running=false;
-        fn unexpected_cancellation_check()->bool{panic!("stopped adapter must not check cancellation")}
+        let mut cancellation_checks=0;
+        let mut executed=0;
         crate::harness_steps!('steps:drive,running=running,
-            cancelled=unexpected_cancellation_check(),calls=0,limit=8,
+            cancelled={cancellation_checks+=1;false},calls=0,limit=8,
             on_cancel={break 'steps},
-            |_step|{panic!("stopped adapter must not execute a step");}
+            |_step|{executed+=1;}
         );
         assert_eq!(drive.completed_steps(),0);
+        assert_eq!(cancellation_checks,0);
+        assert_eq!(executed,0);
     }
 
 }

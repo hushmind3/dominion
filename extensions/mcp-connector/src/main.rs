@@ -34,7 +34,7 @@ fn redacted(config:&Value)->Value{
  let mut values=config["values"].clone();
  if let Some(servers)=values["servers"].as_array_mut(){for s in servers{
   if s["apiKey"].is_string(){s["apiKey"]=json!(MASK)}
-  if let Some(env)=s["env"].as_object_mut(){for(_,v)in env{*v=json!(MASK)}}
+  if let Some(env)=s.get_mut("env").and_then(Value::as_object_mut){for(_,v)in env{*v=json!(MASK)}}
  }}
  json!({"values":values,"schema":configuration_schema(),"description":"MCP servers: {\"servers\":[{\"id\":\"unique-id\",\"name\":\"Server\",\"transport\":\"http\",\"url\":\"https://example.com/mcp\",\"apiKey\":\"optional\",\"enabled\":true}]}. For stdio use command and args; programs run inside this isolated extension, not on your PC. Keep masked secrets unchanged to retain them. Save, then register extension tools in DOMINION."})
 }
@@ -53,7 +53,7 @@ fn configuration_schema()->Value{
  }}}}})
 }
 // A masked secret is a request to keep it for the existing destination,
- // not permission to transfer it to a different endpoint or executable.
+// not permission to transfer it to a different endpoint or executable.
 fn same_secret_destination(old:&Value,new:&Value)->bool{
  if old["transport"]!=new["transport"]{return false}
  match new["transport"].as_str(){
