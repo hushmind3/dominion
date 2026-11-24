@@ -60,12 +60,12 @@ function WorktreeReview({teamId,step,teamStatus,onChanged}:{teamId:string;step:S
  const [reviewed,setReviewed]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[applied,setApplied]=useState(false)
  const inFlight=useRef(false)
  const eligible=teamStatus==='completed'&&step.dependencySatisfied===true&&step.verified===true&&tree.status==='ready'&&tree.mergeStatus==='pending'&&!applied
- const endpoint='/api/task-teams/'+encodeURIComponent(teamId)+'/worktrees/'+encodeURIComponent(step.id)
+ const worktreeEndpoint='/api/task-teams/'+encodeURIComponent(teamId)+'/worktrees/'+encodeURIComponent(step.id)
  const read=async()=>{
   if(inFlight.current||!eligible)return
   inFlight.current=true;setBusy(true);setError('');setPreview(null);setReviewed(false)
   try{
-   const value=await get<WorktreePreview>(endpoint+'/preview')
+   const value=await get<WorktreePreview>(worktreeEndpoint+'/preview')
    if(value.teamId!==teamId||value.taskId!==step.id||value.worktreeId!==tree.id||value.baseCommit!==tree.baseCommit||!/^[a-f0-9]{64}$/i.test(value.diffSha256)||!Array.isArray(value.files))throw Error(en?'Worktree review identity mismatch':'작업 사본의 검토 정보가 일치하지 않습니다.')
    setPreview(value)
   }catch(e){setError((e as Error).message)}
@@ -75,7 +75,7 @@ function WorktreeReview({teamId,step,teamStatus,onChanged}:{teamId:string;step:S
   if(inFlight.current||!eligible||!preview||!reviewed||!window.confirm(en?'Apply the reviewed patch to the source index? This does not commit or push.':'검토한 패치를 원본 작업 폴더와 Git 스테이징 영역에 적용할까요? 커밋이나 푸시는 하지 않습니다.'))return
   inFlight.current=true;setBusy(true);setError('')
   try{
-   const result=await post<{status:string;diffSha256:string;requiresOwnerCommit:boolean}>(endpoint+'/promote',{confirm:true,expectedDiffSha256:preview.diffSha256})
+   const result=await post<{status:string;diffSha256:string;requiresOwnerCommit:boolean}>(worktreeEndpoint+'/promote',{confirm:true,expectedDiffSha256:preview.diffSha256})
    if(result.status!=='applied'||result.diffSha256!==preview.diffSha256)throw Error(en?'Check the source before retrying':'재시도하기 전에 원본 상태를 확인하세요.')
    setApplied(true);setPreview(null);onChanged()
   }catch(e){setError((e as Error).message);setPreview(null);setReviewed(false);onChanged()}
