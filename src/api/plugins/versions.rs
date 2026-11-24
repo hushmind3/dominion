@@ -1,6 +1,7 @@
 //! Stopped-container replacement with a durable rollback descriptor.
-//! Rollback restores the immutable executable image, not mutable /data.
-use super::{call,create_managed,inspect,owner,ensure_volume,container_id,valid_image,valid_id,Install};
+//! Each new version receives a separate copy of stopped plugin data.
+//! Rollback restores the exact previous image and its preserved volume.
+use super::{call,create_managed_in,inspect,owner,ensure_volume,container_id,valid_image,valid_id,Install,data};
 use crate::state::AppState;
 use crate::api::response::error;
 use axum::{extract::{Path,State},http::StatusCode,response::{IntoResponse,Response},Json};
@@ -35,7 +36,7 @@ pub(crate) fn attach(state:&AppState,row:&mut Value){
     let Some(r)=state.store.get(KIND,id)else{return};
     if matches!(r["phase"].as_str(),Some("prepared"|"ready")){
         row["versionChange"]=json!({"phase":r["phase"],"previousImage":r["old"]["image"],
-            "previousImageId":r["old"]["imageId"],"targetImage":r["targetImage"]});
+            "previousImageId":r["old"]["imageId"],"targetImage":r["targetImage"],"dataRollback":r["oldDataVolume"].is_string()&&r["targetDataVolume"].is_string()});
     }
 }
 async fn pull(image:&str)->Result<String,String>{
@@ -45,14 +46,14 @@ async fn pull(image:&str)->Result<String,String>{
     if !immutable(id){return Err("Invalid immutable image identity".into())}
     Ok(id.into())
 }
-async fn create(state:&AppState,scope:&str,input:&Install,exact:&str)->Result<Value,String>{
+async fn create(state:&AppState,scope:&str,input:&Install,exact:&str,volume:&str)->Result<Value,String>{
     // Do not fall back to mutable tags or fetch a different image on rollback.
     let output=call(&["image","inspect","--format","{{.Id}}",exact],15).await?;
     if output.trim()!=exact{return Err("Original image is not available locally".into())}
     ensure_volume(scope,input).await?;
-    create_managed(state,scope,input,exact).await?;
+    create_managed_in(state,scope,input,exact,volume).await?;
     let row=inspect(&input.id,scope).await?.ok_or("Replacement container not found")?;
-    if image_id(&row)!=Some(exact)||row["running"]!=false{return Err("Replacement image/status verification failed".into())}
+    if image_id(&row)!=Some(exact)||row["running"]!=false||row["dataVolume"]!=volume{return Err("Replacement image/status/data verification failed".into())}
     Ok(row)
 }
 fn save(state:&AppState,r:&Value)->Result<(),String>{
@@ -62,11 +63,19 @@ pub(super) async fn replace_stopped(state:&AppState,scope:&str,old:Value,next:&I
     let cid=removal_id(&old)?.to_owned();
     if !immutable(target)||image_id(&old).is_none()||old["id"]!=next.id{return Err("Invalid replacement identity".into())}
     ensure_volume(scope,next).await?;
+    let source=old["dataVolume"].as_str().ok_or("Missing stopped data volume")?.to_owned();
+    let copy=data::clone_for_update(state,scope,&next.id,&source).await?;
+    // Recheck after a potentially long copy before touching the original.
+    let current=inspect(&next.id,scope).await?.ok_or("Original plugin disappeared")?;
+    if removal_id(&current)?!=cid||current["imageId"]!=old["imageId"]||current["dataVolume"]!=source{
+        return Err("복사 중 기존 프로그램이 변경되었습니다.".into())
+    }
     let mut record=json!({"id":next.id,"phase":"prepared","old":old,
-        "targetImage":next.image,"targetImageId":target});
+        "oldDataVolume":source,"targetDataVolume":copy,"targetImage":next.image,"targetImageId":target});
     save(state,&record)?;
     call(&["container","rm",&cid],30).await?;
-    let mut installed=create(state,scope,next,target).await?;
+    let mut installed=create(state,scope,next,target,&copy).await?;
+    data::bind(state,scope,next,&copy)?;
     record["phase"]=json!("ready");save(state,&record)?;
     attach(state,&mut installed);
     Ok(installed)
@@ -112,18 +121,22 @@ pub async fn rollback(State(state):State<AppState>,Path(id):Path<String>,Json(in
         // replacement. Docker image prune may make rollback unavailable.
         let available=call(&["image","inspect","--format","{{.Id}}",&exact],15).await?;
         if available.trim()!=exact{return Err("이전 실행 이미지가 로컬에 없습니다.".into())}
+        let old_volume=match record["oldDataVolume"].as_str(){Some(v)=>v.to_owned(),None=>data::active(&state,&scope,&id)?};
+        data::verify(&scope,&id,&old_volume).await?;
         let current=inspect(&id,&scope).await?;
         if let Some(row)=&current{
-            if image_id(row)==Some(exact.as_str()) {
+            if image_id(row)==Some(exact.as_str())&&row["dataVolume"]==old_volume {
+                data::bind(&state,&scope,&previous,&old_volume)?;
                 record["phase"]=json!("rolled_back");save(&state,&record)?;
                 return Ok(row.clone())
             }
-            if image_id(row)!=Some(target.as_str()){return Err("등록된 버전과 현재 이미지가 일치하지 않습니다.".into())}
+            if image_id(row)!=Some(target.as_str())||record["targetDataVolume"].as_str().is_some_and(|v|row["dataVolume"]!=v){return Err("등록된 버전과 현재 이미지·데이터가 일치하지 않습니다.".into())}
             let cid=removal_id(row)?.to_owned();
             record["phase"]=json!("prepared");save(&state,&record)?;
             call(&["container","rm",&cid],30).await?;
         }
-        let installed=create(&state,&scope,&previous,&exact).await?;
+        let installed=create(&state,&scope,&previous,&exact,&old_volume).await?;
+        data::bind(&state,&scope,&previous,&old_volume)?;
         record["phase"]=json!("rolled_back");save(&state,&record)?;
         Ok(installed)
     }.await;

@@ -13,6 +13,7 @@ pub mod versions;
 pub mod recipe;
 pub mod package;
 pub mod agent;
+mod data;
 
 const LIMIT:usize=1024*1024;
 const OWNER:&str="io.dominion.plugin.owner";
@@ -131,7 +132,8 @@ fn project(raw:&Value,scope:&str)->Option<Value>{
             let p=v["HostPort"].as_str()?.parse::<u16>().ok()?;
             if p==0{return None}Some(p)
         }).collect::<Vec<_>>();
-    Some(json!({"id":id,"name":labels[TITLE],"image":labels[SOURCE],"imageId":raw["Image"],
+    let volume=raw["Mounts"].as_array().and_then(|m|m.iter().find(|m|m["Type"]=="volume"&&m["Destination"]=="/data")).and_then(|m|m["Name"].as_str());
+    Some(json!({"id":id,"name":labels[TITLE],"image":labels[SOURCE],"imageId":raw["Image"],"dataVolume":volume,
         "state":raw["State"]["Status"],"exitCode":raw["State"]["ExitCode"],"running":raw["State"]["Running"],
         "network":labels[NET]=="true","requestedPort":labels[PORT].as_str().and_then(|p|p.parse::<u16>().ok()),"ports":ports,"containerId":docker_id}))
 }
@@ -204,7 +206,8 @@ async fn inventory(scope:&str)->Result<Vec<Value>,String>{
     }
     Ok(installed)
 }
-fn creation_args(scope:&str,input:&Install,image_id:&str)->Vec<String>{
+fn creation_args(scope:&str,input:&Install,image_id:&str)->Vec<String>{creation_args_for_volume(scope,input,image_id,&volume_name(scope,&input.id))}
+fn creation_args_for_volume(scope:&str,input:&Install,image_id:&str,volume:&str)->Vec<String>{
     let name=container_name(scope,&input.id);
     let mut args=vec!["container".into(),"create".into(),"--name".into(),name.clone(),
         "--label".into(),format!("{OWNER}={scope}"),"--label".into(),format!("{IDENT}={}",input.id),
@@ -215,12 +218,17 @@ fn creation_args(scope:&str,input:&Install,image_id:&str)->Vec<String>{
         "--memory=2g".into(),"--cpus=2".into(),"--read-only".into(),"--tmpfs".into(),"/tmp:rw,nosuid,nodev,size=128m".into(),
         "--log-driver=local".into(),"--log-opt=max-size=10m".into(),"--log-opt=max-file=3".into(),
         "--network".into(),if input.network{"bridge".into()}else{"none".into()},
-        "--mount".into(),format!("type=volume,source={name}-data,target=/data,volume-nocopy")];
+        "--mount".into(),format!("type=volume,source={volume},target=/data{}",if package::local_tag(&input.image)||recipe::voice_tag(&input.image){""}else{",volume-nocopy"})];
     if let Some(port)=input.port{args.extend(["--publish".into(),format!("127.0.0.1::{port}/tcp")]);}
     args.push(image_id.into());args
 }
 async fn create_managed(state:&AppState,scope:&str,input:&Install,image_id:&str)->Result<(),String>{
-    let mut args=creation_args(scope,input,image_id);
+    let volume=data::active(state,scope,&input.id)?;
+    create_managed_in(state,scope,input,image_id,&volume).await
+}
+async fn create_managed_in(state:&AppState,scope:&str,input:&Install,image_id:&str,volume:&str)->Result<(),String>{
+    data::verify(scope,&input.id,volume).await?;
+    let mut args=creation_args_for_volume(scope,input,image_id,volume);
     if recipe::voice_tag(&input.image){
         let token=recipe::bridge_token(state,&input.id).ok_or("Voice bridge credential missing")?;
         let pos=args.len()-1;args.splice(pos..pos,["--env".into(),"DOMINION_BRIDGE_TOKEN".into()]);
@@ -234,7 +242,7 @@ pub async fn list(State(state):State<AppState>)->Response{
     let scope=match owner(&state){Ok(s)=>s,Err(e)=>return failed(&e)};
     match inventory(&scope).await{
         Ok(mut items)=>{
-            for row in &mut items { versions::attach(&state,row); package::attach(&state,row); }
+            for row in &mut items { data::attach(&state,row); versions::attach(&state,row); package::attach(&state,row); }
             Json(json!({"available":true,"items":items})).into_response()
         },
         Err(e)=>Json(json!({"available":false,"items":null,"error":e})).into_response()
@@ -279,6 +287,10 @@ async fn mutate_checked(state:AppState,id:String,action:&str,expected:Option<&st
     if !container_id(cid){return failed("Invalid container identity")}
     if expected.is_some_and(|e|e!=cid){return error(StatusCode::CONFLICT,"승인 대상 컨테이너가 변경되었습니다.")}
     if matches!(action,"start"|"remove")&&versions::pending(&state,&id){return error(StatusCode::CONFLICT,"진행 중인 버전 변경을 먼저 복구하세요.")}
+    if action=="start"{
+        let active=match data::active(&state,&scope,&id){Ok(v)=>v,Err(e)=>return failed(&e)};
+        if row["dataVolume"]!=active{return error(StatusCode::CONFLICT,"실행 데이터와 저장된 데이터 연결이 다릅니다. 복구가 필요합니다.")}
+    }
     if action=="remove"&&row["running"]==true{return error(StatusCode::CONFLICT,"실행 중인 플러그인은 먼저 중지하세요.")}
     let args=match action{
         "start"=>vec!["container","start",cid],
@@ -288,7 +300,7 @@ async fn mutate_checked(state:AppState,id:String,action:&str,expected:Option<&st
     };
     if let Err(e)=call(&args,30).await{return failed(&e)}
     match inspect(&id,&scope).await{
-        Ok(None) if action=="remove"=>Json(json!({"removed":true,"dataRetained":true,"volume":format!("{}-data",container_name(&scope,&id))})).into_response(),
+        Ok(None) if action=="remove"=>Json(json!({"removed":true,"dataRetained":true,"volume":row["dataVolume"]})).into_response(),
         Ok(Some(r)) if action!="remove"=>Json(r).into_response(),
         Ok(_)=>failed("변경 결과가 예상과 다릅니다. 새로고침하세요."),
         Err(e)=>failed(&e)

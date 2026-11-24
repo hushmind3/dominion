@@ -19,6 +19,7 @@ pub struct Spec{
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 pub struct Request{
     id:String,name:String,spec:Spec,network:bool,port:Option<u16>,confirmed:bool,
+    #[serde(default)] expected_image_id:Option<String>,
 }
 fn atom(value:&str,max:usize)->bool{
     !value.is_empty()&&value.len()<=max&&value.as_bytes()[0].is_ascii_alphanumeric()
@@ -49,7 +50,7 @@ impl Spec{
             &&self.args.len()<=32&&self.args.iter().all(|a|a.len()<=1000&&!a.chars().any(char::is_control))
     }
     fn image(&self)->String{
-        let hash=Sha256::digest(serde_json::to_vec(self).unwrap_or_default());
+        let hash=Sha256::digest([b"recipe-v2:".as_slice(),serde_json::to_vec(self).unwrap_or_default().as_slice()].concat());
         format!("dominion-package:{}",format!("{hash:x}"))
     }
     fn dockerfile(&self)->Result<String,String>{
@@ -78,16 +79,19 @@ impl Spec{
         }
         out.push_str("RUN ");out.push_str(&serde_json::to_string(&["test","-x",binary.as_str()]).map_err(|e|e.to_string())?);out.push('\n');
         let mut args=vec![binary];args.extend(self.args.clone());
-        out.push_str("USER 10001:10001\nCMD ");out.push_str(&serde_json::to_string(&args).map_err(|e|e.to_string())?);out.push('\n');
+        out.push_str("RUN [\"chown\",\"10001:10001\",\"/data\"]\nUSER 10001:10001\nCMD ");out.push_str(&serde_json::to_string(&args).map_err(|e|e.to_string())?);out.push('\n');
         Ok(out)
     }
 }
 pub(crate) fn local_tag(image:&str)->bool{image.starts_with("dominion-package:")}
+fn record_key(id:&str,image:&str)->String{format!("{id}:{image}")}
+fn saved_spec(state:&AppState,id:&str,image:&str)->Option<Value>{
+    state.store.get(KIND,&record_key(id,image)).or_else(||state.store.get(KIND,id)).filter(|r|r["image"]==image).map(|r|r["spec"].clone())
+}
 pub(crate) fn attach(state:&AppState,row:&mut Value){
     let Some(id)=row["id"].as_str()else{return};
-    if let Some(record)=state.store.get(KIND,id).filter(|r|r["image"]==row["image"]){
-        row["packageSpec"]=record["spec"].clone();
-    }
+    let Some(image)=row["image"].as_str()else{return};
+    if let Some(spec)=saved_spec(state,id,image){row["packageSpec"]=spec;}
 }
 struct Context(PathBuf);
 impl Drop for Context{fn drop(&mut self){let _=std::fs::remove_dir_all(&self.0);}}
@@ -110,14 +114,24 @@ pub async fn install(State(state):State<AppState>,Json(request):Json<Request>)->
         if versions::pending(&state,&request.id){return Err("이전 버전 변경을 먼저 복구하세요.".into())}
         let image=request.spec.image();
         let spec=json!(request.spec);
-        let record=json!({"id":request.id,"image":image,"spec":spec});
-        if let Some(mut row)=inspect(&request.id,&scope).await?{
+        let record=json!({"id":record_key(&request.id,&image),"image":image,"spec":spec});
+        let old=inspect(&request.id,&scope).await?;
+        if let Some(mut row)=old.clone(){
             if row["image"]==image&&row["name"]==request.name&&row["network"]==request.network
                 &&row["requestedPort"]==json!(request.port){
                 attach(&state,&mut row);return Ok(row)
             }
-            return Err("같은 설치 ID에 다른 프로그램이 있습니다.".into())
-        }
+            let old_image=row["image"].as_str().ok_or("Invalid previous package image")?;
+            let prior=saved_spec(&state,&request.id,old_image).ok_or("기존 패키지 설정을 찾지 못했습니다.")?;
+            if row["running"]!=false||request.expected_image_id.as_deref()!=row["imageId"].as_str()
+                ||row["name"]!=request.name||row["network"]!=request.network||row["requestedPort"]!=json!(request.port)
+                ||prior["runtime"]!=request.spec.runtime||prior["package"]!=request.spec.package{
+                return Err("중지된 동일 패키지의 현재 버전과 권한을 확인하세요.".into())
+            }
+            // Migrate the old per-plugin recipe before storing another version.
+            let prior_record=json!({"id":record_key(&request.id,old_image),"image":old_image,"spec":prior});
+            if state.store.put(KIND,&prior_record).is_none(){return Err("이전 패키지 설정을 보존하지 못했습니다.".into())}
+        }else if request.expected_image_id.is_some(){return Err("변경할 패키지가 없습니다.".into())}
         let rows=inventory(&scope).await?;
         if rows.len()>=MAX_PLUGINS&&!rows.iter().any(|r|r["id"]==request.id){return Err("플러그인 등록 한도에 도달했습니다.".into())}
         let context=context(&state,&request.spec.dockerfile()?)?;
@@ -130,8 +144,14 @@ pub async fn install(State(state):State<AppState>,Json(request):Json<Request>)->
         let input=Install{id:request.id.clone(),name:request.name,image,network:request.network,port:request.port,confirmed:true};
         // Save the exact package recipe before creating the container.
         if state.store.put(KIND,&record).is_none(){return Err("패키지 설치 설정을 저장하지 못했습니다.".into())}
+        if let Some(row)=old{
+            let mut updated=versions::replace_stopped(&state,&scope,row,&input,exact).await?;
+            attach(&state,&mut updated);return Ok(updated)
+        }
         ensure_volume(&scope,&input).await?;
         create_managed(&state,&scope,&input,exact).await?;
+        let volume=super::data::active(&state,&scope,&input.id)?;
+        super::data::bind(&state,&scope,&input,&volume)?;
         let mut row=inspect(&request.id,&scope).await?.ok_or("패키지 설치 결과를 확인하지 못했습니다.")?;
         attach(&state,&mut row);
         Ok(row)
