@@ -114,3 +114,9 @@ test('registered plugin filters cannot be spoofed by caller-supplied source labe
  assert.notEqual(sdkSourceKey({id:'1',status:'running',source:{kind:'sdk_plugin',id:'p'}}),
   sdkSourceKey({id:'2',status:'running',sdkPluginId:'p',source:{kind:'sdk_plugin',id:'p'}}))
 })
+
+
+test('registered namespace cannot collide with arbitrary source kind',async()=>{
+ const {sdkSourceKey}=await import('../src/utils/sdkIntegration.ts')
+ assert.notEqual(sdkSourceKey({id:'a',status:'running',source:{kind:'registered',id:'p'}}),sdkSourceKey({id:'b',status:'running',sdkPluginId:'p'}))
+})

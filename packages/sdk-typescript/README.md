@@ -132,3 +132,8 @@ The server enforces one active task, 20 submissions per rolling 24 hours,
 Disabling or rotating a key blocks new requests; already admitted tasks
 can be cancelled by the owner in the SDK run panel. Local loopback use is
 supported; the separate remote worker interface is for remote machines.
+
+For isolation from local owner APIs, configure `DOMINION_ADMIN_TOKEN` on the
+server. The registered plugin client needs only its own key for its scoped
+endpoints; the server's pre-existing unauthenticated local-owner mode is not
+an operating-system sandbox.

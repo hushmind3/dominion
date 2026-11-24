@@ -20,7 +20,7 @@ export function sdkControls(run:SdkRun){
   reconcile:writable&&run.status==='in_doubt',
  }
 }
-export const sdkSourceKey=(run:SdkRun)=>run.sdkPluginId?JSON.stringify(['registered',run.sdkPluginId]):JSON.stringify([run.source?.kind||'',run.source?.id||''])
+export const sdkSourceKey=(run:SdkRun)=>run.sdkPluginId?JSON.stringify(['registered',run.sdkPluginId]):JSON.stringify(['source',run.source?.kind||'',run.source?.id||''])
 export function sdkSources(runs:SdkRun[]){
  const groups=new Map<string,{key:string;kind:string;id:string;runs:SdkRun[];active:number;lastSeen:string}>()
  for(const run of runs){
