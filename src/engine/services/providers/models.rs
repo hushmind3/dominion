@@ -2558,15 +2558,28 @@ fn promote_download_file(partial: &Path, target: &Path) -> Result<(), String> {
     }
 }
 
-fn content_range_starts_at(header: Option<&str>, requested: u64) -> bool {
-    let Some((range, total)) = header.and_then(|value| value.strip_prefix("bytes "))
-        .and_then(|value| value.split_once('/')) else { return false };
-    let Some((start, end)) = range.split_once('-') else { return false };
-    let (Ok(start), Ok(end)) = (start.parse::<u64>(), end.parse::<u64>()) else {
-        return false;
-    };
-    start == requested && end >= start
-        && (total == "*" || total.parse::<u64>().is_ok_and(|n| n > end))
+/// An open-ended range request must return the entire remaining file, not
+/// just a correctly aligned prefix. Never infer the full length from a
+/// partial response's Content-Length.
+fn complete_content_range(
+    header: Option<&str>,
+    requested: u64,
+    expected: u64,
+    content_length: Option<u64>,
+) -> Option<u64> {
+    let (range, total) = header?.strip_prefix("bytes ")?.split_once('/')?;
+    let (start, end) = range.split_once('-')?;
+    let start = start.parse::<u64>().ok()?;
+    let end = end.parse::<u64>().ok()?;
+    let total = total.parse::<u64>().ok()?;
+    if requested == 0 || start != requested || end < start
+        || end.checked_add(1) != Some(total)
+        || (expected != 0 && expected != total)
+        || content_length.is_some_and(|length| length != total - start)
+    {
+        return None;
+    }
+    Some(total)
 }
 
 async fn download_worker(state: AppState, job_id: String) {
@@ -2692,25 +2705,30 @@ async fn download_worker(state: AppState, job_id: String) {
             );
             return;
         }
-        let append = existing > 0 && response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
-        if append && !content_range_starts_at(
-            response.headers().get(reqwest::header::CONTENT_RANGE)
-                .and_then(|value| value.to_str().ok()),
-            existing,
-        ) {
-            // Never append unknown bytes onto a valid partial download.
-            // Discard it so the next resume starts from byte zero.
-            let _ = tokio::fs::remove_file(&partial).await;
-            patch_download(&state, &job_id, json!({
-                "status": "failed",
-                "error": "서버의 이어받기 바이트 구간이 일치하지 않습니다. 다시 재개하면 처음부터 다운로드합니다."
-            }));
-            return;
-        }
+        let append = response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
         let remote_size = blobs.get(&path).map(|(size, _)| *size).unwrap_or(0);
-        let response_size = response.content_length()
-            .unwrap_or(0).saturating_add(if append { existing } else { 0 });
-        let declared = if remote_size > 0 { remote_size } else { response_size };
+        let declared = if append {
+            let Some(total) = complete_content_range(
+                response.headers().get(reqwest::header::CONTENT_RANGE)
+                    .and_then(|value| value.to_str().ok()),
+                existing,
+                remote_size,
+                response.content_length(),
+            ) else {
+                // No bytes have been appended. Keep the existing partial;
+                // an invalid response cannot invalidate bytes already saved.
+                patch_download(&state, &job_id, json!({
+                    "status": "failed",
+                    "error": "서버가 전체 남은 파일 범위를 반환하지 않았습니다. 기존 부분 파일은 유지됩니다."
+                }));
+                return;
+            };
+            total
+        } else if remote_size > 0 {
+            remote_size
+        } else {
+            response.content_length().unwrap_or(0)
+        };
         let mut output = match tokio::fs::OpenOptions::new()
             .create(true)
             .write(true)
@@ -2838,6 +2856,7 @@ async fn download_worker(state: AppState, job_id: String) {
         json!({
             "status": "completed",
             "installedId": installed_id,
+            "files": files,
             "downloaded": done,
             "total": declared_total,
             "finishedAt": chrono::Utc::now().to_rfc3339(),
@@ -3371,13 +3390,19 @@ mod tests {
     }
 
     #[test]
-    fn resumable_download_rejects_misaligned_content_range() {
-        assert!(content_range_starts_at(Some("bytes 1024-2047/4096"), 1024));
-        assert!(content_range_starts_at(Some("bytes 1024-2047/*"), 1024));
-        assert!(!content_range_starts_at(Some("bytes 0-1023/4096"), 1024));
-        assert!(!content_range_starts_at(Some("bytes 1024-2047/2047"), 1024));
-        assert!(!content_range_starts_at(Some("bytes 1024-1023/4096"), 1024));
-        assert!(!content_range_starts_at(None, 1024));
+    fn resumable_download_requires_complete_remaining_content_range() {
+        assert_eq!(complete_content_range(Some("bytes 1024-4095/4096"), 1024, 4096, Some(3072)), Some(4096));
+        assert_eq!(complete_content_range(Some("bytes 1024-4095/4096"), 1024, 0, None), Some(4096));
+        // A valid starting offset alone does not prove a complete response.
+        assert_eq!(complete_content_range(Some("bytes 1024-2047/4096"), 1024, 0, Some(1024)), None);
+        assert_eq!(complete_content_range(Some("bytes 1024-2047/*"), 1024, 0, None), None);
+        assert_eq!(complete_content_range(Some("bytes 0-4095/4096"), 0, 0, Some(4096)), None);
+        assert_eq!(complete_content_range(Some("bytes 0-4095/4096"), 1024, 0, None), None);
+        assert_eq!(complete_content_range(Some("bytes 1024-4095/4096"), 1024, 8192, None), None);
+        assert_eq!(complete_content_range(Some("bytes 1024-4095/4096"), 1024, 4096, Some(1024)), None);
+        assert_eq!(complete_content_range(Some("bytes 1024-1023/1024"), 1024, 0, None), None);
+        assert_eq!(complete_content_range(Some("bytes 1024-18446744073709551615/18446744073709551615"), 1024, 0, None), None);
+        assert_eq!(complete_content_range(None, 1024, 0, None), None);
     }
 
     #[test]
