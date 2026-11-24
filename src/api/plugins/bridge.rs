@@ -8,6 +8,7 @@ use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
 use std::time::Duration;
 
+pub mod auto_chat;
 const KIND:&str="plugin_request";
 const MAX_INSTRUCTION:usize=16000;
 const MAX_ANSWER:usize=64000;
@@ -87,28 +88,31 @@ fn view(state:&AppState,record:&Value)->Value{
         "answerDigest":answer.as_ref().map(|s|digest(s)),"answer":answer,
         "delivery":record["delivery"].as_str().unwrap_or("not_sent")})
 }
-pub async fn pull(State(state):State<AppState>,Path(id):Path<String>)->Response{
-    let _guard=match state.integrations.plugin_mutations.try_lock(){Ok(g)=>g,Err(_)=>return conflict("다른 플러그인 변경이 진행 중입니다.")};
-    let (row,port)=match target(&state,&id).await{Ok(v)=>v,Err(e)=>return upstream(&e)};
-    let client=match client(){Ok(c)=>c,Err(e)=>return upstream(&e)};
-    let response=match client.get(format!("http://127.0.0.1:{port}/dominion/v1/request")).send().await{
-        Ok(r)=>r,Err(e)=>return upstream(&e.to_string())
-    };
-    if response.status()==StatusCode::NO_CONTENT{return Json(json!({"request":null})).into_response()}
-    if !response.status().is_success(){return upstream("플러그인이 DOMINION 요청 규격에 응답하지 않았습니다.")}
-    let value=match crate::integrations::network::read_bounded_json(response,64*1024,"plugin request").await{Ok(v)=>v,Err(e)=>return upstream(&e)};
-    let request=match parse(value){Ok(r)=>r,Err(e)=>return invalid(&e)};
-    let key=record_id(&id,&request.request_id);
+async fn fetch_record(state:&AppState,id:&str,row:&Value,port:u16)->Result<Option<Value>,String>{
+    let response=client()?.get(format!("http://127.0.0.1:{port}/dominion/v1/request")).send().await
+        .map_err(|e|e.to_string())?;
+    if response.status()==StatusCode::NO_CONTENT{return Ok(None)}
+    if !response.status().is_success(){return Err("플러그인이 DOMINION 요청 규격에 응답하지 않았습니다.".into())}
+    let value=crate::integrations::network::read_bounded_json(response,64*1024,"plugin request").await?;
+    let request=parse(value)?;
+    let key=record_id(id,&request.request_id);
     let fingerprint=digest(&request.instruction);
     let candidate=json!({"id":key,"pluginId":id,"requestId":request.request_id,
         "instruction":request.instruction,"requestDigest":fingerprint,"containerId":row["containerId"],
         "imageId":row["imageId"],"delivery":"not_sent"});
     let record=state.store.put_if_absent(KIND,&candidate).or_else(||state.store.get(KIND,&key));
     match record{
-        Some(r) if r["requestDigest"]==candidate["requestDigest"]&&binding_matches(&r,&row)=>
-            Json(json!({"request":view(&state,&r)})).into_response(),
-        Some(_)=>conflict("플러그인 요청 ID가 다른 내용 또는 이미지에 재사용되었습니다."),
-        None=>upstream("플러그인 요청을 저장하지 못했습니다.")
+        Some(r) if r["requestDigest"]==candidate["requestDigest"]&&binding_matches(&r,row)=>Ok(Some(r)),
+        Some(_)=>Err("플러그인 요청 ID가 다른 내용 또는 이미지에 재사용되었습니다.".into()),
+        None=>Err("플러그인 요청을 저장하지 못했습니다.".into())
+    }
+}
+pub async fn pull(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    let _guard=match state.integrations.plugin_mutations.try_lock(){Ok(g)=>g,Err(_)=>return conflict("다른 플러그인 변경이 진행 중입니다.")};
+    let (row,port)=match target(&state,&id).await{Ok(v)=>v,Err(e)=>return upstream(&e)};
+    match fetch_record(&state,&id,&row,port).await{
+        Ok(record)=>Json(json!({"request":record.as_ref().map(|r|view(&state,r))})).into_response(),
+        Err(e)=>upstream(&e)
     }
 }
 pub async fn status(State(state):State<AppState>,Path((id,request)):Path<(String,String)>)->Response{
@@ -135,33 +139,34 @@ pub async fn approve(State(state):State<AppState>,Path((id,request)):Path<(Strin
     state.store.audit("plugin.request.approved",json!({"pluginId":id,"requestId":request,"mode":input.mode}));
     Json(view(&state,&r)).into_response()
 }
+async fn send_answer(state:&AppState,mut r:Value,row:&Value,port:u16,expected_digest:&str)->Result<Value,String>{
+    let current=view(state,&r);
+    if current["status"]!="completed"||current["answerDigest"]!=expected_digest{
+        return Err("완료된 답변 원문을 다시 확인하세요.".into())
+    }
+    if r["delivery"]=="sent"{return Ok(current)}
+    if !binding_matches(&r,row){return Err("원래 요청한 컨테이너에만 답변을 전달할 수 있습니다.".into())}
+    let request=r["requestId"].as_str().ok_or("Invalid request ID")?.to_owned();
+    r["delivery"]=json!("delivery_unknown");
+    if state.store.put(KIND,&r).is_none(){return Err("전달 기록을 저장하지 못했습니다.".into())}
+    let response=client()?.post(format!("http://127.0.0.1:{port}/dominion/v1/result"))
+        .json(&json!({"requestId":request,"answer":current["answer"],"answerDigest":expected_digest}))
+        .send().await.map_err(|e|e.to_string())?;
+    if !response.status().is_success(){return Err("외부 프로그램이 답변을 받았는지 확인되지 않았습니다.".into())}
+    let ack=crate::integrations::network::read_bounded_json(response,8192,"plugin result acknowledgement").await?;
+    if ack["requestId"]!=request||ack["answerDigest"]!=expected_digest{return Err("답변 수신 확인이 일치하지 않습니다.".into())}
+    r["delivery"]=json!("sent");
+    if state.store.put(KIND,&r).is_none(){return Err("수신 확인을 저장하지 못했습니다.".into())}
+    Ok(view(state,&r))
+}
 pub async fn deliver(State(state):State<AppState>,Path((id,request)):Path<(String,String)>,Json(input):Json<Delivery>)->Response{
     if !input.confirmed{return invalid("외부 프로그램에 답변을 보내는 것을 확인하세요.")}
     let _guard=match state.integrations.plugin_mutations.try_lock(){Ok(g)=>g,Err(_)=>return conflict("다른 플러그인 변경이 진행 중입니다.")};
-    let Some(mut r)=lookup(&state,&id,&request)else{return missing()};
-    let current=view(&state,&r);
-    if current["status"]!="completed"||current["answerDigest"]!=input.answer_digest{
-        return conflict("완료된 답변 원문을 다시 확인하세요.")
-    }
-    if r["delivery"]=="sent"{return Json(current).into_response()}
+    let Some(r)=lookup(&state,&id,&request)else{return missing()};
     let (row,port)=match target(&state,&id).await{Ok(v)=>v,Err(e)=>return upstream(&e)};
-    if !binding_matches(&r,&row){return conflict("원래 요청한 컨테이너에만 답변을 전달할 수 있습니다.")}
-    // Record intent before a possibly ambiguous network effect. Only an
-    // explicitly repeated owner click can retry; receiver must dedup requestId.
-    r["delivery"]=json!("delivery_unknown");
-    if state.store.put(KIND,&r).is_none(){return upstream("전달 기록을 저장하지 못했습니다.")}
-    let client=match client(){Ok(c)=>c,Err(e)=>return upstream(&e)};
-    let response=match client.post(format!("http://127.0.0.1:{port}/dominion/v1/result"))
-        .json(&json!({"requestId":request,"answer":current["answer"],"answerDigest":input.answer_digest}))
-        .send().await{Ok(r)=>r,Err(e)=>return upstream(&e.to_string())};
-    if !response.status().is_success(){return upstream("외부 프로그램이 답변을 받았는지 확인되지 않았습니다.")}
-    let ack=match crate::integrations::network::read_bounded_json(response,8192,"plugin result acknowledgement").await{
-        Ok(v)=>v,Err(e)=>return upstream(&e)
-    };
-    if ack["requestId"]!=request||ack["answerDigest"]!=input.answer_digest{return upstream("답변 수신 확인이 일치하지 않습니다.")}
-    r["delivery"]=json!("sent");
-    if state.store.put(KIND,&r).is_none(){return upstream("수신 확인을 저장하지 못했습니다.")}
-    Json(view(&state,&r)).into_response()
+    match send_answer(&state,r,&row,port,&input.answer_digest).await{
+        Ok(v)=>Json(v).into_response(),Err(e)=>upstream(&e)
+    }
 }
 
 #[cfg(test)]

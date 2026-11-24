@@ -4,11 +4,12 @@ import {Button} from '../../components/Primitives'
 import {useLocale} from '../../i18n'
 import {Link2,RefreshCw} from 'lucide-react'
 
+type Grant={enabled:boolean;expiresAt?:number;remaining:number;lastError?:string;activeRequest?:string}
 type Request={requestId:string;instruction:string;requestDigest:string;runId?:string;status:string;answer?:string;answerDigest?:string;delivery:string}
 export function PluginBridgePanel({pluginId}:{pluginId:string}){
  const en=useLocale()==='en',tr=(ko:string,english:string)=>en?english:ko
  const [request,setRequest]=useState<Request|null>(null),[busy,setBusy]=useState(false),[notice,setNotice]=useState(''),[mode,setMode]=useState<'chat'|'workspace'>('chat')
- const [open,setOpen]=useState(false),[checked,setChecked]=useState(false)
+ const [open,setOpen]=useState(false),[checked,setChecked]=useState(false),[grant,setGrant]=useState<Grant|null>(null)
  const id=encodeURIComponent(pluginId),rid=request?encodeURIComponent(request.requestId):''
  useEffect(()=>{
   if(!rid||!request||!['queued','running','awaiting_approval'].includes(request.status))return
@@ -16,7 +17,18 @@ export function PluginBridgePanel({pluginId}:{pluginId:string}){
   const interval=setInterval(()=>{void get<Request>('/api/plugins/managed/'+id+'/bridge/'+rid).then(r=>{if(active)setRequest(r)}).catch(e=>{if(active)setNotice((e as Error).message)})},2500)
   return()=>{active=false;clearInterval(interval)}
  },[id,rid,request?.status])
+ useEffect(()=>{
+  if(!open)return
+  let active=true
+  const load=()=>void get<Grant>('/api/plugins/managed/'+id+'/auto-chat').then(g=>{if(active)setGrant(g)}).catch(()=>{})
+  load();const timer=setInterval(load,4000);return()=>{active=false;clearInterval(timer)}
+ },[id,open])
  const action=async(fn:()=>Promise<void>)=>{if(busy)return;setBusy(true);setNotice('');try{await fn()}catch(e){setNotice((e as Error).message)}finally{setBusy(false)}}
+ const toggleAuto=()=>action(async()=>{
+  const enabled=!grant?.enabled
+  if(enabled&&!window.confirm(tr('30분 동안 최대 20번의 대화 요청을 자동 처리하고 답변을 이 프로그램으로 전달합니다. 도구·공유 기억·스킬은 사용하지 않습니다. 모델 요금이 발생할 수 있습니다.','For 30 minutes, automatically process up to 20 chat turns and share answers with this app. No tools, shared memory or skills. Model charges may apply.')))return
+  setGrant(await post<Grant>('/api/plugins/managed/'+id+'/auto-chat',{enabled,confirmed:true}))
+ })
  const pull=()=>action(async()=>{
   const r=await post<{request:Request|null}>('/api/plugins/managed/'+id+'/bridge/pull',{})
   setRequest(r.request);setChecked(false);setMode('chat')
@@ -36,6 +48,7 @@ export function PluginBridgePanel({pluginId}:{pluginId:string}){
   <Button size="sm" variant="ghost" onClick={()=>setOpen(!open)}><Link2 size={15}/>{tr('도미니온 작업 연결','DOMINION task connection')}</Button>
   {open&&<div className="mt-2 space-y-2 text-xs">
    <p className="text-muted">{tr('SDK 연결 규격을 지원하는 외부 프로그램에서 요청을 받아 도미니온이 처리합니다. 승인한 요청과 답변만 전달합니다.','Pull requests from compatible apps and send only owner-approved answers.')}</p>
+   <div className="rounded-lg bg-canvas p-2 space-y-2"><strong>{tr('음성·자동 대화 연결','Voice / automatic chat')}</strong><p className="text-muted">{grant?.enabled?tr('남은 대화: ','Turns remaining: ')+grant.remaining:tr('꺼짐 · 수동 승인만 사용','Off · manual review only')}</p>{grant?.lastError&&<p className="break-words text-warning">{grant.lastError}</p>}<Button size="sm" disabled={busy||grant===null} onClick={()=>void toggleAuto()}>{grant?.enabled?tr('자동 대화 중지','Stop automatic chat'):tr('30분 자동 대화 허용','Allow automatic chat for 30 minutes')}</Button></div>
    <Button size="sm" disabled={busy} onClick={()=>void pull()}><RefreshCw size={14}/>{tr('요청 가져오기','Fetch request')}</Button>
    {notice&&<p role="status" className="break-words text-warning">{notice}</p>}
    {request&&<div className="space-y-2 rounded-lg bg-canvas p-3">

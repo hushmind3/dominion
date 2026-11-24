@@ -24,6 +24,7 @@ pub(super) fn router() -> Router<AppState> {
         .route("/api/plugins/managed/:id/update", post(plugins::versions::update))
         .route("/api/plugins/managed/:id/rollback", post(plugins::versions::rollback))
         .route("/api/plugins/managed/:id/bridge/pull", post(plugins::bridge::pull))
+        .route("/api/plugins/managed/:id/auto-chat", get(plugins::bridge::auto_chat::status).post(plugins::bridge::auto_chat::change))
         .route("/api/plugins/managed/:id/bridge/:request", get(plugins::bridge::status))
         .route("/api/plugins/managed/:id/bridge/:request/approve", post(plugins::bridge::approve))
         .route("/api/plugins/managed/:id/bridge/:request/deliver", post(plugins::bridge::deliver))

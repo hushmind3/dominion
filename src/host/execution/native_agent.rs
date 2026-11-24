@@ -489,9 +489,10 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     );
     // Use the existing privacy-scoped retriever, not a global summary or an
     // extra paid model call. Source material has lower authority than the owner.
-    let memory=crate::engine::memory::context_block(
-        &context.state.store,&scope,task
-    ).unwrap_or_default();
+    let private_plugin_chat=input["pluginPrivateConversation"]==true;
+    let memory=if private_plugin_chat{String::new()}else{
+        crate::engine::memory::context_block(&context.state.store,&scope,task).unwrap_or_default()
+    };
     let persona=agent.as_ref().and_then(|a|a["systemPrompt"].as_str())
         .unwrap_or("");
     let mut context_instructions=String::new();
@@ -506,10 +507,12 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
     // Context is selected by task relevance, not DB insertion order.
     // Remaining owner-enabled Skills are discoverable later through the
     // existing Rust host tool registry without another planning/runtime loop.
-    context_instructions.push_str(&crate::integrations::skills::discovery::initial_context(
-        &context.state.store,&scope,task,
-        available.iter().any(|spec|spec.name=="skill_search"),
-    ));
+    if !private_plugin_chat{
+        context_instructions.push_str(&crate::integrations::skills::discovery::initial_context(
+            &context.state.store,&scope,task,
+            available.iter().any(|spec|spec.name=="skill_search"),
+        ));
+    }
     context_instructions.push_str("\nCurrent owner's explicit instructions take precedence:\n");
     context_instructions.push_str(input["ownerInstructions"].as_str().unwrap_or(""));
     // Pure conversation need not pretend to have tool evidence. Coding,
