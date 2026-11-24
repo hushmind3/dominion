@@ -143,6 +143,7 @@ function fixture() {
   if(p==='/api/extensions/runtime')return ok(route,{enabled:{},configured:{}})
   if(p==='/api/policy')return ok(route,{id:'default',autoApprove:[],autoApproveAll:false,autoApproveMcp:false})
   if(p==='/api/jobs')return ok(route,db.jobs)
+  if(p==='/api/sdk/runs'||p==='/api/remote/workers'||p==='/api/remote/jobs')return ok(route,[])
   if(/^\/api\/(sessions|agents|rooms|mcp|skills|jobs|channels|approvals|memories|executions|activities)(\/|$)/.test(p))return ok(route,[])
   return ok(route,{})
  }

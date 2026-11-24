@@ -540,3 +540,19 @@ test('settings keeps ordinary preferences separate from maintenance and diagnost
  assert.match(ops,/toolQuery\.trim\(\)\.toLowerCase\(\)/)
  assert.doesNotMatch(ops,/tool\.approval\)\.slice\(0,24\)/)
 })
+
+
+test('workspace shell has a single mobile menu and direct task destinations',()=>{
+ const app=source('src/App.tsx')
+ const nav=source('src/components/WorkspaceNavigation.tsx')
+ const tasks=source('src/pages/Tasks.tsx')
+ assert.match(app,/conversation-topbar/)
+ assert.match(app,/#\/settings\?view=reply/)
+ assert.match(nav,/event\.key\.toLowerCase\(\)!=='k'/)
+ assert.match(nav,/sort\(newest\)/)
+ assert.match(nav,/privateChats\.slice\(0,chatLimit\)/)
+ assert.match(tasks,/workspaceView\(window\.location\.hash,'tasks'\)/)
+ assert.match(tasks,/priority\[stateOf\(a\)\]-priority\[stateOf\(b\)\]/)
+ assert.match(tasks,/<NativeAgentPanel providers=\{providers\.value\}\/>/)
+ assert.match(tasks,/<RemoteWorkPanel initialOpen\/>/)
+})
