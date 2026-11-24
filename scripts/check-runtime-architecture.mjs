@@ -330,6 +330,12 @@ if(!sdkApi.includes('state.store.sdk_evidence_rows()')||!store.includes('pub fn 
 // Old optimizer control loops must not creep back in behind the real journal.
 const selectedAlgorithms=readFileSync(path.join(root,'src/addons/strategies/algorithms.rs'),'utf8')
 const kernelSource=readFileSync(path.join(root,'crates/dominion-algorithms/src/kernels.rs'),'utf8')
+for(const [host,algorithm] of [['strategies/decompose','decompose'],['strategies/plan_quality','plan_quality'],['knowledge/reflect','reflection'],['strategies/turn_policy','planning'],['strategies/obligation_repair','obligation_repair']]){
+ const adapter=readFileSync(path.join(root,'src/addons/'+host+'.rs'),'utf8')
+ const implementation=readFileSync(path.join(root,'crates/dominion-algorithms/src/'+algorithm+'.rs'),'utf8')
+ if(!adapter.includes('dominion_algorithms::'+algorithm+'::')||/\bAppState\b|crate::db|crate::engine|std::fs/.test(implementation))
+   throw Error('Decision implementation crossed host boundary: '+algorithm)
+}
 for(const [module,call] of [['memory','memory::rank_authorized'],['experience','rank_authorized(query'],['principle','principle::compose'],['agent_growth','growth::update'],['learning','dominion_algorithms::learning']]){
  const source=readFileSync(path.join(root,'src/addons/knowledge/'+module+'.rs'),'utf8')
  const algorithm=readFileSync(path.join(root,'crates/dominion-algorithms/src/'+(module==='agent_growth'?'growth':module)+'.rs'),'utf8')

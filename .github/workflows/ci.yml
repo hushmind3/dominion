@@ -165,7 +165,7 @@ jobs:
       - name: Pareto repair selection and schema regression (dev profile)
         run: cargo test --locked --bin dominion-rust addons::adaptation_loop::selection_tests
       - name: Frozen acceptance obligation graph (dev profile)
-        run: cargo test --locked --bin dominion-rust addons::decompose::tests
+        run: cargo test --locked -p dominion-algorithms decompose::tests
       - name: Source-evidence memory reranking (dev profile)
         run: cargo test --locked --bin dominion-rust lineage_rerank_prefers_real_tool_receipts
       - name: Algorithm activation and retired-kernel regressions (dev profile)

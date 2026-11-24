@@ -22,32 +22,13 @@ impl<'a> ScopedAlgorithms<'a> {
     }
 }
 
-/// Legacy default planning heuristic, now owned by the replaceable
-/// strategy layer rather than the native execution/finalization code.
-pub fn needs_plan(input:&str,acceptance:&Option<(String,Value)>)->bool{
-    let text=input.trim();
-    if text.chars().count()>240 || text.contains('\n'){return true;}
-    if ["그리고","그 다음","다음으로","한 뒤","후에","then","after",";"]
-        .iter().any(|marker|text.contains(marker)){return true;}
-    match acceptance {
-        Some((_,checks))=>checks.as_array()
-            .map(|items|items.is_empty()).unwrap_or(true),
-        None=>true,
-    }
-}
+pub use dominion_algorithms::planning::needs_plan;
 
 impl TurnStrategyPort for ScopedAlgorithms<'_> {
     fn execution_limits(&self,default_rounds:usize,default_tools:usize)->TurnLimits{
         let chosen=runtime_hooks::choose_for_agent(
             self.state,"execution.budget",self.agent_id,Some(self.execution_id));
-        TurnLimits{
-            max_rounds:chosen.as_ref()
-                .and_then(|a|a["parameters"]["maxRounds"].as_u64())
-                .unwrap_or(default_rounds as u64).clamp(2,24) as usize,
-            max_tools:chosen.as_ref()
-                .and_then(|a|a["parameters"]["maxTools"].as_u64())
-                .unwrap_or(default_tools as u64).clamp(4,120) as usize,
-        }
+        dominion_algorithms::planning::execution_limits(chosen.as_ref(),default_rounds,default_tools)
     }
     fn discovery_overridden(&self,reason:&str) {
         runtime_hooks::mark_unrated(self.state,self.execution_id,"tool.discovery",reason);
