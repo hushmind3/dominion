@@ -51,3 +51,37 @@ pub async fn execute<A: AgentLoop, M: ModelPort, T: ToolPort>(
     run(algorithm, &mut driver, model, tools, history, visible,
         options.tools_enabled, options.has_plan).await
 }
+
+/// Optional request-time compaction for external hosts. Only the cloned
+/// provider view is reduced; the original history remains available for
+/// independent verification and persistence by the caller. This adapter
+/// invokes the same context policy and Harness as the product.
+struct CompactModel<'a,M> {
+    inner: &'a mut M,
+    tool_trace_bytes: usize,
+}
+impl<M: ModelPort> ModelPort for CompactModel<'_,M> {
+    async fn complete(&mut self, history: &[Value], visible: &[Value])
+        -> Result<ModelResponse,String> {
+        let wire = context::bounded_tool_trace(history,self.tool_trace_bytes);
+        self.inner.complete(&wire,visible).await
+    }
+    fn cancelled(&self)->bool { self.inner.cancelled() }
+}
+
+/// Execute with a bounded historical tool trace on every model request.
+/// The byte limit applies to completed tool frames, not the full context
+/// window or model tokens. Incomplete frames and ordinary dialogue are
+/// preserved. The host must persist and make original evidence retrievable.
+pub async fn execute_compacted<A: AgentLoop,M: ModelPort,T: ToolPort>(
+    algorithm: &mut A,
+    model: &mut M,
+    tools: &mut T,
+    history: &mut Vec<Value>,
+    catalog: &[Value],
+    options: RunOptions,
+    tool_trace_bytes: usize,
+) -> Result<PortRunResult,String> {
+    let mut adapter = CompactModel {inner:model,tool_trace_bytes};
+    execute(algorithm,&mut adapter,tools,history,catalog,options).await
+}

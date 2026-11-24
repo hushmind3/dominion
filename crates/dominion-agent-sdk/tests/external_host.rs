@@ -94,3 +94,31 @@ async fn uncertain_effect_is_preserved_without_replay() {
     let receipt: Value = serde_json::from_str(history[1]["content"].as_str().unwrap()).unwrap();
     assert_eq!(receipt["outcomeUnknown"], true);
 }
+
+#[tokio::test]
+async fn compacted_sdk_requests_do_not_mutate_original_tool_receipts() {
+    use dominion_agent_sdk::execute_compacted;
+    struct InspectModel { wire: Vec<Value> }
+    impl ModelPort for InspectModel {
+        async fn complete(&mut self, history:&[Value],_:&[Value])->Result<ModelResponse,String>{
+            self.wire=history.to_vec();
+            Ok(ModelResponse{content:"done".into(),calls:vec![]})
+        }
+    }
+    let long="LARGE_OLD_RECEIPT".repeat(4000);
+    let mut history=vec![
+        json!({"role":"user","content":"original goal"}),
+        json!({"role":"assistant","tool_calls":[{"id":"old","type":"function","function":{"name":"read","arguments":"{}"}}]}),
+        json!({"role":"tool","tool_call_id":"old","content":long}),
+        json!({"role":"user","content":"continue"}),
+    ];
+    let original=history.clone();
+    let mut provider=InspectModel{wire:vec![]};
+    let result=execute_compacted(&mut ExternalStrategy,&mut provider,&mut Host::default(),
+        &mut history,&catalog(),RunOptions::default(),2048).await.unwrap();
+    assert_eq!(result.response,"done");
+    assert_eq!(&history[..original.len()],original.as_slice());
+    assert!(provider.wire.iter().any(|row|row["_dominion_trace_compacted"]==true));
+    assert!(json!(provider.wire).to_string().len()<3000);
+    assert_eq!(provider.wire[0]["content"],"original goal");
+}

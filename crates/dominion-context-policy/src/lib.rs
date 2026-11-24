@@ -70,8 +70,9 @@ fn outcome_priority(row:&Value)->u8{
     }
     let outer=priority(row);
     let inner=match &row["content"]{
-        Value::String(text)=>serde_json::from_str::<Value>(text).ok()
-            .map(|parsed|priority(&parsed)).unwrap_or(0),
+        Value::String(text) if text.trim_start().starts_with('{')=>
+            serde_json::from_str::<Value>(text).ok()
+                .map(|parsed|priority(&parsed)).unwrap_or(0),
         Value::Object(_)=>priority(&row["content"]),
         _=>0,
     };
@@ -222,6 +223,8 @@ pub fn compact_historical(messages:&[Value],max_receipts:usize)->Vec<Value>{
     frames.sort_by_key(|&(start,priority)|std::cmp::Reverse((
         Some(start)==latest,priority,start
     )));
+    let omitted_unknown=frames.iter().skip(max_receipts).filter(|(_,priority)|*priority==2).count();
+    let omitted_failed=frames.iter().skip(max_receipts).filter(|(_,priority)|*priority==1).count();
     let kept=frames.into_iter().take(max_receipts)
         .map(|(start,_)|start).collect::<HashSet<_>>();
     let mut omitted=false;
@@ -237,8 +240,11 @@ pub fn compact_historical(messages:&[Value],max_receipts:usize)->Vec<Value>{
                 out.push(summary);
             } else if !omitted {
                 omitted=true;
+                let warning=if omitted_unknown>0 || omitted_failed>0 {
+                    format!(" 생략된 실행 묶음: 결과 불명 {omitted_unknown}개, 실패 {omitted_failed}개. 원본 실행 기록을 확인하기 전 불명확한 효과를 반복하지 마세요.")
+                }else{String::new()};
                 out.push(json!({"role":"assistant",
-                    "content":"[이전 도구 기록은 SQLite에 보존됨. 필요한 원문은 해당 파일 또는 출처를 다시 조회하세요.]" }));
+                    "content":format!("[이전 도구 기록은 원본에 보존됨. 필요한 원문은 해당 파일 또는 출처를 다시 조회하세요.{warning}]") }));
             }
             i=end;
             continue;
@@ -385,6 +391,14 @@ mod tests{
         assert_eq!(messages,original);
     }
     #[test]
+    fn omitted_uncertain_history_is_explicit_even_when_only_latest_receipt_fits(){
+        let mut messages=pair("unknown","workspace_write","{}",r#"{"effectUnknown":true}"#);
+        messages.extend(pair("latest","workspace_read","{}","ordinary"));
+        let wire=compact_historical(&messages,1);
+        assert!(wire.iter().any(|row|row["content"].as_str().is_some_and(|text|text.contains("결과 불명 1개"))));
+        assert!(json!(wire).to_string().contains("latest"));
+    }
+    #[test]
     fn bounded_trace_spends_remaining_budget_on_failure_before_success(){
         let mut messages=vec![json!({"role":"user","content":"Continue"})];
         messages.extend(pair("uncertain-write","workspace_write","{}",
@@ -397,7 +411,7 @@ mod tests{
         let text=json!(wire).to_string();
         assert!(text.contains("uncertain-write"),"{text}");
         assert!(text.contains("latest"));
-        assert!(!text.contains("read-7"));
+        assert!(!text.contains("read-0"),"older ordinary output should yield to critical evidence");
         assert!(text.contains("outcome_unknown"));
     }
     #[test]

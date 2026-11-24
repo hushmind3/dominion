@@ -32,6 +32,8 @@ overridden by the strategy. The application uses the same exported
 - `decisions`: independent verification, failure, budget and decision policy.
 - `context`: provider-independent bounded historical context processing.
 
+For long executions, opt into `execute_compacted` with a byte budget for completed tool frames. The same product context policy keeps the latest observation and prioritizes failed or uncertain effects in the remaining budget. Full original receipts remain in caller-owned history; this is not a hard model-token cap or an evidence store.
+
 The SDK does not grant filesystem, network or shell authority. Concrete
 adapters must enforce owner consent, sandboxing, budgets and durable effect
 reconciliation; the portable runner only enforces its model/dispatch gates.
