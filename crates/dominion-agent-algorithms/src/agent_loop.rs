@@ -2,11 +2,11 @@
 //! The core runtime supplies trusted ports, admission, scheduling, and receipts.
 use crate::{AgentAlgorithm,StandardAlgorithm,context,tool_discovery,failure_guidance};
 use dominion_agent_runtime::{self as runtime, acceptance, scheduler, schema, Action,
-    BoxFuture,Limits,CriterionKind,Criterion,RunRequest,Decision,ModelReply,ModelTurn,
-    Model,Tools,Evidence,Journal,DispatchResult,Dispatcher,Status,CheckResult,
+    BoxFuture,CriterionKind,Criterion,RunRequest,Decision,
+    Model,Tools,Evidence,Journal,Status,CheckResult,
     Snapshot,Receipt,Strategy,ToolSpec,AgentLoop,AgentPorts};
 use futures_util::future::join_all;
-use serde_json::{json,Value};
+use serde_json::json;
 use std::collections::HashMap;
 
 /// Default ReAct-compatible orchestration, selected by the host separately
@@ -780,6 +780,7 @@ impl Kernel<'_> {
 #[cfg(test)]
 mod owner_effect_tests {
     use super::*;
+    use dominion_agent_runtime::Limits;
     #[test]
     fn native_and_text_only_model_decisions_share_bounded_plans() {
         let oversized_plan=Decision{plan:vec!["step".into();33],

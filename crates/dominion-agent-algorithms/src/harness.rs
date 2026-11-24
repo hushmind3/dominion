@@ -15,7 +15,8 @@ macro_rules! harness_steps {
         on_cancel = $on_cancel:block,
         |$step:ident| $body:block
     ) => {
-        $label: while $running {
+        $label: loop {
+            if !($running) { break $label; }
             let $step=match $drive.admit($cancelled,$calls,$limit){
                 $crate::runtime::DriveAdmission::Next(next)=>next,
                 $crate::runtime::DriveAdmission::Cancelled=>$on_cancel,
@@ -44,6 +45,19 @@ mod tests{
         );
         assert_eq!(seen,vec![0,1,2]);
         assert_eq!(drive.completed_steps(),3);
+    }
+
+    #[test]
+    fn stopped_adapter_never_admits_or_executes_a_step(){
+        let mut drive=runtime::HarnessDrive::new(8).unwrap();
+        let running=false;
+        fn unexpected_cancellation_check()->bool{panic!("stopped adapter must not check cancellation")}
+        crate::harness_steps!('steps:drive,running=running,
+            cancelled=unexpected_cancellation_check(),calls=0,limit=8,
+            on_cancel={break 'steps},
+            |_step|{panic!("stopped adapter must not execute a step");}
+        );
+        assert_eq!(drive.completed_steps(),0);
     }
 
 }
