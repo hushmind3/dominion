@@ -80,8 +80,13 @@ supports bounded pagination. Aliases accept lowercase ASCII letters,
 digits and single underscores, normalizing hyphens/dots; collisions or
 unsupported names require an explicit adapter instead of ambiguous dispatch.
 
-This shared path supports initialized MCP stdio protocol negotiation
-(2024-11-05 through 2025-11-25), not modern stateless stdio discovery.
+This shared path supports both initialized MCP stdio negotiation
+(2024-11-05 through 2025-11-25) and 2026-07-28 stateless tool discovery/calls.
+By default it probes server/discover with per-request metadata, then starts
+a fresh legacy process only when the read-only probe cannot establish the
+modern protocol. Recognized modern negotiation errors never downgrade.
+Set protocolVersion explicitly to force either era. Owner-input-required
+results are surfaced as errors, not silently accepted or replayed.
 The native HTTP transport retains its separate existing modern/legacy
 handling. The caller owns permission to start the executable; this is
 not an OS sandbox or a Rust dynamic-library ABI. The integration test

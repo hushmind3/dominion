@@ -183,3 +183,20 @@ async fn standalone_sdk_connects_real_stdio_process_and_dispatches_through_harne
     assert!(registry.unregister("echo"));
     assert!(registry.names().is_empty());
 }
+
+#[tokio::test]
+async fn standalone_sdk_negotiates_modern_stdio_without_legacy_initialize(){
+    use dominion_agent_sdk::extensions::ExtensionRegistry;
+    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixture=root.join("scripts/mcp-echo-server.mjs").canonicalize().unwrap();
+    let config=json!({"command":"node","args":[fixture.to_string_lossy().as_ref(),"--modern"]});
+    let mut registry=ExtensionRegistry::new();
+    let grants=registry.register_mcp_stdio("modern",&config,&root).await.unwrap();
+    let mut provider=model("ext__modern__echo");
+    let mut history=vec![json!({"role":"user","content":"echo hello"})];
+    let mut algorithm=select_named(Some("react"),false);
+    let result=registry.execute(&mut algorithm,&mut provider,&mut history,&grants,enabled()).await.unwrap();
+    assert_eq!(result.response,"finished");
+    assert!(json!(history).to_string().contains("MCP_MODERN_ECHO:"));
+    assert!(registry.unregister("modern"));
+}

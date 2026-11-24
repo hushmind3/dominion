@@ -8,6 +8,8 @@ use tokio::io::{AsyncBufRead,AsyncBufReadExt,AsyncWriteExt,BufReader};
 use tokio::process::{Child,ChildStdin,ChildStdout,Command};
 const MAX_STDIO_FRAME_BYTES:usize=4*1024*1024;
 const REQUEST_TIMEOUT:Duration=Duration::from_secs(40);
+const PROBE_TIMEOUT:Duration=Duration::from_secs(3);
+const MODERN_VERSION:&str="2026-07-28";
 
 /// Read one newline-delimited MCP frame without allowing a child process to
 /// grow memory without bound. Returns `None` only for EOF before any bytes.
@@ -40,10 +42,47 @@ pub struct StdioSession {
     stdout: BufReader<ChildStdout>,
     next_id: u64,
     healthy: bool,
+    modern: bool,
 }
 
 impl StdioSession {
-    pub async fn open(record: &Value, workspace: &Path) -> Result<Self, String> {
+    pub async fn open(record:&Value,workspace:&Path)->Result<Self,String>{
+        let mode=record["protocolVersion"].as_str().unwrap_or("auto");
+        if !matches!(mode,"auto"|""|"legacy"|"2024-11-05"|"2025-03-26"|"2025-06-18"|"2025-11-25"|"2026-07-28"){
+            return Err("unsupported MCP stdio protocol selection".into());
+        }
+        let mut session=Self::spawn(record,workspace)?;
+        if matches!(mode,"auto"|""|"2026-07-28"){
+            session.modern=true;
+            let probe=tokio::time::timeout(PROBE_TIMEOUT,
+                session.exchange("server/discover",json!({}))).await;
+            match probe {
+                Ok(Ok(reply)) if reply.get("error").is_none()=>{
+                    let versions=reply["result"]["supportedVersions"].as_array()
+                        .ok_or("MCP discovery missing supportedVersions")?;
+                    if !versions.iter().any(|v|v==MODERN_VERSION){
+                        return Err("MCP server has no mutually supported modern version".into());
+                    }
+                    return Ok(session);
+                }
+                Ok(Ok(reply)) if reply["error"]["code"].as_i64()
+                    .is_some_and(|code|(-32099..=-32020).contains(&code))=>{
+                    return Err(format!("MCP modern discovery rejected: {}",reply["error"]));
+                }
+                _ if mode==MODERN_VERSION=>return Err("MCP modern discovery failed".into()),
+                _=>{
+                    // Discovery is read-only. Restart before legacy negotiation
+                    // so partial frames or late probe replies cannot leak eras.
+                    drop(session);
+                    session=Self::spawn(record,workspace)?;
+                }
+            }
+        }
+        session.initialize_legacy(if matches!(mode,"auto"|""|"legacy"){ "2024-11-05" }else{mode}).await?;
+        Ok(session)
+    }
+
+    fn spawn(record:&Value,workspace:&Path)->Result<Self,String>{
         let command = record
             .get("command")
             .and_then(|value| value.as_str())
@@ -83,18 +122,21 @@ impl StdioSession {
             .map_err(|error| format!("MCP 서버 실행 실패 ({command}): {error}"))?;
         let stdin = child.stdin.take().ok_or("MCP stdin 을 열 수 없습니다.")?;
         let stdout = child.stdout.take().ok_or("MCP stdout 을 열 수 없습니다.")?;
-        let mut session = Self {
+        Ok(Self {
             _child: child,
             stdin,
             stdout: BufReader::new(stdout),
             next_id: 1,
             healthy: true,
-        };
-        let negotiated=session
+            modern: false,
+        })
+    }
+    async fn initialize_legacy(&mut self,version:&str)->Result<(),String>{
+        let negotiated=self
             .request(
                 "initialize",
                 json!({
-                    "protocolVersion": "2024-11-05",
+                    "protocolVersion": version,
                     "capabilities": {},
                     "clientInfo": { "name": "dominion-rust", "version": env!("CARGO_PKG_VERSION") }
                 }),
@@ -107,9 +149,9 @@ impl StdioSession {
             return Err("unsupported initialized MCP stdio protocol".into());
         }
         tokio::time::timeout(REQUEST_TIMEOUT,
-            session.notify("notifications/initialized",json!({})))
+            self.notify("notifications/initialized",json!({})))
             .await.map_err(|_|"MCP initialization notification timeout".to_string())??;
-        Ok(session)
+        Ok(())
     }
 
     async fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
@@ -135,8 +177,21 @@ impl StdioSession {
     pub async fn request(&mut self,method:&str,params:Value)->Result<Value,String>{
         if !self.healthy{return Err("MCP stdio session is no longer usable".into());}
         self.healthy=false;
-        let result=tokio::time::timeout(REQUEST_TIMEOUT,self.exchange(method,params))
-            .await.unwrap_or_else(|_|Err(format!("MCP response deadline exceeded: {method}")));
+        let id=self.next_id;
+        let result=match tokio::time::timeout(REQUEST_TIMEOUT,self.exchange(method,params)).await{
+            Ok(Ok(reply))=>{
+                if let Some(error)=reply.get("error"){Err(format!("MCP 오류: {error}"))}
+                else if reply["result"]["resultType"]=="input_required"{
+                    Err("MCP input_required: explicit owner input required".into())
+                }else{reply.get("result").cloned().ok_or_else(||"MCP response missing result".into())}
+            }
+            Ok(Err(error))=>Err(error),
+            Err(_)=>{
+                let _=tokio::time::timeout(Duration::from_millis(250),
+                    self.notify("notifications/cancelled",json!({"requestId":id,"reason":"request deadline"}))).await;
+                Err(format!("MCP response deadline exceeded: {method}"))
+            }
+        };
         if result.is_ok(){self.healthy=true;}else{let _=self._child.start_kill();}
         result
     }
@@ -161,7 +216,15 @@ impl StdioSession {
         Err("MCP catalog exceeds 16 pages".into())
     }
 
-    async fn exchange(&mut self, method: &str, params: Value) -> Result<Value, String> {
+    async fn exchange(&mut self, method: &str, mut params: Value) -> Result<Value, String> {
+        if self.modern{
+            if !params.is_object(){return Err("MCP parameters must be an object".into());}
+            params["_meta"]=json!({
+                "io.modelcontextprotocol/protocolVersion":MODERN_VERSION,
+                "io.modelcontextprotocol/clientInfo":{"name":"dominion-rust","version":env!("CARGO_PKG_VERSION")},
+                "io.modelcontextprotocol/clientCapabilities":{}
+            });
+        }
         let id = self.next_id;
         self.next_id += 1;
         let payload = json!({
@@ -189,10 +252,10 @@ impl StdioSession {
             if value.get("id").and_then(|item| item.as_u64()) != Some(id) {
                 continue;
             }
-            if let Some(error) = value.get("error") {
-                return Err(format!("MCP 오류: {error}"));
+            if value["jsonrpc"]!="2.0" || (value.get("result").is_some()==value.get("error").is_some()){
+                return Err("invalid MCP JSON-RPC response".into());
             }
-            return value.get("result").cloned().ok_or_else(||"MCP response missing result".into());
+            return Ok(value);
         }
     }
 }
