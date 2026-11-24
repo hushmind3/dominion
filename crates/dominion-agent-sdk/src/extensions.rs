@@ -91,7 +91,7 @@ impl ExtensionRegistry {
         let mut names=Vec::new();
         for tool in tools{
             let original=tool["name"].as_str().ok_or("MCP tool name missing")?;
-            let alias=original.to_ascii_lowercase().replace('-','_').replace('.','_');
+            let alias=original.to_ascii_lowercase().replace(['-', '.'], "_");
             if !valid_segment(&alias){return Err(format!("MCP tool name requires explicit adapter: {original}"));}
             names.push(qualified(plugin,&alias));
             registrations.push(ToolRegistration{
