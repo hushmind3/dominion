@@ -40,7 +40,7 @@ export async function readGoogle(operation,access,send=fetch){
  throw Error('unknown_operation');
 }
 export async function cleanupGoogle(env){if(googleReady(env))await env.DB.prepare('DELETE FROM assistant_google_pending WHERE expires_at<=?').bind(now()).run()}
-export async function googleRoute(req,env,{account,send=fetch}){
+export async function googleRoute(req,env,{account,send=fetch,ctx}){
  const p=new URL(req.url).pathname;
  if(!googleReady(env))return fail('Google connector not configured',503);
  if(p===cb&&req.method==='GET'){
@@ -59,7 +59,7 @@ export async function googleRoute(req,env,{account,send=fetch}){
    if(!allowed.length)return authPage('서비스 조회 권한을 선택해 주세요.',403);
    const cipher=await seal(env,row.account_id,t.refresh_token);
    const result=await env.DB.prepare("INSERT INTO assistant_google_grants(account_id,refresh_cipher,scopes,updated_at) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM app_sessions WHERE id=? AND account_id=? AND status='approved' AND expires_at>? AND capability='assistant_remote') AND EXISTS(SELECT 1 FROM assistant_google_pending WHERE state_hash=? AND claimed=1 AND expires_at>?) ON CONFLICT(account_id) DO UPDATE SET refresh_cipher=excluded.refresh_cipher,scopes=excluded.scopes,updated_at=excluded.updated_at").bind(row.account_id,cipher,JSON.stringify(allowed),now(),row.app_session_id,row.account_id,now(),stateHash,now()).run();
-   return result.meta.changes?authPage('Google 서비스 연결 완료'):authPage('연결 세션이 만료되었습니다.',403);
+   if(result.meta.changes){if(ctx)ctx.waitUntil(drainGoogleJobs(env,row.account_id,send));return authPage('Google 서비스 연결 완료. 대기 중인 업무를 이어서 처리합니다.')}return authPage('연결 세션이 만료되었습니다.',403);
   }catch{return authPage('Google 연결에 실패했습니다. 다시 시도해 주세요.',502)}finally{await env.DB.prepare('DELETE FROM assistant_google_pending WHERE state_hash=?').bind(stateHash).run()}
  }
  const user=await account(req,env);if(!mobile(user))return fail('Assistant Google permission required',403);
@@ -67,6 +67,7 @@ export async function googleRoute(req,env,{account,send=fetch}){
   const row=await env.DB.prepare('SELECT scopes FROM assistant_google_grants WHERE account_id=?').bind(user.id).first();
   return reply({connected:Boolean(row),services:row?JSON.parse(row.scopes):[]});
  }
+ if(p.startsWith('/v1/assistant/google/jobs'))return googleJobRoute(req,env,user,send,ctx);
  if(req.method!=='POST')return fail('Unknown connector route',404);
  if(p==='/v1/assistant/google/start'){
   const state=random(),verifier=random();
@@ -77,6 +78,7 @@ export async function googleRoute(req,env,{account,send=fetch}){
  }
  if(p==='/v1/assistant/google/disconnect'){
   await env.DB.prepare('DELETE FROM assistant_google_pending WHERE account_id=?').bind(user.id).run();
+  await env.DB.prepare("UPDATE assistant_google_jobs SET status='cancelled',lease=NULL,updated_at=? WHERE account_id=? AND status IN ('queued','running','awaiting_auth')").bind(now(),user.id).run();
   const row=await env.DB.prepare('DELETE FROM assistant_google_grants WHERE account_id=? RETURNING refresh_cipher').bind(user.id).first();
   let revoked=false;if(row)try{const refresh=await unseal(env,user.id,row.refresh_cipher);const r=await send('https://oauth2.googleapis.com/revoke',{method:'POST',redirect:'error',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({token:refresh}),signal:AbortSignal.timeout(15000)});revoked=r.ok}catch{}
   return reply({ok:true,revoked});
@@ -94,4 +96,68 @@ export async function googleRoute(req,env,{account,send=fetch}){
   if(current?.refresh_cipher!==row.refresh_cipher)return fail('Connection changed',409);
   const items=await readGoogle(data.operation,t.access_token,send);return reply({operation:data.operation,items});
  }catch{return fail('Google API unavailable or permission denied',502)}
+}
+
+const jobSelect="SELECT j.* FROM assistant_google_jobs j JOIN app_sessions s ON s.id=j.app_session_id AND s.account_id=j.account_id WHERE s.status='approved' AND s.expires_at>? AND s.capability='assistant_remote'";
+const jobId=x=>typeof x==='string'&&/^[a-zA-Z0-9_-]{8,80}$/.test(x);
+const serviceOf=op=>Object.keys(operations).find(k=>operations[k]===op);
+async function jobPublic(env,row){return {id:row.id,operation:row.operation,status:row.status,error:row.error||undefined,createdAt:row.created_at*1000,updatedAt:row.updated_at*1000,...(row.status==='completed'&&row.result_cipher?{items:JSON.parse(await unseal(env,row.account_id,row.result_cipher))}:{})}}
+export async function drainGoogleJobs(env,accountId=null,send=fetch){
+ if(!googleReady(env))return;
+ const t=now();
+ await env.DB.prepare("UPDATE assistant_google_jobs SET status='failed',error='업무 유효기간 만료',lease=NULL,updated_at=? WHERE status IN ('queued','running','awaiting_auth') AND expires_at<=?").bind(t,t).run();
+ await env.DB.prepare("DELETE FROM assistant_google_jobs WHERE updated_at<?").bind(t-30*86400).run();
+ const rows=await env.DB.prepare(jobSelect+" AND j.expires_at>? AND j.lease_until<=? AND j.status IN ('queued','running','awaiting_auth') AND EXISTS(SELECT 1 FROM assistant_google_grants g WHERE g.account_id=j.account_id) AND (? IS NULL OR j.account_id=?) ORDER BY j.created_at LIMIT 3").bind(t,t,t,accountId,accountId).all();
+ for(const row of rows.results||[]){
+  const service=serviceOf(row.operation),grant=await env.DB.prepare('SELECT refresh_cipher,scopes FROM assistant_google_grants WHERE account_id=?').bind(row.account_id).first();
+  if(!service||!grant||!JSON.parse(grant.scopes).includes(service)){
+   await env.DB.prepare("UPDATE assistant_google_jobs SET status='awaiting_auth',lease=NULL,updated_at=? WHERE account_id=? AND id=? AND status IN ('queued','awaiting_auth','running') AND lease_until<=?").bind(now(),row.account_id,row.id,now()).run();continue;
+  }
+  const lease=random(),ts=now();
+  const claimed=await env.DB.prepare("UPDATE assistant_google_jobs SET status='running',lease=?,lease_until=?,attempts=attempts+1,updated_at=? WHERE account_id=? AND id=? AND status IN ('queued','running','awaiting_auth') AND lease_until<=? AND expires_at>? AND EXISTS(SELECT 1 FROM app_sessions s WHERE s.id=assistant_google_jobs.app_session_id AND s.account_id=assistant_google_jobs.account_id AND s.status='approved' AND s.expires_at>? AND s.capability='assistant_remote') RETURNING attempts").bind(lease,ts+120,ts,row.account_id,row.id,ts,ts,ts).first();
+  if(!claimed)continue;
+  const finish=async(status,error=null,cipher=null,delay=0)=>env.DB.prepare("UPDATE assistant_google_jobs SET status=?,error=?,result_cipher=?,lease=NULL,lease_until=?,updated_at=? WHERE account_id=? AND id=? AND lease=? AND status='running'").bind(status,error,cipher,now()+delay,now(),row.account_id,row.id,lease).run();
+  if(claimed.attempts>3){await finish('failed','재시도 횟수 초과');continue}
+  try{
+   const refresh=await unseal(env,row.account_id,grant.refresh_cipher),tokens=await token(env,{grant_type:'refresh_token',refresh_token:refresh},send);
+   if(tokens.error==='reauthorize'){
+    await env.DB.prepare('DELETE FROM assistant_google_grants WHERE account_id=? AND refresh_cipher=?').bind(row.account_id,grant.refresh_cipher).run();
+    await finish('awaiting_auth','Google 재연결 필요');continue;
+   }
+   if(typeof tokens.access_token!=='string')throw Error('provider_unavailable');
+   const current=await env.DB.prepare('SELECT refresh_cipher FROM assistant_google_grants WHERE account_id=?').bind(row.account_id).first();
+   if(current?.refresh_cipher!==grant.refresh_cipher){await finish('awaiting_auth','Google 연결 변경');continue}
+   const items=await readGoogle(row.operation,tokens.access_token,send);
+   const finalGrant=await env.DB.prepare('SELECT refresh_cipher FROM assistant_google_grants WHERE account_id=?').bind(row.account_id).first();
+   if(finalGrant?.refresh_cipher!==grant.refresh_cipher){await finish('awaiting_auth','Google 연결 변경');continue}
+   await finish('completed',null,await seal(env,row.account_id,JSON.stringify(items)));
+  }catch(e){
+   if(e?.message==='google_permission')await finish('awaiting_auth','Google 조회 권한 재확인 필요',null,120);
+   else await finish(claimed.attempts>=3?'failed':'queued','Google API 조회 실패',null,60);
+  }
+ }
+}
+async function googleJobRoute(req,env,user,send,ctx){
+ const p=new URL(req.url).pathname,base='/v1/assistant/google/jobs';
+ if(p===base&&req.method==='GET'){
+  const rows=await env.DB.prepare("SELECT * FROM assistant_google_jobs WHERE account_id=? ORDER BY created_at DESC LIMIT 100").bind(user.id).all();
+  return reply({jobs:await Promise.all(rows.results.map(r=>jobPublic(env,r)))});
+ }
+ if(req.method!=='POST')return fail('Unknown job route',404);
+ let data;try{data=await body(req)}catch{return fail('Invalid request')}
+ if(!jobId(data?.id))return fail('Invalid job id');
+ if(p===base+'/cancel'){
+  await env.DB.prepare("UPDATE assistant_google_jobs SET status='cancelled',lease=NULL,updated_at=? WHERE account_id=? AND id=? AND status IN ('queued','running','awaiting_auth')").bind(now(),user.id,data.id).run();
+  return reply({ok:true});
+ }
+ if(p!==base||!serviceOf(data.operation))return fail('Unknown operation');
+ const existing=await env.DB.prepare('SELECT * FROM assistant_google_jobs WHERE account_id=? AND id=?').bind(user.id,data.id).first();
+ if(existing)return existing.operation===data.operation?reply(await jobPublic(env,existing)):fail('Job id conflict',409);
+ const grant=await env.DB.prepare('SELECT scopes FROM assistant_google_grants WHERE account_id=?').bind(user.id).first(),ts=now();
+ const status=grant&&JSON.parse(grant.scopes).includes(serviceOf(data.operation))?'queued':'awaiting_auth';
+ const inserted=await env.DB.prepare("INSERT OR IGNORE INTO assistant_google_jobs(account_id,id,app_session_id,operation,status,created_at,updated_at,expires_at) SELECT ?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM assistant_google_jobs WHERE account_id=? AND created_at>?)<50").bind(user.id,data.id,user.app_session_id,data.operation,status,ts,ts,ts+86400,user.id,ts-86400).run();
+ if(!inserted.meta.changes)return fail('Job limit or duplicate',429);
+ if(ctx)ctx.waitUntil(drainGoogleJobs(env,user.id,send));
+ const row=await env.DB.prepare('SELECT * FROM assistant_google_jobs WHERE account_id=? AND id=?').bind(user.id,data.id).first();
+ return reply(await jobPublic(env,row),202);
 }

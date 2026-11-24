@@ -39,3 +39,21 @@ test('OAuth lifecycle: one-time callback, refresh and real operation shape, disc
  subject='another';cb=await start();assert.equal((await call(cb)).status,403);assert.equal((await (await call('/status')).json()).connected,false);
  subject='owner';race=true;cb=await start();assert.equal((await call(cb)).status,403);assert.equal((await (await call('/status')).json()).connected,false);
 });
+
+test('durable job survives missing authorization then reads once after grant',async()=>{
+ const {drainGoogleJobs}=await import('../src/assistant_google.js');
+ const db=new DatabaseSync(':memory:');db.exec(readFileSync(new URL('../schema.sql',import.meta.url),'utf8'));
+ const DB={prepare(sql){return{bind(...a){return{first:async()=>db.prepare(sql).get(...a)||null,all:async()=>({results:db.prepare(sql).all(...a)}),run:async()=>({meta:{changes:Number(db.prepare(sql).run(...a).changes)}})}}}}};
+ const ts=Math.floor(Date.now()/1000);db.prepare('INSERT INTO accounts(id,created_at) VALUES(?,?)').run('google:owner',ts);db.prepare("INSERT INTO app_sessions(id,token_hash,app_name,capability,ip_hash,status,account_id,created_at,expires_at) VALUES(?,?,?,?,?,'approved',?,?,?)").run('session','hash','assistant','assistant_remote','ip','google:owner',ts,ts+600);
+ const env={DB,ASSISTANT_GOOGLE_ENABLED:'1',CONNECTOR_GOOGLE_CLIENT_ID:'client',CONNECTOR_GOOGLE_CLIENT_SECRET:'secret',CONNECTOR_TOKEN_SECRET:'x'.repeat(40)};
+ const account=async()=>({id:'google:owner',scope:'app',capability:'assistant_remote',app_session_id:'session'});let reads=0;
+ const send=async(url)=>{if(url.includes('oauth2.googleapis.com/token'))return Response.json({access_token:'access'});if(url.includes('/calendar/')){reads++;return Response.json({items:[{summary:'병원',start:{date:'2027-01-01'}}]})}throw Error('unexpected')};
+ const call=(path,b)=>googleRoute(new Request('https://example.com/v1/assistant/google/jobs'+path,b===undefined?{}:{method:'POST',body:JSON.stringify(b)}),env,{account,send});
+ const payload={id:'request-123',operation:'calendar_upcoming'};assert.equal((await (await call('',payload)).json()).status,'awaiting_auth');
+ await drainGoogleJobs(env,null,send);assert.equal(reads,0);
+ db.prepare('INSERT INTO assistant_google_grants VALUES(?,?,?,?)').run('google:owner',await seal(env,'google:owner','refresh'),JSON.stringify(['calendar']),ts);
+ await drainGoogleJobs(env,null,send);await drainGoogleJobs(env,null,send);assert.equal(reads,1);
+ const row=(await (await call('')).json()).jobs[0];assert.equal(row.status,'completed');assert.equal(row.items[0].title,'병원');
+ assert.equal((await (await call('',payload)).json()).status,'completed');
+ assert.ok(!db.prepare('SELECT result_cipher FROM assistant_google_jobs').get().result_cipher.includes('병원'));
+});

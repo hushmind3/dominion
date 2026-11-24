@@ -3,7 +3,7 @@ import {b64url, hash, randomToken} from './token_crypto.js';
 import {appAccount,isAppRequest,startApp,appStatus,disconnectApp,manageApps,pendingApp,approveApp} from './app_auth.js';
 import {connectPage} from './connect_page.js';
 import {assistantRoute,cleanupAssistant,ready as assistantReady,revokeAppSocket} from './assistant_link.js';
-import {googleRoute,googleReady,cleanupGoogle} from './assistant_google.js';
+import {googleRoute,googleReady,cleanupGoogle,drainGoogleJobs} from './assistant_google.js';
 export {AssistantSocket} from './assistant_socket.js';
 // DOMINION account gateway: no Nous credentials and no shared client-side API key.
 // Cloudflare Worker + D1. Credits are integer micro-KRW (one KRW = 1,000 units).
@@ -510,8 +510,9 @@ export default {
     ctx.waitUntil(availableModels(env, true));
     ctx.waitUntil(cleanupAssistant(env));
     ctx.waitUntil(cleanupGoogle(env));
+    ctx.waitUntil(drainGoogleJobs(env));
   },
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const origin = request.headers.get('origin');
     const path = new URL(request.url).pathname;
     const headers = cors(origin, env);
@@ -552,7 +553,7 @@ export default {
       // App sessions may never enter owner, billing or identity endpoints.
       const appAllowed=['/v1/me','/v1/models','/v1/billing','/v1/chat/completions','/v1/apps/status','/v1/apps/disconnect'];
       if(isAppRequest(request)&&!appAllowed.includes(path)&&!path.startsWith('/v1/assistant/'))return json({error:'Owner login required'},403,headers);
-      if(path.startsWith('/v1/assistant/google/'))response=await googleRoute(request,env,{account});
+      if(path.startsWith('/v1/assistant/google/'))response=await googleRoute(request,env,{account,ctx});
       else if(path.startsWith('/v1/assistant/'))response=await assistantRoute(request,env,{account});
       else if(path==='/connect'&&request.method==='GET')response=await connectPage(request,env);
       else if(path==='/v1/apps/google/approve'&&request.method==='POST'){
