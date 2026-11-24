@@ -1,14 +1,13 @@
-import {Menu, Plus, UsersRound} from 'lucide-react'
+import {Plus, UsersRound} from 'lucide-react'
 import type {Agent} from '../../api'
 import {t, useLocale} from '../../i18n'
 import {Button} from '../Primitives'
 import {RoomAvatar} from './RoomAvatar'
 
-export function RoomWelcome({hasAgents,onCreate,onOpenNavigation}:{hasAgents:boolean;onCreate:()=>void;onOpenNavigation?:()=>void}) {
+export function RoomWelcome({hasAgents,onCreate}:{hasAgents:boolean;onCreate:()=>void}) {
  const en=useLocale()==='en'
  const tr=(ko:string,english:string)=>en?english:ko
  return <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center gap-5 overflow-y-auto bg-surface px-6 py-12 text-center">
-  <Button variant="ghost" size="icon" className="absolute left-3 top-3 md:hidden" aria-label={t('rooms.listExpand')} onClick={onOpenNavigation}><Menu size={20}/></Button>
   <span className="grid size-14 place-items-center rounded-2xl border border-divider bg-canvas text-brand"><UsersRound size={28}/></span>
   <h1 className="text-3xl font-semibold tracking-tight">{tr('함께 이야기할 AI를 고르세요','Choose the AIs to talk with')}</h1>
   <p className="max-w-md text-sm leading-7 text-muted">{tr('한곳에서 여러 AI와 대화하고, 필요할 때 함께할 일을 맡길 수 있습니다.','Talk with several AIs in one place and assign collaborative work when needed.')}</p>

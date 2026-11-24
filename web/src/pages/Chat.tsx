@@ -13,7 +13,7 @@ import {ExecutionInsights} from '../components/ExecutionInsights'
 import {createPortal} from 'react-dom'
 import {Button} from '../components/Primitives'
 import {FormEvent,useEffect,useLayoutEffect,useRef,useState,type ChangeEvent,type KeyboardEvent} from 'react'
-import {ArrowDown,ArrowRight,ArrowUp,BrainCircuit,Check,ChevronRight,CircleHelp,Copy,Menu,LoaderCircle,Paperclip,ShieldAlert,Sparkles,Square,TerminalSquare,Wrench,X} from 'lucide-react'
+import {ArrowDown,ArrowRight,ArrowUp,BrainCircuit,Check,ChevronRight,CircleHelp,Copy,LoaderCircle,Paperclip,ShieldAlert,Sparkles,Square,TerminalSquare,Wrench,X} from 'lucide-react'
 import {Agent,Approval,Attachment,ChatMessage,ChatSession,Provider,del,get,post,resolveApproval,streamChat,uploadAttachment} from '../api'
 import {Action,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
@@ -678,7 +678,6 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     <ConversationComposer value={input} onChange={next=>{setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n')&&(!/\s/.test(next)||/^\/(?:model|agent|mcp)\s+\S*$/.test(next)));setSlashActive(0)}}
      onSend={send} inputRef={inputRef} label={t('chat.messageAria')} placeholder={t('chat.inputPlaceholder')} onKeyDown={appendKey} slashOpen={slashOpen}
      options={<>
-       <Button variant="ghost" size="icon" className="!h-7 !w-7 md:hidden" onClick={onOpenNavigation} aria-label={t('chat.listExpand')} title={t('chat.recent')}><Menu size={17}/></Button>
        <ConversationTargetPicker openRevision={pickerRevision} active={active} providers={enabledProviders} agents={agents.value} providerId={providerId} model={model} agentId={agentMode?agentId:''} catalogue={catalogue}
         onModel={(provider,chosenModel)=>{setChatModeOverride({scope:current,mode:agentMode||Boolean(selectedSession?.agentId)?'agent':'chat'});if(!agentMode&&!selectedSession?.agentId)setAgentChoice(undefined);setRoute(provider,chosenModel)}} onAgent={chooseAgent}/>
        <Button type="button" variant="ghost" size="sm" aria-pressed={toolsEnabled}

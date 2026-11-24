@@ -15,7 +15,7 @@ import {RoomTeamLauncher} from '../components/RoomTeamLauncher'
 import {RunEventTimeline} from '../components/RunEventTimeline'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
 import {useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent} from 'react'
-import {Activity, ArrowDown, ArrowRight, ArrowUp, Workflow, BookOpenText, Check, ChevronDown, LoaderCircle, Menu, Paperclip, Plus, RefreshCw, RotateCcw, ShieldCheck, Square, TerminalSquare, Trash2, UsersRound, X} from 'lucide-react'
+import {Activity, ArrowDown, ArrowRight, ArrowUp, Workflow, BookOpenText, Check, ChevronDown, LoaderCircle, Paperclip, Plus, RefreshCw, RotateCcw, ShieldCheck, Square, TerminalSquare, Trash2, UsersRound, X} from 'lucide-react'
 import {get, post, del, resolveApproval, uploadAttachment, type Agent, type ChatMessage, type ModelOption, type Provider} from '../api'
 import {Button, TextArea, TextInput, SelectInput} from '../components/Primitives'
 import {DialogBackdrop, DialogPanel} from '../components/Dialog'
@@ -70,7 +70,7 @@ export function RoomsPage({openSession,settingsTarget,active:visibleView=true,on
   catch(e){setError((e as Error).message)}finally{setSaving(false)}
  }
  return <div className="rooms-app room-workspace">
-  {current?<RoomConversation settingsTarget={settingsTarget} key={current.id} room={current} visibleView={visibleView} agents={agents.value} providers={providers.value} openList={()=>onOpenNavigation?.()} openSession={openSession} onSaved={async()=>{await rooms.reload();refresh()}} onRemoved={async()=>{setSelected('');await rooms.reload()}}/>:rooms.loading?<div className="room-feed-loading" role="status"><LoaderCircle size={20} className="animate-spin"/>{t('rooms.loading')}</div>:<RoomWelcome hasAgents={agents.value.length>0} onCreate={()=>{setCreating(draftOf());setError('')}} onOpenNavigation={onOpenNavigation}/>}
+  {current?<RoomConversation settingsTarget={settingsTarget} key={current.id} room={current} visibleView={visibleView} agents={agents.value} providers={providers.value} openSession={openSession} onSaved={async()=>{await rooms.reload();refresh()}} onRemoved={async()=>{setSelected('');await rooms.reload()}}/>:rooms.loading?<div className="room-feed-loading" role="status"><LoaderCircle size={20} className="animate-spin"/>{t('rooms.loading')}</div>:<RoomWelcome hasAgents={agents.value.length>0} onCreate={()=>{setCreating(draftOf());setError('')}}/>}
   {(error||rooms.error||agents.error)&&!creating&&<div className="room-global-error"><Notice message={error||rooms.error||agents.error||providers.error} retrying={rooms.refreshing||agents.refreshing||providers.refreshing} onRetry={!error?()=>{void Promise.all([rooms.reload(),agents.reload(),providers.reload()])}:undefined}/></div>}
   {visibleView&&creating&&<DialogBackdrop onDismiss={()=>{if(!saving)setCreating(null)}}><DialogPanel size="wide" className="room-settings-dialog" aria-label={t('rooms.newTitle')}><div className="room-dialog-header"><div><span className="room-eyebrow">{t('ui.label.startConversation')}</span><h2>{t('rooms.who')}</h2></div><Button size="icon" variant="ghost" aria-label={t('rooms.close')} onClick={()=>setCreating(null)} disabled={saving}><X size={18}/></Button></div><div className="room-dialog-body">{!agents.loading&&!agents.value.length&&<div className="room-setup-next-step"><strong>{t('rooms.setupAssistants')}</strong><p>{t('rooms.setupAssistantsDescription')}</p><Button variant="primary" onClick={()=>{window.location.hash='#/agents'}}><Plus size={15}/>{t('rooms.setupAssistantsAction')}</Button></div>}<RoomSettings value={creating} onChange={setCreating} agents={agents.value} providers={providers.value} disabled={saving}/><Notice message={error}/></div><div className="room-dialog-footer"><span>{t('rooms.createHint')}</span><Button variant="primary" onClick={()=>void createRoom()} disabled={saving||!creating.agentIds.length}>{saving?<LoaderCircle size={15} className="animate-spin"/>:<Plus size={15}/>} {t('rooms.create')}</Button></div></DialogPanel></DialogBackdrop>}
  </div>
@@ -138,7 +138,7 @@ function RoomModelPicker({value,onChange,providers,disabled=false}:{value:RoomMo
  </div>
 }
 
-function RoomConversation({settingsTarget,room,agents,providers,openList,openSession,onSaved,onRemoved,visibleView}:{settingsTarget?:HTMLElement|null;visibleView:boolean;room:RoomConfig;agents:Agent[];providers:Provider[];openList:()=>void;openSession:(id:string)=>void;onSaved:()=>Promise<void>;onRemoved:()=>Promise<void>}){
+function RoomConversation({settingsTarget,room,agents,providers,openSession,onSaved,onRemoved,visibleView}:{settingsTarget?:HTMLElement|null;visibleView:boolean;room:RoomConfig;agents:Agent[];providers:Provider[];openSession:(id:string)=>void;onSaved:()=>Promise<void>;onRemoved:()=>Promise<void>}){
  useLocale()
  const [messages,setMessages]=useState<ChatMessage[]>([]),[feed,setFeed]=useState<FeedState>(initialFeed)
  const [loading,setLoading]=useState(true),[loadError,setLoadError]=useState(''),[error,setError]=useState('')
@@ -358,7 +358,6 @@ function RoomConversation({settingsTarget,room,agents,providers,openList,openSes
     <ConversationComposer value={input} onChange={setInput} onSend={send} inputRef={inputRef} disabled={sending}
      label={t('rooms.messageAria')} placeholder={mode==='mentioned'?t('rooms.mentionPlaceholder'):t('rooms.composerPlaceholder',{name:current.name})}
      options={<>
-       <Button variant="ghost" size="icon" className="md:hidden" onClick={openList} aria-label={t('rooms.listExpand')}><Menu size={17}/></Button>
        <Button variant="ghost" className="!min-h-9 !gap-1.5 !px-2 !py-1.5 !text-xs !font-medium" onClick={()=>{setTeamOpen(true);setInspector(false)}}><Workflow size={16}/>{t('rooms.taskAction')}</Button>
        <RoomActions active={visibleView} actions={[
         {label:t('rooms.editParticipants'),icon:<UsersRound size={16}/>,run:()=>{setInspector(true);setRecipientsOpen(false)}},
