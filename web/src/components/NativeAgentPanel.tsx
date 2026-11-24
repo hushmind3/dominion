@@ -6,7 +6,9 @@ import {ExecutionInsights} from './ExecutionInsights'
 import {RunEventTimeline} from './RunEventTimeline'
 
 type SdkState = {state: string; detail?: {call_id?: string; tool?: string}}
+type SdkAction='approve'|'deny'|'cancel'|'resume'|'reconcile'|'steer'|'refresh'
 type SdkRun = {
+ actions?:Partial<Record<SdkAction,boolean>>; taskOutcome?:string; verified?:boolean; uncertainEffectCount?:number;
  id: string; status: string; instruction: string; answer?: string; error?: string; createdAt?:string; model?:string; sessionId?:string; runRef?:{executionId:string}; readOnly?:boolean; failureClass?:string|null;
  checkpoint?: {
   state?: SdkState; rounds?: number; toolCalls?: number; answer?: string; executionId?:string;
@@ -16,8 +18,6 @@ type SdkRun = {
  } | null
 }
 const fmtTokens=(value?:number|null)=>typeof value==='number'&&Number.isFinite(value)?value.toLocaleString():'—'
-const running = new Set(['queued', 'running', 'awaiting_approval'])
-const stopPolling = new Set(['completed','failed','cancelled','exhausted','denied','awaiting_approval','interrupted','in_doubt'])
 const stateNames:Record<string,[string,string]>={
  queued:['대기 중','Queued'], running:['작업 진행 중','Working'],
  completed:['완료','Completed'], failed:['실패','Failed'],
@@ -40,9 +40,14 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [steering,setSteering]=useState('')
  const [notice,setNotice]=useState('')
  const selectionGeneration=useRef(0)
+ const operationInFlight=useRef(false)
+ const retryStart=useRef<{snapshot:string;key:string}|null>(null)
+ const beginOperation=()=>{if(operationInFlight.current)return false;operationInFlight.current=true;++selectionGeneration.current;setBusy(true);return true}
+ const endOperation=()=>{operationInFlight.current=false;setBusy(false)}
  const selectHistory=async(id:string)=>{
+  if(operationInFlight.current)return
   const selected=++selectionGeneration.current
-  setError('');setNotice('');setSteering('')
+  setError('');setNotice('');setSteering('');setObservation('')
   try{
    const current=await get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(id)}`)
    if(selected===selectionGeneration.current)setRun(current)
@@ -62,37 +67,43 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    if(!alive)return
    const sorted=[...list].sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''))
    setHistory(sorted.slice(0,30))
-   if(sorted.length)setRun(sorted[0])
+   if(sorted.length&&selectionGeneration.current===0)setRun(sorted[0])
   }).catch(e=>{if(alive)setError((e as Error).message)})
   return()=>{alive=false}
  },[])
  useEffect(()=>{
-  if(!run?.id || stopPolling.has(run.status)) return
-  let alive=true
+  if(!run?.id||busy||!run.actions?.cancel)return
+  let alive=true,polling=false
+  const controller=new AbortController()
+  const selected=selectionGeneration.current
   const timer=setInterval(()=>{
-   get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}`)
-    .then(next=>{if(alive)setRun(next)})
-    .catch(e=>{if(alive)setError((e as Error).message)})
+   if(polling||operationInFlight.current)return
+   polling=true
+   get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}`,controller.signal)
+    .then(next=>{if(alive&&selected===selectionGeneration.current&&!operationInFlight.current)setRun(next)})
+    .catch(e=>{if(alive&&selected===selectionGeneration.current&&!controller.signal.aborted)setError((e as Error).message)})
+    .finally(()=>{polling=false})
   },1500)
-  return()=>{alive=false;clearInterval(timer)}
- },[run?.id,run?.status])
+  return()=>{alive=false;controller.abort();clearInterval(timer)}
+ },[run?.id,run?.status,run?.actions?.cancel,busy])
  const start=async()=>{
-  if(!instruction.trim()||busy)return
-  setBusy(true);setError('')
+  if(!instruction.trim()||!beginOperation())return
+  setError('')
+  const request={instruction:instruction.trim(),providerId:providerId||undefined,verifyCommand:verification.trim()||undefined}
+  const snapshot=JSON.stringify(request)
+  if(retryStart.current?.snapshot!==snapshot)retryStart.current={snapshot,key:crypto.randomUUID()}
   try{
-   const created=await post<SdkRun>('/api/sdk/runs',{
-    instruction:instruction.trim(),providerId:providerId||undefined,
-    verifyCommand:verification.trim()||undefined
-   })
+   const created=await post<SdkRun>('/api/sdk/runs',{...request,idempotencyKey:retryStart.current.key})
+   retryStart.current=null
    ++selectionGeneration.current
    setRun(created);setHistoryOpen(false);setNotice('')
    void refreshHistory().catch(()=>{})
   }catch(e){setError((e as Error).message)}
-  finally{setBusy(false)}
+  finally{endOperation()}
  }
  const action=async(kind:'approve'|'deny'|'cancel'|'resume')=>{
-  if(!run||busy)return
-  setBusy(true);setError('')
+  if(!run||!run.actions?.[kind]||!beginOperation())return
+  setError('')
   try{
    const call=run.checkpoint?.pendingCall
    if((kind==='approve'||kind==='deny')&&!call?.id)throw Error(en?'Missing approval details':'승인할 도구 정보를 찾지 못했습니다.')
@@ -105,33 +116,33 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    const refreshed=await get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}`)
    setRun(refreshed);void refreshHistory().catch(()=>{})
   }catch(e){setError((e as Error).message)}
-  finally{setBusy(false)}
+  finally{endOperation()}
  }
  const reconcile=async(applied:boolean)=>{
-  if(!run||busy||!observation.trim())return
-  setBusy(true);setError('')
+  if(!run?.actions?.reconcile||!observation.trim()||!beginOperation())return
+  setError('')
   try{
    const updated=await post<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}/reconcile`,
     {applied,details:observation.trim()})
    setRun(updated);setObservation('');void refreshHistory().catch(()=>{})
   }catch(e){setError((e as Error).message)}
-  finally{setBusy(false)}
+  finally{endOperation()}
  }
  const followUp=async()=>{
-  if(!run||busy||!steering.trim())return
-  setBusy(true);setError('');setNotice('')
+  if(!run?.actions?.steer||!steering.trim()||!beginOperation())return
+  setError('');setNotice('')
   try{
    await post(`/api/sdk/runs/${encodeURIComponent(run.id)}/steer`,{instruction:steering.trim(),mode:'append'})
    setSteering('');setNotice(en?'Instruction queued for the current run.':'현재 작업에 추가 지시를 전달했습니다.')
    setRun(await get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}`))
   }catch(e){setError((e as Error).message)}
-  finally{setBusy(false)}
+  finally{endOperation()}
  }
  const status=run?.status||''
  const call=run?.checkpoint?.pendingCall
- const needsApproval=status==='awaiting_approval' && call
+ const needsApproval=run?.actions?.approve && call
  const canRecheck=status==='needs_review'&&run?.failureClass==='completion_evidence_unavailable'
- const canResume=['interrupted','failed'].includes(status)||canRecheck
+ const canResume=run?.actions?.resume===true
  const events=(run?.checkpoint?.events||[]).slice(-4)
  return <section className="mt-4 rounded-xl border border-divider bg-white">
   <div className="flex items-center gap-2 border-b border-[#F0EAE1] px-4 py-3">
@@ -149,7 +160,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    {historyOpen&&<div className="mt-2 max-h-44 space-y-1 overflow-y-auto">
     <button type="button" className="mb-1 text-[10px] underline" onClick={()=>void refreshHistory().catch(e=>setError((e as Error).message))}>{en?'Refresh history':'목록 새로고침'}</button>
     {history.map(item=><button type="button" key={item.id}
-      aria-pressed={run?.id===item.id} onClick={()=>void selectHistory(item.id)}
+      aria-pressed={run?.id===item.id} disabled={busy} onClick={()=>void selectHistory(item.id)}
       className={'flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-[11px] '+(run?.id===item.id?'bg-[#F7E8E1]':'bg-[#FAF7F1] hover:bg-[#F3EEE5]')}>
       <span className="min-w-0 flex-1 truncate">{item.instruction||item.id}</span>
       <span className="shrink-0 text-[#8A8176]">{item.status}</span>
@@ -196,6 +207,8 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     </p>}
     </div>
     <p className="mt-2 line-clamp-2 text-[11px] text-[#766F67]">{run.instruction}</p>
+    {(status==='completed'||run.taskOutcome)&&<p className="mt-2 text-[11px] text-muted">{run.verified===true?(en?'Verified outcome':'검증된 작업 결과'):(en?'Outcome not verified':'작업 결과 미검증')}{run.taskOutcome?' · '+run.taskOutcome:''}</p>}
+    {status==='in_doubt'&&!run.actions?.reconcile&&<p role="status" className="mt-2 text-[11px] text-amber-700">{en?'Manual reconciliation is not currently available. Review the execution evidence.':'현재 수동 복구가 가능한 상태가 아닙니다. 실행 증거를 확인하세요.'} ({run.uncertainEffectCount??0})</p>}
     {events.length>0&&<div className="mt-3 space-y-1 border-t border-divider pt-2">
      {events.map((event,i)=><p key={i} className="text-[11px] text-[#82796D]">
       {event.kind==='tool_started'?(en?'Running tool':'도구 실행'):
@@ -221,7 +234,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     {run.answer||run.checkpoint?.answer?<div className="mt-3 whitespace-pre-wrap break-words border-t border-divider pt-3 text-[12px]">{run.answer||run.checkpoint?.answer}</div>:null}
     {run.error&&<p className="mt-2 text-[11px] text-[#A54027]">{run.error}</p>}
     {notice&&<p role="status" className="mt-2 text-[11px] text-emerald-700">{notice}</p>}
-    {(['queued','running'].includes(status))&&!run.readOnly&&<form onSubmit={event=>{event.preventDefault();void followUp()}} className="mt-3 flex flex-wrap gap-2">
+    {run.actions?.steer&&<form onSubmit={event=>{event.preventDefault();void followUp()}} className="mt-3 flex flex-wrap gap-2">
      <input type="text" maxLength={4000} value={steering} disabled={busy} onChange={e=>setSteering(e.target.value)}
       aria-label={en?'Steer current task':'실행 중 추가 지시'} placeholder={en?'Add a follow-up instruction…':'진행 중인 작업에 추가 지시…'}
       className="min-w-40 flex-1 rounded-lg border border-divider bg-white px-3 py-2 text-[11px]"/>
@@ -231,15 +244,16 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
       <ExecutionInsights executionId={(run.runRef?.executionId||run.checkpoint?.executionId)!} compact/>
       <RunEventTimeline executionId={(run.runRef?.executionId||run.checkpoint?.executionId)!}/>
     </>}
-    <div className="mt-3 flex gap-2">
-     {running.has(status)&&<button type="button" disabled={busy} onClick={()=>void action('cancel')} className="flex items-center gap-1 rounded-lg border border-divider px-3 py-2 text-[11px]">
+    <div className="mt-3 flex flex-wrap gap-2">
+     <button type="button" disabled={busy} onClick={()=>void selectHistory(run.id)} className="flex items-center gap-1 rounded-lg border border-divider px-3 py-2 text-[11px]"><RefreshCw size={13}/>{en?'Refresh run':'실행 상태 새로고침'}</button>
+     {run.actions?.cancel&&<button type="button" disabled={busy} onClick={()=>void action('cancel')} className="flex items-center gap-1 rounded-lg border border-divider px-3 py-2 text-[11px]">
       <Square size={13}/>{en?'Stop':'중단'}
      </button>}
      {canResume&&<button type="button" disabled={busy} onClick={()=>void action('resume')} className="flex items-center gap-1 rounded-lg border border-divider px-3 py-2 text-[11px]">
       <RefreshCw size={13}/>{canRecheck?(en?'Recheck completion evidence':'완료 증거 재확인'):(en?'Resume':'재개')}
      </button>}
     </div>
-    {status==='in_doubt'&&<div className="mt-3 rounded-lg border border-[#E5C4AB] bg-white p-3">
+    {run.actions?.reconcile&&<div className="mt-3 rounded-lg border border-[#E5C4AB] bg-white p-3">
      <p className="text-[11px] text-[#A54027]">
       {en?'The interrupted tool may have changed files. Inspect the workspace before continuing.':'중단 직전 도구가 파일을 변경했을 수 있습니다. 실제 상태를 확인한 뒤 기록하세요.'}
      </p>

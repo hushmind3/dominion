@@ -94,6 +94,7 @@ struct ViewIndex {
     runs:HashMap<String,Value>,
     pending:HashMap<String,Value>,
     uncertain:HashSet<String>,
+    uncertain_counts:HashMap<String,usize>,
 }
 impl ViewIndex{
     fn from_rows(executions:Vec<Value>,approvals:Vec<Value>,operations:Vec<Value>)->Self{
@@ -112,9 +113,12 @@ impl ViewIndex{
                 }
             }
         }
-        let uncertain=operations.into_iter().filter(|op|op["outcomeUnknown"]==true)
-            .filter_map(|op|op["runId"].as_str().map(str::to_string)).collect();
-        Self{runs,pending,uncertain}
+        let mut uncertain_counts=HashMap::<String,usize>::new();
+        for op in operations.iter().filter(|op|op["outcomeUnknown"]==true){
+            if let Some(id)=op["runId"].as_str(){*uncertain_counts.entry(id.to_owned()).or_default()+=1;}
+        }
+        let uncertain=uncertain_counts.keys().cloned().collect();
+        Self{runs,pending,uncertain,uncertain_counts}
     }
     fn load(state:&AppState)->Self{
         let (executions,operations)=match state.store.sdk_evidence_rows(){
@@ -140,6 +144,10 @@ fn public_view_indexed(state:&AppState,mut record:Value,index:&ViewIndex)->Value
     };
     let pending=index.pending.get(&session);
     let run=index.runs.get(&session);
+    let raw_status=record["status"].as_str().unwrap_or("").to_owned();
+    let active=state.active.lock().unwrap().contains(&session);
+    let uncertain_count=run.and_then(|r|r["id"].as_str())
+        .and_then(|id|index.uncertain_counts.get(id)).copied().unwrap_or(0);
     // In-doubt effects must remain visible for *interrupted and failed* SDK
     // runs as well. Otherwise resume() could approve a replay from a failed
     // status while its last tool result remains unobserved.
@@ -158,6 +166,21 @@ fn public_view_indexed(state:&AppState,mut record:Value,index:&ViewIndex)->Value
             record["status"]=json!("interrupted");
         }
     }
+    let live=matches!(raw_status.as_str(),"queued"|"running");
+    let recoverable=matches!(raw_status.as_str(),"failed"|"interrupted");
+    let approval=raw_status=="running" && pending.is_some() && !state.is_cancelled(&session)
+        && record["status"]=="awaiting_approval";
+    let recheck=raw_status=="needs_review" && record["failureClass"]=="completion_evidence_unavailable";
+    record["actions"]=json!({
+        "cancel":live,
+        "approve":approval,
+        "deny":approval,
+        "resume":!active && ((recoverable && uncertain_count==0)||recheck),
+        "reconcile":recoverable && !active && uncertain_count==1,
+        "steer":live && record["status"]!="in_doubt",
+        "refresh":true
+    });
+    record["uncertainEffectCount"]=json!(uncertain_count);
     if let Some(run)=run{
         // Legacy records lacked a verdict field. Read but never rewrite them.
         if record.get("taskOutcome").is_none() {
