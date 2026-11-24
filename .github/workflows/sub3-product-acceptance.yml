@@ -115,7 +115,13 @@ jobs:
           cargo test --bin dominion-rust host::execution::native_agent::tests
           cargo test --bin dominion-rust api::sdk_runs::tests
           cargo test --bin dominion-rust api::sdk::tests
+          cargo test --bin dominion-rust api::executions::event_tests
+          cargo test --bin dominion-rust api::jobs::algorithm_profile_api_tests
+          cargo test --bin dominion-rust api::rooms::tests::room_team_launch_reuses_request_and_preserves_live_job_state
+          cargo test --bin dominion-rust integrations::mcp::tests -- --test-threads=1
           cargo test --test e2e native_job_prompt_runs -- --test-threads=1
+          cargo test --test e2e execution_timeline_replays_real_chat_events -- --test-threads=1
+          cargo test --test e2e room_selects_and_executes_an_mcp_tool_through_approval -- --test-threads=1
 
   frontend:
     runs-on: ubuntu-latest

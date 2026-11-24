@@ -1097,17 +1097,19 @@ for line in sys.stdin:
 "#,
     )
     .unwrap();
-    let conn = Connection::open(app._root.join("runtime/dominion.sqlite")).unwrap();
-    conn.busy_timeout(Duration::from_secs(5)).unwrap();
-    conn.execute(
-        "INSERT OR REPLACE INTO records(kind,id,data) VALUES('mcp','fake',?1)",
-        [json!({
-            "id":"fake","name":"Fake MCP","enabled":true,"transport":"stdio",
-            "command":"python3","args":[script.to_string_lossy()]
-        }).to_string()],
-    )
-    .unwrap();
-    drop(conn);
+    let mut configuration=json!({
+        "id":"fake","name":"Fake MCP","enabled":true,"transport":"stdio",
+        "command":"python3","args":[script.to_string_lossy()]
+    });
+    assert_eq!(app.post("/api/mcp",&configuration)["enabled"],true);
+    let first=app.get("/api/mcp/discover");
+    assert!(first.as_array().unwrap().iter().any(|tool|tool["name"]=="mcp__fake_mcp__search_issues"),"{first}");
+    configuration["enabled"]=json!(false);
+    assert_eq!(app.post("/api/mcp",&configuration)["enabled"],false);
+    assert_eq!(app.get("/api/mcp/fake")["enabled"],false);
+    assert!(!app.get("/api/mcp/discover").as_array().unwrap().iter().any(|tool|tool["mcpId"]=="fake"));
+    configuration["enabled"]=json!(true);
+    assert_eq!(app.post("/api/mcp",&configuration)["enabled"],true);
 
     let discovered = app.get("/api/mcp/discover");
     assert!(discovered.as_array().unwrap().iter().any(|tool| tool["name"] == "mcp__fake_mcp__search_issues"), "{discovered}");

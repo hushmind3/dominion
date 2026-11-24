@@ -1200,3 +1200,43 @@ fn harness_assisted_executes_dag_nodes_through_the_common_dispatch() {
     assert!(nodes.contains(&"report"));
 }
 
+
+#[test]
+fn execution_timeline_replays_real_chat_events_without_cross_session_leakage(){
+    let _serial=serial();
+    let (port,_)=scripted_provider(|_|{
+        vec![json!({"choices":[{"delta":{"content":"Hello from fixture."},"finish_reason":"stop"}]})]
+    });
+    let app=TestApp::new(port,"native");
+    let first=app.post("/api/sessions",&json!({"title":"timeline-one"}));
+    let second=app.post("/api/sessions",&json!({"title":"timeline-two"}));
+    for session in [&first,&second]{
+        let stream=app.chat(&json!({"sessionId":session["id"],"input":"Hello",
+            "autoLearning":false,"toolsEnabled":false}));
+        assert!(stream.contains("assistant_saved"),"{stream}");
+    }
+    let runs=app.get("/api/executions");
+    let id=runs.as_array().unwrap().iter()
+        .find(|run|run["sessionId"]==first["id"]).unwrap()["id"].as_str().unwrap();
+    let endpoint=format!("/api/executions/{id}/events");
+    let mut cursor=0;
+    let mut phases=Vec::new();
+    for _ in 0..100 {
+        let page=app.get(&format!("{endpoint}?limit=1&after={cursor}"));
+        assert_eq!(page["executionId"],id);
+        for event in page["events"].as_array().unwrap(){
+            assert_eq!(event["runRef"]["runId"],id);
+            assert_eq!(event["sourceJournal"],"execution");
+            assert!(event["eventSeq"].as_u64().unwrap()>cursor);
+            assert!(event.get("record").is_none(),"raw records must not leak");
+            phases.push(event["phase"].as_str().unwrap().to_string());
+        }
+        cursor=page["nextAfter"].as_u64().unwrap();
+        if page["hasMore"]==false{break;}
+    }
+    assert!(phases.iter().any(|phase|phase=="running"),"{phases:?}");
+    assert_eq!(phases.last().map(String::as_str),Some("succeeded"),"{phases:?}");
+    assert_eq!(app.get(&format!("{endpoint}?after={cursor}"))["events"],json!([]));
+    let missing=app.client.get(format!("{}/api/executions/missing/events",app.base)).send().unwrap();
+    assert_eq!(missing.status(),reqwest::StatusCode::NOT_FOUND);
+}

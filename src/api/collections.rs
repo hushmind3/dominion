@@ -129,7 +129,6 @@ pub async fn save(
         if let Value::Object(ref mut map) = body {
             map.remove("apiKey");
         }
-        crate::integrations::mcp::invalidate(&state);
     }
     if kind == "skill" {
         // The execution path ignores `draft` even when `enabled` is true.
@@ -144,6 +143,9 @@ pub async fn save(
     }
     match state.store.put(&kind, &body) {
         Some(record) => {
+            if kind=="mcp" {
+                crate::integrations::mcp::invalidate(&state);
+            }
             state.bus.record(&kind, &record);
             Json(record).into_response()
         }

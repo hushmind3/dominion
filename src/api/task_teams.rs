@@ -108,6 +108,7 @@ mod tests {
             Vault::open(&config.key_path()));
         state.store.put("job",&json!({"id":"old-team","kind":"team",
             "status":"needs_review","input":{"goal":"Inspect","maxParallel":1,
+                "sessionId":"original-room-session","plan":[{"id":"read","jobId":"team-child:old-team:read"}],
                 "tasks":[{"id":"read","prompt":"Check files","mode":"read"}]}})).unwrap();
         let denied=retry_team(State(state.clone()),Path("old-team".into()),
             Json(json!({"confirm":false}))).await;
@@ -122,6 +123,8 @@ mod tests {
         assert_eq!(created[0]["retryOf"],"old-team");
         assert_eq!(created[0]["status"],"queued");
         assert_ne!(created[0]["id"],"old-team");
+        assert_eq!(created[0]["input"]["sessionId"],"original-room-session");
+        assert!(created[0]["input"]["plan"].is_null());
         assert!(state.store.get("job","team-child:old-team:read").is_none());
         crate::test_support::cleanup_dir(dir);
     }
