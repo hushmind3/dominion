@@ -12,3 +12,5 @@ pub mod plan_quality;
 pub mod reflection;
 pub mod planning;
 pub mod obligation_repair;
+pub mod adaptation;
+pub mod diagnostics;
