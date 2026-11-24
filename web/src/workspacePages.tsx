@@ -99,7 +99,7 @@ export const settingsPages = {
     render: () => <ModelHub />,
   },
   agents: {
-    label: 'nav.agents',
+    label: 'nav.prompts',
     description: 'workspace.description.agents',
     group: 'nav.group.workspace',
     icon: Bot,
