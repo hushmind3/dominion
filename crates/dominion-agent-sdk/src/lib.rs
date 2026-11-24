@@ -3,7 +3,8 @@
 //! Hosts supply model/tool adapters, permission checks and a durable journal.
 pub use dominion_algorithms as algorithms;
 pub use dominion_core as runtime;
-pub use dominion_algorithms::engine::Engine;
+pub use dominion_harness as harness;
+pub use dominion_harness::Engine;
 pub use dominion_core::budget::BudgetLedger;
 pub use dominion_core::domain::RunStatus;
 pub use dominion_core::hosted::{Action, BoxFuture, DispatchResult, Dispatcher, Journal, Receipt, Snapshot, dispatch_batch};

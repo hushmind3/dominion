@@ -10,9 +10,11 @@ const product=members.find(pkg=>pkg.name==='dominion-rust')
 const core=members.find(pkg=>pkg.name==='dominion-core')
 const algorithms=members.find(pkg=>pkg.name==='dominion-algorithms')
 const sdk=members.find(pkg=>pkg.name==='dominion-agent-sdk')
-if(!product||!core||!algorithms||!sdk)throw Error('Missing product/native core/algorithm/SDK workspace member')
+const harness=members.find(pkg=>pkg.name==='dominion-harness')
+if(!product||!core||!algorithms||!sdk||!harness)throw Error('Missing product/native core/algorithm/SDK workspace member')
 const dependsOn=(from,to)=>from.dependencies.some(dep=>dep.name===to.name&&dep.path===path.dirname(to.manifest_path))
 if(!dependsOn(product,sdk)||!dependsOn(sdk,core)||!dependsOn(sdk,algorithms)||
+   !dependsOn(sdk,harness)||!dependsOn(harness,core)||harness.dependencies.some(dep=>[sdk.name,product.name,algorithms.name].includes(dep.name))||core.dependencies.some(dep=>dep.name===harness.name)||
    core.dependencies.some(dep=>dep.name===sdk.name)||algorithms.dependencies.some(dep=>dep.name===sdk.name)||
    sdk.dependencies.some(dep=>dep.name===product.name))
   throw Error('Native SDK must compose core and algorithms independently of the product')
@@ -193,7 +195,9 @@ for(const source of [activeContract,harnessContract,extensionContract]){
     throw Error('Active architecture docs disagree with the single Rust harness owner')
 }
 const outcome=readFileSync(path.join(root,'src/engine/chat/outcome.rs'),'utf8')
-const driver=readFileSync(path.join(root,'crates/dominion-algorithms/src/engine.rs'),'utf8')
+const driver=readFileSync(path.join(root,'crates/dominion-harness/src/engine.rs'),'utf8')
+const legacyDriver=readFileSync(path.join(root,'crates/dominion-algorithms/src/engine.rs'),'utf8')
+if(!legacyDriver.includes('pub use dominion_harness::engine::*;')||legacyDriver.includes('fn drive'))throw Error('Duplicate execution loop in algorithm package')
 const nativePort=readFileSync(path.join(root,'crates/dominion-core/src/runtime_port.rs'),'utf8')
 const executionEvents=readFileSync(path.join(root,'src/events.rs'),'utf8')
 if(!existsSync(path.join(root,'crates/dominion-core/src/run_event.rs'))||

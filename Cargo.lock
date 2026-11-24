@@ -327,6 +327,7 @@ version = "0.1.0"
 dependencies = [
  "dominion-algorithms",
  "dominion-core",
+ "dominion-harness",
  "serde_json",
  "tokio",
 ]
@@ -336,8 +337,8 @@ name = "dominion-algorithms"
 version = "0.1.0"
 dependencies = [
  "dominion-core",
+ "dominion-harness",
  "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -350,6 +351,15 @@ dependencies = [
  "sha2",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "dominion-harness"
+version = "0.1.0"
+dependencies = [
+ "dominion-core",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

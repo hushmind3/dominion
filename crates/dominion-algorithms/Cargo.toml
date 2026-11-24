@@ -3,11 +3,10 @@ name = "dominion-algorithms"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Dominion agent-loop algorithm atop the native core"
+description = "Dominion decision algorithms and compatibility exports"
 
 [dependencies]
 dominion-core = { path = "../dominion-core" }
+dominion-harness = { path = "../dominion-harness" }
 serde_json = "1"
 
-[dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt", "time"] }

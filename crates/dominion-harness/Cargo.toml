@@ -1,0 +1,13 @@
+[package]
+name = "dominion-harness"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "DOMINION single native execution harness"
+
+[dependencies]
+dominion-core = { path = "../dominion-core", version = "0.3.0" }
+
+[dev-dependencies]
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt", "time"] }

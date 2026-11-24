@@ -9,6 +9,7 @@ on:
       - 'src/**'
       - 'crates/dominion-core/**'
       - 'crates/dominion-algorithms/**'
+      - 'crates/dominion-harness/**'
       - 'crates/dominion-agent-sdk/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -24,6 +25,7 @@ on:
       - 'src/**'
       - 'crates/dominion-core/**'
       - 'crates/dominion-algorithms/**'
+      - 'crates/dominion-harness/**'
       - 'crates/dominion-agent-sdk/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -71,7 +73,9 @@ jobs:
       - name: Versioned Chat/Room/SDK execution correlation (dev profile)
         run: cargo test --locked --bin dominion-rust events::tests
       - name: Isolated agent-loop algorithm regressions (dev profile)
-        run: cargo test --locked -p dominion-algorithms --lib
+        run: |
+          cargo test --locked -p dominion-algorithms --lib
+          cargo test --locked -p dominion-harness --lib
       - name: Standalone Rust SDK embedding contracts
         run: cargo test --locked -p dominion-agent-sdk
       - name: Durable participant room cursors and anti-regression (dev profile)

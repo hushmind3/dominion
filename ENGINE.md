@@ -6,7 +6,7 @@ design notes and branch experiments are not the deployed product contract.
 ## 1. One kernel, one effect boundary
 
 The **single mandatory agent harness loop** is
-[`dominion_algorithms::engine::Engine::drive`](crates/dominion-algorithms/src/engine.rs).
+[`dominion_harness::engine::Engine::drive`](crates/dominion-harness/src/engine.rs).
 It implements [`dominion_core::runtime_port::AgentLoop`](crates/dominion-core/src/runtime_port.rs),
 where the core owns stable state, budgets, cancellations and journal contracts
 — not a competing execution loop. Optional strategies are selected by
@@ -83,3 +83,5 @@ execution, message, approval and SDK records when an authoritative execution
 ID is present. Existing event `type`, `kind`, `seq` and record payloads
 remain unchanged; unrelated room IDs and job IDs are **never** misidentified
 as execution IDs. The global `seq` remains the reconnect/replay cursor.
+
+The `dominion-algorithms` crate owns standalone decision kernels; its legacy engine module reexports `dominion-harness` for compatibility. Product knowledge and strategy storage adapters remain in `src/addons`.

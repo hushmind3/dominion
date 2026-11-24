@@ -2,10 +2,10 @@
 
 ## Execution graph
 
-`Chat / Rooms / Tasks / Workflows / SDK → product adapter → dominion-algorithms::Engine::drive → dominion-core contracts / tool admission → providers + SQLite journal`
+`Chat / Rooms / Tasks / Workflows / SDK → product adapter → dominion-harness::Engine::drive → dominion-core contracts / tool admission → providers + SQLite journal`
 
 - The **single mandatory Rust harness loop** is
-  [`dominion-algorithms::engine::Engine::drive`](../crates/dominion-algorithms/src/engine.rs).
+  [`dominion-harness::engine::Engine::drive`](../crates/dominion-harness/src/engine.rs).
 - The **`dominion-core` crate** owns immutable execution contracts, budgets,
   model-call admission, cancellation and replay-safe receipts. It owns **no
   parallel agent loop**; product-specific approval/verification adapters
@@ -308,3 +308,5 @@ checkout reports its observed Git revision once at runtime with
 `identitySource: source-checkout`, rather than claiming to embed that revision.
 Ordinary chat acceptance reads `execution_operations(runId)` only for relevant
 executions, not the entire historical tool log.
+
+The `dominion-algorithms` crate owns standalone decision kernels; its legacy engine module reexports `dominion-harness` for compatibility. Product knowledge and strategy storage adapters remain in `src/addons`.

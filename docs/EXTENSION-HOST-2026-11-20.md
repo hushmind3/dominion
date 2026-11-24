@@ -4,7 +4,7 @@
 
 `crates/dominion-core/` owns contracts, durable journal admission, cancellation
 and budgets. The **single mandatory agent iteration loop** is now
-`crates/dominion-algorithms/src/engine.rs`; the product host wires the
+`crates/dominion-harness/src/engine.rs`; the product host wires the
 model and tool phases into it. Neither crate imports MCP, messenger,
 memory or skills clients.
 
@@ -108,7 +108,7 @@ emphasize progressive discovery and lazy server activation.
 ## Source ownership split (2026-11-20)
 
 Native execution contracts remain in `crates/dominion-core`; the sole
-agent loop belongs to `crates/dominion-algorithms`. The product's
+agent loop belongs to `crates/dominion-harness`. The product's
 `src/engine` entrypoints own model/tool adapters, approval/effect receipts,
 recovery and verification.
 
@@ -134,7 +134,7 @@ all old imports are separate milestones, not claims made by this commit.
 ## Chat host extraction (same commit series)
 
 The native chat adapter remains at `src/engine/chat/runtime.rs`.
-The **single mandatory loop** is `dominion-algorithms::engine::Engine::drive`.
+The **single mandatory loop** is `dominion-harness::engine::Engine::drive`.
 The product-specific chat implementation is now owned by:
 - `src/addons/integrations/chat_product.rs` — product host callbacks
 - `src/addons/knowledge/chat_context.rs` — memory/prompt composition
@@ -162,7 +162,7 @@ The superseded `goal_control.rs` shim was later deleted; current modules are:
 - `src/addons/operations/job_control.rs`
 
 The app's `src/engine/mod.rs` keeps only the compatibility exports still used by product callers; the obsolete goal-outcome collector and deprecated transport entrypoint have been removed. The
-standalone `crates/dominion-algorithms` owns the only model/tool iteration loop,
+standalone `crates/dominion-harness` owns the only model/tool iteration loop,
 while `crates/dominion-core` owns stable execution infrastructure and ports.
 
 ## Optional strategy runtime boundary (2026-11-20)
@@ -191,3 +191,5 @@ owned by `native_web.rs` and `native_github.rs`; prior GitHub and delegation
 modules moved to integrations. Tool effects still pass through native approval,
 role admission and receipt tracking. The new `connectors=false` policy option
 hides and denies built-in web/browser/GitHub tools independently of external MCP.
+
+The `dominion-algorithms` crate owns standalone decision kernels; its legacy engine module reexports `dominion-harness` for compatibility. Product knowledge and strategy storage adapters remain in `src/addons`.

@@ -9,6 +9,7 @@ readme = "README.md"
 [dependencies]
 dominion-core = { path = "../dominion-core", version = "0.3.0" }
 dominion-algorithms = { path = "../dominion-algorithms", version = "0.1.0" }
+dominion-harness = { path = "../dominion-harness", version = "0.1.0" }
 
 serde_json = "1"
 
