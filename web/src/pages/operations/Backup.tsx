@@ -107,6 +107,7 @@ export function BackupPanel() {
       </Action>
       <Button variant="ghost" onClick={() => void reload()} disabled={Boolean(busy)}><RefreshCw size={15}/> {t('ops.refresh')}</Button>
     </div>
+    <p className="mt-3 text-sm text-muted">{tr('저장된 백업','Saved backups')} · {backups.value.length}{backups.value.length>0&&<span> · {formatBytes(backups.value.reduce((sum,b)=>sum+b.bytes,0))}</span>}</p>
     <details className="mt-4 rounded-xl border border-divider p-3">
       <summary className="cursor-pointer text-sm font-semibold">{tr('복구 및 보안 키 관리','Recovery and security keys')}{active?' · '+t('ops.backup.maintenanceActive'):''}</summary>
       <div className="mt-3 flex flex-wrap items-center gap-2"><StateTag online={active}>{active ? t('ops.backup.maintenanceActive') : t('ops.backup.maintenanceInactive')}</StateTag>

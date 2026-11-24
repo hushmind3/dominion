@@ -498,3 +498,16 @@ test('team retry and isolated changes require owner confirmation and backend-bou
  const tasks=source('src/pages/Tasks.tsx')
  assert.ok(tasks.includes('visibleIds={filtered.map(job=>job.id)}'))
 })
+
+test('settings keeps ordinary preferences separate from maintenance and diagnostic controls',()=>{
+ const hub=source('src/pages/SettingsHub.tsx')
+ const ops=source('src/pages/Operations.tsx')
+ assert.match(hub,/options\.slice\(0,5\)/)
+ assert.match(hub,/settingsArea="security"/)
+ assert.match(hub,/settingsArea="data"/)
+ assert.match(ops,/settingsArea==='general'&&<>/)
+ assert.match(ops,/settingsArea==='data'&&<BackupPanel/)
+ assert.match(ops,/settingsArea==='security'&&<>/)
+ assert.match(ops,/toolQuery\.trim\(\)\.toLowerCase\(\)/)
+ assert.doesNotMatch(ops,/tool\.approval\)\.slice\(0,24\)/)
+})

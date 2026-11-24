@@ -3,11 +3,13 @@ import {RefreshCw,Download} from 'lucide-react'
 import {Button} from './Primitives'
 import {Panel,Subheading,useRemote} from './UI'
 import {get,post} from '../api'
+import {useLocale} from '../i18n'
 
 type VersionInfo={supported:boolean;available:boolean;local?:string;remote?:string;running?:string;reason?:string}
 type Job={id:string;kind:string;status:string;error?:string;logs?:string[]}
 
 export function AppUpdatePanel(){
+ const en=useLocale()==='en',tr=(ko:string,eng:string)=>en?eng:ko
  const version=useRemote<VersionInfo>('/api/dev/update',{supported:false,available:false})
  const [jobId,setJobId]=useState('')
  const [busy,setBusy]=useState(false)
@@ -49,10 +51,11 @@ export function AppUpdatePanel(){
    setJobId(result.id)
   }catch(e){setBusy(false);setMessage('');setError((e as Error).message)}
  }
+ const needsRebuild=!!(version.value.running&&version.value.local&&version.value.running!==version.value.local)
  return <Panel className="min-w-0 p-5">
-  <Subheading title="업데이트" extra={<Button type="button" size="sm" variant="ghost" disabled={busy} onClick={()=>void version.reload()}><RefreshCw size={14}/> 확인</Button>}/>
-  <p className="text-[12px] leading-5 text-muted">가능한 설치 환경에서는 최신 버전 확인부터 설치와 재시작까지 앱 안에서 처리합니다.</p>
-  <details className="mt-3 text-xs text-muted"><summary className="cursor-pointer">버전 상세 정보</summary><div className="mt-2 grid gap-1.5 text-[11px]">
+  <Subheading title={tr("업데이트","Update")} extra={<Button type="button" size="sm" variant="ghost" disabled={busy} onClick={()=>void version.reload()}><RefreshCw size={14}/> {tr("확인","Check")}</Button>}/>
+  <p className="text-[12px] leading-5 text-muted">{tr('새 버전 설치와 재시작을 자동으로 처리합니다.','Install a new version and restart automatically.')}</p>
+  <details className="mt-3 text-xs text-muted"><summary className="cursor-pointer">{tr('버전 상세 정보','Version details')}</summary><div className="mt-2 grid gap-1.5 text-[11px]">
    {version.value.running&&<span>실행 엔진 · {version.value.running.slice(0,12)}</span>}
    {version.value.local&&<span>소스 버전 · {version.value.local.slice(0,12)}</span>}
    {version.value.running&&version.value.local&&version.value.running!==version.value.local&&<strong className="text-brand">업데이트된 소스를 실행하려면 재빌드가 필요합니다.</strong>}
@@ -60,10 +63,10 @@ export function AppUpdatePanel(){
    {version.value.reason&&<span className="text-brand">{version.value.reason}</span>}
    </div></details><div className="mt-3 grid gap-1.5 text-xs text-muted">
    {version.value.available&&<strong className="text-success">설치할 새 버전이 있습니다.</strong>}
-   {!version.value.available&&version.value.supported&&!version.value.reason&&<span>현재 최신 버전입니다.</span>}
+   {!version.value.available&&version.value.supported&&!version.value.reason&&!needsRebuild&&<span>{tr('현재 최신 버전입니다.','You are up to date.')}</span>}{needsRebuild&&<span>{tr('새 소스가 준비됐습니다. 적용하려면 재시작하세요.','New source is ready. Restart to apply it.')}</span>}{!version.value.supported&&!version.loading&&<span>{tr('현재 설치 방식은 앱 내 업데이트를 지원하지 않습니다.','In-app updates are unavailable for this installation.')}</span>}
    {message&&<span role="status" className="text-muted">{message}</span>}
    {error&&<span role="alert" className="text-danger">{error}</span>}
   </div>
-  <Button type="button" variant="primary" className="mt-3" disabled={!version.value.supported||busy} onClick={()=>void apply()}><Download size={15}/> {busy?'업데이트 처리 중':version.value.available?'업데이트 및 재시작':'재빌드 및 재시작'}</Button>
+  {version.value.supported&&(busy||version.value.available||needsRebuild)&&<Button type="button" variant="primary" className="mt-3" disabled={busy} onClick={()=>void apply()}><Download size={15}/> {busy?tr('업데이트 처리 중','Updating'):tr('업데이트 적용 및 재시작','Apply update & restart')}</Button>}
  </Panel>
 }
