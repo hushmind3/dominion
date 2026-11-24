@@ -230,6 +230,33 @@ mod algorithm_profile_api_tests {
         (state,root)
     }
     #[tokio::test]
+    async fn team_steps_exposes_only_owned_children_and_scheduler_completion(){
+        let (state,root)=state();
+        let task=|id:&str,deps:Vec<&str>|json!({"id":id,"prompt":id,"dependsOn":deps});
+        state.store.put("job",&json!({"id":"lead","kind":"team","status":"running",
+            "input":{"goal":"Inspect","maxParallel":1,"tasks":[task("read",vec![]),
+                task("waiting",vec!["read"]),task("foreign",vec![])]}})).unwrap();
+        state.store.put("job",&json!({"id":"team-child:lead:read","kind":"prompt",
+            "status":"completed","input":{"parentRunId":"lead","teamTaskId":"read",
+            "teamMode":"read","bridgeRuntime":"native"},"result":{"status":"completed","answer":"observed"}})).unwrap();
+        state.store.put("job",&json!({"id":"team-child:lead:foreign","kind":"prompt",
+            "status":"completed","input":{"parentRunId":"other","teamTaskId":"foreign",
+            "teamMode":"read","bridgeRuntime":"native"},"result":{"status":"completed","answer":"foreign secret"}})).unwrap();
+        let result=team_steps(State(state.clone()),Path("lead".into())).await;
+        assert_eq!(result.status(),StatusCode::OK);
+        let bytes=axum::body::to_bytes(result.into_body(),usize::MAX).await.unwrap();
+        let value:Value=serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["jobs"].as_array().unwrap().len(),1);
+        assert_eq!(value["tasks"][0]["dependencySatisfied"],true);
+        assert_eq!(value["tasks"][0]["verified"],false);
+        assert_eq!(value["tasks"][1]["recordState"],"not_started");
+        assert_eq!(value["tasks"][2]["recordState"],"foreign_binding");
+        assert_eq!(value["tasks"][2]["dependencySatisfied"],false);
+        assert!(value["tasks"][2]["answerExcerpt"].is_null());
+        assert_eq!(value["missing"],json!(["team-child:lead:foreign"]));
+        drop(state);let _=std::fs::remove_dir_all(root);
+    }
+    #[tokio::test]
     async fn job_api_rejects_unknown_and_nonstring_profiles_before_queueing(){
         let (state,root)=state();
         for id in [json!("uninstalled"),json!(42),json!(null)]{

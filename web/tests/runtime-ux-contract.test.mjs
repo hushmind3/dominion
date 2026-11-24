@@ -174,7 +174,7 @@ test('team outcomes prioritize saved agent answers over raw receipts',()=>{
  const panel=source('src/components/TeamWorkflowPanel.tsx')
  assert.match(panel,/Array\.isArray\(team\.result\?\.nodes\)/)
  assert.match(panel,/typeof node\.answer==='string'/)
- assert.match(panel,/실제 AI 작업 결과/)
+ assert.match(panel,/저장된 AI 작업 결과/)
  assert.match(panel,/agentNames\?\.\[String\(report\.agentId/)
  assert.match(panel,/reports\.slice\(0,2\)/)
  assert.match(panel,/전체 .*개 결과 보기/)

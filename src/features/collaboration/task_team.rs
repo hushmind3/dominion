@@ -342,6 +342,7 @@ pub(crate) fn cancel_children(state:&AppState,parent:&str,tasks:&[Task]){
     for task in tasks {
         let id=child_id(parent,&task.id);
         if let Some(current)=state.store.get("job",&id) {
+            if !belongs_to_team(parent,task,&current){continue;}
             if matches!(current["status"].as_str(),Some("queued"|"running")){
                 if let Some(saved)=state.store.patch_if("job",&id,"status",
                     &current["status"],&json!({"status":"cancelled",

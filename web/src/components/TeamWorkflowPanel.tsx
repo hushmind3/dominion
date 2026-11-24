@@ -17,11 +17,11 @@ type Job={
  }
 }
 type NativeTask={id:string;prompt:string;agentId?:string;dependsOn?:string[];mode?:string;runtime?:string}
-type Step={id:string;jobId:string;agentId?:string;profile?:string;dependsOn?:string[];remoteWorker?:boolean;prompt?:string;runtime?:string;recordState?:string;dependencySatisfied?:boolean;evidenceGrade?:string;verified?:boolean}
+type Step={id:string;jobId:string;agentId?:string;profile?:string;dependsOn?:string[];remoteWorker?:boolean;prompt?:string;runtime?:string;recordState?:string;status?:string;dependencySatisfied?:boolean;evidenceGrade?:string;verified?:boolean}
 type ProjectedTask={taskId:string;childJobId:string;prompt?:string;agentId?:string;dependsOn?:string[];mode?:string;runtime?:string;status?:string|null;recordState:string;dependencySatisfied:boolean;evidenceGrade?:string|null;verified:boolean;answerExcerpt?:string|null}
 type TeamSteps={teamId:string;jobs:Job[];missing:string[];tasks?:ProjectedTask[];status?:string}
 const nativeStep=(task:NativeTask,teamId:string):Step=>({id:task.id,jobId:'team-child:'+teamId+':'+task.id,prompt:task.prompt,agentId:task.agentId,dependsOn:task.dependsOn,profile:task.mode,runtime:task.runtime,remoteWorker:task.runtime==='remote'})
-const projectedStep=(task:ProjectedTask):Step=>({id:task.taskId,jobId:task.childJobId,prompt:task.prompt,agentId:task.agentId,dependsOn:task.dependsOn,profile:task.mode,runtime:task.runtime,remoteWorker:task.runtime==='remote',recordState:task.recordState,dependencySatisfied:task.dependencySatisfied,evidenceGrade:task.evidenceGrade||undefined,verified:task.verified})
+const projectedStep=(task:ProjectedTask):Step=>({id:task.taskId,jobId:task.childJobId,prompt:task.prompt,agentId:task.agentId,dependsOn:task.dependsOn,profile:task.mode,runtime:task.runtime,remoteWorker:task.runtime==='remote',recordState:task.recordState,status:task.status||undefined,dependencySatisfied:task.dependencySatisfied,evidenceGrade:task.evidenceGrade||undefined,verified:task.verified})
 const externalJob=(job?:Job)=>Boolean(job?.input?.externalRuntime||(job?.input?.bridgeRuntime&&job.input.bridgeRuntime!=='native'))
 const compact=(value:unknown)=>typeof value==='string'?value:'—'
 const humanStatus=(status:string|undefined,en:boolean)=>({not_started:en?'Not started':'실행 대기',queued:en?'Waiting':'대기 중',running:en?'Working':'작업 중',completed:en?'Finished':'완료',failed:en?'Failed':'실패',cancelled:en?'Stopped':'중단됨',needs_review:en?'Review needed':'검토 필요',interrupted:en?'Interrupted':'중단됨'} as Record<string,string>)[status||'']||(en?'Checking…':'확인 중…')
@@ -55,7 +55,7 @@ function WorkerStep({step,job,ids,onCreated,index=0,agentNames}:{step:Step;job?:
  const en=useLocale()==='en'
  const [showResult,setShowResult]=useState(false)
  const done=step.dependencySatisfied===true
- const displayedStatus=step.recordState==='foreign_binding'?'needs_review':step.recordState==='not_started'?'not_started':job?.status==='completed'&&step.dependencySatisfied===false?'needs_review':job?.status
+ const displayedStatus=step.recordState==='foreign_binding'?'needs_review':step.recordState==='not_started'?'not_started':(step.status||job?.status)==='completed'&&step.dependencySatisfied===false?'needs_review':step.status||job?.status
  const fileHash=job?.delegationPatchSha256
  const deps=(step.dependsOn||[])
  const receipt=job?.result
@@ -115,16 +115,17 @@ function TeamCard({team,summary,onCreated,initiallyOpen=false,agentNames}:{team:
  const fresh=!details.loading&&!details.error&&details.value.teamId===team.id&&Array.isArray(details.value.tasks)
  const projected=fresh?details.value.tasks!:undefined
  const rows=(team.result?.tasks as Array<Record<string,unknown>>|undefined)||[]
- const plan=projected?projected.map(projectedStep):Array.isArray(team.input?.tasks)
+ const plan:Step[]=projected?projected.map(projectedStep):Array.isArray(team.input?.tasks)
   ?team.input.tasks.map(task=>nativeStep(task,team.id))
   :Array.isArray(team.input?.plan)?team.input.plan:rows.map(row=>({id:String(row.taskId||''),jobId:String(row.childJobId||''),agentId:row.agentId?String(row.agentId):undefined}))
  const records=fresh?new Map(details.value.jobs.map(j=>[j.id,j])):new Map<string,Job>()
- const statuses=Object.fromEntries(plan.map(step=>[step.id,step.dependencySatisfied===true?'completed':records.get(step.jobId)?.status==='completed'?'needs_review':records.get(step.jobId)?.status||'unknown']))
+ const statuses=Object.fromEntries(plan.map(step=>[step.id,step.dependencySatisfied===true?'completed':(step.status||records.get(step.jobId)?.status)==='completed'?'needs_review':step.status||records.get(step.jobId)?.status||'unknown']))
  const complete=plan.filter(step=>step.dependencySatisfied===true).length
  const unknown=fresh?plan.filter(step=>step.recordState==='foreign_binding').length:plan.length
- const review=classifyTeamReview(team)
+ const currentStatus=fresh?details.value.status||team.status:team.status
+ const review=classifyTeamReview({...team,status:currentStatus})
  const nodes=projected?projected.filter(row=>row.recordState==='present').map(row=>({jobId:row.childJobId,agentId:row.agentId,answer:row.answerExcerpt,evidenceGrade:row.evidenceGrade})):
-  Array.isArray(team.result?.nodes)?team.result.nodes:rows.map(row=>({agentId:row.agentId,answer:row.answerExcerpt}))
+  Array.isArray(team.input?.tasks)?[]:Array.isArray(team.result?.nodes)?team.result.nodes:rows.map(row=>({agentId:row.agentId,answer:row.answerExcerpt}))
  const reports=nodes.filter(
   (node):node is Record<string,unknown>=>Boolean(node)&&typeof node==='object'&&!Array.isArray(node)
  ).filter(node=>typeof node.answer==='string'&&String(node.answer).length>0)
@@ -137,12 +138,12 @@ function TeamCard({team,summary,onCreated,initiallyOpen=false,agentNames}:{team:
   <button type="button" aria-expanded={open} onClick={()=>setOpen(v=>!v)} className="flex w-full min-w-0 justify-between gap-2 text-left">
    <span className="min-w-0"><strong className="block break-words text-[14px] leading-6">{team.input?.goal||team.id}</strong>
     <span className="mt-1 block text-[12px] text-muted">{en?'Steps satisfying execution conditions':'실행 조건 충족 단계'} {fresh?complete+' / '+plan.length:(en?'Checking…':'확인 중…')}
-     {unknown>0&&<> · {en?'Checking':'확인 중'} {unknown}</>}</span></span>
-   <span className={'shrink-0 self-start rounded-lg border px-3 py-1.5 text-[12px] font-semibold '+stateClass(team.status)}>{humanStatus(team.status,en)}</span>
+     {unknown>0&&<> · {fresh?(en?'Invalid binding':'기록 불일치'):(en?'Checking':'확인 중')} {unknown}</>}</span></span>
+   <span className={'shrink-0 self-start rounded-lg border px-3 py-1.5 text-[12px] font-semibold '+stateClass(currentStatus)}>{humanStatus(currentStatus,en)}</span>
   </button>
-  <progress className="mt-3 block h-2 w-full accent-[var(--color-brand)]" value={complete} max={Math.max(1,plan.length)}
+  <progress className="mt-3 block h-2 w-full accent-[var(--color-brand)]" value={fresh?complete:undefined} max={Math.max(1,plan.length)}
    aria-label={en?'Team steps completed':'완료된 협업 작업 단계'}/>
-  {['queued','running'].includes(details.value.status||team.status||'')&&<button type="button" disabled={actionBusy} onClick={()=>void stopTeam()} className="mt-3 rounded-lg border border-divider px-3 py-2 text-[11px] text-danger disabled:opacity-50">{en?'Stop team and workers':'협업 및 하위 작업 중단'}</button>}
+  {fresh&&['queued','running'].includes(currentStatus||'')&&<button type="button" disabled={actionBusy} onClick={()=>void stopTeam()} className="mt-3 rounded-lg border border-divider px-3 py-2 text-[11px] text-danger disabled:opacity-50">{en?'Stop team and workers':'협업 및 하위 작업 중단'}</button>}
   {actionError&&<p role="alert" className="mt-2 text-[11px] text-danger">{actionError}</p>}
   {reports.length>0&&<section className="mt-4 rounded-xl border border-success-soft bg-surface p-4" aria-label={en?'Recorded worker answers':'저장된 AI 작업 결과'}>
    <div className="flex flex-wrap items-center justify-between gap-2">
