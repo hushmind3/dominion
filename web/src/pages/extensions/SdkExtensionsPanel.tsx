@@ -89,7 +89,7 @@ function GrantPanel({appId,enabled,onRun}:{appId:string;enabled:boolean;onRun:(i
    <div className="flex gap-2"><Action disabled={busy||!valid||grant.loading||Boolean(grant.error)} onClick={()=>{if(grant.value&&!confirm(en?'Rotate credential and reset request allowance?':'기존 인증키를 폐기하고 새 요청 한도를 발급할까요?'))return;void run(async()=>{const response=await post<{grant:Grant;token:string}>(path,{providerId,model,tokenBudget:Number(budget),maxRuns:Number(maxRuns)});setToken(response.token)})}}>{grant.value?(en?'Rotate key':'키 재발급'):(en?'Issue key':'키 발급')}</Action>
    <Button variant="ghost" disabled={busy||!grant.value} onClick={()=>{if(confirm(en?'Revoke this credential?':'이 인증키를 폐기할까요?'))void run(async()=>{await del(path)})}}>{en?'Revoke key':'키 폐기'}</Button></div>
    {!enabled&&<p className="text-xs text-muted">{en?'Enable the app before testing its connection.':'연결 시험은 앱을 활성화한 뒤 사용할 수 있습니다.'}</p>}
-   {token&&<div className="rounded-lg border border-divider p-3"><p className="text-xs">{en?'Copy this key now. It will not be shown again.':'한 번만 표시되는 인증키입니다. 지금 복사해 외부 앱에 설정하세요.'}</p><TextInput aria-label={en?'One-time credential':'일회 표시 인증키'} readOnly value={token}/><Button variant="ghost" onClick={()=>setToken('')}>{en?'Hide key':'키 숨기기'}</Button><ScopedConnectionTest appId={appId} token={token} enabled={enabled&&!busy&&!grant.error&&Boolean(grant.value&&grant.value.remainingRuns>0)} onRun={onRun}/></div>}
+   {token&&<div className="rounded-lg border border-divider p-3"><p className="text-xs">{en?'Copy this key now. It will not be shown again.':'한 번만 표시되는 인증키입니다. 지금 복사해 외부 앱에 설정하세요.'}</p><TextInput aria-label={en?'One-time credential':'일회 표시 인증키'} readOnly value={token}/><Button variant="ghost" onClick={()=>setToken('')}>{en?'Hide key':'키 숨기기'}</Button><ScopedConnectionTest appId={appId} token={token} enabled={enabled&&!busy&&!grant.error&&Boolean(grant.value)} remaining={grant.value?.remainingRuns??0} onRun={onRun}/></div>}
   </div>}
  </div>
 }
@@ -132,20 +132,26 @@ function AppRunHistory({appId,selected,onSelect}:{appId:string;selected:string;o
   </div>}
  </div>
 }
-function ScopedConnectionTest({appId,token,enabled,onRun}:{appId:string;token:string;enabled:boolean;onRun:(id:string)=>void}){
+function ScopedConnectionTest({appId,token,enabled,remaining,onRun}:{appId:string;token:string;enabled:boolean;remaining:number;onRun:(id:string)=>void}){
  const en=useLocale()==='en'
  const [instruction,setInstruction]=useState(en?'Reply with OK.':'연결되었습니다라고 답해주세요.')
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[submitted,setSubmitted]=useState('')
  const retry=useRef<{instruction:string;key:string}|null>(null),inFlight=useRef(false)
+ // The server checks the durable retry receipt before charging quota. If the
+ // response was lost after the last allowance was consumed, allow replay of
+ // that exact message only, never a new submission at zero remaining.
+ const replay=Boolean(retry.current&&retry.current.instruction===instruction)
+ const canSubmit=enabled&&(remaining>0||replay)
  const submit=async()=>{
-  if(!enabled||!instruction.trim()||inFlight.current)return
+  if(!canSubmit||!instruction.trim()||inFlight.current)return
   inFlight.current=true;setBusy(true);setError('')
-  if(retry.current?.instruction!==instruction)retry.current={instruction,key:crypto.randomUUID()}
   try{
+   const attempt=retry.current?.instruction===instruction?retry.current:{instruction,key:crypto.randomUUID()}
+   retry.current=attempt
    // Intentionally do not use the owner transport; exercise exactly the external credential.
    const res=await fetch(endpoint+'/'+encodeURIComponent(appId)+'/runs',{method:'POST',redirect:'error',cache:'no-store',
     headers:{'Content-Type':'application/json','x-dominion-extension-token':token},
-    body:JSON.stringify({instruction,idempotencyKey:retry.current.key})})
+    body:JSON.stringify({instruction,idempotencyKey:attempt.key})})
    const row=await res.json()
    if(!res.ok||typeof row.id!=='string')throw new Error(row.error||('HTTP '+res.status))
    setSubmitted(row.id);retry.current=null;onRun(row.id);refresh(endpoint+'/'+encodeURIComponent(appId)+'/history')
@@ -155,7 +161,8 @@ function ScopedConnectionTest({appId,token,enabled,onRun}:{appId:string;token:st
   <strong className="text-xs">{en?'Test external connection':'외부 앱 연결 시험'}</strong>
   <p className="text-xs text-muted">{en?'Uses one request from this key and the selected model. No owner credential is sent.':'이 인증키로 실제 모델을 호출합니다. 요청 1회가 차감되며 관리자 인증키는 전송하지 않습니다.'}</p>
   <TextArea aria-label={en?'Test message':'연결 시험 메시지'} value={instruction} disabled={busy||!enabled} onChange={e=>{setInstruction(e.target.value);setSubmitted('')}}/>
-  <Button disabled={!enabled||busy||!instruction.trim()||Boolean(submitted)} onClick={()=>void submit()}>{busy?(en?'Submitting…':'요청 중…'):(en?'Send test request':'연결 시험 보내기')}</Button>
+  <Button disabled={!canSubmit||busy||!instruction.trim()||Boolean(submitted)} onClick={()=>void submit()}>{busy?(en?'Submitting…':'요청 중…'):replay?(en?'Retry same request':'같은 요청 다시 확인'):(en?'Send test request':'연결 시험 보내기')}</Button>
+  {enabled&&remaining===0&&!submitted&&<p className="text-xs text-muted">{replay?(en?'No allowance remains. Retrying the same receipt will not create a new request.':'남은 횟수는 0회입니다. 같은 요청의 접수 기록만 다시 확인할 수 있습니다.'):(en?'Request allowance exhausted.':'허용 요청 횟수를 모두 사용했습니다.')}</p>}
   <Notice message={error}/>
   {submitted&&<p role="status" className="text-xs">{en?'Request accepted. See run history for the actual response.':'요청이 접수됐습니다. 아래 실행 기록에서 실제 응답을 확인하세요.'}</p>}
  </div>
