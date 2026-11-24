@@ -1,0 +1,50 @@
+# DOMINION Rust SDK
+
+The app and external Rust integrations use the same native loop. No separate
+agent implementation is introduced.
+
+- `dominion-core`: runtime contracts, budget, journal, tool schemas and effects.
+- `dominion-algorithms`: executable iteration algorithm.
+- `dominion-sdk`: public facade used by the app itself. Embedded hosts implement
+  `Host` and `Journal` and supply model/tool/approval/verification adapters.
+  Disable default features for embedding without the HTTP client.
+- `packages/sdk-typescript`: JavaScript/TypeScript HTTP transport.
+
+## External Rust integration
+
+In a checkout, add the dependency using the local path (or a Git revision
+with package = "dominion-sdk"). Registry publication is not implied.
+
+```toml
+dominion-sdk = { path = "/path/to/dominion-rust/crates/dominion-sdk" }
+```
+
+```rust,no_run
+use dominion_sdk::{Client, StartRun};
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+let sdk = Client::connect("http://127.0.0.1:4317")?;
+let run = sdk.start_run(&StartRun {
+    instruction: "Inspect this project".into(),
+    idempotency_key: Some("request-unique-1".into()),
+    ..Default::default()
+}).await?;
+let run = sdk.get_run(&run.id).await?;
+println!("{:?}", run.status);
+# Ok(()) }
+```
+
+Wait helpers return at owner-action boundaries. Only verified native success
+counts as success. The SDK never automatically approves or replays uncertain
+effects. Callers may provide a unique stable idempotency key per logical request.
+
+## Native embedding
+
+Use `default-features = false` and implement `dominion_sdk::Host` plus the
+durable `Journal` contract. Construct `Context` with a native snapshot, budget,
+and journal, then invoke `dominion_sdk::run(&mut host, context)`. The product
+chat adapter uses this exact entry point. An embedding host is responsible for
+its own permission enforcement and durable adapters; merely linking this
+library does not grant access to the app database, model keys or tools.
+
+Run `cargo test --locked -p dominion-sdk` and
+`cargo check --locked -p dominion-sdk --no-default-features`.

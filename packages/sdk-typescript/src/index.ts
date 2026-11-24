@@ -5,7 +5,7 @@
 export type SdkRunStatus =
   | 'queued' | 'running' | 'awaiting_approval' | 'in_doubt'
   | 'interrupted' | 'completed' | 'cancelled' | 'exhausted'
-  | 'denied' | 'failed';
+  | 'denied' | 'failed' | 'needs_review';
 
 
 /** Identical execution identity emitted by the SQLite event bus and SDK. */
@@ -124,9 +124,10 @@ export interface ToolCall {
   arguments: Record<string, unknown>;
 }
 export interface ModelUsage {
-  prompt_tokens: number;
-  completion_tokens: number;
-  cached_prompt_tokens: number;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  cached_prompt_tokens: number | null;
+  estimated?: boolean;
 }
 export interface RunCheckpoint {
   state: { state: string; detail?: Record<string, unknown> };
@@ -141,7 +142,15 @@ export interface RunCheckpoint {
   acceptancePassed?: boolean | null;
   failureClass?: string | null;
 }
+export interface RunActions {
+  approve: boolean; deny: boolean; cancel: boolean; resume: boolean;
+  reconcile: boolean; steer: boolean; refresh: boolean;
+}
 export interface AgentRun {
+  actions?: RunActions;
+  uncertainEffectCount?: number;
+  sessionId?: string;
+  readOnly?: boolean;
   id: string;
   status: SdkRunStatus;
   instruction: string;
@@ -163,6 +172,9 @@ export interface StartRun {
   instruction: string;
   providerId?: string;
   model?: string;
+  agentId?: string;
+  idempotencyKey?: string;
+  source?: {kind: string; id: string};
   verifyCommand?: string;
   maxRounds?: number;
   workspaceDir?: string;
@@ -183,10 +195,7 @@ export interface WaitRunOptions {
 
 /** Returns when work is finished or the owner must take action. */
 export const isRunSettled = (run: AgentRun): boolean =>
-  new Set<SdkRunStatus>([
-    'completed', 'failed', 'cancelled', 'exhausted', 'denied',
-    'awaiting_approval', 'in_doubt', 'interrupted',
-  ]).has(run.status);
+  run.status !== 'queued' && run.status !== 'running';
 
 export interface ClientOptions {
   baseUrl?: string;
@@ -225,7 +234,7 @@ export class DominionAgentClient {
     if (data !== undefined) headers['content-type'] = 'application/json';
     if (this.adminToken) headers['x-dominion-token'] = this.adminToken;
     const response = await this.transport(this.baseUrl + path, {
-      method, headers, body: data === undefined ? undefined : JSON.stringify(data), signal,
+      method, headers, body: data === undefined ? undefined : JSON.stringify(data), signal, redirect: 'error',
     });
     const raw = await response.text();
     let decoded: unknown;
@@ -348,6 +357,14 @@ export class DominionAgentClient {
     return this.request('POST', `/api/sdk/runs/${encodeURIComponent(id)}/approve`,
       {callId}, signal);
   }
+  async denyCall(id: string, callId: string, signal?: AbortSignal): Promise<AgentRun> {
+    const current = await this.getRun(id, signal);
+    if (!current.actions?.deny || current.checkpoint?.pendingCall?.id !== callId)
+      throw new DominionSdkError('Not the run’s pending approval', 409);
+    const result = await this.request<{status:string}>('POST','/api/approvals',{id:callId,allow:false},signal);
+    if (result.status !== 'denied') throw new DominionSdkError('Approval was not denied',409);
+    return this.getRun(id,signal);
+  }
   reconcileRun(
     id: string,
     observation: {applied: boolean; details: string},
@@ -407,7 +424,7 @@ export class DominionAgentClient {
         && run.verified === true) return run;
     throw new DominionSdkError(
       run.error ?? `Dominion task is ${run.status}; verified success evidence is missing`,
-      run.status === 'awaiting_approval' || run.status === 'in_doubt' ? 409 : 422,
+      ['awaiting_approval','in_doubt','interrupted','needs_review'].includes(run.status) ? 409 : 422,
     );
   }
 }

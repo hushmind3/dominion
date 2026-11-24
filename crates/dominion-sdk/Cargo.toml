@@ -1,0 +1,19 @@
+[package]
+name = "dominion-sdk"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Embedded native Dominion harness and optional HTTP client"
+repository = "https://github.com/hushmind3/dominion-rust"
+
+[features]
+default = ["http"]
+http = ["dep:reqwest", "dep:serde", "dep:serde_json", "dep:tokio"]
+
+[dependencies]
+dominion-core = { path = "../dominion-core" }
+dominion-algorithms = { path = "../dominion-algorithms" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+tokio = { version = "1", features = ["time"], optional = true }

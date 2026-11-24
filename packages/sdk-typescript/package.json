@@ -1,9 +1,11 @@
 {
   "name": "@hushmind3/dominion-sdk",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "type": "module",
-  "description": "Optional TypeScript HTTP client for the first-party Dominion Rust Agent SDK",
+  "description": "TypeScript SDK for Dominion native Rust agent execution",
+  "license": "MIT",
+  "repository": {"type":"git","url":"https://github.com/hushmind3/dominion-rust.git","directory":"packages/sdk-typescript"},
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

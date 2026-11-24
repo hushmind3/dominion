@@ -194,3 +194,20 @@ test('room cursor is scoped to the room and never aliases global SSE position', 
   assert.equal(page.events[0].originRun,'native-exec');
   assert.match(visited[0],/\/api\/rooms\/room%2Fa\/events\?after=120&limit=50$/);
 });
+
+
+test('needs_review stops polling instead of replaying completed work',async()=>{
+  const {client,calls}=mockClient([{id:'run id',status:'needs_review'}]);
+  assert.equal((await client.waitForRun('run id')).status,'needs_review');
+  assert.equal(calls(),1);
+  await assert.rejects(client.waitForVerifiedRun('run id'), e=>e.status===409);
+});
+test('start forwards caller retry identity and provenance',async()=>{
+  const client=new DominionAgentClient({fetch:async(url,request)=>{
+    assert.match(String(url),/\/api\/sdk\/runs$/);
+    assert.equal(request.method,'POST');
+    assert.deepEqual(JSON.parse(request.body),{instruction:'goal',idempotencyKey:'retry-1',agentId:'a',source:{kind:'issue',id:'1'}});
+    return new Response(JSON.stringify({id:'r',status:'queued'}));
+  }});
+  await client.startRun({instruction:'goal',idempotencyKey:'retry-1',agentId:'a',source:{kind:'issue',id:'1'}});
+});

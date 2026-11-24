@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/dominion-core", "crates/dominion-algorithms"]
+members = [".", "crates/dominion-core", "crates/dominion-algorithms", "crates/dominion-sdk"]
 
 [package]
 name = "dominion-rust"
@@ -11,6 +11,7 @@ repository = "https://github.com/hushmind3/dominion-rust"
 readme = "README.md"
 
 [dependencies]
+dominion-sdk = { path = "crates/dominion-sdk", default-features = false }
 dominion-core = { path = "crates/dominion-core" }
 dominion-algorithms = { path = "crates/dominion-algorithms" }
 axum = "0.7"

@@ -353,6 +353,7 @@ dependencies = [
  "chrono",
  "dominion-algorithms",
  "dominion-core",
+ "dominion-sdk",
  "futures-util",
  "rand 0.8.8",
  "reqwest",
@@ -364,6 +365,18 @@ dependencies = [
  "tokio-tungstenite",
  "tower-http 0.5.2",
  "uuid",
+]
+
+[[package]]
+name = "dominion-sdk"
+version = "0.1.0"
+dependencies = [
+ "dominion-algorithms",
+ "dominion-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
