@@ -251,7 +251,7 @@ pub async fn one(State(state):State<AppState>,Path(id):Path<String>)->Response{
 /// Prepare a native SDK task without persistent side effects. This is also
 /// used by optional tools that must atomically link their own approval receipt
 /// with the ordinary SDK session and execution record.
-fn prepare_start(state:&AppState,input:&Start)->Result<(Value,Value),String>{
+pub(super) fn prepare_start(state:&AppState,input:&Start)->Result<(Value,Value),String>{
     if input.instruction.trim().is_empty()||input.instruction.len()>64000{
         return Err("작업 지시는 1~64000자로 입력하세요.".into());
     }

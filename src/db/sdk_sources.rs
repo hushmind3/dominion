@@ -39,3 +39,58 @@ impl Store {
         rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
 }
+
+impl Store {
+    /// Admit a plugin request, its retry receipt and its native session in
+    /// the same transaction as the credential/status check. No request can
+    /// cross a disable/rotation boundary or overwrite a previous retry.
+    pub(crate) fn claim_plugin_sdk_run(&self, plugin:&str, hash:&str, key:&str,
+        fingerprint:&str, session:&Value, run:&Value) -> Result<(String,bool),String> {
+        let mut conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let tx=conn.transaction().map_err(|e|e.to_string())?;
+        let row:Option<String>=tx.query_row(
+            "SELECT data FROM records WHERE kind='sdk_plugin' AND id=?1",
+            [plugin],|r|r.get(0)).optional().map_err(|e|e.to_string())?;
+        let mut row:Value=serde_json::from_str(&row.ok_or("credential_changed")?)
+            .map_err(|e|e.to_string())?;
+        if row["status"]!="enabled" || row["tokenSha256"].as_str()!=Some(hash) {
+            return Err("credential_changed".into());
+        }
+        let prior:Option<String>=tx.query_row(
+            "SELECT data FROM records WHERE kind='sdk_plugin_claim' AND id=?1",
+            [key],|r|r.get(0)).optional().map_err(|e|e.to_string())?;
+        if let Some(prior)=prior {
+            let claim:Value=serde_json::from_str(&prior).map_err(|e|e.to_string())?;
+            if claim["fingerprint"]!=fingerprint || claim["pluginId"]!=plugin {
+                return Err("retry_conflict".into());
+            }
+            return Ok((claim["runId"].as_str().ok_or("invalid_claim")?.into(),false));
+        }
+        // One active task per plugin and a bounded daily allowance. These
+        // limits are checked under the same transaction as admission.
+        let active:i64=tx.query_row(
+            "SELECT COUNT(*) FROM records WHERE kind='sdk_run'
+             AND json_extract(data,'$.sdkPluginId')=?1
+             AND json_extract(data,'$.status') IN ('queued','running','needs_review')",
+            [plugin],|r|r.get(0)).map_err(|e|e.to_string())?;
+        if active>=1 { return Err("active_limit".into()); }
+        let daily:i64=tx.query_row(
+            "SELECT COUNT(*) FROM records WHERE kind='sdk_run'
+             AND json_extract(data,'$.sdkPluginId')=?1
+             AND created_at>=datetime('now','-1 day')",
+            [plugin],|r|r.get(0)).map_err(|e|e.to_string())?;
+        if daily>=20 { return Err("daily_limit".into()); }
+        let id=run["id"].as_str().ok_or("missing_run_id")?.to_string();
+        if run["sdkPluginId"]!=plugin || session["nativeSdkRunId"]!=id {
+            return Err("invalid_plugin_binding".into());
+        }
+        upsert_tx(&tx,"session",session)?;
+        upsert_tx(&tx,"sdk_run",run)?;
+        upsert_tx(&tx,"sdk_plugin_claim",&json!({"id":key,"pluginId":plugin,
+            "fingerprint":fingerprint,"runId":id}))?;
+        row["lastSeenAt"]=json!(chrono::Utc::now().to_rfc3339());
+        upsert_tx(&tx,"sdk_plugin",&row)?;
+        tx.commit().map_err(|e|e.to_string())?;
+        Ok((id,true))
+    }
+}

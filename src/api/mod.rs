@@ -15,6 +15,7 @@ pub mod approvals;
 pub mod sessions;
 pub mod agents;
 pub mod sdk;
+mod sdk_plugins;
 pub mod providers;
 pub mod cli_oauth;
 pub mod cloud_auth;
@@ -127,6 +128,12 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/system/restore", post(system::restore_backup))
         .route("/api/chat", post(chat::chat))
+        .route("/api/sdk/plugins",get(sdk_plugins::list).post(sdk_plugins::enroll))
+        .route("/api/sdk/plugins/:id/state",post(sdk_plugins::set_state))
+        .route("/api/sdk/plugins/:id/rotate",post(sdk_plugins::rotate))
+        .route("/api/sdk/plugins/:id/heartbeat",post(sdk_plugins::heartbeat))
+        .route("/api/sdk/plugins/:id/runs",post(sdk_plugins::start))
+        .route("/api/sdk/plugins/:id/runs/:run_id",get(sdk_plugins::one))
         .route("/api/sdk/runs", get(sdk::list).post(sdk::start))
         .route("/api/sdk/runs/source/:kind", get(sdk::by_source))
         .route("/api/sdk/runs/:id", get(sdk::one))
@@ -481,6 +488,7 @@ async fn guard_owner_host(State(state): State<AppState>, request: Request, next:
 /// explicit admin secret whenever exposed, regardless of the local default.
 async fn guard_writes(State(state): State<AppState>, request: Request, next: Next) -> Response {
     let is_worker=worker_ingress(request.uri().path());
+    let is_plugin=sdk_plugins::ingress(request.method(),request.uri().path());
     let is_remote_owner=request.uri().path().starts_with("/api/remote/")&&!is_worker;
     let configured=std::env::var("DOMINION_ADMIN_TOKEN").unwrap_or_default();
     if is_remote_owner{
@@ -514,7 +522,7 @@ async fn guard_writes(State(state): State<AppState>, request: Request, next: Nex
                     .into_response();
             }
         }
-        if !is_worker&&!configured.trim().is_empty(){
+        if !is_worker&&!is_plugin&&!configured.trim().is_empty(){
                 let token=configured;
                 let provided = request
                     .headers()

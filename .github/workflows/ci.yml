@@ -240,7 +240,9 @@ jobs:
       - name: Public keyless provider and OpenRouter model catalog regressions (dev profile)
         run: cargo test --locked --bin dominion-rust api::providers::tests::public_
       - name: Shared SDK run and retry regressions (dev profile)
-        run: cargo test --locked --bin dominion-rust api::sdk::view_tests
+        run: |
+          cargo test --locked --bin dominion-rust api::sdk::view_tests
+          cargo test --locked --bin dominion-rust api::sdk_plugins::tests
       - name: External inspection resume ownership guards (dev profile)
         run: cargo test --locked --bin dominion-rust api::jobs::external_resume_ui_tests
 

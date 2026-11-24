@@ -306,6 +306,9 @@ impl Store {
              CREATE INDEX IF NOT EXISTS idx_sdk_run_source
                  ON records(json_extract(data,'$.source.kind'),created_at DESC)
                  WHERE kind='sdk_run';
+             CREATE INDEX IF NOT EXISTS idx_sdk_plugin_run
+                 ON records(json_extract(data,'$.sdkPluginId'),json_extract(data,'$.status'),created_at)
+                 WHERE kind='sdk_run';
              CREATE INDEX IF NOT EXISTS idx_delegated_session_parent
                  ON records(json_extract(data,'$.parentSessionId'))
                  WHERE kind='session' AND json_extract(data,'$.delegated')=1;
