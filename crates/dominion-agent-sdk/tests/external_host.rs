@@ -200,3 +200,19 @@ async fn standalone_sdk_negotiates_modern_stdio_without_legacy_initialize(){
     assert!(json!(history).to_string().contains("MCP_MODERN_ECHO:"));
     assert!(registry.unregister("modern"));
 }
+
+#[tokio::test]
+async fn legacy_empty_discovery_reply_falls_back_only_when_auto_selected(){
+    use dominion_agent_sdk::mcp_stdio::StdioSession;
+    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixture=root.join("scripts/mcp-echo-server.mjs").canonicalize().unwrap();
+    let mut config=json!({"command":"node","args":[fixture.to_string_lossy().as_ref(),"--empty-discovery"]});
+    let mut session=StdioSession::open(&config,&root).await.unwrap();
+    let list=session.list_tools().await.unwrap();
+    assert_eq!(list["tools"][0]["name"],"echo");
+    let result=session.request("tools/call",json!({"name":"echo","arguments":{"text":"legacy"}})).await.unwrap();
+    assert_eq!(result["content"][0]["text"],"MCP_ECHO: legacy");
+    drop(session);
+    config["protocolVersion"]=json!("2026-07-28");
+    assert!(StdioSession::open(&config,&root).await.is_err());
+}

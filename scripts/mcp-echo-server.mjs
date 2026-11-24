@@ -5,6 +5,7 @@ import readline from 'node:readline'
 
 const send = (payload) => process.stdout.write(JSON.stringify(payload) + '\n')
 const modern = process.argv.includes('--modern')
+const emptyDiscovery = process.argv.includes('--empty-discovery')
 const version = '2026-07-28'
 
 const rl = readline.createInterface({ input: process.stdin })
@@ -25,6 +26,8 @@ rl.on('line', (line) => {
     case 'server/discover':
       if (modern) {
         send({jsonrpc:'2.0',id:message.id,result:{supportedVersions:[version],serverInfo:{name:'echo-modern',version:'1.0.0'},capabilities:{tools:{}}}})
+      } else if (emptyDiscovery) {
+        send({jsonrpc:'2.0',id:message.id,result:{}})
       } else {
         send({jsonrpc:'2.0',id:message.id,error:{code:-32601,message:'Method not found'}})
       }

@@ -184,6 +184,28 @@ try{
  assert.equal(await sidebar.getAttribute('data-collapsed'),'true','scrim dismisses mobile drawer')
  await page.getByRole('button',{name:'닫기'}).last().click()
  assert.equal(await rail.isVisible(),false,'collapsed icon rail must not occupy mobile viewport')
+ // Mobile mode tabs keep the drawer open, but explicitly dismissing it
+ // leaves the full transcript width available. Switching preserves drafts.
+ const mobileChat=page.locator('.page-chat')
+ const privateComposer=mobileChat.locator('textarea.conversation-composer-input')
+ await privateComposer.fill('전환해도 보존할 일반대화 초안')
+ await mobileChat.locator('.conversation-topbar').getByRole('button',{name:'대화 목록 펼치기'}).click()
+ await history.waitFor({state:'visible'})
+ await history.getByRole('button',{name:'그룹',exact:true}).click()
+ await roomHistory.waitFor({state:'visible'})
+ const drawer=await roomHistory.boundingBox()
+ assert.ok(drawer&&drawer.x>=0&&drawer.width<=232,'group drawer matches mobile chat width')
+ await roomHistory.getByRole('button',{name:'채팅',exact:true}).click()
+ await history.waitFor({state:'visible'})
+ await history.getByRole('button',{name:'대화 목록 접기'}).click()
+ await history.waitFor({state:'hidden'})
+ assert.equal(await privateComposer.inputValue(),'전환해도 보존할 일반대화 초안')
+ await mobileChat.locator('.conversation-topbar').getByRole('button',{name:'그룹',exact:true}).click()
+ await page.locator('.page-rooms .conversation-topbar').waitFor({state:'visible'})
+ assert.equal(await roomHistory.isVisible(),false,'explicit collapse is also shared')
+ await page.locator('.page-rooms .conversation-topbar').getByRole('button',{name:'채팅',exact:true}).click()
+ await privateComposer.waitFor({state:'visible'})
+ assert.equal(await privateComposer.inputValue(),'전환해도 보존할 일반대화 초안')
  assert.deepEqual(pageErrors,[], 'responsive React navigation runtime errors')
  // Exercise the actual message toolbar: copy beside the overflow menu,
  // with reasoning and tokens hidden until selected.

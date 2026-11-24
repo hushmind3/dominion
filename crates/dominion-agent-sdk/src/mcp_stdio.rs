@@ -57,7 +57,8 @@ impl StdioSession {
             let probe=tokio::time::timeout(PROBE_TIMEOUT,
                 session.exchange("server/discover",json!({}))).await;
             match probe {
-                Ok(Ok(reply)) if reply.get("error").is_none()=>{
+                Ok(Ok(reply)) if reply.get("error").is_none()
+                    && !reply["result"].as_object().is_some_and(serde_json::Map::is_empty)=>{
                     let versions=reply["result"]["supportedVersions"].as_array()
                         .ok_or("MCP discovery missing supportedVersions")?;
                     if !versions.iter().any(|v|v==MODERN_VERSION){
