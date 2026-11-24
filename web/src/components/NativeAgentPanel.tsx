@@ -91,11 +91,13 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   const poll=async()=>{
    if(!alive||reading)return
    reading=true
+   // Recover from a hanging poll without abandoning the active task.
+   const signal=AbortSignal.any([controller.signal,AbortSignal.timeout(10_000)])
    try{
-    const next=await get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(id)}`,controller.signal)
+    const next=await get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(id)}`,signal)
     if(alive&&selection===selectionGeneration.current&&mutation===mutationRevision.current&&selectedRunId.current===id)setRun(next)
    }catch(e){
-    if(alive&&!controller.signal.aborted&&selection===selectionGeneration.current)setError((e as Error).message)
+    if(alive&&!signal.aborted&&selection===selectionGeneration.current&&mutation===mutationRevision.current)setError((e as Error).message)
    }finally{reading=false}
   }
   const timer=setInterval(()=>{void poll()},1500)
