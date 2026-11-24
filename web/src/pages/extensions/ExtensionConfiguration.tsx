@@ -39,7 +39,7 @@ function Field({schema:s,value,onChange,label,en,depth=0,disabled=false}:{schema
 }
 function JsonField({value,onChange,label,disabled}:{value:unknown;onChange:(v:unknown)=>void;label:string;disabled:boolean}){
  const [draft,setDraft]=useState(JSON.stringify(value,null,2)),[error,setError]=useState(false)
- return <><TextArea aria-label={label} disabled={disabled} value={draft} onChange={e=>{setDraft(e.target.value);try{onChange(JSON.parse(e.target.value));setError(false)}catch{setError(true)}} rows={4}/>{error&&<p role="alert" className="text-xs text-danger">Invalid JSON — not applied</p>}</>
+ return <><TextArea aria-label={label} disabled={disabled} value={draft} onChange={e=>{setDraft(e.target.value);try{onChange(JSON.parse(e.target.value));setError(false)}catch{setError(true)}}} rows={4}/>{error&&<p role="alert" className="text-xs text-danger">Invalid JSON — not applied</p>}</>
 }
 export function ExtensionConfiguration({pluginId}:{pluginId:string}){
  const en=useLocale()==='en',tr=(ko:string,eng:string)=>en?eng:ko,path='/api/plugins/managed/'+encodeURIComponent(pluginId)+'/configuration'

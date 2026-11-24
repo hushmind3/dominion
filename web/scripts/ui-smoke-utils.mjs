@@ -37,7 +37,7 @@ function fixture() {
   agents:[{id:'test-persona',name:'Test Persona',description:'Mock persona',systemPrompt:'Be clear.',providerId:'mock-local',model:'qwen-test',enabled:true}],
   sessions:[{id:'recent-chat',title:'Recent Test Chat',providerId:'mock-local',model:'qwen-test',createdAt:'2026-11-23T00:00:00Z'}],
   memories:[{id:'memory-one',text:'Remember test choice',scope:'shared',status:'active',source:'user',retrievalEligible:true,createdAt:'2026-11-23T00:00:00Z'}],
-  chatRequests:[],mcpWrites:[],providerWrites:[],memoryWrites:[],jobs:[],plugins:[],pluginWrites:[],marketWrites:[],marketVersion:1,
+  chatRequests:[],mcpWrites:[],providerWrites:[],memoryWrites:[],jobs:[],plugins:[],pluginWrites:[],marketWrites:[],marketVersion:1,legacyMcp:true,extensionConfig:{servers:[]},extensionTools:false,
  }
  const marketId='01234567-89ab-4def-8123-456789abcdef'
  const manifest=()=>({name:'Independent fixture',description:'Generic SDK extension',version:String(db.marketVersion),image:'ghcr.io/example/fixture@sha256:'+String(db.marketVersion).repeat(64),network:true,port:8080})
@@ -86,6 +86,17 @@ function fixture() {
    db.plugins=db.plugins.filter(row=>row.id!==body.id).concat(saved)
    return ok(route,saved)
   }
+  if(p.startsWith('/api/plugins/managed/'+marketId+'/')){
+   const part=p.slice(('/api/plugins/managed/'+marketId+'/').length)
+   if(part==='capabilities')return ok(route,{version:2,tools:true,events:false,configuration:true})
+   if(part==='configuration'){
+    if(method==='POST')db.extensionConfig=body.values
+    return ok(route,{values:db.extensionConfig,schema:{type:'object',properties:{servers:{type:'array',title:'Server connections',titleKo:'서버 연결',maxItems:8,items:{type:'object',properties:{id:{type:'string',generated:true},name:{type:'string',title:'Connection name',titleKo:'연결 이름',default:'New server'},transport:{type:'string',title:'Connection type',titleKo:'연결 방식',enum:['http','stdio'],default:'http'},url:{type:'string',title:'Server URL',titleKo:'서버 주소',visibleWhen:{field:'transport',equals:'http'}},apiKey:{type:'string',format:'password',title:'API key',titleKo:'API 키'}}}}}}})
+   }
+   const tools=[{name:'echo',description:'Echo a value',schema:{type:'object'}}]
+   if(part==='tools/discover')return ok(route,{tools,digest:'reviewed'})
+   if(part==='tools'){if(method==='POST')db.extensionTools=body.enabled;return ok(route,{enabled:db.extensionTools,tools:db.extensionTools?tools:[]})}
+  }
   const pluginMatch=p.match(/^\/api\/plugins\/managed\/([^/]+)(?:\/(start|stop|logs))?$/)
   if(pluginMatch){
    const plugin=db.plugins.find(row=>row.id===pluginMatch[1])
@@ -93,7 +104,7 @@ function fixture() {
    if(pluginMatch[2]==='logs')return ok(route,{stdout:'Voice fixture ready',stderr:'',truncated:false})
    db.pluginWrites.push({method,id:plugin.id,action:pluginMatch[2]})
    if(method==='DELETE'){Object.assign(plugin,{state:'retained',running:false});return ok(route,{removed:true,dataRetained:true,volume:'fixture-data'})}
-   Object.assign(plugin,{state:pluginMatch[2]==='start'?'running':'exited',running:pluginMatch[2]==='start'})
+   Object.assign(plugin,{state:pluginMatch[2]==='start'?'running':'exited',running:pluginMatch[2]==='start',ports:pluginMatch[2]==='start'&&plugin.requestedPort?[18780]:[]})
    return ok(route,plugin)
   }
   if(method==='POST'&&(p==='/api/plugins/market/install'||p==='/api/plugins/market/update')){
@@ -114,7 +125,7 @@ function fixture() {
   if(p==='/api/capabilities')return ok(route,{items:[{id:'web_search',name:'Web Search',description:'Search current web information',namespace:'builtin',available:true},{id:'file_read',name:'Read File',description:'Read workspace files',namespace:'builtin',available:true}]})
   if(p==='/api/agents')return ok(route,db.agents)
   if(p==='/api/memories')return ok(route,db.memories)
-  if(p==='/api/mcp/runtime')return ok(route,{available:true,legacy:true})
+  if(p==='/api/mcp/runtime')return ok(route,{available:db.legacyMcp,legacy:true})
   if(p==='/api/mcp')return ok(route,db.mcp)
   if(p==='/api/mcp/discover')return ok(route,db.mcp.filter(row=>row.enabled!==false).map(row=>({mcpId:row.id,name:'mcp__mock__search',description:'Mock plugin search'})))
   if(p==='/api/mcp/presets')return ok(route,[])
