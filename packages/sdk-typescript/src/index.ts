@@ -179,6 +179,9 @@ export interface InferenceSupport extends InferenceRoute { thinkingToggle: boole
 export interface ExtensionManifest {
   schemaVersion: 1; id: string; name: string; version: string; description?: string;
 }
+export interface ExtensionGrantInput {providerId:string;model:string;tokenBudget:number;maxRuns:number}
+export interface ExtensionGrant {id:string;providerId:string;model:string;tokenBudget:number;remainingRuns:number;capability:'isolated_chat';generation:string}
+export interface ScopedRun {id:string;status:SdkRunStatus;answer?:string|null;taskOutcome?:string|null;verified?:boolean|null;providerId:string;model:string;extension:string}
 export interface ExtensionRegistration {
   id: string; manifest: ExtensionManifest; enabled: boolean;
 }
@@ -370,6 +373,15 @@ export class DominionAgentClient {
     return this.getExecutionEvents(executionId, options, signal);
   }
 
+  issueExtensionGrant(id:string,input:ExtensionGrantInput,signal?:AbortSignal):Promise<{grant:ExtensionGrant;token:string}> {
+    return this.request('POST','/api/extensions/apps/'+encodeURIComponent(id)+'/grant',input,signal);
+  }
+  extensionGrant(id:string,signal?:AbortSignal):Promise<ExtensionGrant|null>{
+    return this.request('GET','/api/extensions/apps/'+encodeURIComponent(id)+'/grant',undefined,signal);
+  }
+  async revokeExtensionGrant(id:string,signal?:AbortSignal):Promise<void>{
+    await this.request('DELETE','/api/extensions/apps/'+encodeURIComponent(id)+'/grant',undefined,signal);
+  }
   listExtensions(signal?:AbortSignal):Promise<ExtensionRegistration[]> {
     return this.request('GET','/api/extensions/apps',undefined,signal);
   }
@@ -476,5 +488,40 @@ export class DominionAgentClient {
       run.error ?? `Dominion task is ${run.status}; verified success evidence is missing`,
       ['awaiting_approval','in_doubt','interrupted','needs_review'].includes(run.status) ? 409 : 422,
     );
+  }
+}
+
+/** Delegated application client; never accepts an owner/admin credential. */
+export class DominionExtensionClient {
+  private readonly base:string;
+  private readonly transport:typeof fetch;
+  private readonly id:string;
+  private readonly token:string;
+  constructor(options:{baseUrl?:string;id:string;token:string;fetch?:typeof fetch}){
+    if(!/^[a-z][a-z0-9.-]{0,63}$/.test(options.id)||options.id.includes('..')||options.id.endsWith('.'))
+      throw new DominionSdkError('Invalid extension ID',400);
+    if(!/^[a-f0-9]{64}$/i.test(options.token))throw new DominionSdkError('Invalid extension credential',400);
+    const url=new URL(options.baseUrl??'http://127.0.0.1:4317');
+    if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash)
+      throw new DominionSdkError('Invalid base URL',400);
+    this.base=url.toString().replace(/\/$/,'');
+    this.id=options.id;this.token=options.token;this.transport=options.fetch??fetch;
+  }
+  private async request(path:string,body?:{instruction:string;idempotencyKey:string},signal?:AbortSignal):Promise<ScopedRun>{
+    const headers:Record<string,string>={'x-dominion-extension-token':this.token,accept:'application/json'};
+    if(body)headers['content-type']='application/json';
+    const r=await this.transport(this.base+'/api/extensions/apps/'+encodeURIComponent(this.id)+'/runs'+path,
+      {method:body?'POST':'GET',body:body?JSON.stringify(body):undefined,headers,signal,redirect:'error'});
+    const v=await r.json().catch(()=>null);
+    if(!r.ok)throw new DominionSdkError(typeof v?.error==='string'?v.error:'HTTP '+r.status,r.status);
+    return v as ScopedRun;
+  }
+  start(instruction:string,idempotencyKey:string,signal?:AbortSignal):Promise<ScopedRun>{
+    return this.request('',{instruction,idempotencyKey},signal);
+  }
+  get(run:string,signal?:AbortSignal):Promise<ScopedRun>{
+    if(!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(run))
+      throw new DominionSdkError('Invalid run ID',400);
+    return this.request('/'+encodeURIComponent(run),undefined,signal);
   }
 }

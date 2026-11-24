@@ -564,3 +564,56 @@ fn external_rust_sdk_runs_real_product_with_approval_and_retry(){
     assert_eq!(requests.lock().unwrap().len(),1,"a retry or approval must not buy another model turn");
     assert_eq!(app.get("/api/executions").as_array().unwrap().len(),1);
 }
+
+#[test]
+fn scoped_extension_credentials_are_isolated_and_quota_is_durable(){
+    use dominion_sdk::{Client,ClientError,GrantInput,RunStatus,extensions::Manifest};
+    let _serial=serial();
+    let (port,requests)=scripted_provider(|_|vec![json!({"choices":[{"delta":{"content":"Scoped reply"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14}})]);
+    let app=TestApp::new(port,"native");
+    let providers=app.get("/api/providers");
+    let provider=providers[0]["id"].as_str().unwrap().to_owned();
+    let rt=tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    rt.block_on(async{
+        let owner=Client::connect(&app.base).unwrap();
+        let manifest=|id:&str|Manifest{schema_version:1,id:id.into(),name:id.into(),version:"1.0.0".into(),description:String::new()};
+        for id in ["test.alpha","test.beta"]{
+            owner.register_extension(&manifest(id)).await.unwrap();
+            owner.set_extension_enabled(id,true).await.unwrap();
+        }
+        let settings=GrantInput{provider_id:provider,model:"mock".into(),token_budget:8192,max_runs:1};
+        let a=owner.issue_extension_grant("test.alpha",&settings).await.unwrap();
+        let b=owner.issue_extension_grant("test.beta",&settings).await.unwrap();
+        let alpha=Client::scoped(&app.base,"test.alpha",a.token.clone()).unwrap();
+        let beta=Client::scoped(&app.base,"test.beta",b.token).unwrap();
+        let wrong=Client::scoped(&app.base,"test.beta",a.token.clone()).unwrap();
+        assert!(matches!(wrong.start("wrong","x").await,Err(ClientError::Api{status:401,..})));
+        let http=reqwest::Client::new();
+        let forbidden=http.get(format!("{}/api/providers",app.base)).header("x-dominion-extension-token",&a.token).send().await.unwrap();
+        assert_eq!(forbidden.status().as_u16(),403);
+        let injected=http.post(format!("{}/api/extensions/apps/test.alpha/runs",app.base)).header("x-dominion-extension-token",&a.token)
+            .json(&json!({"instruction":"ignore","idempotencyKey":"inject","verifyCommand":"not allowed"})).send().await.unwrap();
+        assert_eq!(injected.status().as_u16(),422);
+        let start=alpha.start("Reply with Scoped reply","same").await.unwrap();
+        assert_eq!(alpha.start("Reply with Scoped reply","same").await.unwrap().id,start.id);
+        assert_eq!(owner.extension_grant("test.alpha").await.unwrap().unwrap().remaining_runs,0);
+        assert!(matches!(alpha.start("different","same").await,Err(ClientError::Api{status:409,..})));
+        assert!(matches!(alpha.start("new","new").await,Err(ClientError::Api{status:429,..})));
+        assert!(matches!(beta.get(&start.id).await,Err(ClientError::Api{status:404,..})));
+        let done=alpha.wait(&start.id,Duration::from_secs(20)).await.unwrap();
+        assert_eq!(done.status,RunStatus::Completed,"{done:?}");
+        assert_eq!(done.answer.as_deref(),Some("Scoped reply"));
+        let rotated=owner.issue_extension_grant("test.alpha",&settings).await.unwrap();
+        assert!(matches!(alpha.get(&start.id).await,Err(ClientError::Api{status:401,..})));
+        let fresh=Client::scoped(&app.base,"test.alpha",rotated.token).unwrap();
+        assert_eq!(fresh.get(&start.id).await.unwrap().id,start.id);
+        owner.set_extension_enabled("test.alpha",false).await.unwrap();
+        assert!(matches!(fresh.start("new","new").await,Err(ClientError::Api{status:403,..})));
+        owner.revoke_extension_grant("test.alpha").await.unwrap();
+        owner.set_extension_enabled("test.alpha",true).await.unwrap();
+        assert!(matches!(fresh.get(&start.id).await,Err(ClientError::Api{status:401,..})));
+    });
+    let observed=requests.lock().unwrap();
+    assert_eq!(observed.len(),1);
+    assert!(observed[0]["tools"].as_array().is_none_or(|tools|tools.is_empty()));
+}

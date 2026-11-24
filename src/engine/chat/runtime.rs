@@ -356,10 +356,13 @@ async fn run_turn_with_policy(
     execution_budget.finish();
     close_pending_approvals(state, &session_id);
 
-    crate::addons::runtime_hooks::after_turn(
-        state,&request,&session_id,&execution_id,&result,
-    );
-    if result.is_ok() {
+    let isolated=state.store.get("session",&session_id).is_some_and(|s|s["extension"]["capability"]=="isolated_chat");
+    if !isolated {
+        crate::addons::runtime_hooks::after_turn(
+            state,&request,&session_id,&execution_id,&result,
+        );
+    }
+    if result.is_ok() && !isolated {
         // Older messages become a checkpoint before the next turn reads them.
         // The work runs in the background; this turn's answer is already done.
         crate::engine::compact::spawn_auto(state, &session_id);
@@ -564,6 +567,7 @@ async fn run_turn_body(
 
     let provider = select_provider(state, request, &session)?;
     let allow_provider_fallback = session["extension"]["capability"]!="isolated_chat";
+    if !allow_provider_fallback && matches!(provider.kind.as_str(),"cli"|"codex") {return Err("Scoped text route is no longer eligible".into());}
     let intelligence=crate::addons::runtime_hooks::strategy_port(
         state,session_id,request.agent_id.as_deref(),execution_id,
     );

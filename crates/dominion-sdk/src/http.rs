@@ -128,6 +128,7 @@ pub struct Client {
     base:Url,
     http:reqwest::Client,
     token:Option<String>,
+    extension_token:Option<String>,
 }
 impl Client {
     pub fn connect(base:&str)->Result<Self,ClientError>{
@@ -139,9 +140,17 @@ impl Client {
         base.set_query(None);base.set_fragment(None);
         let http=reqwest::Client::builder().redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(30)).build()?;
-        Ok(Self{base,http,token:None})
+        Ok(Self{base,http,token:None,extension_token:None})
     }
     pub fn with_admin_token(mut self,token:impl Into<String>)->Self{self.token=Some(token.into());self}
+    pub fn scoped(base:&str,id:&str,token:impl Into<String>)->Result<ScopedClient,ClientError>{
+        if !dominion_extensions::valid_id(id){return Err(ClientError::Invalid("Invalid extension ID".into()))}
+        let token=token.into();
+        if token.len()!=64||!token.bytes().all(|b|b.is_ascii_hexdigit()){return Err(ClientError::Invalid("Invalid scoped credential".into()))}
+        let mut client=Self::connect(base)?;
+        client.extension_token=Some(token);
+        Ok(ScopedClient{client,id:id.into()})
+    }
     fn url(&self,segments:&[&str])->Result<Url,ClientError>{
         if segments.first()!=Some(&"api")||segments.iter().any(|s|s.is_empty()||*s=="."||*s==".."){
             return Err(ClientError::Invalid("Invalid API path segment".into()));
@@ -154,6 +163,7 @@ impl Client {
     async fn request<T:DeserializeOwned>(&self,method:Method,url:Url,body:Option<Value>)->Result<T,ClientError>{
         let mut req=self.http.request(method,url).header("Accept","application/json");
         if let Some(token)=&self.token{req=req.header("X-Dominion-Token",token);}
+        if let Some(token)=&self.extension_token{req=req.header("X-Dominion-Extension-Token",token);}
         if let Some(body)=body{req=req.json(&body);}
         let response=req.send().await?;
         if !response.status().is_success(){
@@ -185,6 +195,16 @@ impl Client {
         self.post(&["api","chat","inference-support"],value).await
     }
     pub async fn get_run(&self,id:&str)->Result<AgentRun,ClientError>{self.get(&["api","sdk","runs",id]).await}
+    pub async fn issue_extension_grant(&self,id:&str,input:&GrantInput)->Result<GrantIssued,ClientError>{
+        let body=serde_json::to_value(input).map_err(|e|ClientError::Invalid(e.to_string()))?;
+        self.post(&["api","extensions","apps",id,"grant"],body).await
+    }
+    pub async fn extension_grant(&self,id:&str)->Result<Option<Grant>,ClientError>{
+        self.get(&["api","extensions","apps",id,"grant"]).await
+    }
+    pub async fn revoke_extension_grant(&self,id:&str)->Result<(),ClientError>{
+        let _:Value=self.request(Method::DELETE,self.url(&["api","extensions","apps",id,"grant"])?,None).await?;Ok(())
+    }
     pub async fn list_extensions(&self)->Result<Vec<Registration>,ClientError>{self.get(&["api","extensions","apps"]).await}
     pub async fn register_extension(&self,manifest:&Manifest)->Result<Registration,ClientError>{
         let body=serde_json::to_value(manifest).map_err(|e|ClientError::Invalid(e.to_string()))?;
@@ -253,6 +273,50 @@ impl Client {
     pub async fn wait_for_verified_run(&self,id:&str,max_wait:Duration,interval:Duration,on_update:impl FnMut(&AgentRun))->Result<AgentRun,ClientError>{
         let run=self.wait_for_run(id,max_wait,interval,on_update).await?;
         if run.verified_success(){Ok(run)}else{Err(ClientError::Unverified{status:run.status,outcome:run.task_outcome})}
+    }
+}
+
+#[derive(Clone,Serialize,Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct GrantInput{
+    pub provider_id:String,pub model:String,pub token_budget:u64,pub max_runs:u64,
+}
+#[derive(Clone,Debug,Deserialize,Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct Grant{
+    pub id:String,pub provider_id:String,pub model:String,pub token_budget:u64,
+    pub remaining_runs:u64,pub capability:String,pub generation:String,
+}
+// Deliberately not Debug: the one-time plaintext token must not be logged.
+#[derive(Deserialize)]
+pub struct GrantIssued{pub grant:Grant,pub token:String}
+#[derive(Clone,Debug,Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct ScopedRun{
+    pub id:String,pub status:RunStatus,pub answer:Option<String>,
+    pub task_outcome:Option<String>,pub verified:Option<bool>,
+    pub provider_id:String,pub model:String,pub extension:String,
+}
+/// Separate client: no owner management methods or owner token.
+#[derive(Clone)]
+pub struct ScopedClient{client:Client,id:String}
+impl ScopedClient{
+    pub async fn start(&self,instruction:&str,retry_key:&str)->Result<ScopedRun,ClientError>{
+        self.client.post(&["api","extensions","apps",&self.id,"runs"],
+            json!({"instruction":instruction,"idempotencyKey":retry_key})).await
+    }
+    pub async fn get(&self,run:&str)->Result<ScopedRun,ClientError>{
+        self.client.get(&["api","extensions","apps",&self.id,"runs",run]).await
+    }
+    pub async fn wait(&self,run:&str,max_wait:Duration)->Result<ScopedRun,ClientError>{
+        let deadline=Instant::now().checked_add(max_wait).ok_or_else(||ClientError::Invalid("Invalid deadline".into()))?;
+        timeout_at(deadline,async{
+            loop{
+                let row=self.get(run).await?;
+                if row.status.settled(){return Ok(row)}
+                sleep(Duration::from_millis(100)).await;
+            }
+        }).await.map_err(|_|ClientError::Timeout)?
     }
 }
 

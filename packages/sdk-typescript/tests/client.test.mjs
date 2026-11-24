@@ -268,3 +268,20 @@ test('external app lifecycle uses the same SDK and reserved source',async()=>{
   ['/api/extensions/apps/example.assistant','DELETE',null]
  ])
 })
+
+test('scoped extension sends no admin credential or owner options',async()=>{
+ const {DominionExtensionClient}=await import('../dist/index.js')
+ const token='a'.repeat(64),run='12345678-1234-1234-1234-123456789012'
+ const calls=[]
+ const client=new DominionExtensionClient({id:'example.assistant',token,fetch:async(url,request)=>{
+  calls.push([new URL(url).pathname,request.method,request.body?JSON.parse(request.body):null])
+  assert.equal(request.headers['x-dominion-extension-token'],token)
+  assert.equal(request.headers['x-dominion-token'],undefined)
+  assert.equal(request.redirect,'error')
+  return new Response(JSON.stringify({id:run,status:'completed',answer:'OK'}))
+ }})
+ await client.start('hello','retry')
+ await client.get(run)
+ assert.deepEqual(calls,[['/api/extensions/apps/example.assistant/runs','POST',{instruction:'hello',idempotencyKey:'retry'}],['/api/extensions/apps/example.assistant/runs/'+run,'GET',null]])
+ assert.throws(()=>client.get('../settings'))
+})
