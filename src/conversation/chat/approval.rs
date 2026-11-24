@@ -217,14 +217,15 @@ pub(super) async fn request_approval(
         .store
         .get("policy", "default")
         .unwrap_or_else(|| json!({}));
-    if policy
+    let external=state.store.get("job",execution_id).is_some_and(|j|j["input"]["pluginBridgeV2"]==true);
+    if !external && policy
         .get("autoApproveAll")
         .and_then(|value| value.as_bool())
         == Some(true)
     {
         return true;
     }
-    if let Some(list) = policy.get("autoApprove").and_then(|value| value.as_array()) {
+    if let Some(list) = policy.get("autoApprove").and_then(|value| value.as_array()).filter(|_|!external) {
         if list.iter().any(|entry| entry.as_str() == Some(tool)) {
             return true;
         }

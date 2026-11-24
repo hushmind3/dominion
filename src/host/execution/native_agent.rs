@@ -187,6 +187,7 @@ impl Tools for NativeTools {
                 .ok_or("Native run record disappeared during tool dispatch")?;
             manual_recovery_guard(&current,&self.tool_specs,action)?;
             legacy_harness_shell_scope(&current,action)?;
+            if !crate::api::plugins::bridge::v2::job_authorized(&self.state,&current){return Err("Plugin connection was revoked".into())}
             let mcp_spec=if action.tool.starts_with("mcp__") {
                 Some(self.tool_specs.iter().find(|spec|spec.name==action.tool)
                     .ok_or("MCP operation not in the pinned authorized tool catalog")?)
@@ -221,7 +222,10 @@ impl Tools for NativeTools {
             let planned_directive=self.state.store.get("job",&self.run_id)
                 .and_then(|job|job.get("nativeDirective").cloned())
                 .unwrap_or(Value::Null);
-            let approval_needed=if action.tool.starts_with("mcp__") {
+            let approval_needed=if current["input"]["pluginBridgeV2"]==true {
+                // External app grants cannot bypass interactive effect review.
+                !matches!(action.tool.as_str(),"web_search"|"http_fetch")
+            } else if action.tool.starts_with("mcp__") {
                 external::external_requires_approval(&self.state,&action.tool)
             } else { tools::requires_approval(&action.tool) };
             let mut artifact_before=Value::Null;
@@ -231,6 +235,8 @@ impl Tools for NativeTools {
                 &action.arguments,&self.run_id,&operation_id
             ).await {
                 Err("Tool execution was not approved".to_string())
+            } else if !crate::api::plugins::bridge::v2::job_authorized(&self.state,&current) {
+                Err("Plugin connection was revoked before tool dispatch".into())
             } else if !may_dispatch_native_action(
                 self.state.store.get("job",&self.run_id).as_ref(),
                 &planned_directive,self.state.is_cancelled(&self.session)) {

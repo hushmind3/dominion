@@ -110,6 +110,7 @@ async fn serve(mut config: Config, open_browser: bool, parent_bound: bool) -> Re
     }
     integrations::start(state.clone());
     api::plugins::bridge::auto_chat::start(state.clone());
+    api::plugins::bridge::v2::start(state.clone());
     api::plugins::scheduled::start(state.clone());
     if std::env::var("DOMINION_REMOTE_WORKERS").ok().as_deref()==Some("1"){
         // Default off, explicitly configured loopback-only listener. A remote

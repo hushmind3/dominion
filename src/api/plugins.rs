@@ -236,6 +236,10 @@ async fn create_managed_in(state:&AppState,scope:&str,input:&Install,image_id:&s
         let token=recipe::bridge_token(state,&input.id).ok_or("Voice bridge credential missing")?;
         let pos=args.len()-1;args.splice(pos..pos,["--env".into(),"DOMINION_BRIDGE_TOKEN".into()]);
         docker_with_token(&args,45,Some(&token)).await?;
+    }else if input.network && input.port.is_some(){
+        let token=bridge::v2::ensure_token(state,&input.id,image_id)?;
+        let pos=args.len()-1;args.splice(pos..pos,["--env".into(),"DOMINION_BRIDGE_TOKEN".into()]);
+        docker_with_token(&args,45,Some(&token)).await?;
     }else{docker(&args,45).await?;}
     Ok(())
 }

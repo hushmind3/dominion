@@ -9,6 +9,7 @@ use sha2::{Digest,Sha256};
 use std::time::Duration;
 
 pub mod auto_chat;
+pub mod v2;
 const KIND:&str="plugin_request";
 const MAX_INSTRUCTION:usize=16000;
 const MAX_ANSWER:usize=64000;

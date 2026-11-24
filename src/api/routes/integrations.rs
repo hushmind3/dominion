@@ -33,6 +33,7 @@ pub(super) fn router() -> Router<AppState> {
         .route("/api/plugins/managed/:id/scheduled-update", post(plugins::scheduled::queue).delete(plugins::scheduled::cancel))
         .route("/api/plugins/managed/:id/rollback", post(plugins::versions::rollback))
         .route("/api/plugins/managed/:id/bridge/pull", post(plugins::bridge::pull))
+        .route("/api/plugins/managed/:id/connection", get(plugins::bridge::v2::status).post(plugins::bridge::v2::change))
         .route("/api/plugins/managed/:id/auto-chat", get(plugins::bridge::auto_chat::status).post(plugins::bridge::auto_chat::change))
         .route("/api/plugins/managed/:id/bridge/:request", get(plugins::bridge::status))
         .route("/api/plugins/managed/:id/bridge/:request/approve", post(plugins::bridge::approve))
