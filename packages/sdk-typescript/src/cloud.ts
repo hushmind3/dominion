@@ -21,7 +21,8 @@ export class DominionCloudClient {
   return {...pair,token};
  }
  status(){return this.request<CloudAppStatus>('/v1/apps/status')}
- me(){return this.request<{account_id:string;scope:'free_inference';app_session_id:string}>('/v1/me')}
+ me(){return this.request<{account_id:string;credits_micro_krw:number;scope:'free_inference';app_session_id:string}>('/v1/me')}
+ billing(){return this.request<{account_id:string;credits_micro_krw:number;plan:'free'|'pro';valid_until:number|null;free_daily_limit:number;free_daily_used:number;free_daily_remaining:number;free_monthly_limit:number|null;free_monthly_remaining:number|null}>('/v1/billing')}
  models(){return this.request<{data:CloudModel[]}>('/v1/models')}
  complete(input:{model:string;messages:{role:'system'|'user'|'assistant';content:string}[];max_tokens?:number}){
   return this.request<{choices:{message:{role:string;content:string};finish_reason:string}[]}>('/v1/chat/completions',{...input,stream:false});

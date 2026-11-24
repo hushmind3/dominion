@@ -34,6 +34,7 @@ jobs:
           node --check cloud/src/email_auth.js
           node --check cloud/src/token_crypto.js
           node --check cloud/src/app_auth.js
+          node --check cloud/src/connect_page.js
       - name: Verify gateway routing, paid-budget guards and single model circuit breaker
         run: |
           node --input-type=module <<'EOF'

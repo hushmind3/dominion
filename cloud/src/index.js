@@ -140,10 +140,20 @@ function proPrice(env) {
 }
 async function billingSummary(env, user) {
   const subscription = await env.DB.prepare('SELECT plan,status,current_period_end FROM subscriptions WHERE account_id=?').bind(user.id).first();
-  const freeDailyLimit = Math.max(1, Math.min(1000, Number(env.FREE_DAILY_LIMIT || 20)));
+  const isPro=subscription?.status==='active'&&subscription.current_period_end>now();
+  const configured=Number(isPro?env.PRO_DAILY_LIMIT||50:env.FREE_DAILY_LIMIT||20);
+  const freeDailyLimit=Number.isSafeInteger(configured)?Math.max(1,Math.min(1000,configured)):20;
+  const configuredMonth=Number(env.PRO_MONTHLY_LIMIT||500);
+  const monthlyLimit=Number.isSafeInteger(configuredMonth)?Math.max(1,Math.min(10000,configuredMonth)):500;
   const quotaDay = new Date().toISOString().slice(0, 10);
   const freeUsage = await env.DB.prepare('SELECT used FROM free_quota WHERE account_day=?').bind(user.id + ':' + quotaDay).first();
+  const monthlyUsage=isPro?await env.DB.prepare('SELECT used FROM free_quota WHERE account_day=?').bind(user.id+':pro-month:'+quotaDay.slice(0,7)).first():null;
   return json({
+    account_id:user.id,
+    credits_micro_krw:user.credits,
+    free_monthly_limit:isPro?monthlyLimit:null,
+    free_monthly_used:isPro?Math.min(monthlyLimit,monthlyUsage?.used||0):null,
+    free_monthly_remaining:isPro?Math.max(0,monthlyLimit-(monthlyUsage?.used||0)):null,
     free_daily_limit: freeDailyLimit,
     free_daily_used: Math.min(freeDailyLimit, freeUsage?.used || 0),
     free_daily_remaining: Math.max(0, freeDailyLimit - (freeUsage?.used || 0)),
@@ -151,8 +161,8 @@ async function billingSummary(env, user) {
     plan: subscription?.status === 'active' && subscription?.current_period_end > now() ? subscription.plan : 'free',
     valid_until: subscription?.current_period_end || null,
     pro_price_krw: proPrice(env),
-    checkout_enabled: Boolean(proPrice(env) && env.TOSS_CLIENT_KEY && env.TOSS_SECRET_KEY),
-    toss_client_key: proPrice(env) && env.TOSS_SECRET_KEY ? (env.TOSS_CLIENT_KEY || null) : null
+    checkout_enabled: user.scope!=='app'&&Boolean(proPrice(env) && env.TOSS_CLIENT_KEY && env.TOSS_SECRET_KEY),
+    toss_client_key: user.scope!=='app'&&proPrice(env) && env.TOSS_SECRET_KEY ? (env.TOSS_CLIENT_KEY || null) : null
   });
 }
 // Account-scoped payment ledger. Settlement is performed by the contracted PG,
@@ -532,7 +542,7 @@ export default {
     try {
       let response;
       // App sessions may never enter owner, billing or identity endpoints.
-      const appAllowed=['/v1/me','/v1/models','/v1/chat/completions','/v1/apps/status','/v1/apps/disconnect'];
+      const appAllowed=['/v1/me','/v1/models','/v1/billing','/v1/chat/completions','/v1/apps/status','/v1/apps/disconnect'];
       if(isAppRequest(request)&&!appAllowed.includes(path))return json({error:'Owner login required'},403,headers);
       if(path==='/connect'&&request.method==='GET')response=await connectPage(request,env);
       else if(path==='/v1/apps/google/approve'&&request.method==='POST'){
@@ -592,7 +602,7 @@ export default {
         }
       } else if (path === '/v1/me' && request.method === 'GET') {
         const user = await account(request, env);
-        response = user ? json(user.scope==='app'?{account_id:user.id,scope:'free_inference',app_session_id:user.app_session_id}:{account_id: user.id, credits_micro_krw: user.credits}) : err('Unauthorized', 401);
+        response = user ? json(user.scope==='app'?{account_id:user.id,credits_micro_krw:user.credits,scope:'free_inference',app_session_id:user.app_session_id}:{account_id: user.id, credits_micro_krw: user.credits}) : err('Unauthorized', 401);
       } else if (path === '/v1/chat/completions' && request.method === 'POST') {
         const user = await account(request, env);
         response = user ? await routeCompletion(request, env, user) : err('Unauthorized', 401);
