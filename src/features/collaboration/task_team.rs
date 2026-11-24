@@ -306,21 +306,22 @@ pub fn project(state:&AppState,parent:&Value)->Value{
     if let Some(team)=team {
         for task in team.tasks {
             let id=child_id(parent["id"].as_str().unwrap_or(""),&task.id);
-            let child=state.store.get("job",&id);
+            let stored=state.store.get("job",&id);
+            let child=stored.as_ref().filter(|c|belongs_to_team(
+                parent["id"].as_str().unwrap_or(""),&task,c));
+            let record_state=if child.is_some(){"present"}else if stored.is_some(){"foreign_binding"}else{"not_started"};
             children.push(json!({
-                "taskId":task.id,"mode":task.mode,"runtime":task.runtime,
+                "taskId":task.id,"prompt":task.prompt,"mode":task.mode,"runtime":task.runtime,
+                "recordState":record_state,"dependencySatisfied":child.is_some_and(|c|complete(&task,c)),
                 "isolation":task.isolation,"resumeId":task.resume_id,
                 "dependsOn":task.depends_on,
                 "agentId":task.agent_id,"childJobId":id,
                 "status":child.as_ref().map(|c|&c["status"]),
                 "executionId":child.as_ref().map(|c|&c["nativeExecutionId"]),
-                "verified":child.as_ref().is_some_and(|c|
-                    belongs_to_team(parent["id"].as_str().unwrap_or(""),&task,c)
-                    && complete(&task,c)&&evidence_grade(&task,c)=="host_verified"),
-                "evidenceGrade":child.as_ref().map(|c|
-                    if belongs_to_team(parent["id"].as_str().unwrap_or(""),&task,c){
-                        evidence_grade(&task,c)
-                    }else{"foreign_binding"}),
+                "verified":child.is_some_and(|c|
+                    complete(&task,c)&&evidence_grade(&task,c)=="host_verified"),
+                "evidenceGrade":if record_state=="foreign_binding"{Some("foreign_binding")}
+                    else{child.map(|c|evidence_grade(&task,c))},
                 "observedOperations":child.as_ref().map(|c|
                     child_observation(&task,c)["observedOperations"].clone()),
                 "worktree":child.as_ref().map(|c|

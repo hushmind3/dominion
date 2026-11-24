@@ -1,6 +1,6 @@
 import {useEffect,useMemo,useState} from 'react'
 import {Check,ChevronDown,ChevronRight,GitBranch,Layers3,MessageSquare,RefreshCw,ShieldCheck} from 'lucide-react'
-import {get,post} from '../api'
+import {post} from '../api'
 import {useLocale} from '../i18n'
 import {Panel,useRemote} from './UI'
 import {classifyTeamReview} from './teamOutcome'
@@ -11,17 +11,23 @@ type Job={
  delegationPatchSha256?:string;integrationStatus?:string;integratedAt?:string;
  input?:{
   goal?:string;prompt?:string;sessionId?:string;parentSessionId?:string;agentId?:string;
-  teamJobId?:string;teamStepId?:string;delegation?:boolean;delegationProfile?:string;externalRuntime?:string|null;
+  teamJobId?:string;teamStepId?:string;parentRunId?:string;teamTaskId?:string;delegation?:boolean;delegationProfile?:string;externalRuntime?:string|null;bridgeRuntime?:string;
   dependsOnJobIds?:string[];resumeFromJobId?:string|null;remoteWorker?:boolean;
-  maxParallel?:number;plan?:Step[];childJobIds?:string[];
+  maxParallel?:number;plan?:Step[];tasks?:NativeTask[];childJobIds?:string[];
  }
 }
-type Step={id:string;jobId:string;agentId?:string;profile?:string;dependsOn?:string[];remoteWorker?:boolean}
-type TeamSteps={teamId:string;jobs:Job[];missing:string[]}
+type NativeTask={id:string;prompt:string;agentId?:string;dependsOn?:string[];mode?:string;runtime?:string}
+type Step={id:string;jobId:string;agentId?:string;profile?:string;dependsOn?:string[];remoteWorker?:boolean;prompt?:string;runtime?:string;recordState?:string;dependencySatisfied?:boolean;evidenceGrade?:string;verified?:boolean}
+type ProjectedTask={taskId:string;childJobId:string;prompt?:string;agentId?:string;dependsOn?:string[];mode?:string;runtime?:string;status?:string|null;recordState:string;dependencySatisfied:boolean;evidenceGrade?:string|null;verified:boolean;answerExcerpt?:string|null}
+type TeamSteps={teamId:string;jobs:Job[];missing:string[];tasks?:ProjectedTask[];status?:string}
+const nativeStep=(task:NativeTask,teamId:string):Step=>({id:task.id,jobId:'team-child:'+teamId+':'+task.id,prompt:task.prompt,agentId:task.agentId,dependsOn:task.dependsOn,profile:task.mode,runtime:task.runtime,remoteWorker:task.runtime==='remote'})
+const projectedStep=(task:ProjectedTask):Step=>({id:task.taskId,jobId:task.childJobId,prompt:task.prompt,agentId:task.agentId,dependsOn:task.dependsOn,profile:task.mode,runtime:task.runtime,remoteWorker:task.runtime==='remote',recordState:task.recordState,dependencySatisfied:task.dependencySatisfied,evidenceGrade:task.evidenceGrade||undefined,verified:task.verified})
+const externalJob=(job?:Job)=>Boolean(job?.input?.externalRuntime||(job?.input?.bridgeRuntime&&job.input.bridgeRuntime!=='native'))
 const compact=(value:unknown)=>typeof value==='string'?value:'—'
-const humanStatus=(status:string|undefined,en:boolean)=>({queued:en?'Waiting':'대기 중',running:en?'Working':'작업 중',completed:en?'Finished':'완료',failed:en?'Failed':'실패',cancelled:en?'Stopped':'중단됨',needs_review:en?'Review needed':'검토 필요',interrupted:en?'Interrupted':'중단됨'} as Record<string,string>)[status||'']||(en?'Checking…':'확인 중…')
-const humanRole=(role:string|undefined,en:boolean)=>({general:en?'General':'일반',inspection:en?'Research':'조사',implementation:en?'Code changes':'코드 수정',verification:en?'Verification':'검증'} as Record<string,string>)[role||'']||role||''
+const humanStatus=(status:string|undefined,en:boolean)=>({not_started:en?'Not started':'실행 대기',queued:en?'Waiting':'대기 중',running:en?'Working':'작업 중',completed:en?'Finished':'완료',failed:en?'Failed':'실패',cancelled:en?'Stopped':'중단됨',needs_review:en?'Review needed':'검토 필요',interrupted:en?'Interrupted':'중단됨'} as Record<string,string>)[status||'']||(en?'Checking…':'확인 중…')
+const humanRole=(role:string|undefined,en:boolean)=>({read:en?'Read-only':'읽기 전용',write:en?'Write':'수정 작업',general:en?'General':'일반',inspection:en?'Research':'조사',implementation:en?'Code changes':'코드 수정',verification:en?'Verification':'검증'} as Record<string,string>)[role||'']||role||''
 function workerTask(job:Job|undefined,step:Step){
+ if(step.prompt)return step.prompt
  const raw=job?.input?.prompt
  const marker='\nTask '+step.id+': '
  const start=raw?.indexOf(marker)??-1
@@ -32,49 +38,24 @@ const stateClass=(state?:string)=>state==='completed'?'border-success/20 bg-succ
  state==='running'?'border-brand bg-brand-soft text-brand-hover':
  state==='needs_review'?'border-warning/20 bg-warning-soft text-warning':
  'border-divider bg-canvas text-muted'
-function ExternalContinuation({job,onCreated}:{job:Job;onCreated:()=>void}){
+function ExternalReceipt({job}:{job:Job}){
  const en=useLocale()==='en'
- const [open,setOpen]=useState(false)
- const [prompt,setPrompt]=useState('')
- const [busy,setBusy]=useState(false)
- const [error,setError]=useState('')
- const [result,setResult]=useState<{jobId?:string;sessionId?:string}|null>(null)
- const runtime=job.input?.externalRuntime
- const finished=job.status==='completed'&&typeof job.result?.externalRunId==='string'
+ const runtime=job.input?.bridgeRuntime||job.input?.externalRuntime
  const parent=job.input?.parentSessionId
  return <div className="mt-2 min-w-0">
   <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted">
    <span className="rounded-md bg-canvas px-2 py-0.5">{runtime}</span>
-   <span>{en?'External receipt':'외부 실행 증거'}: {compact(job.result?.externalRunId)}</span>
+   <span>{en?'External receipt (not host-verified)':'외부 실행 증거 (호스트 미검증)'}: {compact(job.result?.externalRunId)}</span>
    {job.input?.resumeFromJobId&&<span>{en?'Continued from':'이어받은 작업'}: {job.input.resumeFromJobId}</span>}
    {parent&&<a href={'#/chat?session='+encodeURIComponent(parent)} className="underline">{en?'Parent conversation':'원본 대화'}</a>}
   </div>
-  {finished&&<button type="button" aria-expanded={open} onClick={()=>setOpen(v=>!v)}
-   className="mt-2 inline-flex items-center gap-1 rounded-lg border border-divider px-2.5 py-1.5 text-[11px] text-muted hover:bg-canvas">
-   <RefreshCw size={12}/>{en?'Continue verified inspection session':'검증된 조사 세션 이어하기'} {open?'▴':'▾'}
-  </button>}
-  {open&&finished&&<form className="mt-2 flex flex-wrap gap-2" onSubmit={event=>{
-   event.preventDefault();if(busy||!prompt.trim())return
-   setBusy(true);setError('');setResult(null)
-   void post<{jobId?:string;sessionId?:string}>('/api/jobs/'+encodeURIComponent(job.id)+'/resume-external',{prompt:prompt.trim()})
-    .then(value=>{setResult(value);setPrompt('');onCreated()})
-    .catch(e=>setError((e as Error).message))
-    .finally(()=>setBusy(false))
-  }}>
-   <input className="min-w-40 flex-1 rounded-lg border border-divider px-3 py-2 text-[11px]"
-    value={prompt} onChange={e=>setPrompt(e.target.value)} maxLength={3000}
-    aria-label={en?'Follow-up inspection instructions':'이어갈 조사 지시'}
-    placeholder={en?'What should the same inspector check next?':'같은 에이전트가 이어서 조사할 내용'}/>
-   <button type="submit" disabled={busy||!prompt.trim()} className="rounded-lg border border-brand px-3 py-2 text-[11px] font-semibold text-brand-hover disabled:opacity-50">{busy?(en?'Submitting':'전달 중'):(en?'Resume':'재개')}</button>
-  </form>}
-  {error&&<p role="alert" className="mt-2 break-words text-[11px] text-danger">{error}</p>}
-  {result&&<p role="status" className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-success"><Check size={12}/>{en?'Child inspection queued':'후속 조사 예약 완료'}: {result.jobId}{result.sessionId&&<a href={'#/chat?session='+encodeURIComponent(result.sessionId)} className="underline">{en?'Open session':'대화 열기'}</a>}</p>}
  </div>
 }
 function WorkerStep({step,job,ids,onCreated,index=0,agentNames}:{step:Step;job?:Job;ids:Record<string,string>;onCreated:()=>void;index?:number;agentNames?:Record<string,string>}){
  const en=useLocale()==='en'
  const [showResult,setShowResult]=useState(false)
- const done=job?.status==='completed'
+ const done=step.dependencySatisfied===true
+ const displayedStatus=step.recordState==='foreign_binding'?'needs_review':step.recordState==='not_started'?'not_started':job?.status==='completed'&&step.dependencySatisfied===false?'needs_review':job?.status
  const fileHash=job?.delegationPatchSha256
  const deps=(step.dependsOn||[])
  const receipt=job?.result
@@ -87,7 +68,7 @@ function WorkerStep({step,job,ids,onCreated,index=0,agentNames}:{step:Step;job?:
      <small className="text-[12px] text-muted">{humanRole(step.profile,en)}</small>
     </div>
    </div>
-   <span className={'shrink-0 rounded-md border px-2.5 py-1 text-[12px] font-semibold '+stateClass(job?.status)}>{humanStatus(job?.status,en)}</span>
+   <span className={'shrink-0 rounded-md border px-2.5 py-1 text-[12px] font-semibold '+stateClass(displayedStatus)}>{humanStatus(displayedStatus,en)}</span>
   </div>
   <p className="mt-2 break-words text-[13px] font-medium text-ink">
    {en?'Assigned AI':'담당 AI'}: {agentNames?.[step.agentId||'']||step.agentId||job?.input?.agentId||'—'}
@@ -100,7 +81,8 @@ function WorkerStep({step,job,ids,onCreated,index=0,agentNames}:{step:Step;job?:
   </div>
   {job?.error&&<p role="alert" className="mt-2 break-words text-[11px] text-danger">{job.error}</p>}
   {fileHash&&<p className="mt-2 break-all text-[10px] text-muted">{en?'Frozen patch SHA256':'고정된 패치 SHA256'}: {fileHash}</p>}
-  {job?.input?.externalRuntime&&<ExternalContinuation job={job} onCreated={onCreated}/>}
+  {step.evidenceGrade&&<p className="mt-2 text-[11px] text-muted">{en?'Evidence':'검증 근거'}: {step.evidenceGrade==='host_verified'?(en?'Host verified':'호스트 검증 완료'):step.evidenceGrade==='native_observed'?(en?'Native observation (not independently verified)':'네이티브 관측 · 독립 검증 아님'):step.evidenceGrade==='external_unverified'?(en?'External report (unverified)':'외부 보고 · 미검증'):(en?'Requires review':'확인 필요')}</p>}
+  {externalJob(job)&&job&&<ExternalReceipt job={job}/>}
   {job?.result&&<button type="button" aria-expanded={showResult} onClick={()=>setShowResult(v=>!v)}
    className="mt-2 inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-[12px] font-semibold text-brand hover:bg-brand-soft focus-visible:outline-2 focus-visible:outline-offset-2">
    <ShieldCheck size={16}/>{en?'Technical receipt':'작업 영수증(기술 정보)'} {showResult?'▴':'▾'}
@@ -118,23 +100,31 @@ function TeamCard({team,summary,onCreated,initiallyOpen=false,agentNames}:{team:
  const en=useLocale()==='en'
  const [open,setOpen]=useState(initiallyOpen)
  const [showAllReports,setShowAllReports]=useState(false)
- const details=useRemote<TeamSteps>(open?'/api/jobs/'+encodeURIComponent(team.id)+'/team-steps':null,
+ const [actionBusy,setActionBusy]=useState(false),[actionError,setActionError]=useState('')
+ const stopTeam=async()=>{
+  if(actionBusy||!window.confirm(en?'Stop this Team and its active workers?':'협업 작업과 진행 중인 하위 작업을 중단하시겠습니까?'))return
+  setActionBusy(true);setActionError('')
+  try{await post('/api/task-teams/'+encodeURIComponent(team.id)+'/cancel',{});await details.reload();onCreated()}
+  catch(error){setActionError((error as Error).message)}
+  finally{setActionBusy(false)}
+ }
+ const details=useRemote<TeamSteps>('/api/jobs/'+encodeURIComponent(team.id)+'/team-steps',
   {teamId:team.id,jobs:[],missing:[]})
- // The engine projects worker rows under result.tasks; older payloads carried
- // them under input.plan. Accept both so the panel always explains progress.
+ // Current Rust Team.tasks owns the DAG. Legacy plan is only a fallback
+ // for displaying historical descriptions, never proof of completion.
+ const fresh=!details.loading&&!details.error&&details.value.teamId===team.id&&Array.isArray(details.value.tasks)
+ const projected=fresh?details.value.tasks!:undefined
  const rows=(team.result?.tasks as Array<Record<string,unknown>>|undefined)||[]
- const plan=(team.input?.plan as Step[]|undefined)?.length
-  ?team.input!.plan as Step[]
-  :rows.map(row=>({id:String(row.taskId||''),jobId:String(row.childJobId||''),agentId:row.agentId?String(row.agentId):undefined}))
- const fresh=open&&!details.loading&&!details.error&&details.value.teamId===team.id
- const records=fresh?new Map(details.value.jobs.map(j=>[j.id,j])):summary
- const statuses=Object.fromEntries(plan.map(step=>[step.id,records.get(step.jobId)?.status||'unknown']))
- const complete=plan.filter(step=>records.get(step.jobId)?.status==='completed').length
- const unknown=plan.filter(step=>!records.has(step.jobId)).length
+ const plan=projected?projected.map(projectedStep):Array.isArray(team.input?.tasks)
+  ?team.input.tasks.map(task=>nativeStep(task,team.id))
+  :Array.isArray(team.input?.plan)?team.input.plan:rows.map(row=>({id:String(row.taskId||''),jobId:String(row.childJobId||''),agentId:row.agentId?String(row.agentId):undefined}))
+ const records=fresh?new Map(details.value.jobs.map(j=>[j.id,j])):new Map<string,Job>()
+ const statuses=Object.fromEntries(plan.map(step=>[step.id,step.dependencySatisfied===true?'completed':records.get(step.jobId)?.status==='completed'?'needs_review':records.get(step.jobId)?.status||'unknown']))
+ const complete=plan.filter(step=>step.dependencySatisfied===true).length
+ const unknown=fresh?plan.filter(step=>step.recordState==='foreign_binding').length:plan.length
  const review=classifyTeamReview(team)
- const nodes=Array.isArray(team.result?.nodes)
-  ?team.result.nodes
-  :rows.map(row=>({agentId:row.agentId,answer:row.answerExcerpt}))
+ const nodes=projected?projected.filter(row=>row.recordState==='present').map(row=>({jobId:row.childJobId,agentId:row.agentId,answer:row.answerExcerpt,evidenceGrade:row.evidenceGrade})):
+  Array.isArray(team.result?.nodes)?team.result.nodes:rows.map(row=>({agentId:row.agentId,answer:row.answerExcerpt}))
  const reports=nodes.filter(
   (node):node is Record<string,unknown>=>Boolean(node)&&typeof node==='object'&&!Array.isArray(node)
  ).filter(node=>typeof node.answer==='string'&&String(node.answer).length>0)
@@ -146,13 +136,15 @@ function TeamCard({team,summary,onCreated,initiallyOpen=false,agentNames}:{team:
  return <div className="rounded-xl border border-divider bg-surface p-4">
   <button type="button" aria-expanded={open} onClick={()=>setOpen(v=>!v)} className="flex w-full min-w-0 justify-between gap-2 text-left">
    <span className="min-w-0"><strong className="block break-words text-[14px] leading-6">{team.input?.goal||team.id}</strong>
-    <span className="mt-1 block text-[12px] text-muted">{en?'Steps finished':'완료된 단계'} {complete}/{plan.length}
+    <span className="mt-1 block text-[12px] text-muted">{en?'Steps satisfying execution conditions':'실행 조건 충족 단계'} {fresh?complete+' / '+plan.length:(en?'Checking…':'확인 중…')}
      {unknown>0&&<> · {en?'Checking':'확인 중'} {unknown}</>}</span></span>
    <span className={'shrink-0 self-start rounded-lg border px-3 py-1.5 text-[12px] font-semibold '+stateClass(team.status)}>{humanStatus(team.status,en)}</span>
   </button>
   <progress className="mt-3 block h-2 w-full accent-[var(--color-brand)]" value={complete} max={Math.max(1,plan.length)}
    aria-label={en?'Team steps completed':'완료된 협업 작업 단계'}/>
-  {reports.length>0&&<section className="mt-4 rounded-xl border border-success-soft bg-surface p-4" aria-label={en?'Verified worker answers':'실제 AI 작업 결과'}>
+  {['queued','running'].includes(details.value.status||team.status||'')&&<button type="button" disabled={actionBusy} onClick={()=>void stopTeam()} className="mt-3 rounded-lg border border-divider px-3 py-2 text-[11px] text-danger disabled:opacity-50">{en?'Stop team and workers':'협업 및 하위 작업 중단'}</button>}
+  {actionError&&<p role="alert" className="mt-2 text-[11px] text-danger">{actionError}</p>}
+  {reports.length>0&&<section className="mt-4 rounded-xl border border-success-soft bg-surface p-4" aria-label={en?'Recorded worker answers':'저장된 AI 작업 결과'}>
    <div className="flex flex-wrap items-center justify-between gap-2">
     <h4 className="text-[14px] font-bold text-ink">{en?'What the agents found':'AI 작업 결과'}</h4>
     <span className="text-[12px] text-muted">{reports.length}{en?' reports':'개 결과'}</span>
@@ -211,11 +203,11 @@ export function TeamWorkflowPanel({jobs,filterSessionId,agentNames}:{jobs?:Job[]
   :'/api/jobs'):null
  const remote=useRemote<Job[]>(endpoint,[])
  const rows=jobs??remote.value
- const parentTeams=useMemo(()=>rows.filter(j=>j.kind==='team'&&Array.isArray(j.input?.plan)
+ const parentTeams=useMemo(()=>rows.filter(j=>j.kind==='team'&&(Array.isArray(j.input?.tasks)||Array.isArray(j.input?.plan))
   &&(!filterSessionId||j.input?.sessionId===filterSessionId)).sort((a,b)=>(b.queuedAt||'').localeCompare(a.queuedAt||'')).slice(0,8),[rows,filterSessionId])
- const standaloneExternal=useMemo(()=>rows.filter(j=>Boolean(j.input?.externalRuntime)&&!j.input?.teamJobId
+ const standaloneExternal=useMemo(()=>rows.filter(j=>externalJob(j)&&!j.input?.teamJobId&&!j.input?.parentRunId
   &&(!filterSessionId||j.input?.parentSessionId===filterSessionId)).slice(0,10),[rows,filterSessionId])
- const dependentJobs=useMemo(()=>rows.filter(j=>j.input?.delegation===true&&!j.input?.teamJobId
+ const dependentJobs=useMemo(()=>rows.filter(j=>j.input?.delegation===true&&!j.input?.teamJobId&&!j.input?.parentRunId
   &&(j.input?.dependsOnJobIds?.length||0)>0
   &&(!filterSessionId||j.input?.parentSessionId===filterSessionId)).slice(0,18),[rows,filterSessionId])
  const independentStates=useMemo(()=>Object.fromEntries(rows.map(j=>[j.id,j.status||'queued'])),[rows])
@@ -255,7 +247,7 @@ export function TeamWorkflowPanel({jobs,filterSessionId,agentNames}:{jobs?:Job[]
     <div className="space-y-2">{standaloneExternal.map(job=><div key={job.id} className="rounded-lg border border-divider bg-surface p-3">
      <div className="flex flex-wrap justify-between gap-2 text-[11px]"><strong className="min-w-0 break-words">{job.input?.prompt||job.id}</strong>
       <span className={'shrink-0 rounded border px-2 py-0.5 '+stateClass(job.status)}>{job.status}</span></div>
-     <ExternalContinuation job={job} onCreated={refresh}/>
+     <ExternalReceipt job={job}/>
      {job.error&&<p className="mt-1 text-[11px] text-danger">{job.error}</p>}
     </div>)}</div>
    </section>}

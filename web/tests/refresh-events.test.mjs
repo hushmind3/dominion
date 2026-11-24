@@ -65,3 +65,11 @@ test('worker changes refresh only their own Team detail snapshot',()=>{
  }})
  assert.ok(matchesRefreshTarget('/api/jobs/team%3Aalpha/team-steps',root.targets))
 })
+
+test('native Team child events and saved memory edits invalidate real screen endpoints',()=>{
+ const child=classifyRefreshEvent({type:'record',kind:'job',record:{id:'team-child:alpha:read',input:{parentRunId:'alpha',teamTaskId:'read'}}})
+ assert.ok(matchesRefreshTarget('/api/jobs/alpha/team-steps',child.targets))
+ assert.equal(matchesRefreshTarget('/api/jobs/beta/team-steps',child.targets),false)
+ const memory=classifyRefreshEvent({type:'record',kind:'memory',record:{id:'m'}})
+ assert.ok(matchesRefreshTarget('/api/memories',memory.targets))
+})

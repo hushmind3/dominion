@@ -33,13 +33,25 @@ pub async fn list(State(state):State<AppState>,Query(query):Query<HashMap<String
 
 /// Worker jobs spawned by a team lead, keyed by the parent team job.
 pub async fn team_steps(State(state):State<AppState>,Path(id):Path<String>)->Response{
-    if state.store.get("job",&id).is_none(){
-        return error(StatusCode::NOT_FOUND,"작업을 찾을 수 없습니다.");
+    use crate::features::collaboration::task_team;
+    let Some(parent)=state.store.get("job",&id).filter(|job|job["kind"]=="team") else{
+        return error(StatusCode::NOT_FOUND,"팀 작업을 찾을 수 없습니다.");
+    };
+    let team=match task_team::Team::parse(&parent["input"]){
+        Ok(team)=>team,Err(message)=>return error(StatusCode::CONFLICT,&message),
+    };
+    let mut jobs=Vec::new();
+    let mut missing=Vec::new();
+    for task in &team.tasks {
+        let child_id=task_team::child_id(&id,&task.id);
+        if let Some(job)=state.store.get("job",&child_id){
+            if task_team::belongs_to_team(&id,task,&job){jobs.push(job);}
+            else{missing.push(child_id);}
+        }
     }
-    let jobs:Vec<Value>=state.store.all("job").into_iter().filter(|job|{
-        job.pointer("/input/parentRunId").and_then(Value::as_str)==Some(id.as_str())
-    }).collect();
-    Json(json!({"teamId":id,"jobs":jobs,"missing":Vec::<String>::new()})).into_response()
+    let projection=task_team::project(&state,&parent);
+    Json(json!({"teamId":id,"jobs":jobs,"missing":missing,"tasks":projection["tasks"],
+        "status":projection["status"]})).into_response()
 }
 pub async fn one(State(state):State<AppState>,Path(id):Path<String>)->Response{match state.store.get("job",&id){Some(j)=>Json(j).into_response(),None=>error(StatusCode::NOT_FOUND,"작업을 찾을 수 없습니다.")}}
 /// Client requests describe work, never mutable runtime status or evidence.
