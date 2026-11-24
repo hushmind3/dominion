@@ -33,8 +33,8 @@ export function SdkExtensionsPanel(){
   <p className="mb-3 text-xs leading-5 text-muted">{en?'Register trusted external applications that use the Dominion SDK. Registration never downloads, launches or grants access to code. Disabling blocks new managed requests; existing work stays recoverable.':'별도로 설치한 외부 프로그램을 SDK에 연결합니다. 등록만으로 코드를 다운로드하거나 실행하지 않습니다. 비활성화하면 새 SDK 작업 요청을 차단하며 기존 기록은 유지합니다.'}</p>
   <Notice message={error||apps.error} onRetry={apps.error?()=>void apps.reload():undefined}/>
   {open&&<Panel className="mb-3 grid gap-3 p-4">
-   <FormField label={en?'App ID':'앱 ID'} hint="example.assistant"><TextInput value={draft.id} onChange={e=>setDraft({...draft,id:e.target.value})} disabled={busy}/></FormField>
-   <FormField label={en?'Name':'앱 이름'}><TextInput value={draft.name} onChange={e=>setDraft({...draft,name:e.target.value})} disabled={busy}/></FormField>
+   <FormField label={en?'App ID':'앱 ID'} hint="example.assistant"><TextInput aria-label={en?'App ID':'앱 ID'} value={draft.id} onChange={e=>setDraft({...draft,id:e.target.value})} disabled={busy}/></FormField>
+   <FormField label={en?'Name':'앱 이름'}><TextInput aria-label={en?'App name':'앱 이름'} value={draft.name} onChange={e=>setDraft({...draft,name:e.target.value})} disabled={busy}/></FormField>
    <FormField label={en?'Version':'버전'}><TextInput value={draft.version} onChange={e=>setDraft({...draft,version:e.target.value})} disabled={busy}/></FormField>
    <FormField label={en?'Description':'설명'}><TextArea value={draft.description} onChange={e=>setDraft({...draft,description:e.target.value})} disabled={busy}/></FormField>
    <div className="flex gap-2"><Action disabled={busy||!draft.id||!draft.name||!draft.version} onClick={()=>void save()}>{en?'Save registration':'등록 저장'}</Action><Button variant="ghost" onClick={()=>setOpen(false)} disabled={busy}>{en?'Cancel':'취소'}</Button></div>
@@ -78,14 +78,14 @@ function GrantPanel({appId}:{appId:string}){
    <p className="text-xs text-muted">{en?'Isolated chat only: no tools, owner memory, other app history or owner API access. Existing owner SDK tasks remain separate.':'제한형 인증키는 지정 모델의 독립 대화만 허용합니다. 도구·사용자 기억·다른 앱 기록·본체 관리 접근은 허용하지 않습니다.'}</p>
    <Notice message={error||grant.error||providers.error}/>
    {grant.loading?<p className="text-xs text-muted">{en?'Loading…':'불러오는 중…'}</p>:grant.value?<p className="text-xs">{grant.value.model} · {en?'Remaining requests':'남은 요청'} {grant.value.remainingRuns} · {grant.value.tokenBudget} tokens</p>:<p className="text-xs text-muted">{en?'No credential issued':'발급된 인증키 없음'}</p>}
-   <FormField label={en?'Provider':'허용 제공자'}><SelectInput value={providerId} disabled={busy} onChange={e=>{setProviderId(e.target.value);setModel('')}}><option value="">{en?'Select provider':'제공자 선택'}</option>{available.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</SelectInput></FormField>
-   <FormField label={en?'Model':'허용 모델'}><SelectInput value={model} disabled={busy||!provider||catalogue.loading} onChange={e=>setModel(e.target.value)}><option value="">{en?'Select model':'모델 선택'}</option>{models.map(m=><option key={m} value={m}>{m}</option>)}</SelectInput></FormField>
+   <FormField label={en?'Provider':'허용 제공자'}><SelectInput aria-label={en?'Allowed provider':'허용 제공자'} value={providerId} disabled={busy} onChange={e=>{setProviderId(e.target.value);setModel('')}}><option value="">{en?'Select provider':'제공자 선택'}</option>{available.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</SelectInput></FormField>
+   <FormField label={en?'Model':'허용 모델'}><SelectInput aria-label={en?'Allowed model':'허용 모델'} value={model} disabled={busy||!provider||catalogue.loading} onChange={e=>setModel(e.target.value)}><option value="">{en?'Select model':'모델 선택'}</option>{models.map(m=><option key={m} value={m}>{m}</option>)}</SelectInput></FormField>
    <Notice message={catalogue.error}/>
    <div className="grid grid-cols-2 gap-2"><FormField label={en?'Tokens per request':'요청당 토큰 예산'}><TextInput type="number" min={1024} max={32768} value={budget} disabled={busy} onChange={e=>setBudget(e.target.value)}/></FormField>
-   <FormField label={en?'Request allowance':'허용 요청 횟수'}><TextInput type="number" min={1} max={100} value={maxRuns} disabled={busy} onChange={e=>setMaxRuns(e.target.value)}/></FormField></div>
+   <FormField label={en?'Request allowance':'허용 요청 횟수'}><TextInput aria-label={en?'Request allowance':'허용 요청 횟수'} type="number" min={1} max={100} value={maxRuns} disabled={busy} onChange={e=>setMaxRuns(e.target.value)}/></FormField></div>
    <div className="flex gap-2"><Action disabled={busy||!valid||grant.loading||Boolean(grant.error)} onClick={()=>{if(grant.value&&!confirm(en?'Rotate credential and reset request allowance?':'기존 인증키를 폐기하고 새 요청 한도를 발급할까요?'))return;void run(async()=>{const response=await post<{grant:Grant;token:string}>(path,{providerId,model,tokenBudget:Number(budget),maxRuns:Number(maxRuns)});setToken(response.token)})}}>{grant.value?(en?'Rotate key':'키 재발급'):(en?'Issue key':'키 발급')}</Action>
    <Button variant="ghost" disabled={busy||!grant.value} onClick={()=>{if(confirm(en?'Revoke this credential?':'이 인증키를 폐기할까요?'))void run(async()=>{await del(path)})}}>{en?'Revoke key':'키 폐기'}</Button></div>
-   {token&&<div className="rounded-lg border border-divider p-3"><p className="text-xs">{en?'Copy this key now. It will not be shown again.':'한 번만 표시되는 인증키입니다. 지금 복사해 외부 앱에 설정하세요.'}</p><TextInput readOnly value={token}/><Button variant="ghost" onClick={()=>setToken('')}>{en?'Hide key':'키 숨기기'}</Button></div>}
+   {token&&<div className="rounded-lg border border-divider p-3"><p className="text-xs">{en?'Copy this key now. It will not be shown again.':'한 번만 표시되는 인증키입니다. 지금 복사해 외부 앱에 설정하세요.'}</p><TextInput aria-label={en?'One-time credential':'일회 표시 인증키'} readOnly value={token}/><Button variant="ghost" onClick={()=>setToken('')}>{en?'Hide key':'키 숨기기'}</Button></div>}
   </div>}
  </div>
 }

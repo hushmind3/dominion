@@ -448,6 +448,11 @@ fn start_impl(state:AppState,input:Start,scoped:Option<(dominion_extensions::Reg
     // while the session and SDK run remain transactionally durable.
     let run_id=persisted["id"].as_str().unwrap_or_default();
     let saved=state.store.get("sdk_run",run_id).unwrap_or(persisted);
+    if is_scoped{
+        // Publish only the public registration ID. Never broadcast token hashes
+        // or scope secrets. Open grant panels reload the committed balance.
+        state.bus.record("sdk_extension",&json!({"id":saved["extension"]["id"],"grantChanged":true}));
+    }
     launch(state.clone(),saved.clone(),false);
     (StatusCode::ACCEPTED,Json(if is_scoped{scoped_view(&state,saved)}else{public_view(&state,saved)})).into_response()
 }

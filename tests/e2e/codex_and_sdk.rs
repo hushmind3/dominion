@@ -571,6 +571,7 @@ fn scoped_extension_credentials_are_isolated_and_quota_is_durable(){
     let _serial=serial();
     let (port,requests)=scripted_provider(|_|vec![json!({"choices":[{"delta":{"content":"Scoped reply"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14}})]);
     let app=TestApp::new(port,"native");
+    app.post("/api/settings/assistant",&json!({"instructions":"PRIVATE_OWNER_ONLY_SENTINEL","enabled":true}));
     let providers=app.get("/api/providers");
     let provider=providers[0]["id"].as_str().unwrap().to_owned();
     let rt=tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
@@ -616,4 +617,5 @@ fn scoped_extension_credentials_are_isolated_and_quota_is_durable(){
     let observed=requests.lock().unwrap();
     assert_eq!(observed.len(),1);
     assert!(observed[0]["tools"].as_array().is_none_or(|tools|tools.is_empty()));
+    assert!(!observed[0].to_string().contains("PRIVATE_OWNER_ONLY_SENTINEL"));
 }
