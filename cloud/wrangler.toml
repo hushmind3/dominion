@@ -70,3 +70,7 @@ class_name = "AssistantBrowser"
 [[migrations]]
 tag = "assistant-browser-v1"
 new_sqlite_classes = ["AssistantBrowser"]
+
+# Optional private browser vault: configure BROWSER_VAULT_SECRET as an operator secret
+# (random >=32 chars). Login cookies require explicit per-job opt-in. Documents
+# are encrypted in the account's Durable Object; no public bucket.
