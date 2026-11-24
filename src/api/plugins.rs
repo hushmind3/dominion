@@ -9,6 +9,7 @@ use std::{path::PathBuf,process::Stdio,time::Duration};
 use tokio::{io::{AsyncRead,AsyncReadExt},process::Command};
 use super::response::error;
 pub mod bridge;
+pub mod versions;
 
 const LIMIT:usize=1024*1024;
 const OWNER:&str="io.dominion.plugin.owner";
@@ -214,7 +215,10 @@ fn failed(message:&str)->Response{error(StatusCode::BAD_GATEWAY,message)}
 pub async fn list(State(state):State<AppState>)->Response{
     let scope=match owner(&state){Ok(s)=>s,Err(e)=>return failed(&e)};
     match inventory(&scope).await{
-        Ok(items)=>Json(json!({"available":true,"items":items})).into_response(),
+        Ok(mut items)=>{
+            for row in &mut items { versions::attach(&state,row); }
+            Json(json!({"available":true,"items":items})).into_response()
+        },
         Err(e)=>Json(json!({"available":false,"items":null,"error":e})).into_response()
     }
 }
@@ -227,6 +231,7 @@ pub async fn install(State(state):State<AppState>,Json(input):Json<Install>)->Re
     let _lock=match state.integrations.plugin_mutations.try_lock(){Ok(g)=>g,Err(_)=>return error(StatusCode::CONFLICT,"다른 플러그인 변경이 진행 중입니다.")};
     let scope=match owner(&state){Ok(s)=>s,Err(e)=>return failed(&e)};
     let result:Result<Value,String>=async{
+        if versions::pending(&state,&input.id){return Err("진행 중인 버전 변경을 먼저 복구하세요.".into())}
         if let Some(existing)=inspect(&input.id,&scope).await?{
             if existing["image"]==input.image && existing["name"]==input.name && existing["network"]==input.network && existing["requestedPort"]==json!(input.port){
                 return Ok(existing)
@@ -252,6 +257,7 @@ async fn mutate(state:AppState,id:String,action:&str)->Response{
     let row=match inspect(&id,&scope).await{Ok(Some(r))=>r,Ok(None)=>return error(StatusCode::NOT_FOUND,"플러그인이 없습니다."),Err(e)=>return failed(&e)};
     let cid=row["containerId"].as_str().unwrap_or_default();
     if !container_id(cid){return failed("Invalid container identity")}
+    if matches!(action,"start"|"remove")&&versions::pending(&state,&id){return error(StatusCode::CONFLICT,"진행 중인 버전 변경을 먼저 복구하세요.")}
     if action=="remove"&&row["running"]==true{return error(StatusCode::CONFLICT,"실행 중인 플러그인은 먼저 중지하세요.")}
     let args=match action{
         "start"=>vec!["container","start",cid],

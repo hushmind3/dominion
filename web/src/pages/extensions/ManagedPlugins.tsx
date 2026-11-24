@@ -5,7 +5,7 @@ import {Button,TextInput} from '../../components/Primitives'
 import {useLocale} from '../../i18n'
 import {PluginBridgePanel} from './PluginBridgePanel'
 
-type Plugin={id:string;name:string;image:string;imageId:string|null;state:string;running:boolean;network:boolean;ports:number[];exitCode:number|null;requestedPort?:number|null}
+type Plugin={id:string;name:string;image:string;imageId:string|null;state:string;running:boolean;network:boolean;ports:number[];exitCode:number|null;requestedPort?:number|null;versionChange?:{phase:'prepared'|'ready';previousImage:string;previousImageId:string;targetImage:string}}
 type Inventory={available:boolean;items:Plugin[]|null;error?:string}
 type Logs={stdout:string;stderr:string;truncated:boolean}
 export function ManagedPlugins({selectedImage,onImageConsumed}:{selectedImage:string;onImageConsumed:()=>void}){
@@ -14,6 +14,7 @@ export function ManagedPlugins({selectedImage,onImageConsumed}:{selectedImage:st
  const [show,setShow]=useState(false),[name,setName]=useState(''),[image,setImage]=useState(''),[network,setNetwork]=useState(false),[port,setPort]=useState(''),[approved,setApproved]=useState(false)
  const [logs,setLogs]=useState<{name:string;data:Logs}|null>(null)
  const [restoreId,setRestoreId]=useState('')
+ const [updating,setUpdating]=useState<Plugin|null>(null),[newImage,setNewImage]=useState('')
  const active=useRef(false),requestId=useRef(''),loadVersion=useRef(0),installFingerprint=useRef(''),formRef=useRef<HTMLDivElement>(null)
  const load=useCallback(async()=>{
   const version=++loadVersion.current
@@ -50,6 +51,14 @@ export function ManagedPlugins({selectedImage,onImageConsumed}:{selectedImage:st
    setNotice(p.name+' · '+r.state)
   }
  })
+ const updateVersion=()=>{if(!updating)return;const p=updating;void execute(p.id,async()=>{
+  if(!window.confirm(tr('중지된 프로그램을 새 버전으로 교체합니다. 데이터는 유지되지만 이전 버전과 호환되지 않을 수 있습니다.','Replace the stopped app with this version? Data is retained but may not be backward-compatible.')))return
+  await post('/api/plugins/managed/'+encodeURIComponent(p.id)+'/update',{image:newImage.trim(),expectedImageId:p.imageId,confirmed:true});setUpdating(null);setNotice(tr('버전 변경 완료. 실행을 눌러 확인하세요.','Version changed. Start to verify.'))
+ })}
+ const rollback=(p:Plugin)=>execute(p.id,async()=>{
+  if(!window.confirm(tr('이전 실행 이미지로 복구합니다. 저장 데이터 자체를 되돌리지는 않습니다.','Restore the previous executable image? This does not restore stored data.')))return
+  await post('/api/plugins/managed/'+encodeURIComponent(p.id)+'/rollback',{confirmed:true});setNotice(tr('이전 실행 이미지 복구 완료.','Previous executable image restored.'))
+ })
  const restore=(p:Plugin)=>{setRestoreId(p.id);setName(p.name);setImage(p.image);setNetwork(p.network);setPort(p.requestedPort?String(p.requestedPort):'');setApproved(false);setShow(true)}
  const rows=inventory?.items
  const disabled=!!busy||inventory?.available!==true
@@ -74,20 +83,29 @@ export function ManagedPlugins({selectedImage,onImageConsumed}:{selectedImage:st
    <label className="flex items-start gap-2 text-xs"><input type="checkbox" checked={approved} onChange={e=>setApproved(e.target.checked)}/>{tr('이미지 출처와 실행 권한을 확인했습니다.','I reviewed the image source and execution permissions.')}</label>
    <div className="flex flex-wrap gap-2"><Button disabled={disabled||!approved||!name.trim()||!image.trim()||(network&&port!==''&&(!Number.isInteger(Number(port))||Number(port)<1||Number(port)>65535))} onClick={()=>void install()}>{busy==='install'?tr('이미지 받는 중…','Downloading image…'):tr('설치 확인','Install')}</Button><Button variant="ghost" disabled={!!busy} onClick={()=>setShow(false)}>{tr('닫기','Close')}</Button></div>
   </div>}
+  {updating&&<div className="mb-4 space-y-2 rounded-lg border border-divider p-3">
+   <strong className="text-sm">{updating.name} · {tr('버전 변경','Change version')}</strong>
+   <p className="break-all text-xs text-muted">{tr('현재 버전','Current version')}: {updating.image}</p>
+   <TextInput aria-label={tr('새 이미지 버전','New image version')} value={newImage} onChange={e=>setNewImage(e.target.value)} placeholder="owner/app:2.0"/>
+   <div className="flex gap-2"><Button size="sm" disabled={disabled||!newImage.trim()} onClick={updateVersion}>{tr('버전 교체','Replace version')}</Button><Button size="sm" variant="ghost" disabled={!!busy} onClick={()=>setUpdating(null)}>{tr('닫기','Close')}</Button></div>
+  </div>}
   {error&&<p role="alert" className="my-2 break-words text-xs text-danger">{error}</p>}
   {notice&&<p role="status" className="my-2 break-all text-xs text-muted">{notice}</p>}
   {rows?.length===0&&<p className="py-4 text-sm text-muted">{tr('설치된 플러그인이 없습니다. 아래에서 검색하거나 직접 이미지를 설치하세요.','No installed plugins. Search below or install an image directly.')}</p>}
   <div className="grid gap-3 md:grid-cols-2">{rows?.map(p=><article key={p.id} className="min-w-0 rounded-xl border border-divider p-3">
    <div className="flex flex-wrap justify-between gap-2"><strong className="break-all text-sm">{p.name}</strong><span className={p.running?'text-xs text-success':'text-xs text-muted'}>{p.running?tr('실행 중','Running'):p.state==='retained'?tr('데이터 보존됨','Data retained'):p.state==='created'?tr('설치됨','Installed'):p.state==='exited'?tr('중지됨','Stopped')+' · '+p.exitCode:p.state}</span></div>
    <p className="mt-1 break-all text-xs text-muted">{p.image}</p>
+   {p.versionChange&&<p className="mt-1 break-all text-xs text-muted">{tr('복구 가능 이미지','Previous image')}: {p.versionChange.previousImage}</p>}
    <p className="mt-1 text-xs text-muted">{p.network?tr('네트워크 허용','Network allowed'):tr('네트워크 차단','Network off')}</p>
    {p.running&&p.ports.map(port=><a key={port} href={'http://127.0.0.1:'+port} target="_blank" rel="noopener noreferrer" className="mt-1 flex gap-1 text-xs text-brand">{tr('서비스 열기','Open service')} · {port}<ExternalLink size={12}/></a>)}
    <div className="mt-3 flex flex-wrap gap-1.5">
-    {p.state==='retained'?<Button size="sm" disabled={disabled} onClick={()=>restore(p)}><Plus size={14}/>{tr('다시 설치·버전 변경','Reinstall / change version')}</Button>:<>
+    {p.versionChange?.phase==='prepared'?<p className="text-xs text-warning">{tr('버전 변경 복구 필요','Version recovery required')}</p>:p.state==='retained'?<Button size="sm" disabled={disabled} onClick={()=>restore(p)}><Plus size={14}/>{tr('다시 설치·버전 변경','Reinstall / change version')}</Button>:<>
     <Button size="sm" disabled={disabled} onClick={()=>void operate(p,p.running?'stop':'start')}>{p.running?<Square size={14}/>:<Play size={14}/>} {p.running?tr('중지','Stop'):tr('실행','Start')}</Button>
     <Button size="sm" variant="secondary" disabled={disabled} onClick={()=>void operate(p,'logs')}><FileText size={14}/>{tr('로그','Logs')}</Button>
     <Button size="sm" variant="ghost" disabled={disabled||p.running} onClick={()=>void operate(p,'remove')}><Trash2 size={14}/>{tr('제거','Remove')}</Button>
+    {!p.running&&<Button size="sm" variant="secondary" disabled={disabled||!p.imageId} onClick={()=>{setUpdating(p);setNewImage(p.image)}}>{tr('버전 변경','Change version')}</Button>}
     </>}
+    {p.versionChange&&!p.running&&<Button size="sm" variant="secondary" disabled={disabled} onClick={()=>void rollback(p)}>{tr('이전 버전 복구','Restore previous version')}</Button>}
    </div>
    {p.running&&p.ports.length===1&&<PluginBridgePanel pluginId={p.id}/>}
   </article>)}</div>
