@@ -13,8 +13,10 @@ const connectorRepo='hushmind3/dominion-rust',connectorRef='dominion-sub3'
 const connectorImage='ghcr.io/hushmind3/dominion-rust/mcp-connector@sha256:'
 const pause=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms))
 const same=(a:Record<string,unknown>,b:Record<string,unknown>)=>a.transport===b.transport&&(a.transport==='http'?a.url===b.url:a.command===b.command&&JSON.stringify(a.args||[])===JSON.stringify(b.args||[]))
-async function ready(path:string){
- for(let n=0;n<20;n++){try{return await get<Configuration>(path)}catch(e){if(n===19)throw e;await pause(750)}}
+async function ready(pluginId:string){
+ // Keep readiness checks pinned to the supported managed-configuration route.
+ const endpoint='/api/plugins/managed/'+encodeURIComponent(pluginId)+'/configuration'
+ for(let n=0;n<20;n++){try{return await get<Configuration>(endpoint)}catch(e){if(n===19)throw e;await pause(750)}}
  throw Error('Connector did not become ready')
 }
 
@@ -52,7 +54,7 @@ export function McpRegistryPreview(){
    const root='/api/plugins/managed/'+encodeURIComponent(plugin.id)
    if(!plugin.running)await post(root+'/start',{})
    configPath=root+'/configuration';toolPath=root+'/tools'
-   const config=await ready(configPath),servers=config.values?.servers;previous=config
+   const config=await ready(plugin.id),servers=config.values?.servers;previous=config
    if(!Array.isArray(servers))throw Error('Invalid connector configuration')
    const existing=servers.find(s=>same(s,draft))
    const collision=servers.find(s=>String(s.name).toLowerCase()===row.name.toLowerCase()&&!same(s,draft))
