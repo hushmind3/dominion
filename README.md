@@ -195,3 +195,6 @@ Service connections → Plugins searches public package registries and manages l
 
 ### External application boundary
 The native executor and interactive chat use the transport-neutral external adapter registry for discovery, approval, contract pinning and dispatch. Old MCP jobs retain their prior pinned contracts. The legacy MCP transport is still packaged in the host integration layer; the SDK and core do not depend on its protocol. Independent application releases are installed by the generic market rather than built into the product.
+
+### Independent transport packages
+The normal product build excludes MCP transport code (`default = []`). The MCP connector is a separate workspace and OCI extension in `extensions/mcp-connector`, with no dependency on the product SDK kernel, model, algorithm, vault or database. An explicit `--features legacy-mcp` build is available only for migration of pre-existing host-local connections; it uses the same extracted transport source. Default-build legacy APIs preserve historical records and credentials and reject new built-in MCP connections. The independent connector runs stdio inside its own container, so local paths and executables require review. It registers tools through the generic SDK v2 interface like any other extension. See the standalone package README for publication and migration status.

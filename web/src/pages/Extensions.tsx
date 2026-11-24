@@ -343,6 +343,7 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
   // Services embeds only MCP management: do not load unrelated skill data
   // or show the native tool inventory in a connection management screen.
   const mcpOnlyEmbed=embedded&&(tab==='market'||tab==='installed');
+  const legacyRuntime=useRemote<{available:boolean|null}>(tab==='market'||tab==='installed'?'/api/mcp/runtime':null,{available:null});
   const mcp = useRemote<Mcp[]>("/api/mcp", []),
     skills = useRemote<Skill[]>(mcpOnlyEmbed?null:"/api/skills", []),
     presets = useRemote<any[]>(tab === "market"&&!mcpOnlyEmbed ? "/api/mcp/presets" : null, []);
@@ -633,11 +634,24 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
   };
   // Active-tab only: do not run remote MCP discovery from the plugins/skills screens.
   useEffect(() => {
-    if (tab === "installed") void discover(true);
-  }, [tab]);
+    if (tab === "installed"&&legacyRuntime.value.available===true) void discover(true);
+  }, [tab,legacyRuntime.value.available]);
   useEffect(() => {
-    if (tab === "market") void loadCatalog();
-  }, [tab]);
+    if (tab === "market"&&legacyRuntime.value.available===true) void loadCatalog();
+  }, [tab,legacyRuntime.value.available]);
+  if((tab==='market'||tab==='installed')&&legacyRuntime.value.available!==true){
+    const en=loc==='en';
+    const retained=mcp.value.map(r=>{const raw=r as unknown as Record<string,unknown>;return Object.fromEntries(['id','name','transport','url','command','args','enabled','protocolMode'].filter(k=>raw[k]!==undefined).map(k=>[k,raw[k]]))});
+    return <section className="space-y-4 rounded-xl border border-divider bg-surface p-4">
+      <h3 className="font-bold">{en?'Independent MCP extension':'독립 MCP 확장 프로그램'}</h3>
+      {legacyRuntime.value.available===null?<p className="text-sm text-muted">{legacyRuntime.error||(en?'Checking runtime…':'실행 환경 확인 중…')}</p>:<>
+       <p className="text-sm">{en?'MCP transport is no longer built into the standard application. Install a tool-provider extension and register its tools. Existing records and keys are retained.':'기본 도미니온에 MCP 전송 엔진을 내장하지 않습니다. 확장 프로그램을 설치하고 제공 도구를 등록하세요. 기존 연결 기록과 키는 보존됩니다.'}</p>
+       <a href="#/connections?view=plugins" className="inline-flex rounded-lg border border-divider bg-canvas px-3 py-2 text-sm text-brand">{en?'Open extension marketplace':'확장 프로그램 마켓 열기'}</a>
+       {!embedded&&<Button variant="secondary" onClick={()=>setTab('plugins')}>{en?'Extensions':'확장 프로그램'}</Button>}
+       {retained.length>0&&<details><summary className="cursor-pointer text-sm">{en?'Retained connections (non-secret migration settings)':'보존된 연결 설정 (이전용, 비밀키 제외)'} · {retained.length}</summary><p className="my-2 text-xs text-muted">{en?'Copy these records into the installed connector settings. Review container-local commands and re-enter credentials; no automatic transfer.':'설치한 연결 확장의 설정에 복사하세요. 컨테이너 내부 실행 명령을 확인하고 키·환경변수는 직접 입력해야 합니다.'}</p><textarea className="w-full rounded-lg border border-divider bg-canvas p-2 font-mono text-xs" readOnly rows={10} value={JSON.stringify({servers:retained},null,2)}/></details>}
+      </>}
+    </section>
+  }
   return (
     <div className={embedded?"min-w-0":"mx-auto w-full max-w-[1320px] px-5 py-4 sm:px-7 lg:px-6 lg:pb-8"}>
       {!embedded && <Headline

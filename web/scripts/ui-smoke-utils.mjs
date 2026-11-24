@@ -104,6 +104,7 @@ function fixture() {
   if(p==='/api/capabilities')return ok(route,{items:[{id:'web_search',name:'Web Search',description:'Search current web information',namespace:'builtin',available:true},{id:'file_read',name:'Read File',description:'Read workspace files',namespace:'builtin',available:true}]})
   if(p==='/api/agents')return ok(route,db.agents)
   if(p==='/api/memories')return ok(route,db.memories)
+  if(p==='/api/mcp/runtime')return ok(route,{available:true,legacy:true})
   if(p==='/api/mcp')return ok(route,db.mcp)
   if(p==='/api/mcp/discover')return ok(route,db.mcp.filter(row=>row.enabled!==false).map(row=>({mcpId:row.id,name:'mcp__mock__search',description:'Mock plugin search'})))
   if(p==='/api/mcp/presets')return ok(route,[])

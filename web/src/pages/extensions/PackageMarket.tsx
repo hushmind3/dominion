@@ -4,7 +4,7 @@ import {get,post} from '../../api'
 import {Button,TextInput} from '../../components/Primitives'
 import {useLocale} from '../../i18n'
 type Manifest={name:string;description:string;version:string;image:string;network:boolean;port:number|null}
-type Item={repository:string;description:string;stars:number;url:string;detailsLoaded:boolean;commit?:string;manifestDigest?:string;manifest?:Manifest|null;sourceDownload?:string;releaseTag?:string;assets?:{name:string;url:string;size:number|null}[];releaseError?:string}
+type Item={repository:string;description:string;stars:number;url:string;detailsLoaded:boolean;sourceRef?:string;commit?:string;manifestDigest?:string;manifest?:Manifest|null;sourceDownload?:string;releaseTag?:string;assets?:{name:string;url:string;size:number|null}[];releaseError?:string}
 type Page={items:Item[];errors:{repository:string;message:string}[]}
 export function PackageMarket({onInstalled}:{onInstalled:()=>void}){
  const en=useLocale()==='en',tr=(ko:string,eng:string)=>en?eng:ko
@@ -32,12 +32,12 @@ export function PackageMarket({onInstalled}:{onInstalled:()=>void}){
  }
  return <section className="space-y-4 rounded-xl border border-divider bg-surface p-4">
   <div><h2 className="text-xl font-bold text-ink">{tr('플러그인 마켓','Plugin marketplace')}</h2><p className="mt-1 text-sm text-muted">{tr('프로그램 이름으로 검색하고 공개 배포 파일을 받거나 호환 확장 프로그램을 설치하세요.','Search by name, download releases, or install compatible extensions.')}</p></div>
-  <form className="flex gap-2" onSubmit={e=>{e.preventDefault();void search(q)}}><TextInput aria-label={tr('플러그인 검색','Search plugins')} value={q} onChange={e=>setQ(e.target.value)} placeholder={tr('프로그램 이름 · GitHub 저장소','App name or GitHub repository')}/><Button type="submit" disabled={busy||installing}><Search size={16}/>{tr('검색','Search')}</Button></form>
+  <form className="flex gap-2" onSubmit={e=>{e.preventDefault();void search(q)}}><TextInput aria-label={tr('플러그인 검색','Search plugins')} value={q} onChange={e=>setQ(e.target.value)} placeholder={tr('프로그램 이름 · owner/repo · owner/repo@branch','App name · owner/repo · owner/repo@branch')}/><Button type="submit" disabled={busy||installing}><Search size={16}/>{tr('검색','Search')}</Button></form>
   {busy&&<p role="status" className="text-sm text-muted">{tr('공개 저장소 검색 중…','Searching public repositories…')}</p>}
   {error&&<p role="alert" className="break-words text-sm text-danger">{error}</p>}
   {selected&&<article aria-label={tr('배포 상세','Release details')} className="space-y-3 rounded-xl border border-divider bg-canvas p-4">
    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="break-all font-bold">{selected.manifest?.name||selected.repository}</h3><Button size="sm" variant="secondary" disabled={installing} onClick={()=>{setSelected(null);setReview(false)}}>{tr('닫기','Close')}</Button></div>
-   <p className="break-words text-sm">{selected.manifest?.description||selected.description}</p>
+   <p className="break-words text-sm">{selected.manifest?.description||selected.description}</p>{selected.sourceRef&&<p className="break-all text-xs text-muted">{selected.repository}@{selected.sourceRef}</p>}
    {selected.manifest?<div className="space-y-2"><p className="text-sm text-muted">{tr('설치 가능 패키지','Installable package')} · {selected.manifest.version}</p>
     {!review?<Button disabled={installing} onClick={()=>setReview(true)}><Download size={15}/>{tr('설치','Install')}</Button>:<div role="dialog" aria-label={tr('설치 확인','Review installation')} className="space-y-2 rounded-lg border border-divider p-3"><p className="break-all font-mono text-xs">{selected.manifest.image}</p><p className="text-xs">{tr('네트워크','Network')}: {selected.manifest.network?tr('허용','Allowed'):tr('차단','Blocked')} · {tr('서비스 포트','Service port')}: {selected.manifest.port??'–'}</p><div className="flex flex-wrap gap-2"><Button disabled={installing} onClick={()=>void install()}>{installing?tr('설치 중…','Installing…'):tr('확인 및 설치','Confirm install')}</Button><Button variant="secondary" disabled={installing} onClick={()=>setReview(false)}>{tr('취소','Cancel')}</Button></div></div>}
    </div>:<p className="text-xs text-muted">{tr('자동 설치 규격이 없는 프로그램입니다. 배포 파일은 직접 받을 수 있습니다.','No compatible install manifest. Published files remain downloadable.')}</p>}

@@ -48,14 +48,14 @@ jobs:
       - run: cargo test --locked --bin dominion-rust native_auto_route_filters_unavailable_and_too_small_outputs_before_pricing
       - run: cargo test --locked --bin dominion-rust helper_transport_disconnect_never_automatically_replays_paid_post
       - run: cargo test --locked --bin dominion-rust helper_uncertain_transport_prevents_automatic_fallback
-      - run: cargo test --locked --bin dominion-rust failed_mcp_discovery_reports_the_exact_installed_record
+      - run: cargo test --locked --features legacy-mcp --bin dominion-rust failed_mcp_discovery_reports_the_exact_installed_record
       - run: cargo test --locked --bin dominion-rust lightweight_conversation_never_dispatches_hidden_harness_or_program_tools
       - run: cargo test --locked --test e2e web_api::health_reports_running_binary_identity_instead_of_moving_checkout_head -- --exact
-      - run: cargo test --locked --bin dominion-rust real_modern_stdio_never_initializes_and_persists_one_live_process
-      - run: cargo test --locked --bin dominion-rust modern_mcp_http_uses_discovery_stateless_headers_and_live_pinned_schema
-      - run: cargo test --locked --bin dominion-rust modern_mcp_auth_failure_does_not_fall_back_to_initialize
-      - run: cargo test --locked --bin dominion-rust http_reuses_mcp_session_and_reconnects_after_credential_rotation
-      - run: cargo test --locked --bin dominion-rust stdio_reuses_one_live_mcp_process_and_rotates_on_config_change
+      - run: cargo test --locked --features legacy-mcp --bin dominion-rust real_modern_stdio_never_initializes_and_persists_one_live_process
+      - run: cargo test --locked --features legacy-mcp --bin dominion-rust modern_mcp_http_uses_discovery_stateless_headers_and_live_pinned_schema
+      - run: cargo test --locked --features legacy-mcp --bin dominion-rust modern_mcp_auth_failure_does_not_fall_back_to_initialize
+      - run: cargo test --locked --features legacy-mcp --bin dominion-rust http_reuses_mcp_session_and_reconnects_after_credential_rotation
+      - run: cargo test --locked --features legacy-mcp --bin dominion-rust stdio_reuses_one_live_mcp_process_and_rotates_on_config_change
       - run: cargo test --locked -p dominion-agent-runtime --lib
       # SDK library has zero unit tests; execute actual policy/safety suites.
       - run: cargo test --locked -p dominion-agent-sdk --test dispatch_safety

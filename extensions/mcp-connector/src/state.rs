@@ -10,7 +10,7 @@ impl Store{
  pub fn open(_: &Path)->Result<Self,String>{Ok(Self::default())}
  pub fn get(&self,kind:&str,id:&str)->Option<Value>{self.0.read().unwrap().get(&(kind.into(),id.into())).cloned()}
  pub fn all(&self,kind:&str)->Vec<Value>{let mut rows=self.0.read().unwrap().iter().filter(|((k,_),_)|k==kind).map(|(_,v)|v.clone()).collect::<Vec<_>>();rows.sort_by(|a,b|a["id"].as_str().cmp(&b["id"].as_str()));rows}
- pub fn put(&self,kind:&str,value:&Value)->Option<Value>{let id=value["id"].as_str()?;self.0.write().unwrap().insert((kind.into(),id.into()),value.clone());Some(value.clone())}
+ pub fn put(&self,kind:&str,value:&Value)->Option<Value>{let mut row=value.clone();if !row.is_object(){return None}let id=row["id"].as_str().filter(|s|!s.is_empty()).map(str::to_owned).unwrap_or_else(||uuid::Uuid::new_v4().to_string());row["id"]=serde_json::json!(id);self.0.write().unwrap().insert((kind.into(),id),row.clone());Some(row)}
  pub fn audit(&self,_:&str,_:Value){} // never log raw remote output or credentials
 }
 #[derive(Clone,Default)]

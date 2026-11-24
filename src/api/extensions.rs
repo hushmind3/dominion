@@ -31,6 +31,8 @@ pub async fn list_tools(State(state): State<AppState>) -> Json<Value> {
     Json(json!(items))
 }
 
+pub async fn mcp_runtime() -> Json<Value> { Json(json!({"available":cfg!(feature="legacy-mcp"),"legacy":true})) }
+
 pub async fn mcp_presets() -> Json<Value> {
     // Filesystem, git, memory and shell are native Rust tools. Do not push
     // third-party npm MCP servers for capabilities the engine already owns.

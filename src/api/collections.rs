@@ -71,6 +71,9 @@ pub async fn save(
     Json(body): Json<Value>,
 ) -> Response {
     let kind = kind_from_uri(&uri);
+    if kind=="mcp" && !cfg!(feature="legacy-mcp") {
+        return (StatusCode::CONFLICT,Json(json!({"error":"기존 MCP 설정은 보존됩니다. 독립 확장 프로그램에서 연결을 관리하세요."}))).into_response();
+    }
     if !body.is_object() {
         return (
             StatusCode::BAD_REQUEST,

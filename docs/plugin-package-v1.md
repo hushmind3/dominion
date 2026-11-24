@@ -15,3 +15,5 @@ A manifest is not proof of runtime compatibility or trust. The installer pins th
 Application implementations are maintained independently. The host never includes an application-specific build recipe. Legacy installations retain their data; install a published replacement using the market.
 
 Named marketplace searches include ordinary public GitHub repositories without the topic. Details resolve the current commit and latest published release assets; direct source ZIP and release links remain available when a manifest is absent. A generic download is not registered as an installed SDK extension. No LLM is involved.
+
+A search may also use `owner/repo@branch` to resolve a public branch or tag explicitly; review still pins the resulting immutable commit. A manifest may name a digest-pinned direct child GHCR image `ghcr.io/owner/repo/package@sha256:...`; package identities are derived from the exact image repository, so independent packages from one source repository do not collide. The branch-specific connector package is only advertised after anonymous image pull verification. No branch or package name is special-cased in the marketplace.

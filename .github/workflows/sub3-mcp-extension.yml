@@ -66,3 +66,12 @@ jobs:
           path: |
             /tmp/dominion-mcp-connector.tar.gz
             dominion-plugin.json
+      - name: Register verified package manifest on this branch
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add dominion-plugin.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Publish independent extension manifest"
+          git push origin HEAD:dominion-sub3

@@ -14,6 +14,7 @@ pub(super) fn router() -> Router<AppState> {
         .route("/api/browser/action", post(browser::action))
         .route("/api/gateways/freellmapi", get(gateways::freellmapi))
         .route("/api/skills/:id/export", get(extensions::export_skill))
+        .route("/api/mcp/runtime", get(extensions::mcp_runtime))
         .route("/api/mcp/presets", get(extensions::mcp_presets))
         .route("/api/mcp/catalog", get(extensions::mcp_catalog))
         .route("/api/plugins/search", get(extensions::plugin_search))

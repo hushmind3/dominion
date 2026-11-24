@@ -30,8 +30,8 @@ for(const p of [
   'src/conversation/chat/runtime/turn.rs',
   'src/features/collaboration/room_cursor.rs',
   'src/features/collaboration/task_team.rs',
-  'src/integrations/mcp/modern.rs',
-  'src/integrations/mcp/tests.rs',
+  'extensions/mcp-connector/src/mcp/modern.rs',
+  'extensions/mcp-connector/src/mcp/tests.rs',
   'scripts/mcp-echo-modern-server.mjs',
   'src/integrations/agent_bridge.rs',
   'src/api/remote_workers.rs',
@@ -119,20 +119,20 @@ has('src/storage/sqlite.rs',
   ['CREATE TABLE IF NOT EXISTS room_events','CREATE TRIGGER IF NOT EXISTS room_events_message_commit',
    'write_room_answer_with_cursor','"throughSeq"','pub fn patch_if_all']);
 has('src/features/collaboration/task_team.rs',['depends_on','WorkerRuntime','cancel_children']);
-has('src/integrations/mcp.rs',
+has('extensions/mcp-connector/src/mcp.rs',
   ['mod modern;','server/discover','modern::decorate',
    'modern::legacy_http_probe_rejection','modern::advertised_legacy_version',
    'session.request_tool','verify_pinned_tool']);
-has('src/integrations/mcp/modern.rs',
+has('extensions/mcp-connector/src/mcp/modern.rs',
   ['2026-07-28','io.modelcontextprotocol/protocolVersion',
    'io.modelcontextprotocol/clientCapabilities','Mcp-Method',
    'Mcp-Name','Mcp-Param-','validate_tool_schema',
    'pub(super) fn envelope','advertised_legacy_version']);
-has('src/integrations/mcp.rs',
+has('extensions/mcp-connector/src/mcp.rs',
   ['modern::envelope(&plain)','session.request_tool','protocolMode']);
 has('scripts/mcp-echo-modern-server.mjs',
   ['server/discover','2026-07-28','tools/list','tools/call']);
-const mcpRoot=text('src/integrations/mcp.rs').split('\n').length;
+const mcpRoot=text('extensions/mcp-connector/src/mcp.rs').split('\n').length;
 assert.ok(mcpRoot<900,'MCP transport must keep protocol and tests in separate modules');
 has('src/integrations/agent_bridge.rs',['run_codex','run_claude','run_qwen']);
 has('src/api/remote_workers.rs',['gateway_router','worker_authorized',
@@ -164,3 +164,7 @@ for(const p of ['src/host/execution/native_agent.rs','src/host/execution/effect.
 }
 assert.ok(!existsSync(path.join(root,'plugins/dominion-voice')),'Independent applications must not be embedded');
 assert.ok(!existsSync(path.join(root,'src/api/plugins/personal_voice.rs')),'Independent app host handler must not return');
+
+assert.ok(!existsSync(path.join(root,'src/integrations/mcp.rs')),'MCP transport must not live in the product integration tree');
+has('Cargo.toml',['default = []','legacy-mcp = []']);
+has('src/integrations/mod.rs',['#[cfg(feature = "legacy-mcp")]','../../extensions/mcp-connector/src/mcp.rs']);

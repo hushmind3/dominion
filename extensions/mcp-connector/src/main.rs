@@ -5,7 +5,7 @@ mod state;
 #[cfg(test)] mod config{pub use crate::state::Config;}
 #[cfg(test)] mod db{pub use crate::state::Store;}
 #[cfg(test)] mod vault{pub use crate::state::Vault;}
-use axum::{extract::{State,DefaultBodyLimit},http::{HeaderMap,StatusCode},response::{Response,IntoResponse},routing::{get,post},Router,Json};
+use axum::{extract::{State,DefaultBodyLimit},http::{HeaderMap,StatusCode},routing::{get,post},Router,Json};
 use serde::Deserialize;
 use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
@@ -186,5 +186,25 @@ mod sdk_tests{
   let visible=redacted(&cfg);assert_eq!(visible["values"]["servers"][0]["apiKey"],MASK);
   assert_eq!(visible["values"]["servers"][0]["env"]["KEY"],MASK);
   assert_eq!(validate(visible["values"].clone(),&cfg).unwrap(),cfg["values"]);
+ }
+ #[tokio::test] async fn independent_sdk_executes_real_stdio_and_refuses_duplicate_effect(){
+  let root=std::env::temp_dir().join(format!("connector-sdk-{}",uuid::Uuid::new_v4()));
+  std::fs::create_dir_all(root.join("calls")).unwrap();
+  let script=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/mcp-echo-modern-server.mjs");
+  let cfg=json!({"values":{"servers":[{"id":"echo","name":"Echo","transport":"stdio","command":"node","args":[script],"protocolMode":"modern","enabled":true}]},"revision":"fixture"});
+  let state=runtime(&root,&cfg).unwrap();
+  let service=Service{token:Arc::new("test-token-for-sdk".into()),inner:Arc::new(tokio::sync::Mutex::new(Connector{root:root.clone(),config:cfg,state}))};
+  let mut headers=HeaderMap::new();headers.insert("authorization","Bearer test-token-for-sdk".parse().unwrap());
+  assert!(tools(State(service.clone()),HeaderMap::new()).await.is_err());
+  let Json(list)=tools(State(service.clone()),headers.clone()).await.unwrap();
+  let decl=list["tools"][0].clone();
+  let request=json!({"callId":uuid::Uuid::new_v4().to_string(),"name":decl["name"],"arguments":{"text":"independent"},"declaration":decl});
+  let Json(first)=invoke(State(service.clone()),headers.clone(),Json(serde_json::from_value(request.clone()).unwrap())).await.unwrap();
+  assert_eq!(first["success"],true);assert!(first["result"].to_string().contains("MCP_MODERN: independent"));
+  let Json(duplicate)=invoke(State(service.clone()),headers.clone(),Json(serde_json::from_value(request.clone()).unwrap())).await.unwrap();
+  assert_eq!(duplicate,first);
+  let mut changed=request;changed["arguments"]["text"]=json!("changed");
+  assert!(invoke(State(service.clone()),headers,Json(serde_json::from_value(changed).unwrap())).await.is_err());
+  drop(service);let _=std::fs::remove_dir_all(root);
  }
 }

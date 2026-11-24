@@ -2,6 +2,11 @@
 //! The core owns planning, approvals, cost admission and durable tool receipts.
 pub mod accounts;
 pub mod channels;
+#[cfg(feature = "legacy-mcp")]
+#[path = "../../extensions/mcp-connector/src/mcp.rs"]
+pub mod mcp;
+#[cfg(not(feature = "legacy-mcp"))]
+#[path = "mcp_disabled.rs"]
 pub mod mcp;
 pub mod browser;
 pub mod skills;
@@ -15,6 +20,7 @@ use std::sync::Arc;
 /// Shared MCP transport handles, independent of the core agent state machine.
 #[derive(Clone, Default)]
 pub struct IntegrationState {
+    #[cfg(feature = "legacy-mcp")]
     pub(crate) mcp_sessions: Arc<mcp::SessionPool>,
     pub(crate) plugin_mutations: Arc<tokio::sync::Mutex<()>>,
     pub(crate) plugin_proposal_mutations: Arc<tokio::sync::Mutex<()>>,

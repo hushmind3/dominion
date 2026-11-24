@@ -29,10 +29,13 @@ fn text_ok(s:&str,max:usize)->bool{!s.trim().is_empty()&&s.len()<=max&&!s.chars(
 fn parse(repo:&str,value:Value)->Result<Manifest,String>{
     if !repository_ok(repo){return Err("Invalid repository".into())}
     let m:Manifest=serde_json::from_value(value).map_err(|_|"Unsupported package manifest")?;
-    let prefix=format!("ghcr.io/{}@",repo.to_ascii_lowercase());
+    let prefix=format!("ghcr.io/{}",repo.to_ascii_lowercase());
+    let valid_path=m.image.split_once("@sha256:").is_some_and(|(image,hash)|{
+        hex(hash,64)&&image.strip_prefix(&prefix).is_some_and(|suffix|suffix.is_empty()||
+            suffix.strip_prefix('/').is_some_and(|leaf|!leaf.is_empty()&&leaf!="."&&leaf!=".."&&leaf.bytes().all(|b|b.is_ascii_lowercase()||b.is_ascii_digit()||matches!(b,b'-'|b'_'|b'.'))))
+    });
     if m.schema_version!=1||!text_ok(&m.name,120)||!text_ok(&m.description,1500)||!text_ok(&m.version,80)
-        ||!m.image.starts_with(&prefix)||!valid_image(&m.image)
-        ||!m.image.strip_prefix(&prefix).is_some_and(|s|s.strip_prefix("sha256:").is_some_and(|d|hex(d,64)))
+        ||!valid_path||!valid_image(&m.image)
         ||m.port==Some(0)||m.port.is_some()&&!m.network{
         return Err("Unsupported manifest or image identity".into())
     }
@@ -44,6 +47,12 @@ fn install_id(repo:&str)->String{
     let mut bytes=[0u8;16];bytes.copy_from_slice(&hash[..16]);bytes[6]=(bytes[6]&0x0f)|0x50;bytes[8]=(bytes[8]&0x3f)|0x80;
     uuid::Uuid::from_bytes(bytes).to_string()
 }
+fn package_id(repo:&str,image:&str)->String{
+    let prefix=format!("ghcr.io/{}",repo.to_ascii_lowercase());
+    let path=image.split('@').next().unwrap_or("");
+    if path==prefix{install_id(repo)}else{install_id(path.trim_start_matches("ghcr.io/"))}
+}
+fn ref_ok(value:&str)->bool{!value.is_empty()&&value.len()<=120&&!value.contains("..")&&value.split('/').all(|p|!p.is_empty()&&!p.starts_with('.')&&p.bytes().all(|b|b.is_ascii_alphanumeric()||matches!(b,b'-'|b'_'|b'.')))}
 fn client()->Result<reqwest::Client,String>{
     reqwest::Client::builder().user_agent("DOMINION-package-market/1")
         .timeout(Duration::from_secs(12)).redirect(reqwest::redirect::Policy::none())
@@ -76,12 +85,14 @@ fn release_asset(repo:&str,asset:&Value)->Option<Value>{
         ||url.password().is_some()||url.port().is_some()||!url.path().to_ascii_lowercase().starts_with(&format!("/{}/releases/download/",repo.to_ascii_lowercase())){return None}
     Some(json!({"name":name,"url":url.as_str(),"size":asset["size"].as_u64()}))
 }
-async fn resolve(client:&reqwest::Client,repo:&str)->Result<Value,String>{
+async fn resolve(client:&reqwest::Client,repo:&str,requested_ref:Option<&str>)->Result<Value,String>{
     if !repository_ok(repo){return Err("Invalid repository".into())}
     let row=read(client,github_url(&format!("repos/{repo}"))?,512*1024).await?;
     if row["full_name"].as_str().is_none_or(|s|!s.eq_ignore_ascii_case(repo)){return Err("Repository identity changed".into())}
     let mut item=card(&row).ok_or("Only public repositories are supported")?;
-    let branch=row["default_branch"].as_str().filter(|s|!s.is_empty()&&s.len()<200).ok_or("No default branch")?;
+    if requested_ref.is_some_and(|r|!ref_ok(r)){return Err("Invalid package source ref".into())}
+    let branch=requested_ref.or_else(||row["default_branch"].as_str()).filter(|s|!s.is_empty()&&s.len()<200).ok_or("No default branch")?;
+    item["sourceRef"]=json!(branch);
     let mut url=github_url(&format!("repos/{repo}/commits/"))?;
     url.path_segments_mut().map_err(|_|"Invalid branch URL")?.pop_if_empty().push(branch);
     let commit=read(client,url,4*1024*1024).await?["sha"].as_str().filter(|s|hex(s,40)).ok_or("Invalid commit")?.to_owned();
@@ -89,9 +100,10 @@ async fn resolve(client:&reqwest::Client,repo:&str)->Result<Value,String>{
     item["sourceDownload"]=json!(format!("https://github.com/{repo}/archive/{commit}.zip"));
     item["detailsLoaded"]=json!(true);
     match load(client,repo,&commit).await{
-        Ok(m)=>{item["manifestDigest"]=json!(digest(&m));item["manifest"]=json!(m);item["installId"]=json!(install_id(repo));}
+        Ok(m)=>{item["manifestDigest"]=json!(digest(&m));item["installId"]=json!(package_id(repo,&m.image));item["manifest"]=json!(m); }
         Err(e)=>{item["manifestError"]=json!(e);}
     }
+    if requested_ref.is_some(){item["assets"]=json!([]);return Ok(item)}
     match read(client,github_url(&format!("repos/{repo}/releases/latest"))?,2*1024*1024).await{
         Ok(r)=>{
             item["releaseTag"]=r["tag_name"].clone();
@@ -104,7 +116,7 @@ async fn resolve(client:&reqwest::Client,repo:&str)->Result<Value,String>{
 #[derive(Deserialize)]
 pub struct Details{repository:String}
 pub async fn details(Query(input):Query<Details>)->Response{
-    let result=async{resolve(&client()?,input.repository.trim()).await}.await;
+    let result=async{resolve(&client()?,input.repository.trim(),None).await}.await;
     match result{Ok(v)=>Json(v).into_response(),Err(e)=>error(StatusCode::BAD_GATEWAY,&e)}
 }
 pub async fn search(Query(input):Query<Search>)->Response{
@@ -113,7 +125,11 @@ pub async fn search(Query(input):Query<Search>)->Response{
         if q.len()>160||q.chars().any(char::is_control){return Err("Invalid search".into())}
         let client=client()?;
         let repo=q.strip_prefix("https://github.com/").unwrap_or(q).trim_end_matches('/');
-        if repository_ok(repo){return Ok(json!({"items":[resolve(&client,repo).await?],"errors":[]}))}
+        if let Some((name,source_ref))=repo.split_once('@'){
+            if !repository_ok(name)||!ref_ok(source_ref){return Err("Invalid repository or branch".into())}
+            return Ok(json!({"items":[resolve(&client,name,Some(source_ref)).await?],"errors":[]}))
+        }
+        if repository_ok(repo){return Ok(json!({"items":[resolve(&client,repo,None).await?],"errors":[]}))}
         let safe=q.replace(['"','\\',':']," ");
         let words=safe.split_whitespace().map(|w|format!("\"{w}\"")).collect::<Vec<_>>().join(" ");
         let query=if words.is_empty(){"topic:dominion-plugin archived:false".into()}else{format!("archived:false {words}")};
@@ -133,7 +149,7 @@ pub async fn install(State(state):State<AppState>,Json(input):Json<Request>)->Re
         Ok(m)=>m,Err(e)=>return error(StatusCode::BAD_GATEWAY,&e)
     };
     if digest(&m)!=input.manifest_digest{return error(StatusCode::CONFLICT,"검토한 패키지 내용이 변경되었습니다.")}
-    super::install(State(state),Json(Install{id:install_id(&input.repository),name:m.name,image:m.image,network:m.network,port:m.port,confirmed:true})).await
+    super::install(State(state),Json(Install{id:package_id(&input.repository,&m.image),name:m.name,image:m.image,network:m.network,port:m.port,confirmed:true})).await
 }
 #[cfg(test)]
 mod tests{
@@ -145,6 +161,10 @@ mod tests{
         let m=parse("Example/App",sample()).unwrap();assert_eq!(digest(&m).len(),64);
         assert_eq!(install_id("Example/App"),install_id("example/app"));
         assert!(parse("other/app",sample()).is_err());
+        let mut child=sample();child["image"]=json!(format!("ghcr.io/example/app/connector@sha256:{}","a".repeat(64)));
+        let child=parse("example/app",child).unwrap();assert_ne!(package_id("example/app",&child.image),install_id("example/app"));
+        let mut impostor=sample();impostor["image"]=json!(format!("ghcr.io/example/app-other@sha256:{}","a".repeat(64)));assert!(parse("example/app",impostor).is_err());
+        assert!(ref_ok("release/channel"));assert!(!ref_ok("../other"));
         for (field,value) in [("image",json!("ghcr.io/example/app:latest")),("schemaVersion",json!(2)),("network",json!(false)),("command",json!(["shell"]))]{
             let mut v=sample();v[field]=value;assert!(parse("example/app",v).is_err());
         }
