@@ -1,0 +1,9 @@
+[package]
+name = "dominion-extensions"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Transport-independent external SDK extension manifest and lifecycle contract"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }

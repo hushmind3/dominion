@@ -175,6 +175,12 @@ export interface RunSummary {
 }
 export interface InferenceRoute { providerId: string; model: string }
 export interface InferenceSupport extends InferenceRoute { thinkingToggle: boolean; reasoningEfforts: string[] }
+export interface ExtensionManifest {
+  schemaVersion: 1; id: string; name: string; version: string; description?: string;
+}
+export interface ExtensionRegistration {
+  id: string; manifest: ExtensionManifest; enabled: boolean;
+}
 export interface StartRun {
   instruction: string;
   providerId?: string;
@@ -232,7 +238,7 @@ export class DominionAgentClient {
   }
 
   private async request<T>(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     path: string,
     data?: unknown,
     signal?: AbortSignal,
@@ -363,6 +369,21 @@ export class DominionAgentClient {
     return this.getExecutionEvents(executionId, options, signal);
   }
 
+  listExtensions(signal?:AbortSignal):Promise<ExtensionRegistration[]> {
+    return this.request('GET','/api/extensions/apps',undefined,signal);
+  }
+  registerExtension(manifest:ExtensionManifest,signal?:AbortSignal):Promise<ExtensionRegistration>{
+    return this.request('POST','/api/extensions/apps',manifest,signal);
+  }
+  setExtensionEnabled(id:string,enabled:boolean,signal?:AbortSignal):Promise<ExtensionRegistration>{
+    return this.request('POST','/api/extensions/apps/'+encodeURIComponent(id)+'/state',{enabled},signal);
+  }
+  async unregisterExtension(id:string,signal?:AbortSignal):Promise<void>{
+    await this.request('DELETE','/api/extensions/apps/'+encodeURIComponent(id),undefined,signal);
+  }
+  startExtensionRun(id:string,input:Omit<StartRun,'source'>,signal?:AbortSignal):Promise<AgentRun>{
+    return this.startRun({...input,source:{kind:'extension',id}},signal);
+  }
   startRun(input: StartRun, signal?: AbortSignal): Promise<AgentRun> {
     return this.request('POST', '/api/sdk/runs', input, signal);
   }

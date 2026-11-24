@@ -358,10 +358,20 @@ pub async fn start(State(state):State<AppState>,Json(input):Json<Start>)->Respon
     if let Some((key,fingerprint))=&retry{
         if let Some(response)=earlier_run(&state,key,fingerprint){return response;}
     }
-    let (session_row,record)=match prepare_start(&state,&input){
+    // The reserved extension source participates in lifecycle admission.
+    // Generic owner SDK calls remain compatible; provenance is not a sandbox.
+    let extension_admission=if let Some(source)=input.source.as_ref().filter(|s|s.kind==dominion_extensions::SDK_SOURCE_KIND){
+        match super::extension_registry::admit(&state,&source.id){Ok(value)=>Some(value),Err(response)=>return response}
+    }else{None};
+    let (mut session_row,mut record)=match prepare_start(&state,&input){
         Ok(prepared)=>prepared,
         Err(message)=>return error(StatusCode::BAD_REQUEST,&message),
     };
+    if let Some((_,registration))=&extension_admission{
+        let snapshot=json!({"id":registration.id,"version":registration.manifest.version,"schemaVersion":registration.manifest.schema_version});
+        session_row["extension"]=snapshot.clone();
+        record["extension"]=snapshot;
+    }
     // The owner limits and SDK run commit atomically with an optional
     // retry receipt. No second engine or standalone storage is introduced.
     let persisted=if let Some((key,fingerprint))=&retry{

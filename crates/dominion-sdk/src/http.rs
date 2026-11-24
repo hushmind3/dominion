@@ -1,5 +1,6 @@
 //! Typed HTTP integration with the running product; no local execution.
 use crate::{RunEventPage, RunEventRef};
+use dominion_extensions::{Manifest,Registration,SDK_SOURCE_KIND};
 use reqwest::{Method, Url};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{json, Value};
@@ -180,6 +181,22 @@ impl Client {
         self.post(&["api","chat","inference-support"],value).await
     }
     pub async fn get_run(&self,id:&str)->Result<AgentRun,ClientError>{self.get(&["api","sdk","runs",id]).await}
+    pub async fn list_extensions(&self)->Result<Vec<Registration>,ClientError>{self.get(&["api","extensions","apps"]).await}
+    pub async fn register_extension(&self,manifest:&Manifest)->Result<Registration,ClientError>{
+        let body=serde_json::to_value(manifest).map_err(|e|ClientError::Invalid(e.to_string()))?;
+        self.post(&["api","extensions","apps"],body).await
+    }
+    pub async fn set_extension_enabled(&self,id:&str,enabled:bool)->Result<Registration,ClientError>{
+        self.post(&["api","extensions","apps",id,"state"],json!({"enabled":enabled})).await
+    }
+    pub async fn unregister_extension(&self,id:&str)->Result<(),ClientError>{
+        let _:Value=self.request(Method::DELETE,self.url(&["api","extensions","apps",id])?,None).await?;Ok(())
+    }
+    pub async fn start_extension_run(&self,id:&str,input:&StartRun)->Result<AgentRun,ClientError>{
+        let mut request=input.clone();
+        request.source=Some(SourceRef{kind:SDK_SOURCE_KIND.into(),id:id.into()});
+        self.start_run(&request).await
+    }
     pub async fn start_run(&self,input:&StartRun)->Result<AgentRun,ClientError>{
         let body=serde_json::to_value(input).map_err(|e|ClientError::Invalid(e.to_string()))?;
         self.post(&["api","sdk","runs"],body).await

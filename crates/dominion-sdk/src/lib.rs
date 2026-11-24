@@ -3,6 +3,7 @@
 //! The SDK does not create another scheduler, database or implicit authority.
 pub use dominion_core as runtime;
 pub use dominion_algorithms as algorithms;
+pub use dominion_extensions as extensions;
 pub use dominion_core::runtime_port::{AgentLoop, Context, Flow, Host, ModelDecision, model_call};
 pub use dominion_core::hosted::{Action, BoxFuture, Dispatcher, DispatchResult, Journal, Receipt, Snapshot, Status, dispatch_batch};
 pub use dominion_core::budget::BudgetLedger;

@@ -1,4 +1,4 @@
-use super::super::{browser, channels, cloud_auth, compat, extensions, oauth};
+use super::super::{browser, channels, cloud_auth, compat, extensions, extension_registry, oauth};
 use crate::state::AppState;
 use axum::{
     routing::{get, post},
@@ -7,6 +7,9 @@ use axum::{
 
 pub(super) fn router() -> Router<AppState> {
     Router::new()
+        .route("/api/extensions/apps", get(extension_registry::list).post(extension_registry::register))
+        .route("/api/extensions/apps/:id", get(extension_registry::one).delete(extension_registry::remove))
+        .route("/api/extensions/apps/:id/state", post(extension_registry::set_state))
         .route("/api/tools", get(extensions::list_tools))
         .route(
             "/api/extensions/runtime",
