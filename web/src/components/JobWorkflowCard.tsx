@@ -10,7 +10,7 @@ export type WorkflowJob={
  id:string;
  kind?:string;
  status?:string;
- createdAt?:string;
+ createdAt?:string;queuedAt?:string;sessionId?:string;cancelRequested?:boolean;
  error?:string;
  result?:unknown;
  input?:{
@@ -29,9 +29,9 @@ export function JobWorkflowCard({job,onChanged}:{job:WorkflowJob;onChanged:()=>v
  const [error,setError]=useState('')
  const [info,setInfo]=useState('')
  const title=job.input?.goal||job.input?.prompt||(en?'Agent task':'에이전트 작업')
- const active=job.status==='queued'||job.status==='running'
+ const active=(job.status==='queued'||job.status==='running')&&job.cancelRequested!==true
  const isPrompt=job.kind==='prompt'
- const session=job.input?.sessionId
+ const session=job.sessionId||job.input?.sessionId
  const result=typeof job.result==='string'?job.result:
   job.result==null?'':JSON.stringify(job.result,null,2)
  const run=async(action:'cancel'|'steer')=>{
@@ -57,7 +57,7 @@ export function JobWorkflowCard({job,onChanged}:{job:WorkflowJob;onChanged:()=>v
      <StatusPill status={job.status||'unknown'}/>
     </div>
     <p className="mt-1 whitespace-pre-wrap break-words text-[12px] leading-5 text-muted">{title}</p>
-    {job.createdAt&&<time className="mt-1 block text-[10px] text-muted">{formatDateTime(job.createdAt)}</time>}
+    {(job.queuedAt||job.createdAt)&&<time className="mt-1 block text-[10px] text-muted">{formatDateTime(job.queuedAt||job.createdAt)}</time>}
     {job.input?.externalRuntime&&<span className="mt-1 inline-block rounded-md bg-canvas px-2 py-0.5 text-[10px] text-muted">{job.input.externalRuntime}</span>}
     {job.error&&<p role="alert" className="mt-2 break-words text-[11px] text-danger">{translateError(job.error)}</p>}
     <div className="mt-2 flex flex-wrap items-center gap-2">

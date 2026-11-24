@@ -479,3 +479,11 @@ test('memory corrections atomically supersede prior evidence and preserve source
  assert.match(ko,/'memory\.updated': '기억을 수정하고 이전 기록을 보존했습니다\.'/)
  assert.match(en,/'memory\.updated': 'Memory updated; the earlier record is preserved\.'/)
 })
+
+test('room collaboration advertises the actual bounded server launch contract',()=>{
+ const launcher=source('src/components/RoomTeamLauncher.tsx')
+ assert.ok(launcher.includes('[1,2,3].map'))
+ assert.ok(launcher.includes('최대 4명의 읽기 전용'))
+ assert.ok(launcher.includes('launch.value.taskCount'))
+ assert.ok(!launcher.includes('AI가 작업 계획을 만드는 중'))
+})

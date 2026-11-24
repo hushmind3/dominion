@@ -289,6 +289,33 @@ pub async fn team_launch(
             return Err(bad("동시 작업은 1~4개까지 가능합니다."));
         }
         let _guard = lock(&state, &id)?;
+        let launch_id = format!("room-team-launch:{}", memory::stable_id(&[&id, nonce]));
+        let effective_parallel=parallel.min(3);
+        if let Some(previous) = state.store.get("room_team_launch", &launch_id) {
+            if previous["roomId"] != id || previous["goal"] != goal
+                || previous["maxParallel"].as_u64().map(|v|v.min(3))!=Some(effective_parallel) {
+                return Err(conflict("같은 요청 ID로 다른 작업을 시작할 수 없습니다."));
+            }
+            return Ok(project_team_launch(&state,previous));
+        }
+        let job_id=format!("room-team:{}",memory::stable_id(&[&id,nonce]));
+        // If the engine persisted the job but the response/launch record was
+        // lost, recover that job before considering a new dispatch.
+        if let Some(existing)=state.store.get("job",&job_id){
+            if existing["kind"]!="team"||existing["input"]["goal"]!=goal
+                || existing["input"]["maxParallel"]!=json!(effective_parallel){
+                return Err(conflict("기존 협업 작업의 요청 내용이 일치하지 않습니다."));
+            }
+            let session_id=existing["input"]["sessionId"].as_str()
+                .ok_or_else(||conflict("기존 협업 작업의 대화 연결을 확인하세요."))?;
+            let record=json!({"id":launch_id,"roomId":id,"sessionId":session_id,
+                "status":"queued","goal":goal,"maxParallel":effective_parallel,
+                "clientRequestId":nonce,"jobId":job_id,"createdAt":existing["queuedAt"]});
+            let saved=state.store.put_if_absent("room_team_launch",&record)
+                .or_else(||state.store.get("room_team_launch",&launch_id))
+                .ok_or_else(||failed("협업 요청 기록을 복구하지 못했습니다."))?;
+            return Ok(project_team_launch(&state,saved));
+        }
         let config = room(&state, &id)?;
         if config["toolsEnabled"] != true {
             return Err((StatusCode::FORBIDDEN, "그룹의 도구 사용을 먼저 켜세요.".into()));
@@ -298,13 +325,6 @@ pub async fn team_launch(
         }
         let session = rooms::ensure_room_session(&state, &id).map_err(bad)?;
         let session_id = session["id"].as_str().ok_or_else(|| failed("그룹 세션이 없습니다."))?;
-        let launch_id = format!("room-team-launch:{}", memory::stable_id(&[&id, nonce]));
-        if let Some(previous) = state.store.get("room_team_launch", &launch_id) {
-            if previous["roomId"] != id || previous["goal"] != goal {
-                return Err(conflict("같은 요청 ID로 다른 작업을 시작할 수 없습니다."));
-            }
-            return Ok(previous);
-        }
         let agents = config["agentIds"]
             .as_array()
             .map(|ids| {
@@ -332,55 +352,48 @@ pub async fn team_launch(
                 "agentId": agent["id"],
             }));
         }
-        let team = json!({
-            "goal": goal,
-            "tasks": tasks,
-            "maxParallel": parallel.min(3),
-        });
-        let Some(job) = crate::engine::jobs::enqueue(&state, "team", team) else {
+        let plan: Vec<Value> = plan_steps.iter().map(|(task_id,agent_id)|json!({
+            "id":task_id,"agentId":agent_id,
+            "jobId":crate::features::collaboration::task_team::child_id(&job_id,task_id)
+        })).collect();
+        // Persist complete immutable input before waking the scheduler.
+        let team = json!({"goal":goal,"tasks":tasks,"maxParallel":effective_parallel,
+            "plan":plan,"sessionId":session_id});
+        let Some(job)=crate::engine::jobs::enqueue_once(&state,&job_id,"team",team) else{
             return Err(failed("Team 작업을 시작하지 못했습니다."));
         };
-        let job_id = job["id"].as_str().unwrap_or_default().to_string();
-        let mut patched = job.clone();
-        patched["sessionId"] = json!(session_id);
-        patched["roomId"] = json!(id);
-        patched["teamLaunchId"] = json!(launch_id);
-        // The UI reads input.plan to show step progress; worker ids are
-        // deterministic (team-child:<job>:<task>), so they can be written now.
-        let plan: Vec<Value> = plan_steps
-            .iter()
-            .map(|(task_id, agent_id)| {
-                json!({
-                    "id": task_id,
-                    "agentId": agent_id,
-                    "jobId": crate::features::collaboration::task_team::child_id(&job_id, task_id),
-                })
-            })
-            .collect();
-        patched["input"]["plan"] = json!(plan);
-        patched["input"]["sessionId"] = json!(session_id);
-        if let Some(saved) = state.store.put("job", &patched) {
-            state.bus.record("job", &saved);
+        // Patch only metadata. Never put a stale queued job over running or
+        // completed work. The immutable input already carries sessionId.
+        if let Some(saved)=state.store.patch_if("job",&job_id,"id",&json!(job_id),
+            &json!({"sessionId":session_id,"roomId":id,"teamLaunchId":launch_id})){
+            state.bus.record("job",&saved);
         }
-        let launch = json!({
-            "id": launch_id,
-            "roomId": id,
-            "sessionId": session_id,
-            "status": "planning",
-            "goal": goal,
-            "maxParallel": parallel,
-            "createdAt": chrono::Utc::now().to_rfc3339(),
-            "clientRequestId": nonce,
-            "jobId": job_id,
-            "error": Value::Null,
-        });
-        let saved = state
-            .store
-            .put_if_absent("room_team_launch", &launch)
-            .unwrap_or(launch);
+        let launch=json!({"id":launch_id,"roomId":id,"sessionId":session_id,
+            "status":"queued","goal":goal,"maxParallel":effective_parallel,
+            "createdAt":job["queuedAt"],"clientRequestId":nonce,"jobId":job_id,"error":Value::Null});
+        let saved=state.store.put_if_absent("room_team_launch",&launch)
+            .or_else(||state.store.get("room_team_launch",&launch_id))
+            .ok_or_else(||failed("협업 작업은 접수되었으나 요청 기록 저장에 실패했습니다. 같은 요청으로 다시 확인하세요."))?;
         state.bus.record("room_team_launch", &saved);
-        Ok(saved)
+        Ok(project_team_launch(&state,saved))
     })())
+}
+
+/// Actual job state is separate from the legacy launch metadata. No model
+/// planning occurs here; the room submits bounded read-only native tasks.
+fn project_team_launch(state:&AppState,mut launch:Value)->Value{
+    if let Some(job_id)=launch["jobId"].as_str(){
+        if let Some(job)=state.store.get("job",job_id){
+            launch["status"]=job["status"].clone();
+            launch["error"]=job["error"].clone();
+            launch["maxParallel"]=job["input"]["maxParallel"].clone();
+            launch["taskCount"]=json!(job["input"]["tasks"].as_array().map_or(0,Vec::len));
+            return launch;
+        }
+    }
+    launch["status"]=json!("uncertain");
+    launch["error"]=json!("협업 작업 기록을 확인할 수 없습니다.");
+    launch
 }
 
 pub async fn team_launch_status(
@@ -388,26 +401,13 @@ pub async fn team_launch_status(
     Path((id, launch_id)): Path<(String, String)>,
 ) -> Response {
     response((|| {
-        let Some(mut launch) = state.store.get("room_team_launch", &launch_id) else {
-            return Err((StatusCode::NOT_FOUND, "Team 요청을 찾을 수 없습니다.".into()));
+        let Some(launch)=state.store.get("room_team_launch",&launch_id) else{
+            return Err((StatusCode::NOT_FOUND,"Team 요청을 찾을 수 없습니다.".into()));
         };
-        if launch["roomId"].as_str() != Some(id.as_str()) {
-            return Err((StatusCode::NOT_FOUND, "Team 요청을 찾을 수 없습니다.".into()));
+        if launch["roomId"].as_str()!=Some(id.as_str()){
+            return Err((StatusCode::NOT_FOUND,"Team 요청을 찾을 수 없습니다.".into()));
         }
-        if let Some(job_id) = launch["jobId"].as_str() {
-            if let Some(job) = state.store.get("job", job_id) {
-                let status = job["status"].as_str().unwrap_or("queued");
-                launch["status"] = json!(match status {
-                    "queued" | "running" | "planning" | "preparing" => "planning",
-                    "failed" | "cancelled" | "interrupted" => "failed",
-                    _ => "queued",
-                });
-                if matches!(status, "failed" | "cancelled" | "interrupted") {
-                    launch["error"] = job["error"].clone();
-                }
-            }
-        }
-        Ok(launch)
+        Ok(project_team_launch(&state,launch))
     })())
 }
 
@@ -565,6 +565,34 @@ mod tests {
     }
     fn config() -> Value {
         json!({"id":"room-one","name":"우리 방","agentIds":(0..9).map(|i|format!("a{i}")).collect::<Vec<_>>(),"routingMode":"discussion"})
+    }
+    #[tokio::test]
+    async fn room_team_launch_reuses_request_and_preserves_live_job_state(){
+        let (app,dir)=test_state();
+        let mut room_config=config();
+        room_config["toolsEnabled"]=json!(true);
+        save_room(&app,None,&room_config).unwrap();
+        for index in 0..9 {
+            let id=format!("a{index}");
+            let agent=app.store.get("agent",&id).unwrap();
+            app.store.patch_if("agent",&id,"id",&agent["id"],&json!({"providerId":"test-provider"})).unwrap();
+        }
+        let nonce=uuid::Uuid::new_v4().to_string();
+        let body=json!({"goal":"inspect","maxParallel":4,"clientRequestId":nonce});
+        let first=team_launch(State(app.clone()),Path("room-one".into()),Json(body.clone())).await;
+        assert_eq!(first.status(),StatusCode::OK);
+        let data:Value=serde_json::from_slice(&axum::body::to_bytes(first.into_body(),usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(data["status"],"queued");assert_eq!(data["maxParallel"],3);
+        assert_eq!(data["taskCount"],4);
+        let id=data["jobId"].as_str().unwrap();
+        app.store.patch_if("job",id,"status",&json!("queued"),&json!({"status":"running","attempts":1})).unwrap();
+        let second=team_launch(State(app.clone()),Path("room-one".into()),Json(body.clone())).await;
+        let replay:Value=serde_json::from_slice(&axum::body::to_bytes(second.into_body(),usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(replay["jobId"],data["jobId"]);assert_eq!(replay["status"],"running");
+        assert_eq!(app.store.all("job").iter().filter(|j|j["kind"]=="team").count(),1);
+        let mut changed=body;changed["maxParallel"]=json!(1);
+        assert_eq!(team_launch(State(app.clone()),Path("room-one".into()),Json(changed)).await.status(),StatusCode::CONFLICT);
+        drop(app);let _=std::fs::remove_dir_all(dir);
     }
     #[tokio::test]
     async fn room_status_is_scoped_to_current_room_and_preserves_legacy_operation_receipts() {

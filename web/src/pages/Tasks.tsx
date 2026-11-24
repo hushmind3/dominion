@@ -9,8 +9,8 @@ import {useRemote} from '../hooks/useRemote'
 import {useLocale} from '../i18n'
 
 const ongoing=new Set(['queued','running','planning','waiting','pending'])
-const attention=new Set(['needs_review','failed','interrupted','uncertain','waiting_for_approval'])
-const stateOf=(job:WorkflowJob)=>ongoing.has(job.status||'')?'ongoing':attention.has(job.status||'')?'attention':job.status==='completed'?'completed':'other'
+const attention=new Set(['needs_review','failed','interrupted','uncertain','waiting_for_approval','budget_exceeded','answered_unverified'])
+const stateOf=(job:WorkflowJob)=>ongoing.has(job.status||'')?'ongoing':attention.has(job.status||'')?'attention':job.status==='completed'||job.status==='answered_verified'?'completed':job.status==='cancelled'?'cancelled':'other'
 
 export function TasksPage() {
  const en=useLocale()==='en'
@@ -18,7 +18,7 @@ export function TasksPage() {
  const jobs=useRemote<WorkflowJob[]>('/api/jobs',[])
  const [filter,setFilter]=useState('all')
  const [query,setQuery]=useState('')
- const views=[{id:'all',label:tr('전체 작업','All tasks'),icon:Workflow},{id:'ongoing',label:tr('진행 중','In progress'),icon:Clock3},{id:'attention',label:tr('확인 필요','Needs attention'),icon:CircleAlert},{id:'completed',label:tr('완료','Completed'),icon:CheckCircle2}]
+ const views=[{id:'all',label:tr('전체 작업','All tasks'),icon:Workflow},{id:'ongoing',label:tr('진행 중','In progress'),icon:Clock3},{id:'attention',label:tr('확인 필요','Needs attention'),icon:CircleAlert},{id:'completed',label:tr('완료','Completed'),icon:CheckCircle2},{id:'cancelled',label:tr('중단됨','Stopped'),icon:CircleAlert}]
  const filtered=jobs.value.filter(job=>(filter==='all'||stateOf(job)===filter)&&(job.input?.goal||job.input?.prompt||'').toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
  return <PageContainer>
   <PageHeader title={tr('맡긴 작업','Your tasks')} description={tr('진행 중인 작업에 추가 지시를 보내고, 완료된 결과를 확인하세요.','Add instructions to ongoing tasks and review completed results.')} actions={<Button variant="secondary" onClick={()=>void jobs.reload()} disabled={jobs.refreshing}><RefreshCw size={16} className={jobs.refreshing?'animate-spin':''}/>{tr('새로고침','Refresh')}</Button>}/>
