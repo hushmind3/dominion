@@ -1,6 +1,6 @@
 /** Shared account gateway, independent of the local Rust SDK. No operator key. */
 export const DOMINION_CLOUD_URL='https://dominion-cloud.dominion-hushmind.workers.dev';
-export type CloudPairing={id:string;token:string;expires_in:number;status:'pending'};
+export type CloudPairing={id:string;token:string;expires_in:number;status:'pending';verification_uri:string};
 export type CloudAppStatus={id:string;status:'pending'|'approved'|'revoked'|'expired';expires_at:number};
 export type CloudModel={id:string;name:string;free:boolean};
 export class DominionCloudClient {

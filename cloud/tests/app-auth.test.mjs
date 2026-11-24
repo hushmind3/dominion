@@ -17,6 +17,9 @@ test('Assist pairing shares account quota, restricts billing, and supports indep
  const app='dapp_'+randomToken()
  const start=await call('/v1/apps/start',null,{app_name:'DOMINION Assist',token_hash:await hash(app)})
  assert.equal(start.status,200);const pair=await start.json()
+ assert.equal(pair.verification_uri,'https://dominion.example/connect?code='+pair.id)
+ env.GOOGLE_CLIENT_ID='test.apps.googleusercontent.com'
+ const page=await (await call('/connect?code='+pair.id)).text();assert.match(page,/DOMINION Assist/);assert.match(page,/nonce:code/);assert.ok(!page.includes(app))
  assert.equal((await call('/v1/me',app)).status,401)
  assert.equal((await (await call('/v1/apps/status',app)).json()).status,'pending')
  assert.equal((await call('/v1/apps/approve',null,{id:pair.id})).status,401)

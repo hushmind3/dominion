@@ -1,6 +1,7 @@
 import {emailLoginReady, startEmailLogin, verifyEmailLogin, pollEmailLogin} from './email_auth.js';
 import {b64url, hash, randomToken} from './token_crypto.js';
-import {appAccount,isAppRequest,startApp,appStatus,disconnectApp,manageApps} from './app_auth.js';
+import {appAccount,isAppRequest,startApp,appStatus,disconnectApp,manageApps,pendingApp,approveApp} from './app_auth.js';
+import {connectPage} from './connect_page.js';
 // DOMINION account gateway: no Nous credentials and no shared client-side API key.
 // Cloudflare Worker + D1. Credits are integer micro-KRW (one KRW = 1,000 units).
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), {
@@ -505,7 +506,8 @@ export default {
     const sameOriginEmailConfirm = request.method === 'POST'
       && path === '/v1/auth/email/verify'
       && origin === new URL(request.url).origin;
-    if (origin && !isAllowedOrigin(origin, env) && !sameOriginEmailConfirm) return err('Origin not allowed', 403);
+    const sameOriginGoogleApprove=request.method==='POST'&&path==='/v1/apps/google/approve'&&origin===new URL(request.url).origin;
+    if (origin && !isAllowedOrigin(origin, env) && !sameOriginEmailConfirm && !sameOriginGoogleApprove) return err('Origin not allowed', 403);
     // Public OAuth metadata: Google client IDs are public identifiers, never secrets.
     // The browser uses this endpoint so login works without a compile-time VITE key.
     if (path === '/v1/public-config' && request.method === 'GET') {
@@ -532,7 +534,18 @@ export default {
       // App sessions may never enter owner, billing or identity endpoints.
       const appAllowed=['/v1/me','/v1/models','/v1/chat/completions','/v1/apps/status','/v1/apps/disconnect'];
       if(isAppRequest(request)&&!appAllowed.includes(path))return json({error:'Owner login required'},403,headers);
-      if(path==='/v1/apps/start'&&request.method==='POST')response=await startApp(request,env);
+      if(path==='/connect'&&request.method==='GET')response=await connectPage(request,env);
+      else if(path==='/v1/apps/google/approve'&&request.method==='POST'){
+        if(!sameOriginGoogleApprove)return err('Same-origin approval required',403);
+        const body=await maxBody(request,12000);
+        if(!await pendingApp(env,body.id)||typeof body.credential!=='string'||body.credential.length>10000)return err('Pairing unavailable',404);
+        const identity=await verifyGoogle(body.credential,env);
+        if(identity.nonce!==body.id)return err('Google token not bound to this pairing',403);
+        const id='google:'+identity.sub;
+        await env.DB.prepare("INSERT INTO accounts(id,email,credits,created_at) VALUES(?,?,0,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email").bind(id,String(identity.email||'').slice(0,320),now()).run();
+        response=await approveApp(env,body.id,id);
+      }
+      else if(path==='/v1/apps/start'&&request.method==='POST')response=await startApp(request,env);
       else if(path==='/v1/apps/status'&&request.method==='GET')response=await appStatus(request,env);
       else if(path==='/v1/apps/disconnect'&&request.method==='POST')response=await disconnectApp(request,env);
       else if((path==='/v1/apps'&&request.method==='GET')||(['/v1/apps/inspect','/v1/apps/approve','/v1/apps/revoke'].includes(path)&&request.method==='POST'))

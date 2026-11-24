@@ -140,3 +140,5 @@ an operating-system sandbox.
 
 ## Shared DOMINION Cloud account (external app)
 The cloud gateway is independent of the local Rust runtime. Import DominionCloudClient from this SDK. In a trusted local backend, call DominionCloudClient.begin('DOMINION Assist'), persist the returned token in your OS credential store, and show only the returned id to the user. They approve the code in DOMINION Cloud > External apps. Construct new DominionCloudClient(token), poll status(), then use me(), models(), complete({model,messages}) or disconnect(). Pairing expires after ten minutes; approved app sessions expire after seven days. Free inference only, shared account quota. No upstream key is distributed. Requires a deployed Worker with app_pairing support; do not embed tokens in static assets.
+
+For a standalone app, open pairing.verification_uri in the system browser; Google approval there is supported when the Worker origin is registered with Google. Otherwise display pairing.id for approval inside DOMINION. Never open a non-DOMINION verification URI.
