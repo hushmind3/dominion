@@ -330,6 +330,12 @@ if(!sdkApi.includes('state.store.sdk_evidence_rows()')||!store.includes('pub fn 
 // Old optimizer control loops must not creep back in behind the real journal.
 const selectedAlgorithms=readFileSync(path.join(root,'src/addons/strategies/algorithms.rs'),'utf8')
 const kernelSource=readFileSync(path.join(root,'crates/dominion-algorithms/src/kernels.rs'),'utf8')
+for(const [host,algorithm] of [['strategies/debate','debate'],['operations/team_orchestrator','team'],['operations/team_dag','team_dag'],['strategies/program','program_revision'],['strategies/chat_tool_catalog','tool_selection'],['strategies/episode','episode']]){
+ const adapter=readFileSync(path.join(root,'src/addons/'+host+'.rs'),'utf8')
+ const implementation=readFileSync(path.join(root,'crates/dominion-algorithms/src/'+algorithm+'.rs'),'utf8')
+ if(!adapter.includes('dominion_algorithms::'+algorithm+'::')||/\bAppState\b|crate::db|crate::engine|std::fs/.test(implementation))
+   throw Error('Collaborative decision implementation crossed host boundary: '+algorithm)
+}
 for(const [host,algorithm] of [['adaptation_loop','adaptation'],['adaptation/diagnostics','diagnostics']]){
  const adapter=readFileSync(path.join(root,'src/addons/strategies/'+host+'.rs'),'utf8')
  const implementation=readFileSync(path.join(root,'crates/dominion-algorithms/src/'+algorithm+'.rs'),'utf8')

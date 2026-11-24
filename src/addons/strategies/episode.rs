@@ -120,35 +120,7 @@ pub fn link_attempt(
     state.store.put("task_episode", &episode)
 }
 
-fn fold_root_outcome(attempts: &[Value]) -> &'static str {
-    let outcome = |name: &str| {
-        attempts
-            .iter()
-            .any(|attempt| attempt["status"].as_str() == Some(name))
-    };
-    if outcome("succeeded") {
-        return "succeeded";
-    }
-    if outcome("unknown") {
-        return "unknown";
-    }
-    if outcome("running") {
-        return "running";
-    }
-    if outcome("failed") {
-        return "failed";
-    }
-    if attempts.is_empty() {
-        return "running";
-    }
-    if attempts
-        .iter()
-        .all(|attempt| attempt["status"].as_str() == Some("cancelled"))
-    {
-        return "cancelled";
-    }
-    "answered_unverified"
-}
+use dominion_algorithms::episode::fold_root_outcome;
 
 /// Records the terminal outcome of one attempt and recomputes the root outcome
 /// unless an explicit owner (goal lifecycle) already froze it.
