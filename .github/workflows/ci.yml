@@ -328,3 +328,34 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Real process, fake provider, HTTP/SSE, persistence and wire budget
         run: cargo test --locked --test e2e
+
+
+  browser-native-ux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build real backend and production frontend
+        run: |
+          cargo build --locked --bin dominion-rust
+          npm ci --prefix web --no-audit --no-fund
+          npm run build --prefix web
+      - name: Install Chromium
+        run: npx --prefix web playwright install --with-deps chromium
+      - name: Native browser interaction smoke
+        run: node web/tests/native-ux.browser.mjs
+      - name: Collect browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-ux-browser-evidence
+          path: web/test-results/native-ux/
+          if-no-files-found: warn
+          retention-days: 7
