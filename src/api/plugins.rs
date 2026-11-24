@@ -1,0 +1,270 @@
+//! Owner-managed OCI extensions. Docker, not the agent kernel, owns process
+//! state. Every effect uses a scoped container identity, never a shell command.
+use crate::state::AppState;
+use axum::{extract::{Path,State},http::StatusCode,response::{IntoResponse,Response},Json};
+use serde::Deserialize;
+use serde_json::{json,Value};
+use sha2::{Digest,Sha256};
+use std::{path::PathBuf,process::Stdio,time::Duration};
+use tokio::{io::{AsyncRead,AsyncReadExt},process::Command};
+use super::response::error;
+
+const LIMIT:usize=1024*1024;
+const OWNER:&str="io.dominion.plugin.owner";
+const IDENT:&str="io.dominion.plugin.id";
+const TITLE:&str="io.dominion.plugin.name";
+const SOURCE:&str="io.dominion.plugin.source";
+const NET:&str="io.dominion.plugin.network";
+const MAX_PLUGINS:usize=32;
+
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+pub struct Install{
+    id:String,name:String,image:String,network:bool,port:Option<u16>,confirmed:bool,
+}
+
+fn valid_id(id:&str)->bool{
+    uuid::Uuid::parse_str(id).is_ok_and(|u|u.to_string()==id)
+}
+fn valid_image(image:&str)->bool{
+    if image.len()>255 || image.is_empty() || !image.as_bytes()[0].is_ascii_alphanumeric()
+        || !image.bytes().all(|b|b.is_ascii_alphanumeric()||matches!(b,b'.'|b'_'|b'-'|b'/'|b':'|b'@')){return false}
+    let (repo,digest)=image.split_once('@').unwrap_or((image,""));
+    if image.contains('@') && (!digest.starts_with("sha256:")||digest.len()!=71
+        || !digest[7..].bytes().all(|b|b.is_ascii_hexdigit())){return false}
+    let leaf=repo.rsplit('/').next().unwrap_or("");
+    if repo.split('/').any(|p|p.is_empty()||p=="."||p==".."){return false}
+    // Explicit tag or digest; never silently choose a moving latest tag.
+    let (name,tag)=leaf.split_once(':').unwrap_or((leaf,""));
+    !name.is_empty() && (image.contains('@') || !tag.is_empty())
+        && !tag.contains(':') && tag!="latest"
+}
+fn owner(state:&AppState)->Result<String,String>{
+    let path=std::fs::canonicalize(&state.config.data_dir).map_err(|e|e.to_string())?;
+    let digest=Sha256::digest(format!("{}:{}",path.display(),state.config.port).as_bytes());
+    Ok(format!("{digest:x}")[..20].to_owned())
+}
+fn container_name(owner:&str,id:&str)->String{format!("dominion-{owner}-{id}")}
+
+fn local_socket()->Result<String,String>{
+    #[cfg(windows)]
+    {return Ok("npipe:////./pipe/docker_engine".into());}
+    #[cfg(unix)]
+    {
+        let mut paths=Vec::new();
+        if let Some(home)=std::env::var_os("HOME"){
+            let home=PathBuf::from(home);
+            paths.push(home.join(".docker/run/docker.sock"));
+            paths.push(home.join(".colima/default/docker.sock"));
+        }
+        paths.push(PathBuf::from("/var/run/docker.sock"));
+        use std::os::unix::fs::FileTypeExt;
+        for path in paths{
+            if std::fs::metadata(&path).is_ok_and(|m|m.file_type().is_socket()){
+                return Ok(format!("unix://{}",path.display()));
+            }
+        }
+        Err("로컬 Docker가 실행 중이지 않습니다. Docker Desktop 또는 Docker Engine을 실행하세요.".into())
+    }
+    #[cfg(not(any(unix,windows)))]
+    {Err("지원하지 않는 Docker 실행 환경입니다.".into())}
+}
+fn docker_bin()->PathBuf{
+    let mut paths=vec![PathBuf::from("/usr/local/bin/docker"),PathBuf::from("/opt/homebrew/bin/docker")];
+    if let Some(home)=std::env::var_os("HOME"){paths.push(PathBuf::from(home).join(".docker/bin/docker"));}
+    paths.into_iter().find(|p|p.is_file()).unwrap_or_else(||PathBuf::from("docker"))
+}
+async fn drain<R:AsyncRead+Unpin>(mut r:R)->std::io::Result<(Vec<u8>,bool)>{
+    let mut out=Vec::new();let mut buf=[0u8;8192];let mut truncated=false;
+    loop{
+        let n=r.read(&mut buf).await?;if n==0{break}
+        let keep=n.min(LIMIT.saturating_sub(out.len()));
+        out.extend_from_slice(&buf[..keep]);truncated|=keep<n;
+    }
+    Ok((out,truncated))
+}
+async fn docker(args:&[String],seconds:u64)->Result<(String,String,bool),String>{
+    let socket=local_socket()?;
+    let mut child=Command::new(docker_bin()).arg("--host").arg(socket)
+        .env_remove("DOCKER_HOST").env_remove("DOCKER_CONTEXT")
+        .args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
+        .kill_on_drop(true).spawn().map_err(|e|format!("Docker 실행 실패: {e}"))?;
+    let stdout=child.stdout.take().ok_or("Docker stdout unavailable")?;
+    let stderr=child.stderr.take().ok_or("Docker stderr unavailable")?;
+    let (status,(out,a),(err,b))=tokio::time::timeout(Duration::from_secs(seconds),async{
+        tokio::try_join!(child.wait(),drain(stdout),drain(stderr))
+    }).await.map_err(|_|"Docker 응답 시간 초과. 새로고침하여 실제 상태를 확인하세요.".to_owned())?
+        .map_err(|e|e.to_string())?;
+    let out=String::from_utf8_lossy(&out).into_owned();
+    let err=String::from_utf8_lossy(&err).into_owned();
+    if !status.success(){return Err(format!("Docker: {}",err.chars().take(1800).collect::<String>()))}
+    Ok((out,err,a||b))
+}
+async fn call(args:&[&str],seconds:u64)->Result<String,String>{
+    let (out,_,truncated)=docker(&args.iter().map(|s|s.to_string()).collect::<Vec<_>>(),seconds).await?;
+    if truncated{return Err("Docker 응답 크기 제한을 초과했습니다.".into())}
+    Ok(out)
+}
+fn container_id(s:&str)->bool{s.len()==64&&s.bytes().all(|b|b.is_ascii_hexdigit())}
+fn project(raw:&Value,scope:&str)->Option<Value>{
+    let labels=&raw["Config"]["Labels"];
+    let id=labels[IDENT].as_str()?;
+    let docker_id=raw["Id"].as_str()?;
+    if labels[OWNER].as_str()!=Some(scope)||!valid_id(id)||!container_id(docker_id)
+        ||raw["Name"].as_str()!=Some(&format!("/{}",container_name(scope,id))){return None}
+    let ports=raw["NetworkSettings"]["Ports"].as_object().into_iter().flat_map(|map|map.values())
+        .filter_map(Value::as_array).flatten().filter_map(|v|{
+            if v["HostIp"]!="127.0.0.1"{return None}
+            let p=v["HostPort"].as_str()?.parse::<u16>().ok()?;
+            if p==0{return None}Some(p)
+        }).collect::<Vec<_>>();
+    Some(json!({"id":id,"name":labels[TITLE],"image":labels[SOURCE],"imageId":raw["Image"],
+        "state":raw["State"]["Status"],"exitCode":raw["State"]["ExitCode"],"running":raw["State"]["Running"],
+        "network":labels[NET]=="true","ports":ports,"containerId":docker_id}))
+}
+async fn inspect(id:&str,scope:&str)->Result<Option<Value>,String>{
+    if !valid_id(id){return Err("Invalid plugin identity".into())}
+    let name=container_name(scope,id);
+    let filter=format!("name=^/{name}$");
+    let ids=call(&["container","ls","-a","--no-trunc","--filter",&filter,"--format","{{.ID}}"],12).await?;
+    let ids=ids.lines().filter(|s|!s.is_empty()).collect::<Vec<_>>();
+    if ids.is_empty(){return Ok(None)}
+    if ids.len()!=1||!container_id(ids[0]){return Err("Ambiguous plugin identity".into())}
+    let raw:Value=serde_json::from_str(&call(&["container","inspect",ids[0]],12).await?).map_err(|e|e.to_string())?;
+    let row=raw.as_array().and_then(|a|a.first()).and_then(|r|project(r,scope)).ok_or("Foreign container or invalid plugin metadata")?;
+    Ok(Some(row))
+}
+async fn list_owned(scope:&str)->Result<Vec<Value>,String>{
+    let filter=format!("label={OWNER}={scope}");
+    let out=call(&["container","ls","-a","--no-trunc","--filter",&filter,"--format","{{.ID}}"],12).await?;
+    let ids=out.lines().filter(|x|!x.is_empty()).collect::<Vec<_>>();
+    if ids.len()>MAX_PLUGINS||ids.iter().any(|s|!container_id(s)){return Err("Invalid or oversized plugin inventory".into())}
+    if ids.is_empty(){return Ok(vec![])}
+    let mut args=vec!["container","inspect"];args.extend(ids);
+    let raw:Vec<Value>=serde_json::from_str(&call(&args,15).await?).map_err(|e|e.to_string())?;
+    raw.iter().map(|r|project(r,scope).ok_or_else(||"Invalid plugin ownership".into())).collect()
+}
+fn creation_args(scope:&str,input:&Install,image_id:&str)->Vec<String>{
+    let name=container_name(scope,&input.id);
+    let mut args=vec!["container".into(),"create".into(),"--name".into(),name.clone(),
+        "--label".into(),format!("{OWNER}={scope}"),"--label".into(),format!("{IDENT}={}",input.id),
+        "--label".into(),format!("{TITLE}={}",input.name),"--label".into(),format!("{SOURCE}={}",input.image),
+        "--label".into(),format!("{NET}={}",input.network),
+        "--pull=never".into(),"--restart=no".into(),"--cap-drop=ALL".into(),
+        "--security-opt=no-new-privileges:true".into(),"--pids-limit=256".into(),
+        "--memory=2g".into(),"--cpus=2".into(),"--read-only".into(),"--tmpfs".into(),"/tmp:rw,nosuid,nodev,size=128m".into(),
+        "--log-driver=local".into(),"--log-opt=max-size=10m".into(),"--log-opt=max-file=3".into(),
+        "--network".into(),if input.network{"bridge".into()}else{"none".into()},
+        "--mount".into(),format!("type=volume,source={name}-data,target=/data,volume-nocopy")];
+    if let Some(port)=input.port{args.extend(["--publish".into(),format!("127.0.0.1::{port}/tcp")]);}
+    args.push(image_id.into());args
+}
+fn bad(message:&str)->Response{error(StatusCode::BAD_REQUEST,message)}
+fn failed(message:&str)->Response{error(StatusCode::BAD_GATEWAY,message)}
+pub async fn list(State(state):State<AppState>)->Response{
+    let scope=match owner(&state){Ok(s)=>s,Err(e)=>return failed(&e)};
+    match list_owned(&scope).await{
+        Ok(items)=>Json(json!({"available":true,"items":items})).into_response(),
+        Err(e)=>Json(json!({"available":false,"items":null,"error":e})).into_response()
+    }
+}
+pub async fn install(State(state):State<AppState>,Json(input):Json<Install>)->Response{
+    if !input.confirmed||!valid_id(&input.id)||!valid_image(&input.image)||input.name.trim().is_empty()
+        ||input.name.len()>120||input.name.chars().any(char::is_control)
+        ||input.port==Some(0)||input.port.is_some()&&!input.network{
+        return bad("플러그인 이름·명시적 이미지 버전·네트워크 설정과 설치 승인을 확인하세요.");
+    }
+    let _lock=match state.integrations.plugin_mutations.try_lock(){Ok(g)=>g,Err(_)=>return error(StatusCode::CONFLICT,"다른 플러그인 변경이 진행 중입니다.")};
+    let scope=match owner(&state){Ok(s)=>s,Err(e)=>return failed(&e)};
+    let result:Result<Value,String>=async{
+        if let Some(existing)=inspect(&input.id,&scope).await?{
+            if existing["image"]==input.image && existing["name"]==input.name && existing["network"]==input.network{
+                return Ok(existing)
+            }
+            return Err("같은 설치 요청 ID가 이미 다른 설정에 사용되었습니다.".into())
+        }
+        if list_owned(&scope).await?.len()>=MAX_PLUGINS{return Err("플러그인 등록 한도에 도달했습니다.".into())}
+        call(&["image","pull","--quiet",&input.image],300).await?;
+        let image_id=call(&["image","inspect","--format","{{.Id}}",&input.image],15).await?;
+        let image_id=image_id.trim();
+        if !image_id.strip_prefix("sha256:").is_some_and(container_id){return Err("Invalid immutable image identity".into())}
+        // Do not launch at install time. A separate owner action starts it.
+        docker(&creation_args(&scope,&input,image_id),45).await?;
+        inspect(&input.id,&scope).await?.ok_or_else(||"설치 결과를 확인하지 못했습니다. 새로고침하세요.".into())
+    }.await;
+    match result{Ok(row)=>Json(row).into_response(),Err(e)=>failed(&e)}
+}
+async fn mutate(state:AppState,id:String,action:&str)->Response{
+    let _lock=match state.integrations.plugin_mutations.try_lock(){Ok(g)=>g,Err(_)=>return error(StatusCode::CONFLICT,"다른 플러그인 변경이 진행 중입니다.")};
+    let scope=match owner(&state){Ok(s)=>s,Err(e)=>return failed(&e)};
+    let row=match inspect(&id,&scope).await{Ok(Some(r))=>r,Ok(None)=>return error(StatusCode::NOT_FOUND,"플러그인이 없습니다."),Err(e)=>return failed(&e)};
+    let cid=row["containerId"].as_str().unwrap_or_default();
+    if !container_id(cid){return failed("Invalid container identity")}
+    if action=="remove"&&row["running"]==true{return error(StatusCode::CONFLICT,"실행 중인 플러그인은 먼저 중지하세요.")}
+    let args=match action{
+        "start"=>vec!["container","start",cid],
+        "stop"=>vec!["container","stop","--time","10",cid],
+        "remove"=>vec!["container","rm",cid],
+        _=>return bad("Invalid action")
+    };
+    if let Err(e)=call(&args,30).await{return failed(&e)}
+    match inspect(&id,&scope).await{
+        Ok(None) if action=="remove"=>Json(json!({"removed":true,"dataRetained":true,"volume":format!("{}-data",container_name(&scope,&id))})).into_response(),
+        Ok(Some(r)) if action!="remove"=>Json(r).into_response(),
+        Ok(_)=>failed("변경 결과가 예상과 다릅니다. 새로고침하세요."),
+        Err(e)=>failed(&e)
+    }
+}
+pub async fn start(State(s):State<AppState>,Path(id):Path<String>)->Response{mutate(s,id,"start").await}
+pub async fn stop(State(s):State<AppState>,Path(id):Path<String>)->Response{mutate(s,id,"stop").await}
+pub async fn remove(State(s):State<AppState>,Path(id):Path<String>)->Response{mutate(s,id,"remove").await}
+pub async fn logs(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    let scope=match owner(&state){Ok(s)=>s,Err(e)=>return failed(&e)};
+    let row=match inspect(&id,&scope).await{Ok(Some(r))=>r,Ok(None)=>return error(StatusCode::NOT_FOUND,"플러그인이 없습니다."),Err(e)=>return failed(&e)};
+    let cid=row["containerId"].as_str().unwrap_or_default();
+    match docker(&["container".into(),"logs".into(),"--tail".into(),"100".into(),cid.into()],15).await{
+        Ok((stdout,stderr,truncated))=>Json(json!({"stdout":stdout,"stderr":stderr,"truncated":truncated})).into_response(),
+        Err(e)=>failed(&e)
+    }
+}
+pub(crate) async fn discover_images(query:&str)->Result<Vec<Value>,String>{
+    let out=call(&["search","--limit","20","--format","{{json .}}","--",query],20).await?;
+    let mut rows=Vec::new();
+    for line in out.lines().take(20){
+        let r:Value=serde_json::from_str(line).map_err(|e|e.to_string())?;
+        let Some(name)=r["Name"].as_str()else{continue};
+        if !valid_image(&format!("{name}:1")){continue}
+        let path=if name.contains('/') {format!("r/{name}")}else{format!("_/{name}")};
+        rows.push(json!({"id":format!("docker:{name}"),"source":"docker","name":name,"kind":"repository",
+            "version":null,"description":r["Description"].as_str().unwrap_or("").chars().take(500).collect::<String>(),
+            "license":"","url":format!("https://hub.docker.com/{path}"),"compatibility":"unverified"}));
+    }
+    Ok(rows)
+}
+#[cfg(test)]
+mod tests{
+    use super::*;
+    #[test]
+    fn image_must_be_explicit_and_not_cli_syntax(){
+        for s in ["alpine:3.22","ghcr.io/org/app:v1.2","localhost:5000/x:1"]{assert!(valid_image(s),"{s}")}
+        for s in ["alpine","alpine:latest","--privileged","a:1;echo","a/../b:1","a@sha256:bad","a:1\n"]{assert!(!valid_image(s),"{s}")}
+    }
+    #[test]
+    fn create_is_stopped_bounded_and_no_host_mounts(){
+        let i=Install{id:"01234567-89ab-4def-8123-456789abcdef".into(),name:"Voice".into(),image:"app:1".into(),network:false,port:None,confirmed:true};
+        let args=creation_args("scope",&i,"sha256:abc");
+        assert_eq!(&args[..2],&["container","create"]);
+        for flag in ["--pull=never","--restart=no","--read-only","--cap-drop=ALL","--security-opt=no-new-privileges:true","none"]{assert!(args.iter().any(|a|a==flag))}
+        assert!(!args.iter().any(|s|s.contains("type=bind")||s.contains("docker.sock")||s=="--privileged"));
+        assert_eq!(args.last().unwrap(),"sha256:abc");
+    }
+    #[test]
+    fn foreign_container_cannot_be_projected(){
+        let id="01234567-89ab-4def-8123-456789abcdef";
+        let mut r=json!({"Id":"a".repeat(64),"Name":format!("/{}",container_name("scope",id)),"Config":{"Labels":{(OWNER):"scope",(IDENT):id}}});
+        assert!(project(&r,"scope").is_some());
+        assert!(project(&r,"other").is_none());
+        r["Name"]=json!("/different");
+        assert!(project(&r,"scope").is_none());
+    }
+}

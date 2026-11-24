@@ -39,6 +39,7 @@ await withBrowser('workspace-visual',async({page,db,url,viewport})=>{
  await page.waitForURL(/#\/connections\?view=registry/)
  assert.equal(await page.getByRole('navigation',{name:/서비스 연결 보기|Connection views/}).getByRole('button',{name:/^MCP 레지스트리$|^MCP registry$/}).getAttribute('aria-current'),'page')
  await page.goto(url+'/#/connections?view=plugins')
+ await page.getByText(/내 플러그인|My plugins/).waitFor({state:'visible'})
  const searchInput=page.getByRole('textbox',{name:/확장 프로그램 검색어|Search packages/})
  await searchInput.fill('voice')
  await page.getByRole('button',{name:/^검색$|^Search$/}).click()

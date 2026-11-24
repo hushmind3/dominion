@@ -7,7 +7,7 @@ use std::time::Duration;
 
 #[derive(Deserialize)]
 pub struct Search {q:String,source:Option<String>}
-const SOURCES:[&str;4]=["github","npm","pypi","crates"];
+const SOURCES:[&str;6]=["github","npm","pypi","crates","huggingface","docker"];
 fn clean(value:&Value,max:usize)->String{
     value.as_str().unwrap_or("").chars().take(max).collect()
 }
@@ -22,6 +22,7 @@ fn endpoint(source:&str,q:&str)->Result<Option<reqwest::Url>,String>{
         "github"=>"https://api.github.com/search/repositories",
         "npm"=>"https://registry.npmjs.org/-/v1/search",
         "crates"=>"https://crates.io/api/v1/crates",
+        "huggingface"=>"https://huggingface.co/api/spaces",
         "pypi"=>{
             // PyPI retired its search API. Exact project lookup only;
             // never scrape the HTML search page or silently fake results.
@@ -37,6 +38,7 @@ fn endpoint(source:&str,q:&str)->Result<Option<reqwest::Url>,String>{
         "github"=>{u.query_pairs_mut().append_pair("q",q).append_pair("per_page","20");}
         "npm"=>{u.query_pairs_mut().append_pair("text",q).append_pair("size","20");}
         "crates"=>{u.query_pairs_mut().append_pair("q",q).append_pair("per_page","20");}
+        "huggingface"=>{u.query_pairs_mut().append_pair("search",q).append_pair("limit","20");}
         _=>{}
     }
     Ok(Some(u))
@@ -46,6 +48,7 @@ fn project(source:&str,raw:&Value)->Result<Vec<Value>,String>{
         "github"=>raw["items"].as_array(),
         "npm"=>raw["objects"].as_array(),
         "crates"=>raw["crates"].as_array(),
+        "huggingface"=>raw.as_array(),
         "pypi"=>None,
         _=>return Err("Unsupported registry".into())
     };
@@ -55,14 +58,15 @@ fn project(source:&str,raw:&Value)->Result<Vec<Value>,String>{
     }else{rows.ok_or("Invalid registry response")?.iter().take(20).collect()};
     Ok(objects.into_iter().filter_map(|row|{
         let r=if source=="npm"{&row["package"]}else{row};
-        let name=if source=="github"{r["full_name"].as_str()?}else{r["name"].as_str()?};
-        if !valid_name(name,matches!(source,"github"|"npm")){return None;}
-        if source=="github"&&(r["private"]!=false||name.split('/').count()!=2){return None;}
+        let name=match source{"github"=>r["full_name"].as_str()?,"huggingface"=>r["id"].as_str()?,_=>r["name"].as_str()?};
+        if !valid_name(name,matches!(source,"github"|"npm"|"huggingface")){return None;}
+        if matches!(source,"github"|"huggingface")&&(r["private"]!=false||name.split('/').count()!=2){return None;}
         let (kind,version,description,license,url)=match source{
             "github"=>("repository",Value::Null,clean(&r["description"],500),clean(&r["license"]["spdx_id"],100),format!("https://github.com/{name}")),
             "npm"=>("package",r["version"].clone(),clean(&r["description"],500),clean(&r["license"],100),format!("https://www.npmjs.com/package/{name}")),
             "pypi"=>("package",r["version"].clone(),clean(&r["summary"],500),clean(&r["license_expression"],100),format!("https://pypi.org/project/{name}/")),
             "crates"=>("package",r["newest_version"].clone(),clean(&r["description"],500),String::new(),format!("https://crates.io/crates/{name}")),
+            "huggingface"=>("repository",Value::Null,clean(&r["sdk"],100),String::new(),format!("https://huggingface.co/spaces/{name}")),
             _=>return None
         };
         Some(json!({"id":format!("{source}:{name}"),"source":source,"name":name,
@@ -72,6 +76,7 @@ fn project(source:&str,raw:&Value)->Result<Vec<Value>,String>{
     }).collect())
 }
 async fn lookup(client:&reqwest::Client,source:&str,q:&str)->Result<Vec<Value>,String>{
+    if source=="docker"{return crate::api::plugins::discover_images(q).await;}
     let Some(url)=endpoint(source,q)? else{return Ok(vec![]);};
     let response=client.get(url).send().await.map_err(|e|e.to_string())?;
     if source=="pypi"&&response.status()==StatusCode::NOT_FOUND{return Ok(vec![]);}

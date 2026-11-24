@@ -16,6 +16,7 @@ use std::sync::Arc;
 #[derive(Clone, Default)]
 pub struct IntegrationState {
     pub(crate) mcp_sessions: Arc<mcp::SessionPool>,
+    pub(crate) plugin_mutations: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// Connectors are started by runtime composition, never the agent job worker.

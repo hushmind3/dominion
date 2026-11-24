@@ -1,5 +1,5 @@
 //! HTTP routes for integrations. Handler behavior is unchanged.
-use crate::api::{browser, channels, compat, extensions, gateways};
+use crate::api::{browser, channels, compat, extensions, gateways, plugins};
 use crate::state::AppState;
 use axum::{
     routing::{get, post},
@@ -17,6 +17,11 @@ pub(super) fn router() -> Router<AppState> {
         .route("/api/mcp/presets", get(extensions::mcp_presets))
         .route("/api/mcp/catalog", get(extensions::mcp_catalog))
         .route("/api/plugins/search", get(extensions::plugin_search))
+        .route("/api/plugins/managed", get(plugins::list).post(plugins::install))
+        .route("/api/plugins/managed/:id/start", post(plugins::start))
+        .route("/api/plugins/managed/:id/stop", post(plugins::stop))
+        .route("/api/plugins/managed/:id/logs", get(plugins::logs))
+        .route("/api/plugins/managed/:id", axum::routing::delete(plugins::remove))
         .route("/api/mcp/discover", get(extensions::mcp_discover))
         .route(
             "/api/skills/import-repo",

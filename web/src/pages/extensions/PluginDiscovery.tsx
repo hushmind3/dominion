@@ -1,15 +1,17 @@
 import {useEffect,useRef,useState} from 'react'
 import {Search,ExternalLink,PackagePlus} from 'lucide-react'
 import {get} from '../../api'
+import {ManagedPlugins} from './ManagedPlugins'
 import {Button,TextInput} from '../../components/Primitives'
 import {useLocale} from '../../i18n'
 
-type Source='all'|'github'|'npm'|'pypi'|'crates'
+type Source='all'|'github'|'npm'|'pypi'|'crates'|'huggingface'|'docker'
 type Result={id:string;source:Source;name:string;kind:'package'|'repository';version?:string|null;description:string;license:string;url:string;compatibility:'unverified'}
 type SearchPage={items:Result[];errors:{source:Source;message:string}[];pypiMode:string;searchOnly:boolean}
-const sources:{id:Source;label:string}[]=[{id:'all',label:'All'},{id:'github',label:'GitHub'},{id:'npm',label:'npm'},{id:'pypi',label:'PyPI'},{id:'crates',label:'crates.io'}]
+const sources:{id:Source;label:string}[]=[{id:'all',label:'All'},{id:'github',label:'GitHub'},{id:'npm',label:'npm'},{id:'pypi',label:'PyPI'},{id:'crates',label:'crates.io'},{id:'huggingface',label:'Hugging Face'},{id:'docker',label:'Docker Hub'}]
 export function PluginDiscovery(){
  const en=useLocale()==='en'
+ const [image,setImage]=useState('')
  const [query,setQuery]=useState(''),[source,setSource]=useState<Source>('all')
  const [page,setPage]=useState<SearchPage|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('')
  const active=useRef<AbortController|null>(null)
@@ -28,7 +30,9 @@ export function PluginDiscovery(){
   }catch(e){if(active.current===controller&&!controller.signal.aborted)setError((e as Error).message)}
   finally{if(active.current===controller){active.current=null;setBusy(false)}}
  }
- return <section className="mb-6 rounded-xl border border-divider bg-surface p-4">
+ return <>
+ <ManagedPlugins selectedImage={image} onImageConsumed={()=>setImage('')}/>
+ <section className="mb-6 rounded-xl border border-divider bg-surface p-4">
   <h3 className="flex items-center gap-2 text-[15px] font-bold text-ink"><PackagePlus size={17}/>{en?'Open-source discovery':'외부 확장 프로그램 검색'}</h3>
   <p className="my-2 text-xs text-muted">{en?'Search public registries. Results need compatibility review before installation.':'공개 저장소를 검색합니다. 검색 결과는 설치 전에 DOMINION 호환성을 확인해야 합니다.'}</p>
   <div className="mb-3 flex flex-wrap gap-1.5" aria-label={en?'Package registries':'패키지 저장소'}>
@@ -50,8 +54,10 @@ export function PluginDiscovery(){
      <p className="mt-1 break-words text-xs text-muted">{r.description}</p>
      <p className="text-[11px] text-warning">{en?'Compatibility not verified':'호환성 미검증'}</p>
     </div>
+    {r.source==='docker'&&<Button size="sm" variant="secondary" onClick={()=>setImage(r.name+':')}>{en?'Configure install':'설치 설정'}</Button>}
     <a className="inline-flex items-center gap-1 text-xs text-brand" href={r.url} target="_blank" rel="noopener noreferrer">{en?'Source':'원본'} <ExternalLink size={12}/></a>
    </div>)}</div>
   </div>}
  </section>
+ </>
 }

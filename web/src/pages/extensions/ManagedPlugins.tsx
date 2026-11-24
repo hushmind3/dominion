@@ -1,0 +1,88 @@
+import {useCallback,useEffect,useRef,useState} from 'react'
+import {Box,Play,Square,Trash2,RefreshCw,ExternalLink,FileText,Plus} from 'lucide-react'
+import {get,post,del} from '../../api'
+import {Button,TextInput} from '../../components/Primitives'
+import {useLocale} from '../../i18n'
+
+type Plugin={id:string;name:string;image:string;imageId:string;state:string;running:boolean;network:boolean;ports:number[];exitCode:number}
+type Inventory={available:boolean;items:Plugin[]|null;error?:string}
+type Logs={stdout:string;stderr:string;truncated:boolean}
+export function ManagedPlugins({selectedImage,onImageConsumed}:{selectedImage:string;onImageConsumed:()=>void}){
+ const en=useLocale()==='en',tr=(ko:string,eng:string)=>en?eng:ko
+ const [inventory,setInventory]=useState<Inventory|null>(null),[busy,setBusy]=useState(''),[error,setError]=useState(''),[notice,setNotice]=useState('')
+ const [show,setShow]=useState(false),[name,setName]=useState(''),[image,setImage]=useState(''),[network,setNetwork]=useState(false),[port,setPort]=useState(''),[approved,setApproved]=useState(false)
+ const [logs,setLogs]=useState<{name:string;data:Logs}|null>(null)
+ const active=useRef(false),requestId=useRef(''),loadVersion=useRef(0),installFingerprint=useRef(''),formRef=useRef<HTMLDivElement>(null)
+ const load=useCallback(async()=>{
+  const version=++loadVersion.current
+  try{const result=await get<Inventory>('/api/plugins/managed');if(version===loadVersion.current)setInventory(result)}
+  catch(e){if(version===loadVersion.current)setInventory({available:false,items:null,error:(e as Error).message})}
+ },[])
+ useEffect(()=>{void load();return()=>{loadVersion.current++}},[load])
+ useEffect(()=>{if(selectedImage){setImage(selectedImage);setName(selectedImage.split('/').pop()?.replace(/:$/,'')||'');setApproved(false);setShow(true);onImageConsumed();formRef.current?.scrollIntoView({block:'nearest'})}},[selectedImage,onImageConsumed])
+ const execute=async(key:string,task:()=>Promise<void>)=>{
+  if(active.current)return
+  active.current=true;setBusy(key);setError('');setNotice('')
+  try{await task()}catch(e){setError((e as Error).message)}
+  finally{await load();active.current=false;setBusy('')}
+ }
+ const install=()=>execute('install',async()=>{
+  const spec={name:name.trim(),image:image.trim(),network,port:network&&port?Number(port):null}
+  const fingerprint=JSON.stringify(spec)
+  if(!requestId.current||installFingerprint.current!==fingerprint){requestId.current=crypto.randomUUID();installFingerprint.current=fingerprint}
+  await post('/api/plugins/managed',{id:requestId.current,...spec,confirmed:approved})
+  requestId.current='';setShow(false);setName('');setImage('');setPort('');setNetwork(false);setApproved(false)
+  setNotice(tr('설치했습니다. 실행 버튼을 누르면 시작합니다.','Installed. Start it when ready.'))
+ })
+ const operate=(p:Plugin,action:'start'|'stop'|'remove'|'logs')=>execute(p.id,async()=>{
+  const base='/api/plugins/managed/'+encodeURIComponent(p.id)
+  if(action==='logs'){setLogs({name:p.name,data:await get<Logs>(base+'/logs')});return}
+  if(action==='remove'){
+   if(!window.confirm(tr('플러그인을 제거할까요? 이미지와 /data 저장 공간은 삭제하지 않습니다.','Remove this plugin? Its image and /data volume will be retained.')))return
+   const r=await del(base)
+   setNotice(tr('제거했습니다. 데이터 보존 볼륨: ','Removed. Retained data volume: ')+r.volume)
+  }else{
+   if(action==='start'&&!window.confirm(tr('선택한 외부 프로그램을 실행합니다. 계속할까요?','Run the selected external program?')))return
+   const r=await post<Plugin>(base+'/'+action,{})
+   setNotice(p.name+' · '+r.state)
+  }
+ })
+ const rows=inventory?.items
+ const disabled=!!busy||inventory?.available!==true
+ return <section className="mb-6 rounded-xl border border-divider bg-surface p-4">
+  <div className="flex flex-wrap items-center justify-between gap-3">
+   <div><h3 className="flex items-center gap-2 text-base font-bold text-ink"><Box size={20}/>{tr('내 플러그인','My plugins')}{rows&&<span className="text-xs text-muted">· {rows.length}</span>}</h3>
+    <p className="mt-1 text-xs text-muted">{tr('외부 프로그램을 Docker에서 독립 실행합니다. MCP·스킬과 별도로 관리됩니다.','Run external apps in Docker, independently of MCP and skills.')}</p></div>
+   <div className="flex gap-2"><Button variant="ghost" disabled={!!busy} onClick={()=>void load()}><RefreshCw size={15}/>{tr('새로고침','Refresh')}</Button><Button disabled={disabled} onClick={()=>setShow(!show)}><Plus size={16}/>{tr('설치','Install')}</Button></div>
+  </div>
+  <div className="my-3 rounded-lg bg-canvas p-3 text-xs">
+   {!inventory?tr('Docker 확인 중…','Checking Docker…'):inventory.available?tr('Docker 연결됨 · 설치 후 직접 실행','Docker connected · explicit start'):tr('Docker 연결 필요: ','Docker unavailable: ')+inventory.error}
+  </div>
+  {show&&<div ref={formRef} className="mb-4 space-y-3 rounded-xl border border-divider p-3">
+   <h4 className="text-sm font-semibold">{tr('새 플러그인 설치','Install a plugin')}</h4>
+   <label className="block text-xs">{tr('표시 이름','Name')}<TextInput value={name} maxLength={120} onChange={e=>{setName(e.target.value);setApproved(false)}} placeholder={tr('예: 음성 비서','e.g. Voice assistant')}/></label>
+   <label className="block text-xs">{tr('Docker 이미지와 버전','Docker image and version')}<TextInput value={image} maxLength={255} onChange={e=>{setImage(e.target.value);setApproved(false)}} placeholder="ghcr.io/owner/app:1.2.3"/></label>
+   <p className="text-xs text-muted">{tr('공식 배포 이미지의 버전 또는 sha256 digest를 입력하세요. latest는 지원하지 않습니다. 설치는 실행하지 않습니다.','Enter a released version or sha256 digest. No latest tag. Install does not start the program.')}</p>
+   <label className="flex items-start gap-2 text-xs"><input type="checkbox" checked={network} onChange={e=>{setNetwork(e.target.checked);setApproved(false)}}/>{tr('네트워크 허용 (인터넷 및 호스트 네트워크 접근 가능)','Allow network (may reach internet and host network)')}</label>
+   {network&&<label className="block text-xs">{tr('내 PC에서 열 서비스 포트 (선택)','Service port to expose locally (optional)')}<TextInput type="number" min={1} max={65535} value={port} onChange={e=>{setPort(e.target.value);setApproved(false)}} placeholder="8080"/></label>}
+   <p className="text-xs text-muted">{tr('기본 제한: 네트워크 차단, CPU 2개, 메모리 2GB, /data 독립 저장 공간. 호스트 파일과 키는 자동 전달하지 않습니다. 이미지에 따라 추가 설정이 필요할 수 있습니다.','Defaults: no network, 2 CPUs, 2GB RAM, isolated /data volume. No host files or API keys passed automatically. Some images require additional configuration.')}</p>
+   <label className="flex items-start gap-2 text-xs"><input type="checkbox" checked={approved} onChange={e=>setApproved(e.target.checked)}/>{tr('이미지 출처와 실행 권한을 확인했습니다.','I reviewed the image source and execution permissions.')}</label>
+   <div className="flex flex-wrap gap-2"><Button disabled={disabled||!approved||!name.trim()||!image.trim()||(network&&port!==''&&(!Number.isInteger(Number(port))||Number(port)<1||Number(port)>65535))} onClick={()=>void install()}>{busy==='install'?tr('이미지 받는 중…','Downloading image…'):tr('설치 확인','Install')}</Button><Button variant="ghost" disabled={!!busy} onClick={()=>setShow(false)}>{tr('닫기','Close')}</Button></div>
+  </div>}
+  {error&&<p role="alert" className="my-2 break-words text-xs text-danger">{error}</p>}
+  {notice&&<p role="status" className="my-2 break-all text-xs text-muted">{notice}</p>}
+  {rows?.length===0&&<p className="py-4 text-sm text-muted">{tr('설치된 플러그인이 없습니다. 아래에서 검색하거나 직접 이미지를 설치하세요.','No installed plugins. Search below or install an image directly.')}</p>}
+  <div className="grid gap-3 md:grid-cols-2">{rows?.map(p=><article key={p.id} className="min-w-0 rounded-xl border border-divider p-3">
+   <div className="flex flex-wrap justify-between gap-2"><strong className="break-all text-sm">{p.name}</strong><span className={p.running?'text-xs text-success':'text-xs text-muted'}>{p.running?tr('실행 중','Running'):p.state==='created'?tr('설치됨','Installed'):p.state==='exited'?tr('중지됨','Stopped')+' · '+p.exitCode:p.state}</span></div>
+   <p className="mt-1 break-all text-xs text-muted">{p.image}</p>
+   <p className="mt-1 text-xs text-muted">{p.network?tr('네트워크 허용','Network allowed'):tr('네트워크 차단','Network off')}</p>
+   {p.running&&p.ports.map(port=><a key={port} href={'http://127.0.0.1:'+port} target="_blank" rel="noopener noreferrer" className="mt-1 flex gap-1 text-xs text-brand">{tr('서비스 열기','Open service')} · {port}<ExternalLink size={12}/></a>)}
+   <div className="mt-3 flex flex-wrap gap-1.5">
+    <Button size="sm" disabled={disabled} onClick={()=>void operate(p,p.running?'stop':'start')}>{p.running?<Square size={14}/>:<Play size={14}/>} {p.running?tr('중지','Stop'):tr('실행','Start')}</Button>
+    <Button size="sm" variant="secondary" disabled={disabled} onClick={()=>void operate(p,'logs')}><FileText size={14}/>{tr('로그','Logs')}</Button>
+    <Button size="sm" variant="ghost" disabled={disabled||p.running} onClick={()=>void operate(p,'remove')}><Trash2 size={14}/>{tr('제거','Remove')}</Button>
+   </div>
+  </article>)}</div>
+  {logs&&<div className="mt-4 rounded-lg border border-divider p-3"><div className="flex items-center justify-between"><strong className="text-sm">{logs.name} · {tr('최근 로그','Recent logs')}</strong><Button variant="ghost" size="sm" onClick={()=>setLogs(null)}>{tr('닫기','Close')}</Button></div><pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all text-xs">{logs.data.stdout+'\n'+logs.data.stderr}</pre>{logs.data.truncated&&<p className="text-xs text-warning">{tr('로그가 잘렸습니다.','Logs truncated.')}</p>}</div>}
+ </section>
+}

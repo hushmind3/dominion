@@ -187,3 +187,7 @@ Current limitations: interactive chat and the native work kernel are not yet a s
 For a file-by-file boundary and documentation discrepancy register, read [the 2026-11-18 source audit](docs/SUB3-SOURCE-AUDIT-2026-11-18.md). Historical detailed research remains in `docs/`; verify its date and scope before applying it to the current branch.
 
 Apache-2.0 — see [LICENSE](LICENSE).
+
+### Independent extensions (sub3)
+
+Service connections → Plugins searches public package registries and manages local Docker images separately from MCP and skills. Start Docker Desktop/Engine, select a versioned OCI image or digest, confirm the permissions, install, then explicitly start. Running state and logs come from Docker. Containers are scoped to the current data directory and port, have bounded CPU/memory/processes/logs, read-only root, a named `/data` volume, and no network unless enabled. Network-enabled images can access the network; only explicitly selected service ports are published to loopback. Removal requires a stopped container and preserves the image and named volume. Do not treat arbitrary registry results as compatible plugins. Automatic SDK binding, upgrades/rollback, retained-volume recovery UI, non-Docker runtimes and voice/mobile integration are not provided by this initial manager.

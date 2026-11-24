@@ -16,6 +16,7 @@ pub mod dev;
 pub mod executions;
 pub mod experience;
 pub mod extensions;
+pub mod plugins;
 pub mod gateways;
 pub mod improvements;
 pub mod jobs;
