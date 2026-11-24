@@ -16,7 +16,7 @@ jobs:
   package:
     if: github.ref == 'refs/heads/dominion-sub3'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -52,6 +52,7 @@ jobs:
           docker image rm "$IMAGE"
           docker pull "$EXACT"
           export EXACT
+          printf 'DOMINION_EXPECTED_EXTENSION_IMAGE=%s\n' "$EXACT" >> "$GITHUB_ENV"
           python3 - <<'PY'
           import json,os
           m={"schemaVersion":1,"name":"DOMINION MCP Connector","description":"Independent MCP transport and tool provider, installed like any other extension.","version":"0.1.0-"+os.environ["GITHUB_SHA"][:12],"image":os.environ["EXACT"],"network":True,"port":8080}
@@ -75,3 +76,7 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit -m "Publish independent extension manifest"
           git push origin HEAD:dominion-sub3
+      # The bot's manifest push does not trigger another push workflow. Verify
+      # the exact published image here, not an older market package.
+      - name: Install exact published MCP image through real DOMINION host
+        run: cargo test --locked --test e2e published_extensions_install_register_and_execute_live -- --ignored --nocapture --test-threads=1

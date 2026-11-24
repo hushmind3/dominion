@@ -7,6 +7,11 @@ fn install(app:&TestApp,query:&str)->String{
  assert_eq!(items.len(),1,"{rows}");
  let item=&items[0];
  assert!(item["manifest"].is_object(),"Missing published manifest: {item}");
+ if query.ends_with("%40dominion-sub3") {
+  if let Ok(expected)=std::env::var("DOMINION_EXPECTED_EXTENSION_IMAGE") {
+   assert_eq!(item["manifest"]["image"].as_str(),Some(expected.as_str()),"Market must resolve the exact new connector image");
+  }
+ }
  let installed=app.post("/api/plugins/market/install",&json!({
   "repository":item["repository"],"commit":item["commit"],"manifestDigest":item["manifestDigest"],"confirmed":true
  }));
