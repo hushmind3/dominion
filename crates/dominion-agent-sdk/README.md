@@ -76,3 +76,28 @@ adapter must enforce its own request timeouts and report failed/unknown costs.
 On error inspect the checkpoint; never automatically restart unknown effects.
 The integration tests in `tests/ports.rs` exercise an actual local test artifact,
 failed verification repair, uncertain write recovery and model-only denial.
+
+## Native layers and host boundary
+
+The Rust SDK reexports the four reusable execution/decision surfaces:
+
+| Layer | Rust entry point | Responsibility |
+| --- | --- | --- |
+| Core | `dominion_agent_sdk::runtime` | Checkpoint, budget, program IR, predicates, tool admission contracts |
+| Harness | `dominion_agent_sdk::harness` | Single native agent execution loop |
+| Algorithm | `dominion_agent_sdk::algorithms` | Memory ranking, experience, learning, planning, adaptation, team decisions, tool selection, procedure evaluation |
+| SDK | `dominion_agent_sdk::run`, `run_embedded` | Public embedding entry points |
+
+Host is a port implemented by the desktop/server product or an independent
+embedding application, not a second engine. SQLite, provider transport, MCP,
+actual filesystem observations, remote worker authentication, workspace isolation
+and owner approvals stay in the product adapters. Pure algorithm decisions take
+authorized data and observations; they do not authenticate a plugin, grant tool
+permissions or certify a task without trusted receipts. External HTTP plugins
+use the registered SDK API and are managed in Connections / Plugins. Embedded
+offline hosts are not automatically visible to that server. Existing native MCP
+transport remains a distinct tool-provider path rather than an HTTP SDK client.
+
+This split preserves existing product data and execution semantics; it does not
+imply that every product adapter can be removed or every standalone SDK host
+automatically inherits the desktop application's learning database.

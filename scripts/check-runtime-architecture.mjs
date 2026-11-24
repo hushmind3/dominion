@@ -330,6 +330,13 @@ if(!sdkApi.includes('state.store.sdk_evidence_rows()')||!store.includes('pub fn 
 // Old optimizer control loops must not creep back in behind the real journal.
 const selectedAlgorithms=readFileSync(path.join(root,'src/addons/strategies/algorithms.rs'),'utf8')
 const kernelSource=readFileSync(path.join(root,'crates/dominion-algorithms/src/kernels.rs'),'utf8')
+const procedureAlgorithm=readFileSync(path.join(root,'crates/dominion-algorithms/src/procedure.rs'),'utf8')
+const procedureHost=readFileSync(path.join(root,'src/addons/strategies/procedure.rs'),'utf8')
+if(/\bAppState\b|crate::db|crate::engine|std::fs/.test(procedureAlgorithm)||
+ !procedureHost.includes('dominion_algorithms::procedure::evaluate')||
+ !procedureHost.includes('check_after(condition,ops,workspace)'))
+ throw Error('Procedure decision and native observation boundaries must remain separate')
+
 for(const [host,algorithm] of [['strategies/debate','debate'],['operations/team_orchestrator','team'],['operations/team_dag','team_dag'],['strategies/program','program_revision'],['strategies/chat_tool_catalog','tool_selection'],['strategies/episode','episode']]){
  const adapter=readFileSync(path.join(root,'src/addons/'+host+'.rs'),'utf8')
  const implementation=readFileSync(path.join(root,'crates/dominion-algorithms/src/'+algorithm+'.rs'),'utf8')

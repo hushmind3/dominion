@@ -20,3 +20,4 @@ pub mod team_dag;
 pub mod program_revision;
 pub mod tool_selection;
 pub mod episode;
+pub mod procedure;
