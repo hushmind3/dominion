@@ -362,7 +362,7 @@ export function ModelExplorer({initialView='installed',hideNavigation=false}:{in
     </div>
     <div className="flex flex-wrap items-center gap-2">
      {pendingEngineModel&&pendingEngineAction==='install'&&pendingEngineItem?.installable&&!installing&&<Button variant="bare" type="button" className={btn+' !border-[#C96442] !bg-[#C96442] !text-white'} disabled={Boolean(working)} onClick={()=>void safe('install-'+pendingEngineId,()=>post('/api/model-library/runtime/install',{engine:pendingEngineId}))}><ArrowDownToLine size={13}/>필요한 실행기 설치</Button>}
-     {pendingEngineAction==='repair'&&pendingEngineItem?.installable&&!installing&&<Button variant="bare" type="button" className={btn} disabled={Boolean(working)} onClick={()=>void repairMlx()}><ArrowDownToLine size={13}/>실행기 다시 설치</Button>}
+     {pendingEngineAction==='repair'&&pendingEngineId==='mlx-lm'&&pendingEngineItem?.installable&&!installing&&<Button variant="bare" type="button" className={btn} disabled={Boolean(working)} onClick={()=>void repairMlx()}><ArrowDownToLine size={13}/>실행기 다시 설치</Button>}
      {pendingEngineAction==='download'&&pendingEngineItem?.url&&<a className={btn} href={pendingEngineItem.url} target="_blank" rel="noreferrer">실행기 받기 <ExternalLink size={12}/></a>}
      <Button variant="bare" type="button" className={btn} disabled={Boolean(working)||installing} onClick={()=>void refresh()}><RefreshCw size={13}/>상태 확인</Button>
      {pendingEngineModel&&['retry','repair'].includes(pendingEngineAction)&&<Button variant="bare" type="button" className={btn+' !border-[#C96442] !bg-[#C96442] !text-white'} disabled={Boolean(working)||installing||runtime.status==='loading'} onClick={()=>void continueEngineLaunch()}><Play size={13}/>원래 모델 다시 실행</Button>}

@@ -45,7 +45,8 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
    case 'channel':add('/api/channels');break
    case 'oauth_config':case 'oauth_connection':add('/api/oauth/providers','/api/oauth/connections');break
    case 'sdk_run':add('/api/sdk/runs');if(id)add('/api/sdk/runs/'+encoded(id));break
-   case 'memory':case 'experience':add('/api/memory/*');break
+   case 'memory':add('/api/memories','/api/memory/*');break
+   case 'experience':add('/api/experience','/api/memory/*');break
    default:
     if(event.kind?.startsWith('model_'))add('/api/model-library/*')
     break

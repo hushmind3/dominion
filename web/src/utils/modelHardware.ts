@@ -32,6 +32,9 @@ export function selectSmaller<T extends ModelCandidate>(options:readonly T[],cur
 export function classifyRuntimeFailure(error:string):RuntimeFailure{
  const message=error.toLowerCase()
  if(/out.of.memory|\boom\b|memory|메모리|allocat|cuda.*alloc|not enough resources/i.test(message))return 'memory'
+ // Executable/module failures are not missing model weights.
+ if(/no module named.*mlx_lm|(?:llama-server|mlx_lm\.server|lm studio cli).*(?:not.found|no.such.file|찾을 수 없)|실행기.*(?:설치|필요|없|시작 실패)/i.test(message)
+  &&!/모델 파일|safetensors|tokenizer/i.test(message))return 'engine'
  if(/not.found|no.such.file|missing.file|corrupt|invalid.gguf|checksum|파일.*없|파일.*찾을 수 없|손상|불완전|완전하지|safetensors|tokenizer|찾을 수 없습니다.*모델|모델.*찾을 수 없습니다/i.test(message))return 'file'
  if(/backend|engine|executable|llama[.-]?(?:cpp|server)|mlx.*실행기|not.installed|설치.*안|spawn|실행기.*필요|실행기.*없/i.test(message))return 'engine'
  return 'other'
@@ -86,9 +89,8 @@ export function modelPreflight(model:LocalModelToLaunch,capabilities:LaunchCapab
  if(model.id.startsWith('lms:')){
   if(capabilities?.lmstudio?.available!==undefined)engineAvailable=capabilities.lmstudio.available
  }else if(model.format==='mlx'){
-  if(model.id.startsWith('mlx:')){
-   if(capabilities?.mlx?.available!==undefined)engineAvailable=capabilities.mlx.available
-  }else if(capabilities?.mlx?.standalone!==undefined)engineAvailable=capabilities.mlx.standalone
+  if(capabilities?.mlx?.standalone!==undefined)engineAvailable=capabilities.mlx.standalone
+  else if(capabilities?.mlx?.available!==undefined)engineAvailable=capabilities.mlx.available
  }else if(capabilities?.gguf?.path!==undefined){
   engineAvailable=Boolean(capabilities.gguf.path)
  }else if(capabilities?.gguf?.available===false){
@@ -111,8 +113,11 @@ export function engineRecoveryAction(
  if(!runtime)return 'checking'
  if(runtime.installing)return 'installing'
  const blocked=modelPreflight(model,capabilities).status==='blocked'
- if(!blocked&&!engineLaunchFailed)return 'retry'
- if(runtime.installed)return 'repair'
+ if(!blocked&&!engineLaunchFailed&&runtime.installed!==false)return 'retry'
+ if(runtime.installed){
+  if(model.format==='mlx'&&!model.id.startsWith('lms:')&&runtime.installable)return 'repair'
+  return runtime.url?'download':'manual'
+ }
  if(runtime.installable)return 'install'
  if(runtime.url)return 'download'
  return 'manual'

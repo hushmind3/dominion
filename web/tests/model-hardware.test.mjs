@@ -73,7 +73,7 @@ test('preflight blocks missing native GGUF engine even when LM Studio is availab
  const caps={gguf:{available:true,path:null},mlx:{available:true,standalone:false},lmstudio:{available:true},memory:{free:8_000},gpu:{free:0}}
  assert.deepEqual(modelPreflight(gguf('managed-model.gguf',4_000),caps).status,'blocked')
  assert.equal(modelPreflight({id:'lms:imported',format:'gguf',bytes:4_000},caps).status,'ready')
- assert.equal(modelPreflight({id:'mlx:owner/model',format:'mlx',bytes:4_000},caps).status,'ready')
+ assert.equal(modelPreflight({id:'mlx:owner/model',format:'mlx',bytes:4_000},caps).status,'blocked')
  assert.equal(modelPreflight({id:'external:mlx',format:'mlx',bytes:4_000},caps).status,'blocked')
 })
 test('preflight uses separate memory budgets and warns rather than forbidding a risky launch',()=>{
@@ -201,4 +201,18 @@ test('model launch engine errors keep original model and prioritize its installe
  assert.match(explorer,/data-engine-recovery=\{pendingEngineAction\}/)
  assert.match(explorer,/실행 확인 필요/)
  assert.match(explorer,/원래 모델 다시 실행/)
+})
+
+test('runtime recovery uses the selected engine and distinguishes missing executables from weights',()=>{
+ const mlxModel=mlx('mlx:owner/model',4000)
+ const ggufModel=gguf('owner/model.gguf',4000)
+ assert.equal(classifyRuntimeFailure("No module named 'mlx_lm'"),'engine')
+ assert.equal(classifyRuntimeFailure('llama-server not found'),'engine')
+ assert.equal(engineRecoveryAction(ggufModel,{gguf:{available:false}},{installed:true,installable:false,url:'https://example.invalid'},true),'download')
+ assert.equal(engineRecoveryAction(ggufModel,undefined,{installed:false,installable:true}),'install')
+ assert.equal(engineRecoveryAction(mlxModel,{mlx:{standalone:false,available:true}},{installed:true,installable:true},true),'repair')
+ const server=readFileSync(new URL('../../src/engine/services/providers/models.rs',import.meta.url),'utf8')
+ const launch=server.slice(server.indexOf('pub async fn load(state:'),server.indexOf('async fn load_lmstudio('))
+ assert.doesNotMatch(launch.slice(launch.indexOf('id.strip_prefix("mlx:")'),launch.indexOf('let resolved =')), /load_lmstudio/)
+ assert.match(server,/"lmstudio": \{"available": lms_bin\(\)\.is_some\(\)\}/)
 })

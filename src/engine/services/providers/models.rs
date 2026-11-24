@@ -1678,8 +1678,9 @@ pub fn runtime_snapshot(state: &AppState) -> Value {
         "logs": logs.into_iter().rev().collect::<Vec<_>>(),
         "setup": install_snapshot(),
         "capabilities": {
-            "gguf": { "available": lms_bin().is_some() || llama_server_bin_for(state).is_some(), "backend": "llama.cpp", "installable": llama_installable(state), "path": llama_server_bin_for(state).map(|path| path.to_string_lossy().to_string()), "installMethod": if cfg!(target_os="macos") && brew_bin().is_some() { "homebrew" } else { "release" } },
+            "gguf": { "available": llama_server_bin_for(state).is_some(), "backend": "llama.cpp", "installable": llama_installable(state), "path": llama_server_bin_for(state).map(|path| path.to_string_lossy().to_string()), "installMethod": if cfg!(target_os="macos") && brew_bin().is_some() { "homebrew" } else { "release" } },
             "mlx": mlx_runtime_snapshot(state),
+            "lmstudio": {"available": lms_bin().is_some()},
             "memory": {
                 "total": total_memory(),
                 "free": 0,
@@ -1811,13 +1812,10 @@ pub async fn load(state: &AppState, id: &str, context: u64) -> Result<Value, Str
         return load_lmstudio(state, id, key, context).await;
     }
     if let Some(repo) = id.strip_prefix("mlx:") {
-        if mlx_runtime_python(state).is_some() {
-            return load_mlx_standalone(state, id, repo, context).await;
+        if mlx_runtime_python(state).is_none() {
+            return Err("MLX 실행기가 없습니다. 모델 관리에서 MLX (mlx-lm) 실행기를 설치하거나 다시 설치하세요.".into());
         }
-        let key = find_lms_key(repo).ok_or(
-            "MLX 실행기가 없습니다. 모델 관리에서 MLX (mlx-lm) 실행기를 설치하거나 다시 설치하세요.",
-        )?;
-        return load_lmstudio(state, id, &key, context).await;
+        return load_mlx_standalone(state, id, repo, context).await;
     }
     let resolved = if let Some(record) = id.strip_prefix("external:") {
         state.store.get(EXTERNAL_KIND, record)
