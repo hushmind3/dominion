@@ -59,6 +59,7 @@ impl Snapshot{
         Ok(round)
     }
     pub fn begin_model(&mut self,store:&dyn Journal)->Result<(),String>{
+        if self.native.status!=RunStatus::Running{return Err("실행 중인 작업만 모델을 호출할 수 있습니다.".into());}
         if !self.settled(){return Err("이전 실행·승인·하위 작업 결과가 확인되지 않았습니다.".into());}
         if store.cancelled(&self.native.id.to_string()){return Err("실행이 중단되었습니다.".into());}
         self.model_in_flight=true;self.model_calls+=1;store.save(self)
@@ -230,6 +231,19 @@ mod tests{
     impl Dispatcher for Tool{type Output=();fn execute<'a>(&'a self,_:&'a Action)->BoxFuture<'a,Result<DispatchResult<()>,String>>{Box::pin(async move{self.0.fetch_add(1,Ordering::SeqCst);Ok(DispatchResult{output:(),observation:json!({"written":true}),success:true})})}}
     fn run()->Snapshot{Snapshot::new(&uuid::Uuid::new_v4().to_string(),"create a file",8).unwrap()}
     fn action()->Action{Action{id:"c".into(),tool:"workspace_write".into(),arguments:json!({"path":"a","content":""}),depends_on:vec![]}}
+    #[test]
+    fn non_running_snapshot_cannot_admit_paid_model_call() {
+        for status in [RunStatus::Queued, RunStatus::AwaitingApproval, RunStatus::Paused,
+            RunStatus::Completed, RunStatus::Failed, RunStatus::Cancelled] {
+            let mut snapshot = run();
+            snapshot.native.status = status;
+            let journal = Memory { saved: Mutex::new(None), fail: false };
+            assert!(snapshot.begin_model(&journal).is_err());
+            assert_eq!(snapshot.model_calls, 0);
+            assert!(!snapshot.model_in_flight);
+            assert!(journal.saved.lock().unwrap().is_none());
+        }
+    }
     #[test]
     fn cancelled_native_run_cannot_be_revived_by_late_completion() {
         struct CancelJournal;

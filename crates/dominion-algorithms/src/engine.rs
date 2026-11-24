@@ -69,6 +69,12 @@ impl Engine {
             ctx.phase("prepare_model")?;
             let catalog = host.prepare_model(&mut ctx).await?;
             ctx.snapshot = host.reload()?;
+            // Preparation can await owner directives or context work. Recheck
+            // the live deadline and state before writing a phase or paid intent.
+            ctx.check_cancelled()?;
+            if ctx.snapshot.native.status != RunStatus::Running {
+                return Err("실행 중인 작업만 모델을 호출할 수 있습니다.".into());
+            }
             ctx.snapshot.native.advertised_tools = catalog;
             ctx.phase("model")?;
             ctx.snapshot.begin_model(ctx.journal)?;

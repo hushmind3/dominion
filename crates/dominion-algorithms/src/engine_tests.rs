@@ -54,6 +54,7 @@ struct Fixture {
     plan: bool,
     shortcut: bool,
     cancel_after_model: bool,
+    fail_during_prepare: bool,
     confirmations: VecDeque<Flow>,
     reconcile_on_receipt: bool,
     reconcile_calls: usize,
@@ -75,6 +76,7 @@ impl Fixture {
             plan: false,
             shortcut: false,
             cancel_after_model: false,
+            fail_during_prepare: false,
             confirmations: VecDeque::new(),
             reconcile_on_receipt: false,
             reconcile_calls: 0,
@@ -128,7 +130,12 @@ impl Host for Fixture {
         &'a mut self,
         _: &'a mut Context<'_>,
     ) -> BoxFuture<'a, Result<Vec<Value>, String>> {
-        Box::pin(async { Ok(vec![]) })
+        Box::pin(async move {
+            if self.fail_during_prepare {
+                self.store.saved.lock().unwrap().native.status = hosted::Status::Failed;
+            }
+            Ok(vec![])
+        })
     }
     fn model<'a>(
         &'a mut self,
@@ -441,4 +448,17 @@ async fn superseded_model_and_retracted_completion_stay_in_the_bounded_driver() 
         host.store.saved.lock().unwrap().native.status,
         hosted::Status::Completed
     );
+}
+
+
+#[tokio::test]
+async fn failed_during_preparation_never_buys_a_model_call() {
+    let mut host = Fixture::new();
+    host.fail_during_prepare = true;
+    assert!(host.drive(4).await.is_err());
+    assert_eq!(host.models, 0);
+    let saved = host.store.saved.lock().unwrap();
+    assert_eq!(saved.native.status, hosted::Status::Failed);
+    assert_eq!(saved.model_calls, 0);
+    assert!(!saved.model_in_flight);
 }
