@@ -68,9 +68,9 @@ export function ConversationSettings({showReasoning,setShowReasoning,reasoningKo
        </small>
       </span>
      </span>
-     <TextInput type="checkbox" className={check} checked={canDisableThinking?thinkingEnabled:true}
-      disabled={!canDisableThinking} title={!canDisableThinking?(thinkingNotice||(en?'Reasoning off is unavailable.':'추론 끄기 미지원')):undefined}
+     {canDisableThinking?<TextInput type="checkbox" className={check} checked={thinkingEnabled}
       onChange={e=>{const on=e.target.checked;setThinkingEnabled(on);setReasoningEffort(on?'':'none')}}/>
+      :<span className="shrink-0 rounded-lg bg-zinc-100 px-2 py-1 text-[11px] text-zinc-500">{en?'Provider default':'제공자 기본값'}</span>}
     </label>
     {permissionControl&&<div className="px-3 py-3">{permissionControl}</div>}
     {reasoningControl&&<div className="px-3 pb-3">{reasoningControl}</div>}
