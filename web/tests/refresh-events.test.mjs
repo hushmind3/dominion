@@ -65,3 +65,13 @@ test('worker changes refresh only their own Team detail snapshot',()=>{
  }})
  assert.ok(matchesRefreshTarget('/api/jobs/team%3Aalpha/team-steps',root.targets))
 })
+
+test('memory changes refresh actual collection endpoints and provider changes refresh route controls',()=>{
+ const memory=classifyRefreshEvent({type:'record',kind:'memory',record:{id:'m'}})
+ for(const path of ['/api/memories','/api/experience','/api/improvements','/api/algorithms','/api/synergy','/api/transfer'])assert.equal(matchesRefreshTarget(path,memory.targets),true)
+ assert.equal(matchesRefreshTarget('/api/jobs',memory.targets),false)
+ const provider=classifyRefreshEvent({type:'record',kind:'provider',record:{id:'p'}})
+ assert.equal(matchesRefreshTarget('/api/chat/inference-support?providerId=p',provider.targets),true)
+ const mcp=classifyRefreshEvent({type:'record',kind:'mcp',record:{id:'m'}})
+ assert.equal(matchesRefreshTarget('/api/tools',mcp.targets),true)
+})

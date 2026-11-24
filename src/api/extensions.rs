@@ -64,6 +64,7 @@ pub async fn list_tools(State(state): State<AppState>) -> Json<Value> {
             "description": format!("[MCP · {}] {}", tool.server_name, tool.description),
             "parameters": tool.schema,
             "approval": engine::mcp::requires_approval(&state, &qualified),
+            "approvalConfigurable": engine::mcp::server_requires_approval(&state, &qualified),
             "source": "mcp",
             "server": tool.server_name,
         }));

@@ -28,7 +28,7 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
    case 'message':add('/api/sessions');if(session)add('/api/sessions/'+encoded(session)+'/messages');break
    case 'room':add('/api/rooms');if(id){rooms.add(id);add('/api/rooms/'+encoded(id)+'/state')}break
    case 'agent':add('/api/agents');break
-   case 'provider':add('/api/providers');if(id)add('/api/providers/'+encoded(id)+'/models');break
+   case 'provider':add('/api/providers','/api/chat/inference-support');if(id)add('/api/providers/'+encoded(id)+'/models');break
    case 'policy':add('/api/policy');break
    case 'extension_policy':add('/api/extensions/runtime','/api/tools');break
    case 'job':
@@ -47,12 +47,13 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
     if(executionId)add('/api/executions/'+encoded(executionId)+'/operations')
     break
    case 'approval':add('/api/approvals');break
-   case 'mcp':add('/api/mcp','/api/mcp/discover');break
+   case 'mcp':add('/api/mcp','/api/mcp/discover','/api/tools');break
    case 'skill':add('/api/skills');break
    case 'channel':add('/api/channels');break
    case 'oauth_config':case 'oauth_connection':add('/api/oauth/providers','/api/oauth/connections');break
    case 'sdk_run':add('/api/sdk/runs');if(id)add('/api/sdk/runs/'+encoded(id));break
-   case 'memory':case 'experience':add('/api/memory/*');break
+   case 'memory':case 'experience':case 'improvement':case 'algorithm':case 'transfer':add('/api/memories','/api/experience','/api/improvements','/api/algorithms','/api/synergy','/api/transfer');break
+   case 'model_usage':add('/api/model-usage');break
    default:
     if(event.kind?.startsWith('model_'))add('/api/model-library/*')
     break

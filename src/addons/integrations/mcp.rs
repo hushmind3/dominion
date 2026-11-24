@@ -242,7 +242,11 @@ pub fn requires_approval(state: &AppState, qualified: &str) -> bool {
     {
         return false;
     }
-    let qualified = qualified.to_string();
+    server_requires_approval(state,qualified)
+}
+
+/// Server-level requirement independent of the global MCP bypass.
+pub fn server_requires_approval(state: &AppState, qualified: &str) -> bool {
     let server_slug = qualified
         .strip_prefix("mcp__")
         .and_then(|rest| rest.split_once("__"))

@@ -1,5 +1,5 @@
 import {Notice} from './UI'
-import {useEffect,useState} from 'react'
+import {useEffect,useRef,useState} from 'react'
 import {createPortal} from 'react-dom'
 import {Check,ChevronDown,ShieldAlert,ShieldCheck} from 'lucide-react'
 import {get,post} from '../api'
@@ -9,6 +9,14 @@ import {matchesRefreshTarget,type RefreshScope} from '../refreshEvents'
 import {t,useLocale,type LocaleKey} from '../i18n'
 
 type PermissionMode='request'|'workspace'|'full'
+type Policy={autoApprove?:string[];autoApproveAll?:boolean;autoApproveMcp?:boolean}
+function policyMode(p:Policy):PermissionMode|'custom'{
+ const tools=[...new Set(p.autoApprove||[])]
+ if(p.autoApproveAll&&p.autoApproveMcp)return 'full'
+ if(p.autoApproveAll||p.autoApproveMcp)return 'custom'
+ if(!tools.length)return 'request'
+ return tools.length===1&&tools[0]==='workspace_write'?'workspace':'custom'
+}
 const permissionCopy:Record<PermissionMode,{label:LocaleKey;detail:LocaleKey}>={
  request:{label:'chat.perm.request.label',detail:'chat.perm.request.detail'},
  workspace:{label:'chat.perm.workspace.label',detail:'chat.perm.workspace.detail'},
@@ -17,18 +25,26 @@ const permissionCopy:Record<PermissionMode,{label:LocaleKey;detail:LocaleKey}>={
 /** Shared by direct and group chat; changing modes never changes policy by itself. */
 export function ExecutionPermissions({open,onOpenChange,onError,onChanged,active=true}:{open:boolean;onOpenChange:(open:boolean)=>void;onError:(error:string)=>void;onChanged?:(label:string)=>void;active?:boolean}){
  const locale=useLocale()
- const [permissionMode,setPermissionMode]=useState<PermissionMode>('request'),[permissionBusy,setPermissionBusy]=useState(false)
+ const [permissionMode,setPermissionMode]=useState<PermissionMode|'custom'|'unknown'>('unknown'),[permissionBusy,setPermissionBusy]=useState(false)
+ const busyRef=useRef(false)
+ const generation=useRef(0)
+ const [policyError,setPolicyError]=useState('')
  const permissionPanel=useAnchoredPanel(open,()=>onOpenChange(false),340,'top')
  useEffect(()=>{
   if(!active)return
   const controller=new AbortController()
   let latest=0
   const load=()=>{
-   const request=++latest
-   get<{autoApprove?:string[];autoApproveAll?:boolean}>('/api/policy',controller.signal).then(p=>{
-    if(!controller.signal.aborted&&request===latest)
-     setPermissionMode(p.autoApproveAll?'full':(p.autoApprove||[]).includes('workspace_write')?'workspace':'request')
-   }).catch(()=>{})
+   const request=++latest,epoch=generation.current
+   get<Policy>('/api/policy',controller.signal).then(p=>{
+    if(!controller.signal.aborted&&request===latest&&epoch===generation.current&&!busyRef.current){
+     setPermissionMode(policyMode(p));setPolicyError('')
+    }
+   }).catch(e=>{
+    if(!controller.signal.aborted&&request===latest&&epoch===generation.current&&!busyRef.current){
+     setPermissionMode('unknown');setPolicyError((e as Error).message)
+    }
+   })
   }
   const onPolicyChanged=(event:Event)=>{
    const targets=(event as CustomEvent<RefreshScope>).detail?.targets||[]
@@ -39,24 +55,28 @@ export function ExecutionPermissions({open,onOpenChange,onError,onChanged,active
   return()=>{controller.abort();window.removeEventListener('dominion-data-change',onPolicyChanged)}
  },[active,open])
  const changePermission=async(mode:PermissionMode)=>{
-  if(permissionBusy)return
+  if(busyRef.current||permissionMode==='unknown')return
+  if(permissionMode==='custom'&&!window.confirm(locale==='ko'?'사용자 지정 전역 권한을 이 프리셋으로 교체할까요?':'Replace custom global permissions with this preset?'))return
   if(mode==='full'&&!window.confirm(t('chat.perm.fullConfirm')))return
-  setPermissionBusy(true);onError('')
+  busyRef.current=true;generation.current++;setPermissionBusy(true);onError('')
   try{
-   await post('/api/policy',mode==='full'?{id:'default',autoApprove:[],autoApproveAll:true,autoApproveMcp:true}
+   const saved:Policy=await post('/api/policy',mode==='full'?{id:'default',autoApprove:[],autoApproveAll:true,autoApproveMcp:true}
     :mode==='workspace'?{id:'default',autoApprove:['workspace_write'],autoApproveAll:false,autoApproveMcp:false}
     :{id:'default',autoApprove:[],autoApproveAll:false,autoApproveMcp:false})
-   setPermissionMode(mode);onOpenChange(false)
-   onChanged?.(t(permissionCopy[mode].label))
-  }catch(e){onError((e as Error).message)}finally{setPermissionBusy(false)}
+   const confirmed=policyMode(saved)
+   setPermissionMode(confirmed);setPolicyError('');onOpenChange(false)
+   if(confirmed!=='custom')onChanged?.(t(permissionCopy[confirmed].label))
+  }catch(e){onError((e as Error).message)}finally{busyRef.current=false;setPermissionBusy(false)}
  }
- const activePermission=permissionCopy[permissionMode]
+ const activePermission=permissionMode==='unknown'||permissionMode==='custom'?null:permissionCopy[permissionMode]
+ const activeLabel=activePermission?t(activePermission.label):permissionMode==='custom'?(locale==='ko'?'사용자 지정':'Custom'):(locale==='ko'?'권한 확인 필요':'Policy unavailable')
+ const activeDetail=activePermission?t(activePermission.detail):activeLabel
  return <div className="relative">
   <Button type="button" variant="ghost" ref={permissionPanel.trigger} onClick={()=>onOpenChange(!open)}
    className={'chat-permission inline-flex !min-h-9 items-center gap-2 !rounded-lg !border-0 !px-3 !text-[12px] font-semibold '+(permissionMode==='full'?'!bg-amber-50 text-amber-700 hover:!bg-amber-100':'!bg-[#FAF7F1] text-[#5C544A] hover:!bg-[#F3EEE5]')}
-   title={t(activePermission.detail)} aria-label={t('chat.permissions')+': '+t(activePermission.label)} aria-expanded={open} aria-haspopup="dialog">
+   title={activeDetail} aria-label={t('chat.permissions')+': '+activeLabel} aria-expanded={open} aria-haspopup="dialog">
    {permissionMode==='full'?<ShieldAlert size={16}/>:<ShieldCheck size={16}/>}
-   <span className="truncate">{t(activePermission.label)}</span><ChevronDown size={14}/>
+   <span className="truncate">{activeLabel}</span><ChevronDown size={14}/>
   </Button>
   {open&&permissionPanel.position&&createPortal(
    <div ref={permissionPanel.panel} style={permissionPanel.position} role="dialog" aria-label={t('chat.permissions')}
@@ -66,8 +86,10 @@ export function ExecutionPermissions({open,onOpenChange,onError,onChanged,active
      <p className="mt-1 text-[12px] leading-5 text-[#81766A]">{t('chat.permissionsDesc')}</p>
     </div>
     <div className="space-y-1 pt-2">
+     {policyError&&<Notice message={policyError}/>}
+     <p className="px-2 text-[11px] text-muted">{locale==='ko'?'모든 대화에 적용되는 전역 설정입니다.':'Applies globally to all conversations.'}</p>
      {(['request','workspace','full'] as PermissionMode[]).map(mode=>
-      <Button type="button" variant="ghost" key={mode} disabled={permissionBusy}
+      <Button type="button" variant="ghost" key={mode} disabled={permissionBusy||permissionMode==='unknown'}
        aria-pressed={permissionMode===mode} onClick={()=>void changePermission(mode)}
        className={'flex w-full !min-h-16 items-start gap-3 !justify-start rounded-xl !border-0 px-3 py-3 text-left hover:bg-[#F3EEE5] focus-visible:outline-2 focus-visible:outline-offset-2 '+(permissionMode===mode?'!bg-[#F8F1E8]':'')}>
        <span className={'mt-1 grid size-5 shrink-0 place-items-center rounded-full border '+(permissionMode===mode?'border-brand bg-brand text-white':'border-[#D8CFC2]')}>
