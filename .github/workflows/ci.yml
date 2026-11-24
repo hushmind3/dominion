@@ -132,6 +132,9 @@ jobs:
           cargo test --locked -p dominion-turn-core --lib
           cargo test --locked -p dominion-agent-loop --lib
           cargo test --locked -p dominion-context-policy --lib
+          # Public integration tests are not covered by the workspace --lib gate.
+          cargo test --locked -p dominion-agent-sdk --test external_host
+          cargo test --lib engine::experience::tests
           cargo test --lib engine::tools::tests::room_source_reader_preserves_full_peer_history_and_private_scope
           cargo test --lib engine::chat::continuity::tests::indexed_peer_never_duplicates_a_full_reply_in_committed_prefix
           cargo test --lib engine::chat::continuity::tests::semantically_stable_room_state_reuses_one_frame_and_changed_state_appends

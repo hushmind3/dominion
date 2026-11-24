@@ -74,7 +74,7 @@ impl Cycle {
         let mut decision=decide(self.config.strategy,observation.has_checks,
             observation.gaps,observation.error,observation.accumulated_evidence,
             attempt,self.config.attempts);
-        if stalled && !observation.owner_changed {
+        if stalled && !observation.owner_changed && decision==Decision::Repair {
             decision=Decision::Review;
         }
         if observation.owner_changed {
@@ -168,6 +168,9 @@ mod tests{
         assert!(cycle.assess(&o).stalled);
         assert_eq!(cycle.assess(&o).decision,Decision::Review);
         assert!(!cycle.assess(&Observation{new_evidence:1,..o}).stalled);
+        let verified=Observation{has_checks:true,..o};
+        assert_eq!(cycle.assess(&verified).decision,Decision::Accept,
+            "independent verification may establish completion despite the same provider error");
     }
     #[test]
     fn changed_owner_goal_never_replays_unknown_remote_effects(){

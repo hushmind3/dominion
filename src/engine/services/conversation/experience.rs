@@ -645,23 +645,29 @@ fn input_shape(value: &Value) -> Option<String> {
     Some(names.join(","))
 }
 
+fn outcome_unresolved(value:&Value)->bool {
+    value["outcomeUnknown"]==true || value["effectUnknown"]==true
+        || value["dispatched"]==false
+        || matches!(value["status"].as_str(),Some("outcome_unknown"|"effect_unknown"|
+            "not_dispatched"|"pending"|"running"|"cancelled"|"needs_review"|"unverified"))
+}
 fn observed_success(value: &Value) -> bool {
     value.is_object()
         && !value.as_object().is_some_and(|v| v.is_empty())
-        && value["outcomeUnknown"].as_bool() != Some(true)
-        && value["isError"].as_bool() != Some(true)
-        && value["success"].as_bool() != Some(false)
-        && value["error"].is_null()
+        && !outcome_unresolved(value)
+        && !observed_failure(value)
         && value.get("exitCode").is_none_or(|v| v.as_i64() == Some(0))
-        && value.get("status").and_then(Value::as_u64).is_none_or(|v| v < 400)
 }
 
 fn observed_failure(value: &Value) -> bool {
-    value["isError"].as_bool() == Some(true)
-        || value["success"].as_bool() == Some(false)
+    // A transport-ambiguous or undispatched result is not an observed
+    // counterexample to a method that was never proven to have executed.
+    !outcome_unresolved(value) && (
+        value["isError"]==true || value["success"]==false || value["ok"]==false
         || !value["error"].is_null()
+        || matches!(value["status"].as_str(),Some("failed"|"error"))
         || value.get("exitCode").is_some_and(|v| v.as_i64().is_some_and(|n| n != 0))
-        || value.get("status").and_then(Value::as_u64).is_some_and(|v| v >= 400)
+        || value.get("status").and_then(Value::as_u64).is_some_and(|v| v >= 400))
 }
 
 /// Only a verified successful root attempt can contribute a supporting case.
@@ -1045,7 +1051,9 @@ pub fn record_rule_counterexamples(
                             == Some("/environmentFingerprint")
                         && predicate["predicate"]["value"].as_str()==Some(fingerprint)
                 });
-                if !already {
+                if already {
+                    narrowed = true;
+                } else {
                     predicates.push(json!({
                         "type":"not",
                         "predicate": {
@@ -1428,8 +1436,15 @@ mod tests {
         passed["adaptations"][0]["observation"]["actual"] = json!("unexpected failure");
         assert!(learn_verified_adaptations(&state, &passed).is_empty());
         passed["adaptations"][0]["observation"]["actual"] = json!("file not found");
-        passed["adaptations"][0]["result"] = json!({"outcomeUnknown":true});
-        assert!(learn_verified_adaptations(&state, &passed).is_empty());
+        for result in [json!({"outcomeUnknown":true}),
+            json!({"effectUnknown":true,"success":true}),
+            json!({"status":"failed"}),json!({"ok":false}),
+            json!({"dispatched":false,"status":"not_dispatched"})]{
+            passed["adaptations"][0]["result"]=result;
+            assert!(learn_verified_adaptations(&state,&passed).is_empty());
+        }
+        assert!(!observed_failure(&json!({"outcomeUnknown":true,"error":"timeout"})));
+        assert!(observed_failure(&json!({"ok":false,"error":"file not found"})));
         let _ = std::fs::remove_dir_all(dir);
     }
 
