@@ -11,4 +11,5 @@ Required fields (JSON, no extra keys):
 
 A manifest is not proof of runtime compatibility or trust. The installer pins the reviewed manifest commit and digest, does not execute arbitrary source or install scripts, and creates a stopped, bounded container with /data and an optional loopback service. Docker must be available. Repeated installations of the same repository share a stable ID. Updates remain explicit via managed container updates. For host SDK/task requests use the existing /dominion/v1/request and /dominion/v1/result protocol; this manifest does not grant model, tool, or admin credentials. Other DOMINION branches can implement this same wire format independently. They do not yet implement this market merely because this document exists.
 
-The assistant migration is intentionally separate from this contract. Existing voice code stays in place until the new repository receives the exported source and a real published image. Host-specific adapter reference files in the migration bundle are not standalone server code.
+
+Application implementations are maintained independently. The host never includes an application-specific build recipe. Legacy installations retain their data; install a published replacement using the market.

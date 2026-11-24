@@ -1,6 +1,6 @@
 //! AI discovery and durable owner-reviewed plugin proposals.
 //! Tool calls cannot execute a container mutation, even under auto-approval.
-use super::{owner,inventory,inspect,valid_id,valid_image,Install,package,recipe,mutate_checked};
+use super::{owner,inventory,inspect,valid_id,valid_image,Install,package,mutate_checked};
 use crate::{state::AppState,api::response::error};
 use axum::{extract::{Path,State},http::StatusCode,response::{IntoResponse,Response},Json};
 use serde::{Deserialize,Serialize};
@@ -12,7 +12,6 @@ const KIND:&str="plugin_proposal";
 enum Proposal{
     InstallImage{name:String,image:String,network:bool,port:Option<u16>},
     InstallPackage{name:String,spec:package::Spec,network:bool,port:Option<u16>},
-    InstallVoice,
     Start{plugin_id:String},
     Stop{plugin_id:String},
     Remove{plugin_id:String},
@@ -23,7 +22,6 @@ fn parse(value:Value)->Result<Proposal,String>{
     // Serde's internally tagged unit variant accepts extra fields. Explicit
     // per-action allowlists keep review data and execution authority separate.
     let keys:&[&str]=match value["action"].as_str(){
-        Some("install_voice")=>&["action"],
         Some("install_image")=>&["action","name","image","network","port"],
         Some("install_package")=>&["action","name","spec","network","port"],
         Some("start"|"stop"|"remove")=>&["action","plugin_id"],
@@ -35,9 +33,8 @@ fn parse(value:Value)->Result<Proposal,String>{
     let p:Proposal=serde_json::from_value(value).map_err(|_|"Invalid plugin proposal schema".to_owned())?;
     let valid=match &p{
         Proposal::InstallImage{name,image,network,port}=>name_ok(name)&&valid_image(image)
-            &&!recipe::voice_tag(image)&&!package::local_tag(image)&&net_ok(*network,*port),
+            &&!package::local_tag(image)&&net_ok(*network,*port),
         Proposal::InstallPackage{name,spec,network,port}=>name_ok(name)&&spec.valid()&&net_ok(*network,*port),
-        Proposal::InstallVoice=>true,
         Proposal::Start{plugin_id}|Proposal::Stop{plugin_id}|Proposal::Remove{plugin_id}=>valid_id(plugin_id),
     };
     if !valid{return Err("Invalid plugin proposal settings".into())} Ok(p)
@@ -56,7 +53,7 @@ pub(crate) fn definitions()->Vec<Value>{
         tool("plugin_list","Read managed plugin identities and runtime state. Does not grant execution permissions.",json!({}),vec![]),
         tool("plugin_propose","Create an owner-reviewed installation or lifecycle request in Service Connections > Plugins. Does not install or execute anything. For package install use an exact version and documented executable.",json!({
             "proposal":{"type":"object","properties":{
-                "action":{"type":"string","enum":["install_image","install_package","install_voice","start","stop","remove"]},
+                "action":{"type":"string","enum":["install_image","install_package","start","stop","remove"]},
                 "name":{"type":"string"},"image":{"type":"string"},"network":{"type":"boolean"},"port":{"type":"integer"},
                 "plugin_id":{"type":"string"},"spec":{"type":"object","properties":{"runtime":{"type":"string","enum":["pypi","npm","crates"]},"package":{"type":"string"},"version":{"type":"string"},"entry":{"type":"string"},"args":{"type":"array","items":{"type":"string"}}},"required":["runtime","package","version","entry"],"additionalProperties":false}
             },"required":["action"],"additionalProperties":false}
@@ -119,9 +116,6 @@ pub async fn approve(State(state):State<AppState>,Path(id):Path<String>,Json(inp
             let v=json!({"id":id,"name":name,"spec":spec,"network":network,"port":port,"confirmed":true});
             match serde_json::from_value::<package::Request>(v){Ok(req)=>package::install(State(state.clone()),Json(req)).await,Err(_)=>return error(StatusCode::BAD_REQUEST,"Invalid package request")}
         },
-        Proposal::InstallVoice=>{
-            match serde_json::from_value::<recipe::Request>(json!({"id":id,"confirmed":true})){Ok(req)=>recipe::install_voice(State(state.clone()),Json(req)).await,Err(_)=>return error(StatusCode::BAD_REQUEST,"Invalid voice request")}
-        },
         p=>{
             let action=match &p{Proposal::Start{..}=>"start",Proposal::Stop{..}=>"stop",Proposal::Remove{..}=>"remove",_=>unreachable!()};
             let Some(target)=target_id(&p)else{return error(StatusCode::BAD_REQUEST,"Invalid target")};
@@ -143,7 +137,7 @@ mod tests{
     fn proposals_reject_ambient_authority_and_unpinned_images(){
         assert!(parse(json!({"action":"install_image","name":"x","image":"alpine:latest","network":false})).is_err());
         assert!(parse(json!({"action":"install_voice","confirmed":true})).is_err());
-        assert!(parse(json!({"action":"install_voice"})).is_ok());
+        assert!(parse(json!({"action":"install_voice"})).is_err());
         assert!(parse(json!({"action":"install_image","name":"x","image":"alpine:3.21","network":false,"port":8080})).is_err());
         assert!(parse(json!({"action":"install_image","name":"x","image":"alpine:3.21","network":false})).is_ok());
     }

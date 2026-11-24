@@ -10,6 +10,7 @@ use std::time::Duration;
 
 pub mod auto_chat;
 pub mod v2;
+mod legacy;
 const KIND:&str="plugin_request";
 const MAX_INSTRUCTION:usize=16000;
 const MAX_ANSWER:usize=64000;
@@ -90,11 +91,11 @@ fn view(state:&AppState,record:&Value)->Value{
         "delivery":record["delivery"].as_str().unwrap_or("not_sent")})
 }
 fn bridge_auth(state:&AppState,row:&Value,request:reqwest::RequestBuilder)->Result<reqwest::RequestBuilder,String>{
-    if row["image"].as_str().is_some_and(super::recipe::voice_tag){
-        let id=row["id"].as_str().ok_or("Invalid voice identity")?;
-        let token=super::recipe::bridge_token(state,id).ok_or("Voice bridge credential missing")?;
-        Ok(request.bearer_auth(token))
-    }else{Ok(request)}
+    // Read-only compatibility for already installed v1 containers. The
+    // old credential is never supplied to a new application or image.
+    if let Ok(token)=v2::token(state,row){return Ok(request.bearer_auth(token))}
+    if let Some(token)=legacy::token(state,row){return Ok(request.bearer_auth(token))}
+    Ok(request)
 }
 async fn fetch_record(state:&AppState,id:&str,row:&Value,port:u16)->Result<Option<Value>,String>{
     let request=bridge_auth(state,row,client()?.get(format!("http://127.0.0.1:{port}/dominion/v1/request")))?;

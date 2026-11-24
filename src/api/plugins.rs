@@ -10,12 +10,10 @@ use tokio::{io::{AsyncRead,AsyncReadExt},process::Command};
 use super::response::error;
 pub mod bridge;
 pub mod versions;
-pub mod recipe;
 pub mod package;
 pub mod agent;
 mod data;
 pub mod scheduled;
-pub mod personal_voice;
 pub mod market;
 
 const LIMIT:usize=1024*1024;
@@ -232,11 +230,7 @@ async fn create_managed(state:&AppState,scope:&str,input:&Install,image_id:&str)
 async fn create_managed_in(state:&AppState,scope:&str,input:&Install,image_id:&str,volume:&str)->Result<(),String>{
     data::verify(scope,&input.id,volume).await?;
     let mut args=creation_args_for_volume(scope,input,image_id,volume);
-    if recipe::voice_tag(&input.image){
-        let token=recipe::bridge_token(state,&input.id).ok_or("Voice bridge credential missing")?;
-        let pos=args.len()-1;args.splice(pos..pos,["--env".into(),"DOMINION_BRIDGE_TOKEN".into()]);
-        docker_with_token(&args,45,Some(&token)).await?;
-    }else if input.network && input.port.is_some(){
+    if input.network && input.port.is_some(){
         let token=bridge::v2::ensure_token(state,&input.id,image_id)?;
         let pos=args.len()-1;args.splice(pos..pos,["--env".into(),"DOMINION_BRIDGE_TOKEN".into()]);
         docker_with_token(&args,45,Some(&token)).await?;
@@ -256,7 +250,7 @@ pub async fn list(State(state):State<AppState>)->Response{
     }
 }
 pub async fn install(State(state):State<AppState>,Json(input):Json<Install>)->Response{
-    if recipe::voice_tag(&input.image)||package::local_tag(&input.image){return bad("로컬 빌드 프로그램은 전용 설치 버튼을 이용하세요.")}
+    if package::local_tag(&input.image){return bad("로컬 빌드 프로그램은 전용 설치 버튼을 이용하세요.")}
     if !input.confirmed||!valid_id(&input.id)||!valid_image(&input.image)||input.name.trim().is_empty()
         ||input.name.len()>120||input.name.chars().any(char::is_control)
         ||input.port==Some(0)||input.port.is_some()&&!input.network{

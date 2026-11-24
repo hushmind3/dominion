@@ -1,6 +1,6 @@
 //! One-shot unattended upgrades of an owner-pinned OCI digest, only while
 //! stopped. No automatic restart or selection of mutable upstream tags.
-use super::{owner,inspect,valid_id,valid_image,versions,recipe,package};
+use super::{owner,inspect,valid_id,valid_image,versions,package};
 use crate::{state::AppState,api::response::error};
 use axum::{extract::{Path,State},http::StatusCode,response::{IntoResponse,Response},Json};
 use serde::Deserialize;
@@ -11,8 +11,8 @@ const KIND:&str="plugin_scheduled_update";
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 pub struct Request{image:String,expected_image_id:String,confirmed:bool}
-fn pinned(image:&str)->bool{valid_image(image)&&image.contains("@sha256:")&&!recipe::voice_tag(image)&&!package::local_tag(image)}
-fn generic(row:&Value)->bool{row["image"].as_str().is_some_and(|s|!recipe::voice_tag(s)&&!package::local_tag(s))}
+fn pinned(image:&str)->bool{valid_image(image)&&image.contains("@sha256:")&&!package::local_tag(image)}
+fn generic(row:&Value)->bool{row["image"].as_str().is_some_and(|s|!package::local_tag(s))}
 fn same_target(record:&Value,row:&Value)->bool{
     row["imageId"].is_string()&&row["imageId"]==record["expectedImageId"]
         &&row["containerId"]==record["expectedContainerId"]

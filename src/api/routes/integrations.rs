@@ -20,8 +20,6 @@ pub(super) fn router() -> Router<AppState> {
         .route("/api/plugins/market", get(plugins::market::search))
         .route("/api/plugins/market/install", post(plugins::market::install))
         .route("/api/plugins/managed", get(plugins::list).post(plugins::install))
-        .route("/api/plugins/voice/install", post(plugins::recipe::install_voice))
-        .route("/api/plugins/voice/personal", get(plugins::personal_voice::status).post(plugins::personal_voice::enable).delete(plugins::personal_voice::disable))
         .route("/api/plugins/package/install", post(plugins::package::install))
         .route("/api/plugins/proposals", get(plugins::agent::list))
         .route("/api/plugins/proposals/:id/approve", post(plugins::agent::approve))

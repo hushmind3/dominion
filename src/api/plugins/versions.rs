@@ -85,7 +85,7 @@ fn removal_id(row:&Value)->Result<&str,String>{
     row["containerId"].as_str().filter(|s|container_id(s)).ok_or("Invalid container identity".into())
 }
 pub async fn update(State(state):State<AppState>,Path(id):Path<String>,Json(input):Json<Update>)->Response{
-    if super::recipe::voice_tag(&input.image)||super::package::local_tag(&input.image){return error(StatusCode::BAD_REQUEST,"로컬 빌드 프로그램은 전용 설치를 이용하세요.")}
+    if super::package::local_tag(&input.image){return error(StatusCode::BAD_REQUEST,"로컬 빌드 프로그램은 전용 설치를 이용하세요.")}
     if !input.confirmed||!valid_id(&id)||!valid_image(&input.image)||!immutable(&input.expected_image_id){
         return error(StatusCode::BAD_REQUEST,"새 이미지 버전과 현재 버전을 확인하세요.")
     }
@@ -96,7 +96,7 @@ pub async fn update(State(state):State<AppState>,Path(id):Path<String>,Json(inpu
         let old=inspect(&id,&scope).await?.ok_or("설치된 플러그인이 없습니다.")?;
         if image_id(&old)!=Some(input.expected_image_id.as_str()){return Err("현재 이미지가 변경되었습니다. 새로고침하세요.".into())}
         removal_id(&old)?;
-        if old["image"].as_str().is_some_and(|s|super::recipe::voice_tag(s)||super::package::local_tag(s)){return Err("로컬 빌드 프로그램의 전용 업데이트를 이용하세요.".into())}
+        if old["image"].as_str().is_some_and(|s|super::package::local_tag(s)){return Err("로컬 빌드 프로그램의 전용 업데이트를 이용하세요.".into())}
         let next=spec(&old,&input.image).ok_or("Invalid installed plugin metadata")?;
         // Download before replacing the working version. An unavailable
         // registry or image leaves the original container untouched.

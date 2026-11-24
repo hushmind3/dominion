@@ -17,7 +17,7 @@ pub(in crate::api::plugins) fn ensure_token(state:&AppState,id:&str,image:&str)-
     if state.read_secret(&key).as_deref()!=Some(t.as_str()){return Err("Plugin credential storage failed".into())}
     Ok(t)
 }
-fn token(state:&AppState,row:&Value)->Result<String,String>{
+pub(super) fn token(state:&AppState,row:&Value)->Result<String,String>{
     let id=row["id"].as_str().ok_or("Missing plugin identity")?;
     let image=row["imageId"].as_str().ok_or("Missing plugin image identity")?;
     state.read_secret(&secret_key(id,image)).filter(|s|s.len()==64&&s.bytes().all(|b|b.is_ascii_hexdigit()))
