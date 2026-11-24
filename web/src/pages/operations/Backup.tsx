@@ -3,7 +3,7 @@ import {Archive, Check, KeyRound, RefreshCw, RotateCcw, ShieldAlert, TriangleAle
 import {post} from '../../api'
 import {Button, TextInput} from '../../components/Primitives'
 import {Action, Notice, Panel, StateTag, Subheading, useRemote} from '../../components/UI'
-import {formatDateTime, t} from '../../i18n'
+import {formatDateTime, t,useLocale} from '../../i18n'
 type Backup = {name: string; path: string; bytes: number; encrypted: boolean; modifiedAt?: string}
 type KeyStatus = {activeVersion?: number; versions?: number[]; error?: string}
 type SecretStatus = {previousKeys?: number; oldKeyFiles?: string[]; error?: string}
@@ -22,6 +22,7 @@ function formatBytes(bytes?: number) {
 }
 
 export function BackupPanel() {
+  const en=useLocale()==='en',tr=(ko:string,eng:string)=>en?eng:ko
   const backups = useRemote<Backup[]>('/api/system/backups', [])
   const backupKeys = useRemote<KeyStatus>('/api/system/backup-keys', {})
   const secretKey = useRemote<SecretStatus>('/api/system/secret-key', {})
@@ -104,13 +105,15 @@ export function BackupPanel() {
       <Action onClick={createBackup} disabled={Boolean(busy)}>
         {busy === 'create' ? <RefreshCw size={16} className="animate-spin"/> : <Archive size={16}/>} {busy === 'create' ? t('ops.backup.creating') : t('ops.backup.create')}
       </Action>
-      <StateTag online={active}>{active ? t('ops.backup.maintenanceActive') : t('ops.backup.maintenanceInactive')}</StateTag>
+      <Button variant="ghost" onClick={() => void reload()} disabled={Boolean(busy)}><RefreshCw size={15}/> {t('ops.refresh')}</Button>
+    </div>
+    <details className="mt-4 rounded-xl border border-divider p-3">
+      <summary className="cursor-pointer text-sm font-semibold">{tr('복구 및 보안 키 관리','Recovery and security keys')}{active?' · '+t('ops.backup.maintenanceActive'):''}</summary>
+      <div className="mt-3 flex flex-wrap items-center gap-2"><StateTag online={active}>{active ? t('ops.backup.maintenanceActive') : t('ops.backup.maintenanceInactive')}</StateTag>
       <Button variant="secondary" onClick={toggleMaintenance} disabled={Boolean(busy)}>
         <ShieldAlert size={16}/> {active ? t('ops.backup.maintenanceStop') : t('ops.backup.maintenanceStart')}
       </Button>
-      <Button variant="ghost" onClick={() => void reload()} disabled={Boolean(busy)}>
-        <RefreshCw size={15}/> {t('ops.refresh')}
-      </Button>
+
     </div>
     <div className="mt-4 grid gap-3 sm:grid-cols-2">
       <div className="rounded-xl border border-divider bg-canvas p-3">
@@ -138,8 +141,7 @@ export function BackupPanel() {
       <TextInput type="checkbox" checked={keepOld} onChange={event => setKeepOld(event.target.checked)}/>
       {t('ops.backup.keepOld')}
     </label>
-    {error && <Notice message={error}/>}
-    {message && <div className="my-3 flex items-center gap-2 rounded-xl border border-success/20 bg-success-soft p-3 text-sm text-success"><Check size={16}/>{message}</div>}
+
     <div className="mt-5 border-t border-divider pt-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <strong className="text-[13px] text-ink">{t('ops.backup.files')}</strong>
@@ -162,6 +164,8 @@ export function BackupPanel() {
         </Button>
         {!active && <p className="mt-1 text-[10px] text-brand">{t('ops.backup.needMaintenance')}</p>}
       </div>
-    </div>
+    </div></details>
+    {error && <Notice message={error}/>}
+    {message && <div role="status" className="my-3 flex items-center gap-2 rounded-xl border border-success/20 bg-success-soft p-3 text-sm text-success"><Check size={16}/>{message}</div>}
   </Panel>
 }
