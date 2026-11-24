@@ -2,6 +2,7 @@ import React,{useEffect,useRef,useState} from 'react';
 import {AppState, SafeAreaView, View, Text, TextInput, Pressable, StyleSheet, useColorScheme, Platform, PermissionsAndroid, ScrollView, KeyboardAvoidingView} from 'react-native';
 import {AudioSession,registerGlobals} from '@livekit/react-native';
 import {Room,RoomEvent,ConnectionState} from 'livekit-client';
+import PersonalChat from './PersonalChat';
 
 registerGlobals();
 type Pairing={url:string;token:string;room:string;expiresAt:number};
@@ -14,6 +15,10 @@ function parse(raw:string):Pairing{
   return p;
 }
 export default function App(){
+ const [advanced,setAdvanced]=useState(false);
+ return advanced?<View style={{flex:1}}><LiveKitApp/><Pressable onPress={()=>setAdvanced(false)} style={{padding:16,alignItems:'center'}}><Text style={{color:'#3976d7'}}>간편 연결로 돌아가기</Text></Pressable></View>:<PersonalChat onAdvanced={()=>setAdvanced(true)}/>;
+}
+function LiveKitApp(){
   const dark=useColorScheme()==='dark',ink=dark?'#f1f4fa':'#182233';
   const [peerReady,setPeerReady]=useState(false);
   const [raw,setRaw]=useState(''),[status,setStatus]=useState('연결 대기'),[error,setError]=useState(''),[mic,setMic]=useState(false),[connected,setConnected]=useState(false),[busy,setBusy]=useState(false);

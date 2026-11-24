@@ -55,8 +55,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          cp android/app/build/outputs/apk/release/app-release.apk dist/DOMINION-Voice-0.2.1-arm64-test.apk
-          APK=dist/DOMINION-Voice-0.2.1-arm64-test.apk
+          cp android/app/build/outputs/apk/release/app-release.apk dist/DOMINION-Voice-0.3.0-arm64-test.apk
+          APK=dist/DOMINION-Voice-0.3.0-arm64-test.apk
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
           "$APKSIGNER" verify --verbose --print-certs "$APK"
           unzip -l "$APK" | grep 'assets/index.android.bundle'
@@ -66,7 +66,7 @@ jobs:
           echo "Test-signed standalone ARM64 APK; no Metro server needed." >> dist/BUILD.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: DOMINION-Voice-Android-0.2.1-arm64
+          name: DOMINION-Voice-Android-0.3.0-arm64
           path: plugins/dominion-voice/mobile/dist/*
           if-no-files-found: error
           retention-days: 30

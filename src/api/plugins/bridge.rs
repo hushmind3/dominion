@@ -63,7 +63,7 @@ fn lookup(state:&AppState,id:&str,request:&str)->Option<Value>{
     state.store.get(KIND,&record_id(id,request)).filter(|r|r["pluginId"]==id&&r["requestId"]==request)
 }
 fn job_id(record:&Value)->String{format!("plugin-{}",digest(record["id"].as_str().unwrap_or_default()))}
-fn job_input(record:&Value,mode:&str,provider:&str)->Option<Value>{
+pub(super) fn job_input(record:&Value,mode:&str,provider:&str)->Option<Value>{
     let tools=match mode{"chat"=>vec![],"workspace"=>WORKSPACE_TOOLS.to_vec(),_=>return None};
     Some(json!({
         "prompt":record["instruction"],"clientSurface":"native_agent_panel",

@@ -4,6 +4,7 @@ import {get,post,del} from '../../api'
 import {Button,TextInput,TextArea,SelectInput} from '../../components/Primitives'
 import {useLocale} from '../../i18n'
 import {PluginBridgePanel} from './PluginBridgePanel'
+import {PersonalVoicePanel} from './PersonalVoicePanel'
 
 export type PackageSpec={runtime:'npm'|'pypi'|'crates';package:string;version:string;entry:string;args:string[]}
 type Plugin={scheduledUpdate?:{status:string;image:string;message?:string};packageSpec?:PackageSpec;id:string;name:string;image:string;imageId:string|null;state:string;running:boolean;network:boolean;ports:number[];exitCode:number|null;requestedPort?:number|null;versionChange?:{phase:'prepared'|'ready';previousImage:string;previousImageId:string;targetImage:string;dataRollback?:boolean}}
@@ -87,6 +88,7 @@ export function ManagedPlugins({selectedImage,onImageConsumed,selectedPackage,on
  const rows=inventory?.items
  const disabled=!!busy||inventory?.available!==true
  return <section className="mb-6 rounded-xl border border-divider bg-surface p-4">
+  <PersonalVoicePanel/>
   <div className="flex flex-wrap items-center justify-between gap-3">
    <div><h3 className="flex items-center gap-2 text-base font-bold text-ink"><Box size={20}/>{tr('내 플러그인','My plugins')}{rows&&<span className="text-xs text-muted">· {rows.length}</span>}</h3>
     <p className="mt-1 text-xs text-muted">{tr('외부 프로그램을 Docker에서 독립 실행합니다. MCP·스킬과 별도로 관리됩니다.','Run external apps in Docker, independently of MCP and skills.')}</p></div>
