@@ -42,3 +42,12 @@ test('download action only accepts observed same-origin links; page printing is 
  const snap={url:'https://example.com/page',text:'문서',elements:[{index:0,tag:'a',href:'https://example.com/a.pdf',label:'PDF'},{index:1,tag:'a',href:'https://files.example.com/a.pdf',label:'외부'}]};
  assert.equal(decodePlan('{"action":"download_pdf","index":0}',snap,'example.com').action,'download_pdf');assert.throws(()=>decodePlan('{"action":"download_pdf","index":1}',snap,'example.com'));assert.equal(decodePlan('{"action":"save_pdf"}',snap,'example.com').action,'save_pdf');
 });
+
+import {validUpload,acceptsFile} from '../src/browser_upload.js';
+test('upload checks file signature and limits selected site input type',()=>{
+ const f=validUpload({name:'sample.pdf',mime:'application/pdf',base64:btoa('%PDF-1.7\nsample')});
+ assert.equal(f.size,15);assert.ok(acceptsFile('.pdf',f));assert.ok(!acceptsFile('image/*',f));
+ assert.throws(()=>validUpload({...f,name:'../sample.pdf'}));assert.throws(()=>validUpload({...f,base64:btoa('not a pdf')}));
+ const snap={url:'https://example.com/page',text:'첨부',elements:[{index:0,tag:'input',type:'file',label:'자료',accept:'application/pdf',filled:false,auth:false},{index:1,tag:'input',type:'file',filled:true}]};
+ assert.equal(decodePlan('{"action":"upload","index":0}',snap,'example.com').action,'upload');assert.throws(()=>decodePlan('{"action":"upload","index":1}',snap,'example.com'));
+});
