@@ -21,6 +21,10 @@ pub(super) fn router() -> Router<AppState> {
         .route("/api/plugins/managed/:id/start", post(plugins::start))
         .route("/api/plugins/managed/:id/stop", post(plugins::stop))
         .route("/api/plugins/managed/:id/logs", get(plugins::logs))
+        .route("/api/plugins/managed/:id/bridge/pull", post(plugins::bridge::pull))
+        .route("/api/plugins/managed/:id/bridge/:request", get(plugins::bridge::status))
+        .route("/api/plugins/managed/:id/bridge/:request/approve", post(plugins::bridge::approve))
+        .route("/api/plugins/managed/:id/bridge/:request/deliver", post(plugins::bridge::deliver))
         .route("/api/plugins/managed/:id", axum::routing::delete(plugins::remove))
         .route("/api/mcp/discover", get(extensions::mcp_discover))
         .route(

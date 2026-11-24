@@ -3,6 +3,7 @@ import {Box,Play,Square,Trash2,RefreshCw,ExternalLink,FileText,Plus} from 'lucid
 import {get,post,del} from '../../api'
 import {Button,TextInput} from '../../components/Primitives'
 import {useLocale} from '../../i18n'
+import {PluginBridgePanel} from './PluginBridgePanel'
 
 type Plugin={id:string;name:string;image:string;imageId:string|null;state:string;running:boolean;network:boolean;ports:number[];exitCode:number|null;requestedPort?:number|null}
 type Inventory={available:boolean;items:Plugin[]|null;error?:string}
@@ -88,6 +89,7 @@ export function ManagedPlugins({selectedImage,onImageConsumed}:{selectedImage:st
     <Button size="sm" variant="ghost" disabled={disabled||p.running} onClick={()=>void operate(p,'remove')}><Trash2 size={14}/>{tr('제거','Remove')}</Button>
     </>}
    </div>
+   {p.running&&p.ports.length===1&&<PluginBridgePanel pluginId={p.id}/>}
   </article>)}</div>
   {logs&&<div className="mt-4 rounded-lg border border-divider p-3"><div className="flex items-center justify-between"><strong className="text-sm">{logs.name} · {tr('최근 로그','Recent logs')}</strong><Button variant="ghost" size="sm" onClick={()=>setLogs(null)}>{tr('닫기','Close')}</Button></div><pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all text-xs">{logs.data.stdout+'\n'+logs.data.stderr}</pre>{logs.data.truncated&&<p className="text-xs text-warning">{tr('로그가 잘렸습니다.','Logs truncated.')}</p>}</div>}
  </section>

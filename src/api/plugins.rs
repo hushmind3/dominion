@@ -8,6 +8,7 @@ use sha2::{Digest,Sha256};
 use std::{path::PathBuf,process::Stdio,time::Duration};
 use tokio::{io::{AsyncRead,AsyncReadExt},process::Command};
 use super::response::error;
+pub mod bridge;
 
 const LIMIT:usize=1024*1024;
 const OWNER:&str="io.dominion.plugin.owner";

@@ -9,7 +9,7 @@ use crate::engine::gateway;
 /// Keep the main frontend's provider selector honest: a model entry must
 /// support this native Rust tool protocol *before* queueing an owner task.
 /// No probe API call is made and no paid generation is consumed.
-fn native_panel_provider(state:&AppState,provider_id:Option<&str>)->Result<String,String>{
+pub(crate) fn native_panel_provider(state:&AppState,provider_id:Option<&str>)->Result<String,String>{
     let supported=|route:&gateway::Route|{
         route.kind!="cli" && route.tool_mode!="compat"
             && route.capabilities.require_native_tools().is_ok()
