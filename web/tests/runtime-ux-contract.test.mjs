@@ -37,6 +37,17 @@ test('SDK usage preserves missing token data instead of crashing the panel',()=>
  assert.match(sdk,/selectionGeneration\.current/)
  assert.match(sdk,/selected===selectionGeneration\.current/)
 })
+test('credential rotation clears privileged caches before refetching',()=>{
+ const transport=source('src/api/transport.ts')
+ const store=source('src/services/remoteStore.ts')
+ assert.match(transport,/if \(next === authToken\) return/)
+ assert.match(transport,/window\.dispatchEvent\(new Event\('dominion-auth-changed'\)\)/)
+ assert.match(store,/window\.addEventListener\('dominion-auth-changed'/)
+ assert.match(store,/authChanged\(\)/)
+ assert.match(store,/value: this\.initial, loading: true, refreshing: true, error: ''/)
+ assert.match(store,/this\.controller\?\.abort\(\)/)
+ assert.match(store,/if \(version !== this\.version\) \{this\.pending = true; continue\}/)
+})
 test('SDK task selection discards stale history and polling responses',()=>{
  assert.match(sdk,/selectedRunId=useRef<string\|null>\(null\)/)
  assert.match(sdk,/selection===selectionGeneration\.current&&!selectedRunId\.current/)
