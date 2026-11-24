@@ -325,6 +325,8 @@ if(!sdkApi.includes('state.store.sdk_evidence_rows()')||!store.includes('pub fn 
   throw Error('SDK status polling must not scan full execution and tool history')
 // Old optimizer control loops must not creep back in behind the real journal.
 const selectedAlgorithms=readFileSync(path.join(root,'src/addons/strategies/algorithms.rs'),'utf8')
+const kernelSource=readFileSync(path.join(root,'crates/dominion-algorithms/src/kernels.rs'),'utf8')
+if(!selectedAlgorithms.includes('select_kernel(records,kind)')||!kernelSource.includes('pub fn select_kernel(')||kernelSource.includes('AppState'))throw Error('Decision kernel must be independent of product storage')
 const policySource=readFileSync(path.join(root,'src/engine/policy.rs'),'utf8')
 const approvalSource=readFileSync(path.join(root,'src/engine/chat/approval.rs'),'utf8')
 const startup=readFileSync(path.join(root,'src/migrations.rs'),'utf8')
