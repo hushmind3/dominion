@@ -92,6 +92,7 @@ pub async fn change(State(state):State<AppState>,Path(id):Path<String>,Json(inpu
         return Json(view_grant(state.store.get(GRANT,&id).as_ref())).into_response()
     }
     if state.maintenance_mode(){return conflict("유지보수 중입니다.")}
+    if state.integrations.plugin_chat_grants.lock().unwrap().contains_key(&id){return conflict("이전 자동 대화 연결을 먼저 해제하세요.")}
     if old.as_ref().is_some_and(|g|g["enabled"]==true){return conflict("권한 변경 전 기존 연결을 먼저 해제하세요.")}
     if state.store.all(GRANT).iter().filter(|g|g["enabled"]==true).count()>=MAX_CONNECTIONS{return conflict("동시 SDK 연결 한도에 도달했습니다.")}
     let mode=input.mode.as_deref().unwrap_or("chat");

@@ -383,6 +383,7 @@ pub async fn run(context:&JobContext,job:&Value)->Result<Value,String> {
         context.checkpoint(json!({"nativeAlgorithm":selected.binding()}))?;
     }
     let input=&job["input"];
+    if !crate::api::plugins::bridge::v2::job_authorized(&context.state,job){return Err("Plugin connection revoked before model dispatch".into())}
     let workspace=crate::features::collaboration::worktree::for_job(&context.state,job)?;
     let task=input["prompt"].as_str().filter(|text|!text.trim().is_empty())
         .ok_or("Native agent prompt cannot be empty")?;

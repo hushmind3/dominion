@@ -36,6 +36,7 @@ pub async fn change(State(state):State<AppState>,Path(id):Path<String>,Json(inpu
         return Json(grant_view(None)).into_response()
     }
     if !input.confirmed{return invalid("자동 대화와 외부 답변 전달을 승인하세요.")}
+    if state.store.get("plugin_connection_v2",&id).is_some_and(|g|g["enabled"]==true){return conflict("공통 SDK v2 연결을 먼저 해제하세요.")}
     let (row,_)=match target(&state,&id).await{Ok(v)=>v,Err(e)=>return upstream(&e)};
     let at_limit={let grants=state.integrations.plugin_chat_grants.lock().unwrap();grants.len()>=4&&!grants.contains_key(&id)};
     if at_limit{

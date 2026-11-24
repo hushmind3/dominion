@@ -221,7 +221,7 @@ fn creation_args_for_volume(scope:&str,input:&Install,image_id:&str,volume:&str)
         "--memory=2g".into(),"--cpus=2".into(),"--read-only".into(),"--tmpfs".into(),"/tmp:rw,nosuid,nodev,size=128m".into(),
         "--log-driver=local".into(),"--log-opt=max-size=10m".into(),"--log-opt=max-file=3".into(),
         "--network".into(),if input.network{"bridge".into()}else{"none".into()},
-        "--mount".into(),format!("type=volume,source={volume},target=/data{}",if package::local_tag(&input.image)||recipe::voice_tag(&input.image){""}else{",volume-nocopy"})];
+        "--mount".into(),format!("type=volume,source={volume},target=/data")];
     if let Some(port)=input.port{args.extend(["--publish".into(),format!("127.0.0.1::{port}/tcp")]);}
     args.push(image_id.into());args
 }
