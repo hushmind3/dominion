@@ -337,7 +337,7 @@ function StatusLine({
     </span>
   );
 }
-export type ExtensionTab='market'|'installed'|'plugins'|'skills'
+export type ExtensionTab='market'|'installed'|'plugins'|'skills'|'apps'
 export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;embedded?:boolean}={}) {
   const loc = useLocale();
   const [localTab, setTab] = useState<ExtensionTab>("market");
@@ -666,6 +666,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
         >
           {t('ext.tab.installed')} <b>{mcp.value.length}</b>
         </Button>
+        <Button variant={tab === "apps" ? "primary" : "ghost"} onClick={()=>setTab("apps")}><Code2 size={17}/> {loc==='en'?'External apps':'외부 앱 관리'}</Button>
         <Button
           variant={tab === "skills" ? "primary" : "ghost"}
           onClick={() => setTab("skills")}
@@ -1070,9 +1071,10 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
           </div>
         </>
       )}
+      {tab === "apps" && <SdkExtensionsPanel/>}
       {tab === "installed" && (
         <>
-          <SdkExtensionsPanel/>
+          {embedded&&<SdkExtensionsPanel/>}
           <Subheading
             title={t('ext.connectedServers')}
             extra={

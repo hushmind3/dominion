@@ -761,6 +761,19 @@ mod view_tests{
         let _=std::fs::remove_dir_all(&state.config.data_dir);
     }
     #[test]
+    fn extension_history_filters_before_limit_and_excludes_other_source_kinds(){
+        let state=fixture();
+        for (id,kind,source) in [("a","extension","app.a"),("b","extension","app.b"),
+            ("c","task_request","app.a")]{
+            state.store.put("sdk_run",&json!({"id":id,"source":{"kind":kind,"id":source}})).unwrap();
+        }
+        let rows=state.store.sdk_runs_for_source_id("extension","app.a",1).unwrap();
+        assert_eq!(rows.len(),1);
+        assert_eq!(rows[0]["id"],"a");
+        assert!(state.store.sdk_runs_for_source_id("extension","missing",40).unwrap().is_empty());
+        let _=std::fs::remove_dir_all(&state.config.data_dir);
+    }
+    #[test]
     fn retry_key_has_stable_digest_and_rejects_invalid_characters(){
         let req:Start=serde_json::from_value(json!({
             "instruction":"test","idempotencyKey":"stable-1","tokenBudget":5000

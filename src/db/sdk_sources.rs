@@ -26,6 +26,21 @@ impl Store {
         let frames=stmt.query_map([run_id],record_from_row).map_err(|e|e.to_string())?;
         frames.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
     }
+    /// Apply the exact source ID before LIMIT: a busy neighboring app cannot
+    /// push this app's recent history out of the result.
+    pub fn sdk_runs_for_source_id(&self, source_kind:&str, source_id:&str, limit:usize)->Result<Vec<Value>,String>{
+        let conn=self.conn.lock().map_err(|e|e.to_string())?;
+        let mut stmt=conn.prepare(
+            "SELECT data,id,created_at,updated_at FROM records
+             WHERE kind='sdk_run' AND json_extract(data,'$.source.kind')=?1
+               AND json_extract(data,'$.source.id')=?2
+             ORDER BY created_at DESC,id DESC LIMIT ?3"
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map(params![source_kind,source_id,limit.clamp(1,100) as i64],record_from_row)
+            .map_err(|e|e.to_string())?;
+        rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
+    }
+
     /// Only deserialize bounded runs for one source kind, not all historic SDK jobs.
     pub fn sdk_runs_by_source(&self, source_kind:&str, limit:usize)->Result<Vec<Value>,String>{
         let conn=self.conn.lock().map_err(|e|e.to_string())?;

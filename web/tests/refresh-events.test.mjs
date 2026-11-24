@@ -75,3 +75,10 @@ test('memory changes refresh actual collection endpoints and provider changes re
  const mcp=classifyRefreshEvent({type:'record',kind:'mcp',record:{id:'m'}})
  assert.equal(matchesRefreshTarget('/api/tools',mcp.targets),true)
 })
+
+test('SDK app run refresh targets only its own history',()=>{
+ const scope=classifyRefreshEvent({type:'record',kind:'sdk_run',record:{id:'run-a',source:{kind:'extension',id:'app.a'}}})
+ assert.ok(matchesRefreshTarget('/api/extensions/apps/app.a/history',scope.targets))
+ assert.equal(matchesRefreshTarget('/api/extensions/apps/app.b/history',scope.targets),false)
+ assert.equal(matchesRefreshTarget('/api/extensions/apps/app.a/grant',scope.targets),false)
+})

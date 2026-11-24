@@ -52,7 +52,12 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
    case 'skill':add('/api/skills');break
    case 'channel':add('/api/channels');break
    case 'oauth_config':case 'oauth_connection':add('/api/oauth/providers','/api/oauth/connections');break
-   case 'sdk_run':add('/api/sdk/runs');if(id)add('/api/sdk/runs/'+encoded(id));break
+   case 'sdk_run':{
+    add('/api/sdk/runs');if(id)add('/api/sdk/runs/'+encoded(id))
+    const source=child(row,'source'),app=field(source,'id')
+    if(field(source,'kind')==='extension'&&app)add('/api/extensions/apps/'+encoded(app)+'/history')
+    break
+   }
    case 'memory':case 'experience':case 'improvement':case 'algorithm':case 'transfer':add('/api/memories','/api/experience','/api/improvements','/api/algorithms','/api/synergy','/api/transfer');break
    case 'model_usage':add('/api/model-usage');break
    default:

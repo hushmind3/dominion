@@ -152,6 +152,19 @@ pub async fn scoped_start(State(state):State<AppState>,Path(id):Path<String>,hea
     }
     super::sdk::start_scoped(state,row,grant,input.instruction,input.idempotency_key)
 }
+/// Owner-only history, separate from the delegated credential ingress.
+pub async fn history(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    if !valid_id(&id){return error(StatusCode::BAD_REQUEST,"Invalid extension ID")}
+    match state.store.sdk_runs_for_source_id(dominion_extensions::SDK_SOURCE_KIND,&id,40){
+        Ok(rows)=>Json(json!(rows.into_iter().map(|r|json!({
+            "id":r["id"],"status":r["status"],"model":r["model"],"createdAt":r["createdAt"],
+            "instruction":r["instruction"],"taskOutcome":r["taskOutcome"],
+            "verified":r["verified"],"scoped":r["extension"]["capability"]=="isolated_chat"
+        })).collect::<Vec<_>>())).into_response(),
+        Err(e)=>{state.store.audit("sdk.extension_history_failed",json!({"error":e}));
+            error(StatusCode::INTERNAL_SERVER_ERROR,"Extension history unavailable")}
+    }
+}
 pub async fn scoped_one(State(state):State<AppState>,Path((id,run)):Path<(String,String)>,headers:HeaderMap)->Response{
     let (_guard,_,grant)=match authenticated(&state,&headers,&id){Ok(v)=>v,Err(r)=>return r};
     let Some(record)=state.store.get("sdk_run",&run).filter(|r|

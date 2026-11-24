@@ -172,7 +172,7 @@ test('desktop app: actual model selection, persistent chat, settings and room na
   assert.ok(calls.some(row=>row.model==='fixture-alt'&&JSON.stringify(row.messages||[]).includes('browser-sdk.md 파일을 만들어줘')))
   // Existing Extensions screen now owns the external application lifecycle.
   await page.evaluate(()=>{location.hash='#/extensions'})
-  await page.getByRole('button',{name:/설치됨/}).click()
+  await page.getByRole('button',{name:'외부 앱 관리',exact:true}).click()
   const extensions=page.getByRole('region',{name:'외부 SDK 앱'})
   await extensions.getByRole('button',{name:'앱 등록',exact:true}).click()
   await extensions.getByLabel('앱 ID',{exact:true}).fill('browser.assistant')
@@ -194,18 +194,23 @@ test('desktop app: actual model selection, persistent chat, settings and room na
   const grant=await api(grantPath)
   assert.equal(grant.remainingRuns,1)
   assert.ok(!JSON.stringify(grant).includes(token))
-  const scoped=await fetch(base+'/api/extensions/apps/browser.assistant/runs',{
-   method:'POST',headers:{'Content-Type':'application/json','x-dominion-extension-token':token},
-   body:JSON.stringify({instruction:'Browser scoped reply',idempotencyKey:'browser-app-1'})
-  })
-  const scopedRun=await scoped.json()
-  assert.ok(scoped.ok,JSON.stringify(scopedRun))
+  await extensions.getByLabel('연결 시험 메시지',{exact:true}).fill('Browser scoped reply')
+  await extensions.getByRole('button',{name:'연결 시험 보내기',exact:true}).click()
+  await extensions.getByText('요청이 접수됐습니다. 아래 실행 기록에서 실제 응답을 확인하세요.').waitFor({state:'visible'})
+  const historyPath='/api/extensions/apps/browser.assistant/history'
+  await until(async()=> (await api(historyPath)).some(row=>row.instruction==='Browser scoped reply'))
+  const scopedRun=(await api(historyPath)).find(row=>row.instruction==='Browser scoped reply')
+  assert.equal(scopedRun.scoped,true)
+  const deniedHistory=await fetch(base+historyPath,{headers:{'x-dominion-extension-token':token}})
+  assert.equal(deniedHistory.status,403)
   await until(async()=>{
    const response=await fetch(base+'/api/extensions/apps/browser.assistant/runs/'+scopedRun.id,{headers:{'x-dominion-extension-token':token}})
    const row=await response.json()
    return row.status==='completed'
   },30000)
   await extensions.getByText(/남은 요청 0/).waitFor({state:'visible'})
+  await extensions.getByText('실행 결과',{exact:true}).waitFor({state:'visible'})
+  await extensions.getByText('응답 완료',{exact:true}).first().waitFor({state:'visible'})
   await extensions.getByRole('button',{name:'키 숨기기',exact:true}).click()
   assert.equal(await key.count(),0)
   page.once('dialog',dialog=>dialog.accept())
