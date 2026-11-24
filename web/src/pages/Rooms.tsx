@@ -158,6 +158,8 @@ function RoomConversation({sidebarModal,settingsTarget,room,agents,providers,ope
  const [messages,setMessages]=useState<ChatMessage[]>([]),[feed,setFeed]=useState<FeedState>(initialFeed)
  const [loading,setLoading]=useState(true),[loadError,setLoadError]=useState(''),[error,setError]=useState('')
  const [optionsBusy,setOptionsBusy]=useState(false)
+ const optionWriteInFlight=useRef(false)
+ const [optionError,setOptionError]=useState('')
  const [reasoningKo,setReasoningKo]=usePersistentKoreanReasoning()
  const [showReasoning,setShowReasoning]=usePersistentConversationToggle('showReasoning')
  const [recipientsOpen,setRecipientsOpen]=useState(false)
@@ -304,13 +306,13 @@ function RoomConversation({sidebarModal,settingsTarget,room,agents,providers,ope
  const updateDraft=(value:RoomDraft)=>{setDraft(value);setDirty(true);setSaved(false)}
  const save=async()=>{if(saving)return;setSaving(true);setError('');try{const savedRoom=await post<RoomConfig>('/api/rooms',draft);dataVersion.current+=1;setFeed(previous=>({...previous,room:savedRoom}));setDirty(false);setSaved(true);await load();await onSaved()}catch(e){setError((e as Error).message)}finally{setSaving(false)}}
  const changeRoomOption=async(field:'toolsEnabled'|'autoLearning'|'reasoningEffort',value:boolean|string)=>{
-  if(optionsBusy)return
-  setOptionsBusy(true);setError('')
+  if(optionWriteInFlight.current)return
+  optionWriteInFlight.current=true;setOptionsBusy(true);setOptionError('')
   try{
    const updated=await post<RoomConfig>('/api/rooms',{id:room.id,[field]:value})
-   dataVersion.current+=1;setFeed(previous=>({...previous,room:updated}));setDraft(previous=>({...previous,[field]:value}))
+   dataVersion.current+=1;setFeed(previous=>({...previous,room:updated}));setDraft(previous=>({...previous,[field]:updated[field]}))
    await onSaved()
-  }catch(e){setError((e as Error).message)}finally{setOptionsBusy(false)}
+  }catch(e){setOptionError((e as Error).message)}finally{optionWriteInFlight.current=false;setOptionsBusy(false)}
  }
  const remove=async()=>{if(!confirm(t('rooms.deleteConfirm',{name:current.name})))return;setError('');try{await del('/api/rooms/'+room.id);await onRemoved()}catch(e){setError((e as Error).message)}}
  const reset=async()=>{if(!confirm(t('rooms.resetConfirm',{name:current.name})))return;setError('');setStopping(true);try{const result=await post<{sessionId:string}>('/api/rooms/'+room.id+'/reset',{});dataVersion.current+=1;if(activeTurnId.current)terminalTurnIds.current.add(activeTurnId.current);setMessages([]);setLive(null);setFeed(previous=>({...previous,sessionId:result.sessionId,jobs:[],executions:[],operations:[],approvals:[],status:'idle',activeAgentId:undefined}));setInspector(false);await load();await onSaved()}catch(e){setError((e as Error).message)}finally{setStopping(false)}}
@@ -376,7 +378,7 @@ function RoomConversation({sidebarModal,settingsTarget,room,agents,providers,ope
  const stop=async()=>{if(stopping)return;setStopping(true);setError('');try{await post('/api/rooms/'+room.id+'/stop',{});dataVersion.current+=1;if(activeTurnId.current)terminalTurnIds.current.add(activeTurnId.current);setLive(null);await load();await onSaved()}catch(e){setError((e as Error).message)}finally{setStopping(false)}}
  const mention=(agent:Agent)=>setTargets(previous=>previous.includes(agent.id)?previous.filter(id=>id!==agent.id):[...previous,agent.id])
  return <div className="room-conversation">
-  {settingsTarget&&createPortal(<ConversationSettings permissionControl={<ExecutionPermissionsSetting/>} hideThinking reasoningControl={<RoomReasoningSelect room={current} agents={agents} providers={providers} value={current.reasoningEffort||''} onChange={effort=>void changeRoomOption('reasoningEffort',effort)} defaultLabel={t('rooms.reasoningDefault')} disabled={optionsBusy} className="w-full"/>} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} toolsEnabled={current.toolsEnabled===true} setToolsEnabled={value=>void changeRoomOption('toolsEnabled',value)} autoLearn={current.autoLearning===true} setAutoLearn={value=>void changeRoomOption('autoLearning',value)} optionsBusy={optionsBusy} learning={knowledgeBusy} learnDisabled={!sessionId||running} onLearn={learnKnowledge} notice={knowledgeNotice}/>,settingsTarget)}
+  {settingsTarget&&createPortal(<ConversationSettings permissionControl={<ExecutionPermissionsSetting/>} hideThinking reasoningControl={<RoomReasoningSelect room={current} agents={agents} providers={providers} value={current.reasoningEffort||''} onChange={effort=>void changeRoomOption('reasoningEffort',effort)} defaultLabel={t('rooms.reasoningDefault')} disabled={optionsBusy} className="w-full"/>} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} toolsEnabled={current.toolsEnabled===true} setToolsEnabled={value=>void changeRoomOption('toolsEnabled',value)} autoLearn={current.autoLearning===true} setAutoLearn={value=>void changeRoomOption('autoLearning',value)} optionsBusy={optionsBusy} optionSaving={optionsBusy} optionError={optionError} learning={knowledgeBusy} learnDisabled={!sessionId||running} onLearn={learnKnowledge} notice={knowledgeNotice}/>,settingsTarget)}
   <section inert={sidebarModal} aria-hidden={sidebarModal||undefined} className="room-main" aria-label={t('rooms.headerAria',{name:current.name})}>
 
 

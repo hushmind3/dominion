@@ -11,12 +11,12 @@ type Props={
  toolsEnabled:boolean;setToolsEnabled:(value:boolean)=>void
  autoLearn:boolean;setAutoLearn:(value:boolean)=>void
  learning:boolean;learnDisabled:boolean;onLearn:()=>void|Promise<void>
- optionsBusy?:boolean;notice?:string
+ optionsBusy?:boolean;optionSaving?:boolean;optionError?:string;notice?:string
  reasoningControl?:ReactNode;permissionControl?:ReactNode
 }
 /** Shared chat controls: readable labels, native checkboxes and unchanged
  * persistence callbacks for both single chat and nine-agent rooms. */
-export function ConversationSettings({showReasoning,setShowReasoning,reasoningKo,setReasoningKo,thinkingEnabled=true,setThinkingEnabled=()=>{},canDisableThinking=true,thinkingNotice,hideThinking=false,reasoningEffort,setReasoningEffort=()=>{},toolsEnabled,setToolsEnabled,autoLearn,setAutoLearn,learning,learnDisabled,onLearn,optionsBusy=false,notice,reasoningControl,permissionControl}:Props){
+export function ConversationSettings({showReasoning,setShowReasoning,reasoningKo,setReasoningKo,thinkingEnabled=true,setThinkingEnabled=()=>{},canDisableThinking=true,thinkingNotice,hideThinking=false,reasoningEffort,setReasoningEffort=()=>{},toolsEnabled,setToolsEnabled,autoLearn,setAutoLearn,learning,learnDisabled,onLearn,optionsBusy=false,optionSaving=false,optionError,notice,reasoningControl,permissionControl}:Props){
  const locale=useLocale()
  const en=locale==='en'
 
@@ -74,6 +74,8 @@ export function ConversationSettings({showReasoning,setShowReasoning,reasoningKo
     </label>}
     {permissionControl&&<div className="px-3 py-3">{permissionControl}</div>}
     {reasoningControl&&<div className="px-3 pb-3">{reasoningControl}</div>}
+    {optionSaving&&<p role="status" className="px-3 text-xs text-muted">{en?'Saving room settings…':'회의실 설정 저장 중…'}</p>}
+    {optionError&&<p role="alert" className="px-3 text-xs text-rose-700">{optionError}</p>}
     <label className={row}>
      <span className="flex min-w-0 items-start gap-2.5"><Wrench size={18} className="mt-0.5 shrink-0 text-[#957E65]"/>
       <span><strong className="block text-[13px] font-semibold">{t('chat.useTools')}</strong>

@@ -183,7 +183,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
    <div className="flex flex-wrap items-end gap-3">
     <label className="flex min-w-44 flex-1 flex-col gap-1 text-[11px] text-[#746A5F]">
      {en?'AI provider':'AI 제공자'}
-     <select value={providerId} disabled={busy} onChange={e=>{setProviderId(e.target.value);setModel('')}}
+     <select id="sdk-provider" aria-label={en?'AI provider':'AI 제공자'} value={providerId} disabled={busy} onChange={e=>{setProviderId(e.target.value);setModel('')}}
       className="h-9 rounded-lg border border-divider bg-white px-3 text-[12px]">
       <option value="">{en?'Automatic selection':'자동 선택'}</option>
       {providers.filter(p=>p.enabled!==false).map(p=><option key={p.id} value={p.id}>{p.name}{p.model?` · ${p.model}`:''}</option>)}
@@ -191,7 +191,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     </label>
     {providerId&&<label className="flex min-w-44 flex-1 flex-col gap-1 text-[11px] text-muted">
      {en?'AI model':'사용할 AI 모델'}
-     <select value={model} onChange={e=>setModel(e.target.value)} disabled={busy||!provider||catalogue.loading}
+     <select id="sdk-model" aria-label={en?'AI model':'사용할 AI 모델'} value={model} onChange={e=>setModel(e.target.value)} disabled={busy||!provider||catalogue.loading}
       className="h-9 rounded-lg border border-divider bg-white px-3 text-[12px]">
       <option value="">{en?'Provider default':'제공자 기본 모델'}{provider?.model?' · '+provider.model:''}</option>
       {modelIds.map(id=><option key={id} value={id}>{id}</option>)}
