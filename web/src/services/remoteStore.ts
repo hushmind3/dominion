@@ -15,7 +15,7 @@ export class RemoteResource<T> {
  private version = 0
  private loadedAt = 0
  touched = Date.now()
- constructor(readonly endpoint: string, initial: T) {
+ constructor(readonly endpoint: string, private readonly initial: T) {
   this.snapshot = {value: initial, loading: true, refreshing: true, error: ''}
  }
  getSnapshot = () => this.snapshot
@@ -37,6 +37,19 @@ export class RemoteResource<T> {
   }
  }
  invalidate() {if (this.activeReaders > 0) void this.reload()}
+ /** An admin credential change must not leave previously authorized data visible. */
+ authChanged() {
+  this.version++
+  this.loadedAt = 0
+  this.pending = Boolean(this.inFlight)
+  this.update({value: this.initial, loading: true, refreshing: true, error: ''})
+  if (this.inFlight) {
+   // Abort the old credential's request; then fetch with the new credential.
+   const previous = this.inFlight
+   this.controller?.abort()
+   void previous.then(() => {if (this.observed) void this.reload()}, () => {if (this.observed) void this.reload()})
+  } else if (this.observed) void this.reload()
+ }
  reload = (): Promise<void> => {
   if (this.inFlight) {this.pending = true; return this.inFlight}
   this.inFlight = this.read().finally(() => {this.inFlight = null})
@@ -57,6 +70,7 @@ export class RemoteResource<T> {
     this.update({value, loading: false, refreshing: false, error: ''})
    } catch (error) {
     if (controller.signal.aborted) break
+    if (version !== this.version) {this.pending = true; continue}
     this.loadedAt = Date.now()
     this.update({loading: false, refreshing: false, error: error instanceof Error ? error.message : String(error)})
    } finally {if (this.controller === controller) this.controller = null}
@@ -86,6 +100,7 @@ export function remoteResource<T>(endpoint: string, initial: T): RemoteResource<
 
 if (typeof window !== 'undefined') {
  window.addEventListener('dominion-refresh', () => {for (const resource of resources.values()) resource.invalidate()})
+ window.addEventListener('dominion-auth-changed', () => {for (const resource of resources.values()) resource.authChanged()})
  window.addEventListener('dominion-data-change', event => {
   const targets = (event as CustomEvent<RefreshScope>).detail?.targets || []
   for (const resource of resources.values()) if (matchesRefreshTarget(resource.endpoint, targets)) resource.invalidate()
