@@ -940,6 +940,40 @@ mod tests {
     }
 
     #[test]
+    fn direct_chat_uses_same_base_for_short_and_full_context_without_agent_manual(){
+        let (state,dir)=state();
+        state.store.put("assistant_settings",&json!({"id":"global","enabled":true,
+            "instructions":"OWNER_EXACT_POLICY"})).unwrap();
+        state.store.put("harness_prompt_override",&json!({"id":"chat.lightweight",
+            "text":"CUSTOM_CONVERSATION_BASE","revision":"test"})).unwrap();
+        state.store.put("harness_prompt_override",&json!({"id":"agent.tools",
+            "text":"WORK_ONLY_MANUAL","revision":"test"})).unwrap();
+        state.store.put("harness_prompt_override",&json!({"id":"chat.web_scope",
+            "text":"WEB_ONLY_MANUAL","revision":"test"})).unwrap();
+        let request=TurnRequest::from_value(&json!({"input":"야",
+            "conversationMode":"chat","toolsEnabled":true,"toolsExecutionEnabled":true})).unwrap();
+        let short=lightweight_chat_prompt(&state,&request);
+        let full=system_prompt_with_manifest(&state,&request,"chat-test","야",None);
+        for context in [short,full] {
+            assert_eq!(context.prompt.matches("CUSTOM_CONVERSATION_BASE").count(),1);
+            assert!(context.prompt.contains("OWNER_EXACT_POLICY"));
+            assert!(!context.prompt.contains("WORK_ONLY_MANUAL"));
+            assert!(!context.prompt.contains("WEB_ONLY_MANUAL"));
+            assert!(!context.prompt.contains("작업 공간 루트:"));
+        }
+        let mut web=request;
+        web.web_search=true;
+        let full=system_prompt_with_manifest(&state,&web,"chat-test","검색",None);
+        assert_eq!(full.prompt.matches("WEB_ONLY_MANUAL").count(),1);
+        assert!(!full.prompt.contains("WORK_ONLY_MANUAL"));
+        web.tools_execution_enabled=false;
+        let disabled=system_prompt_with_manifest(&state,&web,"chat-test","검색",None);
+        assert!(!disabled.prompt.contains("WEB_ONLY_MANUAL"));
+        assert!(!disabled.prompt.contains("WORK_ONLY_MANUAL"));
+        let _=std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn lightweight_greeting_keeps_owner_and_agent_policy_without_native_work_manual(){
         let (state,dir)=state();
         state.store.put("agent",&json!({"id":"greeting-agent","name":"친구",
