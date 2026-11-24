@@ -136,6 +136,8 @@ pub trait Model: Send + Sync {
     /// schemas and the durable receipt transcript; the default retains
     /// backwards-compatible JSON planning for text-only local routes.
     /// Every actual tool still runs through the same Rust kernel scheduler.
+    /// Native tool protocols may retain additional host data (stream events,
+    /// receipts and message framing) without forcing the model through JSON prose.
     fn complete_with_tools<'a>(
         &'a self,
         system: &'a str,
@@ -196,9 +198,6 @@ mod dispatch_fence_tests {
         assert_eq!(dispatch_fence(&j,"run",Some("corrected")).unwrap(),DispatchFence::Cancelled);
     }
 }
-/// Native tool protocols may retain additional host data (stream events,
-/// receipts and message framing) without forcing the model through JSON prose.
-
 /// Minimal host ports exposed to a compiled agent-loop implementation.
 /// No concrete DB, channels, provider SDK or UI types cross this boundary.
 #[derive(Clone,Copy)]
