@@ -15,7 +15,7 @@ permissions:
   contents: read
 concurrency:
   group: sub4-product-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 jobs:
   frontend:
     if: github.ref == 'refs/heads/dominion-sub4'

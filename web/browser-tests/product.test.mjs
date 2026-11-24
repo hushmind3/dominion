@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {chromium} from 'playwright'
 import {createServer} from 'node:http'
 import {spawn} from 'node:child_process'
-import {mkdtemp,rm} from 'node:fs/promises'
+import {mkdtemp,rm,stat} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join,resolve} from 'node:path'
 import {setTimeout as delay} from 'node:timers/promises'
@@ -37,6 +37,11 @@ test('desktop app: actual model selection, persistent chat, settings and room na
   for await(const chunk of req)body+=chunk
   const parsed=JSON.parse(body)
   calls.push(parsed)
+  if(parsed.stream&&JSON.stringify(parsed.messages||[]).includes('browser-sdk.md 파일을 만들어줘')){
+   res.setHeader('Content-Type','text/event-stream')
+   res.end('data: '+JSON.stringify({choices:[{delta:{tool_calls:[{index:0,id:'browser-sdk-write',type:'function',function:{name:'workspace_write',arguments:JSON.stringify({path:'browser-sdk.md',content:''})}}]},finish_reason:'tool_calls'}],usage:{prompt_tokens:40,completion_tokens:10,total_tokens:50}})+'\n\ndata: [DONE]\n\n')
+   return
+  }
   if(parsed.stream){
    res.setHeader('Content-Type','text/event-stream')
    res.end('data: '+JSON.stringify({choices:[{delta:{content:'Browser integration reply'},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:4,total_tokens:14}})+'\n\ndata: [DONE]\n\n')
@@ -113,6 +118,48 @@ test('desktop app: actual model selection, persistent chat, settings and room na
   await page.locator('.page-rooms .conversation-switch button').first().click()
   await page.locator('.page-chat').waitFor({state:'visible'})
   await page.locator('.page-chat [data-message-role="assistant"]').filter({hasText:'Browser integration reply'}).first().waitFor({state:'visible'})
+  // Native memory save and correction must reach the real database.
+  await page.evaluate(()=>{location.hash='#/memory'})
+  await page.getByLabel('저장할 내용',{exact:true}).fill('Browser persistent memory')
+  await page.getByRole('button',{name:'기억 저장',exact:true}).click()
+  await page.getByText('Browser persistent memory',{exact:true}).waitFor({state:'visible'})
+  const original=await until(async()=> (await api('/api/memories')).find(row=>row.text==='Browser persistent memory'))
+  await page.getByRole('button',{name:'기억 수정',exact:true}).first().click()
+  await page.getByRole('textbox',{name:'기억 수정',exact:true}).fill('Browser corrected memory')
+  await page.getByRole('button',{name:'수정 저장',exact:true}).click()
+  await page.getByText('Browser corrected memory',{exact:true}).waitFor({state:'visible'})
+  await until(async()=> (await api('/api/memories')).find(row=>row.text==='Browser corrected memory'&&row.id!==original.id&&row.retrievalEligible))
+  // Room policy is stored by the room rather than private chat preferences.
+  const agent=await api('/api/agents',{name:'Browser agent',providerId:p.id,model:'fixture-alt',systemPrompt:'Answer briefly.'})
+  const room=await api('/api/rooms',{name:'Browser room',agentIds:[agent.id],models:[{providerId:p.id,model:'fixture-alt'}],toolsEnabled:false,autoLearning:false})
+  await page.evaluate(()=>{location.hash='#/rooms'})
+  await page.locator('.page-rooms .room-list-item').filter({hasText:'Browser room'}).click()
+  await page.locator('.page-rooms .room-main').waitFor({state:'visible'})
+  await page.keyboard.press('Control+,')
+  await page.locator('.workspace-reply-preferences summary').click()
+  await page.locator('.conversation-settings-inline').waitFor({state:'visible'})
+  const tools=page.locator('.conversation-settings-inline label').filter({hasText:'도구 사용'}).locator('input[type=checkbox]')
+  await tools.check()
+  await until(async()=> (await api('/api/rooms/'+room.id)).toolsEnabled===true)
+  // SDK UI must select an exact model and show the real approval boundary.
+  await page.evaluate(()=>{location.hash='#/home'})
+  await page.getByText('고급 작업 도구',{exact:true}).click()
+  await page.locator('#sdk-goal').fill('browser-sdk.md 파일을 만들어줘')
+  await page.getByLabel('AI 제공자',{exact:true}).selectOption(p.id)
+  await page.getByLabel('사용할 AI 모델',{exact:true}).selectOption('fixture-alt')
+  const sdkStart=page.waitForRequest(req=>req.method()==='POST'&&new URL(req.url()).pathname==='/api/sdk/runs')
+  await page.getByRole('button',{name:'작업 시작',exact:true}).click()
+  const sdkWire=(await sdkStart).postDataJSON()
+  assert.equal(sdkWire.providerId,p.id)
+  assert.equal(sdkWire.model,'fixture-alt')
+  assert.ok(sdkWire.idempotencyKey)
+  const approve=page.getByRole('button',{name:'이 작업 1회 승인',exact:true})
+  await approve.waitFor({state:'visible',timeout:30000})
+  await assert.rejects(stat(join(directory,'browser-sdk.md')),e=>e.code==='ENOENT')
+  await approve.click()
+  await page.getByText(/검증된 작업 결과/).waitFor({state:'visible',timeout:30000})
+  assert.equal((await stat(join(directory,'browser-sdk.md'))).size,0)
+  assert.ok((await api('/api/sdk/runs')).some(row=>row.model==='fixture-alt'&&row.status==='completed'&&row.verified===true))
   assert.deepEqual(exceptions,[])
  }catch(error){
   throw Error(error.message+'\nBackend log tail:\n'+stderr.slice(-3000),{cause:error})

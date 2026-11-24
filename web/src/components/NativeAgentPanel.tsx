@@ -2,6 +2,7 @@ import {useEffect, useRef, useState} from 'react'
 import {Check, Play, RefreshCw, ShieldAlert, Square, Sparkles} from 'lucide-react'
 import {get, post, resolveApproval, type Provider} from '../api'
 import {useLocale} from '../i18n'
+import {useProviderModels} from '../hooks/useProviderModels'
 import {ExecutionInsights} from './ExecutionInsights'
 import {RunEventTimeline} from './RunEventTimeline'
 
@@ -32,6 +33,11 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const en=locale==='en'
  const [instruction,setInstruction]=useState('')
  const [providerId,setProviderId]=useState('')
+ const [model,setModel]=useState('')
+ const provider=providers.find(p=>p.id===providerId&&p.enabled!==false)
+ const catalogue=useProviderModels(providerId)
+ const modelIds=[...new Set([...(provider?.model?[provider.model]:[]),...catalogue.value.map(item=>item.id)])]
+ const validSelection=(!providerId||Boolean(provider))&&(!model||modelIds.includes(model))
  const [verification,setVerification]=useState('')
  const [observation,setObservation]=useState('')
  const [run,setRun]=useState<SdkRun|null>(null)
@@ -87,9 +93,9 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   return()=>{alive=false;controller.abort();clearInterval(timer)}
  },[run?.id,run?.status,run?.actions?.cancel,busy])
  const start=async()=>{
-  if(!instruction.trim()||!beginOperation())return
+  if(!instruction.trim()||!validSelection||!beginOperation())return
   setError('')
-  const request={instruction:instruction.trim(),providerId:providerId||undefined,verifyCommand:verification.trim()||undefined}
+  const request={instruction:instruction.trim(),providerId:providerId||undefined,model:model||undefined,verifyCommand:verification.trim()||undefined}
   const snapshot=JSON.stringify(request)
   if(retryStart.current?.snapshot!==snapshot)retryStart.current={snapshot,key:crypto.randomUUID()}
   try{
@@ -176,14 +182,24 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
     className="w-full resize-y rounded-xl border border-divider bg-[#FCFBF9] p-3 text-[12px] outline-none focus:border-[#A36A4A]"/>
    <div className="flex flex-wrap items-end gap-3">
     <label className="flex min-w-44 flex-1 flex-col gap-1 text-[11px] text-[#746A5F]">
-     {en?'AI model':'사용할 AI 모델'}
-     <select value={providerId} onChange={e=>setProviderId(e.target.value)}
+     {en?'AI provider':'AI 제공자'}
+     <select value={providerId} disabled={busy} onChange={e=>{setProviderId(e.target.value);setModel('')}}
       className="h-9 rounded-lg border border-divider bg-white px-3 text-[12px]">
       <option value="">{en?'Automatic selection':'자동 선택'}</option>
-      {providers.filter(p=>p.enabled).map(p=><option key={p.id} value={p.id}>{p.name}{p.model?` · ${p.model}`:''}</option>)}
+      {providers.filter(p=>p.enabled!==false).map(p=><option key={p.id} value={p.id}>{p.name}{p.model?` · ${p.model}`:''}</option>)}
      </select>
     </label>
-    <button type="button" onClick={()=>void start()} disabled={busy||!instruction.trim()}
+    {providerId&&<label className="flex min-w-44 flex-1 flex-col gap-1 text-[11px] text-muted">
+     {en?'AI model':'사용할 AI 모델'}
+     <select value={model} onChange={e=>setModel(e.target.value)} disabled={busy||!provider||catalogue.loading}
+      className="h-9 rounded-lg border border-divider bg-white px-3 text-[12px]">
+      <option value="">{en?'Provider default':'제공자 기본 모델'}{provider?.model?' · '+provider.model:''}</option>
+      {modelIds.map(id=><option key={id} value={id}>{id}</option>)}
+      {model&&!modelIds.includes(model)&&<option value={model} disabled>{model} · {en?'Unavailable':'사용 불가'}</option>}
+     </select>
+     {catalogue.error&&<span role="status">{en?'Model list unavailable; the saved provider default is still available.':'모델 목록 조회 실패 · 저장된 기본 모델 사용 가능'} <button type="button" onClick={()=>void catalogue.reload()} className="underline">{en?'Retry':'재시도'}</button></span>}
+    </label>}
+    <button type="button" onClick={()=>void start()} disabled={busy||!instruction.trim()||!validSelection}
      className="flex h-9 items-center gap-2 rounded-lg bg-[#AE5337] px-4 text-[12px] font-semibold text-white disabled:opacity-40">
      <Play size={14}/>{busy?(en?'Please wait…':'처리 중…'):(en?'Start task':'작업 시작')}
     </button>
