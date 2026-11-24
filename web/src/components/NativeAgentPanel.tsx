@@ -17,7 +17,7 @@ type SdkRun = {
 }
 const fmtTokens=(value?:number|null)=>typeof value==='number'&&Number.isFinite(value)?value.toLocaleString():'—'
 const running = new Set(['queued', 'running', 'awaiting_approval'])
-const stopPolling = new Set(['completed','failed','cancelled','exhausted','denied','awaiting_approval','interrupted','in_doubt'])
+const stopPolling = new Set(['completed','failed','cancelled','exhausted','denied','awaiting_approval','interrupted','in_doubt','needs_review'])
 const stateNames:Record<string,[string,string]>={
  queued:['대기 중','Queued'], running:['작업 진행 중','Working'],
  completed:['완료','Completed'], failed:['실패','Failed'],
@@ -39,13 +39,16 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [historyOpen,setHistoryOpen]=useState(false)
  const [steering,setSteering]=useState('')
  const [notice,setNotice]=useState('')
+ // Guard every async response against switching to a different run.
  const selectionGeneration=useRef(0)
+ const selectedRunId=useRef<string|null>(null)
+ const showRun=(next:SdkRun)=>{selectedRunId.current=next.id;setRun(next)}
  const selectHistory=async(id:string)=>{
   const selected=++selectionGeneration.current
   setError('');setNotice('');setSteering('')
   try{
    const current=await get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(id)}`)
-   if(selected===selectionGeneration.current)setRun(current)
+   if(selected===selectionGeneration.current)showRun(current)
   }catch(e){
    if(selected===selectionGeneration.current)setError((e as Error).message)
   }
@@ -58,73 +61,91 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  }
  useEffect(()=>{
   let alive=true
+  const selection=selectionGeneration.current
   get<SdkRun[]>('/api/sdk/runs').then(list=>{
    if(!alive)return
    const sorted=[...list].sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''))
    setHistory(sorted.slice(0,30))
-   if(sorted.length)setRun(sorted[0])
-  }).catch(e=>{if(alive)setError((e as Error).message)})
+   // An initial history response must never replace a newer manual selection.
+   if(sorted.length&&selection===selectionGeneration.current&&!selectedRunId.current)showRun(sorted[0])
+  }).catch(e=>{if(alive&&selection===selectionGeneration.current)setError((e as Error).message)})
   return()=>{alive=false}
  },[])
  useEffect(()=>{
   if(!run?.id || stopPolling.has(run.status)) return
-  let alive=true
-  const timer=setInterval(()=>{
-   get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}`)
-    .then(next=>{if(alive)setRun(next)})
-    .catch(e=>{if(alive)setError((e as Error).message)})
-  },1500)
-  return()=>{alive=false;clearInterval(timer)}
+  let alive=true, reading=false
+  const id=run.id, selection=selectionGeneration.current
+  const controller=new AbortController()
+  const poll=async()=>{
+   if(!alive||reading)return
+   reading=true
+   try{
+    const next=await get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(id)}`,controller.signal)
+    if(alive&&selection===selectionGeneration.current&&selectedRunId.current===id)setRun(next)
+   }catch(e){
+    if(alive&&!controller.signal.aborted&&selection===selectionGeneration.current)setError((e as Error).message)
+   }finally{reading=false}
+  }
+  const timer=setInterval(()=>{void poll()},1500)
+  return()=>{alive=false;clearInterval(timer);controller.abort()}
  },[run?.id,run?.status])
  const start=async()=>{
   if(!instruction.trim()||busy)return
+  const selection=++selectionGeneration.current
   setBusy(true);setError('')
   try{
    const created=await post<SdkRun>('/api/sdk/runs',{
     instruction:instruction.trim(),providerId:providerId||undefined,
     verifyCommand:verification.trim()||undefined
    })
-   ++selectionGeneration.current
-   setRun(created);setHistoryOpen(false);setNotice('')
+   if(selection===selectionGeneration.current){showRun(created);setHistoryOpen(false);setNotice('')}
    void refreshHistory().catch(()=>{})
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
  const action=async(kind:'approve'|'deny'|'cancel'|'resume')=>{
   if(!run||busy)return
+  const current=run, selection=selectionGeneration.current
   setBusy(true);setError('')
   try{
-   const call=run.checkpoint?.pendingCall
+   const call=current.checkpoint?.pendingCall
    if((kind==='approve'||kind==='deny')&&!call?.id)throw Error(en?'Missing approval details':'승인할 도구 정보를 찾지 못했습니다.')
    if(kind==='deny'){
     await resolveApproval(call!.id,false)
    }else{
-    await post(`/api/sdk/runs/${encodeURIComponent(run.id)}/${kind}`,
+    await post(`/api/sdk/runs/${encodeURIComponent(current.id)}/${kind}`,
      kind==='approve'?{callId:call!.id}:{})
    }
-   const refreshed=await get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}`)
-   setRun(refreshed);void refreshHistory().catch(()=>{})
+   const refreshed=await get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(current.id)}`)
+   if(selection===selectionGeneration.current&&selectedRunId.current===current.id)showRun(refreshed)
+   void refreshHistory().catch(()=>{})
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
  const reconcile=async(applied:boolean)=>{
   if(!run||busy||!observation.trim())return
+  const current=run, selection=selectionGeneration.current
   setBusy(true);setError('')
   try{
-   const updated=await post<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}/reconcile`,
+   const updated=await post<SdkRun>(`/api/sdk/runs/${encodeURIComponent(current.id)}/reconcile`,
     {applied,details:observation.trim()})
-   setRun(updated);setObservation('');void refreshHistory().catch(()=>{})
+   if(selection===selectionGeneration.current&&selectedRunId.current===current.id){showRun(updated);setObservation('')}
+   void refreshHistory().catch(()=>{})
   }catch(e){setError((e as Error).message)}
   finally{setBusy(false)}
  }
  const followUp=async()=>{
   if(!run||busy||!steering.trim())return
+  const current=run, selection=selectionGeneration.current
   setBusy(true);setError('');setNotice('')
   try{
-   await post(`/api/sdk/runs/${encodeURIComponent(run.id)}/steer`,{instruction:steering.trim(),mode:'append'})
-   setSteering('');setNotice(en?'Instruction queued for the current run.':'현재 작업에 추가 지시를 전달했습니다.')
-   setRun(await get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(run.id)}`))
-  }catch(e){setError((e as Error).message)}
+   await post(`/api/sdk/runs/${encodeURIComponent(current.id)}/steer`,{instruction:steering.trim(),mode:'append'})
+   const refreshed=await get<SdkRun>(`/api/sdk/runs/${encodeURIComponent(current.id)}`)
+   if(selection===selectionGeneration.current&&selectedRunId.current===current.id){
+    setSteering('');setNotice(en?'Instruction queued for the current run.':'현재 작업에 추가 지시를 전달했습니다.')
+    showRun(refreshed)
+   }
+  }catch(e){if(selection===selectionGeneration.current)setError((e as Error).message)}
   finally{setBusy(false)}
  }
  const status=run?.status||''
