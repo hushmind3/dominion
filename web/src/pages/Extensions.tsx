@@ -2,6 +2,7 @@ import { koreanToolSummary } from '../lib/toolSummary'
 import {discoveryForMcp} from '../features/mcp/quickCommands'
 import {DialogBackdrop,DialogPanel} from "../components/Dialog";
 import {SkillsPanel} from "./extensions/SkillsPanel";
+import {PluginDiscovery} from "./extensions/PluginDiscovery";
 import {CapabilitiesPage} from './Capabilities';
 import {t,useLocale} from "../i18n";
 import {
@@ -966,6 +967,10 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
       )}
       {tab === "plugins" && (
         <>
+          <PluginDiscovery/>
+          <details className="rounded-xl border border-divider p-4">
+          <summary className="cursor-pointer text-sm font-semibold text-ink">{loc==='en'?'Local skill catalog':'로컬 스킬 카탈로그'}</summary>
+          <div className="mt-4">
           <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
             <div>
               <h3 className="m-0 text-[15px] font-bold text-ink">
@@ -1111,6 +1116,8 @@ export function ExtensionsPage({section,embedded=false,onMcpRegistered}:{section
               </Button>
             )}
           </div>
+          </div>
+          </details>
         </>
       )}
       {tab === "installed" && (

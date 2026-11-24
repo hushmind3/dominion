@@ -16,6 +16,7 @@ pub(super) fn router() -> Router<AppState> {
         .route("/api/skills/:id/export", get(extensions::export_skill))
         .route("/api/mcp/presets", get(extensions::mcp_presets))
         .route("/api/mcp/catalog", get(extensions::mcp_catalog))
+        .route("/api/plugins/search", get(extensions::plugin_search))
         .route("/api/mcp/discover", get(extensions::mcp_discover))
         .route(
             "/api/skills/import-repo",

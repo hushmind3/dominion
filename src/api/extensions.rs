@@ -5,6 +5,8 @@ use serde_json::{json,Value};
 use std::collections::HashMap;
 use std::time::Duration;
 use super::response::error;
+mod plugin_catalog;
+pub use plugin_catalog::search as plugin_search;
 
 pub async fn list_tools(State(state): State<AppState>) -> Json<Value> {
     let mut items = engine::tools::definitions()

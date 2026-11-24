@@ -92,6 +92,7 @@ function fixture() {
   if(p==='/api/mcp/discover')return ok(route,db.mcp.filter(row=>row.enabled!==false).map(row=>({mcpId:row.id,name:'mcp__mock__search',description:'Mock plugin search'})))
   if(p==='/api/mcp/presets')return ok(route,[])
   if(p==='/api/mcp/catalog')return ok(route,[{name:'Parallel MCP 2.0',description:'2026 web search and fetching',url:'https://mcp.parallel.ai/mcp'}])
+  if(p==='/api/plugins/search')return ok(route,{items:[{id:'npm:voice-fixture',source:'npm',name:'voice-fixture',kind:'package',version:'1.0.0',description:'Voice fixture',license:'MIT',url:'https://www.npmjs.com/package/voice-fixture',compatibility:'unverified'}],errors:[],pypiMode:'exact_name',searchOnly:true})
   if(p==='/api/skill-catalog')return ok(route,{items:[],total:0,updatedAt:''})
   if(p==='/api/model-library/runtime')return ok(route,{status:'idle'})
   if(p==='/api/extensions/runtime')return ok(route,{enabled:{},configured:{}})

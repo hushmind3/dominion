@@ -115,6 +115,7 @@ jobs:
           cargo test --bin dominion-rust host::execution::native_agent::tests
           cargo test --bin dominion-rust api::sdk_runs::tests
           cargo test --bin dominion-rust api::sdk::tests
+          cargo test --bin dominion-rust api::extensions::plugin_catalog::tests
           cargo test --bin dominion-rust api::executions::event_tests
           cargo test --bin dominion-rust api::jobs::algorithm_profile_api_tests
           cargo test --bin dominion-rust api::rooms::tests::room_team_launch_reuses_request_and_preserves_live_job_state
