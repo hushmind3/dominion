@@ -1,0 +1,59 @@
+name: Sub4 product integration
+on:
+  push:
+    branches: [dominion-sub4]
+    paths:
+      - 'web/**'
+      - 'src/**'
+      - 'crates/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/sub4-product.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sub4-product-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  frontend:
+    if: github.ref == 'refs/heads/dominion-sub4'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --prefix web --no-audit --no-fund
+      - run: npm run typecheck --prefix web
+      - run: node --experimental-strip-types --test web/tests/*.test.mjs
+      - run: npm run build --prefix web
+  rust-integration:
+    if: github.ref == 'refs/heads/dominion-sub4'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked --workspace --lib
+      - run: cargo test --locked --bin dominion-rust
+      - run: cargo test --locked --test e2e
+  desktop-browser:
+    if: github.ref == 'refs/heads/dominion-sub4'
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci --prefix web --no-audit --no-fund
+      - run: npm run build --prefix web
+      - run: cargo build --locked --bin dominion-rust
+      - run: cd web && npx playwright install chromium
+      - run: node --test web/browser-tests/product.test.mjs
