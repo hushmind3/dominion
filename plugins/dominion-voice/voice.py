@@ -105,6 +105,8 @@ async def run_live(conversation, config, stop, report=lambda state: None):
         first.set()
         if mode == "inbound":
             report("connected")
+        if mode in ("outbound","inbound"):
+            await worker.queue_frame(TTSSpeakFrame("안녕하세요, 도미니온 AI 음성 비서입니다." if config["language"]=="ko" else "Hello, this is the DOMINION AI voice assistant."))
 
     @transport.event_handler("on_participant_disconnected")
     async def left(transport, participant_id):
@@ -134,7 +136,7 @@ async def run_live(conversation, config, stop, report=lambda state: None):
             report("dialing")
             dial = asyncio.create_task(dial_once(config))
         else:
-            report("waiting" if mode in ("mobile","inbound") else "running")
+            report(("connected" if first.is_set() else "waiting") if mode in ("mobile","inbound") else "running")
         while not task.done() and not stop.is_set() and time.monotonic() < deadline:
             if dial is not None and dial.done():
                 await dial

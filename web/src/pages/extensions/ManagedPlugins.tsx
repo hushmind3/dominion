@@ -7,6 +7,7 @@ import {PluginBridgePanel} from './PluginBridgePanel'
 
 export type PackageSpec={runtime:'npm'|'pypi'|'crates';package:string;version:string;entry:string;args:string[]}
 type Plugin={packageSpec?:PackageSpec;id:string;name:string;image:string;imageId:string|null;state:string;running:boolean;network:boolean;ports:number[];exitCode:number|null;requestedPort?:number|null;versionChange?:{phase:'prepared'|'ready';previousImage:string;previousImageId:string;targetImage:string}}
+const isVoice=(p:Plugin)=>['dominion-voice:0.1.0','dominion-voice:0.2.0'].includes(p.image)
 type Inventory={available:boolean;items:Plugin[]|null;error?:string}
 type Logs={stdout:string;stderr:string;truncated:boolean}
 export function ManagedPlugins({selectedImage,onImageConsumed,selectedPackage,onPackageConsumed}:{selectedImage:string;onImageConsumed:()=>void;selectedPackage:PackageSpec|null;onPackageConsumed:()=>void}){
@@ -89,7 +90,7 @@ export function ManagedPlugins({selectedImage,onImageConsumed,selectedPackage,on
   <div className="my-3 rounded-lg bg-canvas p-3 text-xs">
    {!inventory?tr('Docker 확인 중…','Checking Docker…'):inventory.available?tr('Docker 연결됨 · 설치 후 직접 실행','Docker connected · explicit start'):tr('Docker 연결 필요: ','Docker unavailable: ')+inventory.error}
   </div>
-  {!rows?.some(p=>p.image==='dominion-voice:0.1.0')&&<div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-divider p-3"><div><strong className="text-sm">DOMINION Voice</strong><p className="text-xs text-muted">{tr('음성 대화 · 독립 앱 · Pipecat 및 LiveKit 연결','Voice conversation · independent app · Pipecat and LiveKit')}</p></div><Button disabled={disabled} onClick={()=>void installVoice()}>{busy==='voice'?tr('음성 환경 빌드 중…','Building voice environment…'):tr('음성 비서 설치','Install voice assistant')}</Button></div>}
+  {!rows?.some(isVoice)&&<div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-divider p-3"><div><strong className="text-sm">DOMINION Voice</strong><p className="text-xs text-muted">{tr('음성 대화 · 독립 앱 · Pipecat 및 LiveKit 연결','Voice conversation · independent app · Pipecat and LiveKit')}</p></div><Button disabled={disabled} onClick={()=>void installVoice()}>{busy==='voice'?tr('음성 환경 빌드 중…','Building voice environment…'):tr('음성 비서 설치','Install voice assistant')}</Button></div>}
   {show&&<div ref={formRef} className="mb-4 space-y-3 rounded-xl border border-divider p-3">
    <h4 className="text-sm font-semibold">{restoreId?tr('데이터를 유지하고 다시 설치','Reinstall with retained data'):tr('새 플러그인 설치','Install a plugin')}</h4>
    {restoreId&&<p className="text-xs text-warning">{tr('기존 /data를 재사용합니다. 다른 이미지 버전으로 변경할 수 있지만 데이터 호환성과 롤백은 자동 검증하지 않습니다.','Reuses /data. A different image version is possible, but data compatibility and rollback are not automatically verified.')}</p>}
@@ -129,11 +130,12 @@ export function ManagedPlugins({selectedImage,onImageConsumed,selectedPackage,on
    <p className="mt-1 text-xs text-muted">{p.network?tr('네트워크 허용','Network allowed'):tr('네트워크 차단','Network off')}</p>
    {p.running&&p.ports.map(port=><a key={port} href={'http://127.0.0.1:'+port} target="_blank" rel="noopener noreferrer" className="mt-1 flex gap-1 text-xs text-brand">{tr('서비스 열기','Open service')} · {port}<ExternalLink size={12}/></a>)}
    <div className="mt-3 flex flex-wrap gap-1.5">
-    {p.versionChange?.phase==='prepared'?<p className="text-xs text-warning">{tr('버전 변경 복구 필요','Version recovery required')}</p>:p.state==='retained'?<Button size="sm" disabled={disabled} onClick={()=>p.image==='dominion-voice:0.1.0'?void installVoice(p.id):p.packageSpec?openPackage(p.packageSpec,p):restore(p)}><Plus size={14}/>{tr('다시 설치·버전 변경','Reinstall / change version')}</Button>:<>
+    {p.versionChange?.phase==='prepared'?<p className="text-xs text-warning">{tr('버전 변경 복구 필요','Version recovery required')}</p>:p.state==='retained'?<Button size="sm" disabled={disabled} onClick={()=>isVoice(p)?void installVoice(p.id):p.packageSpec?openPackage(p.packageSpec,p):restore(p)}><Plus size={14}/>{tr('다시 설치·버전 변경','Reinstall / change version')}</Button>:<>
     <Button size="sm" disabled={disabled} onClick={()=>void operate(p,p.running?'stop':'start')}>{p.running?<Square size={14}/>:<Play size={14}/>} {p.running?tr('중지','Stop'):tr('실행','Start')}</Button>
     <Button size="sm" variant="secondary" disabled={disabled} onClick={()=>void operate(p,'logs')}><FileText size={14}/>{tr('로그','Logs')}</Button>
     <Button size="sm" variant="ghost" disabled={disabled||p.running} onClick={()=>void operate(p,'remove')}><Trash2 size={14}/>{tr('제거','Remove')}</Button>
-    {!p.running&&!p.packageSpec&&p.image!=='dominion-voice:0.1.0'&&<Button size="sm" variant="secondary" disabled={disabled||!p.imageId} onClick={()=>{setUpdating(p);setNewImage(p.image)}}>{tr('버전 변경','Change version')}</Button>}
+    {!p.running&&p.image==='dominion-voice:0.1.0'&&<Button size="sm" variant="secondary" disabled={disabled} onClick={()=>void installVoice(p.id)}>{tr('음성 비서 업데이트','Update voice assistant')}</Button>}
+    {!p.running&&!p.packageSpec&&!isVoice(p)&&<Button size="sm" variant="secondary" disabled={disabled||!p.imageId} onClick={()=>{setUpdating(p);setNewImage(p.image)}}>{tr('버전 변경','Change version')}</Button>}
     </>}
     {p.versionChange&&!p.running&&<Button size="sm" variant="secondary" disabled={disabled} onClick={()=>void rollback(p)}>{tr('이전 버전 복구','Restore previous version')}</Button>}
    </div>

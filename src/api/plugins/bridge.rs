@@ -89,7 +89,7 @@ fn view(state:&AppState,record:&Value)->Value{
         "delivery":record["delivery"].as_str().unwrap_or("not_sent")})
 }
 fn bridge_auth(state:&AppState,row:&Value,request:reqwest::RequestBuilder)->Result<reqwest::RequestBuilder,String>{
-    if row["image"]==super::recipe::VOICE_IMAGE{
+    if row["image"].as_str().is_some_and(super::recipe::voice_tag){
         let id=row["id"].as_str().ok_or("Invalid voice identity")?;
         let token=super::recipe::bridge_token(state,id).ok_or("Voice bridge credential missing")?;
         Ok(request.bearer_auth(token))

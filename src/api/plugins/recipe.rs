@@ -7,7 +7,8 @@ use axum::{extract::State,http::StatusCode,response::{IntoResponse,Response},Jso
 use serde::Deserialize;
 use std::path::PathBuf;
 
-pub(crate) const VOICE_IMAGE:&str="dominion-voice:0.1.0";
+pub(crate) const VOICE_IMAGE:&str="dominion-voice:0.2.0";
+pub(crate) fn voice_tag(image:&str)->bool{matches!(image,"dominion-voice:0.1.0"|"dominion-voice:0.2.0")}
 const FILES:[(&str,&str);6]=[
     ("Dockerfile",include_str!(concat!(env!("CARGO_MANIFEST_DIR"),"/plugins/dominion-voice/Dockerfile"))),
     ("session.py",include_str!(concat!(env!("CARGO_MANIFEST_DIR"),"/plugins/dominion-voice/session.py"))),
@@ -46,9 +47,12 @@ pub async fn install_voice(State(state):State<AppState>,Json(request):Json<Reque
     let result:Result<serde_json::Value,String>=async{
         let scope=owner(&state)?;
         if versions::pending(&state,&request.id){return Err("이전 버전 변경을 먼저 복구하세요.".into())}
-        if let Some(row)=inspect(&request.id,&scope).await?{
-            if row["image"]==VOICE_IMAGE&&bridge_token(&state,&request.id).is_some(){return Ok(row)}
-            return Err("같은 설치 ID에 다른 프로그램이 있습니다.".into())
+        let old=inspect(&request.id,&scope).await?;
+        if let Some(row)=&old{
+            if row["image"]==VOICE_IMAGE&&bridge_token(&state,&request.id).is_some(){return Ok(row.clone())}
+            if row["image"]!="dominion-voice:0.1.0"||row["running"]!=false{
+                return Err("기존 음성 비서를 중지하거나 다른 설치 ID를 사용하세요.".into())
+            }
         }
         let rows=inventory(&scope).await?;
         if rows.len()>=MAX_PLUGINS&&!rows.iter().any(|r|r["id"]==request.id){return Err("플러그인 등록 한도에 도달했습니다.".into())}
@@ -62,6 +66,9 @@ pub async fn install_voice(State(state):State<AppState>,Json(request):Json<Reque
         let exact=output.trim();
         if !exact.strip_prefix("sha256:").is_some_and(container_id){return Err("Invalid voice image identity".into())}
         ensure_token(&state,&request.id)?;
+        if let Some(row)=old{
+            return versions::replace_stopped(&state,&scope,row,&input,exact).await
+        }
         ensure_volume(&scope,&input).await?;
         create_managed(&state,&scope,&input,exact).await?;
         inspect(&request.id,&scope).await?.ok_or("음성 비서 설치 결과를 확인할 수 없습니다.".into())
@@ -74,6 +81,7 @@ mod tests{
     #[test]
     fn recipe_has_fixed_context_and_no_host_mount(){
         assert_eq!(FILES.len(),6);
+        assert!(voice_tag(VOICE_IMAGE));assert!(voice_tag("dominion-voice:0.1.0"));
         assert!(FILES[0].1.contains("pipecat-ai[livekit,deepgram,cartesia,silero]==1.17.0"));
         assert!(FILES[0].1.contains("USER 10001"));
         assert!(!FILES.iter().any(|(name,_)|name.contains('/')||name.contains("..")));

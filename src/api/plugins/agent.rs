@@ -20,10 +20,22 @@ enum Proposal{
 fn name_ok(name:&str)->bool{!name.trim().is_empty()&&name.len()<=120&&!name.chars().any(char::is_control)}
 fn net_ok(network:bool,port:Option<u16>)->bool{port!=Some(0)&&(port.is_none()||network)}
 fn parse(value:Value)->Result<Proposal,String>{
+    // Serde's internally tagged unit variant accepts extra fields. Explicit
+    // per-action allowlists keep review data and execution authority separate.
+    let keys:&[&str]=match value["action"].as_str(){
+        Some("install_voice")=>&["action"],
+        Some("install_image")=>&["action","name","image","network","port"],
+        Some("install_package")=>&["action","name","spec","network","port"],
+        Some("start"|"stop"|"remove")=>&["action","plugin_id"],
+        _=>return Err("Invalid plugin proposal action".into()),
+    };
+    if !value.as_object().is_some_and(|m|m.keys().all(|k|keys.contains(&k.as_str()))){
+        return Err("Unexpected plugin proposal fields".into())
+    }
     let p:Proposal=serde_json::from_value(value).map_err(|_|"Invalid plugin proposal schema".to_owned())?;
     let valid=match &p{
         Proposal::InstallImage{name,image,network,port}=>name_ok(name)&&valid_image(image)
-            &&image!=recipe::VOICE_IMAGE&&!package::local_tag(image)&&net_ok(*network,*port),
+            &&!recipe::voice_tag(image)&&!package::local_tag(image)&&net_ok(*network,*port),
         Proposal::InstallPackage{name,spec,network,port}=>name_ok(name)&&spec.valid()&&net_ok(*network,*port),
         Proposal::InstallVoice=>true,
         Proposal::Start{plugin_id}|Proposal::Stop{plugin_id}|Proposal::Remove{plugin_id}=>valid_id(plugin_id),

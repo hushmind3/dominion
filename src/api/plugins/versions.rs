@@ -58,12 +58,25 @@ async fn create(state:&AppState,scope:&str,input:&Install,exact:&str)->Result<Va
 fn save(state:&AppState,r:&Value)->Result<(),String>{
     state.store.put(KIND,r).map(|_|()).ok_or("버전 복구 정보를 저장할 수 없습니다.".into())
 }
+pub(super) async fn replace_stopped(state:&AppState,scope:&str,old:Value,next:&Install,target:&str)->Result<Value,String>{
+    let cid=removal_id(&old)?.to_owned();
+    if !immutable(target)||image_id(&old).is_none()||old["id"]!=next.id{return Err("Invalid replacement identity".into())}
+    ensure_volume(scope,next).await?;
+    let mut record=json!({"id":next.id,"phase":"prepared","old":old,
+        "targetImage":next.image,"targetImageId":target});
+    save(state,&record)?;
+    call(&["container","rm",&cid],30).await?;
+    let mut installed=create(state,scope,next,target).await?;
+    record["phase"]=json!("ready");save(state,&record)?;
+    attach(state,&mut installed);
+    Ok(installed)
+}
 fn removal_id(row:&Value)->Result<&str,String>{
     if row["running"]!=false{return Err("플러그인을 먼저 중지하세요.".into())}
     row["containerId"].as_str().filter(|s|container_id(s)).ok_or("Invalid container identity".into())
 }
 pub async fn update(State(state):State<AppState>,Path(id):Path<String>,Json(input):Json<Update>)->Response{
-    if input.image==super::recipe::VOICE_IMAGE||super::package::local_tag(&input.image){return error(StatusCode::BAD_REQUEST,"로컬 빌드 프로그램은 전용 설치를 이용하세요.")}
+    if super::recipe::voice_tag(&input.image)||super::package::local_tag(&input.image){return error(StatusCode::BAD_REQUEST,"로컬 빌드 프로그램은 전용 설치를 이용하세요.")}
     if !input.confirmed||!valid_id(&id)||!valid_image(&input.image)||!immutable(&input.expected_image_id){
         return error(StatusCode::BAD_REQUEST,"새 이미지 버전과 현재 버전을 확인하세요.")
     }
@@ -73,21 +86,13 @@ pub async fn update(State(state):State<AppState>,Path(id):Path<String>,Json(inpu
     let result:Result<Value,String>=async{
         let old=inspect(&id,&scope).await?.ok_or("설치된 플러그인이 없습니다.")?;
         if image_id(&old)!=Some(input.expected_image_id.as_str()){return Err("현재 이미지가 변경되었습니다. 새로고침하세요.".into())}
-        let cid=removal_id(&old)?.to_owned();
+        removal_id(&old)?;
         let next=spec(&old,&input.image).ok_or("Invalid installed plugin metadata")?;
         // Download before replacing the working version. An unavailable
         // registry or image leaves the original container untouched.
         let target=pull(&input.image).await?;
         if target==input.expected_image_id{return Ok(old)}
-        ensure_volume(&scope,&next).await?;
-        let mut record=json!({"id":id,"phase":"prepared","old":old,
-            "targetImage":input.image,"targetImageId":target});
-        save(&state,&record)?;
-        call(&["container","rm",&cid],30).await?;
-        let mut installed=create(&state,&scope,&next,&target).await?;
-        record["phase"]=json!("ready");save(&state,&record)?;
-        attach(&state,&mut installed);
-        Ok(installed)
+        replace_stopped(&state,&scope,old,&next,&target).await
     }.await;
     match result{Ok(row)=>Json(row).into_response(),Err(e)=>failed(&e)}
 }
