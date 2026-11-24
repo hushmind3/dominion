@@ -208,7 +208,7 @@
  .conversation-rail>[aria-current]{background:#E9DFD0;color:#5B4836}
  .conversation-rail>button:hover{background:#EAE2D6}
 }
-@media(max-width:839px){.rooms-app>.conversation-rail{display:none}}
+@media(max-width:767px){.rooms-app>.conversation-rail{display:none}}
 @media(prefers-reduced-motion:reduce){.conversation-rail *, .conversation-rail{transition:none!important}}
 
 
@@ -355,3 +355,19 @@
 .execution-token-details{min-width:0;overflow-wrap:anywhere}
 @media(max-width:480px){.chat-token-detail-popover{padding:12px;border-radius:12px}
  .chat-token-detail-title{top:-12px}}
+
+/* Shared Chat/Room navigation and top strip. Mode changes never close
+   the user's sidebar. Only explicit collapse, selection on a small screen,
+   or entering a narrow viewport changes the open state. */
+.conversation-sidebar-header{display:flex;flex-direction:column;flex-shrink:0}
+.conversation-sidebar-header .conversation-switch{width:100%}
+.conversation-sidebar-header .conversation-switch>button{flex:1;justify-content:center}
+.conversation-topbar{display:flex;align-items:center;min-width:0;gap:8px;flex-shrink:0}
+.chat-usage-bar.conversation-topbar{height:44px;flex:0 0 44px;padding:0 16px;border-bottom:1px solid #EAE6DF}
+.conversation-topbar-spacer{flex:1;min-width:0}
+.conversation-topbar>.conversation-switch{flex-shrink:0}
+.conversation-topbar>.conversation-mobile-toggle{display:none}
+@media(max-width:767px){
+ .conversation-topbar>.conversation-mobile-toggle{display:inline-flex;flex-shrink:0}
+ .chat-usage-bar.conversation-topbar{padding:0 8px;gap:5px}
+}

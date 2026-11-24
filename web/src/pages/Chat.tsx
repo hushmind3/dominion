@@ -2,6 +2,7 @@ import {ConversationSettings} from '../components/ConversationSettings'
 import {ExecutionPermissions} from '../components/ExecutionPermissions'
 import {TeamRunStrip} from '../components/TeamActivity'
 import {ConversationSwitch} from '../components/WorkspaceShell'
+import {ConversationSidebarHeader} from '../components/chat/ConversationSidebarHeader'
 import {ExecutionTokenDetails} from '../components/chat/ExecutionTokenDetails'
 import {useAnchoredPanel} from '../hooks/useAnchoredPanel'
 import {createPortal} from 'react-dom'
@@ -80,7 +81,7 @@ function storeChatDraft(scope:string,text:string){
 const formatDraftBytes=(bytes:number)=>bytes>=1048576
  ?(bytes/1048576).toFixed(1)+' MiB'
  :bytes>=1024?(bytes/1024).toFixed(1)+' KiB':bytes+' B'
-export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,onSession,openModels,openSettings,switchMode,active=true}:{sessionId?:string;initialAgent?:string;initialProvider?:string;initialModel?:string;onSession:(x:string|undefined)=>void;openModels:()=>void;openSettings:()=>void;switchMode:(mode:'chat'|'rooms')=>void;active?:boolean}){
+export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,onSession,openModels,openSettings,switchMode,sidebarOpen:showHistory,setSidebarOpen:setShowHistory,active=true}:{sidebarOpen:boolean;setSidebarOpen:(value:boolean|((previous:boolean)=>boolean))=>void;sessionId?:string;initialAgent?:string;initialProvider?:string;initialModel?:string;onSession:(x:string|undefined)=>void;openModels:()=>void;openSettings:()=>void;switchMode:(mode:'chat'|'rooms')=>void;active?:boolean}){
  const loc=useLocale()
  const sessions=useRemote<ChatSession[]>('/api/sessions',[],active);
  const agents=useRemote<Agent[]>('/api/agents',[],active);
@@ -210,7 +211,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const job=useJob<LearningJob>(learningJob?'/api/jobs/'+encodeURIComponent(learningJob.id):null);
  const approval=(liveApproval?.sessionId===current?liveApproval:null)||
   approvals.value.find(item=>item.sessionId===current&&item.status==='pending');
- const [error,setError]=useState(''),[busy,setBusy]=useState(false),[live,setLive]=useState(''),[thought,setThought]=useState(''),[thinking,setThinking]=useState(false),[reasoningKo,setReasoningKo]=useState(koreanReasoningEnabled),[showReasoning,setShowReasoning]=useState(true),[showSettings,setShowSettings]=useState(false),[toolsEnabled,setToolsEnabled]=useState(true),[thinkingEnabled,setThinkingEnabled]=useState(true),[reasoningEffort,setReasoningEffort]=useState(''),[autoLearn,setAutoLearn]=useState(false),[showHistory,setShowHistory]=useState(()=>{try{if(window.innerWidth<768)return false;return localStorage.getItem('dominion.chat.sidebar')==='1'}catch{return false}}),[toolStatus,setToolStatus]=useState('');
+ const [error,setError]=useState(''),[busy,setBusy]=useState(false),[live,setLive]=useState(''),[thought,setThought]=useState(''),[thinking,setThinking]=useState(false),[reasoningKo,setReasoningKo]=useState(koreanReasoningEnabled),[showReasoning,setShowReasoning]=useState(true),[showSettings,setShowSettings]=useState(false),[toolsEnabled,setToolsEnabled]=useState(true),[thinkingEnabled,setThinkingEnabled]=useState(true),[reasoningEffort,setReasoningEffort]=useState(''),[autoLearn,setAutoLearn]=useState(false),[toolStatus,setToolStatus]=useState('');
  useEffect(()=>{setReasoningEffort('');setThinkingEnabled(true)},[providerId,model,agentId,current]);
  const [permissionOpen,setPermissionOpen]=useState(false);
  const [installed,setInstalled]=useState<InstalledModel[]>([]),[modelsLoading,setModelsLoading]=useState(false),[runtime,setRuntime]=useState<Runtime>({status:'idle'}),[modelBusy,setModelBusy]=useState(''),[unloading,setUnloading]=useState(false),[learning,setLearning]=useState(false),[menuError,setMenuError]=useState('');
@@ -264,13 +265,6 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   :'현재 대화 기록에서 확인한 토큰 합계 · 서버 누적 조회 대기 중이거나 실패'):'새 대화 · 아직 사용한 토큰이 없습니다.';
  const {scrollRef,onScroll,jumpDown}=useTranscriptScroll(current,transcriptRevision);
  useEffect(()=>()=>stream.current?.abort(),[]);
- useEffect(()=>{if(window.innerWidth<768)return;try{localStorage.setItem('dominion.chat.sidebar',showHistory?'1':'0')}catch{}},[showHistory]);
- useEffect(()=>{
-  const narrow=window.matchMedia('(max-width: 767px)')
-  const sync=()=>{if(narrow.matches)setShowHistory(false)}
-  narrow.addEventListener('change',sync)
-  return()=>narrow.removeEventListener('change',sync)
- },[]);
  useEffect(()=>{
   if(!active)return;
   const controller=new AbortController();
@@ -647,14 +641,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  return <div className={'relative grid h-dvh min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] bg-[#FFFDF9] '+(showHistory?'md:grid-cols-[232px_minmax(0,1fr)]':'md:grid-cols-[56px_minmax(0,1fr)]')}>
   {showHistory&&<Button type="button" aria-label={t('chat.listCollapse')} className="absolute inset-y-0 right-0 left-[232px] z-20 !h-auto !w-auto cursor-default !rounded-none !border-0 !bg-slate-900/30 md:hidden" onClick={()=>setShowHistory(false)}/>}
   <aside id="conversation-sidebar" aria-label={t('chat.recent')} className={'flex min-h-0 flex-col overflow-hidden border-r border-[#E7E0D5] bg-[#FAF7F1] '+(showHistory?'max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:w-[232px] max-md:shadow-2xl':'hidden')}>
-   <div className="flex min-h-16 shrink-0 items-center gap-2 px-3">
-    <span className="grid size-8 shrink-0 place-items-center rounded-xl border border-[#EED0BC] bg-[#F7E8E1] text-lg font-bold text-[#C96442]">D</span>
-    <strong className="min-w-0 flex-1 truncate text-lg font-semibold tracking-tight text-[#24211D]">dominion</strong>
-    <Button size="icon" variant="ghost" type="button" onClick={()=>setShowHistory(false)}
-     aria-label={t('chat.listCollapse')} aria-controls="conversation-sidebar" aria-expanded={true} title={t('chat.listCollapse')}><PanelLeftClose size={19}/></Button>
-   </div>
-   <Button className="mx-3 mb-3 inline-flex items-center justify-center gap-2 rounded-xl border border-[#EED9CC] bg-[#C96442] px-4 py-2.5 text-xs font-bold text-white hover:bg-[#A94E30]" onClick={resetLocal}><Plus size={17}/> {t('chat.newChat')}</Button>
-   <div className="mx-3 mb-3"><ConversationSwitch mode="chat" onChange={switchMode}/></div>
+   <ConversationSidebarHeader mode="chat" sidebarId="conversation-sidebar" onClose={()=>setShowHistory(false)} onNew={resetLocal} onSwitchMode={switchMode}/>
    <div className="chat-session-search"><Search size={14}/><input type="search" aria-label="대화 목록 검색" placeholder="대화 검색" value={sessionFilter} onChange={e=>setSessionFilter(e.target.value)}/>{sessionFilter&&<button type="button" aria-label="검색 지우기" onClick={()=>setSessionFilter('')}><X size={13}/></button>}</div>
    <div className="min-h-0 flex-1 overflow-y-auto px-2">{filteredSessions.map(s=><div key={s.id} className={'group flex min-w-0 items-center rounded-xl '+(current===s.id?'bg-[#F7E8E1]':'hover:bg-[#F7E8E1]')}>
      <Button variant="bare" onClick={()=>pickSession(s)} title={s.title} className={'!min-w-0 flex-1 !justify-start gap-3 !rounded-xl !px-3 !py-2.5 text-left text-xs '+(current===s.id?'font-bold text-[#A94E30]':'text-[#7C7469]')}><MessageCircle size={15} className="shrink-0"/><span className="min-w-0 truncate">{s.title}</span></Button>
@@ -665,7 +652,10 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   {!showHistory&&<ConversationRail sidebarId="conversation-sidebar" onExpand={()=>setShowHistory(true)}
    onNew={resetLocal} onSwitchMode={switchMode} onSettings={openSettings}/>}
   <div className="flex min-h-0 min-w-0 flex-col">
-   <div className="chat-usage-bar">
+   <div className="chat-usage-bar conversation-topbar">
+    <Button variant="ghost" size="icon" className="conversation-mobile-toggle" aria-label={showHistory?t('chat.listCollapse'):t('chat.listExpand')} aria-controls="conversation-sidebar" aria-expanded={showHistory} onClick={()=>setShowHistory(value=>!value)}><Menu size={18}/></Button>
+    <ConversationSwitch mode="chat" onChange={switchMode}/>
+    <span className="conversation-topbar-spacer"/>
     <details className="chat-usage-details">
      <summary aria-label={t('chat.cumulativeTokens',{count:totalUsedTokens.toLocaleString()})}
       title="누적 토큰 상세 보기"><Hash size={13}/><span>{t('chat.cumulativeTokens',{count:totalUsedTokens.toLocaleString()})}</span></summary>
@@ -700,9 +690,6 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      <TextArea ref={inputRef} rows={1} placeholder={t("chat.inputPlaceholder")} value={input} onChange={e=>{const next=e.target.value;setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n'));setSlashActive(0);const el=e.currentTarget;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,180)+'px'}} onKeyDown={appendKey} onPaste={handleClipboardFiles} aria-controls="dominion-slash-menu" aria-expanded={slashOpen} className="conversation-composer-input"/>
      <div className="chat-composer-controls conversation-composer-controls">
       <div className="chat-composer-options conversation-composer-options">
-       <Button type="button" variant="ghost" size="icon" className="md:!hidden !size-8 shrink-0"
-        aria-label={t('chat.listExpand')} aria-controls="conversation-sidebar"
-        aria-expanded={showHistory} onClick={()=>setShowHistory(true)}><Menu size={17}/></Button>
        <ConversationTargetPicker active={active} disabled={busy}
         providers={enabledProviders} agents={agents.value}
         providerId={providerId} model={model} agentId={agentId} mode={executionMode}

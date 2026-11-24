@@ -4,6 +4,7 @@ import {ExecutionPermissions} from '../components/ExecutionPermissions'
 import {createPortal} from 'react-dom'
 import {useAnchoredPanel} from '../hooks/useAnchoredPanel'
 import {ConversationSwitch} from '../components/WorkspaceShell'
+import {ConversationSidebarHeader} from '../components/chat/ConversationSidebarHeader'
 import {ConversationRail} from '../components/chat/ConversationRail'
 import {TokenUsage} from '../components/TokenUsage'
 import {MarkdownMessage} from '../components/MarkdownMessage'
@@ -74,41 +75,28 @@ function Avatar({agent,name,owner=false,size='normal',index=0}:{agent?:Agent;nam
  </span>
 }
 
-export function RoomsPage({openSession,openSettings,switchMode,active:visibleView=true}:{openSession:(id:string)=>void;openSettings:()=>void;switchMode:(mode:'chat'|'rooms')=>void;active?:boolean}){
+export function RoomsPage({openSession,openSettings,switchMode,sidebarOpen:showList,setSidebarOpen:setShowList,active:visibleView=true}:{sidebarOpen:boolean;setSidebarOpen:(value:boolean|((previous:boolean)=>boolean))=>void;openSession:(id:string)=>void;openSettings:()=>void;switchMode:(mode:'chat'|'rooms')=>void;active?:boolean}){
  useLocale()
  const rooms=useRemote<RoomConfig[]>('/api/rooms',[],visibleView)
  const agents=useRemote<Agent[]>('/api/agents',[],visibleView)
  const providers=useRemote<Provider[]>('/api/providers',[],visibleView)
  const [selected,setSelected]=useState(()=>{try{return localStorage.getItem('dominion.room.selected')||''}catch{return ''}})
- const [showList,setShowList]=useState(()=>{try{return window.innerWidth>=840&&localStorage.getItem('dominion.rooms.sidebar')==='1'}catch{return false}})
- useEffect(()=>{if(visibleView&&window.innerWidth>=840){try{localStorage.setItem('dominion.rooms.sidebar',showList?'1':'0')}catch{}}},[showList,visibleView])
- useEffect(()=>{if(!visibleView&&window.innerWidth<840)setShowList(false)},[visibleView])
- useEffect(()=>{
-  const narrow=window.matchMedia('(max-width: 839px)')
-  const sync=()=>{if(narrow.matches)setShowList(false)}
-  narrow.addEventListener('change',sync)
-  return()=>narrow.removeEventListener('change',sync)
- },[])
  const [creating,setCreating]=useState<RoomDraft|null>(null)
  const [saving,setSaving]=useState(false),[error,setError]=useState(''),[query,setQuery]=useState('')
  const current=rooms.value.find(room=>room.id===selected)
  useEffect(()=>{if(rooms.loading)return;if(!rooms.value.some(room=>room.id===selected))setSelected(rooms.value[0]?.id||'')},[rooms.value,rooms.loading,selected])
  useEffect(()=>{try{if(selected)localStorage.setItem('dominion.room.selected',selected)}catch{}},[selected])
- const selectRoom=(id:string)=>{setSelected(id);setError('');if(window.innerWidth<840)setShowList(false)}
+ const selectRoom=(id:string)=>{setSelected(id);setError('');if(window.innerWidth<768)setShowList(false)}
  const createRoom=async()=>{
   if(!creating||saving)return;setSaving(true);setError('')
-  try{const created=await post<RoomConfig>('/api/rooms',creating);await rooms.reload();setSelected(created.id);setCreating(null);if(window.innerWidth<840)setShowList(false);refresh()}
+  try{const created=await post<RoomConfig>('/api/rooms',creating);await rooms.reload();setSelected(created.id);setCreating(null);if(window.innerWidth<768)setShowList(false);refresh()}
   catch(e){setError((e as Error).message)}finally{setSaving(false)}
  }
  const filtered=rooms.value.filter(room=>(room.name+' '+(room.topic||'')).toLowerCase().includes(query.toLowerCase()))
  return <div className="rooms-app">
   {showList&&<Button variant="bare" className="room-list-scrim" aria-label={t('rooms.listClose')} onClick={()=>setShowList(false)}/>}
   <aside id="room-sidebar" className={'room-list '+(showList?'room-list-open':'room-list-closed')} aria-label={t('rooms.listAria')}>
-   <div className="room-list-title"><div><span className="room-eyebrow">{t('ui.label.yourCircle')}</span><h2>{t('rooms.listTitle')}</h2></div><div className="flex items-center gap-1">
-    <Button size="icon" variant="ghost" title={t('rooms.new')} aria-label={t('rooms.newAria')} onClick={()=>{setCreating(draftOf());setError('')}}><Plus size={19}/></Button>
-    <Button size="icon" variant="ghost" title={t('rooms.listCollapse')} aria-label={t('rooms.listCollapse')}
-     aria-controls="room-sidebar" aria-expanded={true} onClick={()=>setShowList(false)}><PanelLeftClose size={18}/></Button>
-   </div></div>
+   <ConversationSidebarHeader mode="rooms" sidebarId="room-sidebar" onClose={()=>setShowList(false)} onNew={()=>{setCreating(draftOf());setError('')}} onSwitchMode={switchMode}/>
    <div className="room-list-search"><TextInput aria-label={t('rooms.searchAria')} placeholder={t('rooms.search')} value={query} onChange={e=>setQuery(e.target.value)}/></div>
    <div className="room-list-items">{filtered.map(room=><Button variant="bare" key={room.id} className={'room-list-item '+(selected===room.id?'is-selected':'')} onClick={()=>selectRoom(room.id)} aria-current={selected===room.id?'true':undefined}><span className="room-list-icon"><Hash size={18}/></span><span className="room-list-copy"><strong>{room.name}</strong><small>{room.topic||t('rooms.space')}</small><span className="room-list-meta">{t('rooms.me')} + {room.agentIds?.length||0}{t('rooms.people')}{room.status==='running'&&<i title={t('rooms.st.running')}/>}</span></span></Button>)}
     {rooms.loading&&!filtered.length?<div className="room-list-empty">{t('rooms.loading')}</div>:rooms.error&&!filtered.length?<div role="status" className="room-list-empty">{t('rooms.loadFailed')}</div>:!filtered.length&&<div className="room-list-empty">{query?t('rooms.noSearch'):t('rooms.empty')}</div>}
@@ -118,7 +106,7 @@ export function RoomsPage({openSession,openSettings,switchMode,active:visibleVie
   {!showList&&<ConversationRail mode="rooms" sidebarId="room-sidebar"
    onExpand={()=>setShowList(true)} onNew={()=>{setCreating(draftOf());setError('')}}
    onSwitchMode={switchMode} onSettings={openSettings}/>}
-  {current?<RoomConversation key={current.id} room={current} openSettings={openSettings} visibleView={visibleView} switchMode={switchMode} agents={agents.value} providers={providers.value} openList={()=>setShowList(v=>!v)} showList={showList} openSession={openSession} onSaved={async()=>{await rooms.reload();refresh()}} onRemoved={async()=>{setSelected('');await rooms.reload()}}/>:<div className="room-welcome"><header className="room-empty-header"><Button variant="ghost" size="icon" aria-label={t('rooms.listExpand')} onClick={()=>setShowList(value=>!value)}><Menu size={18}/></Button><ConversationSwitch mode="rooms" onChange={switchMode}/><Button variant="ghost" size="icon" className="conversation-settings" aria-label={t('nav.settings')} onClick={openSettings}><Settings size={18}/></Button></header><div className="room-welcome-mark"><UsersRound size={40}/></div><span className="room-eyebrow">{t('ui.label.teamPlace')}</span><h1>{t('rooms.welcome.title')}</h1><p>{t('rooms.welcome.line1')}<br/>{t('rooms.welcome.line2')}<br/>{t('rooms.welcome.line3')}</p><Button variant="primary" onClick={()=>{setCreating(draftOf());setError('')}}><Plus size={16}/> {t('rooms.create')}</Button><Button variant="bare" className="room-mobile-list-button" onClick={()=>setShowList(true)}>{t('rooms.viewSaved')}</Button></div>}
+  {current?<RoomConversation key={current.id} room={current} openSettings={openSettings} visibleView={visibleView} switchMode={switchMode} agents={agents.value} providers={providers.value} openList={()=>setShowList(v=>!v)} showList={showList} openSession={openSession} onSaved={async()=>{await rooms.reload();refresh()}} onRemoved={async()=>{setSelected('');await rooms.reload()}}/>:<div className="room-welcome"><header className="room-empty-header conversation-topbar"><Button variant="ghost" size="icon" className="conversation-mobile-toggle" aria-label={showList?t('rooms.listCollapse'):t('rooms.listExpand')} aria-controls="room-sidebar" aria-expanded={showList} onClick={()=>setShowList(value=>!value)}><Menu size={18}/></Button><ConversationSwitch mode="rooms" onChange={switchMode}/><Button variant="ghost" size="icon" className="conversation-settings" aria-label={t('nav.settings')} onClick={openSettings}><Settings size={18}/></Button></header><div className="room-welcome-mark"><UsersRound size={40}/></div><span className="room-eyebrow">{t('ui.label.teamPlace')}</span><h1>{t('rooms.welcome.title')}</h1><p>{t('rooms.welcome.line1')}<br/>{t('rooms.welcome.line2')}<br/>{t('rooms.welcome.line3')}</p><Button variant="primary" onClick={()=>{setCreating(draftOf());setError('')}}><Plus size={16}/> {t('rooms.create')}</Button><Button variant="bare" className="room-mobile-list-button" onClick={()=>setShowList(true)}>{t('rooms.viewSaved')}</Button></div>}
   {(error||rooms.error||agents.error||providers.error)&&!creating&&<div className="room-global-error"><Notice message={error||rooms.error||agents.error||providers.error}/></div>}
   {creating&&<DialogBackdrop onDismiss={()=>{if(!saving)setCreating(null)}}><DialogPanel size="wide" aria-label={t('rooms.newTitle')}><div className="room-dialog-header"><div><span className="room-eyebrow">{t('ui.label.startConversation')}</span><h2>{t('rooms.who')}</h2></div><Button size="icon" variant="ghost" aria-label={t('rooms.close')} onClick={()=>setCreating(null)} disabled={saving}><X size={18}/></Button></div><div className="room-dialog-body"><RoomSettings value={creating} onChange={setCreating} agents={agents.value} providers={providers.value} disabled={saving}/><Notice message={error}/></div><div className="room-dialog-footer"><span>{t('rooms.createHint')}</span><Button variant="primary" onClick={()=>void createRoom()} disabled={saving||!creating.name.trim()||!creating.agentIds.length}>{saving?<LoaderCircle size={15} className="animate-spin"/>:<Plus size={15}/>} {t('rooms.create')}</Button></div></DialogPanel></DialogBackdrop>}
  </div>
@@ -556,12 +544,12 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
  const status=running?'running':feed.status||current.status||'idle'
  return <div className={'room-conversation '+(inspector?'has-inspector':'')}>
   <section className="room-main" aria-label={t('rooms.headerAria',{name:current.name})}>
-   <header className="room-header">
-    <Button variant="ghost" size="icon" className="room-list-toggle" aria-label={showList?t('rooms.listCollapse'):t('rooms.listExpand')} aria-controls="room-sidebar" aria-expanded={showList} onClick={openList}><Menu size={18}/></Button>
+   <header className="room-header conversation-topbar">
+    <Button variant="ghost" size="icon" className="conversation-mobile-toggle room-list-toggle" aria-label={showList?t('rooms.listCollapse'):t('rooms.listExpand')} aria-controls="room-sidebar" aria-expanded={showList} onClick={openList}><Menu size={18}/></Button>
+    <ConversationSwitch mode="rooms" onChange={switchMode}/>
     <div className="room-header-copy"><h1 title={current.name}>{current.name}</h1><p title={current.topic}>{current.topic||t('rooms.topicFallback')}</p></div>
-    <span className={'room-status '+(running?'is-running':'')} role="status">{running&&<i/>}{labels[status]?t(labels[status]):status}</span>
     <div className="room-header-actions">
-     <ConversationSwitch mode="rooms" onChange={switchMode}/>
+     <span className={'room-status '+(running?'is-running':'')} role="status">{running&&<i/>}{labels[status]?t(labels[status]):status}</span>
      <Button variant="ghost" size="icon" className="room-header-more" ref={headerMenu.trigger} aria-label={getLocale()==='en'?'Room actions':'그룹 관리'} title={getLocale()==='en'?'Room actions':'그룹 관리'} aria-haspopup="dialog" aria-expanded={headerMenuOpen} onClick={()=>{setHeaderMenuOpen(value=>!value);setRecipientsOpen(false);setPermissionOpen(false);setShowSettings(false)}}><MoreHorizontal size={20}/></Button>
      {headerMenuOpen&&headerMenu.position&&createPortal(<div ref={headerMenu.panel} style={headerMenu.position} className="room-header-menu" role="dialog" aria-label={getLocale()==='en'?'Room actions':'그룹 관리'}>
        <span className="room-header-usage">{t('usage.sessionTotal',{count:usageTotal.toLocaleString()})}</span>
