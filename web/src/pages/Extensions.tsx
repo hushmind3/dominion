@@ -779,7 +779,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                         disabled={Boolean(installing) || x.installable===false}
                         onClick={()=>void install(x)}
                       >
-                        {t('ext.install')}
+                        {x.installable===false?t('ext.manualSetup'):installing===x.name?t('ext.installing'):t('ext.install')}
                       </Button>
                     ))}
                 </div>
@@ -989,7 +989,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                         disabled={Boolean(installing) || x.installable===false}
                         onClick={()=>void install(x)}
                       >
-                        {t('ext.install')}
+                        {x.installable===false?t('ext.manualSetup'):installing===x.name?t('ext.installing'):t('ext.install')}
                       </Button>
                     )}
                   </div>
@@ -1179,14 +1179,14 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                 </div>
                 <StateTag
                   online={Boolean(
-                    tools.find((t) => t.mcpId === x.id && !t.error && t.status!=="empty"),
+                    x.enabled!==false && tools.find((t) => t.mcpId === x.id && !t.error),
                   )}
                 >
                   {(() => {
                     const own = tools.filter((t) => t.mcpId === x.id);
                     const ok = own.filter((t) => !t.error && t.status!=="empty").length;
+                    if (x.enabled===false) return t('ext.disabled');
                     if (ok) return t('ext.connectedTools', { count: ok });
-                    if (!x.enabled) return t('ext.disabled');
                     if (own.some((t) => t.error)) return t('ext.connectionFailed');
                     if (own.some((t) => t.status==="empty")) return t('ext.noTools');
                     return t('ext.checkConnection');
@@ -1228,13 +1228,13 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
               </Panel>
             ))}
           </div>
-          {tools.length > 0 && (
+          {tools.some((item)=>!item.error && item.status!=="empty") && (
             <Panel className="grid gap-3">
               <Subheading
                 title={t('ext.realTools')}
                 extra={<span>{t('ext.count', { count: tools.filter((item) => !item.error && item.status!=="empty").length })}</span>}
               />
-              {tools.map((t) => (
+              {tools.filter((item)=>!item.error && item.status!=="empty").map((t) => (
                 <div
                   key={t.name + t.mcpId}
                   className="overflow-auto rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-4 text-xs leading-6"

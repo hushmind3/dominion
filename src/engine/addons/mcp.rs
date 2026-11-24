@@ -746,6 +746,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn discovery_distinguishes_connected_empty_failed_and_disabled_servers(){
+        use axum::{extract::Path,routing::post,Json,Router};
+        async fn handler(Path(kind):Path<String>,Json(body):Json<Value>)->Json<Value>{
+            let tools=if kind=="empty"{json!([])}else{
+                json!([{"name":"echo","inputSchema":{"type":"object"}}])
+            };
+            Json(json!({"jsonrpc":"2.0","id":body["id"],"result":{"tools":tools}}))
+        }
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base=format!("http://{}",listener.local_addr().unwrap());
+        let app=Router::new().route("/{kind}",post(handler));
+        let server=tokio::spawn(async move{axum::serve(listener,app).await.unwrap();});
+        let state=temp_state();
+        let id=uuid::Uuid::new_v4().to_string();
+        let good=format!("{id}-good");
+        let empty=format!("{id}-empty");
+        let broken=format!("{id}-broken");
+        let disabled=format!("{id}-disabled");
+        for (key,kind) in [(&good,"good"),(&empty,"empty")]{
+            state.store.put("mcp",&json!({"id":key,"name":"Same name",
+                "transport":"http","url":format!("{base}/{kind}"),
+                "protocolVersion":"2026-07-28","enabled":true})).unwrap();
+        }
+        state.store.put("mcp",&json!({"id":broken,"name":"Broken",
+            "transport":"stdio","enabled":true})).unwrap();
+        state.store.put("mcp",&json!({"id":disabled,"name":"Disabled",
+            "transport":"stdio","enabled":false})).unwrap();
+        let rows=discover_servers(&state).await;
+        assert_eq!(rows.len(),3);
+        let connected=rows.iter().find(|row|row.0==good).unwrap();
+        assert_eq!(connected.2.as_ref().unwrap().len(),1);
+        assert!(rows.iter().find(|row|row.0==empty).unwrap().2.as_ref().unwrap().is_empty());
+        assert!(rows.iter().find(|row|row.0==broken).unwrap().2.is_err());
+        assert_eq!(tools(&state).await.len(),1,"status rows cannot become model tools");
+        server.abort();
+        let _=std::fs::remove_dir_all(&state.config.data_dir);
+    }
+
+    #[tokio::test]
     async fn modern_probe_falls_back_to_legacy_only_before_tool_effects(){
         use axum::{extract::State,http::{HeaderMap,StatusCode},
             routing::post,Json,Router};

@@ -21,3 +21,9 @@ long-running process manager without explicit per-workspace lifecycle
 contracts. The HTTP path includes credential/isolation/cancellation cache
 tests; request-count, latency and cross-server integration benchmarks are
 not claimed without actual connected servers.
+
+## 2026-11-24: registry installation and connection reporting
+
+Registry entries now carry a concrete launch descriptor instead of constructing an unpinned npm command in the browser. Simple stdio npm and PyPI packages use their declared versions; concrete HTTPS remote entries take precedence. Templates, custom headers, environment variables, or package/runtime arguments that need configuration are marked manual setup rather than silently omitted. The registration dialog shows the exact command/endpoint and requests approval by default.
+
+Discovery reports persisted MCP IDs and differentiates connected tools, successful empty lists, failures, and disabled configurations. The model-facing catalog contains only real tool definitions. Registration is not evidence that a server is connected: the UI separately invokes discovery. Native external SDK registration remains an in-process trusted adapter mechanism, not a binary plugin loader.
