@@ -198,8 +198,8 @@ test('desktop app: actual model selection, persistent chat, settings and room na
    method:'POST',headers:{'Content-Type':'application/json','x-dominion-extension-token':token},
    body:JSON.stringify({instruction:'Browser scoped reply',idempotencyKey:'browser-app-1'})
   })
-  assert.ok(scoped.ok,await scoped.text())
   const scopedRun=await scoped.json()
+  assert.ok(scoped.ok,JSON.stringify(scopedRun))
   await until(async()=>{
    const response=await fetch(base+'/api/extensions/apps/browser.assistant/runs/'+scopedRun.id,{headers:{'x-dominion-extension-token':token}})
    const row=await response.json()
