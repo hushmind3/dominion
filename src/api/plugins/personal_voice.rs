@@ -193,7 +193,7 @@ mod tests{
         assert!(valid_request("abc-1","안녕"));
         assert!(!valid_request("abc/1","안녕"));
         let now=Instant::now();let address="192.168.1.2:4323".parse().unwrap();
-        let peer="192.168.1.3:30000".parse().unwrap();
+        let peer:SocketAddr="192.168.1.3:30000".parse().unwrap();
         let s=Session{address,provider:"p".into(),pin:"123456".into(),pair_until:now+PAIR_TIME,until:now+LIFETIME,
             attempts:0,token:Some("private-token".into()),peer:Some(peer.ip()),closed:false,remaining:100,current:None,history:vec![]};
         let mut h=HeaderMap::new();h.insert("host","192.168.1.2:4323".parse().unwrap());
