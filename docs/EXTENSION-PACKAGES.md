@@ -42,3 +42,18 @@ optional discovery adapter: disable it in Search sources and add independent
 HTTPS registries instead. No fake or built-in product listings are supplied.
 Public discovery is bounded to 20 repositories per query and can encounter
 public API rate limits; registry errors are shown separately from empty results.
+
+## Offline or private distribution
+
+Build a single installable package (no public registry required):
+```sh
+node scripts/package-extension.mjs manifest.json entry.mjs example.dominion.json
+```
+The command verifies the declared SHA-256 and packages the manifest and bytes
+as a versioned JSON bundle. In the extension manager choose **Install from
+file**. This imports up to 8 MiB of executable bytes (12 MiB JSON body cap)
+using the same verification path as remote installation. A file import uses
+a separate local package identity; it cannot replace a package installed
+from another publisher or registry. A local version update requires a new
+file and activation. Scripts and executable artifacts are never started by
+installation. Node/Python runtime availability is required at execution.

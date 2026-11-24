@@ -52,7 +52,8 @@ pub async fn install(root:&Path,m:&Manifest)->Result<(),String>{
     m.validate()?;if !m.compatible(){return Err("extension platform mismatch".into());}
     install_bytes(root,m,&fetch(&m.artifact.url,MAX_ARTIFACT).await?).await
 }
-async fn install_bytes(root:&Path,m:&Manifest,bytes:&[u8])->Result<(),String>{
+/// Install an explicitly supplied artifact using exactly the remote installer checks.
+pub async fn install_bytes(root:&Path,m:&Manifest,bytes:&[u8])->Result<(),String>{
     m.validate()?;if !m.compatible(){return Err("extension platform mismatch".into());}
     if !verified(m,bytes){return Err("extension SHA-256 verification failed".into());}
     let path=entry_path(root,m);let dir=path.parent().ok_or("invalid extension path")?;

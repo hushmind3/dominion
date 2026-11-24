@@ -1,4 +1,4 @@
-import {useEffect,useState} from 'react'
+import {useEffect,useRef,useState} from 'react'
 import {PackagePlus,Search,Download,Trash2,RefreshCw} from 'lucide-react'
 import {get,post,del} from '../../api'
 import {useLocale} from '../../i18n'
@@ -17,6 +17,7 @@ export function ExtensionPackagesPanel(){
  const [query,setQuery]=useState('')
  const [results,setResults]=useState<Results>({items:[],errors:[]})
  const [busy,setBusy]=useState('')
+ const fileRef=useRef<HTMLInputElement>(null)
  const [error,setError]=useState('')
  const [notice,setNotice]=useState('')
  const [searched,setSearched]=useState(false)
@@ -42,6 +43,16 @@ export function ExtensionPackagesPanel(){
   await installed.reload()
   setNotice(en?'Downloaded and verified. Enable to use.':'다운로드 및 무결성 검사 완료. 활성화하면 사용할 수 있습니다.')
  })
+ const importFile=(file:File)=>run('import',async()=>{
+  if(file.size>12*1024*1024)throw Error(en?'Package exceeds 12 MiB file limit.':'패키지 파일이 12 MiB를 초과합니다.')
+  const bundle=JSON.parse(await file.text())
+  const m=bundle?.manifest as Manifest|undefined
+  if(bundle?.bundleVersion!==1||!m||typeof m.name!=='string'||typeof m.version!=='string'||typeof bundle.artifactBase64!=='string'||!Array.isArray(m.tools))throw Error(en?'Invalid DOMINION package file.':'도미니온 패키지 형식이 올바르지 않습니다.')
+  if(!window.confirm((en?'Install this local package? It will be disabled until you activate it.':'이 로컬 패키지를 설치할까요? 설치 후 활성화해야 사용할 수 있습니다.')+'\n\n'+m.name+' '+m.version+'\n'+m.runtime+'\nSHA-256: '+m.artifact?.sha256+'\n'+m.tools.map(t=>t.name+': '+t.description).join('\n')))return
+  await post('/api/extensions/import',{bundleVersion:1,manifest:m,artifactBase64:bundle.artifactBase64,confirmed:true})
+  await installed.reload()
+  setNotice(en?'Local package installed and verified.':'로컬 패키지 설치 및 무결성 검사 완료.')
+ })
  const enable=(row:Installed)=>run(row.id,async()=>{
   const enabled=!row.enabled
   if(enabled&&!window.confirm((en?'This executable runs with your OS account permissions. Only enable trusted code. Each agent tool call requires approval.':'이 코드는 현재 OS 계정 권한으로 실행됩니다. 신뢰하는 코드만 활성화하세요. 에이전트 도구 호출마다 승인이 필요합니다.')+'\n\n'+row.manifest.name+' '+row.manifest.version))return
@@ -54,8 +65,11 @@ export function ExtensionPackagesPanel(){
  })
  const byId=new Map(installed.value.map(row=>[row.id,row]))
  return <div className="grid gap-4">
-  <div><h2 className="flex items-center gap-2 text-lg font-semibold"><PackagePlus size={20}/>{en?'Extension programs':'확장 프로그램'}</h2>
+  <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="flex items-center gap-2 text-lg font-semibold"><PackagePlus size={20}/>{en?'Extension programs':'확장 프로그램'}</h2>
    <p className="mt-1 text-xs text-[#7C7469]">{en?'Discover and install SDK-compatible packages. MCP servers and model downloads are managed separately.':'SDK 호환 패키지를 검색하고 설치합니다. MCP 서버와 모델 다운로드는 별도 메뉴에서 관리합니다.'}</p></div>
+   <input ref={fileRef} type="file" accept=".json,.dominion" hidden onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void importFile(file)}}/>
+   <Button variant="secondary" disabled={Boolean(busy)} onClick={()=>fileRef.current?.click()}><PackagePlus size={14}/>{en?'Install from file':'파일에서 설치'}</Button>
+  </div>
   <Notice message={error||sources.error||installed.error}/>
   {notice&&<p role="status" className="text-xs text-emerald-800">{notice}</p>}
   <Panel className="grid gap-3 p-4">
