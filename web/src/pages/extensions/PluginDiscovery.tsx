@@ -2,6 +2,7 @@ import {useEffect,useRef,useState} from 'react'
 import {Search,ExternalLink,PackagePlus} from 'lucide-react'
 import {get,post} from '../../api'
 import {ManagedPlugins,type PackageSpec} from './ManagedPlugins'
+import {PackageMarket} from './PackageMarket'
 import {Button,TextInput} from '../../components/Primitives'
 import {useLocale} from '../../i18n'
 
@@ -11,6 +12,7 @@ type SearchPage={items:Result[];errors:{source:Source;message:string}[];pypiMode
 const sources:{id:Source;label:string}[]=[{id:'all',label:'All'},{id:'github',label:'GitHub'},{id:'npm',label:'npm'},{id:'pypi',label:'PyPI'},{id:'crates',label:'crates.io'},{id:'huggingface',label:'Hugging Face'},{id:'docker',label:'Docker Hub'}]
 export function PluginDiscovery(){
  const en=useLocale()==='en'
+ const [view,setView]=useState<'market'|'installed'|'external'|'requests'>('market')
  const [image,setImage]=useState(''),[selectedPackage,setSelectedPackage]=useState<PackageSpec|null>(null)
  const [query,setQuery]=useState(''),[source,setSource]=useState<Source>('all')
  const [page,setPage]=useState<SearchPage|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('')
@@ -35,9 +37,11 @@ export function PluginDiscovery(){
   finally{if(active.current===controller){active.current=null;setBusy(false)}}
  }
  return <>
- <section className="mb-6 rounded-xl border border-divider bg-surface p-4"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{en?'AI plugin requests':'AI 플러그인 요청'} · {proposals.length}</h3><Button size="sm" variant="secondary" onClick={()=>void refreshProposals()}>{en?'Refresh':'새로고침'}</Button></div><p className="my-2 text-xs text-muted">{en?'Review exact settings before installation or execution.':'AI가 요청한 설치·실행 설정을 확인하고 승인합니다.'}</p>{reviewError&&<p role="alert" className="text-xs text-danger">{reviewError}</p>}{proposals.map(p=><div key={p.id} className="border-t border-divider py-3"><pre className="whitespace-pre-wrap break-all text-xs">{JSON.stringify(p.payload,null,2)}</pre><div className="mt-2 flex gap-2"><Button size="sm" disabled={!!reviewBusy} onClick={()=>void review(p.id,p.digest,true)}>{reviewBusy===p.id?(en?'Processing…':'처리 중…'):(en?'Approve and execute':'승인하고 실행')}</Button><Button size="sm" variant="secondary" disabled={!!reviewBusy} onClick={()=>void review(p.id,p.digest,false)}>{en?'Dismiss':'거절'}</Button></div></div>)}</section>
- <ManagedPlugins key={revision} selectedImage={image} onImageConsumed={()=>setImage('')} selectedPackage={selectedPackage} onPackageConsumed={()=>setSelectedPackage(null)}/>
- <section className="mb-6 rounded-xl border border-divider bg-surface p-4">
+ <div className="mb-4 flex flex-wrap gap-2 rounded-xl border border-divider bg-surface p-2">{(['market','installed','external','requests'] as const).map(v=><Button key={v} variant={view===v?'primary':'ghost'} onClick={()=>setView(v)}>{({market:en?'Discover':'플러그인 마켓',installed:en?'Installed':'설치됨',external:en?'Developer search':'개발자 검색',requests:en?'AI requests':'AI 요청'})[v]}</Button>)}</div>
+ {view==='market'&&<PackageMarket onInstalled={()=>{setRevision(v=>v+1);setView('installed')}}/>}
+ <div hidden={view!=='requests'}><section className="mb-6 rounded-xl border border-divider bg-surface p-4"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{en?'AI plugin requests':'AI 플러그인 요청'} · {proposals.length}</h3><Button size="sm" variant="secondary" onClick={()=>void refreshProposals()}>{en?'Refresh':'새로고침'}</Button></div><p className="my-2 text-xs text-muted">{en?'Review exact settings before installation or execution.':'AI가 요청한 설치·실행 설정을 확인하고 승인합니다.'}</p>{reviewError&&<p role="alert" className="text-xs text-danger">{reviewError}</p>}{proposals.map(p=><div key={p.id} className="border-t border-divider py-3"><pre className="whitespace-pre-wrap break-all text-xs">{JSON.stringify(p.payload,null,2)}</pre><div className="mt-2 flex gap-2"><Button size="sm" disabled={!!reviewBusy} onClick={()=>void review(p.id,p.digest,true)}>{reviewBusy===p.id?(en?'Processing…':'처리 중…'):(en?'Approve and execute':'승인하고 실행')}</Button><Button size="sm" variant="secondary" disabled={!!reviewBusy} onClick={()=>void review(p.id,p.digest,false)}>{en?'Dismiss':'거절'}</Button></div></div>)}</section></div>
+ <div hidden={view!=='installed'}><ManagedPlugins key={revision} selectedImage={image} onImageConsumed={()=>setImage('')} selectedPackage={selectedPackage} onPackageConsumed={()=>setSelectedPackage(null)}/></div>
+ <div hidden={view!=='external'}><section className="mb-6 rounded-xl border border-divider bg-surface p-4">
   <h3 className="flex items-center gap-2 text-[15px] font-bold text-ink"><PackagePlus size={17}/>{en?'Open-source discovery':'외부 확장 프로그램 검색'}</h3>
   <p className="my-2 text-xs text-muted">{en?'Search public registries. Results need compatibility review before installation.':'공개 저장소를 검색합니다. 검색 결과는 설치 전에 DOMINION 호환성을 확인해야 합니다.'}</p>
   <div className="mb-3 flex flex-wrap gap-1.5" aria-label={en?'Package registries':'패키지 저장소'}>
@@ -59,11 +63,11 @@ export function PluginDiscovery(){
      <p className="mt-1 break-words text-xs text-muted">{r.description}</p>
      <p className="text-[11px] text-warning">{en?'Compatibility not verified':'호환성 미검증'}</p>
     </div>
-    {r.source==='docker'&&<Button size="sm" variant="secondary" onClick={()=>setImage(r.name+':')}>{en?'Configure install':'설치 설정'}</Button>}
-    {(r.source==='npm'||r.source==='pypi'||r.source==='crates')&&r.version&&<Button size="sm" variant="secondary" onClick={()=>setSelectedPackage({runtime:r.source as PackageSpec['runtime'],package:r.name,version:r.version||'',entry:'',args:[]})}>{en?'Configure package':'패키지 설치 설정'}</Button>}
+    {r.source==='docker'&&<Button size="sm" variant="secondary" onClick={()=>{setImage(r.name+':');setView('installed')}}>{en?'Configure install':'설치 설정'}</Button>}
+    {(r.source==='npm'||r.source==='pypi'||r.source==='crates')&&r.version&&<Button size="sm" variant="secondary" onClick={()=>{setSelectedPackage({runtime:r.source as PackageSpec['runtime'],package:r.name,version:r.version||'',entry:'',args:[]});setView('installed')}}>{en?'Configure package':'패키지 설치 설정'}</Button>}
     <a className="inline-flex items-center gap-1 text-xs text-brand" href={r.url} target="_blank" rel="noopener noreferrer">{en?'Source':'원본'} <ExternalLink size={12}/></a>
    </div>)}</div>
   </div>}
- </section>
+ </section></div>
  </>
 }

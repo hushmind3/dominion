@@ -16,6 +16,7 @@ pub mod agent;
 mod data;
 pub mod scheduled;
 pub mod personal_voice;
+pub mod market;
 
 const LIMIT:usize=1024*1024;
 const OWNER:&str="io.dominion.plugin.owner";
