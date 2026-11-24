@@ -34,108 +34,123 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Product and SDK contract tests (dev profile only)
         run: |
+          set -euo pipefail
+          require_tests() {
+            local log
+            log="$(mktemp)"
+            if ! cargo test --locked "$@" 2>&1 | tee "$log"; then
+              rm -f "$log"
+              return 1
+            fi
+            if ! grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "$log"; then
+              echo "::error::No tests executed: $*"
+              rm -f "$log"
+              return 1
+            fi
+            rm -f "$log"
+          }
           grep -Fq 'Kernel,ReActLoop,tool_relevance,tool_relevance_with_schema};' crates/dominion-agent-sdk/src/lib.rs
           grep -Fq 'dominion_agent_sdk::tool_relevance(' src/conversation/chat/runtime/selection.rs
-          cargo test --bin dominion-rust integrations::skills::discovery::tests
-          cargo test --bin dominion-rust conversation::chat::runtime::capability::tests
-          cargo test --bin dominion-rust planning_cost_tests
-          cargo test --bin dominion-rust shared_sdk_relevance_ignores_tool_parameter_payload
-          cargo test --bin dominion-rust conversation::chat::tests
-          cargo test --bin dominion-rust api::collections::memory_edit_tests
+          require_tests --bin dominion-rust integrations::skills::discovery::tests
+          require_tests --bin dominion-rust conversation::chat::runtime::capability::tests
+          require_tests --bin dominion-rust planning_cost_tests
+          require_tests --bin dominion-rust shared_sdk_relevance_ignores_tool_parameter_payload
+          require_tests --bin dominion-rust conversation::chat::tests
+          require_tests --bin dominion-rust api::collections::memory_edit_tests
           # Keep native nine-participant routing, examples and @mentions honest.
-          cargo test --bin dominion-rust features::collaboration::rooms::tests
-          cargo test --bin dominion-rust features::collaboration::workboard::tests
-          cargo test --bin dominion-rust features::collaboration::task_team::tests
-          cargo test --bin dominion-rust features::collaboration::worktree::tests
-          cargo test -p dominion-agent-runtime --lib
-          cargo test --bin dominion-rust api::host_security_tests -- --test-threads=1
-          cargo test --bin dominion-rust api::remote_workers::tests::remote_http_roundtrip_requires_token_and_fences_owner_cancel -- --test-threads=1
-          cargo test --bin dominion-rust storage::sqlite::tests::crashed_remote_worker_requires_review_without_another_worker_claim
-          cargo test --bin dominion-rust storage::sqlite::tests::remote_claim_is_unique_and_terminal_receipts_are_fenced
-          cargo test --bin dominion-rust storage::sqlite::tests::expired_remote_lease_requires_owner_review_and_cannot_replay
-          cargo test --bin dominion-rust host::execution::remote_worker::tests
-          cargo test --bin dominion-rust features::collaboration::task_team::tests::remote_worker_is_read_only_without_host_tools_or_replay
-          cargo test -p dominion-sdk --lib
-          cargo test --bin dominion-rust host::execution::run_state::tests
-          cargo test --bin dominion-rust host::execution::run_view::tests
-          cargo test --bin dominion-rust api::task_teams::tests
-          cargo test --bin dominion-rust host::execution::lease::tests
-          cargo test --bin dominion-rust host::execution::jobs::tests
+          require_tests --bin dominion-rust features::collaboration::rooms::tests
+          require_tests --bin dominion-rust features::collaboration::workboard::tests
+          require_tests --bin dominion-rust features::collaboration::task_team::tests
+          require_tests --bin dominion-rust features::collaboration::worktree::tests
+          require_tests -p dominion-agent-runtime --lib
+          require_tests --bin dominion-rust api::http_policy::host_security_tests -- --test-threads=1
+          require_tests --bin dominion-rust api::remote_workers::tests::remote_http_roundtrip_requires_token_and_fences_owner_cancel -- --test-threads=1
+          require_tests --bin dominion-rust storage::sqlite::tests::crashed_remote_worker_requires_review_without_another_worker_claim
+          require_tests --bin dominion-rust storage::sqlite::tests::remote_claim_is_unique_and_terminal_receipts_are_fenced
+          require_tests --bin dominion-rust storage::sqlite::tests::expired_remote_lease_requires_owner_review_and_cannot_replay
+          require_tests --bin dominion-rust host::execution::remote_worker::tests
+          require_tests --bin dominion-rust features::collaboration::task_team::tests::remote_worker_is_read_only_without_host_tools_or_replay
+          require_tests -p dominion-sdk --lib
+          require_tests --bin dominion-rust host::execution::run_state::tests
+          require_tests --bin dominion-rust host::execution::run_view::tests
+          require_tests --bin dominion-rust api::task_teams::tests
+          require_tests --bin dominion-rust host::execution::lease::tests
+          require_tests --bin dominion-rust host::execution::jobs::tests
           # Final architecture acceptance: Qwen headless mock CLI, resumed
           # Codex/Claude, bounded stdout and read-only approval; no credentials.
-          cargo test --bin dominion-rust integrations::agent_bridge::tests
-          cargo test --bin dominion-rust features::cognition::strategy_eval::tests
+          require_tests --bin dominion-rust integrations::agent_bridge::tests
+          require_tests --bin dominion-rust features::cognition::strategy_eval::tests
           # Retirement cleanup: owner-grounded memory remains, old RSI learning
           # proposals cannot reappear, and old records migrate only once.
-          cargo test --bin dominion-rust features::cognition::learning::tests
-          cargo test --bin dominion-rust features::cognition::improve::tests
-          cargo test --bin dominion-rust features::cognition::algorithms::tests
-          cargo test --bin dominion-rust features::cognition::reflect::tests
-          cargo test --bin dominion-rust storage::migrations::tests
+          require_tests --bin dominion-rust features::cognition::learning::tests
+          require_tests --bin dominion-rust features::cognition::improve::tests
+          require_tests --bin dominion-rust features::cognition::algorithms::tests
+          require_tests --bin dominion-rust features::cognition::reflect::tests
+          require_tests --bin dominion-rust storage::migrations::tests
           # 150-turn independent Room cursors and periodic cross-process SSE.
-          cargo test --bin dominion-rust features::collaboration::room_cursor::tests
+          require_tests --bin dominion-rust features::collaboration::room_cursor::tests
           node scripts/check-runtime-architecture.mjs
-          cargo test --bin dominion-rust api::rooms::tests::durable_room_events_and_agent_cursor_survive_an_api_page
-          cargo test --bin dominion-rust storage::sqlite::tests::legacy_room_transcripts_migrate_before_event_backfill
-          cargo test --bin dominion-rust storage::sqlite::tests::room_context_reads_exact_commit_order_even_if_imported_timestamps_differ
-          cargo test --bin dominion-rust storage::sqlite::tests::dual_field_cas_rejects_stale_phase_and_completed_run_revival
-          cargo test --bin dominion-rust storage::sqlite::tests::room_events_commit_150_messages_in_order_and_survive_restart
-          cargo test --bin dominion-rust features::providers::gateway::tests::exact_model_context_and_native_tool_support_override_provider_defaults
-          cargo test --bin dominion-rust events::tests
+          require_tests --bin dominion-rust api::rooms::tests::durable_room_events_and_agent_cursor_survive_an_api_page
+          require_tests --bin dominion-rust storage::sqlite::tests::legacy_room_transcripts_migrate_before_event_backfill
+          require_tests --bin dominion-rust storage::sqlite::tests::room_context_reads_exact_commit_order_even_if_imported_timestamps_differ
+          require_tests --bin dominion-rust storage::sqlite::tests::dual_field_cas_rejects_stale_phase_and_completed_run_revival
+          require_tests --bin dominion-rust storage::sqlite::tests::room_events_commit_150_messages_in_order_and_survive_restart
+          require_tests --bin dominion-rust features::providers::gateway::tests::exact_model_context_and_native_tool_support_override_provider_defaults
+          require_tests --bin dominion-rust events::tests
           # Latest main provider UI depends on public, keyless model browsing.
-          cargo test --bin dominion-rust api::providers::tests
-          cargo test --bin dominion-rust api::channels::tests
-          cargo test --bin dominion-rust api::cli_oauth::tests
+          require_tests --bin dominion-rust api::providers::tests
+          require_tests --bin dominion-rust api::channels::tests
+          require_tests --bin dominion-rust api::cli_oauth::tests
           # Chained developer persona must appear exactly once on the WS wire.
-          cargo test --bin dominion-rust conversation::chat::codex_ws::tests
-          cargo test --bin dominion-rust room_catalog_cache_tests
+          require_tests --bin dominion-rust conversation::chat::codex_ws::tests
+          require_tests --bin dominion-rust room_catalog_cache_tests
           # Real local mock SSE wire: no repeated prefill for known KV backends,
           # with full owner/persona context preserved on the stateless wire.
-          cargo test --bin dominion-rust local_kv_cache_is_vendor_scoped_never_general_openai_compat
-          cargo test --bin dominion-rust managed_llama_server_uses_real_chat_wire_prefix_kv_cache
-          cargo test --bin dominion-rust cancel_api_interrupts_silent_http_generation_and_allows_same_session_retry
-          cargo test --bin dominion-rust conversation::chat::runtime::cancellation_watch_tests
-          cargo test --bin dominion-rust conversation::chat::room_context::tests
-          cargo test --bin dominion-rust conversation::chat::continuity::tests
-          cargo test --bin dominion-rust features::collaboration::room_state::tests
-          cargo test --bin dominion-rust host::execution::verification
+          require_tests --bin dominion-rust local_kv_cache_is_vendor_scoped_never_general_openai_compat
+          require_tests --bin dominion-rust managed_llama_server_uses_real_chat_wire_prefix_kv_cache
+          require_tests --bin dominion-rust cancel_api_interrupts_silent_http_generation_and_allows_same_session_retry
+          require_tests --bin dominion-rust conversation::chat::runtime::cancellation_watch_tests
+          require_tests --bin dominion-rust conversation::chat::room_context::tests
+          require_tests --bin dominion-rust conversation::chat::continuity::tests
+          require_tests --bin dominion-rust features::collaboration::room_state::tests
+          require_tests --bin dominion-rust host::execution::verification
           # Audit-relevant regressions: canonical provider route, source index,
           # and bounded conversation checkpoints now get their own test filters.
-          cargo test --bin dominion-rust conversation::chat::provider::tests
-          cargo test --bin dominion-rust features::platform::code_index::tests
-          cargo test --bin dominion-rust features::cognition::compact::token_budget_tests
-          cargo test --bin dominion-rust storage::sqlite::tests
-          cargo test --bin dominion-rust host::execution::native_evidence::tests
-          cargo test --bin dominion-rust features::forensics::native_replay::tests
-          cargo test --bin dominion-rust api::native_replay::tests
-          cargo test --bin dominion-rust host::execution::program::tests
-          cargo test --bin dominion-rust features::cognition::adaptation_loop::tests
-          cargo test --bin dominion-rust conversation::chat::runtime::program::evidence_join_tests
-          cargo test --bin dominion-rust conversation::chat::runtime::program::recovery_tests
-          cargo test --bin dominion-rust features::forensics::native_adjudication::tests
-          cargo test --bin dominion-rust host::execution::native_agent::tests
-          cargo test --bin dominion-rust api::sdk_runs::tests
-          cargo test --bin dominion-rust api::sdk::tests
-          cargo test --bin dominion-rust api::extensions::plugin_catalog::tests
-          cargo test --bin dominion-rust api::plugins::tests
-          cargo test --bin dominion-rust api::plugins::bridge::tests
-          cargo test --bin dominion-rust api::plugins::bridge::auto_chat::tests
-          cargo test --bin dominion-rust api::plugins::versions::tests
-          cargo test --bin dominion-rust api::plugins::data::tests
-          cargo test --bin dominion-rust api::plugins::scheduled::tests
-          cargo test --bin dominion-rust api::plugins::bridge::v2::tests
-          cargo test --bin dominion-rust api::plugins::bridge::tools::tests
-          cargo test --bin dominion-rust api::plugins::market::tests
-          cargo test --bin dominion-rust api::plugins::package::tests
-          cargo test --bin dominion-rust api::plugins::agent::tests
-          cargo test --bin dominion-rust api::extensions::registry_package_tests
-          cargo test --bin dominion-rust api::executions::event_tests
-          cargo test --bin dominion-rust api::jobs::algorithm_profile_api_tests
-          cargo test --bin dominion-rust api::rooms::tests::room_team_launch_reuses_request_and_preserves_live_job_state
-          cargo test --features legacy-mcp --bin dominion-rust integrations::mcp::tests -- --test-threads=1
-          cargo test --test e2e native_job_prompt_runs -- --test-threads=1
-          cargo test --test e2e execution_timeline_replays_real_chat_events -- --test-threads=1
-          cargo test --features legacy-mcp --test e2e room_selects_and_executes_an_mcp_tool_through_approval -- --test-threads=1
+          require_tests --bin dominion-rust conversation::chat::provider::tests
+          require_tests --bin dominion-rust features::platform::code_index::tests
+          require_tests --bin dominion-rust features::cognition::compact::token_budget_tests
+          require_tests --bin dominion-rust storage::sqlite::tests
+          require_tests --bin dominion-rust host::execution::native_evidence::tests
+          require_tests --bin dominion-rust features::forensics::native_replay::tests
+          require_tests --bin dominion-rust api::native_replay::tests
+          require_tests --bin dominion-rust host::execution::program::tests
+          require_tests --bin dominion-rust features::cognition::adaptation_loop::selection_tests
+          require_tests --bin dominion-rust conversation::chat::runtime::program::evidence_join_tests
+          require_tests --bin dominion-rust conversation::chat::runtime::program::recovery_tests
+          require_tests --bin dominion-rust features::forensics::native_adjudication::tests
+          require_tests --bin dominion-rust host::execution::native_agent::native_
+          require_tests --bin dominion-rust api::sdk_runs::tests
+          require_tests --bin dominion-rust api::sdk::tests
+          require_tests --bin dominion-rust api::extensions::plugin_catalog::tests
+          require_tests --bin dominion-rust api::plugins::tests
+          require_tests --bin dominion-rust api::plugins::bridge::tests
+          require_tests --bin dominion-rust api::plugins::bridge::auto_chat::tests
+          require_tests --bin dominion-rust api::plugins::versions::tests
+          require_tests --bin dominion-rust api::plugins::data::tests
+          require_tests --bin dominion-rust api::plugins::scheduled::tests
+          require_tests --bin dominion-rust api::plugins::bridge::v2::tests
+          require_tests --bin dominion-rust api::plugins::bridge::tools::tests
+          require_tests --bin dominion-rust api::plugins::market::tests
+          require_tests --bin dominion-rust api::plugins::package::tests
+          require_tests --bin dominion-rust api::plugins::agent::tests
+          require_tests --bin dominion-rust api::extensions::registry_package_tests
+          require_tests --bin dominion-rust api::executions::event_tests
+          require_tests --bin dominion-rust api::jobs::algorithm_profile_api_tests
+          require_tests --bin dominion-rust api::rooms::tests::room_team_launch_reuses_request_and_preserves_live_job_state
+          require_tests --features legacy-mcp --bin dominion-rust integrations::mcp::tests -- --test-threads=1
+          require_tests --test e2e native_job_prompt_runs -- --test-threads=1
+          require_tests --test e2e execution_timeline_replays_real_chat_events -- --test-threads=1
+          require_tests --features legacy-mcp --test e2e room_selects_and_executes_an_mcp_tool_through_approval -- --test-threads=1
 
   frontend:
     runs-on: ubuntu-latest

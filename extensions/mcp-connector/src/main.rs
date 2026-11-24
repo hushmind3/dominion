@@ -52,6 +52,16 @@ fn configuration_schema()->Value{
   "protocolMode":{"type":"string","title":"Protocol mode","titleKo":"프로토콜 방식","enum":["auto","modern","legacy"],"default":"auto"}
  }}}}})
 }
+// A masked secret is a request to keep it for the existing destination,
+ // not permission to transfer it to a different endpoint or executable.
+fn same_secret_destination(old:&Value,new:&Value)->bool{
+ if old["transport"]!=new["transport"]{return false}
+ match new["transport"].as_str(){
+  Some("http")=>old["url"]==new["url"],
+  Some("stdio")=>old["command"]==new["command"]&&old["args"]==new["args"],
+  _=>false
+ }
+}
 fn validate(mut values:Value,previous:&Value)->Result<Value,Failure>{
  if !values.is_object()||values.as_object().unwrap().keys().any(|k|k!="servers"){return Err(invalid("Expected a servers array"))}
  let servers=values["servers"].as_array_mut().ok_or_else(||invalid("Expected servers array"))?;
@@ -64,7 +74,7 @@ fn validate(mut values:Value,previous:&Value)->Result<Value,Failure>{
   let name=s["name"].as_str().filter(|v|!v.trim().is_empty()&&v.len()<=100&&!v.chars().any(char::is_control)).ok_or_else(||invalid("Server name required"))?.to_owned();
   if !ids.insert(id.clone())||!names.insert(name.to_lowercase()){return Err(invalid("Duplicate server identity"))}
   if s["enabled"].is_null(){s["enabled"]=json!(true)}else if !s["enabled"].is_boolean(){return Err(invalid("Invalid enabled value"))}
-  if s["protocolMode"].as_str().is_some_and(|x|!matches!(x,"auto"|"modern"|"legacy")){return Err(invalid("Invalid protocol mode"))}
+  if !s["protocolMode"].is_null()&&!s["protocolMode"].as_str().is_some_and(|x|matches!(x,"auto"|"modern"|"legacy")){return Err(invalid("Invalid protocol mode"))}
   match s["transport"].as_str(){
    Some("http")=>{
     let u=reqwest::Url::parse(s["url"].as_str().unwrap_or("")).map_err(|_|invalid("Invalid HTTP URL"))?;
@@ -77,14 +87,21 @@ fn validate(mut values:Value,previous:&Value)->Result<Value,Failure>{
    _=>return Err(invalid("Unsupported transport"))
   }
   let old=previous["values"]["servers"].as_array().into_iter().flatten().find(|v|v["id"]==id);
-  if s["apiKey"]==MASK{s["apiKey"]=old.map(|v|v["apiKey"].clone()).unwrap_or(Value::Null)}
+  let retain_secrets=old.is_some_and(|v|same_secret_destination(v,s));
+  if s["apiKey"]==MASK{
+   if !retain_secrets{return Err(invalid("Server destination changed; enter the API key again or clear it"))}
+   s["apiKey"]=old.map(|v|v["apiKey"].clone()).filter(Value::is_string).ok_or_else(||invalid("No stored API key"))?;
+  }
   if !s["apiKey"].is_null()&&!s["apiKey"].as_str().is_some_and(|v|v.len()<=8192&&!v.chars().any(char::is_control)){return Err(invalid("Invalid credential"))}
   if !s["env"].is_null(){
    let env=s["env"].as_object_mut().ok_or_else(||invalid("Invalid environment"))?;
    if env.len()>64{return Err(invalid("Too many environment variables"))}
    for(k,v)in env{
     if k=="DOMINION_BRIDGE_TOKEN"||k.is_empty()||k.len()>120||!k.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'){return Err(invalid("Invalid environment key"))}
-    if *v==MASK{*v=old.and_then(|o|o["env"].get(k)).cloned().ok_or_else(||invalid("No stored value for masked environment variable"))?}
+    if *v==MASK{
+     if !retain_secrets{return Err(invalid("Server destination changed; enter environment values again or clear them"))}
+     *v=old.and_then(|o|o["env"].get(k)).cloned().ok_or_else(||invalid("No stored value for masked environment variable"))?;
+    }
     if !v.as_str().is_some_and(|s|s.len()<=8192&&!s.contains('\0')){return Err(invalid("Invalid environment value"))}
    }
   }
@@ -200,6 +217,27 @@ mod sdk_tests{
   let visible=redacted(&cfg);assert_eq!(visible["values"]["servers"][0]["apiKey"],MASK);
   assert_eq!(visible["values"]["servers"][0]["env"]["KEY"],MASK);
   assert_eq!(validate(visible["values"].clone(),&cfg).unwrap(),cfg["values"]);
+ }
+ #[test] fn masked_credentials_never_follow_a_changed_destination(){
+  let cfg=json!({"values":{"servers":[
+   {"id":"remote","name":"Remote","transport":"http","url":"https://example.com/mcp","apiKey":"secret","enabled":true},
+   {"id":"local","name":"Local","transport":"stdio","command":"node","args":["safe.js"],"env":{"KEY":"other"},"enabled":true}
+  ]}});
+  let visible=redacted(&cfg);
+  assert_eq!(validate(visible["values"].clone(),&cfg).unwrap(),cfg["values"]);
+  let mut changed=visible["values"].clone();
+  changed["servers"][0]["url"]=json!("https://other.example/mcp");
+  assert!(validate(changed.clone(),&cfg).is_err());
+  changed["servers"][0]["apiKey"]=json!("replacement");
+  assert_eq!(validate(changed,&cfg).unwrap()["servers"][0]["apiKey"],"replacement");
+  let mut changed=visible["values"].clone();
+  changed["servers"][1]["args"]=json!(["other.js"]);
+  assert!(validate(changed.clone(),&cfg).is_err());
+  changed["servers"][1]["env"]=json!({});
+  assert!(validate(changed,&cfg).is_ok());
+  let mut changed=visible["values"].clone();
+  changed["servers"][0]["protocolMode"]=json!(123);
+  assert!(validate(changed,&cfg).is_err());
  }
  #[tokio::test] async fn independent_sdk_executes_real_stdio_and_refuses_duplicate_effect(){
   let root=std::env::temp_dir().join(format!("connector-sdk-{}",uuid::Uuid::new_v4()));

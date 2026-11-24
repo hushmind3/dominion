@@ -4,6 +4,11 @@ on:
     branches: [dominion-sub3]
     paths:
       - 'tests/e2e/extensions_live.rs'
+      - 'src/api/plugins/**'
+      - 'src/api/plugins.rs'
+      - 'src/api/extensions/**'
+      - 'src/api/extensions.rs'
+      - 'dominion-plugin.json'
       - '.github/workflows/sub3-extension-live.yml'
   workflow_dispatch:
 permissions:
