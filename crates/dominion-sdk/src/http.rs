@@ -305,13 +305,24 @@ pub struct ScopedRun{
 }
 #[derive(Clone,Debug,Deserialize)]
 #[serde(rename_all="camelCase")]
-pub struct TaskRequestReceipt{pub id:String,pub status:String,pub run_status:Option<String>,pub task_outcome:Option<String>,pub verified:Option<bool>,pub message:Option<String>}
+pub struct TaskRequestReceipt{pub id:String,pub status:String,pub run_status:Option<String>,pub task_outcome:Option<String>,pub verified:Option<bool>,pub message:Option<String>,#[serde(default)]pub parent_request_id:Option<String>,#[serde(default)]pub artifacts:Vec<SharedArtifact>}
+#[derive(Clone,Debug,Deserialize)]
+pub struct SharedArtifact{pub id:String,pub name:String,pub sha256:String,pub bytes:usize}
+#[derive(Clone,Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct ArtifactContent{pub artifact:SharedArtifact,pub content_base64:String}
 /// Separate client: no owner management methods or owner token.
 #[derive(Clone)]
 pub struct ScopedClient{client:Client,id:String}
 impl ScopedClient{
     pub async fn propose_task(&self,instruction:&str,retry_key:&str)->Result<TaskRequestReceipt,ClientError>{
         self.client.post(&["api","extensions","apps",&self.id,"requests"],json!({"instruction":instruction,"idempotencyKey":retry_key})).await
+    }
+    pub async fn propose_follow_up(&self,parent:&str,instruction:&str,retry_key:&str)->Result<TaskRequestReceipt,ClientError>{
+        self.client.post(&["api","extensions","apps",&self.id,"requests"],json!({"instruction":instruction,"idempotencyKey":retry_key,"parentRequestId":parent})).await
+    }
+    pub async fn artifact(&self,request:&str,artifact:&str)->Result<ArtifactContent,ClientError>{
+        self.client.get(&["api","extensions","apps",&self.id,"requests",request,"artifacts",artifact]).await
     }
     pub async fn task_request(&self,id:&str)->Result<TaskRequestReceipt,ClientError>{
         self.client.get(&["api","extensions","apps",&self.id,"requests",id]).await

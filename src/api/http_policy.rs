@@ -95,8 +95,8 @@ fn extension_ingress(method:&Method,path:&str)->bool{
                 ||(parts.len()==7&&method==Method::GET&&uuid::Uuid::parse_str(parts[6]).is_ok())))
             ||(parts.get(5)==Some(&"requests")
                 && ((parts.len()==6&&method==Method::POST)
-                    ||(parts.len()==7&&method==Method::GET&&parts[6].len()==64
-                        &&parts[6].bytes().all(|b|b.is_ascii_hexdigit())))))
+                    ||(method==Method::GET&&parts.get(6).is_some_and(|id|id.len()==64&&id.bytes().all(|b|b.is_ascii_hexdigit()))
+                        &&(parts.len()==7||(parts.len()==9&&parts[7]=="artifacts"&&uuid::Uuid::parse_str(parts[8]).is_ok()))))))
 }
 fn worker_ingress(path: &str) -> bool {
     path == "/api/remote/claim"

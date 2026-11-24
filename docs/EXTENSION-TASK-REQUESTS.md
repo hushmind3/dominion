@@ -5,3 +5,9 @@ A scoped application can opt into a separate proposal capability when its owner 
 The app sees only its proposal status, run status and verdict. The owner can inspect the actual run and explicitly publish one message after it terminates. Raw answers, file paths, errors, tool receipts and owner records are not automatically exposed to the requester. Credential rotation invalidates approval of previously pending requests; revocation prevents reads and submissions. Rejections do not refund proposal quota. Existing ordinary scoped chat and owner SDK routes are unchanged.
 
 Rust: Client::issue_task_request_grant; ScopedClient::propose_task and task_request. TypeScript: allowTaskRequests in ExtensionGrantInput; DominionExtensionClient.proposeTask and taskRequest. Owner UI: External apps > App task requests.
+
+## Explicit artifact delivery and follow-up
+
+The owner can select up to four files (2 MiB each) for a finished request. Files are copied as immutable SQLite snapshots with SHA-256 and returned only to the original app credential generation through GET /requests/:request/artifacts/:artifact. The app cannot select local paths or publish files itself. No shared file is executed. The proposal receipt lists only metadata. Repeated sharing of the same filename and digest returns the existing artifact. Revocation blocks subsequent reads, not copies already received.
+
+A client may propose a follow-up using parentRequestId for its own completed request with an explicitly shared message. The owner sees the previous shared message and the new task before approval. Only that published text is passed as reference data; no private transcript, original tool output or local file access is inherited. A fresh allowance and approval are required for each follow-up. Rust: propose_follow_up and artifact; TypeScript: proposeFollowUp and artifact.

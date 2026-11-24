@@ -181,7 +181,9 @@ export interface ExtensionManifest {
 }
 export interface ExtensionGrantInput {providerId:string;model:string;tokenBudget:number;maxRuns:number;allowTaskRequests?:boolean}
 export interface ExtensionGrant {id:string;providerId:string;model:string;tokenBudget:number;remainingRuns:number;capability:'isolated_chat';generation:string;allowTaskRequests?:boolean}
-export interface TaskRequestReceipt {id:string;status:'pending'|'approved'|'rejected';runStatus?:SdkRunStatus|null;taskOutcome?:string|null;verified?:boolean|null;message?:string|null}
+export interface SharedArtifact {id:string;name:string;sha256:string;bytes:number}
+export interface ArtifactContent {artifact:SharedArtifact;contentBase64:string}
+export interface TaskRequestReceipt {id:string;status:'pending'|'approved'|'rejected';runStatus?:SdkRunStatus|null;taskOutcome?:string|null;verified?:boolean|null;message?:string|null;parentRequestId?:string|null;artifacts?:SharedArtifact[]}
 export interface ScopedRun {id:string;status:SdkRunStatus;answer?:string|null;taskOutcome?:string|null;verified?:boolean|null;providerId:string;model:string;extension:string}
 export interface ExtensionRegistration {
   id: string; manifest: ExtensionManifest; enabled: boolean;
@@ -508,7 +510,7 @@ export class DominionExtensionClient {
     this.base=url.toString().replace(/\/$/,'');
     this.id=options.id;this.token=options.token;this.transport=options.fetch??fetch;
   }
-  private async request<T=ScopedRun>(path:string,body?:{instruction:string;idempotencyKey:string},signal?:AbortSignal,family:'runs'|'requests'='runs'):Promise<T>{
+  private async request<T=ScopedRun>(path:string,body?:{instruction:string;idempotencyKey:string;parentRequestId?:string},signal?:AbortSignal,family:'runs'|'requests'='runs'):Promise<T>{
     const headers:Record<string,string>={'x-dominion-extension-token':this.token,accept:'application/json'};
     if(body)headers['content-type']='application/json';
     const r=await this.transport(this.base+'/api/extensions/apps/'+encodeURIComponent(this.id)+'/'+family+path,
@@ -519,6 +521,14 @@ export class DominionExtensionClient {
   }
   proposeTask(instruction:string,idempotencyKey:string,signal?:AbortSignal):Promise<TaskRequestReceipt>{
     return this.request<TaskRequestReceipt>('',{instruction,idempotencyKey},signal,'requests');
+  }
+  proposeFollowUp(parentRequestId:string,instruction:string,idempotencyKey:string,signal?:AbortSignal):Promise<TaskRequestReceipt>{
+    if(!/^[0-9a-f]{64}$/i.test(parentRequestId))throw new DominionSdkError('Invalid parent request ID',400);
+    return this.request<TaskRequestReceipt>('',{instruction,idempotencyKey,parentRequestId},signal,'requests');
+  }
+  artifact(requestId:string,artifactId:string,signal?:AbortSignal):Promise<ArtifactContent>{
+    if(!/^[0-9a-f]{64}$/i.test(requestId)||! /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(artifactId))throw new DominionSdkError('Invalid artifact identity',400);
+    return this.request<ArtifactContent>('/'+encodeURIComponent(requestId)+'/artifacts/'+encodeURIComponent(artifactId),undefined,signal,'requests');
   }
   taskRequest(id:string,signal?:AbortSignal):Promise<TaskRequestReceipt>{
     if(!/^[0-9a-f]{64}$/i.test(id))throw new DominionSdkError('Invalid task request ID',400);

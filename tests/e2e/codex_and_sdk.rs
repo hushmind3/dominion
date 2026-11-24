@@ -656,7 +656,7 @@ fn extension_task_proposal_is_not_execution_and_requires_owner_review(){
         let review=format!("{}/api/extensions/apps/{id}/requests/{}/review",app.base,other.id);
         let stale=http.post(&review).json(&json!({"approve":true,"workspaceDir":"/tmp"})).send().await.unwrap();
         assert_eq!(stale.status().as_u16(),409);
-        let fresh=Client::scoped(&app.base,id,rotated.token).unwrap();
+        let fresh=Client::scoped(&app.base,id,rotated.token.clone()).unwrap();
         assert_eq!(fresh.task_request(&other.id).await.unwrap().status,"pending");
         assert!(requests.lock().unwrap().is_empty());
         let proposal=fresh.propose_task("proposal-result.md 파일을 만들어줘","third").await.unwrap();
@@ -691,5 +691,22 @@ fn extension_task_proposal_is_not_execution_and_requires_owner_review(){
         assert!(receipt.message.is_none());
         http.post(format!("{request_root}/publish")).json(&json!({"message":"The approved file was created."})).send().await.unwrap().error_for_status().unwrap();
         assert_eq!(fresh.task_request(&proposal.id).await.unwrap().message.as_deref(),Some("The approved file was created."));
+        assert!(fresh.task_request(&proposal.id).await.unwrap().artifacts.is_empty());
+        let artifact:Value=http.post(format!("{request_root}/artifacts")).json(&json!({"name":"result.txt","contentBase64":"aGVsbG8="})).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+        let artifact_id=artifact["id"].as_str().unwrap();
+        let repeated:Value=http.post(format!("{request_root}/artifacts")).json(&json!({"name":"result.txt","contentBase64":"aGVsbG8="})).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+        assert_eq!(repeated["id"],artifact_id);
+        let data=fresh.artifact(&proposal.id,artifact_id).await.unwrap();
+        assert_eq!(data.content_base64,"aGVsbG8=");
+        assert_eq!(data.artifact.bytes,5);
+        assert_eq!(fresh.task_request(&proposal.id).await.unwrap().artifacts.len(),1);
+        let forbidden=http.post(format!("{request_root}/artifacts")).header("x-dominion-extension-token",&rotated.token).json(&json!({"name":"x","contentBase64":""})).send().await.unwrap();
+        assert_eq!(forbidden.status().as_u16(),403);
+        let follow=fresh.propose_follow_up(&proposal.id,"Review delivered result","fourth").await.unwrap();
+        assert_eq!(follow.parent_request_id.as_deref(),Some(proposal.id.as_str()));
+        assert_eq!(follow.status,"pending");
+        assert_eq!(requests.lock().unwrap().len(),1);
+        assert!(matches!(fresh.artifact(&follow.id,artifact_id).await,Err(ClientError::Api{status:404,..})));
+
     });
 }

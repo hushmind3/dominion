@@ -2,6 +2,7 @@
 use crate::state::AppState;
 use axum::{extract::{Path,State},http::{HeaderMap,StatusCode},response::{IntoResponse,Response},Json};
 use serde::Deserialize;
+use base64::{engine::general_purpose::STANDARD,Engine as _};
 use serde_json::{json,Value};
 use sha2::{Digest,Sha256};
 use super::{extension_registry as registry,response::error,sdk};
@@ -9,13 +10,19 @@ use super::{extension_registry as registry,response::error,sdk};
 pub(super) const KIND:&str="sdk_extension_request";
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
-pub struct Submit{instruction:String,idempotency_key:String}
+pub struct Submit{instruction:String,idempotency_key:String,#[serde(default)] parent_request_id:Option<String>}
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 pub struct Review{approve:bool,workspace_dir:Option<String>,max_rounds:Option<usize>}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Publish{message:String}
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+pub struct ArtifactInput{name:String,content_base64:String}
+const ARTIFACT_KIND:&str="sdk_extension_artifact";
+const ARTIFACT_LIMIT:usize=2*1024*1024;
+const MAX_ARTIFACTS:usize=4;
 
 fn receipt_id(app:&str,generation:&Value,key:&str)->String{
     format!("{:x}",Sha256::digest(json!([app,generation,key]).to_string().as_bytes()))
@@ -42,7 +49,8 @@ fn external_view(state:&AppState,row:&Value)->Value{
     json!({"id":row["id"],"status":row["status"],"runStatus":run.as_ref().map(|r|r["status"].clone()),
         "taskOutcome":run.as_ref().map(|r|r["taskOutcome"].clone()),
         "verified":run.as_ref().map(|r|r["verified"]==true),
-        "message":row["publishedMessage"]})
+        "message":row["publishedMessage"],"parentRequestId":row["parentRequestId"],
+        "artifacts":row["artifacts"].as_array().cloned().unwrap_or_default()})
 }
 fn owner_view(state:&AppState,mut row:Value)->Value{
     let run=linked_run(state,&row);
@@ -50,8 +58,10 @@ fn owner_view(state:&AppState,mut row:Value)->Value{
     row["canApprove"]=json!(row["status"]=="pending"&&grant.as_ref().is_some_and(|g|current_authority(&row,g))
         &&registry::load(state,row["appId"].as_str().unwrap_or("")).is_ok_and(|r|r.enabled));
     row["runStatus"]=run.as_ref().map(|r|r["status"].clone()).unwrap_or(Value::Null);
-    row["canPublish"]=json!(row["publishedMessage"].is_null()&&grant.as_ref().is_some_and(|g|g["generation"]==row["credentialGeneration"])&&run.as_ref().is_some_and(|r|
-        matches!(r["status"].as_str(),Some("completed"|"failed"|"cancelled"))));
+    let shareable=grant.as_ref().is_some_and(|g|g["generation"]==row["credentialGeneration"])&&run.as_ref().is_some_and(|r|
+        matches!(r["status"].as_str(),Some("completed"|"failed"|"cancelled")));
+    row["canPublish"]=json!(shareable&&row["publishedMessage"].is_null());
+    row["canShareArtifact"]=json!(shareable&&row["artifacts"].as_array().map_or(0,Vec::len)<MAX_ARTIFACTS);
     if let Some(obj)=row.as_object_mut(){obj.remove("authorizationId");obj.remove("credentialGeneration");}
     row
 }
@@ -63,7 +73,7 @@ pub async fn submit(State(state):State<AppState>,Path(app):Path<String>,headers:
     }
     let id=receipt_id(&app,&grant["generation"],&input.idempotency_key);
     if let Some(old)=state.store.get(KIND,&id){
-        if old["appId"]!=app||old["credentialGeneration"]!=grant["generation"]||old["instruction"]!=input.instruction{
+        if old["appId"]!=app||old["credentialGeneration"]!=grant["generation"]||old["instruction"]!=input.instruction||old["parentRequestId"]!=json!(input.parent_request_id){
             return error(StatusCode::CONFLICT,"Retry key belongs to another request")
         }
         return Json(external_view(&state,&old)).into_response()
@@ -71,10 +81,18 @@ pub async fn submit(State(state):State<AppState>,Path(app):Path<String>,headers:
     if grant["allowTaskRequests"]!=true||!grant["authorizationId"].is_string(){
         return error(StatusCode::FORBIDDEN,"Owner has not enabled task requests")
     }
+    let parent_message=if let Some(parent)=input.parent_request_id.as_deref(){
+        let previous=match load(&state,&app,parent){Ok(r) if r["credentialGeneration"]==grant["generation"]=>r,_=>return error(StatusCode::NOT_FOUND,"Parent request not found")};
+        if !linked_run(&state,&previous).is_some_and(|r|r["status"]=="completed")||previous["publishedMessage"].is_null(){
+            return error(StatusCode::CONFLICT,"Parent must have completed and have an owner-shared message")
+        }
+        previous["publishedMessage"].clone()
+    }else{Value::Null};
     let remaining=grant["remainingRuns"].as_u64().unwrap_or(0);
     if remaining==0{return error(StatusCode::TOO_MANY_REQUESTS,"Extension request allowance exhausted")}
     let row=json!({"id":id,"appId":app,"credentialGeneration":grant["generation"],"authorizationId":grant["authorizationId"],
-        "instruction":input.instruction,"providerId":grant["providerId"],"model":grant["model"],"tokenBudget":grant["tokenBudget"],"status":"pending"});
+        "instruction":input.instruction,"providerId":grant["providerId"],"model":grant["model"],"tokenBudget":grant["tokenBudget"],"status":"pending",
+        "parentRequestId":input.parent_request_id,"parentMessage":parent_message,"artifacts":[]});
     grant["remainingRuns"]=json!(remaining-1);
     if state.store.transaction(&[(KIND.into(),row.clone()),(registry::GRANT_KIND.into(),grant)]).is_err(){
         return error(StatusCode::INTERNAL_SERVER_ERROR,"Cannot persist task request")
@@ -152,9 +170,59 @@ pub async fn publish(State(state):State<AppState>,Path((app,id)):Path<(String,St
     notify(&state,&app);
     Json(owner_view(&state,saved)).into_response()
 }
+fn artifact_name(name:&str)->bool{
+    !name.trim().is_empty()&&name.len()<=180&&name!="."&&name!=".."
+        &&!name.chars().any(|c|c.is_control()||matches!(c,'/'|'\\'|':'))
+}
+pub async fn share_artifact(State(state):State<AppState>,Path((app,id)):Path<(String,String)>,Json(input):Json<ArtifactInput>)->Response{
+    let _guard=match registry::lock(&state,&app){Ok(g)=>g,Err(r)=>return r};
+    let row=match load(&state,&app,&id){Ok(r)=>r,Err(r)=>return r};
+    if !artifact_name(&input.name)||input.content_base64.len()>4*((ARTIFACT_LIMIT+2)/3){
+        return error(StatusCode::BAD_REQUEST,"Select one file up to 2 MiB with a valid name")
+    }
+    let bytes=match STANDARD.decode(&input.content_base64){Ok(b) if b.len()<=ARTIFACT_LIMIT=>b,_=>return error(StatusCode::BAD_REQUEST,"Invalid artifact content")};
+    if !state.store.get(registry::GRANT_KIND,&app).is_some_and(|g|g["generation"]==row["credentialGeneration"]){
+        return error(StatusCode::CONFLICT,"Original app credential was revoked")
+    }
+    if !linked_run(&state,&row).is_some_and(|r|matches!(r["status"].as_str(),Some("completed"|"failed"|"cancelled"))){
+        return error(StatusCode::CONFLICT,"Wait until the native task finishes")
+    }
+    let sha=format!("{:x}",Sha256::digest(&bytes));
+    let mut artifacts=row["artifacts"].as_array().cloned().unwrap_or_default();
+    if let Some(existing)=artifacts.iter().find(|a|a["sha256"]==sha&&a["name"]==input.name){
+        return Json(existing.clone()).into_response()
+    }
+    if artifacts.len()>=MAX_ARTIFACTS{return error(StatusCode::CONFLICT,"Maximum four shared files per request")}
+    let artifact_id=uuid::Uuid::new_v4().to_string();
+    let metadata=json!({"id":artifact_id,"name":input.name,"sha256":sha,"bytes":bytes.len()});
+    artifacts.push(metadata.clone());
+    let mut updated=row.clone();
+    updated["artifacts"]=json!(artifacts);
+    let blob=json!({"id":artifact_id,"appId":app,"requestId":id,"credentialGeneration":row["credentialGeneration"],
+        "metadata":metadata,"contentBase64":STANDARD.encode(&bytes)});
+    if state.store.transaction(&[(KIND.into(),updated),(ARTIFACT_KIND.into(),blob)]).is_err(){
+        return error(StatusCode::INTERNAL_SERVER_ERROR,"Cannot persist artifact")
+    }
+    notify(&state,&app);
+    (StatusCode::CREATED,Json(metadata)).into_response()
+}
+pub async fn artifact(State(state):State<AppState>,Path((app,id,artifact_id)):Path<(String,String,String)>,headers:HeaderMap)->Response{
+    let (_guard,_,grant)=match registry::authenticated(&state,&headers,&app){Ok(r)=>r,Err(r)=>return r};
+    let row=match load(&state,&app,&id){Ok(r) if r["credentialGeneration"]==grant["generation"]=>r,_=>return error(StatusCode::NOT_FOUND,"Artifact not found")};
+    let Some(meta)=row["artifacts"].as_array().and_then(|a|a.iter().find(|m|m["id"]==artifact_id))else{return error(StatusCode::NOT_FOUND,"Artifact not found")};
+    let Some(blob)=state.store.get(ARTIFACT_KIND,&artifact_id).filter(|b|b["appId"]==app&&b["requestId"]==id&&b["credentialGeneration"]==grant["generation"]&&&b["metadata"]==meta)else{return error(StatusCode::NOT_FOUND,"Artifact not found")};
+    let Some(bytes)=blob["contentBase64"].as_str().and_then(|s|STANDARD.decode(s).ok())else{return error(StatusCode::CONFLICT,"Artifact damaged")};
+    if meta["sha256"]!=format!("{:x}",Sha256::digest(&bytes))||meta["bytes"]!=bytes.len(){return error(StatusCode::CONFLICT,"Artifact damaged")}
+    Json(json!({"artifact":meta,"contentBase64":blob["contentBase64"]})).into_response()
+}
+
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]fn artifact_names_are_not_paths(){
+        assert!(artifact_name("report.txt"));
+        for name in ["../secret","a\\b","C:secret","..","\n"," "]{assert!(!artifact_name(name));}
+    }
     #[test]fn rotation_invalidates_pending_authorization(){
         let row=json!({"authorizationId":"a","credentialGeneration":"g"});
         assert!(current_authority(&row,&json!({"allowTaskRequests":true,"authorizationId":"a","generation":"g"})));

@@ -242,19 +242,32 @@ function ManagedPackage({app}:{app:App}){
  </div>
 }
 
-type TaskRequest={id:string;instruction:string;status:string;model:string;tokenBudget:number;runId?:string;runStatus?:string;canApprove:boolean;canPublish:boolean;publishedMessage?:string}
+type SharedArtifact={id:string;name:string;sha256:string;bytes:number}
+type TaskRequest={id:string;instruction:string;status:string;model:string;tokenBudget:number;runId?:string;runStatus?:string;canApprove:boolean;canPublish:boolean;publishedMessage?:string;parentRequestId?:string;parentMessage?:string;canShareArtifact?:boolean;artifacts?:SharedArtifact[]}
 function TaskRequests({appId,enabled,onRun}:{appId:string;enabled:boolean;onRun:(id:string)=>void}){
  const en=useLocale()==='en',path=endpoint+'/'+encodeURIComponent(appId)+'/requests'
  const [open,setOpen]=useState(false),[selected,setSelected]=useState(''),[workspace,setWorkspace]=useState(''),[rounds,setRounds]=useState('8'),[message,setMessage]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false)
  const requests=useRemote<TaskRequest[]>(path,[])
  const pendingCount=requests.value.filter(r=>r.status==='pending'&&r.canApprove).length
  const row=requests.value.find(r=>r.id===selected)
+ const [file,setFile]=useState<File|null>(null),fileInput=useRef<HTMLInputElement>(null)
  const inFlight=useRef(false)
  const act=async(suffix:string,body:unknown)=>{
   if(inFlight.current||!row)return
   inFlight.current=true;setBusy(true);setError('')
-  try{await post(path+'/'+row.id+'/'+suffix,body);await requests.reload();setMessage('')}
+  try{await post(path+'/'+row.id+'/'+suffix,body);await requests.reload();if(suffix==='publish')setMessage('');if(suffix==='artifacts'){setFile(null);if(fileInput.current)fileInput.current.value=''}}
   catch(e){setError((e as Error).message)}finally{inFlight.current=false;setBusy(false)}
+ }
+ const shareFile=async()=>{
+  if(!file||!row?.canShareArtifact||busy)return
+  if(file.size>2*1024*1024){setError(en?'Maximum file size: 2 MiB':'파일 크기는 최대 2MiB입니다.');return}
+  if(!confirm(en?'Share this exact file with the external app?':'선택한 파일을 외부 앱에 전달할까요?'))return
+  try{
+   const bytes=new Uint8Array(await file.arrayBuffer())
+   let binary=''
+   for(let offset=0;offset<bytes.length;offset+=8192)binary+=String.fromCharCode(...bytes.subarray(offset,offset+8192))
+   await act('artifacts',{name:file.name,contentBase64:btoa(binary)})
+  }catch(e){setError((e as Error).message)}
  }
  return <div className="w-full border-t border-divider pt-2">
   <Button variant="ghost" onClick={()=>setOpen(!open)}>{open?(en?'Close task requests':'작업 제안 닫기'):(en?'Task requests':'앱 작업 제안')}{pendingCount>0&&<span className="rounded-full bg-brand px-2 text-white">{pendingCount}</span>}</Button>
@@ -264,8 +277,9 @@ function TaskRequests({appId,enabled,onRun}:{appId:string;enabled:boolean;onRun:
    <Button variant="ghost" disabled={requests.refreshing||busy} onClick={()=>void requests.reload()}>{en?'Refresh requests':'제안 새로고침'}</Button>
    {requests.loading&&<p role="status" className="text-xs text-muted">{en?'Loading requests…':'작업 제안 불러오는 중…'}</p>}
    {!requests.loading&&!requests.value.length&&<p className="text-xs text-muted">{en?'No task requests':'작업 제안 없음'}</p>}
-   <div className="grid max-h-64 gap-1 overflow-auto">{requests.value.map(r=><button type="button" key={r.id} disabled={busy} aria-pressed={selected===r.id} className="rounded-lg border border-divider p-2 text-left" onClick={()=>{setSelected(r.id);setMessage('');setError('')}}><StateTag online={r.status==='approved'}>{en?r.status:r.status==='pending'?'승인 대기':r.status==='approved'?'승인됨':'거절됨'}</StateTag><span className="ml-2 text-xs text-muted">{r.model} · {r.tokenBudget} tokens</span><p className="truncate text-sm">{r.instruction}</p></button>)}</div>
+   <div className="grid max-h-64 gap-1 overflow-auto">{requests.value.map(r=><button type="button" key={r.id} disabled={busy} aria-pressed={selected===r.id} className="rounded-lg border border-divider p-2 text-left" onClick={()=>{setSelected(r.id);setMessage('');setFile(null);if(fileInput.current)fileInput.current.value='';setError('')}}><StateTag online={r.status==='approved'}>{en?r.status:r.status==='pending'?'승인 대기':r.status==='approved'?'승인됨':'거절됨'}</StateTag><span className="ml-2 text-xs text-muted">{r.model} · {r.tokenBudget} tokens</span><p className="truncate text-sm">{r.instruction}</p></button>)}</div>
    {row&&<Panel className="grid gap-2 p-3">
+    {row.parentRequestId&&<div className="grid gap-1 rounded-lg border border-divider p-2"><span className="text-xs text-muted">{en?'Follow-up to a prior completed task':'이전 완료 작업의 후속 요청'}</span><p className="whitespace-pre-wrap break-words text-xs">{row.parentMessage}</p></div>}
     <strong>{en?'Requested instruction':'제안 원문'}</strong><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-sm">{row.instruction}</pre>
     {row.status==='pending'&&<><FormField label={en?'Owner workspace':'승인 작업 공간'} hint={en?'Absolute path':'절대 경로'}><TextInput aria-label={en?'Owner workspace':'승인 작업 공간'} value={workspace} onChange={e=>setWorkspace(e.target.value)} disabled={busy}/></FormField>
     <FormField label={en?'Maximum model rounds':'최대 모델 호출 횟수'}><TextInput type="number" min={1} max={24} value={rounds} onChange={e=>setRounds(e.target.value)} disabled={busy}/></FormField>
@@ -273,6 +287,11 @@ function TaskRequests({appId,enabled,onRun}:{appId:string;enabled:boolean;onRun:
     <div className="flex gap-2"><Action disabled={busy||!enabled||!row.canApprove||!workspace.trim()||!Number.isInteger(Number(rounds))||Number(rounds)<1||Number(rounds)>24} onClick={()=>{if(confirm(en?'Run the displayed instruction using native agent tools in this workspace?':'표시된 지시를 이 작업 공간에서 에이전트로 실행할까요?'))void act('review',{approve:true,workspaceDir:workspace.trim(),maxRounds:Number(rounds)})}}>{en?'Approve and run':'승인 및 실행'}</Action><Button disabled={busy} onClick={()=>void act('review',{approve:false})}>{en?'Reject':'거절'}</Button></div></>}
     {row.runId&&<div className="flex items-center gap-2"><StateTag>{en?(row.runStatus||'queued'):(labels[row.runStatus||'queued']||row.runStatus)}</StateTag><Button onClick={()=>onRun(row.runId!)}>{en?'Inspect native run':'실행 결과 확인'}</Button></div>}
     {row.publishedMessage!=null?<><strong>{en?'Published message':'공유한 메시지'}</strong><p className="whitespace-pre-wrap break-words text-sm">{row.publishedMessage}</p></>:row.canPublish&&<><FormField label={en?'Message to share':'앱에 공유할 메시지'}><TextArea aria-label={en?'Message to share':'앱에 공유할 메시지'} value={message} onChange={e=>setMessage(e.target.value)} disabled={busy}/></FormField><Action disabled={busy||!message.trim()} onClick={()=>{if(confirm(en?'Publish this exact message to the external app?':'이 메시지를 외부 앱에 공유할까요?'))void act('publish',{message})}}>{en?'Share message':'메시지 공유'}</Action></>}
+    {(row.canShareArtifact||Boolean(row.artifacts?.length))&&<div className="grid gap-2 border-t border-divider pt-2">
+     <strong>{en?'Shared files':'공유 파일'}</strong>
+     {(row.artifacts||[]).map(a=><div key={a.id} className="rounded-lg border border-divider p-2"><p className="break-all text-sm">{a.name} · {a.bytes} B</p><p className="break-all text-xs text-muted">SHA-256: {a.sha256}</p></div>)}
+     {row.canShareArtifact&&<><p className="text-xs text-muted">{en?'Select a file you intend to disclose. Up to four files, 2 MiB each.':'직접 공유할 파일을 선택하세요. 최대 4개, 파일당 2MiB입니다.'}</p><input ref={fileInput} type="file" aria-label={en?'File to share':'공유할 파일'} disabled={busy} onChange={e=>setFile(e.target.files?.[0]||null)}/><Action disabled={busy||!file||file.size>2*1024*1024} onClick={()=>void shareFile()}>{en?'Share file':'파일 공유'}</Action></>}
+    </div>}
    </Panel>}
   </div>}
  </div>

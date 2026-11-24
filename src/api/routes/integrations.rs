@@ -17,6 +17,8 @@ pub(super) fn router() -> Router<AppState> {
         .route("/api/extensions/apps/:id/requests/:request", get(extension_requests::read))
         .route("/api/extensions/apps/:id/requests/:request/review", post(extension_requests::review))
         .route("/api/extensions/apps/:id/requests/:request/publish", post(extension_requests::publish))
+        .route("/api/extensions/apps/:id/requests/:request/artifacts", post(extension_requests::share_artifact))
+        .route("/api/extensions/apps/:id/requests/:request/artifacts/:artifact", get(extension_requests::artifact))
         .route("/api/extensions/apps/:id/package", get(extension_process::status).post(extension_process::install).delete(extension_process::uninstall))
         .route("/api/extensions/apps/:id/process/start", post(extension_process::start))
         .route("/api/extensions/apps/:id/process/stop", post(extension_process::stop))
