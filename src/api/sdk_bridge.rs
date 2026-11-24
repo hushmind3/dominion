@@ -28,6 +28,7 @@ pub struct Start {
     max_total_tokens: Option<u64>,
     planning_mode: Option<String>,
     mcp_enabled: Option<bool>,
+    extensions_enabled: Option<bool>,
     skills_enabled: Option<bool>,
     web_enabled: Option<bool>,
     subagents_enabled: Option<bool>,
@@ -248,6 +249,7 @@ pub async fn start(State(state): State<AppState>, Json(input): Json<Start>) -> R
         "sdkUiPolicy":{
             "planningMode":planning,"maxRounds":rounds,"maxTotalTokens":tokens,
             "mcpEnabled":input.mcp_enabled.unwrap_or(false),
+            "extensionsEnabled":input.extensions_enabled.unwrap_or(false),
             "skillsEnabled":input.skills_enabled.unwrap_or(true),
             "webEnabled":input.web_enabled.unwrap_or(false),
             "subagentsEnabled":input.subagents_enabled.unwrap_or(false),
@@ -528,7 +530,7 @@ mod tests {
             instruction:"Inspect a repository".into(),
             provider_id:Some("model".into()),model:None,verify_command:None,
             max_rounds:None,max_total_tokens:None,planning_mode:None,
-            mcp_enabled:None,skills_enabled:None,web_enabled:None,
+            mcp_enabled:None,extensions_enabled:None,skills_enabled:None,web_enabled:None,
             subagents_enabled:None,
         })).await;
         assert_eq!(response.status(),StatusCode::ACCEPTED);
@@ -611,7 +613,7 @@ mod tests {
             max_rounds: Some(2),
             max_total_tokens: Some(50_000),
             planning_mode: Some("always".into()),
-            mcp_enabled: Some(false),skills_enabled: Some(true),
+            mcp_enabled: Some(false),extensions_enabled:Some(true),skills_enabled: Some(true),
             web_enabled: Some(false),subagents_enabled: Some(false),
         })).await;
         assert_eq!(created.status(), StatusCode::ACCEPTED);

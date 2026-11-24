@@ -29,6 +29,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
  const [instruction,setInstruction]=useState('')
  const [providerId,setProviderId]=useState('')
  const [verification,setVerification]=useState('')
+ const [extensionsEnabled,setExtensionsEnabled]=useState(false)
  const [observation,setObservation]=useState('')
  const [run,setRun]=useState<SdkRun|null>(null)
  const [busy,setBusy]=useState(false)
@@ -54,7 +55,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
   try{
    const created=await post<SdkRun>('/api/sdk/runs',{
     instruction:instruction.trim(),providerId:providerId||undefined,
-    verifyCommand:verification.trim()||undefined
+    verifyCommand:verification.trim()||undefined,extensionsEnabled
    })
    setRun(created)
   }catch(e){setError((e as Error).message)}
@@ -114,6 +115,7 @@ export function NativeAgentPanel({providers}:{providers:Provider[]}){
      <Play size={14}/>{busy?(en?'Please wait…':'처리 중…'):(en?'Start task':'작업 시작')}
     </button>
    </div>
+   <label className="flex items-center gap-2 text-[11px] text-[#746A5F]"><input type="checkbox" checked={extensionsEnabled} onChange={e=>setExtensionsEnabled(e.target.checked)}/>{en?'Allow installed extensions for this run (approval required)':'이 작업에 설치된 확장 사용 허용 (실행 승인 필요)'}</label>
    <details className="text-[11px] text-[#746A5F]">
     <summary className="cursor-pointer select-none">{en?'Optional: verify the result with a command':'선택 사항: 명령어로 결과 검증'}</summary>
     <label className="mt-2 block" htmlFor="sdk-verify">

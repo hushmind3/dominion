@@ -89,6 +89,11 @@ pub fn resource_key(tool: &str, arguments: &Value) -> Option<String> {
                 .map(normalize_path)
                 .unwrap_or_else(|| "default".into())
         )),
+        tool if tool.starts_with(dominion_agent_sdk::plugin_protocol::PREFIX) => {
+            // Opaque plugin code is never implicitly read-only. Keep the
+            // resource identity stable across package updates.
+            tool.split("__").nth(1).map(|id|format!("extension:{id}"))
+        }
         tool if tool.starts_with("mcp__") => {
             let target = ["key", "id", "path", "resource"]
                 .iter()
@@ -107,7 +112,8 @@ pub fn resource_key(tool: &str, arguments: &Value) -> Option<String> {
 /// world. A read can still have side effects (locks, billing reservations), so
 /// callers must not treat this classification as a safety proof.
 pub fn is_effectful(tool: &str, arguments: &Value) -> bool {
-    if matches!(tool, "shell_exec" | "terminal_exec" | "external_harness_run") {
+    if tool.starts_with(dominion_agent_sdk::plugin_protocol::PREFIX)
+        || matches!(tool, "shell_exec" | "terminal_exec" | "external_harness_run") {
         return true;
     }
     if tool == "github_file_read" {return false;}
@@ -130,6 +136,7 @@ pub fn is_effectful(tool: &str, arguments: &Value) -> bool {
 }
 
 fn is_read(tool: &str, arguments: &Value) -> bool {
+    if tool.starts_with(dominion_agent_sdk::plugin_protocol::PREFIX){return false;}
     if tool == "http_fetch" {
         return true;
     }
@@ -165,6 +172,7 @@ fn gated(tool: &str, arguments: &Value) -> bool {
     is_effectful(tool, arguments)
         && (tool == "github_api"
             || tool.starts_with("mcp__")
+            || tool.starts_with(dominion_agent_sdk::plugin_protocol::PREFIX)
             || tool.contains("http_request"))
 }
 
@@ -242,7 +250,9 @@ pub fn unresolved(effect: &Value, operations: &[Value]) -> Option<Value> {
         return None;
     }
     operations.iter().rev().find_map(|operation| {
-        if operation["effectId"].as_str() != Some(effect_id) {
+        let extension_resource=effect["tool"].as_str().is_some_and(|t|t.starts_with(dominion_agent_sdk::plugin_protocol::PREFIX))
+            && effect["resourceKey"].is_string() && operation["resourceKey"]==effect["resourceKey"];
+        if operation["effectId"].as_str() != Some(effect_id) && !extension_resource {
             return None;
         }
         let state = operation["effectState"].as_str().unwrap_or("");
