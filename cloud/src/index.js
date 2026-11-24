@@ -1,5 +1,6 @@
 import {emailLoginReady, startEmailLogin, verifyEmailLogin, pollEmailLogin} from './email_auth.js';
 import {b64url, hash, randomToken} from './token_crypto.js';
+import {appAccount,isAppRequest,startApp,appStatus,disconnectApp,manageApps} from './app_auth.js';
 // DOMINION account gateway: no Nous credentials and no shared client-side API key.
 // Cloudflare Worker + D1. Credits are integer micro-KRW (one KRW = 1,000 units).
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), {
@@ -27,6 +28,7 @@ function cors(origin, env) {
     'access-control-allow-methods': 'POST, GET, OPTIONS',
     'access-control-allow-headers': 'content-type, authorization',
     'access-control-max-age': '600',
+    'access-control-expose-headers': 'x-dominion-free-remaining',
     vary: 'Origin'
   } : {};
 }
@@ -49,6 +51,7 @@ async function verifyGoogle(idToken, env) {
   return claims;
 }
 async function account(request, env) {
+  if(isAppRequest(request))return appAccount(request,env);
   const token = /^Bearer ([A-Za-z0-9_-]{32,})$/.exec(request.headers.get('authorization') || '')?.[1];
   if (!token) return null;
   return env.DB.prepare('SELECT a.id, a.credits FROM sessions s JOIN accounts a ON a.id=s.account_id WHERE s.token_hash=? AND s.expires_at>?')
@@ -485,6 +488,7 @@ async function routeCompletion(request, env, user) {
     }
     return err('All free models temporarily unavailable', 503);
   }
+  if(user.scope==='app')return err('External app credentials permit free models only',403);
   return proxy(request, env, user);
 }
 export default {
@@ -514,6 +518,7 @@ export default {
           kakao: Boolean(env.KAKAO_CLIENT_ID && env.KAKAO_CLIENT_SECRET),
           naver: Boolean(env.NAVER_CLIENT_ID && env.NAVER_CLIENT_SECRET)
         },
+        app_pairing: true,
         toss_available: Boolean(proPrice(env) && env.TOSS_CLIENT_KEY && env.TOSS_SECRET_KEY)
       });
       const out = new Response(response.body, response);
@@ -524,7 +529,15 @@ export default {
     if (!env.DB || !env.ALLOWED_ORIGIN) return err('Service not configured', 503);
     try {
       let response;
-      if (path === '/v1/auth/email/start' && request.method === 'POST') response = await startEmailLogin(request, env);
+      // App sessions may never enter owner, billing or identity endpoints.
+      const appAllowed=['/v1/me','/v1/models','/v1/chat/completions','/v1/apps/status','/v1/apps/disconnect'];
+      if(isAppRequest(request)&&!appAllowed.includes(path))return json({error:'Owner login required'},403,headers);
+      if(path==='/v1/apps/start'&&request.method==='POST')response=await startApp(request,env);
+      else if(path==='/v1/apps/status'&&request.method==='GET')response=await appStatus(request,env);
+      else if(path==='/v1/apps/disconnect'&&request.method==='POST')response=await disconnectApp(request,env);
+      else if((path==='/v1/apps'&&request.method==='GET')||(['/v1/apps/inspect','/v1/apps/approve','/v1/apps/revoke'].includes(path)&&request.method==='POST'))
+        response=await manageApps(request,env,await account(request,env),path);
+      else if (path === '/v1/auth/email/start' && request.method === 'POST') response = await startEmailLogin(request, env);
       else if (path === '/v1/auth/email/status' && request.method === 'POST') response = await pollEmailLogin(request, env);
       else if (path === '/v1/auth/email/verify' && ['GET','POST'].includes(request.method)) response = await verifyEmailLogin(request, env);
       else if (path === '/v1/auth/google' && request.method === 'POST') response = await login(request, env);
@@ -534,7 +547,7 @@ export default {
         response = await oauthCallback(request,env,path.split('/')[3]);
       else if (path === '/v1/models' && request.method === 'GET') {
         const user = await account(request, env);
-        response = user ? json({ data: [{ id: 'dominion/free-auto', name: 'DOMINION Free Auto', object: 'model', free: true }, ...(await availableModels(env)).map(x => ({ id: x.id, name: x.name || x.id, object: 'model', free: true })), ...paidModels(env).map(x => ({ id: x.id, name: x.name, object: 'model', free: false, provider: x.provider, input_micro_krw: x.input_micro_krw, output_micro_krw: x.output_micro_krw }))] }) : err('Unauthorized', 401);
+        response = user ? json({ data: [{ id: 'dominion/free-auto', name: 'DOMINION Free Auto', object: 'model', free: true }, ...(await availableModels(env)).map(x => ({ id: x.id, name: x.name || x.id, object: 'model', free: true })), ...(user.scope==='app'?[]:paidModels(env)).map(x => ({ id: x.id, name: x.name, object: 'model', free: false, provider: x.provider, input_micro_krw: x.input_micro_krw, output_micro_krw: x.output_micro_krw }))] }) : err('Unauthorized', 401);
       }
       else if (path === '/v1/billing' && request.method === 'GET') {
         const user = await account(request, env);
@@ -566,7 +579,7 @@ export default {
         }
       } else if (path === '/v1/me' && request.method === 'GET') {
         const user = await account(request, env);
-        response = user ? json({ account_id: user.id, credits_micro_krw: user.credits }) : err('Unauthorized', 401);
+        response = user ? json(user.scope==='app'?{account_id:user.id,scope:'free_inference',app_session_id:user.app_session_id}:{account_id: user.id, credits_micro_krw: user.credits}) : err('Unauthorized', 401);
       } else if (path === '/v1/chat/completions' && request.method === 'POST') {
         const user = await account(request, env);
         response = user ? await routeCompletion(request, env, user) : err('Unauthorized', 401);

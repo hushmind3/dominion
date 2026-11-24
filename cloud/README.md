@@ -213,3 +213,6 @@ workflow dispatch and operator-controlled secrets. Production hardening should
 include Turnstile/WAF abuse controls, sender reputation monitoring and a
 live end-to-end verification test. The 2026 Cloudflare send binding reference:
 https://developers.cloudflare.com/email-service/api/send-emails/workers-api/
+
+## External apps (DOMINION Assist / Pickle)
+Use the same Cloud account with separate, revocable credentials. An app generates a random dapp_ bearer and sends only its SHA-256 base64url hash to POST /v1/apps/start with app_name. Display the returned pairing id. The user signs in to DOMINION Cloud, previews and approves that code in External apps. The app polls GET /v1/apps/status with its own token; approval grants seven days of free model inference, sharing the account quota. No billing, paid inference, owner administration, Google credentials, or local engine data are granted. Revoke from the owner UI or POST /v1/apps/disconnect with the app token. Apply the additive cloud/migrations/0001_app_sessions.sql before deploying. Native Google OAuth and email sending still require operator-provisioned settings. Do not copy the owner's bearer or provider API key into external apps.

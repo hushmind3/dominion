@@ -137,3 +137,6 @@ For isolation from local owner APIs, configure `DOMINION_ADMIN_TOKEN` on the
 server. The registered plugin client needs only its own key for its scoped
 endpoints; the server's pre-existing unauthenticated local-owner mode is not
 an operating-system sandbox.
+
+## Shared DOMINION Cloud account (external app)
+The cloud gateway is independent of the local Rust runtime. Import DominionCloudClient from this SDK. In a trusted local backend, call DominionCloudClient.begin('DOMINION Assist'), persist the returned token in your OS credential store, and show only the returned id to the user. They approve the code in DOMINION Cloud > External apps. Construct new DominionCloudClient(token), poll status(), then use me(), models(), complete({model,messages}) or disconnect(). Pairing expires after ten minutes; approved app sessions expire after seven days. Free inference only, shared account quota. No upstream key is distributed. Requires a deployed Worker with app_pairing support; do not embed tokens in static assets.

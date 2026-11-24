@@ -1,5 +1,6 @@
 import {useCallback,useEffect,useRef,useState} from 'react'
 import {CloudEmailLogin} from './CloudEmailLogin'
+import {CloudAppConnections} from './CloudAppConnections'
 import {decodeNativeGoogleFlight,encodeNativeGoogleFlight} from '../utils/cloudAuthFlight'
 import {get,post} from '../api'
 
@@ -375,8 +376,10 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
    const existing=await get<Array<{id:string;baseUrl:string;model:string}>>('/api/providers')
    const match=existing.find(p=>p.baseUrl.replace(/\/$/,'')===cloudUrl+'/v1'&&p.model===selected)
    if(match){
+    await post('/api/providers',{id:match.id,name:'DOMINION Cloud · '+selected,baseUrl:cloudUrl+'/v1',kind:'openai',apiKey:token,model:selected,enabled:true,local:false,toolMode:'compat'})
     setRegistered({providerId:match.id,model:selected,source:'cloud'})
-    setMessage('이미 등록된 모델입니다. 중복 등록하지 않았습니다.')
+    await onProviderAdded()
+    setMessage('기존 모델의 로그인 세션을 갱신했습니다.')
     return
    }
    const saved=await post<{id:string}>('/api/providers',{name:'DOMINION Cloud · '+selected,baseUrl:cloudUrl+'/v1',kind:'openai',apiKey:token,model:selected,enabled:true,local:false,toolMode:'compat'})
@@ -445,6 +448,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
    {!billing?.checkout_enabled&&<p className="mt-2 text-[12px]">운영자 결제 키와 요금 설정 후 테스트 결제를 시작할 수 있습니다.</p>}
   </div>}
   {registered?.source==='cloud'&&<button type="button" onClick={goToRegisteredChat} className="mt-2 rounded-lg bg-[#C96442] px-3 py-2 text-[12px] font-semibold text-white">등록한 모델로 채팅하기</button>}
+  {token&&<CloudAppConnections key={token} cloudUrl={cloudUrl} token={token}/>}
   {token&&<button type="button" className="mt-3 rounded-lg border px-3 py-2 text-[12px]" onClick={logout}>로그아웃</button>}
   </>}
   {managementTab==='providers'&&<div className="mt-4 border-t border-[#E7E0D5] pt-4">
