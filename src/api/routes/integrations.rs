@@ -19,6 +19,7 @@ pub(super) fn router() -> Router<AppState> {
         .route("/api/plugins/search", get(extensions::plugin_search))
         .route("/api/plugins/managed", get(plugins::list).post(plugins::install))
         .route("/api/plugins/voice/install", post(plugins::recipe::install_voice))
+        .route("/api/plugins/package/install", post(plugins::package::install))
         .route("/api/plugins/managed/:id/start", post(plugins::start))
         .route("/api/plugins/managed/:id/stop", post(plugins::stop))
         .route("/api/plugins/managed/:id/logs", get(plugins::logs))

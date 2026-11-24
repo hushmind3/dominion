@@ -11,6 +11,7 @@ use super::response::error;
 pub mod bridge;
 pub mod versions;
 pub mod recipe;
+pub mod package;
 
 const LIMIT:usize=1024*1024;
 const OWNER:&str="io.dominion.plugin.owner";
@@ -232,14 +233,14 @@ pub async fn list(State(state):State<AppState>)->Response{
     let scope=match owner(&state){Ok(s)=>s,Err(e)=>return failed(&e)};
     match inventory(&scope).await{
         Ok(mut items)=>{
-            for row in &mut items { versions::attach(&state,row); }
+            for row in &mut items { versions::attach(&state,row); package::attach(&state,row); }
             Json(json!({"available":true,"items":items})).into_response()
         },
         Err(e)=>Json(json!({"available":false,"items":null,"error":e})).into_response()
     }
 }
 pub async fn install(State(state):State<AppState>,Json(input):Json<Install>)->Response{
-    if input.image==recipe::VOICE_IMAGE{return bad("음성 비서는 전용 설치 버튼을 이용하세요.")}
+    if input.image==recipe::VOICE_IMAGE||package::local_tag(&input.image){return bad("로컬 빌드 프로그램은 전용 설치 버튼을 이용하세요.")}
     if !input.confirmed||!valid_id(&input.id)||!valid_image(&input.image)||input.name.trim().is_empty()
         ||input.name.len()>120||input.name.chars().any(char::is_control)
         ||input.port==Some(0)||input.port.is_some()&&!input.network{

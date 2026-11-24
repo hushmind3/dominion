@@ -1,7 +1,7 @@
 import {useEffect,useRef,useState} from 'react'
 import {Search,ExternalLink,PackagePlus} from 'lucide-react'
 import {get} from '../../api'
-import {ManagedPlugins} from './ManagedPlugins'
+import {ManagedPlugins,type PackageSpec} from './ManagedPlugins'
 import {Button,TextInput} from '../../components/Primitives'
 import {useLocale} from '../../i18n'
 
@@ -11,7 +11,7 @@ type SearchPage={items:Result[];errors:{source:Source;message:string}[];pypiMode
 const sources:{id:Source;label:string}[]=[{id:'all',label:'All'},{id:'github',label:'GitHub'},{id:'npm',label:'npm'},{id:'pypi',label:'PyPI'},{id:'crates',label:'crates.io'},{id:'huggingface',label:'Hugging Face'},{id:'docker',label:'Docker Hub'}]
 export function PluginDiscovery(){
  const en=useLocale()==='en'
- const [image,setImage]=useState('')
+ const [image,setImage]=useState(''),[selectedPackage,setSelectedPackage]=useState<PackageSpec|null>(null)
  const [query,setQuery]=useState(''),[source,setSource]=useState<Source>('all')
  const [page,setPage]=useState<SearchPage|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('')
  const active=useRef<AbortController|null>(null)
@@ -31,7 +31,7 @@ export function PluginDiscovery(){
   finally{if(active.current===controller){active.current=null;setBusy(false)}}
  }
  return <>
- <ManagedPlugins selectedImage={image} onImageConsumed={()=>setImage('')}/>
+ <ManagedPlugins selectedImage={image} onImageConsumed={()=>setImage('')} selectedPackage={selectedPackage} onPackageConsumed={()=>setSelectedPackage(null)}/>
  <section className="mb-6 rounded-xl border border-divider bg-surface p-4">
   <h3 className="flex items-center gap-2 text-[15px] font-bold text-ink"><PackagePlus size={17}/>{en?'Open-source discovery':'외부 확장 프로그램 검색'}</h3>
   <p className="my-2 text-xs text-muted">{en?'Search public registries. Results need compatibility review before installation.':'공개 저장소를 검색합니다. 검색 결과는 설치 전에 DOMINION 호환성을 확인해야 합니다.'}</p>
@@ -55,6 +55,7 @@ export function PluginDiscovery(){
      <p className="text-[11px] text-warning">{en?'Compatibility not verified':'호환성 미검증'}</p>
     </div>
     {r.source==='docker'&&<Button size="sm" variant="secondary" onClick={()=>setImage(r.name+':')}>{en?'Configure install':'설치 설정'}</Button>}
+    {(r.source==='npm'||r.source==='pypi'||r.source==='crates')&&r.version&&<Button size="sm" variant="secondary" onClick={()=>setSelectedPackage({runtime:r.source as PackageSpec['runtime'],package:r.name,version:r.version||'',entry:'',args:[]})}>{en?'Configure package':'패키지 설치 설정'}</Button>}
     <a className="inline-flex items-center gap-1 text-xs text-brand" href={r.url} target="_blank" rel="noopener noreferrer">{en?'Source':'원본'} <ExternalLink size={12}/></a>
    </div>)}</div>
   </div>}

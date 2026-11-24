@@ -1,14 +1,15 @@
 import {useCallback,useEffect,useRef,useState} from 'react'
 import {Box,Play,Square,Trash2,RefreshCw,ExternalLink,FileText,Plus} from 'lucide-react'
 import {get,post,del} from '../../api'
-import {Button,TextInput} from '../../components/Primitives'
+import {Button,TextInput,TextArea,SelectInput} from '../../components/Primitives'
 import {useLocale} from '../../i18n'
 import {PluginBridgePanel} from './PluginBridgePanel'
 
-type Plugin={id:string;name:string;image:string;imageId:string|null;state:string;running:boolean;network:boolean;ports:number[];exitCode:number|null;requestedPort?:number|null;versionChange?:{phase:'prepared'|'ready';previousImage:string;previousImageId:string;targetImage:string}}
+export type PackageSpec={runtime:'npm'|'pypi'|'crates';package:string;version:string;entry:string;args:string[]}
+type Plugin={packageSpec?:PackageSpec;id:string;name:string;image:string;imageId:string|null;state:string;running:boolean;network:boolean;ports:number[];exitCode:number|null;requestedPort?:number|null;versionChange?:{phase:'prepared'|'ready';previousImage:string;previousImageId:string;targetImage:string}}
 type Inventory={available:boolean;items:Plugin[]|null;error?:string}
 type Logs={stdout:string;stderr:string;truncated:boolean}
-export function ManagedPlugins({selectedImage,onImageConsumed}:{selectedImage:string;onImageConsumed:()=>void}){
+export function ManagedPlugins({selectedImage,onImageConsumed,selectedPackage,onPackageConsumed}:{selectedImage:string;onImageConsumed:()=>void;selectedPackage:PackageSpec|null;onPackageConsumed:()=>void}){
  const en=useLocale()==='en',tr=(ko:string,eng:string)=>en?eng:ko
  const [inventory,setInventory]=useState<Inventory|null>(null),[busy,setBusy]=useState(''),[error,setError]=useState(''),[notice,setNotice]=useState('')
  const [show,setShow]=useState(false),[name,setName]=useState(''),[image,setImage]=useState(''),[network,setNetwork]=useState(false),[port,setPort]=useState(''),[approved,setApproved]=useState(false)
@@ -16,6 +17,8 @@ export function ManagedPlugins({selectedImage,onImageConsumed}:{selectedImage:st
  const [restoreId,setRestoreId]=useState('')
  const [updating,setUpdating]=useState<Plugin|null>(null),[newImage,setNewImage]=useState('')
  const voiceRequest=useRef('')
+ const [packageForm,setPackageForm]=useState<PackageSpec|null>(null),[packageArgs,setPackageArgs]=useState(''),[packageNetwork,setPackageNetwork]=useState(false),[packagePort,setPackagePort]=useState(''),[packageApproved,setPackageApproved]=useState(false),[packageRestore,setPackageRestore]=useState('')
+ const packageRequest=useRef(''),packageFingerprint=useRef('')
  const active=useRef(false),requestId=useRef(''),loadVersion=useRef(0),installFingerprint=useRef(''),formRef=useRef<HTMLDivElement>(null)
  const load=useCallback(async()=>{
   const version=++loadVersion.current
@@ -25,6 +28,7 @@ export function ManagedPlugins({selectedImage,onImageConsumed}:{selectedImage:st
  useEffect(()=>{void load();return()=>{loadVersion.current++}},[load])
  useEffect(()=>{if(selectedImage){setRestoreId('');setImage(selectedImage);setName(selectedImage.split('/').pop()?.replace(/:$/,'')||'');setApproved(false);setShow(true);onImageConsumed()}},[selectedImage,onImageConsumed])
  useEffect(()=>{if(show)formRef.current?.scrollIntoView({block:'nearest'})},[show])
+ useEffect(()=>{if(selectedPackage){setPackageForm(selectedPackage);setPackageArgs(selectedPackage.args.join('\n'));setPackageApproved(false);setPackageRestore('');setPackageNetwork(false);setPackagePort('');onPackageConsumed()}},[selectedPackage,onPackageConsumed])
  const execute=async(key:string,task:()=>Promise<void>)=>{
   if(active.current)return
   active.current=true;setBusy(key);setError('');setNotice('')
@@ -45,6 +49,13 @@ export function ManagedPlugins({selectedImage,onImageConsumed}:{selectedImage:st
   await post('/api/plugins/voice/install',{id:voiceRequest.current,confirmed:true});voiceRequest.current=''
   setNotice(tr('음성 비서를 설치했습니다. 실행 후 서비스 열기를 선택하세요.','Voice installed. Start it and open the service.'))
  })
+ const installPackage=()=>{if(!packageForm)return;void execute('package',async()=>{
+  const spec={...packageForm,package:packageForm.package.trim(),version:packageForm.version.trim(),entry:packageForm.entry.trim(),args:packageArgs.split('\n').map(s=>s.trim()).filter(Boolean)}
+  const body={name:spec.package+' ('+spec.runtime+')',spec,network:packageNetwork,port:packageNetwork&&packagePort?Number(packagePort):null}
+  const fingerprint=JSON.stringify({...body,packageRestore});if(!packageRequest.current||packageFingerprint.current!==fingerprint){packageRequest.current=packageRestore||crypto.randomUUID();packageFingerprint.current=fingerprint}
+  await post('/api/plugins/package/install',{id:packageRequest.current,...body,confirmed:packageApproved});packageRequest.current='';setPackageForm(null);setPackageRestore('');setPackageApproved(false);setNotice(tr('패키지 설치 완료. 실행 버튼을 누르세요.','Package installed. Start it when ready.'))
+ })}
+ const openPackage=(spec?:PackageSpec,record?:Plugin)=>{setPackageForm(spec||{runtime:'pypi',package:'',version:'',entry:'',args:[]});setPackageArgs(spec?.args.join('\n')||'');setPackageNetwork(record?.network||false);setPackagePort(record?.requestedPort?String(record.requestedPort):'');setPackageRestore(record?.id||'');setPackageApproved(false)}
  const operate=(p:Plugin,action:'start'|'stop'|'remove'|'logs')=>execute(p.id,async()=>{
   const id=encodeURIComponent(p.id)
   if(action==='logs'){setLogs({name:p.name,data:await get<Logs>('/api/plugins/managed/'+id+'/logs')});return}
@@ -73,7 +84,7 @@ export function ManagedPlugins({selectedImage,onImageConsumed}:{selectedImage:st
   <div className="flex flex-wrap items-center justify-between gap-3">
    <div><h3 className="flex items-center gap-2 text-base font-bold text-ink"><Box size={20}/>{tr('내 플러그인','My plugins')}{rows&&<span className="text-xs text-muted">· {rows.length}</span>}</h3>
     <p className="mt-1 text-xs text-muted">{tr('외부 프로그램을 Docker에서 독립 실행합니다. MCP·스킬과 별도로 관리됩니다.','Run external apps in Docker, independently of MCP and skills.')}</p></div>
-   <div className="flex gap-2"><Button variant="ghost" disabled={!!busy} onClick={()=>void load()}><RefreshCw size={15}/>{tr('새로고침','Refresh')}</Button><Button disabled={disabled} onClick={()=>{setRestoreId('');setShow(!show);setApproved(false)}}><Plus size={16}/>{tr('설치','Install')}</Button></div>
+   <div className="flex gap-2"><Button variant="ghost" disabled={!!busy} onClick={()=>void load()}><RefreshCw size={15}/>{tr('새로고침','Refresh')}</Button><Button disabled={disabled} onClick={()=>{setRestoreId('');setShow(!show);setApproved(false)}}><Plus size={16}/>{tr('설치','Install')}</Button><Button disabled={disabled} variant="secondary" onClick={()=>openPackage()}>{tr('패키지 설치','Install package')}</Button></div>
   </div>
   <div className="my-3 rounded-lg bg-canvas p-3 text-xs">
    {!inventory?tr('Docker 확인 중…','Checking Docker…'):inventory.available?tr('Docker 연결됨 · 설치 후 직접 실행','Docker connected · explicit start'):tr('Docker 연결 필요: ','Docker unavailable: ')+inventory.error}
@@ -91,6 +102,17 @@ export function ManagedPlugins({selectedImage,onImageConsumed}:{selectedImage:st
    <label className="flex items-start gap-2 text-xs"><input type="checkbox" checked={approved} onChange={e=>setApproved(e.target.checked)}/>{tr('이미지 출처와 실행 권한을 확인했습니다.','I reviewed the image source and execution permissions.')}</label>
    <div className="flex flex-wrap gap-2"><Button disabled={disabled||!approved||!name.trim()||!image.trim()||(network&&port!==''&&(!Number.isInteger(Number(port))||Number(port)<1||Number(port)>65535))} onClick={()=>void install()}>{busy==='install'?tr('이미지 받는 중…','Downloading image…'):tr('설치 확인','Install')}</Button><Button variant="ghost" disabled={!!busy} onClick={()=>setShow(false)}>{tr('닫기','Close')}</Button></div>
   </div>}
+  {packageForm&&<div className="mb-4 space-y-3 rounded-xl border border-divider p-3">
+   <strong className="text-sm">{tr('패키지로 독립 프로그램 설치','Install a standalone package')}</strong>
+   <p className="text-xs text-muted">{tr('실행 가능한 CLI 패키지만 지원합니다. Python은 wheel, Node는 설치 스크립트 없는 패키지를 우선합니다. 설치 후 도미니온 SDK 연결은 프로그램이 연결 규격을 지원해야 합니다.','Requires an executable CLI package. Python uses wheels; Node disables install scripts. SDK integration requires the app bridge protocol.')}</p>
+   <label className="block text-xs">{tr('실행 환경','Runtime')}<SelectInput value={packageForm.runtime} onChange={e=>{setPackageForm({...packageForm,runtime:e.target.value as PackageSpec['runtime']});setPackageApproved(false)}}><option value="pypi">Python / PyPI</option><option value="npm">Node.js / npm</option><option value="crates">Rust / crates.io</option></SelectInput></label>
+   {([['package',tr('패키지 이름','Package name')],['version',tr('정확한 버전','Exact version')],['entry',tr('실행 파일 이름 (공식 문서 확인)','Executable name (see package docs)')]] as const).map(([key,label])=><label key={key} className="block text-xs">{label}<TextInput value={packageForm[key]} onChange={e=>{setPackageForm({...packageForm,[key]:e.target.value});setPackageApproved(false)}}/></label>)}
+   <label className="block text-xs">{tr('실행 옵션 (한 줄에 하나, 비밀키 입력 금지)','Arguments (one per line, no secrets)')}<TextArea value={packageArgs} onChange={e=>{setPackageArgs(e.target.value);setPackageApproved(false)}} rows={3}/></label>
+   <label className="flex gap-2 text-xs"><input type="checkbox" checked={packageNetwork} onChange={e=>{setPackageNetwork(e.target.checked);setPackageApproved(false)}}/>{tr('실행 중 네트워크 허용','Allow network at runtime')}</label>
+   {packageNetwork&&<label className="block text-xs">{tr('서비스 포트 (선택)','Service port (optional)')}<TextInput type="number" min={1} max={65535} value={packagePort} onChange={e=>{setPackagePort(e.target.value);setPackageApproved(false)}}/></label>}
+   <label className="flex gap-2 text-xs"><input type="checkbox" checked={packageApproved} onChange={e=>setPackageApproved(e.target.checked)}/>{tr('패키지 출처, 버전, 실행 설정을 검토했고 독립 컨테이너 빌드를 승인합니다.','I reviewed the package source, version and command and approve the isolated build.')}</label>
+   <div className="flex flex-wrap gap-2"><Button disabled={disabled||!packageApproved||!packageForm.package.trim()||!packageForm.version.trim()||!packageForm.entry.trim()||(packageNetwork&&packagePort!==''&&(!Number.isInteger(Number(packagePort))||Number(packagePort)<1||Number(packagePort)>65535))} onClick={installPackage}>{busy==='package'?tr('패키지 빌드 중…','Building package…'):tr('패키지 설치 확인','Confirm package install')}</Button><Button variant="ghost" disabled={!!busy} onClick={()=>setPackageForm(null)}>{tr('닫기','Close')}</Button></div>
+  </div>}
   {updating&&<div className="mb-4 space-y-2 rounded-lg border border-divider p-3">
    <strong className="text-sm">{updating.name} · {tr('버전 변경','Change version')}</strong>
    <p className="break-all text-xs text-muted">{tr('현재 버전','Current version')}: {updating.image}</p>
@@ -102,16 +124,16 @@ export function ManagedPlugins({selectedImage,onImageConsumed}:{selectedImage:st
   {rows?.length===0&&<p className="py-4 text-sm text-muted">{tr('설치된 플러그인이 없습니다. 아래에서 검색하거나 직접 이미지를 설치하세요.','No installed plugins. Search below or install an image directly.')}</p>}
   <div className="grid gap-3 md:grid-cols-2">{rows?.map(p=><article key={p.id} className="min-w-0 rounded-xl border border-divider p-3">
    <div className="flex flex-wrap justify-between gap-2"><strong className="break-all text-sm">{p.name}</strong><span className={p.running?'text-xs text-success':'text-xs text-muted'}>{p.running?tr('실행 중','Running'):p.state==='retained'?tr('데이터 보존됨','Data retained'):p.state==='created'?tr('설치됨','Installed'):p.state==='exited'?tr('중지됨','Stopped')+' · '+p.exitCode:p.state}</span></div>
-   <p className="mt-1 break-all text-xs text-muted">{p.image}</p>
+   <p className="mt-1 break-all text-xs text-muted">{p.packageSpec?p.packageSpec.runtime+' · '+p.packageSpec.package+' @ '+p.packageSpec.version:p.image}</p>
    {p.versionChange&&<p className="mt-1 break-all text-xs text-muted">{tr('복구 가능 이미지','Previous image')}: {p.versionChange.previousImage}</p>}
    <p className="mt-1 text-xs text-muted">{p.network?tr('네트워크 허용','Network allowed'):tr('네트워크 차단','Network off')}</p>
    {p.running&&p.ports.map(port=><a key={port} href={'http://127.0.0.1:'+port} target="_blank" rel="noopener noreferrer" className="mt-1 flex gap-1 text-xs text-brand">{tr('서비스 열기','Open service')} · {port}<ExternalLink size={12}/></a>)}
    <div className="mt-3 flex flex-wrap gap-1.5">
-    {p.versionChange?.phase==='prepared'?<p className="text-xs text-warning">{tr('버전 변경 복구 필요','Version recovery required')}</p>:p.state==='retained'?<Button size="sm" disabled={disabled} onClick={()=>p.image==='dominion-voice:0.1.0'?void installVoice(p.id):restore(p)}><Plus size={14}/>{tr('다시 설치·버전 변경','Reinstall / change version')}</Button>:<>
+    {p.versionChange?.phase==='prepared'?<p className="text-xs text-warning">{tr('버전 변경 복구 필요','Version recovery required')}</p>:p.state==='retained'?<Button size="sm" disabled={disabled} onClick={()=>p.image==='dominion-voice:0.1.0'?void installVoice(p.id):p.packageSpec?openPackage(p.packageSpec,p):restore(p)}><Plus size={14}/>{tr('다시 설치·버전 변경','Reinstall / change version')}</Button>:<>
     <Button size="sm" disabled={disabled} onClick={()=>void operate(p,p.running?'stop':'start')}>{p.running?<Square size={14}/>:<Play size={14}/>} {p.running?tr('중지','Stop'):tr('실행','Start')}</Button>
     <Button size="sm" variant="secondary" disabled={disabled} onClick={()=>void operate(p,'logs')}><FileText size={14}/>{tr('로그','Logs')}</Button>
     <Button size="sm" variant="ghost" disabled={disabled||p.running} onClick={()=>void operate(p,'remove')}><Trash2 size={14}/>{tr('제거','Remove')}</Button>
-    {!p.running&&<Button size="sm" variant="secondary" disabled={disabled||!p.imageId} onClick={()=>{setUpdating(p);setNewImage(p.image)}}>{tr('버전 변경','Change version')}</Button>}
+    {!p.running&&!p.packageSpec&&p.image!=='dominion-voice:0.1.0'&&<Button size="sm" variant="secondary" disabled={disabled||!p.imageId} onClick={()=>{setUpdating(p);setNewImage(p.image)}}>{tr('버전 변경','Change version')}</Button>}
     </>}
     {p.versionChange&&!p.running&&<Button size="sm" variant="secondary" disabled={disabled} onClick={()=>void rollback(p)}>{tr('이전 버전 복구','Restore previous version')}</Button>}
    </div>

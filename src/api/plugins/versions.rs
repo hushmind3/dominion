@@ -63,7 +63,7 @@ fn removal_id(row:&Value)->Result<&str,String>{
     row["containerId"].as_str().filter(|s|container_id(s)).ok_or("Invalid container identity".into())
 }
 pub async fn update(State(state):State<AppState>,Path(id):Path<String>,Json(input):Json<Update>)->Response{
-    if input.image==super::recipe::VOICE_IMAGE{return error(StatusCode::BAD_REQUEST,"음성 비서 전용 설치를 이용하세요.")}
+    if input.image==super::recipe::VOICE_IMAGE||super::package::local_tag(&input.image){return error(StatusCode::BAD_REQUEST,"로컬 빌드 프로그램은 전용 설치를 이용하세요.")}
     if !input.confirmed||!valid_id(&id)||!valid_image(&input.image)||!immutable(&input.expected_image_id){
         return error(StatusCode::BAD_REQUEST,"새 이미지 버전과 현재 버전을 확인하세요.")
     }
