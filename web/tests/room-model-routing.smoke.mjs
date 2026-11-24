@@ -157,6 +157,12 @@ try{
  assert.ok(own.right<=390,'Room bubble must fit mobile: '+JSON.stringify(messageLayout));
  assert.ok(own.fontSize>=15&&reply.fontSize>=15,
   'Room transcript text must remain readable on mobile: '+JSON.stringify(messageLayout));
+ const sharedReply=page.locator('.room-message-agent[data-message]').first()
+ await sharedReply.getByRole('button',{name:'답변 복사',exact:true}).waitFor({state:'visible'})
+ await sharedReply.getByRole('button',{name:'답변 옵션',exact:true}).click()
+ await sharedReply.getByRole('menuitem',{name:'토큰 사용량 보기'}).click()
+ await page.getByRole('dialog',{name:'실행·토큰 상세',exact:true}).waitFor({state:'visible'})
+ await page.getByRole('button',{name:'실행·토큰 상세 닫기'}).click()
  assert.ok(await page.getByText('recorded-model',{exact:true}).first().isVisible(),
   'each saved reply must expose its ACTUAL model, not just the configured route');
  // The configured model remains selectable when /models is not available.

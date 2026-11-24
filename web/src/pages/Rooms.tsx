@@ -4,10 +4,11 @@ import {ExecutionPermissions} from '../components/ExecutionPermissions'
 import {createPortal} from 'react-dom'
 import {useAnchoredPanel} from '../hooks/useAnchoredPanel'
 import {ConversationSidebarHeader} from '../components/chat/ConversationSidebarHeader'
+import {ConversationMessage} from '../components/chat/ConversationMessage'
+import {ConversationInput,DraftAttachments,ConversationUsage} from '../components/chat/ConversationParts'
+import {useConversationCatalog} from '../components/chat/ConversationCatalog'
 import {ConversationRail} from '../components/chat/ConversationRail'
-import {TokenUsage} from '../components/TokenUsage'
 import {MarkdownMessage} from '../components/MarkdownMessage'
-import {AttachmentLink} from '../components/AttachmentLink'
 import {useOwnerProfile} from '../components/OwnerProfile'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
 import {useCallback,useEffect,useMemo,useRef,useState,type ClipboardEvent,type DragEvent,type FormEvent,type SetStateAction} from 'react'
@@ -77,8 +78,7 @@ function Avatar({agent,name,owner=false,size='normal',index=0}:{agent?:Agent;nam
 export function RoomsPage({openSession,openSettings,switchMode,sidebarOpen:showList,setSidebarOpen:setShowList,active:visibleView=true}:{sidebarOpen:boolean;setSidebarOpen:(value:boolean|((previous:boolean)=>boolean))=>void;openSession:(id:string)=>void;openSettings:()=>void;switchMode:(mode:'chat'|'rooms')=>void;active?:boolean}){
  useLocale()
  const rooms=useRemote<RoomConfig[]>('/api/rooms',[],visibleView)
- const agents=useRemote<Agent[]>('/api/agents',[],visibleView)
- const providers=useRemote<Provider[]>('/api/providers',[],visibleView)
+ const {agents,providers}=useConversationCatalog()
  const [selected,setSelected]=useState(()=>{try{return localStorage.getItem('dominion.room.selected')||''}catch{return ''}})
  const [creating,setCreating]=useState<RoomDraft|null>(null)
  const [saving,setSaving]=useState(false),[error,setError]=useState(''),[query,setQuery]=useState('')
@@ -194,8 +194,6 @@ type RoomAttachment={id:string;name:string;size:number;sessionId?:string}
 type RoomSendAttempt={input:string;targets:string[];attachmentIds:string[];id:string;reasoningLanguage:'ko'|'default';reasoningEffort?:string;thinking:boolean}
 type RoomComposerDraft={text:string;targets:string[];attachments:RoomAttachment[];attempt?:RoomSendAttempt}
 const maxRoomAttachmentBytes=8*1024*1024,maxRoomAttachments=8,maxRoomTotalBytes=24*1024*1024
-const formatRoomAttachmentSize=(bytes:number)=>bytes>=1048576
- ?(bytes/1048576).toFixed(1)+' MiB':bytes>=1024?(bytes/1024).toFixed(1)+' KiB':bytes+' B'
 async function encodeRoomFile(file:File):Promise<string>{
  const data=new Uint8Array(await file.arrayBuffer())
  let binary=''
@@ -563,10 +561,7 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
     </details>
    </div>
      {running&&<span className="room-status is-running" role="status"><i/>{t('rooms.st.running')}</span>}
-     <details className="chat-usage-details room-token-details">
-      <summary aria-label={t('chat.cumulativeTokens',{count:usageTotal.toLocaleString()})} title={t('usage.sessionTotal',{count:usageTotal.toLocaleString()})}><Hash size={13}/><span>{t('chat.cumulativeTokens',{count:usageTotal.toLocaleString()})}</span></summary>
-      <div role="note" className="chat-usage-popover"><strong>{current.name}</strong><p>{t('usage.sessionTotal',{count:usageTotal.toLocaleString()})}</p></div>
-     </details>
+     <ConversationUsage total={usageTotal} className="room-token-details"><strong>{current.name}</strong><p>{t('usage.sessionTotal',{count:usageTotal.toLocaleString()})}</p></ConversationUsage>
      <Button variant="ghost" size="icon" className="room-header-more" ref={headerMenu.trigger} aria-label={getLocale()==='en'?'Room actions':'그룹 관리'} title={getLocale()==='en'?'Room actions':'그룹 관리'} aria-haspopup="dialog" aria-expanded={headerMenuOpen} onClick={()=>{setHeaderMenuOpen(value=>!value);setRecipientsOpen(false);setPermissionOpen(false);setShowSettings(false)}}><MoreHorizontal size={20}/></Button>
      {headerMenuOpen&&headerMenu.position&&createPortal(<div ref={headerMenu.panel} style={headerMenu.position} className="room-header-menu" role="dialog" aria-label={getLocale()==='en'?'Room actions':'그룹 관리'}>
        <span className="room-header-usage"><strong>{current.name}</strong>{current.topic&&<span className="room-menu-topic">{current.topic}</span>}</span>
@@ -579,7 +574,7 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
     </div>
    </header>
    <div className="room-scroll" ref={scrollRef} onScroll={onScroll} role="log" aria-label={t('rooms.logAria')} aria-busy={loading}>
-    {loading?<div className="room-feed-loading"><LoaderCircle size={20} className="animate-spin"/> {t('rooms.loading')}</div>:!visible.length?<div className="room-first-message"><div className="room-empty-avatars"><Avatar owner/>{roster.slice(0,3).map((agent,index)=><Avatar key={agent.id} agent={agent} index={index}/>)}</div><h2>{t('rooms.firstTitle')}</h2><p>{t('rooms.firstDesc')}<br/>{t('rooms.firstDesc2')}</p><div><span><AtSign size={14}/> {t('rooms.mentionOne')}</span><span><BookOpenText size={14}/> {t('rooms.roomContinues')}</span></div></div>:<>{visible.map(message=>{const owner=message.role==='user';const shared=message.metadata?.kind==='learning_report'&&(message.metadata?.learningScope==='room'||message.metadata?.source==='knowledge');const agent=shared?undefined:agents.find(item=>item.id===message.agent_id);return <TranscriptMessage key={message.id} message={message} showReasoning={showReasoning} agent={agent} name={shared?t('rooms.sharedKnowledge'):owner?(current.ownerName||t('rooms.me')):(agent?.name||message.agent_id||t('rooms.agentFallback'))} owner={owner} index={Math.max(0,current.agentIds.indexOf(message.agent_id||''))}/>})}</>}
+    {loading?<div className="room-feed-loading"><LoaderCircle size={20} className="animate-spin"/> {t('rooms.loading')}</div>:!visible.length?<div className="room-first-message"><div className="room-empty-avatars"><Avatar owner/>{roster.slice(0,3).map((agent,index)=><Avatar key={agent.id} agent={agent} index={index}/>)}</div><h2>{t('rooms.firstTitle')}</h2><p>{t('rooms.firstDesc')}<br/>{t('rooms.firstDesc2')}</p><div><span><AtSign size={14}/> {t('rooms.mentionOne')}</span><span><BookOpenText size={14}/> {t('rooms.roomContinues')}</span></div></div>:<>{visible.map(message=>{const owner=message.role==='user';const shared=message.metadata?.kind==='learning_report'&&(message.metadata?.learningScope==='room'||message.metadata?.source==='knowledge');const agent=shared?undefined:agents.find(item=>item.id===message.agent_id);return <TranscriptMessage key={message.id} message={message} active={visibleView} showReasoning={showReasoning} agent={agent} name={shared?t('rooms.sharedKnowledge'):owner?(current.ownerName||t('rooms.me')):(agent?.name||message.agent_id||t('rooms.agentFallback'))} owner={owner} index={Math.max(0,current.agentIds.indexOf(message.agent_id||''))}/>})}</>}
     {live&&<div className="room-message room-message-agent room-message-live"><Avatar agent={agents.find(agent=>agent.id===live.agentId)}/><div className="room-message-main"><div className="room-message-byline"><strong>{agents.find(agent=>agent.id===live.agentId)?.name||live.agentId}</strong><span className="room-live-label">{!live.done&&<i/>}{live.error?t('rooms.live.stopped'):live.done?t('rooms.live.saving'):t('rooms.live.responding')}</span></div>{showReasoning&&live.reasoning&&<details className="room-reasoning"><summary>{t('rooms.live.showReasoning')}</summary><pre>{live.reasoning}</pre></details>}{live.text?<MessageBody text={live.text} streaming/>:!live.error&&<span className="room-typing"><i/><i/><i/></span>}{live.tool&&<div className="room-tool-live"><TerminalSquare size={13}/>{t('rooms.live.toolRunning',{tool:live.tool})}</div>}{live.error&&<p className="room-message-error">{translateError(live.error)}</p>}</div></div>}
     {running&&!live&&<div className="room-message room-message-agent room-message-live"><Avatar agent={speaker}/><div className="room-message-main"><div className="room-message-byline"><strong>{speaker?.name||t('rooms.waitingSpeaker')}</strong><span className="room-live-label">{speaker?t('rooms.preparing'):t('rooms.queuedWait')}</span></div>{speaker&&<span className="room-typing"><i/><i/><i/></span>}</div></div>}
     {loadError&&<Notice message={loadError}/>}
@@ -599,10 +594,10 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
      onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node))setDraggingFile(false)}}
      onDrop={handleRoomDrop}>
      {targets.length>0&&<div className="room-target-chips" aria-label={t('rooms.mentionOptions')}>{targets.map(id=><span key={id}>{roster.find(agent=>agent.id===id)?.name||id}<Button variant="bare" disabled={sending||uploading} aria-label={(roster.find(agent=>agent.id===id)?.name||id)+(getLocale()==='en'?' remove recipient':' 대상 제외')} onClick={()=>setTargets(previous=>previous.filter(item=>item!==id))}><X size={13}/></Button></span>)}</div>}
-     {composer.attachments.length>0&&<div className="chat-file-drafts" aria-label="그룹 첨부 대기 파일">{composer.attachments.map(file=><span key={file.id} className="chat-file-chip"><Paperclip size={13}/><span title={file.name}>{file.name}</span><small>{formatRoomAttachmentSize(file.size)}</small><button type="button" aria-label={file.name+' 첨부 취소'} disabled={sending||uploading} onClick={()=>removeRoomAttachment(file.id)}><X size={13}/></button></span>)}</div>}
+     <DraftAttachments files={composer.attachments} label="그룹 첨부 대기 파일" disabled={sending||uploading} onRemove={file=>removeRoomAttachment(file.id!)}/>
      {uploading&&<div className="room-attachment-uploading" role="status"><LoaderCircle size={13} className="animate-spin"/>첨부 파일 업로드 중…</div>}
      <input ref={roomFileInput} type="file" className="sr-only" multiple accept="image/png,image/jpeg,image/webp,image/gif,.txt,.md,.csv,.ts,.tsx,.js,.mjs,.json,.py,.rs,.yaml,.yml,.xml,.html,.css,.log,.sql" aria-label="그룹 첨부 파일 선택" disabled={sending||uploading} onChange={event=>{void attachRoomFiles(event.currentTarget.files);event.currentTarget.value=''}}/>
-     <TextArea ref={inputRef} className="conversation-composer-input" aria-label={t('rooms.messageAria')} placeholder={mode==='mentioned'?t('rooms.mentionPlaceholder'):t('chat.inputPlaceholder')} value={input} onChange={e=>{setInput(e.target.value);e.currentTarget.style.height='auto';e.currentTarget.style.height=Math.min(e.currentTarget.scrollHeight,180)+'px'}} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();void send()}}} onPaste={handleRoomPaste} rows={1} disabled={sending||uploading}/>
+     <ConversationInput ref={inputRef} aria-label={t('rooms.messageAria')} placeholder={mode==='mentioned'?t('rooms.mentionPlaceholder'):t('chat.inputPlaceholder')} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();void send()}}} onPaste={handleRoomPaste} disabled={sending||uploading}/>
      <div className="chat-composer-controls conversation-composer-controls">
       <div className="chat-composer-options conversation-composer-options">
        <Button type="button" variant="ghost" disabled={sending||uploading} className="chat-file-add" title="그룹에 이미지 또는 텍스트 파일 첨부" onClick={()=>roomFileInput.current?.click()}><Paperclip size={15}/><span className="hidden sm:inline">첨부</span></Button>
@@ -635,16 +630,12 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
  </div>
 }
 
-function TranscriptMessage({message,agent,name,owner,index,showReasoning=true}:{showReasoning?:boolean;message:ChatMessage;agent?:Agent;name:string;owner:boolean;index:number}){
+function TranscriptMessage({message,agent,name,owner,index,showReasoning=true,active=true}:{showReasoning?:boolean;active?:boolean;message:ChatMessage;agent?:Agent;name:string;owner:boolean;index:number}){
  useLocale()
- const [copied,setCopied]=useState(false)
- return <article className={'room-message '+(owner?'room-message-owner':'room-message-agent')+(message.metadata?.kind==='learning_report'?' room-message-review':'')}>{!owner&&<Avatar agent={agent} index={index}/>}<div className="room-message-main"><div className="room-message-byline"><strong>{name}</strong>{message.metadata?.kind==='learning_report'?<span className="room-agent-tag">{t(message.metadata?.learningScope==='room'||message.metadata?.source==='knowledge'?'rooms.sharedLearning':'rooms.selfReview')}</span>:owner?<span className="room-author-tag">{t('rooms.authorMe')}</span>:<span className="room-agent-tag">{t('rooms.authorAgent')}</span>}<time>{stamp(message.created_at)}</time>{!owner&&message.metadata?.usage?.model&&<span className="room-message-model" title={t('rooms.routeActual')}>{message.metadata.usage.model}</span>}<TokenUsage usage={message.metadata?.usage} className="room-message-usage"/></div>{showReasoning&&message.reasoning&&<details className="room-reasoning"><summary>{t('rooms.live.showReasoning')}</summary><pre>{message.reasoning}</pre></details>}<MessageBody text={message.content} owner={owner}/>
-   {owner&&Array.isArray(message.metadata?.attachments)&&message.metadata.attachments.length>0&&
-    <div className="chat-saved-attachments">
-     {(message.metadata.attachments as {id:string;name:string;isImage?:boolean}[]).map(file=><AttachmentLink key={file.id} file={file}/>)}
-    </div>}
-   {message.tool_calls?.length?<span className="room-message-tools"><TerminalSquare size={12}/>{t('rooms.toolCallsSummary',{count:message.tool_calls.length})}</span>:null}
-   {!owner&&Boolean(message.content)&&<div className="room-reply-actions"><Button variant="bare" className="room-copy" aria-label={t('rooms.copyAria')} title={t('rooms.copyAria')} onClick={()=>{void navigator.clipboard.writeText(message.content).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),1600)}).catch(()=>setCopied(false))}}>{copied?<Check size={12}/>:<Copy size={12}/>}</Button></div>}</div></article>
+ return <ConversationMessage room message={message} active={active} showReasoning={showReasoning}
+  avatar={<Avatar agent={agent} index={index}/>}
+  byline={<div className="room-message-byline"><strong>{name}</strong>{message.metadata?.kind==='learning_report'?<span className="room-agent-tag">{t(message.metadata?.learningScope==='room'||message.metadata?.source==='knowledge'?'rooms.sharedLearning':'rooms.selfReview')}</span>:owner?<span className="room-author-tag">{t('rooms.authorMe')}</span>:<span className="room-agent-tag">{t('rooms.authorAgent')}</span>}<time>{stamp(message.created_at)}</time>{!owner&&message.metadata?.usage?.model&&<span className="room-message-model" title={t('rooms.routeActual')}>{message.metadata.usage.model}</span>}</div>}
+  extra={message.tool_calls?.length?<span className="room-message-tools"><TerminalSquare size={12}/>{t('rooms.toolCallsSummary',{count:message.tool_calls.length})}</span>:null}/>
 }
 function MessageBody({text,owner=false,streaming=false}:{text:string;owner?:boolean;streaming?:boolean}){
  return <div className="room-message-text">{owner||streaming?text:<MarkdownMessage text={text}/>}</div>

@@ -8,8 +8,8 @@ test('chat keeps live session-wide usage visible in its own compact top-right st
  const chat=source('../src/pages/Chat.tsx')
  const css=source('../src/theme.css')
  assert.match(chat,/chat-usage-bar/)
- assert.match(chat,/chat-usage-details/)
- assert.match(chat,/totalUsedTokens\.toLocaleString\(\)/)
+ assert.match(chat,/ConversationUsage total=\{totalUsedTokens\}/)
+ assert.match(source('../src/components/chat/ConversationParts.tsx'),/chat-usage-details/)
  assert.match(chat,/usageSession===current/)
  assert.match(chat,/Math\.max\(serverUsage,messageUsage\)/)
  assert.ok(chat.includes("'/api/sessions/'+encodeURIComponent(current)+'/usage'"))
@@ -32,7 +32,7 @@ test('empty chat stays uncluttered without deleting AI, agent and file controls'
 })
 
 test('assistant messages expose copy beside a small options menu with on-demand reasoning and token breakdown',()=>{
- const chat=source('../src/pages/Chat.tsx')
+ const chat=source('../src/components/chat/ConversationMessage.tsx')
  const css=source('../src/theme.css')
  assert.match(chat,/aria-label=\{copied\?'답변 복사됨':'답변 복사'\}/)
  assert.match(chat,/aria-label="답변 옵션"/)
@@ -47,4 +47,14 @@ test('assistant messages expose copy beside a small options menu with on-demand 
  assert.doesNotMatch(chat,/chat-turn-copy inline-flex/)
  assert.match(css,/\.chat-turn-action-popover/)
  assert.match(css,/\.chat-turn-detail/)
+})
+
+test('group and private chat reuse the same catalog, composer, message and usage components',()=>{
+ const chat=source('../src/pages/Chat.tsx'),rooms=source('../src/pages/Rooms.tsx')
+ for(const page of [chat,rooms]){
+  for(const part of ['ConversationMessage','ConversationUsage','ConversationInput','DraftAttachments','useConversationCatalog'])assert.ok(page.includes(part),part)
+  assert.doesNotMatch(page,/useRemote<Agent\[\]>\('\/api\/agents'/)
+  assert.doesNotMatch(page,/useRemote<Provider\[\]>\('\/api\/providers'/)
+ }
+ assert.match(source('../src/App.tsx'),/ConversationCatalogProvider/)
 })

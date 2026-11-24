@@ -2,6 +2,7 @@ import {DialogBackdrop} from './components/Dialog'
 import {Button} from './components/Primitives'
 import { ContextMenu } from './components/ContextMenu'
 import {OwnerProfileProvider} from './components/OwnerProfile'
+import {ConversationCatalogProvider} from './components/chat/ConversationCatalog'
 import {Component,lazy,Suspense,useCallback,useEffect,useLayoutEffect,useState,type ReactNode} from 'react'
 import {get} from './api'
 import {t} from './i18n'
@@ -239,7 +240,7 @@ export default function App(){
  },[navigate])
  return <OwnerProfileProvider><div className="h-dvh overflow-hidden bg-[#FFFDF9] font-sans text-[#24211D]">
   <ContextMenu/>
-  <main inert={settingsOpen} className="h-dvh min-w-0">
+  <ConversationCatalogProvider><main inert={settingsOpen} className="h-dvh min-w-0">
    {visited.chat&&<div hidden={mode!=='chat'} className="h-full page-chat"><PageLoadBoundary><Suspense fallback={<div role="status" className="p-8 text-sm text-[#7C7469]">대화 불러오는 중…</div>}>
     <ChatPage key={chatDraft} sidebarOpen={conversationSidebar} setSidebarOpen={setConversationSidebar} active={mode==='chat'&&!settingsOpen} sessionId={chatRoute.session} initialAgent={chatRoute.agent} initialProvider={chatRoute.provider} initialModel={chatRoute.model} onSession={id=>{
      setChatRoute(previous=>({...previous,session:id}))
@@ -248,7 +249,7 @@ export default function App(){
    </Suspense></PageLoadBoundary></div>}
    {visited.rooms&&<div hidden={mode!=='rooms'} className="h-full page-rooms"><PageLoadBoundary><Suspense fallback={<div role="status" className="p-8 text-sm text-[#7C7469]">대화 불러오는 중…</div>}><RoomsPage sidebarOpen={conversationSidebar} setSidebarOpen={setConversationSidebar} active={mode==='rooms'&&!settingsOpen} openSession={id=>navigate('chat',id)} openSettings={()=>navigate('settings')} switchMode={switchMode}/></Suspense></PageLoadBoundary></div>}
 
-  </main>
+  </main></ConversationCatalogProvider>
   {settingsOpen&&<DialogBackdrop onDismiss={closeSettings}><div role="dialog" aria-modal="true" aria-label="설정" className="workspace-settings workspace-responsive-settings relative h-[calc(100dvh-40px)] w-full max-w-[1440px] overflow-hidden rounded-2xl border border-[#E7E0D5] bg-[#FFFDF9] shadow-2xl">
    {settingsNav&&<Button variant="bare" type="button" className="workspace-responsive-scrim"
     aria-label={t('shell.menuClose')} onClick={toggleSettingsNav}/>}

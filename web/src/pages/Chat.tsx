@@ -2,11 +2,9 @@ import {ConversationSettings} from '../components/ConversationSettings'
 import {ExecutionPermissions} from '../components/ExecutionPermissions'
 import {TeamRunStrip} from '../components/TeamActivity'
 import {ConversationSidebarHeader} from '../components/chat/ConversationSidebarHeader'
-import {ExecutionTokenDetails} from '../components/chat/ExecutionTokenDetails'
-import {useAnchoredPanel} from '../hooks/useAnchoredPanel'
-import {createPortal} from 'react-dom'
-import {MarkdownMessage} from '../components/MarkdownMessage'
-import {AttachmentLink} from '../components/AttachmentLink'
+import {ConversationMessage} from '../components/chat/ConversationMessage'
+import {ConversationInput,DraftAttachments,ConversationUsage} from '../components/chat/ConversationParts'
+import {useConversationCatalog} from '../components/chat/ConversationCatalog'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
 import {FormEvent,useEffect,useMemo,useRef,useState,type ClipboardEvent,type DragEvent,type KeyboardEvent} from 'react'
 import {ArrowRight,ArrowUp,BrainCircuit,Check,ChevronRight,CircleHelp,Clock3,Code2,Command,Compass,Copy,CornerDownLeft,Menu,Settings,List,LoaderCircle,MessageCircle,Hash,PanelLeftClose,MoreHorizontal,Globe2,Paperclip,Plus,Search,ShieldAlert,ShieldCheck,Sparkles,Square,TerminalSquare,Trash2,X} from 'lucide-react'
@@ -77,14 +75,10 @@ function storeChatDraft(scope:string,text:string){
   else sessionStorage.removeItem(chatDraftPrefix+scope)
  }catch{/* Private mode or quota may reject browser storage. */}
 }
-const formatDraftBytes=(bytes:number)=>bytes>=1048576
- ?(bytes/1048576).toFixed(1)+' MiB'
- :bytes>=1024?(bytes/1024).toFixed(1)+' KiB':bytes+' B'
 export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,onSession,openModels,openSettings,switchMode,sidebarOpen:showHistory,setSidebarOpen:setShowHistory,active=true}:{sidebarOpen:boolean;setSidebarOpen:(value:boolean|((previous:boolean)=>boolean))=>void;sessionId?:string;initialAgent?:string;initialProvider?:string;initialModel?:string;onSession:(x:string|undefined)=>void;openModels:()=>void;openSettings:()=>void;switchMode:(mode:'chat'|'rooms')=>void;active?:boolean}){
  const loc=useLocale()
  const sessions=useRemote<ChatSession[]>('/api/sessions',[],active);
- const agents=useRemote<Agent[]>('/api/agents',[],active);
- const providers=useRemote<Provider[]>('/api/providers',[],active);
+ const {agents,providers}=useConversationCatalog()
  const current=sessionId;
  const selectedSession=sessions.value.find(session=>session.id===current);
  const transcript=useRemote<ChatMessage[]>(current?'/api/sessions/'+encodeURIComponent(current)+'/messages':null,[],active);
@@ -654,18 +648,14 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    <div className="chat-usage-bar conversation-topbar">
     <Button variant="ghost" size="icon" className="conversation-mobile-toggle" aria-label={showHistory?t('chat.listCollapse'):t('chat.listExpand')} aria-controls="conversation-sidebar" aria-expanded={showHistory} onClick={()=>setShowHistory(value=>!value)}><Menu size={18}/></Button>
     <span className="conversation-topbar-spacer"/>
-    <details className="chat-usage-details">
-     <summary aria-label={t('chat.cumulativeTokens',{count:totalUsedTokens.toLocaleString()})}
-      title="누적 토큰 상세 보기"><Hash size={13}/><span>{t('chat.cumulativeTokens',{count:totalUsedTokens.toLocaleString()})}</span></summary>
-     <div role="note" className="chat-usage-popover">{usageDetails}</div>
-    </details>
+    <ConversationUsage total={totalUsedTokens}>{usageDetails}</ConversationUsage>
    </div>
    <div ref={scrollRef} onScroll={onScroll} data-chat-scroll className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{current&&transcript.loading&&!messages.length?<div className="flex min-h-full items-center justify-center p-6 text-sm text-[#8A8176]">{t('chat.transcriptLoading')}</div>:current&&transcript.error&&!messages.length?<div role="status" className="flex min-h-full items-center justify-center p-6 text-sm text-[#8A8176]">{t('chat.transcriptUnavailable')}</div>:!messages.length&&!(busy&&viewingTurn)?<div className="chat-welcome mx-auto flex min-h-full w-full max-w-[900px] flex-col items-center justify-center px-5 py-12 text-center">
     <div className="chat-welcome-mark"><MessageCircle size={30} strokeWidth={1.8}/></div>
     <h1 className="chat-welcome-title">{t('chat.newChatHeading')}</h1>
     <p className="chat-welcome-desc">{t('chat.newChatDesc')}</p>
     {!model&&<Button type="button" variant="ghost" onClick={openModels} className="chat-welcome-connect"><Compass size={15}/>{t('chat.connectFirst')}<ArrowRight size={14}/></Button>}
-   </div>:<div className="chat-transcript mx-auto flex min-h-full w-full max-w-[860px] flex-col gap-6 px-6 py-7">{messages.filter(m=>m.role!=='tool').map(m=><Message key={m.id} message={m} agentName={agents.value.find(a=>a.id===m.agent_id)?.name} showReasoning={showReasoning} />)}{viewingTurn&&(live||thought||busy)&&<div className="chat-turn chat-turn-assistant chat-turn-live"><div className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#F3EEE5] text-[#4A443C] ai"><Sparkles size={17}/></div><div className="chat-turn-body"><div className="mb-2 flex items-center gap-2 text-xs font-bold text-[#4A443C]">DOMINION <span>{t('ui.label.live')}</span>{busy&&thought&&!showReasoning&&<span className="inline-flex items-center gap-1 rounded bg-[#F3EEE5] px-1.5 py-0.5 text-[10px] font-medium text-[#7C7469]"><BrainCircuit size={11}/> {t('chat.thinkingNow')}</span>}</div>{showReasoning&&thought&&<details className="mb-3 max-h-56 overflow-y-auto rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-[11px] leading-5 text-[#7C7469]" open={thinking}><summary className="cursor-pointer select-none" onClick={e=>{e.preventDefault();setThinking(x=>!x)}}><BrainCircuit size={14} className="inline"/> {t('chat.reasoningProcess',{count:thought.length.toLocaleString()} )} <ChevronRight size={13} className="inline"/></summary><div className="mt-2 whitespace-pre-wrap">{thought}</div></details>}{live&&<div className="chat-turn-text">{live}</div>}{busy&&!live&&<div className="flex items-center gap-2 text-xs text-[#9C9388]"><i/><i/><i/></div>}</div></div>}{viewingTurn&&toolStatus&&<div className="inline-flex items-center gap-2 rounded-lg bg-[#FAF7F1] px-3 py-1.5 text-xs text-[#7C7469]"><TerminalSquare size={15}/>{toolStatus}</div>}</div>}</div>
+   </div>:<div className="chat-transcript mx-auto flex min-h-full w-full max-w-[860px] flex-col gap-6 px-6 py-7">{messages.filter(m=>m.role!=='tool').map(m=><ConversationMessage key={m.id} message={m} agentName={agents.value.find(a=>a.id===m.agent_id)?.name} showReasoning={showReasoning} active={active}/>)}{viewingTurn&&(live||thought||busy)&&<div className="chat-turn chat-turn-assistant chat-turn-live"><div className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#F3EEE5] text-[#4A443C] ai"><Sparkles size={17}/></div><div className="chat-turn-body"><div className="mb-2 flex items-center gap-2 text-xs font-bold text-[#4A443C]">DOMINION <span>{t('ui.label.live')}</span>{busy&&thought&&!showReasoning&&<span className="inline-flex items-center gap-1 rounded bg-[#F3EEE5] px-1.5 py-0.5 text-[10px] font-medium text-[#7C7469]"><BrainCircuit size={11}/> {t('chat.thinkingNow')}</span>}</div>{showReasoning&&thought&&<details className="mb-3 max-h-56 overflow-y-auto rounded-xl border border-[#E7E0D5] bg-[#FAF7F1] p-3 text-[11px] leading-5 text-[#7C7469]" open={thinking}><summary className="cursor-pointer select-none" onClick={e=>{e.preventDefault();setThinking(x=>!x)}}><BrainCircuit size={14} className="inline"/> {t('chat.reasoningProcess',{count:thought.length.toLocaleString()} )} <ChevronRight size={13} className="inline"/></summary><div className="mt-2 whitespace-pre-wrap">{thought}</div></details>}{live&&<div className="chat-turn-text">{live}</div>}{busy&&!live&&<div className="flex items-center gap-2 text-xs text-[#9C9388]"><i/><i/><i/></div>}</div></div>}{viewingTurn&&toolStatus&&<div className="inline-flex items-center gap-2 rounded-lg bg-[#FAF7F1] px-3 py-1.5 text-xs text-[#7C7469]"><TerminalSquare size={15}/>{toolStatus}</div>}</div>}</div>
    <div className="conversation-composer-wrap sticky bottom-0 z-10"><div className="mx-auto w-full max-w-[860px]">{approval&&<div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"><div><ShieldAlert size={20}/><span><strong>{t('chat.approval')}</strong><small>{approval.tool} · {JSON.stringify(approval.args??{}).slice(0,150)}</small></span></div><div><Action variant="secondary" disabled={approvalBusy} onClick={()=>approve(false)}>{t('chat.deny')}</Action><Action disabled={approvalBusy} onClick={()=>approve(true)}><Check size={15}/> {t('chat.approve')}</Action></div></div>}
     <Notice message={agents.error||providers.error||approvals.error}/>
     {(error||transcript.error||job.error)&&<div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"><CircleHelp size={16}/>{error||transcript.error||translateError(job.error||'')}<Button onClick={()=>setError('')}><X size={14}/></Button></div>}
@@ -683,9 +673,9 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
       <Button type="button" className="chat-execution-mode-option" aria-pressed={executionMode==='agent'} disabled={busy} onClick={()=>setExecutionMode('agent')}><TerminalSquare size={14}/> 에이전트 실행</Button>
       <span className="chat-execution-mode-hint">{executionMode==='chat'?(webSearchEnabled?'공개 웹 검색만 허용':'도구 사용 없이 모델과 대화'):'파일·도구·MCP 작업 가능'}</span>
      </div>
-     {draftFiles.length>0&&<div className="chat-file-drafts" aria-label="첨부 대기 파일">{draftFiles.map((file,i)=><span key={i} className="chat-file-chip"><Paperclip size={13}/><span title={file.name}>{file.name}</span><small>{formatDraftBytes(file.size)}</small><button type="button" aria-label={file.name+' 첨부 취소'} disabled={busy} onClick={()=>removeFile(i)}><X size={13}/></button></span>)}</div>}
+     <DraftAttachments files={draftFiles} disabled={busy} onRemove={(_,index)=>removeFile(index)}/>
      <input ref={fileInputRef} type="file" className="sr-only" multiple accept="image/png,image/jpeg,image/webp,image/gif,.txt,.md,.csv,.ts,.tsx,.js,.mjs,.json,.py,.rs,.yaml,.yml,.xml,.html,.css,.log,.sql" aria-label="첨부 파일 선택" disabled={busy} onChange={e=>{addFiles(e.currentTarget.files);e.currentTarget.value=''}}/>
-     <TextArea ref={inputRef} rows={1} placeholder={t("chat.inputPlaceholder")} value={input} onChange={e=>{const next=e.target.value;setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n'));setSlashActive(0);const el=e.currentTarget;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,180)+'px'}} onKeyDown={appendKey} onPaste={handleClipboardFiles} aria-controls="dominion-slash-menu" aria-expanded={slashOpen} className="conversation-composer-input"/>
+     <ConversationInput ref={inputRef} placeholder={t("chat.inputPlaceholder")} value={input} onChange={e=>{const next=e.target.value;setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n'));setSlashActive(0)}} onKeyDown={appendKey} onPaste={handleClipboardFiles} aria-controls="dominion-slash-menu" aria-expanded={slashOpen}/>
      <div className="chat-composer-controls conversation-composer-controls">
       <div className="chat-composer-options conversation-composer-options">
        <ConversationTargetPicker active={active} disabled={busy}
@@ -714,89 +704,5 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     </form></div>
    </div></div>
   </div>
- </div>
-}
-function Message({message,agentName,showReasoning}:{message:ChatMessage;agentName?:string;showReasoning?:boolean}){
- const [detail,setDetail]=useState<'reasoning'|'usage'|null>(null)
- const [menuOpen,setMenuOpen]=useState(false)
- const [copied,setCopied]=useState(false)
- const menuRef=useRef<HTMLDivElement>(null)
- const tokenPanel=useAnchoredPanel(detail==='usage',()=>setDetail(null),420,'top')
- const human=message.role==='user'
- const usage=message.metadata?.usage
- const executionId=typeof message.metadata?.executionId==='string'?message.metadata.executionId:undefined
- const canShowReasoning=Boolean(showReasoning&&message.reasoning)
- const canShowUsage=Boolean(usage?.totalTokens||executionId)
- const attached=(Array.isArray(message.metadata?.attachments)?message.metadata.attachments:[]) as {id:string;name:string;size?:number;isImage?:boolean}[]
- const sources=Array.isArray(message.metadata?.sources)
-  ?message.metadata.sources.filter(source=>typeof source.title==='string'
-   &&typeof source.url==='string'&&/^https?:\/\//i.test(source.url)).slice(0,8):[]
- useEffect(()=>{
-  if(!menuOpen)return
-  const outside=(event:PointerEvent)=>{
-   if(menuRef.current&&!menuRef.current.contains(event.target as Node))setMenuOpen(false)
-  }
-  const escape=(event:globalThis.KeyboardEvent)=>{
-   if(event.key==='Escape')setMenuOpen(false)
-  }
-  document.addEventListener('pointerdown',outside)
-  document.addEventListener('keydown',escape)
-  return()=>{
-   document.removeEventListener('pointerdown',outside)
-   document.removeEventListener('keydown',escape)
-  }
- },[menuOpen])
- const toggleDetail=(next:'reasoning'|'usage')=>{
-  setDetail(current=>current===next?null:next)
-  setMenuOpen(false)
- }
- const copyAnswer=async()=>{
-  try{await navigator.clipboard.writeText(message.content||'');setCopied(true)}
-  catch{setCopied(false)}
- }
- return <div className={'chat-turn '+(human?'chat-turn-owner':'chat-turn-assistant')} data-message data-role={message.role}>
-  {!human&&<div className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#F3EEE5] text-[#72685E]"><Sparkles size={17}/></div>}
-  <div className="chat-turn-body">
-   {!human&&<div className="chat-turn-byline">{agentName||'DOMINION'}</div>}
-   {(message.content||!human)&&<div className="chat-turn-text">{human?message.content:<MarkdownMessage text={message.content||(!human&&message.tool_calls?.length?t('chat.toolRequest'):'')}/>}</div>}
-   {human&&attached.length>0&&<div className="chat-saved-attachments">{attached.map(file=><AttachmentLink key={file.id} file={file}/>)}</div>}
-   {!human&&sources.length>0&&<details className="chat-web-sources" aria-label="웹 검색 결과">
-    <summary>웹 검색 결과 {sources.length}개</summary>
-    <div>{sources.map((source,i)=><a key={source.url} href={source.url} target="_blank" rel="noopener noreferrer">
-     <span className="chat-web-source-number">{i+1}</span>
-     <span className="chat-web-source-title">{source.title}</span>
-     {source.published&&<small>{source.published}</small>}
-    </a>)}</div>
-   </details>}
-   {!human&&detail==='reasoning'&&canShowReasoning&&<section className="chat-turn-detail" aria-label="추론 정보">
-    <div className="chat-turn-detail-heading"><BrainCircuit size={14}/> 추론 정보 <Button variant="bare" type="button" onClick={()=>setDetail(null)} aria-label="추론 정보 접기"><X size={14}/></Button></div>
-    <div className="max-h-56 overflow-auto whitespace-pre-wrap">{message.reasoning}</div>
-   </section>}
-
-   {!human&&Boolean(message.content)&&<div className="chat-turn-actions" role="group" aria-label="답변 작업">
-    <Button type="button" variant="bare" className="chat-turn-action" onClick={()=>void copyAnswer()}
-     aria-label={copied?'답변 복사됨':'답변 복사'} title={copied?'복사됨':t('chat.copy')}>
-     {copied?<Check size={15}/>:<Copy size={15}/>}<span>{copied?'복사됨':'복사'}</span>
-    </Button>
-    {(canShowReasoning||canShowUsage)&&<div className="chat-turn-action-menu" ref={menuRef}>
-     <Button ref={tokenPanel.trigger} type="button" variant="bare" className="chat-turn-action" aria-label="답변 옵션"
-      aria-haspopup="menu" aria-expanded={menuOpen} title="추론·토큰 상세" onClick={()=>setMenuOpen(value=>!value)}>
-      <MoreHorizontal size={17}/>
-     </Button>
-     {menuOpen&&<div className="chat-turn-action-popover" role="menu" aria-label="답변 상세 옵션">
-      {canShowReasoning&&<button type="button" role="menuitem" onClick={()=>toggleDetail('reasoning')}><BrainCircuit size={14}/>{detail==='reasoning'?'추론 정보 접기':'추론 정보 보기'}</button>}
-      {canShowUsage&&<button type="button" role="menuitem" onClick={()=>toggleDetail('usage')}><Hash size={14}/>{detail==='usage'?'토큰 상세 접기':'토큰 사용량 보기'}</button>}
-     </div>}
-    </div>}
-   </div>}
-  </div>
-  {!human&&detail==='usage'&&canShowUsage&&tokenPanel.position&&createPortal(
-   <div ref={tokenPanel.panel} style={tokenPanel.position} role="dialog" tabIndex={-1}
-    aria-label="실행·토큰 상세" className="chat-token-detail-popover">
-    <div className="chat-token-detail-title"><strong>실행·토큰 상세</strong>
-     <button type="button" onClick={()=>setDetail(null)} aria-label="실행·토큰 상세 닫기"><X size={15}/></button>
-    </div>
-    <ExecutionTokenDetails executionId={executionId} usage={usage} createdAt={message.created_at}/>
-   </div>,document.body)}
  </div>
 }
