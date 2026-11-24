@@ -328,9 +328,9 @@ fn retry_identity(input:&Start)->Result<Option<(String,String)>,String>{
     Ok(Some((key.to_owned(),format!("{:x}",Sha256::digest(body.to_string().as_bytes())))))
 }
 fn earlier_run(state:&AppState,key:&str,fingerprint:&str)->Option<Response>{
-    earlier_run_view(state,key,fingerprint,false)
+    earlier_run_view(state,key,fingerprint,None)
 }
-fn earlier_run_view(state:&AppState,key:&str,fingerprint:&str,scoped:bool)->Option<Response>{
+fn earlier_run_view(state:&AppState,key:&str,fingerprint:&str,scope:Option<&(String,Value)>)->Option<Response>{
     let claim=state.store.get("sdk_start_claim",key)?;
     if claim["fingerprint"]!=fingerprint{
         return Some(error(StatusCode::CONFLICT,"다른 요청에 사용한 idempotencyKey입니다."));
@@ -339,7 +339,23 @@ fn earlier_run_view(state:&AppState,key:&str,fingerprint:&str,scoped:bool)->Opti
         return Some(error(StatusCode::CONFLICT,"기존 요청 기록이 불완전합니다."));
     };
     Some(match state.store.get("sdk_run",run_id){
-        Some(run)=>Json(if scoped{scoped_view(state,run)}else{public_view(state,run)}).into_response(),
+        Some(run)=>{
+            // Retry receipts are not authorization. Verify the original run's
+            // delegated identity before returning even the restricted view.
+            let delegated=run["extension"]["capability"]=="isolated_chat";
+            let matches_scope=match scope {
+                Some((id,generation))=>delegated
+                    && run["extension"]["id"].as_str()==Some(id.as_str())
+                    && generation.as_str().is_some_and(|g|!g.is_empty())
+                    && &run["extension"]["credentialGeneration"]==generation,
+                None=>!delegated,
+            };
+            if !matches_scope {
+                error(StatusCode::CONFLICT,"SDK retry receipt belongs to a different execution scope")
+            }else{
+                Json(if scope.is_some(){scoped_view(state,run)}else{public_view(state,run)}).into_response()
+            }
+        },
         None=>error(StatusCode::CONFLICT,"기존 SDK 작업이 누락됐습니다. 중복 실행하지 않습니다.")
     })
 }
@@ -381,11 +397,13 @@ pub(crate) fn start_scoped(state:AppState,registration:dominion_extensions::Regi
 fn hex_digest(value:&str)->String{format!("{:x}",Sha256::digest(value.as_bytes()))}
 fn start_impl(state:AppState,input:Start,scoped:Option<(dominion_extensions::Registration,Value)>)->Response{
     let is_scoped=scoped.is_some();
+    let replay_scope=scoped.as_ref().map(|(registration,grant)|
+        (registration.id.clone(),grant["generation"].clone()));
     let retry=match retry_identity(&input){
         Ok(value)=>value,Err(message)=>return error(StatusCode::BAD_REQUEST,&message),
     };
     if let Some((key,fingerprint))=&retry{
-        if let Some(response)=earlier_run_view(&state,key,fingerprint,is_scoped){return response;}
+        if let Some(response)=earlier_run_view(&state,key,fingerprint,replay_scope.as_ref()){return response;}
     }
     // The reserved extension source participates in lifecycle admission.
     // Generic owner SDK calls remain compatible; provenance is not a sandbox.
@@ -426,7 +444,7 @@ fn start_impl(state:AppState,input:Start,scoped:Option<(dominion_extensions::Reg
         match claim_run_extra(&state,key,fingerprint,&session_row,&record,extra){
             Ok(())=>record.clone(),
             Err(message) if message=="already_claimed"=>{
-                return earlier_run_view(&state,key,fingerprint,is_scoped).unwrap_or_else(||
+                return earlier_run_view(&state,key,fingerprint,replay_scope.as_ref()).unwrap_or_else(||
                     error(StatusCode::CONFLICT,"기존 SDK 요청 기록을 찾을 수 없습니다."));
             },
             Err(message)=>{
@@ -719,6 +737,27 @@ mod view_tests{
         assert_eq!(state.store.count_kind("sdk_run"),1);
         assert_eq!(state.store.count_kind("session"),1);
         assert_eq!(earlier_run(&state,"key1","different").unwrap().status(),StatusCode::CONFLICT);
+        let _=std::fs::remove_dir_all(&state.config.data_dir);
+    }
+    #[test]
+    fn retry_receipt_cannot_cross_owner_or_extension_generation(){
+        let state=fixture();
+        let scope=("example.app".to_string(),json!("generation-one"));
+        let owner=json!({"id":"owner-run","sessionId":"owner-session","status":"queued"});
+        let delegated=json!({"id":"scoped-run","sessionId":"scoped-session","status":"queued",
+            "extension":{"id":"example.app","credentialGeneration":"generation-one","capability":"isolated_chat"}});
+        claim_run(&state,"owner-key","digest",&json!({"id":"owner-session"}),&owner).unwrap();
+        claim_run(&state,"scoped-key","digest",&json!({"id":"scoped-session"}),&delegated).unwrap();
+        assert_eq!(earlier_run_view(&state,"owner-key","digest",Some(&scope)).unwrap().status(),StatusCode::CONFLICT);
+        assert_eq!(earlier_run(&state,"scoped-key","digest").unwrap().status(),StatusCode::CONFLICT);
+        for wrong in [("other.app".to_string(),json!("generation-one")),
+            ("example.app".to_string(),json!("generation-two")),
+            ("example.app".to_string(),Value::Null)]{
+            assert_eq!(earlier_run_view(&state,"scoped-key","digest",Some(&wrong)).unwrap().status(),StatusCode::CONFLICT);
+        }
+        assert_eq!(earlier_run_view(&state,"scoped-key","digest",Some(&scope)).unwrap().status(),StatusCode::OK);
+        assert_eq!(earlier_run(&state,"owner-key","digest").unwrap().status(),StatusCode::OK);
+        assert_eq!(state.store.count_kind("sdk_run"),2);
         let _=std::fs::remove_dir_all(&state.config.data_dir);
     }
     #[test]
