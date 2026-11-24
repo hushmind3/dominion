@@ -72,6 +72,10 @@ type RegistryItem = {
   url?: string;
   packageName?: string;
   transport?: string;
+  command?: string;
+  args?: string[];
+  installable?: boolean;
+  manualSetup?: boolean;
 };
 const featured = [
   {
@@ -434,31 +438,36 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
     [skillEdit, setSkillEdit] = useState<Partial<Skill> | null>(null),
     [tools, setTools] = useState<any[]>([]);
   const install = async (entry: any) => {
-    if (
-      !confirm(
-        t('ext.confirmRegister'),
-      )
-    )
-      return;
-    setError("");
-    setMessage("");
+    if (installing || entry.installable === false) return;
+    const transport = entry.transport || "stdio";
+    const payload = {
+      name: entry.name, transport,
+      url: transport === "http" ? entry.endpoint || entry.url || "" : "",
+      command: transport === "stdio" ? entry.command || "npx" : "",
+      args: transport === "stdio" ? entry.args || [] : [],
+      approval: true, enabled: true,
+    };
+    if (transport === "http" ? !payload.url : !payload.command || !payload.args.length) {
+      setError(t('ext.manualSetup')); return;
+    }
+    const launch = transport === "http" ? payload.url : JSON.stringify([payload.command,...payload.args]);
+    if (!confirm(t('ext.confirmRegister')+"\n\n"+entry.name+"\n"+launch)) return;
+    setInstalling(entry.name);
+    setError(""); setMessage("");
     try {
-      const payload = {
-        name: entry.name,
-        transport: entry.transport || "stdio",
-        url: entry.endpoint || entry.url || "",
-        command: entry.command || "npx",
-        args:
-          entry.args || (entry.packageName ? ["-y", entry.packageName] : []),
-      };
-      await post("/api/mcp", payload);
-      mcp.reload();
-      setMessage(
-        t('ext.registeredHint'),
-      );
+      const saved=await post<any>("/api/mcp", payload);
+      await mcp.reload();
+      setMessage(t('ext.registeredHint'));
+      const found=await get<any[]>("/api/mcp/discover");
+      setTools(found);
+      const own=found.filter(tool=>tool.mcpId===saved.id);
+      const connected=own.filter(tool=>!tool.error && tool.status!=="empty").length;
+      if(connected) setMessage(t('ext.connectedToolsMsg',{name:entry.name,count:connected}));
+      else if(own.some(tool=>tool.status==="empty")) setMessage(t('ext.noTools'));
+      else if(own.some(tool=>tool.error)) setError(t('ext.connectionFailed'));
     } catch (e) {
       setError((e as Error).message);
-    }
+    } finally { setInstalling(""); }
   };
   const installPreset = async (preset: any) => {
     if (installing) return;
@@ -479,7 +488,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
       for (let attempt = 0; attempt < 30; attempt++) {
         const found = await get<any[]>("/api/mcp/discover");
         setTools(found);
-        const own = found.filter((t) => t.mcpId === saved.id && !t.error);
+        const own = found.filter((t) => t.mcpId === saved.id && !t.error && t.status!=="empty");
         if (own.length) {
           setMessage(
             t('ext.connectedToolsMsg', { name: preset.name, count: own.length }),
@@ -652,7 +661,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
         <StatusLine label={t('ext.tab.servers')} value={mcp.loading||mcp.error?'—':mcp.value.length} />
         <StatusLine
           label={t('ext.tab.tools')}
-          value={tools.filter((t) => !t.error).length}
+          value={tools.filter((t) => !t.error && t.status!=="empty").length}
         />
         <StatusLine
           label={t('ext.tab.skills')}
@@ -748,7 +757,9 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                     <p>{x.description || "MCP server"}</p>
                     <small>{x.packageName || x.url || t('ext.noInstallInfo')}</small>
                   </div>
-                  {(x.packageName || x.url) &&
+                  {x.installable===false && !mcp.value.some(r=>r.name===x.name) &&
+                    <small className="text-amber-700">{t('ext.manualSetup')}</small>}
+                  {(x.packageName || x.url || mcp.value.some(r=>r.name===x.name)) &&
                     (mcp.value.some((r: any) => r.name === x.name) ? (
                       <Button
                         variant="secondary"
@@ -765,15 +776,8 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                     ) : (
                       <Button
                         variant="secondary"
-                        onClick={() =>
-                          install({
-                            name: x.name,
-                            transport: x.packageName ? "stdio" : "http",
-                            command: "npx",
-                            args: x.packageName ? ["-y", x.packageName] : [],
-                            endpoint: x.url,
-                          })
-                        }
+                        disabled={Boolean(installing) || x.installable===false}
+                        onClick={()=>void install(x)}
                       >
                         {t('ext.install')}
                       </Button>
@@ -982,15 +986,8 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                     ) : (
                       <Button
                         variant="secondary"
-                        onClick={() =>
-                          void install({
-                            name: x.name,
-                            transport: x.packageName ? "stdio" : "http",
-                            command: "npx",
-                            args: x.packageName ? ["-y", x.packageName] : [],
-                            endpoint: x.url,
-                          })
-                        }
+                        disabled={Boolean(installing) || x.installable===false}
+                        onClick={()=>void install(x)}
                       >
                         {t('ext.install')}
                       </Button>
@@ -1036,7 +1033,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
             {filteredPresets.map((preset) => {
               const record = mcp.value.find((x) => x.name === preset.name);
               const connected = tools.filter(
-                (t) => t.mcpId === record?.id && !t.error,
+                (t) => t.mcpId === record?.id && !t.error && t.status!=="empty",
               ).length;
               return (
                 <Panel
@@ -1108,7 +1105,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
               const Icon = x.icon;
               const record = mcp.value.find((y) => y.name === x.name);
               const connected = tools.filter(
-                (t) => t.mcpId === record?.id && !t.error,
+                (t) => t.mcpId === record?.id && !t.error && t.status!=="empty",
               ).length;
               return (
                 <Panel key={x.name} className="flex min-w-0 flex-col gap-3 p-5">
@@ -1182,15 +1179,17 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
                 </div>
                 <StateTag
                   online={Boolean(
-                    tools.find((t) => t.mcpId === x.id && !t.error),
+                    tools.find((t) => t.mcpId === x.id && !t.error && t.status!=="empty"),
                   )}
                 >
                   {(() => {
                     const own = tools.filter((t) => t.mcpId === x.id);
-                    const ok = own.filter((t) => !t.error).length;
+                    const ok = own.filter((t) => !t.error && t.status!=="empty").length;
                     if (ok) return t('ext.connectedTools', { count: ok });
+                    if (!x.enabled) return t('ext.disabled');
                     if (own.some((t) => t.error)) return t('ext.connectionFailed');
-                    return tools.length ? t('ext.checkConnection') : t('ext.checking');
+                    if (own.some((t) => t.status==="empty")) return t('ext.noTools');
+                    return t('ext.checkConnection');
                   })()}
                 </StateTag>
                 <Button
@@ -1233,7 +1232,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
             <Panel className="grid gap-3">
               <Subheading
                 title={t('ext.realTools')}
-                extra={<span>{t('ext.count', { count: tools.filter((item) => !item.error).length })}</span>}
+                extra={<span>{t('ext.count', { count: tools.filter((item) => !item.error && item.status!=="empty").length })}</span>}
               />
               {tools.map((t) => (
                 <div

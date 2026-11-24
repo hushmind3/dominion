@@ -109,8 +109,10 @@ fn enabled_servers(state: &AppState) -> Vec<Value> {
         .collect()
 }
 
-/// Fetch (and cache) the tool list of every enabled MCP server.
-pub async fn tools(state: &AppState) -> Vec<McpTool> {
+/// Discover each enabled server, including empty catalogs and failures.
+/// Persisted identity is independent of potentially duplicate display names.
+pub(crate) async fn discover_servers(state: &AppState)
+    -> Vec<(String,String,Result<Vec<McpTool>,String>)> {
     let mut collected = Vec::new();
     let servers=enabled_servers(state);
     for server in &servers {
@@ -122,13 +124,14 @@ pub async fn tools(state: &AppState) -> Vec<McpTool> {
         if id.is_empty() {
             continue;
         }
+        let name=server["name"].as_str().unwrap_or("mcp").to_string();
         let namespace=server_namespace(server,&servers);
         // Namespace is part of the cache key so adding a colliding server
         // cannot reuse a stale definition with its old unqualified name.
         let cache_key=format!("{id}:{namespace}");
         if let Some((at, tools)) = cache().lock().unwrap().get(&cache_key) {
             if at.elapsed() < CACHE_TTL {
-                collected.extend(tools.clone());
+                collected.push((id,name,Ok(tools.clone())));
                 continue;
             }
         }
@@ -138,16 +141,21 @@ pub async fn tools(state: &AppState) -> Vec<McpTool> {
                     .lock()
                     .unwrap()
                     .insert(cache_key, (Instant::now(), tools.clone()));
-                collected.extend(tools);
+                collected.push((id,name,Ok(tools)));
             }
             Err(error) => {
-                state
-                    .store
-                    .audit("mcp.list_failed", json!({ "server": id, "error": error }));
+                state.store.audit("mcp.list_failed", json!({"server":id,"error":error}));
+                collected.push((id,name,Err("MCP discovery failed".into())));
             }
         }
     }
     collected
+}
+
+/// The provider sees actual tools only, never connection-status rows.
+pub async fn tools(state:&AppState)->Vec<McpTool>{
+    discover_servers(state).await.into_iter()
+        .filter_map(|(_,_,result)|result.ok()).flatten().collect()
 }
 
 async fn list_server(state: &AppState, server: &Value, server_slug:&str) -> Result<Vec<McpTool>, String> {

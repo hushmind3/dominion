@@ -58,21 +58,28 @@ pub async fn mcp_presets() -> Json<Value> {
 }
 
 pub async fn mcp_discover(State(state): State<AppState>) -> Json<Value> {
-    let items = engine::mcp::tools(&state)
-        .await
-        .into_iter()
-        .map(|tool| {
-            let qualified = tool.qualified();
-            json!({
-                "server": tool.server_name,
-                "name": qualified,
-                "tool": tool.tool,
-                "description": tool.description,
-                "parameters": tool.schema,
-                "approval": engine::mcp::requires_approval(&state, &qualified),
-            })
-        })
-        .collect::<Vec<_>>();
+    let mut items=Vec::new();
+    for (id,server,result) in engine::mcp::discover_servers(&state).await {
+        match result {
+            Ok(tools) if tools.is_empty()=>items.push(json!({
+                "mcpId":id,"server":server,"name":format!("status:{id}"),
+                "status":"empty","description":"Connected; no tools advertised"
+            })),
+            Err(error)=>items.push(json!({
+                "mcpId":id,"server":server,"name":format!("status:{id}"),
+                "status":"failed","error":error
+            })),
+            Ok(tools)=>for tool in tools {
+                let qualified=tool.qualified();
+                items.push(json!({
+                    "mcpId":id,"server":tool.server_name,"name":qualified,
+                    "tool":tool.tool,"description":tool.description,"parameters":tool.schema,
+                    "approval":engine::mcp::requires_approval(&state,&qualified),
+                    "status":"connected"
+                }));
+            }
+        }
+    }
     Json(json!(items))
 }
 
@@ -179,40 +186,115 @@ pub async fn mcp_catalog(Query(query): Query<HashMap<String, String>>) -> Respon
                     if !seen.insert(name.to_string()) {
                         return None;
                     }
-                    let packages = server
-                        .get("packages")
-                        .and_then(|value| value.as_array())
-                        .map(|items| {
-                            items.iter().find(|package| {
-                                package
-                                    .get("registryType")
-                                    .or_else(|| package.get("registry_type"))
-                                    .and_then(|value| value.as_str())
-                                    == Some("npm")
-                            })
-                        })
-                        .flatten();
-                    let remote = server
-                        .get("remotes")
-                        .and_then(|value| value.as_array())
-                        .and_then(|items| {
-                            items.iter().find(|remote| {
-                                remote
-                                    .get("url")
-                                    .and_then(|value| value.as_str())
-                                    .map(|url| url.starts_with("https://"))
-                                    .unwrap_or(false)
-                            })
-                        });
-                    Some(json!({
-                        "name": name,
-                        "description": server.get("description"),
-                        "packageName": packages.and_then(|package| package.get("identifier")),
-                        "url": remote.and_then(|remote| remote.get("url")),
-                    }))
+                    Some(registry_item(server,name))
                 })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
     Json(json!(items)).into_response()
+}
+
+// Only fully specified supported launch configurations are offered for
+// automatic registration. Complex argument/header/env templates need review.
+fn nonempty_field(value:&Value,key:&str)->bool {
+    value.get(key).is_some_and(|v| !v.is_null() &&
+        !v.as_array().is_some_and(Vec::is_empty) &&
+        !v.as_object().is_some_and(serde_json::Map::is_empty))
+}
+fn package_identifier(value:&str,kind:&str)->bool{
+    let valid=|part:&str| !part.is_empty() && part.as_bytes()[0].is_ascii_alphanumeric()
+        && part.bytes().all(|b|b.is_ascii_alphanumeric()||matches!(b,b'-'|b'_'|b'.'));
+    if kind=="npm" && value.starts_with('@') {
+        value[1..].split_once('/').is_some_and(|(scope,name)|valid(scope)&&valid(name))
+    }else{valid(value)}
+}
+fn package_version(value:&str)->bool{
+    !value.is_empty() && value.len()<=128 && value.as_bytes()[0].is_ascii_digit()
+        && value.bytes().all(|b|b.is_ascii_alphanumeric()||matches!(b,b'.'|b'-'|b'+'|b'_'))
+        && !value.split('.').any(|part|part.eq_ignore_ascii_case("x"))
+}
+fn registry_item(server:&Value,name:&str)->Value{
+    let mut item=json!({"name":name,"description":server["description"],
+        "version":server["version"],"installable":false,"manualSetup":true});
+    for remote in server["remotes"].as_array().into_iter().flatten(){
+        let Some(raw)=remote["url"].as_str() else{continue};
+        if !matches!(remote["type"].as_str(),Some("streamable-http"|"sse"))
+            || nonempty_field(remote,"headers") || nonempty_field(remote,"variables")
+            || raw.contains('{')||raw.contains('}') {continue;}
+        let Ok(url)=reqwest::Url::parse(raw) else{continue};
+        if url.scheme()!="https"||url.host_str().is_none()||!url.username().is_empty()
+            ||url.password().is_some()||url.fragment().is_some() {continue;}
+        item["url"]=json!(raw);
+        item["transport"]=json!("http");
+        item["installable"]=json!(true);
+        item["manualSetup"]=json!(false);
+        return item;
+    }
+    for package in server["packages"].as_array().into_iter().flatten(){
+        let kind=package["registryType"].as_str()
+            .or_else(||package["registry_type"].as_str()).unwrap_or("");
+        let (runtime,base)=match kind{
+            "npm"=>("npx","https://registry.npmjs.org"),
+            "pypi"=>("uvx","https://pypi.org"),
+            _=>continue,
+        };
+        let Some(identifier)=package["identifier"].as_str() else{continue};
+        let Some(version)=package["version"].as_str() else{continue};
+        if !package_identifier(identifier,kind)||!package_version(version)
+            || package["transport"]["type"]!="stdio"
+            || package["runtimeHint"].as_str().is_some_and(|hint|hint!=runtime)
+            || package["registryBaseUrl"].as_str().is_some_and(|url|url.trim_end_matches('/')!=base)
+            || ["runtimeArguments","packageArguments","environmentVariables","runtime_arguments",
+                "package_arguments","environment_variables"].iter().any(|key|nonempty_field(package,key))
+        {continue;}
+        let spec=if kind=="npm"{format!("{identifier}@{version}")}else{format!("{identifier}=={version}")};
+        let args=if kind=="npm"{vec!["-y".to_string(),spec.clone()]}else{vec![spec.clone()]};
+        item["packageName"]=json!(spec);
+        item["packageVersion"]=json!(version);
+        item["transport"]=json!("stdio");
+        item["command"]=json!(runtime);
+        item["args"]=json!(args);
+        item["installable"]=json!(true);
+        item["manualSetup"]=json!(false);
+        return item;
+    }
+    item
+}
+
+#[cfg(test)]
+mod registry_tests{
+    use super::*;
+    #[test]
+    fn concrete_remote_preferred_and_packages_pinned(){
+        let package=json!({"registryType":"npm","identifier":"@sample/server","version":"2.1.0",
+            "transport":{"type":"stdio"}});
+        let remote=json!({"type":"streamable-http","url":"https://example.com/mcp"});
+        let item=registry_item(&json!({"packages":[package.clone()],"remotes":[remote]}),"example/server");
+        assert_eq!(item["transport"],"http");
+        let item=registry_item(&json!({"packages":[package]}),"example/server");
+        assert_eq!(item["args"],json!(["-y","@sample/server@2.1.0"]));
+        let python=registry_item(&json!({"packages":[{"registryType":"pypi",
+            "identifier":"sample-server","version":"2026.11.2","transport":{"type":"stdio"}}]}),"python");
+        assert_eq!(python["command"],"uvx");
+        assert_eq!(python["args"],json!(["sample-server==2026.11.2"]));
+    }
+    #[test]
+    fn unsupported_or_templated_descriptors_require_manual_setup(){
+        for package in [
+            json!({"registryType":"npm","identifier":"--evil","version":"1.0.0","transport":{"type":"stdio"}}),
+            json!({"registryType":"npm","identifier":"sample","version":"latest","transport":{"type":"stdio"}}),
+            json!({"registryType":"npm","identifier":"sample","version":"1.x","transport":{"type":"stdio"}}),
+            json!({"registryType":"npm","identifier":"sample","version":"1.0.0","transport":{"type":"stdio"},
+                "environmentVariables":[{"name":"TOKEN","isRequired":true}]}),
+            json!({"registryType":"npm","identifier":"sample","version":"1.0.0","transport":{"type":"stdio"},
+                "packageArguments":[{"type":"positional","value":"some/path"}]})
+        ]{
+            let item=registry_item(&json!({"packages":[package]}),"manual");
+            assert_eq!(item["installable"],false);
+            assert!(item["command"].is_null());
+        }
+        let item=registry_item(&json!({"remotes":[{"type":"streamable-http",
+            "url":"https://example.com/{tenant}/mcp","headers":[{"name":"Authorization"}]}]}),"manual");
+        assert_eq!(item["manualSetup"],true);
+    }
 }
