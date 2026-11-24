@@ -1,4 +1,6 @@
 //! Public embeddable Rust SDK over the same AppState, workers and SQLite as the GUI.
+/// Independent host-driven agent SDK: same runtime and algorithm types as the app.
+pub use dominion_agent_sdk as portable;
 use crate::{config::Config,db::Store,engine,migrations,state::AppState,vault::Vault};
 use serde_json::{json,Value};
 use std::{path::PathBuf,sync::{atomic::{AtomicBool,Ordering},Arc},time::Duration};

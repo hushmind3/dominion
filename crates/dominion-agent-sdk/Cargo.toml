@@ -1,0 +1,16 @@
+[package]
+name = "dominion-agent-sdk"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Standalone DOMINION agent SDK for custom model and tool hosts"
+
+[dependencies]
+dominion-agent-kernel = { path = "../dominion-agent-kernel", version = "0.1.0" }
+dominion-agent-loop = { path = "../dominion-agent-loop", version = "0.1.0" }
+dominion-context-policy = { path = "../dominion-context-policy", version = "0.1.0" }
+dominion-turn-core = { path = "../dominion-turn-core", version = "0.1.0" }
+serde_json = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

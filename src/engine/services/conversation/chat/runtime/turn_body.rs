@@ -657,8 +657,8 @@ pub(super) async fn run_turn_body(
 
     // This provider-neutral gate has no knowledge of memory, MCP, plans,
     // SQLite, or product UI. The host retains the existing effect receipts.
-    let mut driver=crate::engine::core::driver::Driver::new(max_rounds,max_tools);
-    let mut harness=crate::engine::core::agent_loop::Harness::new(
+    let mut driver=dominion_agent_sdk::Driver::new(max_rounds,max_tools);
+    let mut harness=dominion_agent_sdk::Harness::new(
         &mut driver,&mut agent_loop,
     );
     // Both Chat and the SDK now obtain their next provider round from the

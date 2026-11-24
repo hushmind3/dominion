@@ -5,10 +5,11 @@ edition = "2021"
 license = "Apache-2.0"
 
 [workspace]
-members = [".", "crates/dominion-agent-kernel", "crates/dominion-turn-core", "crates/dominion-agent-loop", "crates/dominion-context-policy"]
-default-members = [".", "crates/dominion-agent-kernel", "crates/dominion-turn-core", "crates/dominion-agent-loop", "crates/dominion-context-policy"]
+members = [".", "crates/dominion-agent-kernel", "crates/dominion-turn-core", "crates/dominion-agent-loop", "crates/dominion-context-policy", "crates/dominion-agent-sdk"]
+default-members = [".", "crates/dominion-agent-kernel", "crates/dominion-turn-core", "crates/dominion-agent-loop", "crates/dominion-context-policy", "crates/dominion-agent-sdk"]
 
 [dependencies]
+dominion-agent-sdk = { path = "crates/dominion-agent-sdk" }
 dominion-agent-kernel = { path = "crates/dominion-agent-kernel" }
 dominion-agent-loop = { path = "crates/dominion-agent-loop" }
 dominion-context-policy = { path = "crates/dominion-context-policy" }

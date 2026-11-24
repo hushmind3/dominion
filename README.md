@@ -65,6 +65,8 @@ Obsolete embedded generation, campaign and upload endpoints, their Rust implemen
 Current canonical architecture: [DOMINION sub2 Rust Harness / Room / Task Team](docs/SUB2-ARCHITECTURE-2026-11-21.md).
 
 
+External Rust hosts can depend on [`dominion-agent-sdk`](crates/dominion-agent-sdk/README.md) without compiling the desktop application, HTTP server or SQLite host. The app uses the same SDK-exported Driver and Harness. The existing full embedded API remains `dominion_rust::sdk::Dominion`, and HTTP/TypeScript SDK contracts remain unchanged.
+
 The single provider-independent execution Harness is in `crates/dominion-turn-core/src/agent_loop.rs`, with replaceable loop strategies in `crates/dominion-agent-loop/`. Product adapters for chat, providers, memory, rooms, automation, planning and concrete tools remain under `src/engine/services/`; MCP and external channels remain in `src/engine/addons/`. Rust module names and existing API/UI routes remain stable. See [core isolation design](docs/SUB2-MICROKERNEL-2026-11-20.md).
 
 API architecture: 11 execution endpoints remain in the guarded core router; 123 domain endpoints use five service route modules, and 27 external-integration endpoints use the addon router. All retain their original URL paths and shared middleware.
