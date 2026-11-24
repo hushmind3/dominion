@@ -59,7 +59,7 @@ fn release_assets(release:&Value,repo:&str)->Vec<Value>{
         if !valid_digest(sha)||size==0||size>MAX_BYTES as u64||asset["state"]!="uploaded"{return None}
         // Only standalone artifacts; common archive/checksum types are not runnable.
         let lower=name.to_ascii_lowercase();
-        if [".zip",".tar",".gz",".xz",".bz2",".7z",".sha256",".sig",".asc",".json",".txt",".md",".dmg",".msi",".pkg"].iter().any(|ext|lower.ends_with(ext)){return None}
+        if [".zip",".tar",".gz",".xz",".bz2",".7z",".sha256",".sig",".asc",".json",".txt",".md",".dmg",".msi",".pkg"].iter().any(|ext|lower.ends_with(*ext)){return None}
         Some(json!({"name":name,"version":version,"source":url.as_str(),"sha256":sha,"bytes":size}))
     }).take(50).collect()
 }
