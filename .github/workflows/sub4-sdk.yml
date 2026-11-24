@@ -1,0 +1,51 @@
+name: Sub4 SDK contract checks
+on:
+  push:
+    branches: [dominion-sub4]
+    paths:
+      - 'crates/dominion-sdk/**'
+      - 'crates/dominion-core/**'
+      - 'crates/dominion-algorithms/**'
+      - 'packages/sdk-typescript/**'
+      - 'src/api/sdk.rs'
+      - 'src/engine/chat/runtime.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/sub4-sdk.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sub4-sdk-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  rust-sdk:
+    if: github.ref == 'refs/heads/dominion-sub4'
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Native embedding without HTTP dependencies
+        run: cargo test --locked -p dominion-sdk --no-default-features
+      - name: Public Rust SDK and HTTP contracts
+        run: cargo test --locked -p dominion-sdk
+      - name: Verify the product actually compiles with the embedded SDK
+        run: cargo check --locked --bin dominion-rust
+      - name: Backend SDK status and recovery contracts
+        run: cargo test --locked --bin dominion-rust api::sdk::view_tests
+  typescript-sdk:
+    if: github.ref == 'refs/heads/dominion-sub4'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: SDK build and consumer tests
+        run: |
+          npm install --prefix packages/sdk-typescript --no-audit --no-fund
+          npm test --prefix packages/sdk-typescript
+          npm pack --dry-run --prefix packages/sdk-typescript
