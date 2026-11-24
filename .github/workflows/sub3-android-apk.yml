@@ -29,7 +29,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      - name: Check runner Android SDK
+        run: |
+          test -d "$ANDROID_HOME"
+          echo "SDK: $ANDROID_HOME"
+          ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools"
+          df -h
+          java -version
       - name: Install dependencies and validate
         working-directory: plugins/dominion-voice/mobile
         run: |
