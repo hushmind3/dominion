@@ -27,7 +27,7 @@ export function TasksPage() {
  const filtered=jobs.value.filter(job=>(filter==='all'||stateOf(job)===filter)&&(job.input?.goal||job.input?.prompt||'').toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
  return <PageContainer>
   <PageHeader title={tr('작업 관리','Task workspace')} description={tr('새 작업을 시작하거나 진행 상태와 결과를 확인하세요.','Start a new task or inspect ongoing work and results.')} actions={source==='delegated'?<Button variant="secondary" onClick={()=>void jobs.reload()} disabled={jobs.refreshing}><RefreshCw size={16} className={jobs.refreshing?'animate-spin':''}/>{tr('새로고침','Refresh')}</Button>:undefined}/>
-  <ViewTabs value={source} onChange={setSource} label={tr('작업 유형','Task types')} options={[{id:'native',label:tr('자동 작업','Autonomous work'),icon:Bot},{id:'delegated',label:tr('대화·그룹에서 맡긴 작업','Chat & group tasks'),icon:Workflow}]}/>
+  <ViewTabs value={source} onChange={setSource} label={tr('작업 유형','Task types')} options={[{id:'native' as const,label:tr('자동 작업','Autonomous work'),icon:Bot},{id:'delegated' as const,label:tr('대화·그룹에서 맡긴 작업','Chat & group tasks'),icon:Workflow}]}/>
   {source==='native'?<NativeAgentPanel providers={providers.value}/>:<>
   <ViewTabs value={filter} onChange={value=>{setFilter(value);setLimit(60)}} label={tr('작업 상태','Task status')} options={views.map(item=>({...item,count:item.id==='all'?jobs.value.length:jobs.value.filter(job=>stateOf(job)===item.id).length}))}/>
   <div className="mb-6 flex max-w-xl"><SearchField value={query} onChange={value=>{setQuery(value);setLimit(60)}} label={tr('작업 검색','Search tasks')} placeholder={tr('맡긴 내용으로 검색','Search by task description')}/></div>
