@@ -81,9 +81,9 @@ function PatchReview({jobId,jobStatus,onChanged}:{jobId:string;jobStatus:string;
 }
 /** Owner-only remote control surface. All sensitive worker token receipts
  * exist in React memory only, are not logged, and are not written to storage. */
-export function RemoteWorkPanel({initialOpen=false}:{initialOpen?:boolean}={}){
+export function RemoteWorkPanel(){
  const en=useLocale()==='en'
- const [open,setOpen]=useState(initialOpen)
+ const [open,setOpen]=useState(false)
  const workers=useRemote<Worker[]>(open?'/api/remote/workers':null,[],false)
  const jobs=useRemote<RemoteJob[]>(open?'/api/remote/jobs':null,[],false)
  const [workerName,setWorkerName]=useState('')

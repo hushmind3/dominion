@@ -48,16 +48,16 @@ export function JobWorkflowCard({job,onChanged}:{job:WorkflowJob;onChanged:()=>v
   }catch(err){setError(translateError((err as Error).message))}
   finally{setBusy(false)}
  }
- return <Panel className="min-w-0 rounded-xl bg-surface p-4 sm:p-5">
+ return <Panel className="min-w-0 rounded-xl bg-surface p-4">
   <div className="flex min-w-0 items-start gap-3">
    <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand"><Workflow size={18}/></span>
    <div className="min-w-0 flex-1">
     <div className="flex flex-wrap items-center justify-between gap-2">
-     <strong className="text-xs font-medium text-muted">{job.kind==='meeting'?t('ops.meeting'):t('ops.agentJob')}</strong>
+     <strong className="text-[12px] text-ink">{job.kind==='meeting'?t('ops.meeting'):t('ops.agentJob')}</strong>
      <StatusPill status={job.status||'unknown'}/>
     </div>
-    <p className="mt-2 whitespace-pre-wrap break-words text-sm font-medium leading-6 text-ink">{title}</p>
-    {(job.queuedAt||job.createdAt)&&<time className="mt-1 block text-xs text-muted">{formatDateTime(job.queuedAt||job.createdAt)}</time>}
+    <p className="mt-1 whitespace-pre-wrap break-words text-[12px] leading-5 text-muted">{title}</p>
+    {(job.queuedAt||job.createdAt)&&<time className="mt-1 block text-[10px] text-muted">{formatDateTime(job.queuedAt||job.createdAt)}</time>}
     {job.input?.externalRuntime&&<span className="mt-1 inline-block rounded-md bg-canvas px-2 py-0.5 text-[10px] text-muted">{job.input.externalRuntime}</span>}
     {job.error&&<p role="alert" className="mt-2 break-words text-[11px] text-danger">{translateError(job.error)}</p>}
     <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -82,8 +82,8 @@ export function JobWorkflowCard({job,onChanged}:{job:WorkflowJob;onChanged:()=>v
      </button>
     </form>}
     {result&&<details className="mt-3 rounded-lg border border-divider bg-surface px-3 py-2 text-[11px]">
-     <summary className="cursor-pointer text-xs font-semibold text-ink">{en?'View completed result':'작업 결과 펼치기'}</summary>
-     <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words text-sm leading-6 text-ink">{result.slice(0,12000)}{result.length>12000?'\n…':''}</pre>
+     <summary className="cursor-pointer font-semibold text-muted">{en?'View completed result':'작업 결과 펼치기'}</summary>
+     <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-muted">{result.slice(0,12000)}{result.length>12000?'\n…':''}</pre>
     </details>}
     {info&&<p role="status" className="mt-2 flex items-center gap-1 text-[11px] text-success"><Check size={13}/>{info}</p>}
     {error&&<p role="alert" className="mt-2 break-words text-[11px] text-danger">{error}</p>}
