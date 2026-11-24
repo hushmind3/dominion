@@ -37,7 +37,7 @@ export function WorkspaceNavigation({page,session,selectedRoom,open,mobile,onlin
   return()=>window.removeEventListener('keydown',shortcut)
  },[open,mobile,onToggle,onClose])
  const navigate=(target:PageId,id?:string)=>{onNavigate(target,id);if(mobile)onClose()}
- const main=[{id:'chat' as const,label:tr('대화','Chat'),icon:MessageSquare},{id:'rooms' as const,label:tr('그룹','Groups'),icon:UsersRound},{id:'tasks' as const,label:t('nav.tasks'),icon:Workflow}]
+ const main=[{id:'chat' as const,label:tr('대화','Chat'),icon:MessageSquare},{id:'rooms' as const,label:tr('그룹','Groups'),icon:UsersRound},{id:'home' as const,label:tr('작업 홈','Work home'),icon:House},{id:'tasks' as const,label:t('nav.tasks'),icon:Workflow}]
  const tools=[
   {id:'models' as const,label:tr('AI 모델','AI models'),icon:Cpu},
   {id:'agents' as const,label:tr('작업 도우미','Assistants'),icon:Bot},
@@ -49,7 +49,6 @@ export function WorkspaceNavigation({page,session,selectedRoom,open,mobile,onlin
  const needle=query.trim().toLocaleLowerCase()
  const destinations=[...main,...tools,
   {id:'prompts' as const,label:tr('프롬프트·지침','Prompts'),icon:FileText},
-  {id:'home' as const,label:tr('내 공간','Overview'),icon:House},
   {id:'settings' as const,label:tr('설정','Settings'),icon:Settings},
  ]
  const pageResults=needle?destinations.filter(item=>`${item.label} ${item.id}`.toLocaleLowerCase().includes(needle)):[]
