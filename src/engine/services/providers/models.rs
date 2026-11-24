@@ -2410,8 +2410,13 @@ pub fn start_download_at_revision(
         let partial = partial_download_path(&target, revision);
         // A pre-existing target may belong to a different revision. Until the
         // worker validates its hash, only actual .part bytes are progress.
-        let downloaded = std::fs::metadata(&partial)
-            .map(|meta| meta.len()).unwrap_or(0);
+        let downloaded = if valid_hf_revision(revision) {
+            std::fs::metadata(&partial).map(|meta| meta.len()).unwrap_or(0)
+        } else {
+            // Legacy mutable-ref partials cannot be attributed to a snapshot.
+            // Leave their bytes untouched; a resolved commit gets its own path.
+            0
+        };
         total += downloaded;
         entries.push(json!({"path": path, "downloaded": downloaded, "total": 0}));
     }
@@ -2496,32 +2501,41 @@ fn file_sha256(path: &Path) -> Result<String, String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+type HfBlobs = std::collections::HashMap<String, (u64, Option<String>)>;
+
+fn hf_snapshot_metadata(value: &Value, requested: &str) -> Result<(String, HfBlobs), String> {
+    let revision = value["sha"].as_str().filter(|sha| valid_hf_revision(sha))
+        .ok_or("모델의 고정 버전을 확인할 수 없습니다.")?;
+    if valid_hf_revision(requested) && !revision.eq_ignore_ascii_case(requested) {
+        return Err("요청한 모델 버전과 원격 버전이 일치하지 않습니다.".into());
+    }
+    let siblings = value["siblings"].as_array().ok_or("모델 파일 목록이 없습니다.")?;
+    let mut map = HfBlobs::new();
+    for sibling in siblings {
+        let Some(path) = sibling["rfilename"].as_str().filter(|path| safe_relative(path)) else {
+            continue;
+        };
+        let size = sibling["size"].as_u64().unwrap_or(0);
+        let sha = [sibling["lfs"]["sha256"].as_str(), sibling["lfs"]["oid"].as_str()]
+            .into_iter().flatten()
+            .find(|sha| sha.len() == 64 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .map(str::to_ascii_lowercase);
+        map.insert(path.to_string(), (size, sha));
+    }
+    Ok((revision.to_ascii_lowercase(), map))
+}
+
 async fn hf_blob_metadata(
     client: &reqwest::Client,
     repo: &str,
     revision: &str,
-) -> std::collections::HashMap<String, (u64, Option<String>)> {
+) -> Result<(String, HfBlobs), String> {
     let url = format!("https://huggingface.co/api/models/{repo}/revision/{revision}?blobs=true");
-    let Ok(response) = client.get(url).timeout(Duration::from_secs(20)).send().await else {
-        return Default::default();
-    };
-    let Ok(value) = bounded_response_json(response, 16 * 1024 * 1024).await else {
-        return Default::default();
-    };
-    let mut map = std::collections::HashMap::new();
-    for sibling in value["siblings"].as_array().into_iter().flatten() {
-        let Some(path) = sibling["rfilename"].as_str() else {
-            continue;
-        };
-        let size = sibling["size"].as_u64().unwrap_or(0);
-        let sha = sibling["lfs"]["oid"]
-            .as_str()
-            .filter(|value| value.len() == 64)
-            .or_else(|| sibling["blobId"].as_str().filter(|value| value.len() == 64))
-            .map(str::to_string);
-        map.insert(path.to_string(), (size, sha));
-    }
-    map
+    let response = client.get(url).timeout(Duration::from_secs(20)).send().await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|error| error.to_string())?;
+    let value = bounded_response_json(response, 16 * 1024 * 1024).await?;
+    hf_snapshot_metadata(&value, revision)
 }
 
 /// A 206 response is safe to append only when the server confirms that the
@@ -2598,9 +2612,15 @@ async fn download_worker(state: AppState, job_id: String) {
         return;
     };
     let repo = job["repo"].as_str().unwrap_or("").to_string();
-    let revision = job["revision"].as_str()
-        .filter(|value| valid_hf_revision(value))
-        .unwrap_or("main").to_string();
+    let requested_revision = job["resolvedRevision"].as_str()
+        .or_else(|| job["revision"].as_str())
+        .unwrap_or("main");
+    if requested_revision != "main" && !valid_hf_revision(requested_revision) {
+        patch_download(&state, &job_id, json!({
+            "status": "failed", "error": "다운로드 작업의 모델 버전이 손상되었습니다."
+        }));
+        return;
+    }
     let format = job["format"].as_str().unwrap_or("gguf").to_string();
     let dir = PathBuf::from(job["targetDir"].as_str().unwrap_or(""));
     let mut files = job["files"].as_array().cloned().unwrap_or_default();
@@ -2613,7 +2633,36 @@ async fn download_worker(state: AppState, job_id: String) {
         return;
     }
     let client = reqwest::Client::new();
-    let blobs = hf_blob_metadata(&client, &repo, &revision).await;
+    let (revision, blobs) = match hf_blob_metadata(&client, &repo, requested_revision).await {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            patch_download(&state, &job_id, json!({"status": "failed", "error": error}));
+            return;
+        }
+    };
+    // Resolve a mutable ref once and persist it before touching any bytes.
+    // Keeping the original requested revision preserves duplicate-job identity.
+    // An older .part without a commit identity is deliberately not reused.
+    if files.iter().any(|file| file["path"].as_str().is_none_or(|path| !blobs.contains_key(path))) {
+        patch_download(&state, &job_id, json!({
+            "status": "failed", "error": "선택한 파일이 모델의 고정 버전에 없습니다."
+        }));
+        return;
+    }
+    for file in &mut files {
+        let path = file["path"].as_str().unwrap_or("");
+        let partial = partial_download_path(&dir.join(path), &revision);
+        let downloaded = std::fs::metadata(partial).map(|meta| meta.len()).unwrap_or(0);
+        let total = blobs.get(path).map(|(size, _)| *size).unwrap_or(0);
+        file["downloaded"] = json!(downloaded);
+        file["total"] = json!(total);
+    }
+    let Some(saved) = state.store.patch_if(
+        MODEL_KIND, &job_id, "status", &json!("downloading"),
+        &json!({"resolvedRevision": revision, "files": files,
+            "downloaded": downloaded_total(&files), "total": declared_total(&files)}),
+    ) else { return };
+    state.bus.record("model_job", &saved);
     for index in 0..files.len() {
         if job_status(&state, &job_id) != "downloading" {
             return;
@@ -2637,7 +2686,10 @@ async fn download_worker(state: AppState, job_id: String) {
             let size = std::fs::metadata(&target).map(|meta| meta.len()).unwrap_or(0);
             let (remote_size, remote_sha) = blobs.get(&path).cloned().unwrap_or((0, None));
             let expected = remote_size.max(files[index]["total"].as_u64().unwrap_or(0));
-            let hash_ok = remote_sha.as_deref().is_none_or(|sha| {
+            // Equal length alone cannot establish that an installed file
+            // belongs to the selected snapshot. Small non-LFS config files
+            // are fetched again rather than reusing unverified bytes.
+            let hash_ok = remote_sha.as_deref().is_some_and(|sha| {
                 file_sha256(&target).is_ok_and(|actual| actual == sha)
             });
             if size == 0 || expected == 0 || size != expected || !hash_ok {
@@ -3387,6 +3439,25 @@ mod tests {
         assert!(!valid_hf_revision("../main"));
         assert!(!valid_hf_revision("0123456789abcdef0123456789abcdef0123456/"));
         assert!(!valid_hf_revision("0123456789abcdef0123456789abcdef0123456z"));
+    }
+
+    #[test]
+    fn hf_snapshot_metadata_pins_revision_and_reads_lfs_checksum() {
+        let revision = "a".repeat(40);
+        let checksum = "b".repeat(64);
+        let response = json!({"sha": revision, "siblings": [
+            {"rfilename": "model.gguf", "size": 42, "lfs": {"sha256": checksum}},
+            {"rfilename": "config.json", "size": 10, "blobId": "c".repeat(40)},
+            {"rfilename": "../escape.gguf", "size": 5}
+        ]});
+        let (resolved, files) = hf_snapshot_metadata(&response, "main").unwrap();
+        assert_eq!(resolved, revision);
+        assert_eq!(files["model.gguf"], (42, Some(checksum)));
+        assert_eq!(files["config.json"], (10, None));
+        assert!(!files.contains_key("../escape.gguf"));
+        assert!(hf_snapshot_metadata(&response, &"d".repeat(40)).is_err());
+        assert!(hf_snapshot_metadata(&json!({"sha": "main", "siblings": []}), "main").is_err());
+        assert!(hf_snapshot_metadata(&json!({"sha": revision}), "main").is_err());
     }
 
     #[test]
