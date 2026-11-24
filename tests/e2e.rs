@@ -349,3 +349,6 @@ mod adaptation;
 mod web_api;
 #[path = "e2e/continuity.rs"]
 mod continuity;
+
+#[path = "e2e/extensions_live.rs"]
+mod extensions_live;

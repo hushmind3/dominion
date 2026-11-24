@@ -1,0 +1,26 @@
+name: Sub3 live published extension acceptance
+on:
+  push:
+    branches: [dominion-sub3]
+    paths:
+      - 'tests/e2e/extensions_live.rs'
+      - '.github/workflows/sub3-extension-live.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sub3-extension-live
+  cancel-in-progress: true
+jobs:
+  live:
+    if: github.ref == 'refs/heads/dominion-sub3'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Confirm Docker available
+        run: docker info
+      - name: Real host, public packages and owner-approved SDK execution
+        run: cargo test --locked --test e2e published_extensions_install_register_and_execute_live -- --ignored --nocapture --test-threads=1
