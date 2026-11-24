@@ -31,6 +31,7 @@ export function classifyRefreshEvent(event:BusChange):RefreshScope {
    case 'provider':add('/api/providers','/api/chat/inference-support');if(id)add('/api/providers/'+encoded(id)+'/models');break
    case 'policy':add('/api/policy');break
    case 'extension_policy':add('/api/extensions/runtime','/api/tools');break
+   case 'sdk_extension':add('/api/extensions/apps');break
    case 'job':
     add('/api/jobs')
     if(id)add('/api/jobs/'+encoded(id))

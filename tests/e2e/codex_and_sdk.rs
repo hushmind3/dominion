@@ -513,7 +513,7 @@ fn owner_replacement_during_approval_cannot_write_the_old_goal_or_escape_workspa
 /// database, retry receipt and execution event journal are real.
 #[test]
 fn external_rust_sdk_runs_real_product_with_approval_and_retry(){
-    use dominion_sdk::{Client,ClientError,RunStatus,SourceRef,StartRun};
+    use dominion_sdk::{Client,ClientError,RunStatus,StartRun,extensions::Manifest};
     let _serial=serial();
     let (port,requests)=scripted_provider(|_|vec![json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"external-sdk-write","type":"function","function":{"name":"workspace_write","arguments":"{\"path\":\"external-sdk.md\",\"content\":\"\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":40,"completion_tokens":10,"total_tokens":50}})]);
     let app=TestApp::new(port,"native");
@@ -522,13 +522,20 @@ fn external_rust_sdk_runs_real_product_with_approval_and_retry(){
         let sdk=Client::connect(&app.base).unwrap();
         let input=StartRun{instruction:"external-sdk.md 파일을 만들어줘".into(),
             idempotency_key:Some("external-consumer-1".into()),
-            source:Some(SourceRef{kind:"external_plugin".into(),id:"fixture-1".into()}),
             ..Default::default()};
-        let start=sdk.start_run(&input).await.unwrap();
-        let duplicate=sdk.start_run(&input).await.unwrap();
+        let plugin="example.assistant";
+        assert!(matches!(sdk.start_extension_run(plugin,&input).await,Err(ClientError::Api{status:404,..})));
+        let registration=sdk.register_extension(&Manifest{schema_version:1,id:plugin.into(),name:"External assistant".into(),version:"1.0.0".into(),description:"Fixture".into()}).await.unwrap();
+        assert!(!registration.enabled);
+        assert!(matches!(sdk.start_extension_run(plugin,&input).await,Err(ClientError::Api{status:409,..})));
+        assert!(sdk.set_extension_enabled(plugin,true).await.unwrap().enabled);
+        assert_eq!(sdk.list_extensions().await.unwrap().len(),1);
+        assert!(matches!(sdk.unregister_extension(plugin).await,Err(ClientError::Api{status:409,..})));
+        let start=sdk.start_extension_run(plugin,&input).await.unwrap();
+        let duplicate=sdk.start_extension_run(plugin,&input).await.unwrap();
         assert_eq!(duplicate.id,start.id);
         let conflict=StartRun{instruction:"different request".into(),..input.clone()};
-        assert!(matches!(sdk.start_run(&conflict).await,Err(ClientError::Api{status:409,..})));
+        assert!(matches!(sdk.start_extension_run(plugin,&conflict).await,Err(ClientError::Api{status:409,..})));
         let pending=sdk.wait_for_run(&start.id,Duration::from_secs(20),Duration::from_millis(50),|_|{}).await.unwrap();
         assert_eq!(pending.status,RunStatus::AwaitingApproval);
         assert!(pending.actions.as_ref().unwrap().approve);
@@ -538,7 +545,15 @@ fn external_rust_sdk_runs_real_product_with_approval_and_retry(){
         let completed=sdk.wait_for_verified_run(&start.id,Duration::from_secs(20),Duration::from_millis(50),|_|{}).await.unwrap();
         assert!(completed.verified_success());
         assert_eq!(std::fs::metadata(app._root.join("external-sdk.md")).unwrap().len(),0);
-        let history=sdk.runs_by_source("external_plugin").await.unwrap();
+        assert_eq!(completed.extension.as_ref().unwrap().version,"1.0.0");
+        assert!(!sdk.set_extension_enabled(plugin,false).await.unwrap().enabled);
+        let new_request=StartRun{ idempotency_key:Some("external-consumer-2".into()),..input.clone()};
+        assert!(matches!(sdk.start_extension_run(plugin,&new_request).await,Err(ClientError::Api{status:409,..})));
+        assert_eq!(sdk.start_extension_run(plugin,&input).await.unwrap().id,start.id);
+        sdk.unregister_extension(plugin).await.unwrap();
+        assert!(sdk.list_extensions().await.unwrap().is_empty());
+        assert_eq!(sdk.get_run(&start.id).await.unwrap().id,start.id);
+        let history=sdk.runs_by_source("extension").await.unwrap();
         assert_eq!(history.len(),1);
         assert_eq!(history[0].id,start.id);
         let events=sdk.run_events(&start.id,0,100).await.unwrap();

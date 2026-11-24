@@ -247,3 +247,24 @@ test('source history and route metadata use the existing server routes', async()
   assert.match(calls[1].url,/\/api\/chat\/inference-support\?providerId=p%2F1&model=m\+x$/);
   assert.deepEqual(JSON.parse(calls[2].body),[{providerId:'p/1',model:'m x'}]);
 });
+
+test('external app lifecycle uses the same SDK and reserved source',async()=>{
+ const calls=[]
+ const manifest={schemaVersion:1,id:'example.assistant',name:'Assistant',version:'1.0.0'}
+ const client=new DominionAgentClient({fetch:async(url,request)=>{
+  calls.push([new URL(url).pathname,request.method,request.body?JSON.parse(request.body):null])
+  return new Response(JSON.stringify({id:'r',status:'queued'}))
+ }})
+ await client.registerExtension(manifest)
+ await client.setExtensionEnabled(manifest.id,true)
+ await client.startExtensionRun(manifest.id,{instruction:'test',idempotencyKey:'retry'})
+ await client.setExtensionEnabled(manifest.id,false)
+ await client.unregisterExtension(manifest.id)
+ assert.deepEqual(calls,[
+  ['/api/extensions/apps','POST',manifest],
+  ['/api/extensions/apps/example.assistant/state','POST',{enabled:true}],
+  ['/api/sdk/runs','POST',{instruction:'test',idempotencyKey:'retry',source:{kind:'extension',id:'example.assistant'}}],
+  ['/api/extensions/apps/example.assistant/state','POST',{enabled:false}],
+  ['/api/extensions/apps/example.assistant','DELETE',null]
+ ])
+})

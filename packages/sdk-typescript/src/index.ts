@@ -147,6 +147,7 @@ export interface RunActions {
   reconcile: boolean; steer: boolean; refresh: boolean;
 }
 export interface AgentRun {
+  extension?: {id:string;version:string;schemaVersion:number};
   actions?: RunActions;
   uncertainEffectCount?: number;
   sessionId?: string;

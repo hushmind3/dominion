@@ -52,10 +52,14 @@ pub struct RunActions {
 }
 #[derive(Clone,Debug,Deserialize,Serialize)]
 #[serde(rename_all="camelCase")]
+pub struct ExtensionSnapshot { pub id:String,pub version:String,pub schema_version:u32 }
+#[derive(Clone,Debug,Deserialize,Serialize)]
+#[serde(rename_all="camelCase")]
 pub struct AgentRun {
     pub id:String,
     pub status:RunStatus,
     pub instruction:String,
+    #[serde(default)] pub extension:Option<ExtensionSnapshot>,
     #[serde(default)] pub provider_id:Option<String>,
     #[serde(default)] pub model:Option<String>,
     #[serde(default)] pub session_id:Option<String>,

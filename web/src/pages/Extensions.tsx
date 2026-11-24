@@ -1,5 +1,6 @@
 import {DialogBackdrop,DialogPanel} from "../components/Dialog";
 import {SkillsPanel} from "./extensions/SkillsPanel";
+import {SdkExtensionsPanel} from "./extensions/SdkExtensionsPanel";
 import {t,useLocale} from "../i18n";
 import {
   Button,
@@ -1071,6 +1072,7 @@ export function ExtensionsPage({section,embedded=false}:{section?:ExtensionTab;e
       )}
       {tab === "installed" && (
         <>
+          <SdkExtensionsPanel/>
           <Subheading
             title={t('ext.connectedServers')}
             extra={

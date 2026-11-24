@@ -101,3 +101,25 @@ uses it as the previous-self anchor across long conversations.
 The cursor is **not a global delivery acknowledgement for every earlier
 message**, because token-limited context selection intentionally omits
 some history. The exact `selectedMessageIds` set is the observation proof.
+
+
+## External SDK app boundary (2026-11-24)
+
+`dominion-extensions` owns versioned registration data and validation, with no
+dependency on the engine. `dominion-sdk` re-exports the contract and provides
+typed Rust and TypeScript clients. The product Host persists registrations via
+`/api/extensions/apps`; the existing Extensions > Installed screen manages them.
+The reserved SDK source `extension` admits a new run only while its registration
+is enabled, using the same lock for registration changes and durable SDK
+admission. The run records the registered manifest version; disable/unregister
+preserves already admitted runs, approval/recovery and retry receipts.
+MCP continues through the existing native MCP transport and tool policy.
+
+External apps are installed and executed independently by their owners.
+Registration is not package installation, a code loader, a sandbox, a scoped
+API credential or proof of caller identity. The owner API remains trusted.
+No personal assistant implementation is bundled by this change.
+
+Native SDK embedding, the execution harness and algorithm loop remain the
+same; product-bound model adapters, knowledge and strategy policies still
+live in the product host. They are not yet separate crates.
