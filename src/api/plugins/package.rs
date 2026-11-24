@@ -148,7 +148,7 @@ mod tests{
             let f=s.dockerfile().unwrap();assert!(f.contains("USER 10001:10001"));assert!(f.contains("CMD ["));assert!(local_tag(&s.image()));
         }
         for s in [spec("npm","app","latest"),spec("npm","app","1"),spec("pypi","app;evil","1.2"),spec("npm","@x/../evil","1.2.3"),spec("pypi","app","1\nRUN evil")]{assert!(!s.valid());}
-        let mut s=spec("pypi","app","1.2");s.entry="../bin";assert!(!s.valid());
+        let mut s=spec("pypi","app","1.2");s.entry="../bin".into();assert!(!s.valid());
         let mut s=spec("npm","app","1.2.3");s.args=vec!["x\nRUN evil".into()];assert!(!s.valid());
     }
 }
