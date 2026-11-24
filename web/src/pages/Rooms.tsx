@@ -2,7 +2,6 @@ import {RoomWelcome, RoomFirstMessage} from '../components/rooms/RoomWelcome'
 import {useChatDraft} from '../hooks/useChatDraft'
 import {ConversationComposer, ComposerSendButton} from '../components/chat/ConversationComposer'
 import {ExecutionPermissionsSetting} from '../components/ExecutionPermissions'
-import {RoomActions} from '../components/rooms/RoomActions'
 import {RoomAvatar as Avatar} from '../components/rooms/RoomAvatar'
 import {RoomMessage as TranscriptMessage, RoomMessageBody as MessageBody, RoomMessageFrame, RoomTyping} from '../components/rooms/RoomMessage'
 import {ConversationSettings} from '../components/ConversationSettings'
@@ -359,10 +358,8 @@ function RoomConversation({settingsTarget,room,agents,providers,openSession,onSa
      label={t('rooms.messageAria')} placeholder={mode==='mentioned'?t('rooms.mentionPlaceholder'):t('rooms.composerPlaceholder',{name:current.name})}
      options={<>
        <Button variant="ghost" className="!min-h-9 !gap-1.5 !px-2 !py-1.5 !text-xs !font-medium" onClick={()=>{setTeamOpen(true);setInspector(false)}}><Workflow size={16}/>{t('rooms.taskAction')}</Button>
-       <RoomActions active={visibleView} actions={[
-        {label:t('rooms.editParticipants'),icon:<UsersRound size={16}/>,run:()=>{setInspector(true);setRecipientsOpen(false)}},
-        {label:t('rooms.sharedKnowledge'),icon:<BookOpenText size={16}/>,run:()=>void openKnowledge()},
-       ]}/>
+       <Button variant="ghost" size="sm" className="!min-h-9 !px-2 !font-medium" onClick={()=>{setInspector(true);setRecipientsOpen(false)}}><UsersRound size={16}/>{t('rooms.editParticipants')}</Button>
+       <Button variant="ghost" size="icon" className="!size-9" title={t('rooms.sharedKnowledge')} aria-label={t('rooms.sharedKnowledge')} onClick={()=>void openKnowledge()}><BookOpenText size={16}/></Button>
        <Button type="button" variant="ghost" size="icon" className="!h-7 !w-7 !border-0 !bg-transparent !text-muted" title={t('chat.attach')} aria-label={t('chat.attach')} onClick={()=>imageInputRef.current?.click()} disabled={sending||uploading}>{uploading?<LoaderCircle size={16} className="animate-spin"/>:<Paperclip size={16}/>}</Button>
        <input ref={imageInputRef} type="file" accept={ROOM_ATTACH_ALLOWED.join(',')} multiple className="sr-only" aria-label={t('chat.attach')} onChange={onPickImages}/>
 

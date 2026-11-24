@@ -47,6 +47,11 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const [input,setInput,adoptNewSession]=useChatDraft(current);
  const [pickerRevision,setPickerRevision]=useState(0);
  const chooseAI=()=>setPickerRevision(value=>value+1);
+ useEffect(()=>{
+  if(!active)return;
+  const shortcut=(event:globalThis.KeyboardEvent)=>{if(!event.defaultPrevented&&!event.isComposing&&(event.metaKey||event.ctrlKey)&&event.shiftKey&&event.key.toLowerCase()==='m'){event.preventDefault();setPickerRevision(value=>value+1)}};
+  window.addEventListener('keydown',shortcut);return()=>window.removeEventListener('keydown',shortcut);
+ },[active]);
  const [agentChoice,setAgentChoice]=useState<{scope?:string;id:string}>();
  const [chatModeOverride,setChatModeOverride]=useState<{scope?:string;mode:'chat'|'agent'}>();
  const [override,setOverride]=useState<ModelOverride>();

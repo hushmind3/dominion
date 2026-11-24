@@ -21,6 +21,7 @@ export function WorkspaceNavigation({page,session,selectedRoom,open,mobile,onlin
  const rooms=useRemote<Room[]>('/api/rooms',[])
  const [query,setQuery]=useState('')
  const [chatLimit,setChatLimit]=useState(30),[roomLimit,setRoomLimit]=useState(15)
+ const [historyFilter,setHistoryFilter]=useState<'all'|'chat'|'rooms'>('all')
  const searchRef=useRef<HTMLInputElement>(null)
  const focusSearch=useRef(false)
  useEffect(()=>{
@@ -39,8 +40,8 @@ export function WorkspaceNavigation({page,session,selectedRoom,open,mobile,onlin
  const tools=[{id:'connections' as const,label:tr('서비스 연결','Connected services'),icon:RadioTower},{id:'memory' as const,label:tr('기억','Memory'),icon:BookOpenText}]
  const renderItem=({id,label,icon:Icon}:typeof main[number]|typeof tools[number])=><Button variant="bare" key={id} className={cn(rowClass,'min-h-10 flex-1 font-medium',!open&&'justify-center !px-2')} aria-current={page===id?'page':undefined} title={label} aria-label={label} onClick={()=>navigate(id)}><Icon size={18} strokeWidth={1.8}/>{open&&<span className="min-w-0 flex-1 truncate">{label}</span>}</Button>
  const needle=query.trim().toLocaleLowerCase()
- const privateChats=sessions.value.filter(item=>!item.roomId&&[item.title,item.model,item.id].some(value=>(value||'').toLocaleLowerCase().includes(needle))).sort(newest)
- const groups=rooms.value.filter(item=>(item.name||'').toLocaleLowerCase().includes(needle)).sort(newest)
+ const privateChats=sessions.value.filter(item=>(historyFilter!=='rooms'||Boolean(needle))&&!item.roomId&&[item.title,item.model,item.id].some(value=>(value||'').toLocaleLowerCase().includes(needle))).sort(newest)
+ const groups=rooms.value.filter(item=>(historyFilter!=='chat'||Boolean(needle))&&(item.name||'').toLocaleLowerCase().includes(needle)).sort(newest)
  const changeQuery=(value:string)=>{setQuery(value);setChatLimit(30);setRoomLimit(15)}
  return <>
   {mobile&&open&&<Button variant="bare" className="fixed inset-0 z-80 border-0 bg-ink/35" aria-label={tr('메뉴 닫기','Close navigation')} onClick={onClose}/>}
@@ -56,6 +57,7 @@ export function WorkspaceNavigation({page,session,selectedRoom,open,mobile,onlin
     <Search size={16} className="shrink-0"/><TextInput ref={searchRef} value={query} onChange={event=>changeQuery(event.target.value)} placeholder={tr('대화 검색','Search conversations')} aria-label={tr('대화·그룹 검색','Search chats and groups')} className="!min-h-9 !border-0 !bg-transparent !px-0 !py-1.5 !text-sm !shadow-none !ring-0" onKeyDown={event=>{if(event.key==='Escape')changeQuery('')}}/>
     {query?<Button size="icon" variant="ghost" className="!size-7" aria-label={tr('검색 지우기','Clear search')} onClick={()=>changeQuery('')}><X size={14}/></Button>:<kbd className="shrink-0 rounded border border-divider px-1 text-[10px] text-muted">Ctrl/⌘ K</kbd>}
    </div>}
+   {open&&!needle&&<div role="group" aria-label={tr('대화 목록 보기','Conversation list view')} className="mt-2 flex shrink-0 gap-1 rounded-lg bg-canvas p-1">{([{id:'all',label:tr('전체','All')},{id:'chat',label:tr('개인','Direct')},{id:'rooms',label:tr('그룹','Groups')}] as const).map(item=><Button key={item.id} variant="bare" aria-pressed={historyFilter===item.id} className="min-h-8 flex-1 rounded-md px-1 text-xs text-muted aria-pressed:bg-surface aria-pressed:font-semibold aria-pressed:text-ink aria-pressed:shadow-sm" onClick={()=>setHistoryFilter(item.id)}>{item.label}</Button>)}</div>}
    <div className="mt-3 min-h-0 flex-1 overflow-y-auto overscroll-contain">
     {open&&<div className="space-y-5">
      {groups.length>0&&<section aria-label={tr('그룹 대화','Groups')}><h2 className="mb-1 flex items-center justify-between px-2.5 text-[11px] font-semibold text-muted">{tr('그룹 대화','Groups')}<span className="tabular-nums">{groups.length}</span></h2>{groups.slice(0,roomLimit).map(room=><Button key={room.id} variant="bare" title={room.name} className={rowClass} aria-current={page==='rooms'&&room.id===selectedRoom?'page':undefined} onClick={()=>{onRoom(room.id);if(mobile)onClose()}}><UsersRound size={15}/><span className="min-w-0 flex-1 truncate">{room.name}</span>{room.status==='running'&&<i className="size-1.5 shrink-0 rounded-full bg-success" aria-label={tr('답변 중','Responding')}/>}</Button>)}{groups.length>roomLimit&&<Button variant="ghost" size="sm" className="w-full !justify-start" onClick={()=>setRoomLimit(n=>n+15)}>{tr('그룹 더 보기','More groups')}</Button>}</section>}

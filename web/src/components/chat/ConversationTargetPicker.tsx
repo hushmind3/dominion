@@ -6,7 +6,7 @@ import {useAnchoredPanel} from '../../hooks/useAnchoredPanel'
 import {useProviderModels} from '../../hooks/useProviderModels'
 import {providerConfigured} from '../../features/conversations/resolveRoute'
 import {t, useLocale} from '../../i18n'
-import {Button, SelectInput} from '../Primitives'
+import {Button} from '../Primitives'
 import {SearchField, ViewTabs} from '../ui/WorkspaceUI'
 
 const InlineConnectionDialog=lazy(()=>import('../../features/models/InlineConnectionDialog').then(module=>({default:module.InlineConnectionDialog})))
@@ -41,14 +41,14 @@ export function ConversationTargetPicker({active,providers,agents,providerId,mod
  const visibleModels=models.value.filter(item=>(item.name+' '+item.id).toLocaleLowerCase().includes(needle))
  const visibleAgents=agents.filter(item=>(item.name+' '+(item.description||'')).toLocaleLowerCase().includes(needle))
  return <>
-  <Button ref={panel.trigger} variant="ghost" className="!min-h-9 !max-w-[min(20rem,55vw)] !justify-start !gap-1.5 !px-2 !py-1.5 !text-sm !font-medium" aria-label={tr('대화 상대 선택','Choose who to talk to')} aria-expanded={open} aria-haspopup="dialog" onClick={choose}>
+  <Button ref={panel.trigger} variant="ghost" className="!min-h-9 !max-w-[min(20rem,55vw)] !justify-start !gap-1.5 !px-2 !py-1.5 !text-sm !font-medium" title={tr('모델·페르소나 선택 (Ctrl/⌘+Shift+M)','Choose model or persona (Ctrl/⌘+Shift+M)')} aria-label={tr('대화 상대 선택','Choose who to talk to')} aria-expanded={open} aria-haspopup="dialog" onClick={choose}>
    {selectedAgent?<UsersRound size={16} className="shrink-0"/>:<Sparkles size={16} className="shrink-0 text-brand"/>}<span className="min-w-0 truncate">{selectedAgent?[selectedAgent.name,selectedModel?.name||model].filter(Boolean).join(' · '):selectedModel?.name||model||tr('대화할 AI 선택','Choose an AI')}</span><ChevronDown size={13} className="shrink-0"/>
   </Button>
   {active&&open&&panel.position&&createPortal(<div ref={panel.panel} style={panel.position} role="dialog" aria-label={tr('대화 상대 선택','Choose who to talk to')} className="z-85 overflow-y-auto overscroll-contain rounded-2xl border border-divider bg-surface p-4 shadow-xl">
    <header className="mb-3 flex items-start justify-between gap-3"><div><h2 className="text-base font-semibold">{tr('누구와 대화할까요?','Who would you like to talk to?')}</h2><p className="mt-1 text-xs leading-6 text-muted">{tr('AI나 페르소나를 선택하면 이 대화에 적용됩니다.','Choose an AI or persona for this conversation.')}</p></div><Button size="icon" variant="ghost" onClick={()=>setOpen(false)} aria-label={t('rooms.close')}><X size={17}/></Button></header>
    {agents.length>0&&<ViewTabs value={view} onChange={value=>{setView(value);setQuery('')}} options={[{id:'models',label:tr('연결한 AI','Connected AIs')},{id:'personas',label:tr('페르소나','Personas'),count:agents.length}]} label={tr('대화 상대 종류','Conversation target type')}/>}
    <div ref={focusTarget} className="grid gap-3">
-    {view==='models'&&providers.length>0&&<SelectInput aria-label={tr('연결 서비스 선택','Connection to browse')} value={browse} onChange={event=>{setBrowse(event.target.value);setQuery('')}}><option value="" disabled>{tr('연결을 선택하세요','Choose a connection')}</option>{providers.map(item=><option value={item.id} key={item.id}>{item.name}</option>)}</SelectInput>}
+    {view==='models'&&providers.length>0&&<div role="group" aria-label={tr('연결 서비스 선택','Connection to browse')} className="flex flex-wrap gap-1.5">{providers.map(item=><Button key={item.id} variant="secondary" size="sm" aria-pressed={browse===item.id} className="max-w-full !font-medium aria-pressed:!border-brand/50 aria-pressed:!bg-brand-soft aria-pressed:!text-brand-hover" onClick={()=>{setBrowse(item.id);setQuery('')}}><span className="truncate">{item.name}</span></Button>)}</div>}
     {view==='models'&&!providers.length&&<div className="grid gap-4 py-3"><p className="text-sm leading-7 text-muted">{tr('아직 연결한 AI가 없습니다. 여기서 연결하고 대화를 이어가세요.','No AIs connected yet. Connect here and continue chatting.')}</p><Button variant="primary" onClick={()=>connect()}><Plus size={16}/>{tr('AI 연결 추가','Add an AI connection')}</Button></div>}
     {(providers.length>0||agents.length>0)&&<SearchField value={query} onChange={setQuery} label={tr('AI·페르소나 검색','Search AIs and personas')}/>}
     <div className="max-h-64 overflow-y-auto overscroll-contain">
