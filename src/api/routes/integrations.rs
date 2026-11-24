@@ -37,6 +37,7 @@ pub(super) fn router() -> Router<AppState> {
         .route("/api/plugins/managed/:id/configuration", get(plugins::bridge::configuration::read).post(plugins::bridge::configuration::write))
         .route("/api/plugins/managed/:id/tools", get(plugins::bridge::tools::status).post(plugins::bridge::tools::change))
         .route("/api/plugins/managed/:id/tools/discover", get(plugins::bridge::tools::discover))
+        .route("/api/plugins/managed/:id/capabilities", get(plugins::bridge::v2::capabilities))
         .route("/api/plugins/managed/:id/connection", get(plugins::bridge::v2::status).post(plugins::bridge::v2::change))
         .route("/api/plugins/managed/:id/auto-chat", get(plugins::bridge::auto_chat::status).post(plugins::bridge::auto_chat::change))
         .route("/api/plugins/managed/:id/bridge/:request", get(plugins::bridge::status))

@@ -176,6 +176,7 @@ export function ConnectionsPage(){
  const rooms=useRemote<any[]>('/api/rooms',[])
  const providers=useRemote<any[]>('/api/providers',[])
  const [view,setView]=useState<ConnectionView>(connectionViewFromHash)
+ const legacyRuntime=useRemote<{available:boolean}>('/api/mcp/runtime',{available:false})
  useEffect(()=>{
   const sync=()=>setView(connectionViewFromHash())
   window.addEventListener('hashchange',sync);window.addEventListener('popstate',sync)
@@ -239,13 +240,13 @@ export function ConnectionsPage(){
  const choices=registry.value.filter(entry=>(entry.name+' '+entry.id).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).sort((a,b)=>a.name.localeCompare(b.name))
  const tr=(ko:string,en:string)=>english?en:ko
  return <PageContainer>
-  <ViewTabs value={view} onChange={choose} label={tr('서비스 연결 보기','Connection views')} options={[{id:'saved',label:tr('내 연결','Your connections'),count:channels.value.length},{id:'add',label:tr('연결 추가','Add a connection')},{id:'accounts',label:tr('앱 계정','App accounts')},{id:'mcp',label:tr('MCP 연결','MCP connections'),icon:Blocks},{id:'registry',label:tr('MCP 레지스트리','MCP registry'),icon:RadioTower},{id:'plugins',label:tr('플러그인','Plugins'),icon:PackagePlus},{id:'skills',label:tr('스킬','Skills'),icon:BookOpenText}]}/>
+  <ViewTabs value={view} onChange={choose} label={tr('서비스 연결 보기','Connection views')} options={[{id:'saved',label:tr('내 연결','Your connections'),count:channels.value.length},{id:'add',label:tr('연결 추가','Add a connection')},{id:'accounts',label:tr('앱 계정','App accounts')},...(legacyRuntime.value.available||view==='mcp'||view==='registry'?[{id:'mcp' as const,label:tr('MCP 연결','MCP connections'),icon:Blocks},{id:'registry' as const,label:tr('MCP 레지스트리','MCP registry'),icon:RadioTower}]:[]),{id:'plugins',label:tr('확장 프로그램','Extensions'),icon:PackagePlus},{id:'skills',label:tr('스킬','Skills'),icon:BookOpenText}]}/>
 
   <Notice message={error||(view==='saved'||view==='add'?registry.error||channels.error:'')} onRetry={()=>{void registry.reload();void channels.reload()}}/>
   {info&&<p className="mb-4 flex items-center gap-2 rounded-xl border border-success/20 bg-success-soft/30 p-4 text-sm text-success" role="status"><Check size={16}/>{info}</p>}
   {view==='accounts'?<ConnectedAccounts/>:
    (view==='mcp'||view==='registry'||view==='plugins'||view==='skills')?
-    <Suspense fallback={<p className="p-5 text-sm text-muted">{tr('MCP 관리 화면 여는 중…','Loading MCP connections…')}</p>}>
+    <Suspense fallback={<p className="p-5 text-sm text-muted">{tr('확장 관리 화면 여는 중…','Loading extensions…')}</p>}>
      <McpExtensions section={view==='mcp'?'installed':view==='registry'?'market':view} embedded
       onMcpRegistered={()=>choose('mcp')}/>
     </Suspense>:<>

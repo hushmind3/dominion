@@ -24,13 +24,20 @@ pub(super) fn token(state:&AppState,row:&Value)->Result<String,String>{
         .ok_or("이 플러그인은 공통 SDK 인증정보가 없습니다. 새 버전으로 재설치하세요.".into())
 }
 fn endpoint(port:u16,path:&str)->String{format!("http://127.0.0.1:{port}/dominion/v2/{path}")}
-async fn handshake(state:&AppState,row:&Value,port:u16)->Result<(),String>{
+async fn capabilities_for(state:&AppState,row:&Value,port:u16)->Result<Value,String>{
     let res=client()?.get(endpoint(port,"capabilities")).bearer_auth(token(state,row)?).send().await.map_err(|e|e.to_string())?;
     if !res.status().is_success(){return Err("공통 SDK v2 연결을 지원하지 않거나 인증에 실패했습니다.".into())}
     let v=crate::integrations::network::read_bounded_json(res,8192,"plugin capabilities").await?;
-    if v["protocol"]!="dominion.plugin"||v["version"]!=2||v["transport"]!="host-pull"||v["events"]!=true{
-        return Err("Unsupported plugin SDK protocol".into())
+    if v["protocol"]!="dominion.plugin"||v["version"]!=2||v["transport"]!="host-pull"{return Err("Unsupported plugin SDK protocol".into())}
+    Ok(json!({"version":2,"events":v["events"]==true,"tools":v["tools"]==true,"configuration":v["configuration"]==true}))
+}
+pub async fn capabilities(State(state):State<AppState>,Path(id):Path<String>)->Response{
+    match async{let(row,port)=target(&state,&id).await?;capabilities_for(&state,&row,port).await}.await{
+        Ok(v)=>Json(v).into_response(),Err(e)=>upstream(&e)
     }
+}
+async fn handshake(state:&AppState,row:&Value,port:u16)->Result<(),String>{
+    if capabilities_for(state,row,port).await?["events"]!=true{return Err("This extension does not accept task requests".into())}
     Ok(())
 }
 #[derive(Deserialize)]

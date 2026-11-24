@@ -81,7 +81,7 @@ export function ManagedPlugins({selectedImage,onImageConsumed,selectedPackage,on
  return <section className="mb-6 rounded-xl border border-divider bg-surface p-4">
   <div className="flex flex-wrap items-center justify-between gap-3">
    <div><h3 className="flex items-center gap-2 text-base font-bold text-ink"><Box size={20}/>{tr('내 플러그인','My plugins')}{rows&&<span className="text-xs text-muted">· {rows.length}</span>}</h3>
-    <p className="mt-1 text-xs text-muted">{tr('외부 프로그램을 Docker에서 독립 실행합니다. MCP·스킬과 별도로 관리됩니다.','Run external apps in Docker, independently of MCP and skills.')}</p></div>
+    <p className="mt-1 text-xs text-muted">{tr('설치한 확장 프로그램을 실행하고 설정하거나 업데이트할 수 있습니다.','Start, configure and update installed extensions.')}</p></div>
    <div className="flex flex-wrap gap-2"><Button variant="ghost" disabled={!!busy} onClick={()=>void load()}><RefreshCw size={15}/>{tr('새로고침','Refresh')}</Button><Button disabled={disabled} onClick={()=>{setRestoreId('');setShow(!show);setApproved(false)}}><Plus size={16}/>{tr('설치','Install')}</Button><Button disabled={disabled} variant="secondary" onClick={()=>openPackage()}>{tr('패키지 설치','Install package')}</Button></div>
   </div>
   <div className="my-3 rounded-lg bg-canvas p-3 text-xs">
@@ -120,10 +120,10 @@ export function ManagedPlugins({selectedImage,onImageConsumed,selectedPackage,on
   </div>}
   {error&&<p role="alert" className="my-2 break-words text-xs text-danger">{error}</p>}
   {notice&&<p role="status" className="my-2 break-all text-xs text-muted">{notice}</p>}
-  {rows?.length===0&&<p className="py-4 text-sm text-muted">{tr('설치된 플러그인이 없습니다. 아래에서 검색하거나 직접 이미지를 설치하세요.','No installed plugins. Search below or install an image directly.')}</p>}
-  <div className="grid gap-3 md:grid-cols-2">{rows?.map(p=><article key={p.id} className="min-w-0 rounded-xl border border-divider p-3">
+  {rows?.length===0&&<p className="py-4 text-sm text-muted">{tr('설치된 확장 프로그램이 없습니다. 마켓에서 검색해 설치하세요.','No installed extensions. Discover and install apps from the marketplace.')}</p>}
+  <div role="region" aria-label={tr('설치된 확장 목록','Installed extensions')} className="grid gap-3 md:grid-cols-2">{rows?.map(p=><article key={p.id} className="min-w-0 rounded-xl border border-divider p-3">
    <div className="flex flex-wrap justify-between gap-2"><strong className="break-all text-sm">{p.name}</strong><span className={p.running?'text-xs text-success':'text-xs text-muted'}>{p.running?tr('실행 중','Running'):p.state==='retained'?tr('데이터 보존됨','Data retained'):p.state==='created'?tr('설치됨','Installed'):p.state==='exited'?tr('중지됨','Stopped')+' · '+p.exitCode:p.state}</span></div>
-   <p className="mt-1 break-all text-xs text-muted">{p.packageSpec?p.packageSpec.runtime+' · '+p.packageSpec.package+' @ '+p.packageSpec.version:p.image}</p>
+   <details className="mt-2 text-xs text-muted"><summary className="cursor-pointer">{tr('배포 정보','Package information')}</summary><p className="mt-1 break-all">{p.packageSpec?p.packageSpec.runtime+' · '+p.packageSpec.package+' @ '+p.packageSpec.version:p.image}</p></details>
    {p.versionChange&&<p className="mt-1 break-all text-xs text-muted">{tr('복구 가능 이미지','Previous image')}: {p.versionChange.previousImage} {p.versionChange.dataRollback&&tr('· 이전 데이터 포함','· previous data included')}</p>}
    {p.scheduledUpdate&&<p className="mt-1 break-all text-xs text-muted">{tr('예약 업데이트','Scheduled update')}: {p.scheduledUpdate.message||p.scheduledUpdate.status}</p>}
    <p className="mt-1 text-xs text-muted">{p.network?tr('네트워크 허용','Network allowed'):tr('네트워크 차단','Network off')}</p>

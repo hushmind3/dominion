@@ -339,6 +339,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   finally{setMcpQuickBusy(false);}
  };
  const executeMcpCommand=async(input:string)=>{
+  try{const runtime=await get<{available:boolean}>('/api/mcp/runtime');if(!runtime.available){window.location.hash='#/connections?view=plugins';return}}catch{window.location.hash='#/connections?view=plugins';return}
   const action=parseMcpQuickCommand(input);
   if(action.kind==='invalid')throw Error(action.message);
   setMcpQuickOpen(true);
@@ -675,7 +676,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
         onModel={(provider,chosenModel)=>{setChatModeOverride({scope:current,mode:agentMode||Boolean(selectedSession?.agentId)?'agent':'chat'});if(!agentMode&&!selectedSession?.agentId)setAgentChoice(undefined);setRoute(provider,chosenModel)}} onAgent={chooseAgent}/>
        <Button type="button" variant="ghost" size="sm" aria-pressed={toolsEnabled}
         aria-label={loc==='en'?'Use built-in tools':'기본 도구 사용'}
-        title={toolsEnabled?(loc==='en'?'Built-in search, files and code tools are ready. Connected MCP plugins are managed separately.':'검색·파일·코드 등 내장 도구를 사용할 수 있습니다. MCP는 확장 기능에서 별도로 관리합니다.'):(loc==='en'?'Enable built-in tools':'검색·파일·코드 도구 켜기')}
+        title={toolsEnabled?(loc==='en'?'Built-in search, files and code tools are ready. External tools are managed in Extensions.':'검색·파일·코드 등 내장 도구를 사용할 수 있습니다. 외부 도구는 확장 프로그램에서 관리합니다.'):(loc==='en'?'Enable built-in tools':'검색·파일·코드 도구 켜기')}
         onClick={()=>setToolsEnabled(!toolsEnabled)} disabled={busy}
         className={'!min-h-8 !gap-1.5 !rounded-lg !px-2 !text-xs '+(toolsEnabled?'!bg-canvas !font-medium !text-ink':'!text-muted')}>
         <Wrench size={15}/><span>{loc==='en'?(toolsEnabled?'Tools on':'Tools off'):(toolsEnabled?'도구 켜짐':'도구 꺼짐')}</span>

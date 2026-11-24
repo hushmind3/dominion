@@ -7,6 +7,7 @@ import {UniversalConnection} from './UniversalConnection'
 import {ExtensionTools} from './ExtensionTools'
 import {ExtensionConfiguration} from './ExtensionConfiguration'
 
+type Capabilities={version:number;events:boolean;tools:boolean;configuration:boolean}
 type Grant={enabled:boolean;expiresAt?:number;remaining:number;lastError?:string;activeRequest?:string}
 type Request={requestId:string;instruction:string;requestDigest:string;runId?:string;status:string;answer?:string;answerDigest?:string;delivery:string}
 export function PluginBridgePanel({pluginId}:{pluginId:string}){
@@ -14,6 +15,8 @@ export function PluginBridgePanel({pluginId}:{pluginId:string}){
  const [request,setRequest]=useState<Request|null>(null),[busy,setBusy]=useState(false),[notice,setNotice]=useState(''),[mode,setMode]=useState<'chat'|'workspace'>('chat')
  const [open,setOpen]=useState(false),[checked,setChecked]=useState(false),[grant,setGrant]=useState<Grant|null>(null)
  const id=encodeURIComponent(pluginId),rid=request?encodeURIComponent(request.requestId):''
+ const [caps,setCaps]=useState<Capabilities|null>(null),[capError,setCapError]=useState(''),[retry,setRetry]=useState(0),[legacyOpen,setLegacyOpen]=useState(false)
+ useEffect(()=>{if(!open)return;let live=true;setCaps(null);setCapError('');get<Capabilities>('/api/plugins/managed/'+id+'/capabilities').then(v=>{if(live){if(v.version!==2)throw Error('Unsupported SDK');setCaps(v)}}).catch(e=>{if(live)setCapError((e as Error).message)});return()=>{live=false}},[id,open,retry])
  useEffect(()=>{
   if(!rid||!request||!['queued','running','awaiting_approval'].includes(request.status))return
   let active=true
@@ -21,11 +24,11 @@ export function PluginBridgePanel({pluginId}:{pluginId:string}){
   return()=>{active=false;clearInterval(interval)}
  },[id,rid,request?.status])
  useEffect(()=>{
-  if(!open)return
+  if(!open||!legacyOpen)return
   let active=true
   const load=()=>void get<Grant>('/api/plugins/managed/'+id+'/auto-chat').then(g=>{if(active)setGrant(g)}).catch(()=>{})
   load();const timer=setInterval(load,4000);return()=>{active=false;clearInterval(timer)}
- },[id,open])
+ },[id,open,legacyOpen])
  const action=async(fn:()=>Promise<void>)=>{if(busy)return;setBusy(true);setNotice('');try{await fn()}catch(e){setNotice((e as Error).message)}finally{setBusy(false)}}
  const toggleAuto=()=>action(async()=>{
   const enabled=!grant?.enabled
@@ -48,12 +51,16 @@ export function PluginBridgePanel({pluginId}:{pluginId:string}){
   setChecked(false)
  })
  return <div className="mt-3 border-t border-divider pt-2">
-  <Button size="sm" variant="ghost" onClick={()=>setOpen(!open)}><Link2 size={15}/>{tr('도미니온 작업 연결','DOMINION task connection')}</Button>
+  <Button size="sm" variant="ghost" onClick={()=>setOpen(!open)}><Link2 size={15}/>{tr('확장 설정 및 연결','Extension setup')}</Button>
   {open&&<div className="mt-2 space-y-2 text-xs">
-   <ExtensionConfiguration pluginId={pluginId}/>
-   <ExtensionTools pluginId={pluginId}/>
-   <UniversalConnection pluginId={pluginId}/>
-   <details><summary className="cursor-pointer text-muted">{tr('이전 SDK v1 연결 (구버전 앱)','Legacy SDK v1 connection')}</summary>
+   {!caps&&!capError&&<p role="status" className="text-muted">{tr('지원 기능 확인 중…','Checking supported features…')}</p>}
+   {capError&&<div className="space-y-2 rounded-xl border border-divider p-3"><p className="break-words text-muted">{tr('공통 SDK 연결을 확인하지 못했습니다. 프로그램 실행 상태를 확인하세요.','Could not detect SDK support. Check whether the app is ready.')}</p><p className="break-words text-xs">{capError}</p><Button size="sm" variant="secondary" onClick={()=>setRetry(n=>n+1)}>{tr('다시 확인','Retry')}</Button></div>}
+   {caps&&<><div className="flex flex-wrap items-center gap-2 text-success"><span className="size-2 rounded-full bg-success"/>{tr('SDK 연결 가능','SDK available')} · v{caps.version}</div>
+   {caps.configuration&&<ExtensionConfiguration pluginId={pluginId}/>}
+   {caps.tools&&<ExtensionTools pluginId={pluginId}/>}
+   {caps.events&&<UniversalConnection pluginId={pluginId}/>}
+   {!caps.configuration&&!caps.tools&&!caps.events&&<p>{tr('이 프로그램은 독립 실행만 지원합니다.','This app runs independently.')}</p>}</>}
+   {!caps&&capError&&<details onToggle={e=>setLegacyOpen(e.currentTarget.open)}><summary className="cursor-pointer text-muted">{tr('이전 SDK v1 연결 (구버전 앱)','Legacy SDK v1 connection')}</summary>
    <p className="text-muted">{tr('SDK 연결 규격을 지원하는 외부 프로그램에서 요청을 받아 도미니온이 처리합니다. 승인한 요청과 답변만 전달합니다.','Pull requests from compatible apps and send only owner-approved answers.')}</p>
    <div className="rounded-lg bg-canvas p-2 space-y-2"><strong>{tr('음성·자동 대화 연결','Voice / automatic chat')}</strong><p className="text-muted">{grant?.enabled?tr('남은 대화: ','Turns remaining: ')+grant.remaining:tr('꺼짐 · 수동 승인만 사용','Off · manual review only')}</p>{grant?.lastError&&<p className="break-words text-warning">{grant.lastError}</p>}<Button size="sm" disabled={busy||grant===null} onClick={()=>void toggleAuto()}>{grant?.enabled?tr('자동 대화 중지','Stop automatic chat'):tr('30분 자동 대화 허용','Allow automatic chat for 30 minutes')}</Button></div>
    <Button size="sm" disabled={busy} onClick={()=>void pull()}><RefreshCw size={14}/>{tr('요청 가져오기','Fetch request')}</Button>
@@ -77,6 +84,6 @@ export function PluginBridgePanel({pluginId}:{pluginId:string}){
      </>}
     </>}
    </div>}
-  </details></div>}
+  </details>}</div>}
  </div>
 }
