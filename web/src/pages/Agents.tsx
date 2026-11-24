@@ -30,7 +30,7 @@ import {
 } from "lucide-react";
 import {Agent,Provider,del,get,post} from "../api";
 import {ModelPicker} from "../components/ModelPicker";
-import {ReasoningSelect} from "../components/ReasoningSelect";
+import {RouteReasoningSelect} from "../components/ReasoningSelect";
 import {useProviderModels} from "../hooks/useProviderModels";
 import {
   Action,
@@ -233,7 +233,7 @@ export function AgentsPage() {
               />
             </FormField>
             <FormField label={t('chat.reasoningEffort')}>
-              <ReasoningSelect value={bulkEffort} onChange={setBulkEffort} model={bulkModels.value.find(item=>item.id===bulkModel)} requireCatalog={enabledProviders.find(item=>item.id===bulkProvider)?.kind==='codex'} disabled={bulkBusy||!bulkModel}/>
+              <RouteReasoningSelect providerId={bulkProvider} modelId={bulkModel} value={bulkEffort} onChange={setBulkEffort} model={bulkModels.value.find(item=>item.id===bulkModel)} disabled={bulkBusy||!bulkModel}/>
             </FormField>
             <Action
               disabled={
@@ -403,7 +403,7 @@ export function AgentsPage() {
                 </FormField>
               </div>
               <FormField label={t('chat.reasoningEffort')} hint="이 에이전트의 기본 추론 강도입니다. 대화나 회의실에서 지정한 값이 있으면 해당 값이 우선합니다.">
-                <ReasoningSelect value={edit.reasoningEffort||""} onChange={reasoningEffort=>setEdit({...edit,reasoningEffort,thinking:undefined})} model={editModels.value.find(item=>item.id===(edit.model||editProvider?.model))} requireCatalog={editProvider?.kind==='codex'} disabled={saving}/>
+                <RouteReasoningSelect providerId={edit.providerId||""} modelId={edit.model||editProvider?.model||""} value={edit.reasoningEffort||""} onChange={reasoningEffort=>setEdit({...edit,reasoningEffort,thinking:undefined})} model={editModels.value.find(item=>item.id===(edit.model||editProvider?.model))} disabled={saving}/>
               </FormField>
               <FormField
                 label={t('agents.alias')}

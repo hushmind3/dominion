@@ -6,7 +6,7 @@ import {ConversationRail} from '../components/chat/ConversationRail'
 import {useConversationSidebar} from '../hooks/useConversationSidebar'
 import type {CSSProperties} from 'react'
 import {ConversationSettings} from '../components/ConversationSettings'
-import {usePersistentConversationToggle,usePersistentReasoningEffort,usePersistentKoreanReasoning} from '../hooks/usePersistentConversationPreference'
+import {usePersistentConversationToggle,usePersistentKoreanReasoning} from '../hooks/usePersistentConversationPreference'
 import {matchesRoomRefresh,type RefreshScope} from '../refreshEvents'
 import {createPortal} from 'react-dom'
 import {useAnchoredPanel} from '../hooks/useAnchoredPanel'
@@ -22,7 +22,7 @@ import {get,post,del,resolveApproval,uploadAttachment,type Agent,type ChatMessag
 import {Button,TextArea,TextInput,SelectInput} from '../components/Primitives'
 import {DialogBackdrop,DialogPanel} from '../components/Dialog'
 import {FormField,Notice,refresh,useRemote} from '../components/UI'
-import {ReasoningSelect} from '../components/ReasoningSelect'
+import {RoomReasoningSelect,RouteReasoningSelect} from '../components/ReasoningSelect'
 import './Rooms.css'
 import '../styles/group-workspace.css'
 import {t,useLocale,getLocale,type LocaleKey} from '../i18n'
@@ -107,7 +107,7 @@ function RoomSettings({value,onChange,agents,providers,disabled=false}:{value:Ro
   <div className="room-settings-numbers"><FormField label={t('rooms.rounds')} hint={t('rooms.roundsHint')}><TextInput type="number" min={1} max={100000} value={value.rounds} onChange={e=>onChange({...value,rounds:Math.min(100000,Math.max(1,Number(e.target.value)||1))})} disabled={disabled||value.routingMode==='round_robin'}/></FormField><FormField label={t('rooms.maxTurns')} hint={t('rooms.maxTurnsHint')}><TextInput type="number" min={0} max={100000} value={value.maxTurns} onChange={e=>onChange({...value,maxTurns:Math.min(100000,Math.max(0,Number(e.target.value)||0))})} disabled={disabled}/></FormField></div>
   <FormField label={t('rooms.tokenBudget')} hint={t('rooms.tokenBudgetHint')}><TextInput type="number" min={0} max={10000000} value={value.tokenBudget} onChange={e=>onChange({...value,tokenBudget:Math.min(10000000,Math.max(0,Number(e.target.value)||0))})} disabled={disabled}/></FormField>
   <FormField label="대화 문맥 목표 (토큰)" hint="동적 대화·기억 선택의 목표값입니다. 페르소나·공통 지시는 압축하지 않으며 이 값보다 커질 수 있습니다."><TextInput type="number" min={2000} max={1000000} value={value.contextBudgetTokens} onChange={e=>onChange({...value,contextBudgetTokens:Math.min(1000000,Math.max(2000,Number(e.target.value)||2000))})} disabled={disabled}/></FormField>
-  <FormField label={t('rooms.reasoning')} hint={t('rooms.reasoningHint')}><ReasoningSelect value={value.reasoningEffort} onChange={reasoningEffort=>onChange({...value,reasoningEffort})} defaultLabel={t('rooms.reasoningDefault')} disabled={disabled}/></FormField>
+  <FormField label={t('rooms.reasoning')} hint={t('rooms.reasoningHint')}><RoomReasoningSelect room={value} agents={agents} providers={providers} value={value.reasoningEffort} onChange={reasoningEffort=>onChange({...value,reasoningEffort})} defaultLabel={t('rooms.reasoningDefault')} disabled={disabled}/></FormField>
   <label className="room-setting-check"><input type="checkbox" checked={value.autoLearning} onChange={e=>onChange({...value,autoLearning:e.target.checked})} disabled={disabled}/><span><strong>{t('rooms.autoLearn')}</strong><small>{t('rooms.autoLearnDesc')}</small></span></label>
   <RoomModelPicker value={value.models} onChange={models=>onChange({...value,models})} providers={providers} disabled={disabled}/>
   <label className="room-setting-check"><input type="checkbox" checked={value.autoModels} onChange={e=>onChange({...value,autoModels:e.target.checked})} disabled={disabled}/><span><strong>{t('rooms.autoModels')}</strong><small>{t('rooms.autoModelsDesc')}</small></span></label>
@@ -148,7 +148,7 @@ function RoomModelPicker({value,onChange,providers,disabled=false}:{value:RoomMo
   </div>
   {loading&&<p className="room-note">{t('rooms.modelsLoading')}</p>}
   {error&&<p className="room-message-error">{translateError(error)}</p>}
-  {!loading&&!error&&<div className="room-model-list">{models.map(item=>{const checked=has(providerId,item.id);return <div key={item.id} className={'room-model-option '+(checked?'checked':'')}><label className="room-model-check"><input type="checkbox" checked={checked} onChange={()=>toggle(item.id)} disabled={disabled}/><span>{item.name||item.id}</span></label>{checked&&<ReasoningSelect className="room-model-effort" value={effortOf(item.id)} onChange={effort=>setEffort(item.id,effort)} model={item} requireCatalog={available.find(provider=>provider.id===providerId)?.kind==='codex'} defaultLabel={t('rooms.models.effortDefault')} disabled={disabled}/>}{checked&&<Check size={13}/>}</div>})}{!models.length&&<p className="room-note">{t('rooms.modelsEmpty')}</p>}</div>}
+  {!loading&&!error&&<div className="room-model-list">{models.map(item=>{const checked=has(providerId,item.id);return <div key={item.id} className={'room-model-option '+(checked?'checked':'')}><label className="room-model-check"><input type="checkbox" checked={checked} onChange={()=>toggle(item.id)} disabled={disabled}/><span>{item.name||item.id}</span></label>{checked&&<RouteReasoningSelect providerId={providerId} modelId={item.id} className="room-model-effort" value={effortOf(item.id)} onChange={effort=>setEffort(item.id,effort)} model={item} defaultLabel={t('rooms.models.effortDefault')} disabled={disabled}/>}{checked&&<Check size={13}/>}</div>})}{!models.length&&<p className="room-note">{t('rooms.modelsEmpty')}</p>}</div>}
   <small className="room-note">{t('rooms.modelsHint')}</small>
  </div>
 }
@@ -160,8 +160,6 @@ function RoomConversation({sidebarModal,settingsTarget,room,agents,providers,ope
  const [optionsBusy,setOptionsBusy]=useState(false)
  const [reasoningKo,setReasoningKo]=usePersistentKoreanReasoning()
  const [showReasoning,setShowReasoning]=usePersistentConversationToggle('showReasoning')
- const [thinkingEnabled,setThinkingEnabled]=usePersistentConversationToggle('thinkingEnabled')
- const [reasoningEffort,setReasoningEffort]=usePersistentReasoningEffort()
  const [recipientsOpen,setRecipientsOpen]=useState(false)
  const recipientsPanel=useAnchoredPanel(recipientsOpen,()=>setRecipientsOpen(false),280,'top')
  useEffect(()=>{if(!visibleView){setRecipientsOpen(false)}},[visibleView])
@@ -176,7 +174,7 @@ function RoomConversation({sidebarModal,settingsTarget,room,agents,providers,ope
  const [learningNotice,setLearningNotice]=useState('')
  const [teamOpen,setTeamOpen]=useState(false)
  const [showActivity,setShowActivity]=useState(false),[live,setLive]=useState<LiveDraft|null>(null),[moreBelow,setMoreBelow]=useState(false)
- const inputRef=useRef<HTMLTextAreaElement>(null),approvalRef=useRef<HTMLDivElement>(null),requestInFlight=useRef(false),reloadRequested=useRef(false),dataVersion=useRef(0),mounted=useRef(true),sendAttempt=useRef<{input:string;targets:string[];attachmentIds:string[];id:string;reasoningLanguage:'ko'|'default';reasoningEffort?:string;thinking:boolean}|null>(null)
+ const inputRef=useRef<HTMLTextAreaElement>(null),approvalRef=useRef<HTMLDivElement>(null),requestInFlight=useRef(false),reloadRequested=useRef(false),dataVersion=useRef(0),mounted=useRef(true),sendAttempt=useRef<{input:string;targets:string[];attachmentIds:string[];id:string;reasoningLanguage:'ko'|'default'}|null>(null)
  const activeTurnId=useRef<string|null>(null),retiredTurnIds=useRef(new Set<string>()),terminalTurnIds=useRef(new Set<string>())
  const imageInputRef=useRef<HTMLInputElement>(null),pendingImagesRef=useRef<PendingRoomImage[]>([])
  const [pendingImages,setPendingImages]=useState<PendingRoomImage[]>([])
@@ -305,7 +303,7 @@ function RoomConversation({sidebarModal,settingsTarget,room,agents,providers,ope
  const {scrollRef,onScroll,jumpDown}=useTranscriptScroll(room.id,transcriptRevision,setMoreBelow);
  const updateDraft=(value:RoomDraft)=>{setDraft(value);setDirty(true);setSaved(false)}
  const save=async()=>{if(saving)return;setSaving(true);setError('');try{const savedRoom=await post<RoomConfig>('/api/rooms',draft);dataVersion.current+=1;setFeed(previous=>({...previous,room:savedRoom}));setDirty(false);setSaved(true);await load();await onSaved()}catch(e){setError((e as Error).message)}finally{setSaving(false)}}
- const changeRoomOption=async(field:'toolsEnabled'|'autoLearning',value:boolean)=>{
+ const changeRoomOption=async(field:'toolsEnabled'|'autoLearning'|'reasoningEffort',value:boolean|string)=>{
   if(optionsBusy)return
   setOptionsBusy(true);setError('')
   try{
@@ -370,15 +368,15 @@ function RoomConversation({sidebarModal,settingsTarget,room,agents,providers,ope
    }
   }catch(e){setError((e as Error).message);setUploading(false);setSending(false);return}
   setUploading(false)
-  if(!sendAttempt.current||sendAttempt.current.input!==contents||JSON.stringify(sendAttempt.current.targets)!==JSON.stringify(recipients)||JSON.stringify(sendAttempt.current.attachmentIds)!==JSON.stringify(attachmentIds)||sendAttempt.current.reasoningEffort!==(reasoningEffort||undefined)||sendAttempt.current.thinking!==(reasoningEffort==='none'?false:thinkingEnabled)||sendAttempt.current.reasoningLanguage!==(reasoningKo?'ko':'default'))sendAttempt.current={input:contents,targets:recipients,attachmentIds,id:crypto.randomUUID(),reasoningLanguage:reasoningKo?'ko':'default',reasoningEffort:reasoningEffort||undefined,thinking:reasoningEffort==='none'?false:thinkingEnabled}
-  try{const result=await post<{room:RoomConfig;message:ChatMessage;job:Job;sessionId:string}>('/api/rooms/'+room.id+'/messages',{input:contents,...(attachmentIds.length?{attachmentIds}:{}),...(recipients.length?{agentIds:recipients}:{}),clientMessageId:sendAttempt.current.id,reasoningLanguage:sendAttempt.current.reasoningLanguage,reasoningEffort:sendAttempt.current.reasoningEffort,thinking:sendAttempt.current.thinking});dataVersion.current+=1;setMessages(previous=>previous.some(message=>message.id===result.message.id)?previous:[...previous,result.message]);setFeed(previous=>({...previous,room:result.room,sessionId:result.sessionId,jobs:[result.job,...previous.jobs.filter(job=>job.id!==result.job.id)]}));setInput('');if(inputRef.current)inputRef.current.style.height='';setTargets([]);setRecipientsOpen(false);sendAttempt.current=null;await load();await onSaved();inputRef.current?.focus({preventScroll:true})}
+  if(!sendAttempt.current||sendAttempt.current.input!==contents||JSON.stringify(sendAttempt.current.targets)!==JSON.stringify(recipients)||JSON.stringify(sendAttempt.current.attachmentIds)!==JSON.stringify(attachmentIds)||sendAttempt.current.reasoningLanguage!==(reasoningKo?'ko':'default'))sendAttempt.current={input:contents,targets:recipients,attachmentIds,id:crypto.randomUUID(),reasoningLanguage:reasoningKo?'ko':'default'}
+  try{const result=await post<{room:RoomConfig;message:ChatMessage;job:Job;sessionId:string}>('/api/rooms/'+room.id+'/messages',{input:contents,...(attachmentIds.length?{attachmentIds}:{}),...(recipients.length?{agentIds:recipients}:{}),clientMessageId:sendAttempt.current.id,reasoningLanguage:sendAttempt.current.reasoningLanguage});dataVersion.current+=1;setMessages(previous=>previous.some(message=>message.id===result.message.id)?previous:[...previous,result.message]);setFeed(previous=>({...previous,room:result.room,sessionId:result.sessionId,jobs:[result.job,...previous.jobs.filter(job=>job.id!==result.job.id)]}));setInput('');if(inputRef.current)inputRef.current.style.height='';setTargets([]);setRecipientsOpen(false);sendAttempt.current=null;await load();await onSaved();inputRef.current?.focus({preventScroll:true})}
   catch(e){setError((e as Error).message)}finally{setSending(false)}
  }
  const approve=async(id:string,allow:boolean)=>{if(approvalBusy)return;setApprovalBusy(id);setError('');try{await resolveApproval(id,allow);dataVersion.current+=1;setFeed(previous=>({...previous,approvals:previous.approvals.filter(approval=>approval.id!==id)}));refresh()}catch(e){setError((e as Error).message)}finally{await load();setApprovalBusy('')}}
  const stop=async()=>{if(stopping)return;setStopping(true);setError('');try{await post('/api/rooms/'+room.id+'/stop',{});dataVersion.current+=1;if(activeTurnId.current)terminalTurnIds.current.add(activeTurnId.current);setLive(null);await load();await onSaved()}catch(e){setError((e as Error).message)}finally{setStopping(false)}}
  const mention=(agent:Agent)=>setTargets(previous=>previous.includes(agent.id)?previous.filter(id=>id!==agent.id):[...previous,agent.id])
  return <div className="room-conversation">
-  {settingsTarget&&createPortal(<ConversationSettings permissionControl={<ExecutionPermissionsSetting/>} reasoningControl={<ReasoningSelect value={reasoningEffort} onChange={effort=>{setReasoningEffort(effort);setThinkingEnabled(effort!=='none')}} defaultLabel={current.reasoningEffort?`${t('rooms.reasoningDefault')} (${current.reasoningEffort})`:t('chat.reasoningAuto')} className="chat-reasoning !h-7 !w-auto !border-0 !bg-transparent !py-1 !pl-1.5 !pr-6 !text-[11px] !font-semibold !text-[#5C544A]"/>} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} thinkingEnabled={thinkingEnabled} setThinkingEnabled={setThinkingEnabled} reasoningEffort={reasoningEffort} setReasoningEffort={setReasoningEffort} toolsEnabled={current.toolsEnabled===true} setToolsEnabled={value=>void changeRoomOption('toolsEnabled',value)} autoLearn={current.autoLearning===true} setAutoLearn={value=>void changeRoomOption('autoLearning',value)} optionsBusy={optionsBusy} learning={knowledgeBusy} learnDisabled={!sessionId||running} onLearn={learnKnowledge} notice={knowledgeNotice}/>,settingsTarget)}
+  {settingsTarget&&createPortal(<ConversationSettings permissionControl={<ExecutionPermissionsSetting/>} hideThinking reasoningControl={<RoomReasoningSelect room={current} agents={agents} providers={providers} value={current.reasoningEffort||''} onChange={effort=>void changeRoomOption('reasoningEffort',effort)} defaultLabel={t('rooms.reasoningDefault')} disabled={optionsBusy} className="w-full"/>} showReasoning={showReasoning} setShowReasoning={setShowReasoning} reasoningKo={reasoningKo} setReasoningKo={setReasoningKo} toolsEnabled={current.toolsEnabled===true} setToolsEnabled={value=>void changeRoomOption('toolsEnabled',value)} autoLearn={current.autoLearning===true} setAutoLearn={value=>void changeRoomOption('autoLearning',value)} optionsBusy={optionsBusy} learning={knowledgeBusy} learnDisabled={!sessionId||running} onLearn={learnKnowledge} notice={knowledgeNotice}/>,settingsTarget)}
   <section inert={sidebarModal} aria-hidden={sidebarModal||undefined} className="room-main" aria-label={t('rooms.headerAria',{name:current.name})}>
 
 

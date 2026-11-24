@@ -10,7 +10,7 @@ import {DominionCloudAccount} from '../components/DominionCloudAccount'
 import {ModelPicker} from '../components/ModelPicker'
 import {OAuthConnectionCard} from '../components/OAuthConnectionCard'
 import {CliAuthProgress, type CliAuthStatus} from '../components/CliAuthProgress'
-import {ReasoningSelect} from '../components/ReasoningSelect'
+import {RouteReasoningSelect} from '../components/ReasoningSelect'
 import {useProviderModels} from '../hooks/useProviderModels'
 import {t,useLocale} from '../i18n'
 
@@ -476,7 +476,7 @@ export function ModelHub(){
      {baseUrl.includes('ACCOUNT_ID')&&<FormField label={t('models.dlg.accountId')} hint={t('models.dlg.accountIdHint')}><TextInput value={accountId} onChange={e=>setAccountId(e.target.value)} placeholder="a1b2c3d4e5f6..."/></FormField>}
      <FormField label={t('models.dlg.apiMode')}><SelectInput value={kind} onChange={e=>setKind(e.target.value)}><option value="openai">{t('models.dlg.openaiCompat')}</option><option value="anthropic">Anthropic</option><option value="codex">Codex (OAuth)</option><option value="ollama">Ollama</option></SelectInput></FormField>
      {kind==='codex'&&edit&&<FormField label="Codex 기본 모델" hint="계정 모델 목록에서 선택합니다. 모델이 보이지 않으면 OAuth 연결을 갱신하세요."><ModelPicker providerId={edit.id} catalogue={editModels} value={defaultModel} onChange={model=>{setDefaultModel(model);setDefaultEffort('')}} className="w-full"/></FormField>}
-     <FormField label={t('chat.reasoningEffort')} hint="에이전트나 대화에서 별도로 지정하지 않았을 때 사용하는 기본값입니다."><ReasoningSelect value={defaultEffort} onChange={setDefaultEffort} model={editModels.value.find(item=>item.id===(defaultModel||edit?.model))} requireCatalog={kind==='codex'}/></FormField>
+     <FormField label={t('chat.reasoningEffort')} hint="에이전트나 대화에서 별도로 지정하지 않았을 때 사용하는 기본값입니다."><RouteReasoningSelect providerId={edit&&edit.kind===kind&&edit.baseUrl===baseUrl.trim()&&(edit.accountId||'')===accountId.trim()?edit.id:''} modelId={defaultModel||edit?.model||''} value={defaultEffort} onChange={setDefaultEffort} model={editModels.value.find(item=>item.id===(defaultModel||edit?.model))} disabled={saving}/></FormField>
      {kind!=='codex'&&<FormField label={t('models.dlg.apiKey')}><TextInput type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder={edit?.hasKey?t('models.dlg.keepKey'):t('models.dlg.keyIfNeeded')}/></FormField>}
      <label className="flex items-center gap-2 text-[12px]"><TextInput type="checkbox" checked={local} onChange={e=>setLocal(e.target.checked)}/> {t('models.dlg.localServer')}</label>
      <label className="flex items-center gap-2 text-[12px]"><TextInput type="checkbox" checked={vision} onChange={e=>setVision(e.target.checked)}/> {t('models.dlg.vision')}</label>

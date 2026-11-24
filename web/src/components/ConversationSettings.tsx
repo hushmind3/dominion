@@ -6,8 +6,8 @@ import {t,useLocale} from '../i18n'
 type Props={
  showReasoning:boolean;setShowReasoning:(value:boolean)=>void
  reasoningKo:boolean;setReasoningKo:(value:boolean)=>void
- thinkingEnabled:boolean;setThinkingEnabled:(value:boolean)=>void;canDisableThinking?:boolean;thinkingNotice?:string
- reasoningEffort:string;setReasoningEffort:(value:string)=>void
+ thinkingEnabled?:boolean;setThinkingEnabled?:(value:boolean)=>void;canDisableThinking?:boolean;thinkingNotice?:string;hideThinking?:boolean
+ reasoningEffort?:string;setReasoningEffort?:(value:string)=>void
  toolsEnabled:boolean;setToolsEnabled:(value:boolean)=>void
  autoLearn:boolean;setAutoLearn:(value:boolean)=>void
  learning:boolean;learnDisabled:boolean;onLearn:()=>void|Promise<void>
@@ -16,7 +16,7 @@ type Props={
 }
 /** Shared chat controls: readable labels, native checkboxes and unchanged
  * persistence callbacks for both single chat and nine-agent rooms. */
-export function ConversationSettings({showReasoning,setShowReasoning,reasoningKo,setReasoningKo,thinkingEnabled,setThinkingEnabled,canDisableThinking=true,thinkingNotice,reasoningEffort,setReasoningEffort,toolsEnabled,setToolsEnabled,autoLearn,setAutoLearn,learning,learnDisabled,onLearn,optionsBusy=false,notice,reasoningControl,permissionControl}:Props){
+export function ConversationSettings({showReasoning,setShowReasoning,reasoningKo,setReasoningKo,thinkingEnabled=true,setThinkingEnabled=()=>{},canDisableThinking=true,thinkingNotice,hideThinking=false,reasoningEffort,setReasoningEffort=()=>{},toolsEnabled,setToolsEnabled,autoLearn,setAutoLearn,learning,learnDisabled,onLearn,optionsBusy=false,notice,reasoningControl,permissionControl}:Props){
  const locale=useLocale()
  const en=locale==='en'
 
@@ -59,7 +59,7 @@ export function ConversationSettings({showReasoning,setShowReasoning,reasoningKo
     <div className="mt-2 border-t border-[#EAE2D6] pt-1">
      <p className="px-3 pb-1 pt-3 text-[11px] font-bold tracking-[.08em] text-[#98795C]">{en?'RESPONSE & TOOLS':'응답·도구'}</p>
     </div>
-    <label className={row}>
+    {!hideThinking&&<label className={row}>
      <span className="flex min-w-0 items-start gap-2.5"><BrainCircuit size={18} className="mt-0.5 shrink-0 text-[#957E65]"/>
       <span><strong className="block text-[13px] font-semibold">{t('chat.useThinking')}</strong>
        <small className="mt-1 block text-[12px] leading-5 text-[#81766A]">
@@ -71,7 +71,7 @@ export function ConversationSettings({showReasoning,setShowReasoning,reasoningKo
      {canDisableThinking?<TextInput type="checkbox" className={check} checked={thinkingEnabled}
       onChange={e=>{const on=e.target.checked;setThinkingEnabled(on);setReasoningEffort(on?'':'none')}}/>
       :<span className="shrink-0 rounded-lg bg-zinc-100 px-2 py-1 text-[11px] text-zinc-500">{en?'Provider default':'제공자 기본값'}</span>}
-    </label>
+    </label>}
     {permissionControl&&<div className="px-3 py-3">{permissionControl}</div>}
     {reasoningControl&&<div className="px-3 pb-3">{reasoningControl}</div>}
     <label className={row}>

@@ -73,13 +73,15 @@ test('persistence changes notify mounted views and native storage events are sub
  assert.match(hook,/removeEventListener\('storage',sync\)/)
 })
 
-test('both screens bind persisted display/thinking controls and chat wire uses effective values',()=>{
+test('display preferences are shared, but room reasoning belongs to the saved room',()=>{
  assert.match(chat,/usePersistentConversationToggle\('showReasoning'\)/)
  assert.match(rooms,/usePersistentConversationToggle\('showReasoning'\)/)
  assert.match(chat,/usePersistentConversationToggle\('toolsEnabled'\)/)
  assert.match(chat,/usePersistentConversationToggle\('autoLearn'\)/)
  assert.match(chat,/usePersistentReasoningEffort\(\)/)
- assert.match(rooms,/usePersistentReasoningEffort\(\)/)
+ assert.doesNotMatch(rooms,/usePersistentReasoningEffort\(\)/)
+ assert.match(rooms,/changeRoomOption\('reasoningEffort',effort\)/)
+ assert.doesNotMatch(rooms,/reasoningEffort:sendAttempt\.current\.reasoningEffort/)
  assert.match(chat,/reasoningEffort:effectiveReasoningEffort\|\|undefined/)
  assert.match(chat,/toolsEnabled:agentMode&&toolsEnabled,toolsExecutionEnabled:agentMode&&toolsEnabled,autoLearning:agentMode&&autoLearn/)
  assert.match(chat,/sessionId:id,clientTurnId,agentId:agentMode\?agentId:undefined,directChat:!agentMode/)

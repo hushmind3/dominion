@@ -19,6 +19,7 @@ import {Agent,Approval,Attachment,ChatMessage,ChatSession,Provider,get,post,reso
 import {Action,refresh,useRemote} from '../components/UI'
 import {SlashMenu,slashCandidates,slashCommandLabel,slashCommands,type SlashChoice} from '../components/SlashMenu'
 import {ReasoningSelect} from '../components/ReasoningSelect'
+import {useInferenceSupport} from '../hooks/useInferenceSupport'
 import {useProviderModels} from '../hooks/useProviderModels'
 import {useTranscriptScroll} from '../hooks/useTranscriptScroll'
 import {useChatDraft} from '../hooks/useChatDraft'
@@ -76,9 +77,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    setOverride({scope:current,providerId,model:choice.id});
   }
  },[model,catalogue.loading,catalogue.error,models,providerId,current]);
- const inferenceSupport=useRemote<{providerId:string;model:string;thinkingToggle:boolean;reasoningEfforts:string[]}|null>(
-  active&&providerId&&model&&!catalogue.loading?'/api/chat/inference-support?providerId='+encodeURIComponent(providerId)+'&model='+encodeURIComponent(model):null,null,active);
- const support=inferenceSupport.value?.providerId===providerId&&inferenceSupport.value?.model===model?inferenceSupport.value:null;
+ const inferenceSupport=useInferenceSupport(providerId,model,active&&!catalogue.loading);
+ const support=inferenceSupport.support;
  const supportedEfforts=support?.reasoningEfforts??[];
  const canDisableThinking=support?.thinkingToggle===true;
  const supportedModel=selectedModel?{...selectedModel,reasoningEfforts:supportedEfforts}:{id:model,reasoningEfforts:supportedEfforts};
