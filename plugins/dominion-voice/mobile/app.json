@@ -2,7 +2,7 @@
   "expo": {
     "name": "DOMINION Voice",
     "slug": "dominion-voice-mobile",
-    "version": "0.1.0",
+    "version": "0.2.1",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "ios": {
@@ -19,6 +19,10 @@
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.ACCESS_NETWORK_STATE"
+      ],
+      "versionCode": 3,
+      "blockedPermissions": [
+        "android.permission.CAMERA"
       ]
     },
     "plugins": [

@@ -1,0 +1,66 @@
+name: Sub3 Android voice APK
+on:
+  push:
+    branches: [dominion-sub3]
+    paths:
+      - 'plugins/dominion-voice/mobile/**'
+      - '.github/workflows/sub3-android-apk.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sub3-android-apk
+  cancel-in-progress: true
+jobs:
+  apk:
+    if: github.ref == 'refs/heads/dominion-sub3'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      CI: 'true'
+      EXPO_NO_TELEMETRY: '1'
+      NODE_OPTIONS: '--max-old-space-size=6144'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install dependencies and validate
+        working-directory: plugins/dominion-voice/mobile
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npx expo config --type public
+      - name: Generate native Android project
+        working-directory: plugins/dominion-voice/mobile
+        run: npx expo prebuild --platform android --clean --no-install
+      - name: Build standalone signed APK
+        working-directory: plugins/dominion-voice/mobile/android
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon --stacktrace
+      - name: Verify APK and publish checksum
+        working-directory: plugins/dominion-voice/mobile
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release.apk dist/DOMINION-Voice-0.2.1-arm64-test.apk
+          APK=dist/DOMINION-Voice-0.2.1-arm64-test.apk
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          unzip -l "$APK" | grep 'assets/index.android.bundle'
+          unzip -l "$APK" | grep 'lib/arm64-v8a/'
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+          echo "Commit: $GITHUB_SHA" > dist/BUILD.txt
+          echo "Test-signed standalone ARM64 APK; no Metro server needed." >> dist/BUILD.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DOMINION-Voice-Android-0.2.1-arm64
+          path: plugins/dominion-voice/mobile/dist/*
+          if-no-files-found: error
+          retention-days: 30
