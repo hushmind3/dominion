@@ -15,3 +15,6 @@ pub use dominion_core::runtime_port::{AgentLoop, Context, Flow, Host, ModelDecis
 pub async fn run<H: Host>(host: &mut H, context: Context<'_>) -> Result<(), String> {
     AgentLoop::run(&Engine, host, context).await
 }
+
+mod embedded;
+pub use embedded::{run_embedded, CheckpointStore, EmbeddedLimits, ModelPort, ModelTurn, TurnDecision, Verification, Verifier};

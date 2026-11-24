@@ -46,3 +46,33 @@ directly; there is no second model/tool loop.
 
 Run `cargo test --locked -p dominion-agent-sdk` for the independent host test.
 For HTTP clients, see [TypeScript SDK](../../packages/sdk-typescript/README.md).
+
+## Simpler external host integration
+
+Use `run_embedded` if you do not need custom phase scheduling. Implement only
+`CheckpointStore` (a single-run durable Journal with load), `ModelPort`,
+`Dispatcher` and `Verifier`. The adapter translates structured model answers
+and tool actions into the **same** native Engine phases. It preserves receipts,
+verification retry feedback and reported token totals. An unsuccessful verifier
+returns `Verification::Retry(reason)`; the next model turn sees this in the
+checkpoint events. No second loop, HTTP server or provider is required.
+
+```rust,ignore
+let result = dominion_agent_sdk::run_embedded(
+    &journal, &mut model, &dispatcher, &mut verifier,
+    dominion_agent_sdk::EmbeddedLimits {
+        max_rounds: 8, max_tools: 16,
+        max_elapsed: std::time::Duration::from_secs(120),
+    },
+).await?;
+```
+
+The caller creates the initial checkpoint once, exclusively leases that run,
+and implements authentication, sandboxing and approval inside the dispatcher.
+Tools must have an advertised JSON schema; an empty catalog or model-only
+frame cannot fall back to unrestricted dispatch. Limits count persisted
+rounds and receipts; elapsed time applies to the current invocation. A provider
+adapter must enforce its own request timeouts and report failed/unknown costs.
+On error inspect the checkpoint; never automatically restart unknown effects.
+The integration tests in `tests/ports.rs` exercise an actual local test artifact,
+failed verification repair, uncertain write recovery and model-only denial.
