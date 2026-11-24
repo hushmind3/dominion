@@ -264,7 +264,12 @@ try{
  page.once('dialog',dialog=>dialog.accept());
  const roomReset=page.waitForResponse(response=>
   new URL(response.url()).pathname==='/api/rooms/room-model-fixture/reset');
- await page.locator('.room-header-more > summary').click();
+ const roomMenu=page.getByRole('button',{name:'그룹 관리',exact:true});
+ await roomMenu.click();
+ await page.getByRole('dialog',{name:'그룹 관리',exact:true}).waitFor();
+ await page.keyboard.press('Escape');
+ assert.equal(await roomMenu.getAttribute('aria-expanded'),'false');
+ await roomMenu.click();
  await page.getByRole('button',{name:'대화 초기화'}).click();
  await roomReset;
  await page.getByText('dropped.txt',{exact:true}).waitFor({state:'detached',timeout:10000});

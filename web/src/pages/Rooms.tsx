@@ -80,8 +80,9 @@ export function RoomsPage({openSession,openSettings,switchMode,active:visibleVie
  const agents=useRemote<Agent[]>('/api/agents',[],visibleView)
  const providers=useRemote<Provider[]>('/api/providers',[],visibleView)
  const [selected,setSelected]=useState(()=>{try{return localStorage.getItem('dominion.room.selected')||''}catch{return ''}})
- const [showList,setShowList]=useState(false)
- useEffect(()=>{if(!visibleView)setShowList(false)},[visibleView])
+ const [showList,setShowList]=useState(()=>{try{return window.innerWidth>=840&&localStorage.getItem('dominion.rooms.sidebar')==='1'}catch{return false}})
+ useEffect(()=>{if(visibleView&&window.innerWidth>=840){try{localStorage.setItem('dominion.rooms.sidebar',showList?'1':'0')}catch{}}},[showList,visibleView])
+ useEffect(()=>{if(!visibleView&&window.innerWidth<840)setShowList(false)},[visibleView])
  useEffect(()=>{
   const narrow=window.matchMedia('(max-width: 839px)')
   const sync=()=>{if(narrow.matches)setShowList(false)}
@@ -285,7 +286,9 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
  [thinkingEnabled,setThinkingEnabled]=useState(()=>composer.attempt?.thinking??true),[optionsBusy,setOptionsBusy]=useState(false)
  const [reasoningEffort,setReasoningEffort]=useState(()=>composer.attempt?.reasoningEffort||''),[permissionOpen,setPermissionOpen]=useState(false),[recipientsOpen,setRecipientsOpen]=useState(false)
  const recipientsPanel=useAnchoredPanel(recipientsOpen,()=>setRecipientsOpen(false),280,'top')
- useEffect(()=>{if(!visibleView){setRecipientsOpen(false);setPermissionOpen(false);setShowSettings(false)}else if(!composer.attempt)setReasoningKo(koreanReasoningEnabled())},[visibleView])
+ const [headerMenuOpen,setHeaderMenuOpen]=useState(false)
+ const headerMenu=useAnchoredPanel(headerMenuOpen,()=>setHeaderMenuOpen(false),240)
+ useEffect(()=>{if(!visibleView){setHeaderMenuOpen(false);setRecipientsOpen(false);setPermissionOpen(false);setShowSettings(false)}else if(!composer.attempt)setReasoningKo(koreanReasoningEnabled())},[visibleView])
  // A Room owns its unsent text and explicit recipients. Reopening another
  // Room must never transplant this draft or silently broadcast it to all.
  const input=composer.text,targets=composer.targets
@@ -559,17 +562,15 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
     <span className={'room-status '+(running?'is-running':'')} role="status">{running&&<i/>}{labels[status]?t(labels[status]):status}</span>
     <div className="room-header-actions">
      <ConversationSwitch mode="rooms" onChange={switchMode}/>
-     <details className="room-header-more">
-      <summary aria-label={getLocale()==='en'?'Room actions':'그룹 관리'} title={getLocale()==='en'?'Room actions':'그룹 관리'}><MoreHorizontal size={20}/></summary>
-      <div className="room-header-menu" onClick={e=>{if((e.target as HTMLElement).closest('button'))e.currentTarget.parentElement?.removeAttribute('open')}}>
+     <Button variant="ghost" size="icon" className="room-header-more" ref={headerMenu.trigger} aria-label={getLocale()==='en'?'Room actions':'그룹 관리'} title={getLocale()==='en'?'Room actions':'그룹 관리'} aria-haspopup="dialog" aria-expanded={headerMenuOpen} onClick={()=>{setHeaderMenuOpen(value=>!value);setRecipientsOpen(false);setPermissionOpen(false);setShowSettings(false)}}><MoreHorizontal size={20}/></Button>
+     {headerMenuOpen&&headerMenu.position&&createPortal(<div ref={headerMenu.panel} style={headerMenu.position} className="room-header-menu" role="dialog" aria-label={getLocale()==='en'?'Room actions':'그룹 관리'}>
        <span className="room-header-usage">{t('usage.sessionTotal',{count:usageTotal.toLocaleString()})}</span>
-       <Button variant="ghost" onClick={()=>void openKnowledge()}><BookOpenText size={16}/>{t('rooms.sharedKnowledge')} ({knowledge.length||0})</Button>
-       <Button variant="ghost" onClick={()=>void openPrompt()}><FileText size={16}/>{t('rooms.systemPrompt')}</Button>
-       <Button variant="ghost" onClick={()=>setShowActivity(true)}><Activity size={16}/>{t('rooms.activity')}</Button>
-       <Button variant="ghost" onClick={()=>void reset()} disabled={stopping}><RotateCcw size={16}/>{t('rooms.reset')}</Button>
-       <Button variant="ghost" onClick={openSettings}><Settings size={16}/>{t('nav.settings')}</Button>
-      </div>
-     </details>
+       <Button variant="ghost" onClick={()=>{setHeaderMenuOpen(false);void openKnowledge()}}><BookOpenText size={16}/>{t('rooms.sharedKnowledge')} ({knowledge.length||0})</Button>
+       <Button variant="ghost" onClick={()=>{setHeaderMenuOpen(false);void openPrompt()}}><FileText size={16}/>{t('rooms.systemPrompt')}</Button>
+       <Button variant="ghost" onClick={()=>{setHeaderMenuOpen(false);setShowActivity(true)}}><Activity size={16}/>{t('rooms.activity')}</Button>
+       <Button variant="ghost" onClick={()=>{setHeaderMenuOpen(false);void reset()}} disabled={stopping}><RotateCcw size={16}/>{t('rooms.reset')}</Button>
+       <Button variant="ghost" onClick={()=>{setHeaderMenuOpen(false);openSettings()}}><Settings size={16}/>{t('nav.settings')}</Button>
+      </div>,document.body)}
     </div>
    </header>
 
@@ -578,7 +579,7 @@ function RoomConversation({room,agents,providers,openList,showList,openSession,o
     <details className="room-route-details">
      <summary>
       <span className="room-avatar-stack"><Avatar owner size="small"/>{roster.slice(0,3).map((agent,index)=><Avatar key={agent.id} agent={agent} size="small" index={index}/>)}</span>
-      <span className="room-route-summary"><strong>{t('rooms.withAgents',{count:roster.length})}</strong><small>{t(modes[mode].label)}</small></span>
+      <span className="room-route-summary"><strong>{current.ownerName||t('rooms.me')}{t('rooms.withAgents',{count:roster.length})}</strong><small>{t(modes[mode].label)}</small></span>
       <ChevronDown size={14}/>
      </summary>
      <div className="room-route-bar-items">
