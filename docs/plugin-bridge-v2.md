@@ -17,3 +17,6 @@ An installed program may instead (or additionally) expose GET /dominion/v2/tools
 
 ### Optional settings capability
 Owner-only GET and POST /dominion/v2/configuration use the same bearer. GET returns {values:{...},description:"..."}; POST accepts {confirmed:true,values:{...}} and returns redacted values. The extension must validate its own fields, mask stored credentials, and never log submitted secrets. The host refuses configuration changes while that extension's tools are registered. No model invokes this interface.
+
+### Optional declarative configuration form
+GET and POST configuration may also return `schema`, a small JSON Schema-style object describing editable values. The host renders labels (title/titleKo), string/password, enum, boolean, number, arrays and nested objects; generated IDs and conditional field visibility are declarative. Unknown complex fields retain a JSON editor fallback. No executable UI script or extension-specific field name is required. The extension continues to validate and redact its configuration on the server. Absence of a schema uses the generic JSON editor.

@@ -36,7 +36,21 @@ fn redacted(config:&Value)->Value{
   if s["apiKey"].is_string(){s["apiKey"]=json!(MASK)}
   if let Some(env)=s["env"].as_object_mut(){for(_,v)in env{*v=json!(MASK)}}
  }}
- json!({"values":values,"description":"MCP servers: {\"servers\":[{\"id\":\"unique-id\",\"name\":\"Server\",\"transport\":\"http\",\"url\":\"https://example.com/mcp\",\"apiKey\":\"optional\",\"enabled\":true}]}. For stdio use command and args; programs run inside this isolated extension, not on your PC. Keep masked secrets unchanged to retain them. Save, then register extension tools in DOMINION."})
+ json!({"values":values,"schema":configuration_schema(),"description":"MCP servers: {\"servers\":[{\"id\":\"unique-id\",\"name\":\"Server\",\"transport\":\"http\",\"url\":\"https://example.com/mcp\",\"apiKey\":\"optional\",\"enabled\":true}]}. For stdio use command and args; programs run inside this isolated extension, not on your PC. Keep masked secrets unchanged to retain them. Save, then register extension tools in DOMINION."})
+}
+fn configuration_schema()->Value{
+ json!({"type":"object","properties":{"servers":{"type":"array","title":"Server connections","titleKo":"서버 연결","maxItems":8,"items":{"type":"object","properties":{
+  "id":{"type":"string","generated":true},
+  "name":{"type":"string","title":"Connection name","titleKo":"연결 이름","default":"New server"},
+  "enabled":{"type":"boolean","title":"Enabled","titleKo":"사용","default":true},
+  "transport":{"type":"string","title":"Connection type","titleKo":"연결 방식","enum":["http","stdio"],"enumLabels":["Remote server","Local process (container)"],"enumLabelsKo":["원격 서버","컨테이너 실행"],"default":"http"},
+  "url":{"type":"string","title":"Server URL","titleKo":"서버 주소","visibleWhen":{"field":"transport","equals":"http"}},
+  "apiKey":{"type":"string","format":"password","title":"API key (optional)","titleKo":"API 키 (선택)","visibleWhen":{"field":"transport","equals":"http"}},
+  "command":{"type":"string","title":"Executable","titleKo":"실행 명령","visibleWhen":{"field":"transport","equals":"stdio"}},
+  "args":{"type":"array","items":{"type":"string"},"title":"Arguments","titleKo":"실행 옵션","visibleWhen":{"field":"transport","equals":"stdio"}},
+  "env":{"type":"object","title":"Environment variables","titleKo":"환경변수","visibleWhen":{"field":"transport","equals":"stdio"}},
+  "protocolMode":{"type":"string","title":"Protocol mode","titleKo":"프로토콜 방식","enum":["auto","modern","legacy"],"default":"auto"}
+ }}}}})
 }
 fn validate(mut values:Value,previous:&Value)->Result<Value,Failure>{
  if !values.is_object()||values.as_object().unwrap().keys().any(|k|k!="servers"){return Err(invalid("Expected a servers array"))}
