@@ -24,6 +24,19 @@ test('routine navigation and reading run without button-by-button approval, but 
  assert.equal(needsHumanApproval({action:'click',target:target('button','button','확인')},{...snap,text:'최종 제출 확인'},'example.com'),true);
  assert.equal(needsHumanApproval({action:'click',target:target('button','button','알 수 없는 버튼')},snap,'example.com'),true);
 });
+test('durable worker autonomously clicks a read-only lookup and verifies its result',async()=>{
+ const data=new Map(),storage={get:async k=>data.get(k),put:async(k,v)=>data.set(k,structuredClone(v)),delete:async k=>data.delete(k),list:async({prefix=''}={})=>new Map([...data].filter(([k])=>k.startsWith(prefix))),setAlarm:async()=>{},deleteAlarm:async()=>{}};
+ let clicks=0,closed=0;
+ const env={ASSISTANT_BROWSER_ENABLED:'1',ASSISTANT_BROWSER_DAILY_LIMIT:'2',ASSISTANT_BROWSER:{},DB:{prepare(){return{bind(){return{first:async()=>({id:'s',used:1})}}}}},BROWSER:{acquire:async()=>({sessionId:'browser'}),connectSession(){},getLiveView:async()=>({devtoolsFrontendUrl:'https://live.browser.run/ui/view?token=test'}),closeSession:async()=>{closed++},devtools:{newTarget:async()=>({id:'tab'})}}};
+ const driver=async()=>({evaluate:async expression=>expression.includes('function applyElement')?{ok:true,x:10,y:20}:{url:'https://example.com/',title:'조회',auth:false,text:clicks?'조회 결과입니다.':'조회 준비',elements:[{index:0,tag:'button',type:'button',label:'조회',href:'',auth:false}]},send:async(method,params)=>{if(method==='Input.dispatchMouseEvent'&&params.type==='mouseReleased')clicks++;return{}},close(){}});
+ const Cls=createBrowserObject(async()=>clicks?'{"action":"done","result":"조회 완료","evidence":"조회 결과입니다."}':'{"action":"click","index":0}',driver),obj=new Cls({storage},env);
+ const call=(p,b={})=>obj.fetch(new Request('https://internal/'+p,{method:'POST',body:JSON.stringify({account:'google:owner',appSession:'s',id:'task-readonly-1234',...b})}));
+ assert.equal((await call('start',{confirmed:true,url:'https://example.com/',goal:'조회'})).status,202);
+ await obj.alarm();await obj.alarm();await obj.alarm();
+ const job=await (await call('jobs')).json();
+ assert.equal(job.status,'completed');assert.equal(clicks,1);assert.equal(closed,1);
+ assert.equal(job.result.evidence,'조회 결과입니다.');
+});
 test('wrong app capability cannot access browser',async()=>{assert.equal((await browserRoute(new Request('https://example.com/v1/assistant/browser/jobs'),{},{account:async()=>({scope:'app',capability:'inference'})})).status,403)});
 
 test('human handoff pauses model decisions until live view completes and reinspects',async()=>{
