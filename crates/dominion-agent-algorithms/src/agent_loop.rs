@@ -500,6 +500,23 @@ impl Kernel<'_> {
                             && (!requires_file_mutation || has_confirmed_write)
                             && (observed || !request.checks.is_empty()));
                     if evidence_sufficient && run.checks.iter().all(|c| c.satisfied) {
+                        let verdict=self.evidence.verify_answer(&answer).await?;
+                        if self.journal.cancelled(&request.id){
+                            run.stop(Status::Cancelled,"Owner cancelled final verification");
+                            self.journal.save(&run)?;
+                            return Ok(run);
+                        }
+                        if self.journal.directive(&request.id)?.as_deref()!=current_directive.as_deref(){
+                            self.journal.save(&run)?;
+                            continue;
+                        }
+                        if let Some(reason)=verdict{
+                            run.checks.push(CheckResult{criterion:Criterion{kind:CriterionKind::ToolSucceeded,
+                                path:None,contains:None,tool:Some("host_final_verification".into())},
+                                satisfied:false,explanation:reason});
+                            self.journal.save(&run)?;
+                            continue;
+                        }
                         run.answer = Some(answer);
                         run.status = Status::Completed;
                         self.journal.save(&run)?;

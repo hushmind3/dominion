@@ -158,6 +158,11 @@ pub trait Tools: Send + Sync {
 }
 pub trait Evidence: Send + Sync {
     fn check<'a>(&'a self, criterion: &'a Criterion) -> BoxFuture<'a, Result<bool, String>>;
+    /// Optional independent final-answer gate. None accepts; Some requests
+    /// correction. Existing product evidence implementations are unchanged.
+    fn verify_answer<'a>(&'a self,_answer:&'a str)->BoxFuture<'a,Result<Option<String>,String>>{
+        Box::pin(async{Ok(None)})
+    }
 }
 /// The single post-write-ahead admission check used by both the streaming
 /// conversation transport and the native AgentLoop. This code cannot issue

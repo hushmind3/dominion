@@ -9,6 +9,7 @@ description = "DOMINION-owned autonomous Rust agent kernel; model and tool provi
 tokio = { version = "1", features = ["macros", "rt"] }
 
 [dependencies]
+tokio = { version = "1", features = ["rt", "sync", "time", "net"] }
 serde_json = "1"
 dominion-agent-runtime = { path = "../dominion-agent-runtime" }
 dominion-agent-algorithms = { path = "../dominion-agent-algorithms" }

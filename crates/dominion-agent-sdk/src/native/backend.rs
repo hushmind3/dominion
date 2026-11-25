@@ -1,5 +1,6 @@
 //! Adapter to branch3's existing ReActLoop/Kernel, including native evidence.
 use super::*;
+pub(super) const ENGINE_ID:&str="dominion-branch3-native-v2";
 use crate::{Action, AgentLoop, AgentPorts, BoxFuture, Criterion, Decision, Evidence, Journal,
     Model as ModelPort, ModelReply, ModelTurn, Receipt, Snapshot, Status, Tools as ToolPort};
 struct Model<'a>(&'a Session<'a>);
@@ -42,9 +43,13 @@ struct Proof<'a>(&'a Session<'a>);
 impl Evidence for Proof<'_>{
     fn check<'a>(&'a self,criterion:&'a Criterion)->BoxFuture<'a,Result<bool,String>>{
         Box::pin(async move{
-            self.0.check()?;
-            self.0.host.check_evidence(&self.0.request.id,serde_json::to_value(criterion).map_err(|e|e.to_string())?).await
+            self.0.evidence(serde_json::to_value(criterion).map_err(|e|e.to_string())?).await
         })
+    }
+    fn verify_answer<'a>(&'a self,answer:&'a str)->BoxFuture<'a,Result<Option<String>,String>>{
+        Box::pin(async move{Ok(match self.0.verify_candidate(answer).await?{
+            Verification::Accept=>None,Verification::Reject(reason)=>Some(reason)
+        })})
     }
 }
 struct Store<'a>(&'a Session<'a>);
@@ -54,7 +59,7 @@ impl Journal for Store<'_>{
     }
     fn cancelled(&self,_:&str)->bool{self.0.cancelled()}
 }
-pub(super) async fn execute(session:&Session<'_>)->Result<String,String>{
+pub(super) async fn execute(session:&Session<'_>,restored:Option<Value>)->Result<String,String>{
     let r=session.request;
     let model=Model(session);
     let tools=Tools(session);
@@ -67,11 +72,26 @@ pub(super) async fn execute(session:&Session<'_>)->Result<String,String>{
             max_model_calls:r.limits.max_model_calls,max_tool_calls:r.limits.max_tool_calls.max(1),
             max_estimated_tokens:r.limits.max_tokens.unwrap_or(20_000_000),..crate::Limits::default()},
         allowed_tools:tools.definitions().into_iter().map(|t|t.name).collect(),checks:vec![],require_evidence:true};
-    let snapshot=runner.execute(AgentPorts{model:&model,tools:&tools,evidence:&evidence,journal:&journal},request,None).await?;
+    let saved=restored.map(serde_json::from_value::<Snapshot>).transpose().map_err(|e|e.to_string())?;
+    if let Some(snapshot)=&saved{
+        if !matches!(snapshot.status,Status::Running)||snapshot.model_in_flight||!snapshot.in_flight.is_empty()
+            ||snapshot.id!=r.id||snapshot.instruction!=r.instruction||snapshot.model_calls!=session.meter()?.model_calls{
+            return Err("suspended kernel state is not a matching settled run".into());
+        }
+    }
+    let snapshot=runner.execute(AgentPorts{model:&model,tools:&tools,evidence:&evidence,journal:&journal},request,saved).await?;
     if !matches!(snapshot.status,Status::Completed){
         return Err(snapshot.error.unwrap_or_else(||"native branch3 task not completed".into()));
     }
     let answer=snapshot.answer.ok_or("native completion missing answer")?;
-    session.verify(&answer).await?;
     Ok(answer)
+}
+
+pub(super) fn suspend_state(state:&Value,meter:Meter)->Result<Value,String>{
+    let mut snapshot:Snapshot=serde_json::from_value(state.clone()).map_err(|e|e.to_string())?;
+    if !matches!(snapshot.status,Status::Running)||!snapshot.model_in_flight||!snapshot.in_flight.is_empty()
+        ||snapshot.model_calls!=meter.model_calls||snapshot.step==0{
+        return Err("not an undispatched kernel model boundary".into());}
+    snapshot.model_in_flight=false;snapshot.step-=1;
+    serde_json::to_value(snapshot).map_err(|e|e.to_string())
 }
