@@ -169,6 +169,10 @@ impl<'a,A:AgentLoop+?Sized> Harness<'a,A>{
         match prepared.step(){
             Step::Answer=>{
                 history.push(json!({"role":"assistant","content":response.content}));
+                if let Some(reason)=model.verify_candidate(&response.content).await?{
+                    history.push(json!({"role":"user","content":format!("Independent verification rejected the answer. Repair the task or answer using this feedback: {reason}")}));
+                    continue;
+                }
                 return Ok(PortRunResult{
                     response:response.content,model_rounds:rounds,
                     tool_calls:dispatched,workflow:self.workflow(),
@@ -226,6 +230,9 @@ impl<'a,A:AgentLoop+?Sized> Harness<'a,A>{
 pub trait ModelPort {
     async fn complete(&mut self, transcript:&[Value], visible_tools:&[Value])
         ->Result<ModelResponse,String>;
+    /// Optional final-answer verification gate; ordinary raw ports retain
+    /// their existing behavior and do not claim independent verification.
+    async fn verify_candidate(&mut self,_answer:&str)->Result<Option<String>,String>{Ok(None)}
     fn cancelled(&self)->bool {false}
 }
 /// Approval, sandboxing, effect recording and actual tool execution live here.

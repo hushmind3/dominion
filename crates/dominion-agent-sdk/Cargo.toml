@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "Standalone DOMINION agent SDK for custom model and tool hosts"
 
 [dependencies]
+tokio = { version = "1", features = ["rt", "sync", "time", "net"] }
 dominion-agent-kernel = { path = "../dominion-agent-kernel", version = "0.1.0" }
 dominion-agent-loop = { path = "../dominion-agent-loop", version = "0.1.0" }
 dominion-context-policy = { path = "../dominion-context-policy", version = "0.1.0" }
