@@ -2370,7 +2370,26 @@ fn hf_catalog_url(
         if !query.trim().is_empty() {
             pairs.append_pair("search", query.trim());
         }
-        pairs.append_pair("filter", if format == "mlx" { "mlx" } else { "gguf" });
+        pairs.append_pair(
+            "filter",
+            match format {
+                "mlx" => "mlx",
+                "onnx" => "onnx",
+                _ => "gguf",
+            },
+        );
+        if format == "ggml" {
+            if query.trim().is_empty() {
+                pairs.append_pair("search", "whisper");
+            }
+            pairs.append_pair("pipeline_tag", "automatic-speech-recognition");
+        }
+        if format == "onnx" {
+            if query.trim().is_empty() {
+                pairs.append_pair("search", "piper");
+            }
+            pairs.append_pair("pipeline_tag", "text-to-speech");
+        }
         pairs.append_pair("sort", sort);
         pairs.append_pair("direction", "-1");
         pairs.append_pair("limit", &limit.clamp(1, 100).to_string());
