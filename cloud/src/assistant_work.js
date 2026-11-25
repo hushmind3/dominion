@@ -27,6 +27,27 @@ export async function workRoute(req,env,{account,ctx,adapters={google:googleRout
  if(!user||user.scope!=='app'||user.capability!=='assistant_remote')return fail('Assistant remote permission required',403);
  const path=new URL(req.url).pathname,base='/v1/assistant/work/';
  const enabled={google:readiness.google(env),browser:readiness.browser(env)};
+ if(path===base+'ui'&&req.method==='GET'){
+  // Strict versioned primitives only: no remotely executed JavaScript or URLs.
+  const sections=[];
+  if(enabled.google)sections.push({
+   id:'google-read',type:'actions',title:'Google 서비스 조회',
+   description:'연결된 서비스에서 읽기 전용 조회를 실행합니다.',
+   actions:[
+    {id:'gmail_recent',label:'최근 받은 메일',kind:'google',operation:'gmail_recent'},
+    {id:'calendar_upcoming',label:'다가오는 일정',kind:'google',operation:'calendar_upcoming'},
+    {id:'drive_recent',label:'최근 Drive 파일',kind:'google',operation:'drive_recent'}
+   ]
+  });
+  if(enabled.browser)sections.push({
+   id:'browser-work',type:'form',title:'웹사이트 업무 맡기기',
+   description:'실제 웹사이트에서 처리할 업무를 입력합니다. 변경 동작은 개별 승인이 필요합니다.',
+   fields:[{id:'url',kind:'https_url',label:'공식 HTTPS 사이트'},
+    {id:'goal',kind:'multiline',label:'업무 지시',maxLength:4000}],
+   submit:{kind:'browser',label:'사이트 및 업무 확인'}
+  });
+  return reply({version:1,sections});
+ }
  if(path===base+'jobs'&&req.method==='GET'){
   const jobs=[];
   for(const kind of ['google','browser']){
