@@ -1,5 +1,5 @@
 // Owner-scoped inbox and opt-in generic push. Never send private task text to notification providers.
-import {isPushToken,deliverPush} from './assistant_push_delivery.js';
+import {isPushToken,isNativePushToken,nativePushReady,deliverPush} from './assistant_push_delivery.js';
 const now=()=>Math.floor(Date.now()/1000);
 const reply=(x,status=200)=>new Response(JSON.stringify(x),{status,headers:{'content-type':'application/json','cache-control':'no-store'}});
 const validToken=isPushToken;
@@ -9,6 +9,7 @@ export async function messages(req,env,user,path){
   const r=await env.DB.prepare('SELECT id,device_id AS deviceId,text,created_at*1000 AS time FROM assistant_messages WHERE account_id=? ORDER BY created_at DESC,id DESC LIMIT 100').bind(user.id).all();
   return reply({messages:r.results.reverse()});
  }
+ if(path==='push/status'&&req.method==='GET')return reply({nativeReady:nativePushReady(env)});
  if(req.method!=='POST')return reply({error:'Method not allowed'},405);
  const raw=await req.text();if(raw.length>1024)return reply({error:'Too large'},413);
  let b;try{b=JSON.parse(raw)}catch{return reply({error:'Invalid JSON'},400)}
@@ -17,6 +18,7 @@ export async function messages(req,env,user,path){
   await env.DB.prepare('DELETE FROM assistant_push WHERE token=? AND account_id=? AND app_session_id=?').bind(b.token,user.id,user.app_session_id).run();return reply({ok:true});
  }
  if(path!=='push/register')return reply({error:'Not found'},404);
+ if(isNativePushToken(b.token)&&!nativePushReady(env))return reply({error:'Native push backend not configured'},503);
  // Require a fresh scoped session; token registration is opt-in. Never transfer a
  // push endpoint between accounts without removing its previous registration.
  const old=await env.DB.prepare('SELECT account_id FROM assistant_push WHERE token=?').bind(b.token).first();
