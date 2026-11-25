@@ -27,7 +27,8 @@ test('FCM HTTP v1 uses project-scoped OAuth, generic notification and no private
  assert.equal(calls[0].options.headers.authorization,'Bearer fake-access-token');
  const data=JSON.parse(calls[0].options.body).message;
  assert.equal(data.token,fcm.slice(4));
- assert.equal(data.notification.body,'업무 결과를 확인하세요.');
+ assert.equal(data.notification,undefined);
+ assert.equal(data.android.priority,'NORMAL');
  assert.equal(data.data.kind,'job');
  assert.equal(data.data.assistantMessage,'true');
 });
