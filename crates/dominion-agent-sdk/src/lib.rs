@@ -13,3 +13,6 @@ pub use dominion_agent_runtime::schema::validate_arguments;
 pub use dominion_agent_algorithms::{harness_steps,AgentAlgorithm,StandardAlgorithm,FocusedAlgorithm,Intent,
     Kernel,ReActLoop,tool_relevance,tool_relevance_with_schema};
 pub use dominion_agent_algorithms::replay;
+
+/// Portable native execution contract shared across DOMINION branches.
+pub mod native;

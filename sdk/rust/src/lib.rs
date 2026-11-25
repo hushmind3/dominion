@@ -483,3 +483,6 @@ mod tests {
         }
     }
 }
+
+/// Native in-process execution, independent of the HTTP client.
+pub use dominion_agent_sdk::native;
