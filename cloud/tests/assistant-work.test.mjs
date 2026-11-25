@@ -51,3 +51,15 @@ test('disabled connectors remain absent from combined job list',async()=>{
  assert.deepEqual(body.jobs.map(j=>j.kind),['browser']);
  assert.equal(body.available.google,false);
 });
+
+test('server work UI exposes only scoped, known action definitions',async()=>{
+ const result=await workRoute(request('ui'),{},config);
+ assert.equal(result.status,200);
+ const payload=await result.json();
+ assert.equal(payload.version,1);
+ assert.deepEqual(payload.sections.map(x=>x.type),['actions','form']);
+ assert.deepEqual(payload.sections[0].actions.map(x=>x.operation),
+   ['gmail_recent','calendar_upcoming','drive_recent']);
+ assert.deepEqual(payload.sections[1].fields.map(x=>x.kind),['https_url','multiline']);
+ assert.equal(JSON.stringify(payload).includes('javascript:'),false);
+});

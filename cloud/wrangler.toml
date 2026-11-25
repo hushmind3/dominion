@@ -77,3 +77,12 @@ new_sqlite_classes = ["AssistantBrowser"]
 
 # Mail watch: apply migration 0008 and explicitly set ASSISTANT_MAIL_WATCH_ENABLED=1.
 # Reuses existing 15-minute cron and Google Gmail readonly scope; no model inference.
+
+# Native Android FCM delivery (opt-in, alongside existing Expo push):
+# Set ASSISTANT_PUSH_ENABLED=1. Register com.dominion.assistant in a Firebase project.
+# Set Worker variables ASSISTANT_FCM_PROJECT_ID and ASSISTANT_FCM_SERVICE_EMAIL.
+# Set Worker secret ASSISTANT_FCM_PRIVATE_KEY (service account PKCS8 PEM).
+# Grant that service account only the Firebase Cloud Messaging API Admin role
+# on the FCM project. The phone stores no service-account credential.
+# A missing FCM configuration disables native push, not the durable inbox
+# or legacy Expo notification transport.
