@@ -29,6 +29,7 @@ pub mod remote_artifacts;
 pub mod system;
 pub mod attachments;
 pub mod channels;
+pub mod voice;
 pub mod collections;
 pub mod compat;
 pub mod dev;
@@ -85,6 +86,12 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/attachments", post(attachments::upload))
         .route("/api/attachments/:id/content", get(attachments::content))
+        .route("/api/voice/status", get(voice::status))
+        .route(
+            "/api/voice/transcribe",
+            post(voice::transcribe).layer(axum::extract::DefaultBodyLimit::max(25 * 1024 * 1024)),
+        )
+        .route("/api/voice/speak", post(voice::speak))
         .route("/api/events", get(system::events))
         .route("/api/model-usage", get(system::model_usage))
         .route("/api/run-wakes", get(system::run_wakes))

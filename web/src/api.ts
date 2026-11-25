@@ -16,7 +16,7 @@ export function koreanReasoningEnabled(){
 let authToken = ''
 export function setAuthToken(value: string) { authToken = value.trim() }
 
-function apiFetch(url: string, init: RequestInit = {}) {
+export function apiFetch(url: string, init: RequestInit = {}) {
  const headers = new Headers(init.headers)
  if (typeof init.body === 'string' && !headers.has('Content-Type')) {
   headers.set('Content-Type', 'application/json')

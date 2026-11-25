@@ -1225,7 +1225,7 @@ pub fn runtimes(state: &AppState) -> Value {
 
 /// Voice engines are looked up on PATH plus the usual Homebrew and user bin
 /// folders, because a GUI-launched app does not inherit a shell PATH.
-fn voice_bin(names: &[&str]) -> Option<PathBuf> {
+pub(crate) fn voice_bin(names: &[&str]) -> Option<PathBuf> {
     let mut dirs: Vec<PathBuf> = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
     dirs.push(PathBuf::from("/opt/homebrew/bin"));
     dirs.push(PathBuf::from("/usr/local/bin"));
@@ -2017,6 +2017,30 @@ pub async fn load(state: &AppState, id: &str, context: u64) -> Result<Value, Str
     } else {
         managed_model_path(state, id)
     }.ok_or_else(|| format!("설치된 모델을 찾을 수 없습니다: {id}"))?;
+    // Voice weights are served by /api/voice/*, not by llama-server. Returning
+    // a distinct state keeps a downloaded Whisper model from being launched as
+    // a chat model.
+    {
+        let name = resolved
+            .file_name()
+            .map(|value| value.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        let ext = resolved
+            .extension()
+            .map(|value| value.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        let speech = (ext == "gguf" || ext == "bin" || ext == "onnx")
+            && (name.contains("whisper") || name.contains("ggml") || ext == "onnx");
+        if speech {
+            let kind = if ext == "onnx" { "piper" } else { "whisper" };
+            return Ok(json!({
+                "status": "voice_ready",
+                "kind": kind,
+                "id": id,
+                "model": resolved.to_string_lossy(),
+            }));
+        }
+    }
     if resolved.is_dir() {
         if mlx_runtime_python(state).is_none() {
             return Err("MLX 실행기가 필요합니다. 모델 관리의 실행기 탭에서 설치하세요.".into());
