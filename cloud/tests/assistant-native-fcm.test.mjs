@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {isPushToken,deliverPush} from '../src/assistant_push_delivery.js';
+import {isPushToken,isNativePushToken,nativePushReady,deliverPush} from '../src/assistant_push_delivery.js';
 
 const fcm='fcm:'+'AbCd0123_:-'.repeat(12);
 const expo='ExpoPushToken['+'a'.repeat(25)+']';
@@ -57,4 +57,13 @@ test('stale FCM registration removal only on UNREGISTERED',async()=>{
   {send,access:async()=> 'fake-access-token'});
  assert.equal(state,'failed');
  assert.equal(deletes.length,1);assert.equal(deletes[0].token,fcm);
+});
+
+test('native FCM availability is false until both transport and service credentials exist',()=>{
+ assert.equal(nativePushReady(env),true);
+ assert.equal(nativePushReady({...env,ASSISTANT_PUSH_ENABLED:'0'}),false);
+ assert.equal(nativePushReady({...env,ASSISTANT_FCM_PRIVATE_KEY:undefined}),false);
+ assert.equal(nativePushReady({...env,ASSISTANT_FCM_PROJECT_ID:'bad/project'}),false);
+ assert.equal(isNativePushToken(fcm),true);
+ assert.equal(isNativePushToken(expo),false);
 });
