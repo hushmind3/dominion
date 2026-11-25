@@ -6,6 +6,7 @@ import {ExecutionPermissions} from '../components/ExecutionPermissions'
 import {ConversationSwitch} from '../components/WorkspaceShell'
 import {TokenUsage} from '../components/TokenUsage'
 import {VoiceButton} from '../components/VoiceButton'
+import {SpeakButton} from '../components/SpeakButton'
 import {ExecutionInsights} from '../components/ExecutionInsights'
 import {createPortal} from 'react-dom'
 import {Button,TextInput,TextArea,SelectInput} from '../components/Primitives'
@@ -666,6 +667,7 @@ function Message({message,agentName,showReasoning}:{message:ChatMessage;agentNam
      ?<a key={item.id} href={item.url} target="_blank" rel="noreferrer" title={item.name} className="block overflow-hidden rounded-lg border border-[#E7E0D5]"><img src={item.url} alt={item.name} className="h-24 w-24 object-cover"/></a>
      :<a key={item.id} href={item.url} target="_blank" rel="noreferrer" className="rounded-lg border border-[#E7E0D5] bg-white px-2 py-1 text-[11px] text-[#5C544A] hover:bg-[#FAF7F1]">{item.name}</a>)}
    </div>}
+   {!human&&message.content&&<SpeakButton text={message.content}/>}
    {!human&&message.content&&<Button className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] text-[#7C7469] hover:bg-[#F3EEE5]" onClick={()=>navigator.clipboard.writeText(message.content)} title={t('chat.copy')}><Copy size={14}/></Button>}
    {!human&&typeof message.metadata?.executionId==='string'&&
     <ExecutionInsights executionId={message.metadata.executionId} compact/>}
