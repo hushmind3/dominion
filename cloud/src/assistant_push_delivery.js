@@ -1,7 +1,7 @@
 // Provider-scoped push transport. Durable inbox/job status is authoritative.
 // Expo token format remains unchanged; native FCM tokens use an explicit prefix.
 const expo=/^(?:ExpoPushToken|ExponentPushToken)\[[A-Za-z0-9_-]{10,200}\]$/;
-const native=/^fcm:[A-Za-z0-9_:\-]{40,400}$/;
+const native=/^fcm:[A-Za-z0-9_:\-.~]{40,400}$/;
 export const isNativePushToken=t=>typeof t==='string'&&native.test(t);
 export const isPushToken=t=>typeof t==='string'&&(expo.test(t)||native.test(t));
 const toBase64Url=bytes=>btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
