@@ -19,3 +19,6 @@ pub async fn run<H: Host>(host: &mut H, context: Context<'_>) -> Result<(), Stri
 
 mod embedded;
 pub use embedded::{run_embedded, CheckpointStore, EmbeddedLimits, ModelPort, ModelTurn, TurnDecision, Verification, Verifier};
+
+/// Portable native execution contract shared across DOMINION branches.
+pub mod native;
