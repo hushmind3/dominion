@@ -77,9 +77,10 @@ export async function deliverPush(env,account,tokens,body,kind,{send=fetch,acces
       'https://fcm.googleapis.com/v1/projects/'+env.ASSISTANT_FCM_PROJECT_ID+'/messages:send',{
       method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},
       body:JSON.stringify({message:{token:device.slice(4),
-       notification:{title:'나의 AI 비서',body},
+       // Data-only: onMessageReceived builds the explicit native notification and
+       // custom work-screen intent in both foreground and background.
        data:{assistantMessage:'true',kind},
-       android:{priority:'normal',notification:{channel_id:'dominion_assistant_alerts'}}}}),
+       android:{priority:kind==='auth'?'HIGH':'NORMAL'}}}),
       signal:AbortSignal.timeout(10000)
      });
      if(response.ok)ok=true;
