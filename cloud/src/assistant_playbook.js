@@ -12,8 +12,8 @@ export async function playbookKey(site,goal){
  const hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(raw));
  return 'playbook:'+Array.from(new Uint8Array(hash),x=>x.toString(16).padStart(2,'0')).join('').slice(0,40);
 }
-export function extractPlaybook(job,at=Date.now()){
- if(!job||job.status!=='completed'||!job.result?.evidence||!Array.isArray(job.trace)||job.trace.length===0||typeof job.root!=='string'||!normalize(job.goal))return null;
+export function extractPlaybook(job,key,at=Date.now()){
+ if(!job||job.status!=='completed'||!job.result?.evidence||!Array.isArray(job.trace)||job.trace.length===0||typeof job.root!=='string'||!normalize(job.goal)||typeof key!=='string'||!/^playbook:[a-f0-9]{40}$/.test(key))return null;
  const steps=job.trace.slice(-8).flatMap(row=>{
   if(!row||!ACTIONS.has(row.action))return [];
   const label=safeLabel(row.label);
@@ -23,9 +23,9 @@ export function extractPlaybook(job,at=Date.now()){
   return [{action:row.action,label,page}];
  });
  if(!steps.length)return null;
- return {version:1,account:job.account,site:job.root,goalKey:normalize(job.goal),steps,createdAt:at,expiresAt:at+30*86400_000};
+ return {version:1,account:job.account,site:job.root,key,steps,createdAt:at,expiresAt:at+30*86400_000};
 }
-export function playbookHints(record,{account,site,goal,at=Date.now()}={}){
- if(!record||record.version!==1||record.account!==account||record.site!==site||record.goalKey!==normalize(goal)||!Number.isFinite(record.expiresAt)||at>=record.expiresAt||!Array.isArray(record.steps))return [];
+export function playbookHints(record,{account,site,key,at=Date.now()}={}){
+ if(!record||record.version!==1||record.account!==account||record.site!==site||record.key!==key||!Number.isFinite(record.expiresAt)||at>=record.expiresAt||!Array.isArray(record.steps))return [];
  return record.steps.slice(-8).flatMap(row=>row&&ACTIONS.has(row.action)&&safeLabel(row.label)?[{action:row.action,label:safeLabel(row.label),page:typeof row.page==='string'?row.page.slice(0,180):''}]:[]);
 }
