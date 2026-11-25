@@ -170,7 +170,7 @@ export function createBrowserObject(runModel,driver=connect){
       await this.state.storage.put(key,record);
       const all=await this.state.storage.list({prefix:'playbook:'});
       const rows=[...all.entries()].sort((a,b)=>b[1].createdAt-a[1].createdAt);
-      for(const [k,v] of rows)if(v.expiresAt<=Date.now()||rows.indexOf(rows.find(x=>x[0]===k))>=20)await this.state.storage.delete(k);
+      for(const [i,[k,v]] of rows.entries())if(v.expiresAt<=Date.now()||i>=20)await this.state.storage.delete(k);
      }
     }catch{/* playbook learning must never break an actual completed job */}
    }
