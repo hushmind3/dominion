@@ -1148,6 +1148,22 @@ pub fn runtimes(state: &AppState) -> Value {
                 "version": "", "url": "https://github.com/ggml-org/llama.cpp",
             },
             {
+                "id": "whisper-cpp", "name": "whisper.cpp (음성인식)", "formats": ["GGUF"],
+                "installed": bin("whisper-cli").is_some() || bin("whisper-cpp").is_some(),
+                "path": bin("whisper-cli").or_else(|| bin("whisper-cpp")).map(|path| path.to_string_lossy().to_string()),
+                "installable": false, "installing": active("whisper-cpp"),
+                "installMethod": "external", "version": "",
+                "url": "https://github.com/ggml-org/whisper.cpp/releases",
+            },
+            {
+                "id": "piper", "name": "Piper (음성합성)", "formats": ["ONNX"],
+                "installed": bin("piper").is_some(),
+                "path": bin("piper").map(|path| path.to_string_lossy().to_string()),
+                "installable": false, "installing": active("piper"),
+                "installMethod": "external", "version": "",
+                "url": "https://github.com/rhasspy/piper/releases",
+            },
+            {
                 "id": "mlx-lm", "name": "MLX (mlx-lm)", "formats": ["MLX"],
                 "installed": mlx_runtime_python(state).is_some(),
                 "path": mlx_runtime_python(state).map(|path| path.to_string_lossy().to_string()),
