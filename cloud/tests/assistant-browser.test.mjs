@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {safeUrl,browserScope,decodePlan,createBrowserObject,browserRoute} from '../src/assistant_browser.js';
+import test from 'node:test';import assert from 'node:assert/strict';import {safeUrl,browserScope,decodePlan,needsHumanApproval,createBrowserObject,browserRoute} from '../src/assistant_browser.js';
 test('approved HTTPS site boundary and sensitive fields',()=>{for(const u of ['http://example.com','https://localhost','https://127.0.0.1','https://[::1]','https://a:b@example.com','https://example.com:444','https://foo.internal'])assert.equal(safeUrl(u),null);assert.equal(browserScope('https://www.hometax.go.kr').root,'hometax.go.kr');const snap={text:'접수가 완료되었습니다.',elements:[{index:0,tag:'a',href:'https://evil.test',label:'외부'},{index:1,tag:'input',type:'password',label:'비밀번호',auth:true},{index:2,tag:'button',type:'submit',label:'신청'}]};assert.throws(()=>decodePlan('{"action":"navigate","index":0}',snap,'hometax.go.kr'));assert.throws(()=>decodePlan('{"action":"fill","index":1,"value":"secret"}',snap,'hometax.go.kr'));assert.equal(decodePlan('{"action":"click","index":2}',snap,'hometax.go.kr').action,'click');assert.throws(()=>decodePlan('{"action":"done","result":"성공","evidence":"없는 근거"}',snap,'hometax.go.kr'));assert.equal(decodePlan('{"action":"done","result":"접수됨","evidence":"접수가 완료되었습니다."}',snap,'hometax.go.kr').action,'done')});
 test('durable job waits for exact approval, performs one real action then verifies evidence',async()=>{
  const data=new Map();const storage={get:async k=>data.get(k),put:async(k,v)=>data.set(k,structuredClone(v)),delete:async k=>data.delete(k),list:async({prefix=''}={})=>new Map([...data].filter(([k])=>k.startsWith(prefix))),setAlarm:async()=>{},deleteAlarm:async()=>{}};
@@ -9,6 +9,20 @@ test('durable job waits for exact approval, performs one real action then verifi
  const call=(p,b)=>obj.fetch(new Request('https://internal/'+p,{method:'POST',body:JSON.stringify({account:'google:owner',appSession:'s',id:'task-1234',...b})}));
  assert.equal((await call('start',{confirmed:true,url:'https://example.com/',goal:'신청'})).status,202);await obj.alarm();await obj.alarm();let j=await (await call('jobs',{})).json();assert.equal(j.status,'awaiting_approval');assert.equal(clicked,0);
  assert.equal((await call('approve',{approvalId:'incorrect'})).status,409);assert.equal((await call('approve',{approvalId:j.approval.id})).status,200);await obj.alarm();await obj.alarm();j=await (await call('jobs',{})).json();assert.equal(j.status,'completed');assert.equal(j.result.evidence,'접수가 완료되었습니다.');assert.equal(clicked,1);assert.equal(models,2);assert.equal(closed,1);assert.ok(!('session'in j));await obj.alarm();assert.equal(clicked,1);
+});
+test('routine navigation and reading run without button-by-button approval, but submitted actions wait',()=>{
+ const snap={url:'https://www.example.com/start',text:'검색 화면',elements:[]};
+ const target=(tag,type,label,href='')=>({index:0,tag,type,label,href,auth:false});
+ assert.equal(needsHumanApproval({action:'click',target:target('a','','목록','https://www.example.com/list')},snap,'example.com'),false);
+ assert.equal(needsHumanApproval({action:'click',target:target('button','button','검색')},snap,'example.com'),false);
+ assert.equal(needsHumanApproval({action:'click',target:target('button','button','더 보기')},snap,'example.com'),false);
+ assert.equal(needsHumanApproval({action:'download_pdf'},snap,'example.com'),false);
+ assert.equal(needsHumanApproval({action:'save_pdf'},snap,'example.com'),false);
+ assert.equal(needsHumanApproval({action:'click',target:target('button','submit','사업자등록 신청')},snap,'example.com'),true);
+ assert.equal(needsHumanApproval({action:'click',target:target('a','','장바구니 구매','https://www.example.com/buy')},snap,'example.com'),true);
+ assert.equal(needsHumanApproval({action:'click',target:target('a','','이동','https://other.example.net/list')},snap,'example.com'),true);
+ assert.equal(needsHumanApproval({action:'click',target:target('button','button','확인')},{...snap,text:'최종 제출 확인'},'example.com'),true);
+ assert.equal(needsHumanApproval({action:'click',target:target('button','button','알 수 없는 버튼')},snap,'example.com'),true);
 });
 test('wrong app capability cannot access browser',async()=>{assert.equal((await browserRoute(new Request('https://example.com/v1/assistant/browser/jobs'),{},{account:async()=>({scope:'app',capability:'inference'})})).status,403)});
 
