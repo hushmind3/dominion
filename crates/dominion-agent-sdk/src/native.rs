@@ -4,6 +4,11 @@
 use serde_json::{json, Value};
 use std::{collections::HashSet, future::Future, pin::Pin, sync::Mutex, time::{Duration, Instant}};
 mod backend;
+mod control;
+pub use control::*;
+use std::sync::atomic::{AtomicBool,Ordering};
+pub const CHECKPOINT_VERSION:u32=2;
+const SUSPENDED:&str="native run suspended at a durable model boundary";
 
 pub const API_VERSION: u32 = 1;
 pub type NativeFuture<'a, T> = Pin<Box<dyn Future<Output=Result<T,String>> + Send + 'a>>;
@@ -67,6 +72,13 @@ impl RunRequest {
         }
         Ok(())
     }
+    fn binding(&self,options:&RunOptions<'_>)->Value{
+        json!({"id":self.id,"instruction":self.instruction,"system":self.system,
+            "tools":self.tools.iter().map(|t|json!({"name":t.name,"description":t.description,"parameters":t.parameters,"readOnly":t.read_only})).collect::<Vec<_>>(),
+            "limits":{"model":self.limits.max_model_calls,"tools":self.limits.max_tool_calls,
+            "elapsedSeconds":self.limits.max_elapsed.as_secs(),"elapsedNanos":self.limits.max_elapsed.subsec_nanos(),
+            "tokens":self.limits.max_tokens,"verificationRetries":options.max_verification_retries}})
+    }
     fn catalog(&self) -> Vec<Value> {
         if self.limits.max_tool_calls==0 { return vec![]; }
         self.tools.iter().map(ToolSpec::provider_schema).collect()
@@ -126,6 +138,11 @@ pub enum Event {
     ModelFinished { round: usize, input_tokens: Option<u64>, output_tokens: Option<u64> },
     ToolStarted { round: usize, id: String, name: String },
     ToolFinished { round: usize, id: String, success: bool },
+    ModelDelta { round:usize, delta:ModelDelta },
+    VerificationStarted,
+    VerificationRejected { reason:String, will_retry:bool },
+    Suspended,
+    Failed { error:String },
     Verified,
 }
 /// The host must exclusively lease a run ID, enforce permissions/approvals,
@@ -133,6 +150,11 @@ pub enum Event {
 /// No provider, HTTP server, database, scheduler or shell is supplied here.
 pub trait NativeHost: Send + Sync {
     fn complete(&self, request: ModelRequest) -> NativeFuture<'_, ModelResponse>;
+    fn supports_streaming(&self)->bool{false}
+    /// Must forward actual provider deltas; never synthesize a stream from final text.
+    fn complete_streamed<'a>(&'a self,_request:ModelRequest,_emit:&'a(dyn Fn(ModelDelta)+Send+Sync))->NativeFuture<'a,ModelResponse>{
+        Box::pin(async{Err("host has no streaming model port".into())})
+    }
     fn dispatch(&self, run_id: &str, call: ToolCall) -> NativeFuture<'_, ToolOutcome>;
     fn verify(&self, run_id: &str, answer: String) -> NativeFuture<'_, Verification>;
     /// Optional independent evidence for native file/acceptance criteria.
@@ -143,7 +165,7 @@ pub trait NativeHost: Send + Sync {
     fn load_checkpoint(&self, run_id: &str) -> Result<Option<Value>,String>;
     fn save_checkpoint(&self, run_id: &str, checkpoint: &Value) -> Result<(),String>;
     fn cancelled(&self, _run_id: &str) -> bool { false }
-    /// Turn/tool lifecycle events; this is not token-delta streaming.
+    /// Lifecycle events and actual provider deltas when streaming is enabled.
     fn event(&self, _run_id: &str, _event: Event) {}
 }
 #[derive(Clone, Debug)]
@@ -166,6 +188,17 @@ struct Meter {
     tool_calls: usize,
     input_tokens: Option<u64>,
     output_tokens: Option<u64>,
+    rejected:usize,
+}
+impl Meter{
+    fn fresh()->Self{Self{model_calls:0,tool_calls:0,input_tokens:Some(0),output_tokens:Some(0),rejected:0}}
+    fn value(self)->Value{json!({"modelCalls":self.model_calls,"toolCalls":self.tool_calls,"inputTokens":self.input_tokens,"outputTokens":self.output_tokens,"rejected":self.rejected})}
+    fn parse(v:&Value)->Result<Self,String>{
+        fn count(v:&Value,k:&str)->Result<usize,String>{usize::try_from(v[k].as_u64().ok_or_else(||format!("invalid checkpoint {k}"))?).map_err(|_|format!("checkpoint {k} overflow"))}
+        fn tokens(v:&Value,k:&str)->Result<Option<u64>,String>{match v.get(k){
+            Some(Value::Null)=>Ok(None),Some(n)=>n.as_u64().map(Some).ok_or_else(||format!("invalid checkpoint {k}")),None=>Err(format!("missing checkpoint {k}"))}}
+        Ok(Self{model_calls:count(v,"modelCalls")?,tool_calls:count(v,"toolCalls")?,input_tokens:tokens(v,"inputTokens")?,output_tokens:tokens(v,"outputTokens")?,rejected:count(v,"rejected")?})
+    }
 }
 struct Session<'a> {
     host: &'a dyn NativeHost,
@@ -173,23 +206,66 @@ struct Session<'a> {
     started: Instant,
     meter: Mutex<Meter>,
     state: Mutex<Value>,
+    options:RunOptions<'a>,
+    elapsed_before:Duration,
+    suspended:AtomicBool,
 }
 impl<'a> Session<'a> {
     fn check(&self) -> Result<(),String> {
-        if self.host.cancelled(&self.request.id) { return Err("native run cancelled".into()); }
-        if self.started.elapsed() >= self.request.limits.max_elapsed { return Err("native admission deadline exceeded".into()); }
+        if self.suspended.load(Ordering::Acquire){return Err(SUSPENDED.into());}
+        if self.host.cancelled(&self.request.id)||self.options.control.as_ref().is_some_and(RunControl::is_cancelled){return Err("native run cancelled".into());}
+        if self.elapsed()>=self.request.limits.max_elapsed{return Err("native admission deadline exceeded".into());}
         Ok(())
     }
     fn cancelled(&self) -> bool { self.check().is_err() }
-    fn emit(&self,event:Event) { self.host.event(&self.request.id,event); }
-    fn save(&self,state:Value) -> Result<(),String> {
+    fn elapsed(&self)->Duration{self.elapsed_before.saturating_add(self.started.elapsed())}
+    fn elapsed_ms(&self)->u64{self.elapsed().as_millis().min(u64::MAX as u128) as u64}
+    fn meter(&self)->Result<Meter,String>{Ok(*self.meter.lock().map_err(|_|"meter lock poisoned".to_string())?)}
+    fn emit(&self,event:Event){
+        self.host.event(&self.request.id,event.clone());
+        for hook in &self.options.hooks{hook.event(&self.request.id,&event);}
+        if let Some(tx)=&self.options.events{let _=tx.send(event);}
+    }
+    fn envelope(&self,state:&Value,meter:Meter,verified:bool,suspended:bool)->Value{
+        json!({"apiVersion":API_VERSION,"checkpointVersion":CHECKPOINT_VERSION,"engine":backend::ENGINE_ID,
+            "request":self.request.binding(&self.options),"elapsedMs":self.elapsed_ms(),"meter":meter.value(),
+            "state":state,"verified":verified,"suspended":suspended})
+    }
+    fn save(&self,state:Value)->Result<(),String>{
         let mut current=self.state.lock().map_err(|_|"checkpoint lock poisoned".to_string())?;
-        self.host.save_checkpoint(&self.request.id,&json!({"apiVersion":API_VERSION,"state":state,"verified":false}))?;
+        if self.suspended.load(Ordering::Acquire){return Err(SUSPENDED.into());}
+        self.host.save_checkpoint(&self.request.id,&self.envelope(&state,self.meter()?,false,false))?;
         *current=state;
         Ok(())
     }
-    async fn model(&self,messages:Vec<Value>,tools:Vec<Value>,observations:Vec<Value>) -> Result<ModelResponse,String> {
+    // Only at the live boundary BEFORE the provider future is invoked.
+    fn suspend(&self)->Result<(),String>{
+        let mut current=self.state.lock().map_err(|_|"checkpoint lock poisoned".to_string())?;
+        let meter=self.meter()?;
+        let settled=backend::suspend_state(&current,meter)?;
+        self.host.save_checkpoint(&self.request.id,&self.envelope(&settled,meter,false,true))?;
+        *current=settled;
+        self.suspended.store(true,Ordering::Release);
+        drop(current);
+        self.emit(Event::Suspended);
+        Err(SUSPENDED.into())
+    }
+    async fn admit(&self,operation:Operation)->Result<(),String>{
         self.check()?;
+        if let Some(control)=&self.options.control{
+            if control.wait(&operation,||self.check()).await?{self.check()?;return self.suspend();}
+        }
+        for hook in &self.options.hooks{
+            let m=self.meter()?;
+            match hook.before(HookContext{run_id:self.request.id.clone(),operation:operation.clone(),model_calls:m.model_calls,tool_calls:m.tool_calls}).await?{
+                HookDecision::Allow=>{},
+                HookDecision::Reject(reason)=>return Err(format!("native hook rejected operation: {reason}")),
+            }
+        }
+        self.check()
+    }
+    async fn model(&self,messages:Vec<Value>,tools:Vec<Value>,observations:Vec<Value>) -> Result<ModelResponse,String> {
+        self.admit(Operation::Model).await?;
         let round={
             let mut m=self.meter.lock().map_err(|_|"meter lock poisoned".to_string())?;
             if m.model_calls>=self.request.limits.max_model_calls { return Err("model-call budget exhausted".into()); }
@@ -201,7 +277,11 @@ impl<'a> Session<'a> {
             m.model_calls+=1; m.model_calls
         };
         self.emit(Event::ModelStarted{round});
-        let response=self.host.complete(ModelRequest{run_id:self.request.id.clone(),round,messages,tools,observations}).await?;
+        let request=ModelRequest{run_id:self.request.id.clone(),round,messages,tools,observations};
+        let response=if self.options.streaming{
+            let emit=|delta|self.emit(Event::ModelDelta{round,delta});
+            self.host.complete_streamed(request,&emit).await?
+        }else{self.host.complete(request).await?};
         {
             let mut m=self.meter.lock().map_err(|_|"meter lock poisoned".to_string())?;
             m.input_tokens=m.input_tokens.zip(response.input_tokens).map(|(a,b)|a.saturating_add(b));
@@ -229,6 +309,7 @@ impl<'a> Session<'a> {
     async fn tool(&self,call:ToolCall) -> Result<ToolOutcome,String> {
         self.check()?;
         if !self.request.tools.iter().any(|t|t.name==call.name) { return Err("tool not authorized by host catalogue".into()); }
+        self.admit(Operation::Tool{id:call.id.clone(),name:call.name.clone(),arguments:call.arguments.clone()}).await?;
         let round={
             let mut m=self.meter.lock().map_err(|_|"meter lock poisoned".to_string())?;
             if m.tool_calls>=self.request.limits.max_tool_calls { return Err("tool budget exhausted".into()); }
@@ -240,43 +321,99 @@ impl<'a> Session<'a> {
         self.emit(Event::ToolFinished{round,id,success:result.success});
         Ok(result)
     }
-    async fn verify(&self,answer:&str) -> Result<(),String> {
+    async fn verify_candidate(&self,answer:&str)->Result<Verification,String>{
+        self.admit(Operation::Verify).await?;
+        self.emit(Event::VerificationStarted);
+        let verdict=self.host.verify(&self.request.id,answer.to_owned()).await?;
         self.check()?;
-        match self.host.verify(&self.request.id,answer.to_owned()).await? {
-            Verification::Accept => { self.check()?; Ok(()) }
-            Verification::Reject(reason) => Err(format!("independent verification rejected: {reason}")),
+        match verdict{
+            Verification::Accept=>Ok(Verification::Accept),
+            Verification::Reject(reason)=>{
+                let reason=reason.chars().take(8192).collect::<String>();
+                let retry={
+                    let mut m=self.meter.lock().map_err(|_|"meter lock poisoned".to_string())?;
+                    m.rejected=m.rejected.saturating_add(1);
+                    m.rejected<=self.options.max_verification_retries&&m.model_calls<self.request.limits.max_model_calls
+                };
+                self.emit(Event::VerificationRejected{reason:reason.clone(),will_retry:retry});
+                if retry{Ok(Verification::Reject(reason))}else{Err(format!("independent verification rejected: {reason}"))}
+            }
         }
+    }
+    async fn evidence(&self,criterion:Value)->Result<bool,String>{
+        self.admit(Operation::Evidence{criterion:criterion.clone()}).await?;
+        let result=self.host.check_evidence(&self.request.id,criterion).await?;
+        self.check()?;
+        Ok(result)
     }
     fn finish(&self,answer:String) -> Result<RunResult,String> {
         self.check()?;
         let m=*self.meter.lock().map_err(|_|"meter lock poisoned".to_string())?;
         let result=RunResult{answer,model_calls:m.model_calls,tool_calls:m.tool_calls,
             input_tokens:m.input_tokens,output_tokens:m.output_tokens,
-            elapsed_ms:self.started.elapsed().as_millis().min(u64::MAX as u128) as u64};
+            elapsed_ms:self.elapsed_ms()};
         let state=self.state.lock().map_err(|_|"checkpoint lock poisoned".to_string())?;
-        self.host.save_checkpoint(&self.request.id,&json!({"apiVersion":API_VERSION,
-            "state":&*state,"verified":true,"result":{"answer":result.answer,
-            "modelCalls":result.model_calls,"toolCalls":result.tool_calls,
-            "inputTokens":result.input_tokens,"outputTokens":result.output_tokens,
-            "elapsedMs":result.elapsed_ms}}))?;
+        let mut envelope=self.envelope(&state,m,true,false);
+        envelope["result"]=json!({"answer":result.answer,"modelCalls":result.model_calls,"toolCalls":result.tool_calls,
+            "inputTokens":result.input_tokens,"outputTokens":result.output_tokens,"elapsedMs":result.elapsed_ms});
+        self.host.save_checkpoint(&self.request.id,&envelope)?;
         drop(state);
         self.emit(Event::Verified);
         Ok(result)
     }
 }
-/// Execute a fresh task through the selected branch's original native engine.
-/// Success means independently verified completion, not just an LLM answer.
-/// A pre-existing checkpoint is rejected; no implicit resume/replay.
-pub async fn run(host:&dyn NativeHost, request:RunRequest) -> Result<RunResult,String> {
+/// Fresh run through the selected native engine. Never reuses a run ID.
+pub async fn run(host:&dyn NativeHost,request:RunRequest)->Result<RunResult,String>{
+    run_with_options(host,request,RunOptions::default()).await
+}
+pub async fn run_with_options(host:&dyn NativeHost,request:RunRequest,options:RunOptions<'_>)->Result<RunResult,String>{
+    run_internal(host,request,options,false).await
+}
+/// Continue an explicit safe suspension, or return an already verified result.
+/// Arbitrary crash/unknown-effect checkpoints are not safe suspensions.
+pub async fn resume(host:&dyn NativeHost,request:RunRequest)->Result<RunResult,String>{
+    resume_with_options(host,request,RunOptions::default()).await
+}
+pub async fn resume_with_options(host:&dyn NativeHost,request:RunRequest,options:RunOptions<'_>)->Result<RunResult,String>{
+    run_internal(host,request,options,true).await
+}
+async fn run_internal(host:&dyn NativeHost,request:RunRequest,options:RunOptions<'_>,resume:bool)->Result<RunResult,String>{
     request.validate()?;
-    if host.load_checkpoint(&request.id)?.is_some() { return Err("run ID already exists; inspect checkpoint before recovery".into()); }
-    let session=Session{host,request:&request,started:Instant::now(),
-        meter:Mutex::new(Meter{model_calls:0,tool_calls:0,input_tokens:Some(0),output_tokens:Some(0)}),
-        state:Mutex::new(Value::Null)};
+    if options.max_verification_retries>100{return Err("invalid verification retry budget".into());}
+    if options.streaming&&!host.supports_streaming(){return Err("host has no streaming model port".into());}
+    let previous=host.load_checkpoint(&request.id)?;
+    let (meter,state,elapsed,restored)=match(resume,previous){
+        (false,None)=>(Meter::fresh(),Value::Null,Duration::ZERO,None),
+        (false,Some(_))=>return Err("run ID already exists; use explicit resume".into()),
+        (true,None)=>return Err("no checkpoint to resume".into()),
+        (true,Some(saved))=>{
+            if saved["apiVersion"]!=API_VERSION||saved["checkpointVersion"]!=CHECKPOINT_VERSION
+                ||saved["engine"]!=backend::ENGINE_ID||saved["request"]!=request.binding(&options){
+                return Err("checkpoint version, engine or request mismatch".into());
+            }
+            let meter=Meter::parse(&saved["meter"])?;
+            if meter.model_calls>request.limits.max_model_calls||meter.tool_calls>request.limits.max_tool_calls
+                ||meter.rejected>options.max_verification_retries.saturating_add(1){return Err("checkpoint exceeds limits".into());}
+            let ms=saved["elapsedMs"].as_u64().ok_or("missing checkpoint elapsed time")?;
+            if saved["verified"]==true{
+                if saved["suspended"]==true{return Err("invalid verified suspension".into());}
+                let result=&saved["result"];
+                let answer=result["answer"].as_str().filter(|s|!s.trim().is_empty()).ok_or("missing verified answer")?;
+                return Ok(RunResult{answer:answer.into(),model_calls:meter.model_calls,tool_calls:meter.tool_calls,
+                    input_tokens:meter.input_tokens,output_tokens:meter.output_tokens,elapsed_ms:result["elapsedMs"].as_u64().ok_or("missing verified elapsed time")?});
+            }
+            if saved["suspended"]!=true{return Err("checkpoint is not an explicit safe suspension; reconcile uncertain work manually".into());}
+            let state=saved.get("state").filter(|v|!v.is_null()).ok_or("missing suspended state")?.clone();
+            (meter,state.clone(),Duration::from_millis(ms),Some(state))
+        }
+    };
+    let session=Session{host,request:&request,started:Instant::now(),meter:Mutex::new(meter),state:Mutex::new(state),
+        options,elapsed_before:elapsed,suspended:AtomicBool::new(false)};
     session.check()?;
-    session.save(json!({"phase":"created"}))?;
-    let answer=backend::execute(&session).await?;
-    session.finish(answer)
+    if restored.is_none(){session.save(json!({"phase":"created"}))?;}
+    let result=backend::execute(&session,restored).await;
+    if session.suspended.load(Ordering::Acquire){return Err(SUSPENDED.into());}
+    session.finish(result?)
 }
 
 /// Sequential batch uses the same engine and individual durable identities.
