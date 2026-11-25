@@ -1319,6 +1319,84 @@ async fn install_brew_voice(
 
 /// One-click Piper install: pipx where a shell and Homebrew are available,
 /// otherwise the platform Python with `pip --user`.
+fn piper_voice_dir(state: &AppState) -> PathBuf {
+    models_dir(state).join("piper-voices")
+}
+
+fn first_piper_voice(dir: &Path) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path
+            .extension()
+            .map(|value| value.to_string_lossy().eq_ignore_ascii_case("onnx"))
+            .unwrap_or(false)
+        {
+            let mut config = path.as_os_str().to_os_string();
+            config.push(".json");
+            if Path::new(&config).is_file() {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+/// Downloads a Korean Piper voice (weights + config) from rhasspy/piper-voices
+/// so the runtime install finishes with a usable voice instead of a manual step.
+async fn download_piper_voice(state: &AppState) -> Result<PathBuf, String> {
+    let dir = piper_voice_dir(state);
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    if let Some(existing) = first_piper_voice(&dir) {
+        return Ok(existing);
+    }
+    let client = reqwest::Client::new();
+    let tree: Value = client
+        .get("https://huggingface.co/api/models/rhasspy/piper-voices/tree/main?recursive=true")
+        .header("User-Agent", "dominion-rust")
+        .timeout(Duration::from_secs(60))
+        .send()
+        .await
+        .map_err(|error| format!("Piper 음성 목록 조회 실패: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Piper 음성 목록 HTTP 오류: {error}"))?
+        .json()
+        .await
+        .map_err(|error| format!("Piper 음성 목록 응답 오류: {error}"))?;
+    let paths = tree
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|item| item["type"] == "file")
+        .filter_map(|item| item["path"].as_str().map(str::to_string))
+        .collect::<Vec<_>>();
+    let voice = paths
+        .iter()
+        .find(|path| path.contains("ko_KR") && path.ends_with(".onnx"))
+        .or_else(|| paths.iter().find(|path| path.ends_with(".onnx")))
+        .ok_or("Piper 음성 파일을 찾지 못했습니다.")?
+        .clone();
+    let config = format!("{voice}.json");
+    for path in [&voice, &config] {
+        let url = format!("https://huggingface.co/rhasspy/piper-voices/resolve/main/{path}");
+        let bytes = client
+            .get(&url)
+            .header("User-Agent", "dominion-rust")
+            .timeout(Duration::from_secs(900))
+            .send()
+            .await
+            .map_err(|error| format!("Piper 음성 다운로드 실패: {error}"))?
+            .error_for_status()
+            .map_err(|error| format!("Piper 음성 HTTP 오류: {error}"))?
+            .bytes()
+            .await
+            .map_err(|error| format!("Piper 음성 본문 오류: {error}"))?;
+        let name = path.rsplit('/').next().unwrap_or("voice.onnx");
+        std::fs::write(dir.join(name), &bytes).map_err(|error| error.to_string())?;
+    }
+    first_piper_voice(&dir).ok_or_else(|| "Piper 음성을 저장하지 못했습니다.".to_string())
+}
+
 async fn install_piper(state: AppState) -> Result<Value, String> {
     if let Some(path) = voice_bin(&["piper"]) {
         return Ok(json!({
@@ -1362,11 +1440,22 @@ async fn install_piper(state: AppState) -> Result<Value, String> {
         .await;
         let installed = voice_bin(&["piper"]);
         let result = match output {
-            Ok(Ok(out)) if out.status.success() && installed.is_some() => json!({
-                "status": "installed", "engine": "piper", "backend": "pipx",
-                "tag": "piper-tts", "downloaded": 0, "total": 0, "file": "", "error": "",
-                "updatedAt": chrono::Utc::now().to_rfc3339(),
-            }),
+            Ok(Ok(out)) if out.status.success() && installed.is_some() => {
+                match download_piper_voice(&task_state).await {
+                    Ok(voice) => json!({
+                        "status": "installed", "engine": "piper", "backend": "pipx",
+                        "tag": "piper-tts", "downloaded": 0, "total": 0,
+                        "file": voice.to_string_lossy(), "error": "",
+                        "updatedAt": chrono::Utc::now().to_rfc3339(),
+                    }),
+                    Err(error) => json!({
+                        "status": "failed", "engine": "piper", "backend": "pipx",
+                        "tag": "piper-tts", "downloaded": 0, "total": 0, "file": "",
+                        "error": format!("Piper 실행기는 설치됐지만 음성 파일을 받지 못했습니다: {error}"),
+                        "updatedAt": chrono::Utc::now().to_rfc3339(),
+                    }),
+                }
+            }
             Ok(Ok(out)) if out.status.success() => json!({
                 "status": "failed", "engine": "piper", "backend": "pipx",
                 "tag": "piper-tts", "downloaded": 0, "total": 0, "file": "",

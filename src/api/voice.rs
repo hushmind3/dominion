@@ -50,10 +50,16 @@ fn whisper_model(state: &AppState) -> Option<PathBuf> {
 fn piper_voice(state: &AppState) -> Option<PathBuf> {
     let root = models::models_dir(state);
     let is_onnx = |path: &Path| -> bool {
-        path.extension()
+        if !path
+            .extension()
             .map(|value| value.to_string_lossy().eq_ignore_ascii_case("onnx"))
             .unwrap_or(false)
-            && path.with_extension("json").is_file()
+        {
+            return false;
+        }
+        let mut config = path.as_os_str().to_os_string();
+        config.push(".json");
+        Path::new(&config).is_file()
     };
     find_file(&root, 0, &is_onnx)
 }
