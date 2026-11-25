@@ -1157,10 +1157,10 @@ pub fn runtimes(state: &AppState) -> Value {
             },
             {
                 "id": "piper", "name": "Piper (음성합성)", "formats": ["ONNX"],
-                "installed": bin("piper").is_some(),
-                "path": bin("piper").map(|path| path.to_string_lossy().to_string()),
-                "installable": false, "installing": active("piper"),
-                "installMethod": "external", "version": "",
+                "installed": voice_bin(&["piper"]).is_some(),
+                "path": voice_bin(&["piper"]).map(|path| path.to_string_lossy().to_string()),
+                "installable": piper_installable(), "installing": active("piper"),
+                "installMethod": if cfg!(windows) { "pip" } else { "pipx" }, "version": "",
                 "url": "https://github.com/rhasspy/piper/releases",
             },
             {
@@ -1250,6 +1250,10 @@ fn voice_installable(names: &[&str]) -> bool {
     voice_bin(names).is_none() && brew_bin().is_some()
 }
 
+fn piper_installable() -> bool {
+    voice_bin(&["piper"]).is_none() && (brew_bin().is_some() || cfg!(windows))
+}
+
 /// One-click install through Homebrew, mirroring the Ollama path: progress is
 /// published through the shared setup snapshot the dashboard already polls.
 async fn install_brew_voice(
@@ -1313,6 +1317,85 @@ async fn install_brew_voice(
     Ok(json!({"status": "installing", "engine": engine, "setup": install_snapshot()}))
 }
 
+/// One-click Piper install: pipx where a shell and Homebrew are available,
+/// otherwise the platform Python with `pip --user`.
+async fn install_piper(state: AppState) -> Result<Value, String> {
+    if let Some(path) = voice_bin(&["piper"]) {
+        return Ok(json!({
+            "status": "already_installed", "engine": "piper",
+            "path": path.to_string_lossy(),
+            "setup": install_snapshot(),
+        }));
+    }
+    if install_active() {
+        return Ok(json!({"status": "installing", "setup": install_snapshot()}));
+    }
+    let (program, args): (String, Vec<String>) = if cfg!(windows) {
+        let python = std::env::var("DOMINION_PYTHON")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "python".into());
+        (
+            python,
+            vec!["-m".into(), "pip".into(), "install".into(), "--user".into(), "piper-tts".into()],
+        )
+    } else {
+        (
+            "sh".into(),
+            vec![
+                "-lc".into(),
+                "command -v pipx >/dev/null 2>&1 || brew install pipx; pipx install piper-tts".into(),
+            ],
+        )
+    };
+    set_install(json!({
+        "status": "downloading", "engine": "piper", "backend": "pipx",
+        "tag": "piper-tts", "downloaded": 0, "total": 0,
+        "file": "pipx install piper-tts", "error": "",
+    }));
+    let task_state = state.clone();
+    tokio::spawn(async move {
+        let output = tokio::time::timeout(
+            Duration::from_secs(1800),
+            Command::new(&program).args(&args).output(),
+        )
+        .await;
+        let installed = voice_bin(&["piper"]);
+        let result = match output {
+            Ok(Ok(out)) if out.status.success() && installed.is_some() => json!({
+                "status": "installed", "engine": "piper", "backend": "pipx",
+                "tag": "piper-tts", "downloaded": 0, "total": 0, "file": "", "error": "",
+                "updatedAt": chrono::Utc::now().to_rfc3339(),
+            }),
+            Ok(Ok(out)) if out.status.success() => json!({
+                "status": "failed", "engine": "piper", "backend": "pipx",
+                "tag": "piper-tts", "downloaded": 0, "total": 0, "file": "",
+                "error": "설치는 끝났지만 piper 실행 파일을 찾지 못했습니다.",
+                "updatedAt": chrono::Utc::now().to_rfc3339(),
+            }),
+            Ok(Ok(out)) => json!({
+                "status": "failed", "engine": "piper", "backend": "pipx",
+                "tag": "piper-tts", "downloaded": 0, "total": 0, "file": "",
+                "error": String::from_utf8_lossy(&out.stderr).trim(),
+                "updatedAt": chrono::Utc::now().to_rfc3339(),
+            }),
+            Ok(Err(error)) => json!({
+                "status": "failed", "engine": "piper", "backend": "pipx",
+                "tag": "piper-tts", "downloaded": 0, "total": 0, "file": "",
+                "error": error.to_string(), "updatedAt": chrono::Utc::now().to_rfc3339(),
+            }),
+            Err(_) => json!({
+                "status": "failed", "engine": "piper", "backend": "pipx",
+                "tag": "piper-tts", "downloaded": 0, "total": 0, "file": "",
+                "error": "설치 시간 초과", "updatedAt": chrono::Utc::now().to_rfc3339(),
+            }),
+        };
+        let _ = &task_state;
+        set_install(result);
+    });
+    Ok(json!({"status": "installing", "engine": "piper", "setup": install_snapshot()}))
+}
+
 pub async fn install_runtime(state: AppState, engine: &str) -> Result<Value, String> {
     if engine == "whisper-cpp" {
         return install_brew_voice(
@@ -1322,6 +1405,9 @@ pub async fn install_runtime(state: AppState, engine: &str) -> Result<Value, Str
             &["whisper-cli", "whisper-cpp"],
         )
         .await;
+    }
+    if engine == "piper" {
+        return install_piper(state).await;
     }
     if engine == "ollama" {
         if let Some(path) = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
