@@ -1,7 +1,7 @@
 name: Assistant cloud source checks
 on:
   push:
-    branches: [assistant-cloud-link]
+    branches: [assistant-cloud-link, assistant-work-kernel]
     paths:
       - 'cloud/**'
       - '.github/workflows/assistant-cloud-check.yml'
@@ -22,4 +22,6 @@ jobs:
           node --check cloud/src/assistant_link.js
           node --check cloud/src/assistant_socket.js
           node --check cloud/src/assistant_browser.js
-          node --test cloud/tests/app-auth.test.mjs cloud/tests/email-auth.test.mjs cloud/tests/assistant-socket.test.mjs cloud/tests/assistant-shared-auth.test.mjs cloud/tests/assistant-messages.test.mjs cloud/tests/assistant-google.test.mjs cloud/tests/assistant-search.test.mjs cloud/tests/assistant-browser.test.mjs cloud/tests/assistant-mail-watch.test.mjs
+          node --check cloud/src/assistant_work.js
+          node --check cloud/src/assistant_playbook.js
+          node --test cloud/tests/*.test.mjs
