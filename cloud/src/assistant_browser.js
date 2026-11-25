@@ -135,7 +135,7 @@ export function needsHumanApproval(plan,snap,root){
  }
  // Explicitly allow only conventional view/navigation controls, not arbitrary
  // type=button handlers; unknown actions still require review.
- if(e.tag==='button'&&e.type==='button'&&/^(?:검색|조회|이전|뒤로|다음|목록|더\\s*보기|펼치기|접기|메뉴|상세(?:정보)?\\s*보기)$/.test(label))return false;
+ if(e.tag==='button'&&e.type==='button'&&/^(?:검색|조회|이전|뒤로|다음|목록|더\s*보기|펼치기|접기|메뉴|상세(?:정보)?\s*보기)$/.test(label))return false;
  return true;
 }
 const sameTarget=(a,b)=>a&&b&&a.index===b.index&&a.tag===b.tag&&a.type===b.type&&a.label===b.label&&a.href===b.href&&!b.auth;
