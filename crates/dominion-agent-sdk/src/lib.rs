@@ -87,3 +87,6 @@ pub async fn execute_compacted<A: AgentLoop,M: ModelPort,T: ToolPort>(
     let mut adapter = CompactModel {inner:model,tool_trace_bytes};
     execute(algorithm,&mut adapter,tools,history,catalog,options).await
 }
+
+/// Portable native execution contract shared across DOMINION branches.
+pub mod native;
