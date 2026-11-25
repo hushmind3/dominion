@@ -1149,10 +1149,10 @@ pub fn runtimes(state: &AppState) -> Value {
             },
             {
                 "id": "whisper-cpp", "name": "whisper.cpp (음성인식)", "formats": ["GGUF"],
-                "installed": bin("whisper-cli").is_some() || bin("whisper-cpp").is_some(),
-                "path": bin("whisper-cli").or_else(|| bin("whisper-cpp")).map(|path| path.to_string_lossy().to_string()),
-                "installable": false, "installing": active("whisper-cpp"),
-                "installMethod": "external", "version": "",
+                "installed": voice_bin(&["whisper-cli", "whisper-cpp"]).is_some(),
+                "path": voice_bin(&["whisper-cli", "whisper-cpp"]).map(|path| path.to_string_lossy().to_string()),
+                "installable": voice_installable(&["whisper-cli", "whisper-cpp"]), "installing": active("whisper-cpp"),
+                "installMethod": if brew_bin().is_some() { "homebrew" } else { "external" }, "version": "",
                 "url": "https://github.com/ggml-org/whisper.cpp/releases",
             },
             {
@@ -1223,7 +1223,106 @@ pub fn runtimes(state: &AppState) -> Value {
     })
 }
 
+/// Voice engines are looked up on PATH plus the usual Homebrew and user bin
+/// folders, because a GUI-launched app does not inherit a shell PATH.
+fn voice_bin(names: &[&str]) -> Option<PathBuf> {
+    let mut dirs: Vec<PathBuf> = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+    dirs.push(PathBuf::from("/opt/homebrew/bin"));
+    dirs.push(PathBuf::from("/usr/local/bin"));
+    if let Ok(home) = std::env::var("HOME") {
+        dirs.push(PathBuf::from(&home).join(".local/bin"));
+        dirs.push(PathBuf::from(&home).join(".cargo/bin"));
+    }
+    for dir in dirs {
+        for name in names {
+            for candidate in [name.to_string(), format!("{name}{}", std::env::consts::EXE_SUFFIX)] {
+                let path = dir.join(candidate);
+                if path.is_file() {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn voice_installable(names: &[&str]) -> bool {
+    voice_bin(names).is_none() && brew_bin().is_some()
+}
+
+/// One-click install through Homebrew, mirroring the Ollama path: progress is
+/// published through the shared setup snapshot the dashboard already polls.
+async fn install_brew_voice(
+    state: AppState,
+    engine: &'static str,
+    formula: &'static str,
+    probe: &'static [&'static str],
+) -> Result<Value, String> {
+    if let Some(path) = voice_bin(probe) {
+        return Ok(json!({
+            "status": "already_installed", "engine": engine,
+            "path": path.to_string_lossy(),
+            "setup": install_snapshot(),
+        }));
+    }
+    if !voice_installable(probe) {
+        return Err("이 플랫폼에서는 Homebrew를 통한 자동 설치만 지원합니다.".into());
+    }
+    if install_active() {
+        return Ok(json!({"status": "installing", "setup": install_snapshot()}));
+    }
+    set_install(json!({
+        "status": "downloading", "engine": engine, "backend": "homebrew",
+        "tag": formula, "downloaded": 0, "total": 0,
+        "file": format!("brew install {formula}"), "error": "",
+    }));
+    let brew = brew_bin().ok_or("Homebrew를 찾지 못했습니다.")?;
+    let task_state = state.clone();
+    tokio::spawn(async move {
+        let output = tokio::time::timeout(
+            Duration::from_secs(1800),
+            Command::new(&brew).args(["install", formula]).output(),
+        )
+        .await;
+        let result = match output {
+            Ok(Ok(out)) if out.status.success() => json!({
+                "status": "installed", "engine": engine, "backend": "homebrew",
+                "tag": formula, "downloaded": 0, "total": 0, "file": "", "error": "",
+                "updatedAt": chrono::Utc::now().to_rfc3339(),
+            }),
+            Ok(Ok(out)) => json!({
+                "status": "failed", "engine": engine, "backend": "homebrew",
+                "tag": formula, "downloaded": 0, "total": 0, "file": "",
+                "error": String::from_utf8_lossy(&out.stderr).trim(),
+                "updatedAt": chrono::Utc::now().to_rfc3339(),
+            }),
+            Ok(Err(error)) => json!({
+                "status": "failed", "engine": engine, "backend": "homebrew",
+                "tag": formula, "downloaded": 0, "total": 0, "file": "",
+                "error": error.to_string(), "updatedAt": chrono::Utc::now().to_rfc3339(),
+            }),
+            Err(_) => json!({
+                "status": "failed", "engine": engine, "backend": "homebrew",
+                "tag": formula, "downloaded": 0, "total": 0, "file": "",
+                "error": "설치 시간 초과", "updatedAt": chrono::Utc::now().to_rfc3339(),
+            }),
+        };
+        let _ = &task_state;
+        set_install(result);
+    });
+    Ok(json!({"status": "installing", "engine": engine, "setup": install_snapshot()}))
+}
+
 pub async fn install_runtime(state: AppState, engine: &str) -> Result<Value, String> {
+    if engine == "whisper-cpp" {
+        return install_brew_voice(
+            state,
+            "whisper-cpp",
+            "whisper-cpp",
+            &["whisper-cli", "whisper-cpp"],
+        )
+        .await;
+    }
     if engine == "ollama" {
         if let Some(path) = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
             .map(|dir| dir.join("ollama"))
