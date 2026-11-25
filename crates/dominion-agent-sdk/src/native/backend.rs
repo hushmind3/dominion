@@ -4,6 +4,31 @@ pub(super) const ENGINE_ID:&str="dominion-branch2-native-v2";
 use crate::{ModelPort,ToolPort,ModelResponse as PortResponse,ToolRequest as PortCall};
 struct Audit<'a> { session:&'a Session<'a>, events:Mutex<Vec<Value>> }
 impl Audit<'_> {
+    // Read settled receipts from the native driver's audit; proposals are
+    // not successes. Keep only exact arguments/IDs and the observed outcome.
+    fn observations(&self)->Result<Vec<Value>,String>{
+        let events=self.events.lock().map_err(|_|"audit lock poisoned".to_string())?;
+        let mut intents=std::collections::HashMap::<&str,(&Value,usize)>::new();
+        let mut receipts=Vec::new();let mut step=0usize;
+        for event in events.iter(){
+            match event["phase"].as_str(){
+                Some("model_intent")=>step+=1,
+                Some("tool_intent")=>{
+                    if let Some(id)=event["id"].as_str(){intents.insert(id,(event,step));}
+                },
+                Some("tool_observed")=>{
+                    if let Some(id)=event["id"].as_str(){
+                        if let Some((intent,step))=intents.remove(id){
+                            receipts.push(json!({"id":id,"tool":intent["name"],"arguments":intent["arguments"],
+                                "success":event["success"],"result":event["result"],"step":step}));
+                        }
+                    }
+                },
+                _=>{},
+            }
+        }
+        Ok(receipts)
+    }
     fn record(&self,event:Value)->Result<(),String>{
         let mut events=self.events.lock().map_err(|_|"audit lock poisoned".to_string())?;
         events.push(event);
@@ -14,7 +39,7 @@ struct Model<'a>(&'a Audit<'a>);
 impl ModelPort for Model<'_> {
     async fn complete(&mut self,history:&[Value],visible:&[Value])->Result<PortResponse,String>{
         self.0.record(json!({"phase":"model_intent","transcript":history,"catalog":visible}))?;
-        let response=self.0.session.model(history.to_vec(),visible.to_vec(),vec![]).await?;
+        let response=self.0.session.model(history.to_vec(),visible.to_vec(),if self.0.session.options.provider_context.is_some(){self.0.observations()?}else{vec![]}).await?;
         self.0.record(json!({"phase":"model_observed","content":response.content,
             "calls":response.calls.iter().map(|c|json!({"id":c.id,"name":c.name,"arguments":c.arguments})).collect::<Vec<_>>(),
             "inputTokens":response.input_tokens,"outputTokens":response.output_tokens}))?;
