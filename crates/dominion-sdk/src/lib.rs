@@ -20,3 +20,10 @@ pub async fn run<H: Host>(host: &mut H, context: Context<'_>) -> Result<(), Stri
 pub mod http;
 #[cfg(feature = "http")]
 pub use http::{Client, ClientError, StartRun, AgentRun, RunActions, RunStatus, RunSummary, SourceRef, InferenceRoute, InferenceSupport, ExtensionSnapshot, GrantInput, Grant, GrantIssued, ScopedClient, ScopedRun, TaskRequestReceipt, SharedArtifact, ArtifactContent};
+
+/// Portable native execution contract shared across DOMINION branches.
+pub mod native;
+
+// Same engine-owned embedding convenience as the existing Host path.
+mod embedded;
+pub use embedded::{run_embedded, CheckpointStore, EmbeddedLimits, ModelPort, ModelTurn, TurnDecision, Verification, Verifier};
