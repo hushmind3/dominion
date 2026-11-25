@@ -1,7 +1,8 @@
-// Owner-scoped inbox and opt-in generic push. Never send private task text to Expo.
+// Owner-scoped inbox and opt-in generic push. Never send private task text to notification providers.
+import {isPushToken,deliverPush} from './assistant_push_delivery.js';
 const now=()=>Math.floor(Date.now()/1000);
 const reply=(x,status=200)=>new Response(JSON.stringify(x),{status,headers:{'content-type':'application/json','cache-control':'no-store'}});
-const validToken=t=>typeof t==='string'&&/^(ExpoPushToken|ExponentPushToken)\[[A-Za-z0-9_-]{10,200}\]$/.test(t);
+const validToken=isPushToken;
 export async function messages(req,env,user,path){
  if(user.scope!=='app'||user.capability!=='assistant_remote')return reply({error:'Assistant mobile permission required'},403);
  if(path==='messages'&&req.method==='GET'){
@@ -11,7 +12,7 @@ export async function messages(req,env,user,path){
  if(req.method!=='POST')return reply({error:'Method not allowed'},405);
  const raw=await req.text();if(raw.length>1024)return reply({error:'Too large'},413);
  let b;try{b=JSON.parse(raw)}catch{return reply({error:'Invalid JSON'},400)}
- if(!validToken(b?.token))return reply({error:'Invalid Expo push token'},400);
+ if(!validToken(b?.token))return reply({error:'Invalid push token'},400);
  if(path==='push/unregister'){
   await env.DB.prepare('DELETE FROM assistant_push WHERE token=? AND account_id=? AND app_session_id=?').bind(b.token,user.id,user.app_session_id).run();return reply({ok:true});
  }
@@ -30,9 +31,7 @@ export async function publish(env,device,b,send=fetch){
  if(!r.meta.changes){const old=await env.DB.prepare('SELECT id FROM assistant_messages WHERE device_id=? AND id=?').bind(device.id,b.id).first();return old?reply({ok:true,duplicate:true}):reply({error:'Message limit or revoked'},429)}
  // Push failure does not undo durable inbox delivery. No repeated SMS/call.
  const rows=await env.DB.prepare("SELECT p.token FROM assistant_push p JOIN app_sessions s ON s.id=p.app_session_id WHERE p.account_id=? AND s.account_id=p.account_id AND s.status='approved' AND s.capability='assistant_remote' AND s.expires_at>? LIMIT 10").bind(device.account_id,t).all();
- let push='not_configured';
- if(rows.results.length&&env.ASSISTANT_PUSH_ENABLED==='1'){
-  try{const res=await send('https://exp.host/--/api/v2/push/send',{method:'POST',headers:{'content-type':'application/json',...(env.EXPO_PUSH_ACCESS_TOKEN?{authorization:'Bearer '+env.EXPO_PUSH_ACCESS_TOKEN}:{})},body:JSON.stringify(rows.results.map(x=>({to:x.token,title:'나의 AI 비서',body:'새 메시지가 도착했습니다.',sound:'default',data:{assistantMessage:true},channelId:'assistant-reminders'})))});push=res.ok?'submitted':'failed'}catch{push='failed'}
- }
+ const push=await deliverPush(env,device.account_id,rows.results.map(x=>x.token),
+    '새 메시지가 도착했습니다.','message',{send});
  return reply({ok:true,push});
 }
