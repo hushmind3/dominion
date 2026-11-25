@@ -7,6 +7,7 @@ import {googleRoute,googleReady,cleanupGoogle,drainGoogleJobs} from './assistant
 import {searchRoute,searchReady} from './assistant_search.js';
 import {mailWatchReady,mailWatchRoute,drainMailWatch} from './assistant_mail_watch.js';
 import {browserRoute,browserReady,createBrowserObject} from './assistant_browser.js';
+import {workRoute} from './assistant_work.js';
 export {AssistantSocket} from './assistant_socket.js';
 // DOMINION account gateway: no Nous credentials and no shared client-side API key.
 // Cloudflare Worker + D1. Credits are integer micro-KRW (one KRW = 1,000 units).
@@ -551,6 +552,7 @@ export default {
         assistant_mail_watch: mailWatchReady(env),
         assistant_search: searchReady(env),
         assistant_browser: browserReady(env),
+        assistant_work: googleReady(env)||browserReady(env),
         toss_available: Boolean(proPrice(env) && env.TOSS_CLIENT_KEY && env.TOSS_SECRET_KEY)
       });
       const out = new Response(response.body, response);
@@ -566,6 +568,7 @@ export default {
       if(isAppRequest(request)&&!appAllowed.includes(path)&&!path.startsWith('/v1/assistant/'))return json({error:'Owner login required'},403,headers);
       if(path.startsWith('/v1/assistant/mail/'))response=await mailWatchRoute(request,env,{account,ctx});
       else if(path.startsWith('/v1/assistant/browser/'))response=await browserRoute(request,env,{account});
+      else if(path.startsWith('/v1/assistant/work/'))response=await workRoute(request,env,{account,ctx});
       else if(path==='/v1/assistant/search')response=await searchRoute(request,env,{account});
       else if(path.startsWith('/v1/assistant/google/'))response=await googleRoute(request,env,{account,ctx});
       else if(path.startsWith('/v1/assistant/'))response=await assistantRoute(request,env,{account});
