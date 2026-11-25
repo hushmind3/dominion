@@ -28,7 +28,7 @@ export async function assistantRoute(req,env,{account}){
   return fail('Not found',404);
  }
  const user=await account(req,env);if(!user)return fail('Unauthorized',401);
- if(['messages','push/register','push/unregister'].includes(p))return messages(req,env,user,p);
+ if(['messages','push/register','push/unregister','push/status'].includes(p))return messages(req,env,user,p);
  const remote=user.scope!=='app'||user.capability==='assistant_remote',pc=user.scope!=='app'||user.capability==='assistant_pc';
  if(p==='socket'&&req.method==='GET'){
   if(!remote)return fail('Assistant remote permission required',403);
