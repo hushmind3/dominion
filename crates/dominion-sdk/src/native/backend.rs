@@ -1,5 +1,6 @@
 //! Adapter to the existing embedded execution path, not an agent loop.
 use super::*;
+pub(super) const ENGINE_ID:&str="dominion-branch4-native-v2";
 use crate::{Snapshot, CheckpointStore, Journal, ModelPort, ModelTurn, TurnDecision, Dispatcher,
     DispatchResult, EmbeddedLimits, Action, BoxFuture, Verifier};
 struct Store<'a> { session:&'a Session<'a>, snapshot:Mutex<Snapshot> }
@@ -51,14 +52,26 @@ impl Dispatcher for Tools<'_> {
 struct Verify<'a>(&'a Session<'a>);
 impl Verifier for Verify<'_> {
     fn verify<'a>(&'a mut self,_:&'a Snapshot,answer:&'a str)->BoxFuture<'a,Result<crate::Verification,String>> {
-        Box::pin(async move { self.0.verify(answer).await?; Ok(crate::Verification::Accept) })
+        Box::pin(async move{Ok(match self.0.verify_candidate(answer).await?{
+            Verification::Accept=>crate::Verification::Accept,Verification::Reject(reason)=>crate::Verification::Retry(reason)
+        })})
     }
 }
-pub(super) async fn execute(session:&Session<'_>)->Result<String,String>{
+pub(super) async fn execute(session:&Session<'_>,restored:Option<Value>)->Result<String,String>{
     let r=session.request;
-    let mut snapshot=Snapshot::new(&r.id,&r.instruction,r.limits.max_model_calls)?;
-    snapshot.native.messages=r.initial_messages();
-    snapshot.native.model_only=r.catalog().is_empty();
+    let snapshot=if let Some(saved)=restored{
+        let snapshot:Snapshot=serde_json::from_value(saved).map_err(|e|e.to_string())?;
+        let expected=Snapshot::new(&r.id,&r.instruction,r.limits.max_model_calls)?;
+        if !snapshot.settled()||snapshot.native.status!=crate::runtime::domain::RunStatus::Running
+            ||snapshot.native.id!=expected.native.id||snapshot.native.instruction!=r.instruction||snapshot.model_calls!=session.meter()?.model_calls{
+            return Err("suspended snapshot identity or settlement mismatch".into());}
+        snapshot
+    }else{
+        let mut snapshot=Snapshot::new(&r.id,&r.instruction,r.limits.max_model_calls)?;
+        snapshot.native.messages=r.initial_messages();
+        snapshot.native.model_only=r.catalog().is_empty();
+        snapshot
+    };
     let store=Store{session,snapshot:Mutex::new(snapshot)};
     let mut model=Model(session);
     let tools=Tools(session);
@@ -66,4 +79,16 @@ pub(super) async fn execute(session:&Session<'_>)->Result<String,String>{
     let snapshot=crate::run_embedded(&store,&mut model,&tools,&mut verifier,
         EmbeddedLimits{max_rounds:r.limits.max_model_calls,max_tools:r.limits.max_tool_calls,max_elapsed:r.limits.max_elapsed}).await?;
     snapshot.native.answer.ok_or_else(||"native completion missing answer".into())
+}
+
+/// Cancel exactly the undispatched native model intent, not a paid request.
+pub(super) fn suspend_state(state:&Value,meter:Meter)->Result<Value,String>{
+    let mut snapshot:Snapshot=serde_json::from_value(state.clone()).map_err(|e|e.to_string())?;
+    if !snapshot.model_in_flight||snapshot.native.status!=crate::runtime::domain::RunStatus::Running
+        ||snapshot.model_calls!=meter.model_calls.saturating_add(1)||snapshot.step==0||snapshot.native.steps!=snapshot.step{
+        return Err("not an undispatched native model boundary".into());}
+    snapshot.model_in_flight=false;snapshot.model_calls-=1;snapshot.step-=1;snapshot.native.steps-=1;
+    if !snapshot.settled(){return Err("native boundary still unsettled".into());}
+    snapshot.native.event("sdk_suspended","SDK suspended before provider dispatch",None);
+    serde_json::to_value(snapshot).map_err(|e|e.to_string())
 }

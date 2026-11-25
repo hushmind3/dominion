@@ -1,51 +1,35 @@
-# DOMINION native embedding API v1
+# DOMINION native API v1
+Same existing SDK exports and public host contract in all branches. Alias the
+dependency as dominion. Branch1–3: dominion-agent-sdk; branch4: dominion-sdk,
+including --no-default-features. No second agent runtime.
 
-The same Rust source can use all four independently developed native engines.
-Import the existing SDK crate under the Cargo dependency alias `dominion` and
-call `dominion::native::run(&host, request).await`. No new engine, server,
-provider SDK, external protocol, or product/UI dependency is added.
+- run / run_with_options: async verified execution.
+- run_sync / run_sync_with_options: synchronous local Tokio runtime, no nesting.
+- run_channel: caller-polled result future plus lifecycle events.
+- run_streamed: actual text/tool-argument provider deltas, requires the host
+  streaming port. No synthesized deltas.
+- run_batch: sequential tasks, unique run IDs.
+- RunControl::pause / continue_run / step / step_n / cancel: live operation
+  admission. Already dispatched operations may finish. Step counts external
+  operations, not engine instructions.
+- RunControl::suspend: permits the current batch to settle and saves a durable
+  continuation before the next provider call. May complete if no next call.
+- resume / resume_with_options / resume_channel: use the original engine,
+  request and cumulative budgets. Verified checkpoints return saved results.
+- NativeHook::before / event: async approval/veto plus event observation.
+  Cannot authorize hidden tools. Independent rejection can request bounded
+  correction within the existing native engine (default two retries).
 
-- branch1/2/3: package `dominion-agent-sdk` at `crates/dominion-agent-sdk`.
-- branch4: package `dominion-sdk` at `crates/dominion-sdk`, optionally with
-  `default-features = false`.
-- branch3's existing HTTP SDK also re-exports the native module.
+NativeHost supplies real model/tool/evidence I/O, approvals, atomic storage and
+exclusive run ownership. Hosts must enforce provider/tool timeouts. Native
+admission deadlines include live waits but exclude time between suspension and
+resume. Poll the channel result and drain events concurrently; no hidden task.
+Token usage stays unknown when the provider omits it. Unknown crash/transport
+outcomes cannot be replayed. Only explicitly suspended checkpoints or verified
+results are portable through this API. No cross-engine or old-envelope
+migration. Hooks reject rather than fabricate outcomes. Existing engine-specific
+recovery APIs remain available.
 
-Only the Cargo dependency target/package changes; the public native host
-traits, model requests, tool calls, results, limits and events are identical.
-Keep the current native SDK exports for advanced callers.
-
-## Contract
-
-The host implements `NativeHost` once: model completion, authorized tool
-execution, independent outcome verification, and atomic checkpoint storage.
-It must own an exclusive run-ID lease, enforce approvals/sandbox policy,
-and configure timeouts for its external I/O. Provider messages and call IDs
-must not be dropped or rewritten. Model usage is optional; unknown usage
-never becomes a measured zero. A configured token cap requires actual usage.
-The deadline stops admission, not an already-running external operation.
-
-The engine owns its own decision loop, tool admission and native policies.
-`ModelRequest.messages` is the native provider transcript or planner view;
-`observations` carries available full receipts separately. Different
-native algorithms can still choose different context and tool catalogues.
-`run` returns success only after independent host verification and final
-checkpoint persistence. Native internal completion alone is not success.
-A rejected answer returns an error. Existing low-level APIs remain available
-for engine-specific repair policies; v1 does not promise automatic repair.
-
-`run_batch` is sequential and stops on first error. `NativeHost::event`
-receives turn and tool lifecycle events; this is not token streaming.
-Fresh runs refuse existing checkpoint IDs. Automatic cross-engine checkpoint
-migration/resume, token streaming, synchronous convenience, and portable
-step-by-step driving are not promised by v1. Do not replay uncertain work
-or use an engine's checkpoint in a different branch.
-
-## Verification
-
-Identical SDK contract tests cover native tool roundtrip, verified completion,
-usage, rejection, token-cap handling and duplicate batch IDs. Run
-`cargo test -p dominion-agent-sdk native::tests` on branches 1–3, and
-`cargo test -p dominion-sdk --no-default-features native::tests`
-on branch4. Then use one actual external adapter and the fixed 7-task 9B
-protocol against all four branches. The host is still responsible for model
-transport, real tools, and durable checkpoint implementation.
+Run cargo test -p dominion-agent-sdk native::tests on branches 1–3; on branch4
+cargo test -p dominion-sdk --no-default-features native::tests. These are source
+tests; compilation and external 9B rebenchmark must be run separately.
