@@ -60,9 +60,12 @@ impl RunControl{
 }
 pub struct RunOptions<'a>{
     pub control:Option<RunControl>,pub hooks:Vec<&'a dyn NativeHook>,pub streaming:bool,
-    pub max_verification_retries:usize,pub(super) events:Option<mpsc::UnboundedSender<Event>>,
+    pub max_verification_retries:usize,
+    /// Opt-in provider projection owned by the SDK, not by each host.
+    pub provider_context:Option<super::ProviderContext>,
+    pub(super) events:Option<mpsc::UnboundedSender<Event>>,
 }
-impl Default for RunOptions<'_>{fn default()->Self{Self{control:None,hooks:vec![],streaming:false,max_verification_retries:2,events:None}}}
+impl Default for RunOptions<'_>{fn default()->Self{Self{control:None,hooks:vec![],streaming:false,max_verification_retries:2,provider_context:None,events:None}}}
 /// Poll result and drain events concurrently. No detached task. The channel
 /// is unbounded to avoid losing provider deltas; consumers must drain it.
 pub struct ChannelRun<'a>{
