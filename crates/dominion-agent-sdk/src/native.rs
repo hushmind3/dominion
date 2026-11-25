@@ -5,6 +5,8 @@ use serde_json::{json, Value};
 use std::{collections::HashSet, future::Future, pin::Pin, sync::Mutex, time::{Duration, Instant}};
 mod backend;
 mod control;
+mod context;
+pub use context::ProviderContext;
 pub use control::*;
 use std::sync::atomic::{AtomicBool,Ordering};
 pub const CHECKPOINT_VERSION:u32=2;
@@ -73,11 +75,15 @@ impl RunRequest {
         Ok(())
     }
     fn binding(&self,options:&RunOptions<'_>)->Value{
-        json!({"id":self.id,"instruction":self.instruction,"system":self.system,
+        let mut binding=json!({"id":self.id,"instruction":self.instruction,"system":self.system,
             "tools":self.tools.iter().map(|t|json!({"name":t.name,"description":t.description,"parameters":t.parameters,"readOnly":t.read_only})).collect::<Vec<_>>(),
             "limits":{"model":self.limits.max_model_calls,"tools":self.limits.max_tool_calls,
             "elapsedSeconds":self.limits.max_elapsed.as_secs(),"elapsedNanos":self.limits.max_elapsed.subsec_nanos(),
-            "tokens":self.limits.max_tokens,"verificationRetries":options.max_verification_retries}})
+            "tokens":self.limits.max_tokens,"verificationRetries":options.max_verification_retries}});
+        if let Some(policy)=options.provider_context{
+            binding["providerContext"]=json!({"version":1,"historyBytes":policy.history_bytes,"repeatGuard":policy.repeat_guard});
+        }
+        binding
     }
     fn catalog(&self) -> Vec<Value> {
         if self.limits.max_tool_calls==0 { return vec![]; }
@@ -139,6 +145,7 @@ pub enum Event {
     ToolStarted { round: usize, id: String, name: String },
     ToolFinished { round: usize, id: String, success: bool },
     ModelDelta { round:usize, delta:ModelDelta },
+    ContextPrepared { round:usize, elapsed_us:u64 },
     VerificationStarted,
     VerificationRejected { reason:String, will_retry:bool },
     Suspended,
@@ -209,10 +216,12 @@ struct Session<'a> {
     options:RunOptions<'a>,
     elapsed_before:Duration,
     suspended:AtomicBool,
+    uncertain_effect:AtomicBool,
 }
 impl<'a> Session<'a> {
     fn check(&self) -> Result<(),String> {
         if self.suspended.load(Ordering::Acquire){return Err(SUSPENDED.into());}
+        if self.uncertain_effect.load(Ordering::Acquire){return Err("external effect outcome uncertain; reconcile before further execution".into());}
         if self.host.cancelled(&self.request.id)||self.options.control.as_ref().is_some_and(RunControl::is_cancelled){return Err("native run cancelled".into());}
         if self.elapsed()>=self.request.limits.max_elapsed{return Err("native admission deadline exceeded".into());}
         Ok(())
@@ -229,7 +238,8 @@ impl<'a> Session<'a> {
     fn envelope(&self,state:&Value,meter:Meter,verified:bool,suspended:bool)->Value{
         json!({"apiVersion":API_VERSION,"checkpointVersion":CHECKPOINT_VERSION,"engine":backend::ENGINE_ID,
             "request":self.request.binding(&self.options),"elapsedMs":self.elapsed_ms(),"meter":meter.value(),
-            "state":state,"verified":verified,"suspended":suspended})
+            "state":state,"verified":verified,"suspended":suspended,
+            "uncertainEffect":self.uncertain_effect.load(Ordering::Acquire)})
     }
     fn save(&self,state:Value)->Result<(),String>{
         let mut current=self.state.lock().map_err(|_|"checkpoint lock poisoned".to_string())?;
@@ -277,7 +287,13 @@ impl<'a> Session<'a> {
             m.model_calls+=1; m.model_calls
         };
         self.emit(Event::ModelStarted{round});
-        let request=ModelRequest{run_id:self.request.id.clone(),round,messages,tools,observations};
+        let mut request=ModelRequest{run_id:self.request.id.clone(),round,messages,tools,observations};
+        if let Some(policy)=self.options.provider_context{
+            let started=Instant::now();
+            context::prepare(&mut request,&self.request.tools,policy);
+            self.emit(Event::ContextPrepared{round,elapsed_us:started.elapsed().as_micros().min(u64::MAX as u128) as u64});
+        }
+        self.check()?;
         let response=if self.options.streaming{
             let emit=|delta|self.emit(Event::ModelDelta{round,delta});
             self.host.complete_streamed(request,&emit).await?
@@ -308,7 +324,8 @@ impl<'a> Session<'a> {
     }
     async fn tool(&self,call:ToolCall) -> Result<ToolOutcome,String> {
         self.check()?;
-        if !self.request.tools.iter().any(|t|t.name==call.name) { return Err("tool not authorized by host catalogue".into()); }
+        let spec=self.request.tools.iter().find(|t|t.name==call.name).ok_or("tool not authorized by host catalogue")?;
+        let read_only=spec.read_only;
         self.admit(Operation::Tool{id:call.id.clone(),name:call.name.clone(),arguments:call.arguments.clone()}).await?;
         let round={
             let mut m=self.meter.lock().map_err(|_|"meter lock poisoned".to_string())?;
@@ -317,7 +334,20 @@ impl<'a> Session<'a> {
         };
         let id=call.id.clone();
         self.emit(Event::ToolStarted{round,id:id.clone(),name:call.name.clone()});
-        let result=self.host.dispatch(&self.request.id,call).await?;
+        let result=match self.host.dispatch(&self.request.id,call).await{
+            Ok(outcome)=>outcome,
+            Err(error)=>{
+                // An error from an effectful port does not establish that the
+                // effect failed. Some engines turn errors into observations:
+                // fence the portable session as well, preventing any new I/O
+                // or verified completion even on that path.
+                if !read_only{
+                    self.uncertain_effect.store(true,Ordering::Release);
+                    return Err(format!("external effect outcome uncertain: {error}"));
+                }
+                return Err(error);
+            }
+        };
         self.emit(Event::ToolFinished{round,id,success:result.success});
         Ok(result)
     }
@@ -380,6 +410,9 @@ pub async fn resume_with_options(host:&dyn NativeHost,request:RunRequest,options
 async fn run_internal(host:&dyn NativeHost,request:RunRequest,options:RunOptions<'_>,resume:bool)->Result<RunResult,String>{
     request.validate()?;
     if options.max_verification_retries>100{return Err("invalid verification retry budget".into());}
+    if options.provider_context.is_some_and(|p|p.history_bytes==0||p.history_bytes>1_048_576){
+        return Err("invalid provider context byte budget".into());
+    }
     if options.streaming&&!host.supports_streaming(){return Err("host has no streaming model port".into());}
     let previous=host.load_checkpoint(&request.id)?;
     let (meter,state,elapsed,restored)=match(resume,previous){
@@ -391,6 +424,7 @@ async fn run_internal(host:&dyn NativeHost,request:RunRequest,options:RunOptions
                 ||saved["engine"]!=backend::ENGINE_ID||saved["request"]!=request.binding(&options){
                 return Err("checkpoint version, engine or request mismatch".into());
             }
+            if saved["uncertainEffect"]==true{return Err("external effect outcome uncertain; reconcile manually".into());}
             let meter=Meter::parse(&saved["meter"])?;
             if meter.model_calls>request.limits.max_model_calls||meter.tool_calls>request.limits.max_tool_calls
                 ||meter.rejected>options.max_verification_retries.saturating_add(1){return Err("checkpoint exceeds limits".into());}
@@ -408,11 +442,18 @@ async fn run_internal(host:&dyn NativeHost,request:RunRequest,options:RunOptions
         }
     };
     let session=Session{host,request:&request,started:Instant::now(),meter:Mutex::new(meter),state:Mutex::new(state),
-        options,elapsed_before:elapsed,suspended:AtomicBool::new(false)};
+        options,elapsed_before:elapsed,suspended:AtomicBool::new(false),uncertain_effect:AtomicBool::new(false)};
     session.check()?;
     if restored.is_none(){session.save(json!({"phase":"created"}))?;}
     let result=backend::execute(&session,restored).await;
     if session.suspended.load(Ordering::Acquire){return Err(SUSPENDED.into());}
+    if session.uncertain_effect.load(Ordering::Acquire){
+        // The native engine has already journaled its own transition if it
+        // could; persist the additional fence against portable replay.
+        let state=session.state.lock().map_err(|_|"checkpoint lock poisoned".to_string())?;
+        session.host.save_checkpoint(&session.request.id,&session.envelope(&state,session.meter()?,false,false))?;
+        return Err("external effect outcome uncertain; reconcile before further execution".into());
+    }
     session.finish(result?)
 }
 

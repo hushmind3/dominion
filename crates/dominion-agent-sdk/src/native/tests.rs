@@ -6,10 +6,11 @@ struct HostStub {
     tools: AtomicUsize,
     reject: bool,
     unknown_usage: bool,
+    uncertain_tool: bool,
 }
 impl HostStub {
     fn new(reject:bool,unknown_usage:bool)->Self{
-        Self{checkpoints:Mutex::new(Default::default()),calls:AtomicUsize::new(0),tools:AtomicUsize::new(0),reject,unknown_usage}
+        Self{checkpoints:Mutex::new(Default::default()),calls:AtomicUsize::new(0),tools:AtomicUsize::new(0),reject,unknown_usage,uncertain_tool:false}
     }
 }
 impl NativeHost for HostStub {
@@ -32,6 +33,7 @@ impl NativeHost for HostStub {
         Box::pin(async move {
             assert_eq!(call.id,"native-call-1");
             self.tools.fetch_add(1,Ordering::SeqCst);
+            if self.uncertain_tool{return Err("transport lost after effect admission".into());}
             Ok(ToolOutcome{value:json!({"success":true,"result":"observed"}),success:true})
         })
     }
@@ -142,3 +144,31 @@ async fn hook_denies_real_tool_io(){
 fn sync_runs_same_native_engine(){let host=HostStub::new(false,false);assert_eq!(run_sync(&host,request("sync")).unwrap().total_tokens(),Some(32));}
 #[tokio::test]
 async fn sync_rejects_nested_runtime(){let host=HostStub::new(false,false);assert!(run_sync(&host,request("nested")).is_err());assert_eq!(host.calls.load(Ordering::SeqCst),0);}
+
+#[tokio::test]
+async fn uncertain_effect_fences_next_generation_and_resume(){
+    let mut host=HostStub::new(false,false);host.uncertain_tool=true;
+    let mut req=request("effect-uncertain");req.tools[0].read_only=false;
+    assert!(run(&host,req.clone()).await.is_err());
+    assert_eq!(host.calls.load(Ordering::SeqCst),1);
+    assert_eq!(host.tools.load(Ordering::SeqCst),1);
+    let saved=host.load_checkpoint("effect-uncertain").unwrap().unwrap();
+    assert_eq!(saved["uncertainEffect"],true);assert_eq!(saved["verified"],false);
+    assert!(resume(&host,req).await.is_err());
+    assert_eq!(host.tools.load(Ordering::SeqCst),1);
+}
+#[tokio::test]
+async fn cancelled_control_admits_no_model_or_tool(){
+    let host=HostStub::new(false,false);let control=RunControl::new();control.cancel();
+    let mut options=RunOptions::default();options.control=Some(control);
+    assert!(run_with_options(&host,request("cancel"),options).await.is_err());
+    assert_eq!(host.calls.load(Ordering::SeqCst),0);
+    assert_eq!(host.tools.load(Ordering::SeqCst),0);
+}
+#[tokio::test]
+async fn sdk_context_enabled_preserves_roundtrip_and_usage(){
+    let host=HostStub::new(false,false);
+    let mut options=RunOptions::default();options.provider_context=Some(ProviderContext::default());
+    let result=run_with_options(&host,request("context"),options).await.unwrap();
+    assert_eq!(result.total_tokens(),Some(32));assert_eq!(result.tool_calls,1);
+}

@@ -33,3 +33,18 @@ recovery APIs remain available.
 Run cargo test -p dominion-agent-sdk native::tests on branches 1–3; on branch4
 cargo test -p dominion-sdk --no-default-features native::tests. These are source
 tests; compilation and external 9B rebenchmark must be run separately.
+
+## Provider-context ownership and uncertainty
+
+Set RunOptions::provider_context = Some(ProviderContext::default()) to opt into
+SDK-managed model context (12,000-byte soft history budget and receipt-based
+repeat advice). Hosts forward ModelRequest.messages unchanged. Original tool
+JSON and paired IDs are preserved; the structured kernel's latest receipt
+previews are replaced in-place rather than duplicated. This is an opt-in
+projection; the default existing raw port behavior is unchanged. Configuration
+is bound to the checkpoint. ContextPrepared reports projection time.
+
+For effectful tools, NativeHost::dispatch returning Err means an unknown
+external outcome. The portable session fences additional model/tool/verify
+operations and refuses resume. Return ToolOutcome { success: false, ... } only
+for a known failure. Do not replay an uncertain effect automatically.
