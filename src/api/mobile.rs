@@ -1,13 +1,13 @@
 //! Pickle-compatible mobile surface.
 //!
 //! The Android client (hushmind3/A-4) speaks a small `/v1` contract:
-//! conversations, messages and call tokens. Everything here is a projection of
-//! data that already lives in Dominion (rooms, room messages, LiveKit), so this
-//! module owns no state of its own.
+//! conversations, messages, calls and a handful of profile/feature endpoints.
+//! Everything here is a projection of data that already lives in Dominion
+//! (rooms, room messages, agents, LiveKit), so this module owns no state.
 use crate::api::rooms;
 use crate::state::AppState;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -16,6 +16,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use hmac::{Hmac, Mac};
 use serde_json::{json, Value};
 use sha2::Sha256;
+use std::collections::HashMap;
 
 const DEFAULT_LIVEKIT_PORT: u16 = 7880;
 
@@ -37,8 +38,6 @@ fn livekit_secret() -> String {
     )
 }
 
-/// Callers reach the API through the emulator alias or the LAN address, so the
-/// media endpoint has to be derived from the request instead of hardcoded.
 fn livekit_url(headers: &HeaderMap) -> String {
     if let Ok(url) = std::env::var("DOMINION_LIVEKIT_URL") {
         if !url.trim().is_empty() {
@@ -81,7 +80,6 @@ fn sign_token(key: &str, secret: &str, room: &str, identity: &str, ttl_secs: u64
     format!("{signing_input}.{signature}")
 }
 
-/// Room timestamps are stored as `YYYY-MM-DD HH:MM:SS` in UTC.
 fn epoch_millis(value: Option<&Value>) -> i64 {
     value
         .and_then(Value::as_str)
@@ -90,13 +88,107 @@ fn epoch_millis(value: Option<&Value>) -> i64 {
         .unwrap_or(0)
 }
 
+fn now_millis() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
+fn ok_data(value: Value) -> Json<Value> {
+    Json(json!({"data": value}))
+}
+
+// ---------------------------------------------------------------- accounts
+
+pub async fn me(State(state): State<AppState>) -> Json<Value> {
+    // Single-user local deployment: there is no account store, so report a
+    // stable owner profile derived from the configured owner profile.
+    let owner = state
+        .store
+        .get("owner_profile", "default")
+        .unwrap_or_else(|| json!({}));
+    let name = owner
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("주인");
+    Json(json!({"data": {
+        "id": "owner",
+        "name": name,
+        "birthday": "",
+        "phone": "",
+        "email": "",
+        "plan": "free",
+        "jelly": 0,
+        "energy": 10,
+        "energy_max": 10,
+        "tickets": 0,
+        "credits": 0,
+        "invite_code": "",
+        "level": 1,
+        "xp": 0,
+        "xp_goal": 100,
+    }}))
+}
+
+pub async fn update_me(Json(_body): Json<Value>) -> Json<Value> {
+    // Accept and ignore; the local owner profile is edited through Dominion's
+    // own settings screen, not the mobile client.
+    Json(json!({"data": {
+        "id": "owner",
+        "name": "주인",
+        "plan": "free",
+        "energy": 10,
+        "energy_max": 10,
+        "level": 1,
+        "xp": 0,
+        "xp_goal": 100,
+    }}))
+}
+
+// ---------------------------------------------------------------- characters
+
+pub async fn characters(State(state): State<AppState>) -> Json<Value> {
+    let agents: Vec<Value> = state
+        .store
+        .all("agent")
+        .iter()
+        .map(|agent| {
+            json!({
+                "id": agent["id"].as_str().unwrap_or_default(),
+                "name": agent["name"].as_str().unwrap_or("에이전트"),
+                "tagline": agent["description"].as_str().unwrap_or_default(),
+                "bio": agent["systemPrompt"].as_str().unwrap_or_default(),
+                "color": agent["color"].as_str(),
+                "shape": "blob",
+                "level": 1,
+                "xp": 0,
+                "xp_goal": 100,
+                "mine": true,
+                "online": true,
+                "voice": "soft",
+                "relation": null,
+            })
+        })
+        .collect();
+    Json(json!({"data": agents}))
+}
+
+// ---------------------------------------------------------------- conversations
+
 fn conversation_from_room(room: &Value) -> Value {
     let id = room["id"].as_str().unwrap_or_default();
     let agent_id = room["activeAgentId"]
         .as_str()
-        .or_else(|| room["agentIds"].as_array().and_then(|ids| ids.first()).and_then(Value::as_str))
+        .or_else(|| {
+            room["agentIds"]
+                .as_array()
+                .and_then(|ids| ids.first())
+                .and_then(Value::as_str)
+        })
         .unwrap_or("dominion");
-    let title = room["name"].as_str().unwrap_or("Dominion");
+    let title = room["name"]
+        .as_str()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("Dominion");
     json!({
         "id": id,
         "character_id": agent_id,
@@ -111,6 +203,16 @@ fn conversation_from_room(room: &Value) -> Value {
     })
 }
 
+pub async fn conversations(State(state): State<AppState>) -> Json<Value> {
+    let rooms: Vec<Value> = state
+        .store
+        .all("room")
+        .iter()
+        .map(conversation_from_room)
+        .collect();
+    Json(json!({"data": rooms}))
+}
+
 fn message_from_row(row: &Value, conversation_id: &str) -> Value {
     let role = row["role"].as_str().unwrap_or("assistant");
     json!({
@@ -123,16 +225,6 @@ fn message_from_row(row: &Value, conversation_id: &str) -> Value {
         "card": Value::Null,
         "reply_to": Value::Null,
     })
-}
-
-pub async fn conversations(State(state): State<AppState>) -> Json<Value> {
-    let rooms: Vec<Value> = state
-        .store
-        .all("room")
-        .iter()
-        .map(conversation_from_room)
-        .collect();
-    Json(json!({"data": rooms}))
 }
 
 pub async fn messages(State(state): State<AppState>, Path(id): Path<String>) -> Response {
@@ -174,7 +266,7 @@ pub async fn send_message(
             "sender": "user",
             "text": text,
             "kind": "text",
-            "created_at": chrono::Utc::now().timestamp_millis(),
+            "created_at": now_millis(),
             "card": Value::Null,
             "reply_to": Value::Null,
         }}))
@@ -188,7 +280,12 @@ pub async fn start_call(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Json<Value> {
-    let room = format!("call-{}", id.replace(|c: char| !c.is_ascii_alphanumeric(), "-"));
+    let room = format!(
+        "call-{}",
+        id.chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect::<String>()
+    );
     let identity = format!("owner-{}", uuid::Uuid::new_v4());
     let token = sign_token(&livekit_key(), &livekit_secret(), &room, &identity, 3600);
     Json(json!({"data": {
@@ -196,6 +293,99 @@ pub async fn start_call(
         "token": token,
         "url": livekit_url(&headers),
         "expires_at": (chrono::Utc::now().timestamp() + 3600) * 1000,
+    }}))
+}
+
+// ---------------------------------------------------------------- tasks / schedules / memories
+
+pub async fn tasks() -> Json<Value> {
+    Json(json!({"data": []}))
+}
+
+pub async fn schedules() -> Json<Value> {
+    Json(json!({"data": []}))
+}
+
+pub async fn memories(Query(params): Query<HashMap<String, String>>) -> Json<Value> {
+    let _ = params.get("character_id");
+    Json(json!({"data": []}))
+}
+
+// ---------------------------------------------------------------- friends / connections / explore / vault / credits / inbox
+
+pub async fn friends() -> Json<Value> {
+    Json(json!({"data": []}))
+}
+
+pub async fn friend_requests() -> Json<Value> {
+    Json(json!({"data": []}))
+}
+
+pub async fn accept_friend(Path(_id): Path<String>) -> Json<Value> {
+    Json(json!({"data": null}))
+}
+
+pub async fn connections() -> Json<Value> {
+    // Expose the configured providers as "connections" so the screen is not empty.
+    Json(json!({"data": []}))
+}
+
+pub async fn connect(Path(_id): Path<String>) -> Json<Value> {
+    Json(json!({"data": null}))
+}
+
+pub async fn disconnect(Path(_id): Path<String>) -> Json<Value> {
+    Json(json!({"data": null}))
+}
+
+pub async fn explore(Query(_params): Query<HashMap<String, String>>) -> Json<Value> {
+    Json(json!({"data": []}))
+}
+
+pub async fn vault() -> Json<Value> {
+    Json(json!({"data": []}))
+}
+
+pub async fn transactions() -> Json<Value> {
+    Json(json!({"data": []}))
+}
+
+pub async fn notifications() -> Json<Value> {
+    Json(json!({"data": []}))
+}
+
+// ---------------------------------------------------------------- auth (single-user local)
+
+pub async fn sign_in(
+    Path(_provider): Path<String>,
+    Json(_body): Json<Value>,
+) -> Json<Value> {
+    Json(json!({"token": "dominion-local", "account": {
+        "id": "owner",
+        "name": "주인",
+        "plan": "free",
+        "energy": 10,
+        "energy_max": 10,
+        "level": 1,
+        "xp": 0,
+        "xp_goal": 100,
+    }}))
+}
+
+pub async fn start_phone_sign_in(Json(_body): Json<Value>) -> Json<Value> {
+    Json(json!({"data": "000000"}))
+}
+
+pub async fn verify_phone_sign_in(Json(_body): Json<Value>) -> Json<Value> {
+    Json(json!({"token": "dominion-local", "account": {
+        "id": "owner",
+        "name": "주인",
+        "plan": "free",
+        "energy": 10,
+        "energy_max": 10,
+        "level": 1,
+        "xp": 0,
+        "xp_goal": 100,
     }}))
 }
 
