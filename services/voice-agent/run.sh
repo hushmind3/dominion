@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 MODELS="${DOMINION_MODELS:-$HOME/Models}"
-WHISPER_MODEL="$MODELS/whisper/ggml-large-v3-turbo.bin"
+WHISPER_MODEL="$MODELS/whisper/ggml-base.bin"
 AUDIO_PORT=8082
 
 export LIVEKIT_URL="${LIVEKIT_URL:-ws://127.0.0.1:7880}"
