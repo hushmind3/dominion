@@ -32,6 +32,7 @@ pub mod channels;
 pub mod voice;
 pub mod collections;
 pub mod compat;
+pub mod mobile;
 pub mod dev;
 pub mod gateways;
 pub mod models;
@@ -135,6 +136,13 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/system/restore", post(system::restore_backup))
         .route("/api/chat", post(chat::chat))
+        // Pickle-compatible mobile surface (hushmind3/A-4).
+        .route("/v1/conversations", get(mobile::conversations))
+        .route(
+            "/v1/conversations/:id/messages",
+            get(mobile::messages).post(mobile::send_message),
+        )
+        .route("/v1/conversations/:id/calls", post(mobile::start_call))
         .route("/api/sdk/plugins",get(sdk_plugins::list).post(sdk_plugins::enroll))
         .route("/api/sdk/plugins/:id/state",post(sdk_plugins::set_state))
         .route("/api/sdk/plugins/:id/rotate",post(sdk_plugins::rotate))
