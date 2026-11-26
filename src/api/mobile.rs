@@ -204,6 +204,30 @@ fn conversation_from_room(room: &Value) -> Value {
 }
 
 pub async fn conversations(State(state): State<AppState>) -> Json<Value> {
+    // Ensure a single-agent mobile assistant room exists so the phone has a
+    // usable 1:1 conversation instead of only the 9-agent Nazarick room.
+    if state.store.get("room", "assistant").is_none() {
+        let body = json!({
+            "id": "assistant",
+            "name": "도미니언 비서",
+            "agentIds": ["dominion-ainz"],
+            "routingMode": "discussion",
+            "description": "모바일 비서 대화",
+            "topic": "",
+            "ownerName": "나",
+            "rounds": 1,
+            "maxTurns": 1000,
+            "tokenBudget": 10000000,
+            "contextBudgetTokens": 2000,
+            "toolsEnabled": false,
+            "autoLearning": false,
+            "autoModels": true,
+            "reasoningEffort": "",
+            "models": [{"providerId": "05aa0051-884b-473f-ad90-90fb4dffdb73", "model": "deepseek-v4.1-flash"}],
+        });
+        let _ = rooms::save(State(state.clone()), Json(body)).await;
+    }
+
     let rooms: Vec<Value> = state
         .store
         .all("room")
