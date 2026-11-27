@@ -756,7 +756,15 @@ fn scheduled_backup_uploads_to_a_remote_target() {
         std::thread::sleep(Duration::from_millis(100));
     }
     assert!(uploaded, "backup was not uploaded to the remote sink");
-    let audit = app.get("/api/audit");
+    // Receiving the bytes precedes response verification and the durable audit.
+    // Wait for the completion signal rather than racing the sink callback.
+    let mut audit = app.get("/api/audit");
+    while Instant::now() < deadline && !audit.as_array().unwrap().iter().any(|event| {
+        event["event"] == "backup.remote_uploaded"
+    }) {
+        std::thread::sleep(Duration::from_millis(20));
+        audit = app.get("/api/audit");
+    }
     assert!(
         audit.as_array().unwrap().iter().any(|event| {
             event["event"] == "backup.remote_uploaded"

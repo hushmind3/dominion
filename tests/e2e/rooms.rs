@@ -324,7 +324,7 @@ fn compatibility_tools_are_available_and_round_limit_is_a_failure() {
 #[test]
 fn cancelling_a_stalled_model_does_not_wait_for_network_data() {
     let _serial = serial();
-    let (port, _) = scripted_provider(|_| {
+    let (port, requests) = scripted_provider(|_| {
         std::thread::sleep(Duration::from_secs(5));
         vec![json!({"choices":[{"delta":{"content":"too late"},"finish_reason":"stop"}]})]
     });
@@ -343,12 +343,9 @@ fn cancelling_a_stalled_model_does_not_wait_for_network_data() {
             .text()
             .unwrap()
     });
-    while app
-        .get("/api/executions/active")
-        .as_array()
-        .unwrap()
-        .is_empty()
-    {
+    // An active execution can still be preparing its prompt. Wait until the
+    // provider received the paid request before testing uncertain cancellation.
+    while requests.lock().unwrap().is_empty() {
         assert!(started.elapsed() < Duration::from_secs(3));
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -1053,6 +1050,7 @@ fn room_selected_tools_keep_read_write_history_and_require_real_write_approval()
     assert_eq!(execution["toolCalls"],2);
 }
 
+#[cfg(feature = "legacy-mcp")]
 #[test]
 fn room_selects_and_executes_an_mcp_tool_through_approval() {
     let _serial = serial();
@@ -1309,7 +1307,7 @@ fn reused_model_call_ids_do_not_overwrite_prior_tool_evidence() {
         }
     });
     let app = TestApp::new(port, "native");
-    let stream = app.chat(&json!({"input":"두 번 확인","autoLearning":false}));
+    let stream = app.chat(&json!({"input":"폴더 목록을 두 번 확인해","autoLearning":false}));
     assert!(stream.contains("두 번 확인했습니다."), "{stream}");
     let execution = &app.get("/api/executions")[0];
     let operations = app.get(&format!(

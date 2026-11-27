@@ -34,8 +34,14 @@ fn parse(repo:&str,value:Value)->Result<Manifest,String>{
     let m:Manifest=serde_json::from_value(value).map_err(|_|"Unsupported package manifest")?;
     let prefix=format!("ghcr.io/{}",repo.to_ascii_lowercase());
     let valid_path=m.image.split_once("@sha256:").is_some_and(|(image,hash)|{
-        hex(hash,64)&&image.strip_prefix(&prefix).is_some_and(|suffix|suffix.is_empty()||
-            suffix.strip_prefix('/').is_some_and(|leaf|!leaf.is_empty()&&leaf!="."&&leaf!=".."&&leaf.bytes().all(|b|b.is_ascii_lowercase()||b.is_ascii_digit()||matches!(b,b'-'|b'_'|b'.'))))
+        let same_repository=image.strip_prefix(&prefix).is_some_and(|suffix|suffix.is_empty()||
+            suffix.strip_prefix('/').is_some_and(|leaf|!leaf.is_empty()&&leaf!="."&&leaf!=".."&&leaf.bytes().all(|b|b.is_ascii_lowercase()||b.is_ascii_digit()||matches!(b,b'-'|b'_'|b'.'))));
+        // GitHub's repository rename did not move the public GHCR artifact.
+        // Only the existing connector gets this exact alias; other packages
+        // must still match their own source repository and immutable digest.
+        let renamed_connector=repo.eq_ignore_ascii_case("hushmind3/dominion")
+            && image=="ghcr.io/hushmind3/dominion-rust/mcp-connector";
+        hex(hash,64)&&(same_repository||renamed_connector)
     });
     if m.schema_version!=1||!text_ok(&m.name,120)||!text_ok(&m.description,1500)||!text_ok(&m.version,80)
         ||!valid_path||!valid_image(&m.image)
@@ -234,6 +240,20 @@ mod tests{
         assert_eq!(found[0]["sourceRef"],"plugins");assert_eq!(found[0]["manifest"],Value::Null);
         assert!(found[0].get("image").is_none());
         assert!(index_cards(&index,"unrelated").unwrap().is_empty());
+    }
+    #[test]
+    fn repository_rename_preserves_only_the_existing_digest_pinned_connector(){
+        let mut manifest=sample();
+        manifest["image"]=json!(format!("ghcr.io/hushmind3/dominion-rust/mcp-connector@sha256:{}","a".repeat(64)));
+        assert!(parse("hushmind3/dominion",manifest.clone()).is_ok());
+        assert!(parse("other/dominion",manifest.clone()).is_err());
+        assert!(parse("hushmind3/another-project",manifest.clone()).is_err());
+        for image in ["ghcr.io/hushmind3/dominion-rust/mcp-connector-evil", "ghcr.io/hushmind3/dominion-rust/other"]{
+            manifest["image"]=json!(format!("{image}@sha256:{}","a".repeat(64)));
+            assert!(parse("hushmind3/dominion",manifest.clone()).is_err());
+        }
+        manifest["image"]=json!("ghcr.io/hushmind3/dominion-rust/mcp-connector:latest");
+        assert!(parse("hushmind3/dominion",manifest).is_err());
     }
     #[test]
     fn only_same_repository_digest_pinned_declarative_package(){
