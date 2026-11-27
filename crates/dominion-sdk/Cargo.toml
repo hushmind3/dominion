@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "Embedded native Dominion harness and optional HTTP client"
-repository = "https://github.com/hushmind3/dominion-rust"
+repository = "https://github.com/hushmind3/dominion"
 
 [features]
 default = ["http"]

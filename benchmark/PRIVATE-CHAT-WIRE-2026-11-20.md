@@ -2,7 +2,7 @@
 
 ## Scope and reproducibility
 
-Repository: `hushmind3/dominion-rust`, `main`.
+Repository: `hushmind3/dominion`, `main`.
 
 The tests exercise a **real DOMINION Rust binary** over the public HTTP
 chat endpoint, with an isolated SQLite database and a deterministic mock
@@ -64,7 +64,7 @@ Ratios: 274399 / 288620 = **0.951** and
 3527359 / 20976200 = **0.168** (rounded).
 
 These numbers come from a passing GitHub Actions macOS dev-profile run:
-[CI run 44698895126](https://github.com/hushmind3/dominion-rust/actions/runs/44698895126).
+[CI run 44698895126](https://github.com/hushmind3/dominion/actions/runs/44698895126).
 The `PRIVATE_CONTEXT_WIRE_PROBE` and `PRIVATE_CONTEXT_SOCIAL` output is
 produced by the test fixture itself.
 

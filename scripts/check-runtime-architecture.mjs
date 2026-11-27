@@ -41,7 +41,8 @@ for(const name of e2eModules){
 }
 // Baseline grows only when a deliberately reviewed real-process case is
 // added. Do not silently drop old tests while claiming full E2E coverage.
-const expectedE2eCases=123
+// Includes external Rust SDK execution and owner-reviewed task proposal cases.
+const expectedE2eCases=125
 if(e2eCases!==expectedE2eCases)throw Error('E2E regression tests lost or duplicated: '+e2eCases+' (expected '+expectedE2eCases+')')
 
 const runtime=readFileSync(path.join(root,'src/engine/chat/runtime.rs'),'utf8')

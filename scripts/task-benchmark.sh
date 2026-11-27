@@ -105,7 +105,7 @@ ROOT_REAL="$(cd "$BENCH_ROOT" 2>/dev/null && pwd -P)" || {
   exit 2
 }
 case "$ROOT_REAL/" in
-  "$HOME/dominion-rust/"*)
+  "$HOME/dominion/"*)
     echo "Refusing to use the live repository as BENCH_ROOT." >&2
     exit 2
     ;;
@@ -118,7 +118,7 @@ mkdir -p "$WORKSPACE" "$BENCH_ROOT/data"
 WORKSPACE_REAL="$(cd "$WORKSPACE" && pwd -P)"
 DATA_REAL="$(cd "$BENCH_ROOT/data" && pwd -P)"
 case "$WORKSPACE_REAL/" in
-  "$HOME/dominion-rust/"*)
+  "$HOME/dominion/"*)
     echo "Refusing to use the live workspace: $WORKSPACE_REAL" >&2
     exit 2
     ;;

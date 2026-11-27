@@ -1,7 +1,7 @@
 name: Sub4 product integration
 on:
   push:
-    branches: [dominion-sub4]
+    branches: [branch4]
     paths:
       - 'web/**'
       - 'src/**'
@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   frontend:
-    if: github.ref == 'refs/heads/dominion-sub4'
+    if: github.ref == 'refs/heads/branch4'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -31,7 +31,7 @@ jobs:
       - run: node --experimental-strip-types --test web/tests/*.test.mjs
       - run: npm run build --prefix web
   rust-integration:
-    if: github.ref == 'refs/heads/dominion-sub4'
+    if: github.ref == 'refs/heads/branch4'
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
@@ -42,7 +42,7 @@ jobs:
       - run: cargo test --locked --bin dominion-rust
       - run: cargo test --locked --test e2e
   desktop-browser:
-    if: github.ref == 'refs/heads/dominion-sub4'
+    if: github.ref == 'refs/heads/branch4'
     runs-on: macos-latest
     timeout-minutes: 20
     steps:

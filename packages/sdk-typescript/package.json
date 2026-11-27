@@ -5,7 +5,7 @@
   "type": "module",
   "description": "TypeScript SDK for Dominion native Rust agent execution",
   "license": "MIT",
-  "repository": {"type":"git","url":"https://github.com/hushmind3/dominion-rust.git","directory":"packages/sdk-typescript"},
+  "repository": {"type":"git","url":"https://github.com/hushmind3/dominion.git","directory":"packages/sdk-typescript"},
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

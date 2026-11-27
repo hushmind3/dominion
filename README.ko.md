@@ -2,7 +2,7 @@
 
 <p align="center"><img src="src-tauri/icons/icon.png" alt="DOMINION" width="90" /></p>
 <p align="center"><strong>내 모델, 내 작업 공간, 독립 Rust 에이전트 실행기.</strong></p>
-<p align="center"><strong>한국어</strong> · <a href="README.md">English</a> · <a href="LICENSE">MIT</a> · <a href="https://github.com/hushmind3/dominion-rust/releases">설치 파일</a></p>
+<p align="center"><strong>한국어</strong> · <a href="README.md">English</a> · <a href="LICENSE">MIT</a> · <a href="https://github.com/hushmind3/dominion/releases">설치 파일</a></p>
 
 DOMINION은 **Rust 실행 엔진 + React/Vite 인터페이스 + Tauri 2 데스크톱**
 구조의 로컬 우선 오픈소스 AI 에이전트 워크스페이스입니다.
@@ -51,7 +51,7 @@ DOMINION은 **Rust 실행 엔진 + React/Vite 인터페이스 + Tauri 2 데스�
 
 ## 설치 파일
 
-[GitHub Releases](https://github.com/hushmind3/dominion-rust/releases)에
+[GitHub Releases](https://github.com/hushmind3/dominion/releases)에
 **Apple Silicon용 DMG, Intel Mac용 DMG, Windows용 EXE·MSI**를 제공합니다.
 코드 서명 없는 빌드이므로 설치 시 운영체제의 보안 확인이 필요할 수 있습니다.
 
@@ -65,8 +65,8 @@ DOMINION은 **Rust 실행 엔진 + React/Vite 인터페이스 + Tauri 2 데스�
 [Tauri 2 운영체제별 사전 준비](https://v2.tauri.app/start/prerequisites/)가 필요합니다.
 
 ```bash
-git clone https://github.com/hushmind3/dominion-rust.git
-cd dominion-rust
+git clone https://github.com/hushmind3/dominion.git
+cd dominion
 npm ci --prefix web
 npm run typecheck --prefix web
 npm run build --prefix web

@@ -1,7 +1,7 @@
 name: Sub4 SDK contract checks
 on:
   push:
-    branches: [dominion-sub4]
+    branches: [branch4]
     paths:
       - 'crates/dominion-sdk/**'
       - 'crates/dominion-core/**'
@@ -25,7 +25,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   rust-sdk:
-    if: github.ref == 'refs/heads/dominion-sub4'
+    if: github.ref == 'refs/heads/branch4'
     runs-on: macos-latest
     timeout-minutes: 15
     steps:
@@ -49,7 +49,7 @@ jobs:
       - name: External task proposals, native execution, artifact delivery and follow-up
         run: cargo test --locked --test e2e extension_task_proposal_is_not_execution_and_requires_owner_review -- --nocapture
   typescript-sdk:
-    if: github.ref == 'refs/heads/dominion-sub4'
+    if: github.ref == 'refs/heads/branch4'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

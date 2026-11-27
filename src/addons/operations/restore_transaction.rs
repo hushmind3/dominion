@@ -9,7 +9,8 @@ const OLD_DB: &str = ".restore-rollback.sqlite";
 const OLD_KEY: &str = ".restore-rollback.key";
 
 fn sync_file(path:&Path)->Result<(),String>{
-    fs::File::open(path).and_then(|file|file.sync_all()).map_err(|e|e.to_string())
+    // Windows FlushFileBuffers requires a handle opened with write access.
+    fs::OpenOptions::new().read(true).write(true).open(path).and_then(|file|file.sync_all()).map_err(|e|e.to_string())
 }
 fn sync_parent(path:&Path)->Result<(),String>{
     #[cfg(unix)]

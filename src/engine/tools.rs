@@ -1390,10 +1390,10 @@ mod tests {
 
     #[test]
     fn github_file_tool_paths_and_approval_are_explicit(){
-        let args=json!({"owner":"hushmind3","repo":"dominion-rust",
-            "path":"src/engine/tools.rs","branch":"main"});
+        let args=json!({"owner":"hushmind3","repo":"dominion",
+            "path":"src/engine/tools.rs","branch":"branch1"});
         let url=github_file_url(&args).unwrap();
-        assert_eq!(url.as_str(),"https://api.github.com/repos/hushmind3/dominion-rust/contents/src/engine/tools.rs?ref=main");
+        assert_eq!(url.as_str(),"https://api.github.com/repos/hushmind3/dominion/contents/src/engine/tools.rs?ref=branch1");
         assert!(github_file_url(&json!({"owner":"a","repo":"b","path":"../secret"})).is_err());
         assert!(github_file_url(&json!({"owner":"a","repo":"b","path":"/etc/passwd"})).is_err());
         assert!(requires_approval("github_file_update"));

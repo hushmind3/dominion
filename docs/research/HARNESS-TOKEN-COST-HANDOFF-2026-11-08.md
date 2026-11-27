@@ -15,7 +15,7 @@
 
 ## 작업 상태
 
-- 저장소: /Users/gim-yeonsu/dominion-rust
+- 저장소: /Users/gim-yeonsu/dominion
 - 확인한 브랜치: dominion-sub
 - 확인한 HEAD: 39ddc332cde409e05c3b10053db7508390a6e331
 - 이번 작업에서 엔진 코드 변경, 운영 재시작, 운영 방 시험 메시지 전송, 커밋, 푸시를 하지 않았다.

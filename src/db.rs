@@ -1640,7 +1640,7 @@ impl Store {
     fn replace_database_staged(&self, bytes: &[u8], suffix: &str) -> Result<(), String> {
         let temp=self.path.with_extension(suffix);
         std::fs::write(&temp,bytes).map_err(|error|error.to_string())?;
-        std::fs::File::open(&temp).and_then(|file|file.sync_all())
+        std::fs::OpenOptions::new().read(true).write(true).open(&temp).and_then(|file|file.sync_all())
             .map_err(|error|error.to_string())?;
         // Invalid snapshots cannot destroy a healthy, connected live store.
         {
