@@ -4,7 +4,7 @@
 
 **One Rust agent-iteration loop, with separately owned core infrastructure and algorithms.** The active driver is `dominion_algorithms::engine::Engine::drive` in `crates/dominion-algorithms/src/engine.rs`. The `dominion-core` crate owns journal/checkpoint, budget, cancellation and `runtime_port::Host` contracts. The product gateway composes these layers; an alternate driver must use the same authorization/effect journal rather than spawn an unchecked parent execution.
 
-Branch comparison is selective, not wholesale. The `dominion-sub3` discovery/search approach inspired the capability interface, but the independent `dominion-agent-sdk::Kernel::run/resume` loop is **not imported**. The `dominion-sub2` decision helpers and the standalone `dominion-sub4` engine remain isolated evaluation sources.
+Branch comparison is selective, not wholesale. The `branch3` discovery/search approach inspired the capability interface, but the independent `dominion-agent-sdk::Kernel::run/resume` loop is **not imported**. The `branch2` decision helpers and the standalone `branch4` engine remain isolated evaluation sources.
 
 ## Implemented on main
 

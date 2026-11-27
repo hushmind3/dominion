@@ -185,7 +185,7 @@ impl DiscordClient {
                 .header("Authorization", format!("Bot {}", self.token))
                 .header(
                     "User-Agent",
-                    "DiscordBot (https://github.com/hushmind3/dominion-rust, 0.1)",
+                    "DiscordBot (https://github.com/hushmind3/dominion, 0.1)",
                 );
             if let Some(body) = &body {
                 request = request.json(body);

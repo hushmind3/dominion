@@ -13,7 +13,9 @@ test('busy chat has a keyboard-accessible real stop control instead of a disable
  assert.match(chat,/busy\?<Button[^>]*type="button"[^>]*onClick=\{\(\)=>void stopChat\(\)\}/)
  assert.match(chat,/aria-label=\{stopping\?t\('chat\.stopping'\):t\('chat\.stop'\)\}/)
  assert.match(chat,/<Square size=\{18\} fill="currentColor"\/>/)
- assert.doesNotMatch(chat,/disabled=\{busy\|\|Boolean\(selectedSession/)
+ const stopButton=chat.match(/busy\?(<Button[^>]*onClick=\{\(\)=>void stopChat\(\)\}[^>]*>)/)?.[1]
+ assert.ok(stopButton,'the active turn exposes a stop button')
+ assert.doesNotMatch(stopButton,/disabled=\{busy/)
 })
 
 test('STOP propagates to server before local abort and ignores late SSE events',()=>{

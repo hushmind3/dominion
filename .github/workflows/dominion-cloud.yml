@@ -7,7 +7,7 @@ on:
       - 'web/src/components/DominionCloudAccount.tsx'
       - '.github/workflows/dominion-cloud.yml'
   push:
-    branches: [main]
+    branches: [branch1]
     paths:
       - 'cloud/**'
       - 'web/src/components/DominionCloudAccount.tsx'

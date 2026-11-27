@@ -2,7 +2,7 @@
 
 <p align="center"><img src="src-tauri/icons/icon.png" alt="DOMINION" width="90" /></p>
 <p align="center"><strong>Your models. Your workspace. A native Rust agent runtime.</strong></p>
-<p align="center"><a href="README.ko.md">한국어</a> · <strong>English</strong> · <a href="LICENSE">MIT</a> · <a href="https://github.com/hushmind3/dominion-rust/releases">Desktop downloads</a></p>
+<p align="center"><a href="README.ko.md">한국어</a> · <strong>English</strong> · <a href="LICENSE">MIT</a> · <a href="https://github.com/hushmind3/dominion/releases">Desktop downloads</a></p>
 
 DOMINION is a **local-first AI agent workspace** with a native Rust execution
 engine, React/Vite frontend and Tauri 2 desktop apps for **macOS and Windows**.
@@ -56,7 +56,7 @@ execution receipts and user-controlled workspace boundaries in the application.
 
 ## Download and install
 
-The latest installers are on [GitHub Releases](https://github.com/hushmind3/dominion-rust/releases).
+The latest installers are on [GitHub Releases](https://github.com/hushmind3/dominion/releases).
 The release matrix produces **Apple Silicon DMG, Intel Mac DMG, Windows NSIS
 EXE and MSI** installers. Builds are currently unsigned; follow your OS's
 normal security confirmation when installing a build you trust.
@@ -73,8 +73,8 @@ Requirements: **Rust stable**, **Node.js 24.12+**, npm, and your OS's
 Windows needs the MSVC build tools/WebView2, macOS needs Xcode tools.
 
 ```bash
-git clone https://github.com/hushmind3/dominion-rust.git
-cd dominion-rust
+git clone https://github.com/hushmind3/dominion.git
+cd dominion
 npm ci --prefix web
 npm run typecheck --prefix web
 npm run build --prefix web
@@ -210,5 +210,5 @@ See [getting started](docs/GETTING-STARTED.md),
 - [Runtime structure check](scripts/check-runtime-architecture.mjs) and
   [version/sidecar check](scripts/check-release-contract.mjs).
 
-**License:** MIT. The [main branch](https://github.com/hushmind3/dominion-rust/tree/main)
+**License:** MIT. The [default branch](https://github.com/hushmind3/dominion/tree/branch1)
 is the canonical development line.

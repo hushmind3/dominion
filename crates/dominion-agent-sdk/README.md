@@ -7,7 +7,7 @@ In your own Cargo project, add:
 
 ```toml
 [dependencies]
-dominion-agent-sdk = { path = "/absolute/path/to/dominion-rust/crates/dominion-agent-sdk" }
+dominion-agent-sdk = { path = "/absolute/path/to/dominion/crates/dominion-agent-sdk" }
 ```
 
 A Git dependency pinned to a reviewed commit is also supported by Cargo.
