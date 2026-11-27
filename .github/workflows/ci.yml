@@ -359,3 +359,16 @@ jobs:
           path: web/test-results/native-ux/
           if-no-files-found: warn
           retention-days: 7
+
+  windows-restore-tests:
+    name: Windows crash-recoverable backup restore
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Restore, rollback and durable database/key synchronization
+        run: cargo test --locked --bin dominion-rust addons::restore_transaction::tests

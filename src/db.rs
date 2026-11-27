@@ -1688,7 +1688,8 @@ impl Store {
         let busy:i64=guard.query_row("PRAGMA wal_checkpoint(TRUNCATE)",[],|row|row.get(0))
             .map_err(|error|format!("restore durability checkpoint: {error}"))?;
         if busy!=0{return Err("restore durability checkpoint is busy".into());}
-        std::fs::File::open(&self.path)
+        // FlushFileBuffers also requires write access for the live DB on Windows.
+        std::fs::OpenOptions::new().read(true).write(true).open(&self.path)
             .and_then(|file|file.sync_all()).map_err(|error|error.to_string())
     }
 
