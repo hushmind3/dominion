@@ -323,3 +323,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Real process, fake provider, HTTP/SSE, persistence and wire budget
         run: cargo test --locked --test e2e
+
+  windows-restore-tests:
+    name: Windows crash-recoverable backup restore
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Restore, rollback and durable database/key synchronization
+        run: cargo test --locked --bin dominion-rust addons::restore_transaction::tests
