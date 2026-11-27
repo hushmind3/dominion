@@ -169,8 +169,8 @@ pub async fn update_status(state: &AppState) -> Value {
         Err(message) => return json!({"supported":false,"available":false,"reason":message}),
     };
     let branch = git(&dir, &["branch", "--show-current"]).await.unwrap_or_default();
-    if branch.trim() != "main" {
-        return json!({"supported":false,"available":false,"reason":"main 브랜치에서 실행한 경우에만 업데이트할 수 있습니다."});
+    if branch.trim() != "branch2" {
+        return json!({"supported":false,"available":false,"reason":"branch2 브랜치에서 실행한 경우에만 업데이트할 수 있습니다."});
     }
     let local = git(&dir, &["rev-parse", "HEAD"]).await.unwrap_or_default().trim().to_string();
     let dirty = git(&dir, &["status", "--porcelain"]).await.unwrap_or_default();
@@ -180,7 +180,7 @@ pub async fn update_status(state: &AppState) -> Value {
     let remote = tokio::time::timeout(
         Duration::from_secs(15),
         Command::new("git")
-            .args(["ls-remote", "--exit-code", "origin", "refs/heads/main"])
+            .args(["ls-remote", "--exit-code", "origin", "refs/heads/branch2"])
             .current_dir(&dir)
             .env("GIT_TERMINAL_PROMPT", "0")
             .stdin(Stdio::null())
@@ -274,8 +274,8 @@ async fn run_update_job(state: AppState, job_id: String) {
 async fn update_source(state: &AppState) -> Result<(Vec<String>, Value), (Vec<String>, String)> {
     let dir = live_source_root(state).map_err(|e| (vec![], e))?;
     let branch = git(&dir, &["branch", "--show-current"]).await.map_err(|e| (vec![], e))?;
-    if branch.trim() != "main" {
-        return Err((vec![], "main 브랜치에서만 업데이트할 수 있습니다.".into()));
+    if branch.trim() != "branch2" {
+        return Err((vec![], "branch2 브랜치에서만 업데이트할 수 있습니다.".into()));
     }
     let dirty = git(&dir, &["status", "--porcelain"]).await.map_err(|e| (vec![], e))?;
     if !dirty.trim().is_empty() {
@@ -284,7 +284,7 @@ async fn update_source(state: &AppState) -> Result<(Vec<String>, Value), (Vec<St
     let old = git(&dir, &["rev-parse", "HEAD"]).await.map_err(|e| (vec![], e))?.trim().to_string();
     let mut logs = vec![format!("현재 버전: {}", old.chars().take(12).collect::<String>())];
     let commands: Vec<(&str, Vec<&str>, u64)> = vec![
-        ("git", vec!["fetch", "origin", "main"], 120),
+        ("git", vec!["fetch", "origin", "branch2"], 120),
         ("git", vec!["merge", "--ff-only", "FETCH_HEAD"], 30),
         ("npm", vec!["ci", "--prefix", "web"], 300),
         ("cargo", vec!["build", "--locked", "--release"], 900),

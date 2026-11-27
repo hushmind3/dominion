@@ -12,7 +12,7 @@ The owner clarified that a roughly 4,000-token shared charter/persona should be 
 **2026 source**: OpenAI Responses conversation-state documentation (developer input persists along the response chain; top-level instructions do not): https://developers.openai.com/api/docs/guides/conversation-state ; DeepSeek context caching docs: https://api-docs.deepseek.com/guides/kv_cache/ ; OpenCode Go route affinity docs: https://opencode.ai/docs/en/go/.
 
 
-Branch: `dominion-sub2` only. Scope: read-only interpretation of the user-supplied archive `dominion-bench-20261118-2054(1).zip`, native Rust source changes and narrow regression tests. No main, money, sub3 or sub4 code was edited.
+Branch: `branch2` only. Scope: read-only interpretation of the user-supplied archive `dominion-bench-20261118-2054(1).zip`, native Rust source changes and narrow regression tests. No main, money, sub3 or sub4 code was edited.
 
 ## Measured baseline (before the changes in this document)
 

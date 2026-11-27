@@ -183,7 +183,7 @@ remains a one-time 30-day purchase, not recurring auto-billing.
 
 ## Sub2 branch integration (2026-11-19)
 
-The `dominion-sub2` branch imports the main Cloudflare Worker, D1 schema,
+The `branch2` branch imports the main Cloudflare Worker, D1 schema,
 authentication, quota, model relay, identity and TossPayments purchase flows.
 The existing main-synchronized React model screen registers a Cloud model via
 the normal Rust provider API. The imported UI now refreshes its token on
@@ -194,8 +194,8 @@ Configure `VITE_DOMINION_CLOUD_URL` (your HTTPS Worker origin) and
 Server provider keys, payment secret, Google/Kakao/Naver credentials, and any
 production service credentials must be bound to the Worker, never to Vite.
 
-Cloud CI is enabled on `dominion-sub2`; production deployment is restricted to
-`main`. The imported Wrangler configuration names the same existing Worker and
+Cloud CI is enabled on `branch2`; production deployment is restricted to
+`branch1`. The imported Wrangler configuration names the same existing Worker and
 D1 database, so **do not deploy this branch over production**.
 
 Free chat is text-first with server-enforced quotas. Paid-model streaming and

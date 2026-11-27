@@ -1,5 +1,5 @@
 # Sub2 — nine-agent source-addressed incremental group context
-2026-11-18 | branch: `dominion-sub2` only
+2026-11-18 | branch: `branch2` only
 
 ## Owner objective
 

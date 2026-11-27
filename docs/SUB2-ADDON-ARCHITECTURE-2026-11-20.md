@@ -1,6 +1,6 @@
 # Sub2: optional integration architecture (2026-11-20)
 
-Branch: dominion-sub2. This is a source-level refactor, not a menu redesign or a production deployment.
+Branch: branch2. This is a source-level refactor, not a menu redesign or a production deployment.
 
 ## One runtime, optional extensions
 

@@ -38,4 +38,4 @@ Targeted Rust CI now includes:
 
 The prior group cancel-epoch and tool-budget suites also run as configured. `wire_profile` is a deterministic estimate of a native pre-provider-adapter envelope, not an exact remote model tokenizer. **Actual live 9×3 same-model comparison and answer-quality equivalence are still required** before claiming that sub2 beat the 81,079-token baseline in the user's ZIP.
 
-Only `dominion-sub2` was changed; no main/sub3/sub4 merges, frontend visual edits, or new persistent database collection.
+Only `branch2` was changed; no main/sub3/sub4 merges, frontend visual edits, or new persistent database collection.

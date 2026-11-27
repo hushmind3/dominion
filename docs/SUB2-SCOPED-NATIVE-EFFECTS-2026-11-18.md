@@ -1,6 +1,6 @@
 # Sub2 — single native tool owner and indexed effect admission (2026-11-18)
 
-Branch: `dominion-sub2`. This document describes committed source changes and test intentions; no Rust build, test run, CI pass or real-model performance gain is claimed in this session.
+Branch: `branch2`. This document describes committed source changes and test intentions; no Rust build, test run, CI pass or real-model performance gain is claimed in this session.
 
 ## Execution topology
 
@@ -45,7 +45,7 @@ The indexes are created with `IF NOT EXISTS` during normal `Store::open`, mainta
 - OpenHands's 2026 software-agent SDK retains first-class event provenance separately from reconstructed conversation views: https://github.com/OpenHands/software-agent-sdk
 - The existing sub2 ProgramIR candidate trial and the model-free replacement now both use the same native tool receipt and cancellation ownership, rather than independent permission or history systems.
 
-No dependency, menu, frontend, public SDK or database record format has been changed. All work is on `dominion-sub2` and does not merge into `main`.
+No dependency, menu, frontend, public SDK or database record format has been changed. All work is on `branch2` and does not merge into `main`.
 
 ## Verification limits
 

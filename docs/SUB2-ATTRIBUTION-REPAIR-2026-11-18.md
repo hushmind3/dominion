@@ -1,6 +1,6 @@
 # Sub2: bounded evidence-specific repair and non-confounded UCB credit
 Date: 2026-11-18
-Branch: dominion-sub2
+Branch: branch2
 
 ## Source comparison
 - Airbnb Agent Harness Optimizer (2026) tests harness changes on held-out tasks instead of grading by code volume: https://github.com/airbnb/agent-harness-optimizer

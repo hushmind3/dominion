@@ -1,6 +1,6 @@
 # Sub2 — 2026 per-conversation prompt prefix and cache evidence
 
-Date: 2026-11-18. Scope: `dominion-sub2` only; Rust server/agent SDK. No frontend changes, no `main` or other branch edits, no release build.
+Date: 2026-11-18. Scope: `branch2` only; Rust server/agent SDK. No frontend changes, no `main` or other branch edits, no release build.
 
 ## User requirement
 

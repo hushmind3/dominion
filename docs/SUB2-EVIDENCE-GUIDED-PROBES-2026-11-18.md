@@ -1,5 +1,5 @@
 # Sub2: evidence-guided hypothesis probes in the existing Rust adaptation engine
-Date: 2026-11-18 | Branch: dominion-sub2
+Date: 2026-11-18 | Branch: branch2
 
 ## What changed
 

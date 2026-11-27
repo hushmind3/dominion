@@ -1,6 +1,6 @@
 # Sub2 native chat Stop, safe settlement and Cloudflare group-prefix caching
 
-Date: 2026-11-18. Scope: **`dominion-sub2` only**.
+Date: 2026-11-18. Scope: **`branch2` only**.
 
 ## User-visible symptoms
 

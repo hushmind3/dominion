@@ -4,7 +4,7 @@
 <p align="center"><strong>Your models. Your workspace. Native Rust execution.</strong></p>
 <p align="center"><a href="README.ko.md">한국어</a> · English · <a href="ENGINE.md">Architecture</a> · <a href="LICENSE">Apache-2.0</a></p>
 
-This document describes the **experimental `dominion-sub2` branch**, checked against source on **2026-11-21**. The complete React/Vite frontend has been synchronized with main's 2026-11-19 interface (`f86a36e`), while the Rust runtime and SDK retain sub2-specific execution, evidence, cache and recovery work. This is **not** a claim that the sub2 backend is identical to main or that a production desktop release has been verified.
+This document describes the **experimental `branch2` branch**, checked against source on **2026-11-21**. The complete React/Vite frontend has been synchronized with main's 2026-11-19 interface (`f86a36e`), while the Rust runtime and SDK retain sub2-specific execution, evidence, cache and recovery work. This is **not** a claim that the sub2 backend is identical to main or that a production desktop release has been verified.
 
 <p align="center">
   <img src="docs/01-multi-agent-room.webp" alt="Group conversation workspace" width="48%" />

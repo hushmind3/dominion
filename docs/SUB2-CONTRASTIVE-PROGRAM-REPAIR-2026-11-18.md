@@ -1,6 +1,6 @@
 # Sub2 — contrastive, receipt-grounded ProgramIR repair (2026-11-18)
 
-Branch: `dominion-sub2`. This describes source changes, not a verified benchmark gain.
+Branch: `branch2`. This describes source changes, not a verified benchmark gain.
 
 ## One connected execution path
 
@@ -179,6 +179,6 @@ stock-harness winner is presumed.
 
 ## Verification status
 
-Commit source and unit-test bodies exist on `dominion-sub2`. This session does not have `rustc` or `cargo`. GitHub Actions development-test jobs were queued or previously cancelled during rapid changes, with no confirmed passing test result observed for the final revision. Do not describe this as compiled, benchmark-winning, frontier-equivalent, or production-verified yet. CI completion is not part of this owner's current request.
+Commit source and unit-test bodies exist on `branch2`. This session does not have `rustc` or `cargo`. GitHub Actions development-test jobs were queued or previously cancelled during rapid changes, with no confirmed passing test result observed for the final revision. Do not describe this as compiled, benchmark-winning, frontier-equivalent, or production-verified yet. CI completion is not part of this owner's current request.
 
 Measured complete-task success rate, postflight recovery rate, token cost, CPU/DB utilization and time comparisons under controlled identical tasks are **not measured yet**. Local file candidate counterfactuals are now executed in separate disposable SQLite/workspace copies; full Git worktrees, sandboxed shell/test execution, remote effects and held-out harness optimization are not implemented.

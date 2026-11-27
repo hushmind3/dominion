@@ -38,6 +38,7 @@ jobs:
             src-tauri -> target
       - run: npm ci --prefix web
       - run: npm run typecheck --prefix web
+      - run: node --test scripts/package-dmg.test.mjs
       # Full cross-OS test coverage runs in ci.yml on every push. The release
       # job only needs a green macOS contract and working installers, so it
       # does not block on platform-specific test fixtures on Windows.

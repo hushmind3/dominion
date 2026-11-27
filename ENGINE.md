@@ -1,6 +1,6 @@
 # DOMINION sub2 — 실행 엔진·아키텍처 (2026-11-21)
 
-> **구현 정본:** [docs/SUB2-ARCHITECTURE-2026-11-21.md](docs/SUB2-ARCHITECTURE-2026-11-21.md). 이 파일은 이전 `src/engine/chat/`·`src/engine/core/` 구조가 아닌, 현재 `dominion-sub2`의 실제 모듈 위치만 설명합니다.
+> **구현 정본:** [docs/SUB2-ARCHITECTURE-2026-11-21.md](docs/SUB2-ARCHITECTURE-2026-11-21.md). 이 파일은 이전 `src/engine/chat/`·`src/engine/core/` 구조가 아닌, 현재 `branch2`의 실제 모듈 위치만 설명합니다.
 
 ## 단일 실행 소유권
 

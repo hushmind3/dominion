@@ -104,7 +104,7 @@ try{
    metadata:{usage:{providerId:'fixture',model:'recorded-model',totalTokens:4}}
   }];
   if(pathname==='/api/status')response={jobs:0};
-  if(pathname==='/api/health')response={branch:'dominion-sub2',commit:'fixture'};
+  if(pathname==='/api/health')response={branch:'branch2',commit:'fixture'};
   if(pathname==='/api/events'){
    await route.fulfill({status:200,contentType:'text/event-stream',body:': room smoke\n\n'});
    return;

@@ -1,6 +1,6 @@
 # Sub2: room execution path and provider input-cost evidence (2026-11-18)
 
-Scope: `dominion-sub2` only. No model/provider swap, new execution runner, new database table, UI replacement or change to default tool permissions.
+Scope: `branch2` only. No model/provider swap, new execution runner, new database table, UI replacement or change to default tool permissions.
 
 ## First live benchmark signal
 

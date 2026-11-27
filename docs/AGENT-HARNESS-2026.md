@@ -1,6 +1,6 @@
 # Dominion 2026 — Source-Guided Agent Harness and SDK Development
 
-**Reviewed:** 2026-11-15. **Branch:** `dominion-sub2`. **Decision:** Rust is the execution-policy authority; React and TypeScript SDK share the existing native Axum API.
+**Reviewed:** 2026-11-15. **Branch:** `branch2`. **Decision:** Rust is the execution-policy authority; React and TypeScript SDK share the existing native Axum API.
 
 This is a code inspection and a shipped implementation slice, not a claim that Dominion has matched any other system on SWE-bench Verified or production task success. GitHub stars/forks are discovery signals, **not performance measures**.
 

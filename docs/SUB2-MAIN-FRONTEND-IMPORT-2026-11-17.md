@@ -1,7 +1,7 @@
 # Sub2 main frontend transplant — 2026-11-17
 
 Source: `main` at `76e2e5e5de742d8f43761e8a9cd3265158030b00` (latest HEAD when imported).
-Destination: `dominion-sub2` based on `0a25a4080503cd4d795acba69603c436a09108f7`.
+Destination: `branch2` based on `0a25a4080503cd4d795acba69603c436a09108f7`.
 
 All 16 differing files under `web/` were taken directly from the pinned
 main source tree, including the new Chat/Rooms conversation settings and

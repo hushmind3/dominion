@@ -13,7 +13,7 @@ A blocked remote effect uses `result.effectUnknown=true`. Losing that observatio
 3. `crates/dominion-agent-kernel/src/lib.rs` accepts both `outcomeUnknown` and `effectUnknown` contracts and differentiates explicit known observational tools from mutating or unknown external tools. GET-only GitHub access is read-only for replay decisions; POST and unspecified MCP tools remain conservative.
 4. `src/engine/autonomy.rs` computes successful *novel* tool evidence from stable call inputs and results, ignoring per-call IDs and timestamps. Duplicate reads and failed events no longer override the kernel's stagnant-progress stop rule; genuinely changed read output and modified workspace receipts still count.
 
-The original authorization, approval, token ceiling, persistence schema, React UI, external SDK routes, stored jobs and historical SQLite data are unchanged. No migration or new daemon was introduced. Only `dominion-sub2` was modified.
+The original authorization, approval, token ceiling, persistence schema, React UI, external SDK routes, stored jobs and historical SQLite data are unchanged. No migration or new daemon was introduced. Only `branch2` was modified.
 
 ## Regression cases added in source
 
@@ -25,7 +25,7 @@ The original authorization, approval, token ceiling, persistence schema, React U
 
 ## Evaluation contract
 
-**Source-confirmed:** five connected source changes and focused Rust regression cases were committed to `dominion-sub2`. **Not run in this chat:** Rust unit/integration tests, HEAD CI, real account/browser flows, real-model task-completion benchmarks and CPU/DB/token before/after measurements. No speedup or score increase is asserted without executing the same workloads.
+**Source-confirmed:** five connected source changes and focused Rust regression cases were committed to `branch2`. **Not run in this chat:** Rust unit/integration tests, HEAD CI, real account/browser flows, real-model task-completion benchmarks and CPU/DB/token before/after measurements. No speedup or score increase is asserted without executing the same workloads.
 
 Next measurement should run the kernel tests, `outcome_tests`, and autonomous prompt jobs with: (a) failed Google/GitHub read followed by a repair, (b) an uncertain remote mutation, and (c) repeated identical read output across 3 attempts. Verify final job statuses, tool receipts, cost and absence of replayed effects before judge scoring.
 

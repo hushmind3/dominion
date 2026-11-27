@@ -31,8 +31,8 @@ Git for Windows, Node.js, rustup을 설치한다. Rust 설치 안내에 따라 V
 macOS 터미널과 Windows PowerShell에서 동일하게 실행한다.
 
 ```text
-git clone https://github.com/hushmind3/dominion-rust.git
-cd dominion-rust
+git clone https://github.com/hushmind3/dominion.git
+cd dominion
 npm ci --prefix web
 npm run build --prefix web
 cargo run --release -- --home .

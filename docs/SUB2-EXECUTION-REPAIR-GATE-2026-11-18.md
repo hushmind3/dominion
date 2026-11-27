@@ -1,6 +1,6 @@
 # Sub2 2026 native-chat acceptance repair gate
 
-**Scope:** `dominion-sub2` only. Existing product chat path `run_turn_body` → `verification::check_acceptance` → existing Rust tool dispatcher → `finish_attempt`. No new worker, agent runtime, policy owner, database collection or prompt-driven autonomous scheduler.
+**Scope:** `branch2` only. Existing product chat path `run_turn_body` → `verification::check_acceptance` → existing Rust tool dispatcher → `finish_attempt`. No new worker, agent runtime, policy owner, database collection or prompt-driven autonomous scheduler.
 
 ## What was broken
 

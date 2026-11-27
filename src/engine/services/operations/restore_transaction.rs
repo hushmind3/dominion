@@ -30,7 +30,17 @@ fn verify_rollback_database(path:&Path)->Result<(),String>{
     Ok(())
 }
 fn sync(path:&Path)->Result<(),String>{
-    fs::File::open(path).and_then(|file|file.sync_all())
+    if path.is_dir() {
+        // Directory durability uses a read handle on Unix; Windows cannot
+        // flush directory handles through the portable File API.
+        #[cfg(unix)]
+        return fs::File::open(path).and_then(|dir|dir.sync_all())
+            .map_err(|e|format!("restore directory sync: {e}"));
+        #[cfg(not(unix))]
+        return Ok(());
+    }
+    // Windows FlushFileBuffers requires a handle opened with write access.
+    fs::OpenOptions::new().read(true).write(true).open(path).and_then(|file|file.sync_all())
         .map_err(|e|format!("restore durability sync: {e}"))
 }
 fn remove_if_present(path:&Path)->Result<(),String>{

@@ -34,7 +34,7 @@ try{
   const req=route.request(),url=new URL(req.url()),path=url.pathname,method=req.method()
   if(path==='/api/events'){await route.fulfill({status:200,contentType:'text/event-stream',body:': fixture\n\n'});return}
   let body=[]
-  if(path==='/api/health')body={branch:'dominion-sub2',commit:'extension-store-fixture'}
+  if(path==='/api/health')body={branch:'branch2',commit:'extension-store-fixture'}
   else if(path==='/api/status')body={jobs:0,providers:0,agents:0}
   else if(path==='/api/settings/owner-profile')body={id:'owner',name:'나'}
   else if(path==='/api/policy'||path.startsWith('/api/settings/'))body={}

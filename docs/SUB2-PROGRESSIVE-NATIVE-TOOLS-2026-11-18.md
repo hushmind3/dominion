@@ -1,6 +1,6 @@
 # Sub2 — Progressive tool schemas in the single Rust turn loop (2026-11-18)
 
-Branch: `dominion-sub2`. This is a real source implementation, **not** a claimed measured completion-rate or token improvement. Rust integration/unit tests are committed but have not been run in this workspace (Cargo is not installed). No release, frontend or platform-wide validation was performed.
+Branch: `branch2`. This is a real source implementation, **not** a claimed measured completion-rate or token improvement. Rust integration/unit tests are committed but have not been run in this workspace (Cargo is not installed). No release, frontend or platform-wide validation was performed.
 
 ## Problem linked to the 76/100 review
 

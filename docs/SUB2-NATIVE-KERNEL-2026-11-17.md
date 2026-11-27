@@ -1,6 +1,6 @@
 # Independent owner-task kernel on Sub2 (2026-11-17)
 
-The `dominion-sub2` branch separates the **model-independent task decision core** as a buildable Rust library at `crates/dominion-agent-kernel`. It is compiled into and **used by** the existing `src/engine/autonomy.rs` durable owner job worker through the `src/engine/agent_kernel.rs` compatibility export. It is not a second executor.
+The `branch2` branch separates the **model-independent task decision core** as a buildable Rust library at `crates/dominion-agent-kernel`. It is compiled into and **used by** the existing `src/engine/autonomy.rs` durable owner job worker through the `src/engine/agent_kernel.rs` compatibility export. It is not a second executor.
 
 ## Responsibilities
 

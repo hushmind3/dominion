@@ -6,7 +6,7 @@ on:
       - 'cloud/**'
       - '.github/workflows/dominion-cloud.yml'
   push:
-    branches: [main, dominion-sub2]
+    branches: [branch1, branch2]
     paths:
       - 'cloud/**'
       - '.github/workflows/dominion-cloud.yml'
@@ -45,7 +45,7 @@ jobs:
 
   deploy:
     needs: check
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy && github.ref == 'refs/heads/branch1'
     runs-on: ubuntu-latest
     environment: dominion-cloud
     steps:

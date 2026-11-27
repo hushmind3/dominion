@@ -42,7 +42,7 @@ try{
    return
   }
   let response=[]
-  if(path==='/api/health')response={branch:'dominion-sub2',commit:'nav-fixture'}
+  if(path==='/api/health')response={branch:'branch2',commit:'nav-fixture'}
   else if(path==='/api/status')response={jobs:0,providers:0,agents:0}
   else if(path==='/api/settings/owner-profile')response={id:'owner',name:'나',avatar:''}
   else if(path==='/api/policy'||path.startsWith('/api/settings/'))response={}
@@ -230,7 +230,7 @@ try{
    return
   }
   let result=[]
-  if(path==='/api/health')result={branch:'dominion-sub2',commit:'message-actions'}
+  if(path==='/api/health')result={branch:'branch2',commit:'message-actions'}
   else if(path==='/api/status')result={jobs:0,providers:1,agents:0}
   else if(path==='/api/sessions')result=[{id:'menu-demo',title:'Fixture conversation',
    providerId:'fixture',model:'test-model'}]

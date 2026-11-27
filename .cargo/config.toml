@@ -1,0 +1,3 @@
+# Match CI for the deeply nested debug-profile agent futures.
+[env]
+RUST_MIN_STACK = { value = "8388608", force = false }

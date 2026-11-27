@@ -92,7 +92,7 @@ try{
     ]:[];
     if(path.endsWith('/usage'))response={totalTokens:0};
     if(path==='/api/model-library/runtime')response={status:'idle'};
-    if(path==='/api/health')response={branch:'dominion-sub2',commit:'fixture'};
+    if(path==='/api/health')response={branch:'branch2',commit:'fixture'};
     if(path==='/api/events'){
       await route.fulfill({status:200,contentType:'text/event-stream',body:': smoke\n\n'});
       return;

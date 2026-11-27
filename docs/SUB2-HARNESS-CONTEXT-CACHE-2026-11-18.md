@@ -1,6 +1,6 @@
 # Sub2 — Context reuse, lazy skills and measurable cache behavior
 
-2026-11-18 | Branch: `dominion-sub2` only.
+2026-11-18 | Branch: `branch2` only.
 
 ## Baseline evidence, not a claim about today's runtime
 

@@ -1,6 +1,6 @@
 # Sub2 — Native harness decision fixes (2026-11-18)
 
-Scope: `dominion-sub2` only. This is a **behavior change in the Rust SDK/verification harness**, not another job-status repaint. No other branch or frontend menu was modified.
+Scope: `branch2` only. This is a **behavior change in the Rust SDK/verification harness**, not another job-status repaint. No other branch or frontend menu was modified.
 
 ## Why this was necessary
 

@@ -1,6 +1,6 @@
 # DOMINION sub2 — P3 native distributed Rust Workers (2026-11-21)
 
-Branch: dominion-sub2 only. The existing Rust Harness, React/Tauri UI, SQLite event journal and native Job engine remain the only execution owners. The Cloudflare account/model gateway is a separate product from this Rust worker-control plane.
+Branch: branch2 only. The existing Rust Harness, React/Tauri UI, SQLite event journal and native Job engine remain the only execution owners. The Cloudflare account/model gateway is a separate product from this Rust worker-control plane.
 
 ## Executable design
 

@@ -4,7 +4,7 @@
 
 이 파일 하나에 현재 구현 진단, 자기개선 알고리즘, Rust 구현 명세, 단계별 개발 지시, 검증·벤치마크, 미해결 위험을 모두 담았다. 구현 코드를 변경한 보고가 아니라 후속 구현자를 위한 설계서다.
 
-기준: hushmind3/dominion-rust / codex/native-memory-harness / ac1d0a0 및 분석 시점의 미커밋 procedure 변경. 일반 채팅 실행이 중심이며 /goal은 같은 코어를 사용하는 선택 기능이다.
+기준: hushmind3/dominion / codex/native-memory-harness / ac1d0a0 및 분석 시점의 미커밋 procedure 변경. 일반 채팅 실행이 중심이며 /goal은 같은 코어를 사용하는 선택 기능이다.
 
 읽는 순서: 제1부 설계 → 제2부 S0~S12 개발 지시 → 제3부 검증. 문서에 들어 있는 테스트 명령·실험은 앞으로 실행할 지시이며 이번 작성 과정에서 실행한 결과가 아니다.
 
@@ -20,8 +20,8 @@
 ## 0. 읽는 순서와 판정
 
 1. 이 문서: 실제 구현 진단, 알고리즘, Rust·저장 명세, 위험.
-2. [단계별 개발 지시서](/Users/gim-yeonsu/dominion-rust/docs/SELF-IMPROVEMENT-TASKS-2026-11-05.md): 의존 순서대로 별도 커밋할 작업.
-3. [검증·벤치마크 명세](/Users/gim-yeonsu/dominion-rust/docs/SELF-IMPROVEMENT-BENCHMARK-2026-11-05.md): 모의 모델과 실제 모델, 인과 비교, 성장 판정.
+2. [단계별 개발 지시서](/Users/gim-yeonsu/dominion/docs/SELF-IMPROVEMENT-TASKS-2026-11-05.md): 의존 순서대로 별도 커밋할 작업.
+3. [검증·벤치마크 명세](/Users/gim-yeonsu/dominion/docs/SELF-IMPROVEMENT-BENCHMARK-2026-11-05.md): 모의 모델과 실제 모델, 인과 비교, 성장 판정.
 
 선택한 구조는 **기존 실행 기록을 토대로 한 검증 가능한 절차 + 범위를 나눈 통계적 전략 선택 + 격리된 대조 실험**이다. 새 에이전트 런타임이나 별도 기억 DB를 만들지 않는다. 기존 Rust 실행 루프, SQLite, `learn`/`reflect` 작업을 확장한다. 일반 채팅이 첫 적용 대상이고 `/goal`은 같은 실행·검증 코어를 호출하는 선택 기능이다.
 
@@ -31,11 +31,11 @@
 
 ### 1.1 확인한 저장소 상태
 
-- 저장소: `hushmind3/dominion-rust`, 브랜치 `codex/native-memory-harness`.
+- 저장소: `hushmind3/dominion`, 브랜치 `codex/native-memory-harness`.
 - `git fetch origin codex/native-memory-harness` 후 로컬과 원격 모두 `ac1d0a0f95510a38bfc334c661f338b36e46a5bb`.
 - 최근 이력: `ac1d0a0` 난제 보고서 → `b6985ba` 성공 경험 공유 → `c30ad3f` 학습·채널 전파 → `46ed801` 기억·전략 채택 수정.
 - 분석 당시 미커밋 변경: `chat/runtime.rs`, `improve.rs`, `learning.rs`, `reflect.rs`, `engine/mod.rs`, `tests/e2e.rs`; 미추적 `engine/procedure.rs`. 이 변경은 HEAD와 별개다. 삭제하거나 덮어쓰지 않는다.
-- [기준 보고서](/Users/gim-yeonsu/dominion-rust/docs/HARD-PROBLEMS-2026-11-05.md)의 148 unit + 21 integration, 실제 4B baseline 0 / post 0/3 / cross-agent 0은 **기존 보고 값**이다. 이번 분석에서 테스트나 모델 실험을 재실행하지 않았다.
+- [기준 보고서](/Users/gim-yeonsu/dominion/docs/HARD-PROBLEMS-2026-11-05.md)의 148 unit + 21 integration, 실제 4B baseline 0 / post 0/3 / cross-agent 0은 **기존 보고 값**이다. 이번 분석에서 테스트나 모델 실험을 재실행하지 않았다.
 - 아래 줄 번호는 분석 당시 작업 트리 기준이다. DeepSeek는 작업 시작 시 HEAD·diff를 다시 기록하고 함수 이름으로 위치를 확인한다.
 
 ### 1.2 실제 호출 경로
@@ -63,38 +63,38 @@ goal job → plan → run_quiet_outcome(일반 실행) → acceptance + reviewer
 
 | 위치 | 확인한 구현 | 판단 / 수정 |
 |---|---|---|
-| [improve::propose](/Users/gim-yeonsu/dominion-rust/src/engine/improve.rs:10) | 근거 ID 목록·rationale 검사, 유사 문구 비교, 기본 `adopted`, harness만 `proposed` | 출처 ID의 의미·권한·내용을 재검증해야 한다. `candidate`부터 시작하고 내용 유사도만으로 기존 절차를 덮어쓰지 않는다. |
-| [active_values](/Users/gim-yeonsu/dominion-rust/src/engine/improve.rs:288) | 범위에 맞는 adopted/validated 최대 6개. 작업 적합도·비용·성과 조건 없음 | 작업별 selector로 교체. 한 번 선택한 불변 snapshot을 주입과 실행 양쪽에 사용. |
-| [record_execution](/Users/gim-yeonsu/dominion-rust/src/engine/improve.rs:348) | HEAD는 주입 ID + toolCalls + completed로 성공 집계. WIP는 준수 결과도 사용 | WIP는 진전이나 인과 추정이 아니다. 5회·기준 성공률−0.2 방식 폐기. observed와 controlled evidence 분리. |
-| [attach_verification](/Users/gim-yeonsu/dominion-rust/src/engine/improve.rs:462) | 같은 record에 검증 정의 덮어쓰기, version 증가 | 실행 중 snapshot은 유지되지만 성과는 ID 단위로 섞인다. 내용 주소 기반 불변 revision과 revision별 통계 필요. |
-| [experience::record_with_scope](/Users/gim-yeonsu/dominion-rust/src/engine/experience.rs:97) | signature·outcome·lesson 기반 병합, 근거 최대 12개 | 원시 episode와 재사용 교훈 분리. 근거 12개 잘림으로 원시 이력 유실 금지. |
-| [experience::retrieve](/Users/gim-yeonsu/dominion-rust/src/engine/experience.rs:186) | 문자열 포함, 발생 횟수 boost; 검색 자체가 uses 증가 | exposure로 이름 변경. 의미 검색 추가하되 실제 준수나 효용으로 집계하지 않는다. |
-| [consolidate](/Users/gim-yeonsu/dominion-rust/src/engine/experience.rs:252) | signature/outcome 중복 정리, 전체 300개 초과 archive | 상반된 교훈도 같은 signature면 묻힐 수 있다. 의미·조건·출처를 보존하고 범위별 working set 관리. |
-| [learning::run](/Users/gim-yeonsu/dominion-rust/src/engine/learning.rs:192) | actor별 lock, immutable through ID, grounding·checkpoint | 재사용. remainder가 `throughMessageId=through`로 바뀌어 원래 snapshot 끝을 잃는 경로를 수정. 원본 through 고정, cursor만 이동. |
-| [apply_learning](/Users/gim-yeonsu/dominion-rust/src/engine/learning.rs:370) | 기억은 엄격한 원문 검사, 전략은 batch ID 포함 여부 중심 | 전략에서도 메시지 역할·권한·실행 증거 검사. assistant ID를 사실 증거로 채택하지 않는다. |
-| [reflect::run](/Users/gim-yeonsu/dominion-rust/src/engine/reflect.rs:107) | 최근 대화·실행을 분석하고 global 산출물 생성. memory는 직접 put | 지연 실행 시 다른 턴이 섞일 수 있다. episode/교정 watermark 고정. `save_grounded` 우회 금지. 원문 대신 승인된 추상 교훈만 범위 확대. |
-| [memory::visible](/Users/gim-yeonsu/dominion-rust/src/engine/memory.rs:56) / [save_grounded](/Users/gim-yeonsu/dominion-rust/src/engine/memory.rs:321) | partition·agent·sourceAuthorKey·정확 인용 검사. global은 범위 통과 | 대부분 재사용. 명시적인 공유 허가와 원문/추상본 visibility를 공통화. 정확 인용은 출처 증명이지 추측성 요약의 진실 증명이 아니다. |
-| [chat::context](/Users/gim-yeonsu/dominion-rust/src/engine/chat/context.rs:62) | 기억·스킬·전략·경험을 각각 조회 | 실행 시작 때 고정한 ContextSelection을 전달. 중복 절차와 토큰 폭증 방지. |
-| [runtime](/Users/gim-yeonsu/dominion-rust/src/engine/chat/runtime.rs:194) | 실제 승인·도구·기록·취소·예산, ordinary acceptance 이미 존재 | 유지. 일반 실행을 완료 주장만 하는 루프로 되돌리지 않는다. 공통 RunGuard를 도구 경계와 완료 경계에 연결. |
-| [runtime::action_plan](/Users/gim-yeonsu/dominion-rust/src/engine/chat/runtime.rs:984) | 직접 실행 요청은 별도 LLM 계획; 실패 시 reviewer 호출 | 단순 결정적 실행은 추가 호출 0으로 시작. 필요한 경우만 계획/리뷰 프로필 선택. 비용 계측에 보조 호출도 포함. |
-| [goals::run](/Users/gim-yeonsu/dominion-rust/src/engine/goals.rs:9) | plan·실행·검토·repair·replan·중단 checkpoint | 보존. 합성 goal 프롬프트를 새 사용자 지시로 다시 추출하지 않도록 parent task 연결. 중복 평가·중복 보상 제거. |
-| [goals::acceptance_gaps](/Users/gim-yeonsu/dominion-rust/src/engine/goals.rs:704) | 파일·실행 근거 검사, 원래 baseline | 공통 verification 모듈로 이동하고 호환 wrapper 유지. 절차 준수와 결과 검증을 통합 판정하되 각각 기록. |
-| [jobs](/Users/gim-yeonsu/dominion-rust/src/engine/jobs.rs:125) | 재시작의 uncertain side effect 보류, CAS claim, learn 우선순위 낮음 | 유지. reflect/embed/consolidate도 background class. learn_running 관찰 후 claim은 여러 worker 간 동시 admission을 완전히 보장하지 않으므로 원자적 slot 필요. |
-| [Store](/Users/gim-yeonsu/dominion-rust/src/db.rs:111) | put upsert, 단일 record CAS·increment | episode 종료·observation·정책 집계는 여러 record에 걸치므로 하나의 transaction 필요. 읽기 실패를 빈 목록으로 처리하는 기존 API를 새 평가 경로에서 쓰지 않는다. |
-| [task-benchmark.sh](/Users/gim-yeonsu/dominion-rust/scripts/task-benchmark.sh:11) | 기본 4317, repo/bench 삭제, autoApproveAll, 파일 내용만 검사 | 현 상태로 실행 금지. 격리 sentinel·읽기 확인·순서 검증·원시 결과 저장이 있는 Rust runner로 대체. shell은 호출 wrapper만. |
+| [improve::propose](/Users/gim-yeonsu/dominion/src/engine/improve.rs:10) | 근거 ID 목록·rationale 검사, 유사 문구 비교, 기본 `adopted`, harness만 `proposed` | 출처 ID의 의미·권한·내용을 재검증해야 한다. `candidate`부터 시작하고 내용 유사도만으로 기존 절차를 덮어쓰지 않는다. |
+| [active_values](/Users/gim-yeonsu/dominion/src/engine/improve.rs:288) | 범위에 맞는 adopted/validated 최대 6개. 작업 적합도·비용·성과 조건 없음 | 작업별 selector로 교체. 한 번 선택한 불변 snapshot을 주입과 실행 양쪽에 사용. |
+| [record_execution](/Users/gim-yeonsu/dominion/src/engine/improve.rs:348) | HEAD는 주입 ID + toolCalls + completed로 성공 집계. WIP는 준수 결과도 사용 | WIP는 진전이나 인과 추정이 아니다. 5회·기준 성공률−0.2 방식 폐기. observed와 controlled evidence 분리. |
+| [attach_verification](/Users/gim-yeonsu/dominion/src/engine/improve.rs:462) | 같은 record에 검증 정의 덮어쓰기, version 증가 | 실행 중 snapshot은 유지되지만 성과는 ID 단위로 섞인다. 내용 주소 기반 불변 revision과 revision별 통계 필요. |
+| [experience::record_with_scope](/Users/gim-yeonsu/dominion/src/engine/experience.rs:97) | signature·outcome·lesson 기반 병합, 근거 최대 12개 | 원시 episode와 재사용 교훈 분리. 근거 12개 잘림으로 원시 이력 유실 금지. |
+| [experience::retrieve](/Users/gim-yeonsu/dominion/src/engine/experience.rs:186) | 문자열 포함, 발생 횟수 boost; 검색 자체가 uses 증가 | exposure로 이름 변경. 의미 검색 추가하되 실제 준수나 효용으로 집계하지 않는다. |
+| [consolidate](/Users/gim-yeonsu/dominion/src/engine/experience.rs:252) | signature/outcome 중복 정리, 전체 300개 초과 archive | 상반된 교훈도 같은 signature면 묻힐 수 있다. 의미·조건·출처를 보존하고 범위별 working set 관리. |
+| [learning::run](/Users/gim-yeonsu/dominion/src/engine/learning.rs:192) | actor별 lock, immutable through ID, grounding·checkpoint | 재사용. remainder가 `throughMessageId=through`로 바뀌어 원래 snapshot 끝을 잃는 경로를 수정. 원본 through 고정, cursor만 이동. |
+| [apply_learning](/Users/gim-yeonsu/dominion/src/engine/learning.rs:370) | 기억은 엄격한 원문 검사, 전략은 batch ID 포함 여부 중심 | 전략에서도 메시지 역할·권한·실행 증거 검사. assistant ID를 사실 증거로 채택하지 않는다. |
+| [reflect::run](/Users/gim-yeonsu/dominion/src/engine/reflect.rs:107) | 최근 대화·실행을 분석하고 global 산출물 생성. memory는 직접 put | 지연 실행 시 다른 턴이 섞일 수 있다. episode/교정 watermark 고정. `save_grounded` 우회 금지. 원문 대신 승인된 추상 교훈만 범위 확대. |
+| [memory::visible](/Users/gim-yeonsu/dominion/src/engine/memory.rs:56) / [save_grounded](/Users/gim-yeonsu/dominion/src/engine/memory.rs:321) | partition·agent·sourceAuthorKey·정확 인용 검사. global은 범위 통과 | 대부분 재사용. 명시적인 공유 허가와 원문/추상본 visibility를 공통화. 정확 인용은 출처 증명이지 추측성 요약의 진실 증명이 아니다. |
+| [chat::context](/Users/gim-yeonsu/dominion/src/engine/chat/context.rs:62) | 기억·스킬·전략·경험을 각각 조회 | 실행 시작 때 고정한 ContextSelection을 전달. 중복 절차와 토큰 폭증 방지. |
+| [runtime](/Users/gim-yeonsu/dominion/src/engine/chat/runtime.rs:194) | 실제 승인·도구·기록·취소·예산, ordinary acceptance 이미 존재 | 유지. 일반 실행을 완료 주장만 하는 루프로 되돌리지 않는다. 공통 RunGuard를 도구 경계와 완료 경계에 연결. |
+| [runtime::action_plan](/Users/gim-yeonsu/dominion/src/engine/chat/runtime.rs:984) | 직접 실행 요청은 별도 LLM 계획; 실패 시 reviewer 호출 | 단순 결정적 실행은 추가 호출 0으로 시작. 필요한 경우만 계획/리뷰 프로필 선택. 비용 계측에 보조 호출도 포함. |
+| [goals::run](/Users/gim-yeonsu/dominion/src/engine/goals.rs:9) | plan·실행·검토·repair·replan·중단 checkpoint | 보존. 합성 goal 프롬프트를 새 사용자 지시로 다시 추출하지 않도록 parent task 연결. 중복 평가·중복 보상 제거. |
+| [goals::acceptance_gaps](/Users/gim-yeonsu/dominion/src/engine/goals.rs:704) | 파일·실행 근거 검사, 원래 baseline | 공통 verification 모듈로 이동하고 호환 wrapper 유지. 절차 준수와 결과 검증을 통합 판정하되 각각 기록. |
+| [jobs](/Users/gim-yeonsu/dominion/src/engine/jobs.rs:125) | 재시작의 uncertain side effect 보류, CAS claim, learn 우선순위 낮음 | 유지. reflect/embed/consolidate도 background class. learn_running 관찰 후 claim은 여러 worker 간 동시 admission을 완전히 보장하지 않으므로 원자적 slot 필요. |
+| [Store](/Users/gim-yeonsu/dominion/src/db.rs:111) | put upsert, 단일 record CAS·increment | episode 종료·observation·정책 집계는 여러 record에 걸치므로 하나의 transaction 필요. 읽기 실패를 빈 목록으로 처리하는 기존 API를 새 평가 경로에서 쓰지 않는다. |
+| [task-benchmark.sh](/Users/gim-yeonsu/dominion/scripts/task-benchmark.sh:11) | 기본 4317, repo/bench 삭제, autoApproveAll, 파일 내용만 검사 | 현 상태로 실행 금지. 격리 sentinel·읽기 확인·순서 검증·원시 결과 저장이 있는 Rust runner로 대체. shell은 호출 wrapper만. |
 
 ### 1.4 미커밋 procedure의 구체적인 결함
 
 기존 시도를 버리지 않고 다음 검증기를 엄격하게 만든다.
 
-- [normalize](/Users/gim-yeonsu/dominion-rust/src/engine/procedure.rs:60)는 잘못된 조건을 필터링해서 나머지만 채택한다. 필수 조건이 조용히 사라지므로 **전체 revision을 Invalid로 거부**해야 한다.
-- [operation_matches](/Users/gim-yeonsu/dominion-rust/src/engine/procedure.rs:101)는 `path/file/command/cwd`의 부분 문자열을 검색한다. `report.txt.bak`, `echo report.txt`도 혼동 가능. typed tool adapter가 정규화한 resource ID와 인자 값을 비교한다.
-- [evaluate](/Users/gim-yeonsu/dominion-rust/src/engine/procedure.rs:265)는 before의 양쪽 작업이 없으면 true. 이는 조건부 제약의 공허한 충족일 수 있지만 ‘전략 실행’ 증거가 아니다. `NotTriggered`를 구분한다.
+- [normalize](/Users/gim-yeonsu/dominion/src/engine/procedure.rs:60)는 잘못된 조건을 필터링해서 나머지만 채택한다. 필수 조건이 조용히 사라지므로 **전체 revision을 Invalid로 거부**해야 한다.
+- [operation_matches](/Users/gim-yeonsu/dominion/src/engine/procedure.rs:101)는 `path/file/command/cwd`의 부분 문자열을 검색한다. `report.txt.bak`, `echo report.txt`도 혼동 가능. typed tool adapter가 정규화한 resource ID와 인자 값을 비교한다.
+- [evaluate](/Users/gim-yeonsu/dominion/src/engine/procedure.rs:265)는 before의 양쪽 작업이 없으면 true. 이는 조건부 제약의 공허한 충족일 수 있지만 ‘전략 실행’ 증거가 아니다. `NotTriggered`를 구분한다.
 - before는 첫 위치만 비교한다. 대상 호출마다 prerequisite 범위·무효화 여부를 검사해야 한다. 정렬은 timestamp/문자열 ID 대신 엔진 단조 sequence를 사용한다.
-- [read_workspace_file](/Users/gim-yeonsu/dominion-rust/src/engine/procedure.rs:224)는 lexical 상대경로 검사만 하고 read_to_string한다. symlink 탈출·큰 파일·binary 존재 검사·읽기 오류와 부재를 구분할 필요가 있다.
-- [runtime 절차 repair](/Users/gim-yeonsu/dominion-rust/src/engine/chat/runtime.rs:411)는 `!force_final && repairs < 2`에서만 실행된다. 소진 후에는 위반을 terminal failure로 고정하지 않는다. [acceptance_passed](/Users/gim-yeonsu/dominion-rust/src/engine/chat/runtime.rs:861)는 일반 조건만 통과해 force_final을 만들 수 있다. **최종 공통 판정을 우회하는 완료 경로가 있어서는 안 된다.**
+- [read_workspace_file](/Users/gim-yeonsu/dominion/src/engine/procedure.rs:224)는 lexical 상대경로 검사만 하고 read_to_string한다. symlink 탈출·큰 파일·binary 존재 검사·읽기 오류와 부재를 구분할 필요가 있다.
+- [runtime 절차 repair](/Users/gim-yeonsu/dominion/src/engine/chat/runtime.rs:411)는 `!force_final && repairs < 2`에서만 실행된다. 소진 후에는 위반을 terminal failure로 고정하지 않는다. [acceptance_passed](/Users/gim-yeonsu/dominion/src/engine/chat/runtime.rs:861)는 일반 조건만 통과해 force_final을 만들 수 있다. **최종 공통 판정을 우회하는 완료 경로가 있어서는 안 된다.**
 - 최종 적용성 계산은 tool=None이라 tools-only 적용 조건을 놓칠 수 있다. 요청 시점의 eligibility와 실행 중 trigger를 별도 기록한다.
-- [finalize_execution](/Users/gim-yeonsu/dominion-rust/src/engine/chat/runtime.rs:1136)은 실행 저장 전에 카운터 갱신을 호출한다. 반복 finalization의 중복 집계·중간 crash·동시 덮어쓰기 방지 필요.
+- [finalize_execution](/Users/gim-yeonsu/dominion/src/engine/chat/runtime.rs:1136)은 실행 저장 전에 카운터 갱신을 호출한다. 반복 finalization의 중복 집계·중간 crash·동시 덮어쓰기 방지 필요.
 
 ## 2. 데이터와 권한의 기본 계약
 
@@ -610,8 +610,8 @@ enqueue_projection_updates_and_triggered_learning_once()
 
 # DeepSeek 개발 지시서 — DOMINION 자기개선
 
-설계 기준: [SELF-IMPROVEMENT-DESIGN](/Users/gim-yeonsu/dominion-rust/docs/SELF-IMPROVEMENT-DESIGN-2026-11-05.md).
-검증 기준: [SELF-IMPROVEMENT-BENCHMARK](/Users/gim-yeonsu/dominion-rust/docs/SELF-IMPROVEMENT-BENCHMARK-2026-11-05.md).
+설계 기준: [SELF-IMPROVEMENT-DESIGN](/Users/gim-yeonsu/dominion/docs/SELF-IMPROVEMENT-DESIGN-2026-11-05.md).
+검증 기준: [SELF-IMPROVEMENT-BENCHMARK](/Users/gim-yeonsu/dominion/docs/SELF-IMPROVEMENT-BENCHMARK-2026-11-05.md).
 
 ## 그대로 전달할 첫 지시
 
@@ -932,7 +932,7 @@ S7까지는 측정·준수 기반을 닫는 첫 묶음이다. S8/S9는 검색·�
 
 ## 1. 현 스크립트를 그대로 사용하지 않는 이유
 
-[기존 script](/Users/gim-yeonsu/dominion-rust/scripts/task-benchmark.sh:11)는 기본 4317, repo 아래 bench 디렉터리 초기화, autoApproveAll 변경, SSE 출력 폐기, 파일 결과만 확인한다. 또한 reflect failed도 wait 함수의 정상 종료로 취급한다. 안전한 격리와 실험 완료 barrier가 필요하다.
+[기존 script](/Users/gim-yeonsu/dominion/scripts/task-benchmark.sh:11)는 기본 4317, repo 아래 bench 디렉터리 초기화, autoApproveAll 변경, SSE 출력 폐기, 파일 결과만 확인한다. 또한 reflect failed도 wait 함수의 정상 종료로 취급한다. 안전한 격리와 실험 완료 barrier가 필요하다.
 
 현재 baseline은 감사 절차를 모르는 상태인데 post는 owner 교정을 받은 상태다. 이것은 **추가 지식의 보존·전이**를 확인하는 실험이다. 동일한 정보를 가진 두 시스템의 실행 제어 성능 비교와는 다르다. 두 질문을 구분해서 측정한다.
 

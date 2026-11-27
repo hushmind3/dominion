@@ -1,6 +1,6 @@
 # DOMINION sub2 — 실행 아키텍처 정본 (2026-11-21)
 
-> 범위: `dominion-sub2` 브랜치에서 **실제 소스와 저장소 계약**에 맞게 정리한 구조입니다. 다른 브랜치를 변경하거나 새 UI 메뉴·별도 런타임을 만드는 설계가 아닙니다. 본 문서가 기능의 실기기·실모델 운영 검증까지 보증하지는 않습니다.
+> 범위: `branch2` 브랜치에서 **실제 소스와 저장소 계약**에 맞게 정리한 구조입니다. 다른 브랜치를 변경하거나 새 UI 메뉴·별도 런타임을 만드는 설계가 아닙니다. 본 문서가 기능의 실기기·실모델 운영 검증까지 보증하지는 않습니다.
 
 ## 1. 결정 — 1개 실행 경로, 3개 책임 계층
 
@@ -93,7 +93,7 @@ flowchart TD
 
 ## 8. 실제 구현 연결 — Lead Team, Bot Room, Endpoint Model, SDK (2026-11-21)
 
-이 절은 설계 제안이 아니라 현재 `dominion-sub2` 브랜치에서 새로 연결된 실제 실행 코드의 범위를 기록합니다.
+이 절은 설계 제안이 아니라 현재 `branch2` 브랜치에서 새로 연결된 실제 실행 코드의 범위를 기록합니다.
 
 ### 자율 Lead/Worker DAG
 
@@ -164,7 +164,7 @@ P3 원문은 "실제 다중 기기 요구가 생길 때 도입"하는 조건부 
 
 ### 출발·제출/검증 경계
 
-- 이 회차의 출발 기준은 `dominion-sub2`의 2026-11-21 HEAD `d41aa7bbda85f87df39dd9250785d06e2208a411`입니다. 서브2에서만 수정하며 메인·서브3·서브4로 자동 이식하지 않습니다.
+- 이 회차의 출발 기준은 `branch2`의 2026-11-21 HEAD `d41aa7bbda85f87df39dd9250785d06e2208a411`입니다. 서브2에서만 수정하며 메인·서브3·서브4로 자동 이식하지 않습니다.
 - 주요 회귀: `cargo test --lib api::sessions::deletion_tests`, `cargo test --lib engine::chat::context::tests`, `cargo test --lib engine::chat::context_window::tests`, `cargo test --lib engine::task_team_work::tests`, `./web/node_modules/.bin/tsc -p sdk/typescript/tsconfig.json`, `node --test sdk/typescript/tests/sdk.test.mjs`, `node web/tests/team-activity.smoke.mjs`, `node web/tests/room-model-routing.smoke.mjs`.
 - GitHub Actions에서 여러 차례 프런트 타입·빌드·SDK와 Chromium fixture 성공을 관찰했습니다. 연속 커밋으로 오래 걸리는 macOS Rust 실행은 취소된 회차가 있으므로, 최신 **제출 SHA의 전체 CI·실모델·실기기 통과라고 주장하지 않습니다**. 각 커밋 SHA에 대응하는 Actions 원문으로 판정해야 합니다.
 - 로컬 4321 검증자는 제출한 Rust/프런트 빌드 SHA가 실제 서버와 일치함을 먼저 확인합니다. 긴 파일의 중간 원문 재질문, 다른 세션의 파일 차단, Chat 복제 후 원본 삭제, Room 재설정 후 초안 유지와 오래된 파일 불사용, 중지 후 늦은 결과·초안·영수증을 확인합니다.

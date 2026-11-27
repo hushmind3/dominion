@@ -4,7 +4,7 @@ name: Rust development tests
 # Separate builds, cargo check, frontend and platform matrices belong to release.
 on:
   push:
-    branches: [dominion-sub2]
+    branches: [branch2]
     paths:
       - 'src/**/*.rs'
       - 'tests/e2e.rs'
@@ -22,7 +22,7 @@ on:
       - 'scripts/sub2-*.mjs'
       - 'sdk/typescript/**'
   pull_request:
-    branches: [main, dominion-sub2]
+    branches: [branch1, branch2]
     paths:
       - 'src/**/*.rs'
       - 'tests/e2e.rs'

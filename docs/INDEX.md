@@ -1,4 +1,4 @@
-# DOMINION documentation — dominion-sub2
+# DOMINION documentation — branch2
 
 **Current source overview**
 

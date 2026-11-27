@@ -4,7 +4,7 @@
 <p align="center"><strong>내 모델, 내 작업 공간, 독립 Rust 에이전트 실행기</strong></p>
 <p align="center"><strong>한국어</strong> · <a href="README.md">English</a> · <a href="ENGINE.md">엔진 구조</a> · <a href="LICENSE">Apache-2.0</a></p>
 
-**2026년 11월 21일 기준 `dominion-sub2` 실험 브랜치** 설명입니다. React/Vite 프론트는 최신 main 화면(`f86a36e`)과 동기화하고, 백엔드는 서브2 고유의 Rust 하네스·대화 연속성·실행/검증 구조를 유지했습니다. main과 **백엔드가 동일하다는 뜻은 아닙니다.**
+**2026년 11월 21일 기준 `branch2` 실험 브랜치** 설명입니다. React/Vite 프론트는 최신 main 화면(`f86a36e`)과 동기화하고, 백엔드는 서브2 고유의 Rust 하네스·대화 연속성·실행/검증 구조를 유지했습니다. main과 **백엔드가 동일하다는 뜻은 아닙니다.**
 
 <p align="center">
   <img src="docs/01-multi-agent-room.webp" alt="다중 에이전트 방" width="48%" />

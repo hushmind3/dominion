@@ -1,7 +1,7 @@
 # DOMINION sub2 — MCP interop boundary (2026-11-21)
 
 This audit documents the actual implementation, not a claim of complete MCP
-conformance. It concerns only the dominion-sub2 branch and preserves the
+conformance. It concerns only the branch2 branch and preserves the
 existing Rust agent Harness, permissions, tool cache, and execution receipts.
 
 ## Protocol eras

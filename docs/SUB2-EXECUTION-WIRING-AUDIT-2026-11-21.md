@@ -2,7 +2,7 @@
 
 ## What was inspected
 
-Scope: the **dominion-sub2** tree (444 tracked blobs in the GitHub tree at audit start), plus read-only tree comparisons with `main`, `dominion-sub3`, and `dominion-sub4`. No other branch was edited.
+Scope: the **branch2** tree (444 tracked blobs in the GitHub tree at audit start), plus read-only tree comparisons with `main`, `branch3`, and `branch4`. No other branch was edited.
 
 The source-wide automated gate, `scripts/sub2-source-audit.mjs`, recursively reads executable source across `src/`, `crates/`, `web/src/`, `sdk/`, cloud, scripts, services, and desktop adapters. It detects identical executable files, high-confidence copied logic, duplicate Axum route shapes, and absent Team UI routes/handlers. **This is not a claim that every file was manually code-reviewed.** Manual path-level review prioritized the following end-to-end execution chain and adjacent contracts.
 
