@@ -1,0 +1,6 @@
+{
+  "version": "0.4.5",
+  "branch": "branch1",
+  "requested_on": "2026-11-28",
+  "purpose": "Build and publish verified native Windows and macOS installers"
+}
