@@ -3,11 +3,12 @@ name: Windows and macOS native desktop release
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [branch1]
     tags: ['v*']
     paths:
       - 'Cargo.toml'
       - 'src-tauri/tauri.conf.json'
+      - '.github/release-request.json'
 
 permissions:
   contents: read
