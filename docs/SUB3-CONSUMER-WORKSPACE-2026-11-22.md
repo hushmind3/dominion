@@ -1,6 +1,6 @@
 # sub3 consumer workspace
 
-This change belongs to `dominion-sub3`. Main and sub4 are separate worktrees.
+This change belongs to `branch3`. Main and sub4 are separate worktrees.
 The sub3 execution kernel remains `dominion-agent-sdk` with `dominion-harness`;
 jobs, team launches, approvals, receipts and streamed room events keep their
 existing engine contracts.

@@ -1,6 +1,6 @@
 # SUB3 — room progress, transport reuse and durable job finalization (2026-11-17)
 
-Scope: `dominion-sub3` only. Main branch, GUI design, authentication, existing SQLite records, and public API routes remain unchanged.
+Scope: `branch3` only. Main branch, GUI design, authentication, existing SQLite records, and public API routes remain unchanged.
 
 ## Baseline observed from GitHub Actions
 
@@ -27,4 +27,4 @@ Scope: `dominion-sub3` only. Main branch, GUI design, authentication, existing S
 
 ## Verification boundary
 
-These changes were committed to `dominion-sub3` with CI deferred by `[skip ci]`. **Do not claim post-change CI success or measured throughput improvements.** For an eventual focused check use the full Rust crate tests plus the two named Windows `--test e2e` cases, and compare the newly recorded `elapsedMs` values before deciding whether deeper context/SQLite optimization is warranted.
+These changes were committed to `branch3` with CI deferred by `[skip ci]`. **Do not claim post-change CI success or measured throughput improvements.** For an eventual focused check use the full Rust crate tests plus the two named Windows `--test e2e` cases, and compare the newly recorded `elapsedMs` values before deciding whether deeper context/SQLite optimization is warranted.

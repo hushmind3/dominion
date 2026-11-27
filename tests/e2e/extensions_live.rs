@@ -7,7 +7,7 @@ fn install(app:&TestApp,query:&str)->String{
  assert_eq!(items.len(),1,"{rows}");
  let item=&items[0];
  assert!(item["manifest"].is_object(),"Missing published manifest: {item}");
- if query.ends_with("%40dominion-sub3") {
+ if query.ends_with("%40branch3") {
   if let Ok(expected)=std::env::var("DOMINION_EXPECTED_EXTENSION_IMAGE") {
    assert_eq!(item["manifest"]["image"].as_str(),Some(expected.as_str()),"Market must resolve the exact new connector image");
   }
@@ -51,8 +51,8 @@ fn published_extensions_install_register_and_execute_live(){
  assert_eq!(app.get("/api/mcp/runtime")["available"],false,"Run default host build only");
  assert_eq!(app.get("/api/plugins/managed")["available"],true,"Docker required");
  let indexed=app.get("/api/plugins/market?q=MCP");
- assert!(indexed["items"].as_array().unwrap().iter().any(|x|x["sourceRef"]=="dominion-sub3"&&x["indexed"]==true),"{indexed}");
- let id=install(&app,"hushmind3%2Fdominion-rust%40dominion-sub3");
+ assert!(indexed["items"].as_array().unwrap().iter().any(|x|x["sourceRef"]=="branch3"&&x["indexed"]==true),"{indexed}");
+ let id=install(&app,"hushmind3%2Fdominion%40branch3");
  let path=format!("/api/plugins/managed/{id}");
  assert_eq!(app.post(&format!("{path}/start"),&json!({}))["running"],true);
  let caps=capabilities(&app,&id);

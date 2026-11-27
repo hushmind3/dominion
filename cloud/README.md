@@ -106,7 +106,7 @@ been deployed or verified end-to-end with real Google/Cloudflare credentials.
 
 ## Sub3 isolated branch gateway (2026-11-19)
 
-This `dominion-sub3` copy is taken from `main` at `f86a36e1c8ddac149baea2ac2391d317add36cbe`.
+This `branch3` copy is taken from `main` at `f86a36e1c8ddac149baea2ac2391d317add36cbe`.
 It is **source integration, not an additional live deployment**.
 The existing main Worker and production D1 are **not** re-used by this branch.
 

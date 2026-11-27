@@ -1,6 +1,6 @@
 # Sub3 — durable model-turn settlement and no replay after ambiguity
 
-Date: 2026-11-21. Branch: `dominion-sub3`.
+Date: 2026-11-21. Branch: `branch3`.
 Scope: native Rust AgentLoop; no UI, pricing, Cloudflare or other branch changes.
 
 ## Why this matters

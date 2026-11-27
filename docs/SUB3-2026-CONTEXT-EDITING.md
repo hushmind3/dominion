@@ -30,4 +30,4 @@
 
 ### 검증 결과 — 2026-11-15
 
-[GitHub Actions 제품 집중 검증 #43717467520](https://github.com/hushmind3/dominion-rust/actions/runs/43717467520) **성공**. Rust 호스트 빌드, 도구 결과 압축·쓰기/오류/ID 재사용 회귀, **실제 Anthropic 모의 HTTP 요청의 압축 본문·감사 이벤트**, 채팅 19개·파일 검증·실제 FFmpeg H.264 생성·API 통합 10개, React 타입 검사·빌드를 포함한다. 시험에서 측정된 **30,000자 이상**의 직렬화 문자량 감소는 구성된 가상 도구 출력에서 얻은 결과이며 실제 API 청구 토큰 절감률이 아니다.
+[GitHub Actions 제품 집중 검증 #43717467520](https://github.com/hushmind3/dominion/actions/runs/43717467520) **성공**. Rust 호스트 빌드, 도구 결과 압축·쓰기/오류/ID 재사용 회귀, **실제 Anthropic 모의 HTTP 요청의 압축 본문·감사 이벤트**, 채팅 19개·파일 검증·실제 FFmpeg H.264 생성·API 통합 10개, React 타입 검사·빌드를 포함한다. 시험에서 측정된 **30,000자 이상**의 직렬화 문자량 감소는 구성된 가상 도구 출력에서 얻은 결과이며 실제 API 청구 토큰 절감률이 아니다.

@@ -1,6 +1,6 @@
 # sub3 owner command and persistence refactor
 
-Scope: `dominion-sub3`, including the frontend callers of changed backend
+Scope: `branch3`, including the frontend callers of changed backend
 contracts. The native `dominion-agent-sdk` / `dominion-harness`, approval gates,
 worker attempt fences and durable tool evidence remain the execution authority.
 

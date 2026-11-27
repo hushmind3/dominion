@@ -4,7 +4,7 @@
 > **2026-11-20 후속 변경:** 이 문서는 11월 18일 시점의 역사적 점검 기록입니다. 이후 중복 `packages/sdk-typescript` 클라이언트 패키지를 제거하고 `sdk/typescript`를 단일 TypeScript SDK로 유지했습니다. 구형 `/api/harness/runs` 경로는 `src/api/sdk.rs`의 제한된 호환 어댑터로 계속 동작하며 저장된 실행 기록은 유지합니다. 구형 RSI 전용 채팅 제공자 정책도 제거했습니다. 아래 표는 당시 상태를 기록한 것이며 현재 구현 목록이 아닙니다.
 
 
-**Scope:** `hushmind3/dominion-rust`, branch `dominion-sub3`. **No changes to `main`.** This is a static repository/API/source-path review, not a claim that all 196 Rust files were line-reviewed or runtime-tested. The GitHub recursive tree returned **479 file/directory entries**, untruncated: **196 `.rs`**, **47 frontend `.ts/.tsx` under `web/src`**, **62 `.md`**, and five `.yml`. Core code at the actual entry/dispatch/storage/UI/API boundaries was read directly; dependencies and workspace/build manifests were compared. Prior measured artifacts were dated separately.
+**Scope:** `hushmind3/dominion`, branch `branch3`. **No changes to `main`.** This is a static repository/API/source-path review, not a claim that all 196 Rust files were line-reviewed or runtime-tested. The GitHub recursive tree returned **479 file/directory entries**, untruncated: **196 `.rs`**, **47 frontend `.ts/.tsx` under `web/src`**, **62 `.md`**, and five `.yml`. Core code at the actual entry/dispatch/storage/UI/API boundaries was read directly; dependencies and workspace/build manifests were compared. Prior measured artifacts were dated separately.
 
 ## Runtime entry and shared state
 

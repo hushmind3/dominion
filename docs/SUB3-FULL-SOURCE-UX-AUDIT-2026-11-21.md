@@ -1,6 +1,6 @@
 # SUB3 — full source and UX audit (2026-11-21)
 
-Branch: dominion-sub3 only. Source: GitHub recursive tree, exact Rust/UI modules, workflow definitions, 54 Chromium screenshots and cross-branch blob comparisons. **Tree inventory is broader than the deep-reviewed call paths; this is not a statement that all 439 blobs received line-by-line manual review.**
+Branch: branch3 only. Source: GitHub recursive tree, exact Rust/UI modules, workflow definitions, 54 Chromium screenshots and cross-branch blob comparisons. **Tree inventory is broader than the deep-reviewed call paths; this is not a statement that all 439 blobs received line-by-line manual review.**
 
 ## Inventory and comparison
 

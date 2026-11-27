@@ -1,4 +1,4 @@
-# DOMINION Rust SDK (active `dominion-sub3` contract)
+# DOMINION Rust SDK (active `branch3` contract)
 
 [Product README](../../README.md) · [한국어](../../README.ko.md) · [Native execution architecture](../../docs/HARNESS.md) · [Kernel source](../../crates/dominion-agent-sdk/src/lib.rs)
 
@@ -74,6 +74,6 @@ cargo test --bin dominion-rust engine::native_agent::tests
 cargo test --bin dominion-rust api::sdk::tests
 ```
 
-Run relevant **development-profile** Rust tests during regular work; release builds, Windows/macOS packaging, frontend builds and paid provider comparisons are separate release/evaluation steps. An earlier focused GitHub run passing on its original commit does **not** establish success on the latest `dominion-sub3` HEAD. This document update itself has not been compiled or validated with a real model.
+Run relevant **development-profile** Rust tests during regular work; release builds, Windows/macOS packaging, frontend builds and paid provider comparisons are separate release/evaluation steps. An earlier focused GitHub run passing on its original commit does **not** establish success on the latest `branch3` HEAD. This document update itself has not been compiled or validated with a real model.
 
 See [source audit](../../docs/SUB3-SOURCE-AUDIT-2026-11-18.md) and [SDK architecture notes](../../docs/HARNESS.md) for current boundaries.

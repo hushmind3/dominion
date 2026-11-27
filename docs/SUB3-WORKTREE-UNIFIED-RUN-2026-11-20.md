@@ -1,6 +1,6 @@
 # DOMINION sub3 — unified run lifecycle, Git worktrees and recovery
 
-Date: 2026-11-20. Branch: **dominion-sub3** only.
+Date: 2026-11-20. Branch: **branch3** only.
 
 ## Execution structure
 

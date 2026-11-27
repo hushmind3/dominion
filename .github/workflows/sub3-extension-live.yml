@@ -1,7 +1,7 @@
 name: Sub3 live published extension acceptance
 on:
   push:
-    branches: [dominion-sub3]
+    branches: [branch3]
     paths:
       - 'tests/e2e/extensions_live.rs'
       - 'src/api/plugins/**'
@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   live:
-    if: github.ref == 'refs/heads/dominion-sub3'
+    if: github.ref == 'refs/heads/branch3'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:

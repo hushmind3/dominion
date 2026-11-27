@@ -1,7 +1,7 @@
 name: Independent MCP connector package
 on:
   push:
-    branches: [dominion-sub3]
+    branches: [branch3]
     paths:
       - 'extensions/mcp-connector/**'
       - '.github/workflows/sub3-mcp-extension.yml'
@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   package:
-    if: github.ref == 'refs/heads/dominion-sub3'
+    if: github.ref == 'refs/heads/branch3'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -75,7 +75,7 @@ jobs:
           git add dominion-plugin.json
           git diff --cached --quiet && exit 0
           git commit -m "Publish independent extension manifest"
-          git push origin HEAD:dominion-sub3
+          git push origin HEAD:branch3
       # The bot's manifest push does not trigger another push workflow. Verify
       # the exact published image here, not an older market package.
       - name: Install exact published MCP image through real DOMINION host

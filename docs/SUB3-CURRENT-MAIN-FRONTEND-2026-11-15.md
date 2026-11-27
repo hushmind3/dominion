@@ -2,7 +2,7 @@
 
 ## 기준과 원본
 
-이번 확인 시점의 `main` HEAD는 **`879dc23dce309688691c200b001b180bead95a12`**. 이 커밋의 `web/` **56개 Git blob SHA 전부** `dominion-sub3`와 동일하다. 다른 레이아웃·서브3 전용 React 위젯·가격/토큰 예산 입력란을 끼워넣지 않았다. 이는 **확인 시점의 최신 메인 스냅샷**이며, 미래의 메인 변경을 무시하는 영구 정책이 아니다.
+이번 확인 시점의 `main` HEAD는 **`879dc23dce309688691c200b001b180bead95a12`**. 이 커밋의 `web/` **56개 Git blob SHA 전부** `branch3`와 동일하다. 다른 레이아웃·서브3 전용 React 위젯·가격/토큰 예산 입력란을 끼워넣지 않았다. 이는 **확인 시점의 최신 메인 스냅샷**이며, 미래의 메인 변경을 무시하는 영구 정책이 아니다.
 
 현재 메인 `src/api/mod.rs`의 등록 경로 **210개 모두** 서브3에 존재한다(누락 0개). 서브3에는 `/api/jobs/:id/directive` 1개가 추가로 존재한다. URL 일치만으로 외부 로그인·모든 영상 제공자 등 제품 기능의 실제 외부 동작까지 검증했다고 주장하지 않는다.
 
@@ -34,7 +34,7 @@
 
 ## 최종 집중 검증 결과
 
-[GitHub Actions #43707625721](https://github.com/hushmind3/dominion-rust/actions/runs/43707625721) 성공: **Rust 236/236**, 실제 Git·Rust 동결 A/B **2/2**, 독립 TypeScript SDK **7/7**, 프런트 TypeScript 검사·Vite 프로덕션 빌드 통과. 새 회귀 테스트는 Rust SDK의 불확실한 도구 관찰이 성공 영수증이 되지 않음을 확인하고, main UI용 `/api/sdk/runs`에서 실제 작업 생성·검증 조건·취소·실제 승인 대기자·수동 복구 후 재개·미확정 모델 호출 중복 거부를 검사한다. 이 수치는 집중 회귀 테스트이며 브라우저 수동 사용·유료 모델 연속 RSI를 뜻하지 않는다.
+[GitHub Actions #43707625721](https://github.com/hushmind3/dominion/actions/runs/43707625721) 성공: **Rust 236/236**, 실제 Git·Rust 동결 A/B **2/2**, 독립 TypeScript SDK **7/7**, 프런트 TypeScript 검사·Vite 프로덕션 빌드 통과. 새 회귀 테스트는 Rust SDK의 불확실한 도구 관찰이 성공 영수증이 되지 않음을 확인하고, main UI용 `/api/sdk/runs`에서 실제 작업 생성·검증 조건·취소·실제 승인 대기자·수동 복구 후 재개·미확정 모델 호출 중복 거부를 검사한다. 이 수치는 집중 회귀 테스트이며 브라우저 수동 사용·유료 모델 연속 RSI를 뜻하지 않는다.
 
 검증된 실행 코드 HEAD: `20a45a316934f23bfd799d4d816a6450c2128320`. 이후 README/문서 갱신은 프런트·Rust 실행 소스를 변경하지 않는다.
 
@@ -49,6 +49,6 @@
 
 ## 회귀 검증 — 메인 UI 자동 작업 기능
 
-[GitHub Actions #43709108553](https://github.com/hushmind3/dominion-rust/actions/runs/43709108553) 성공: **Rust 239/239**, 실제 Git/Cargo A/B **2/2**, 독립 TypeScript SDK **7/7**, 메인 React 프런트 TypeScript 검사·Vite 프로덕션 빌드 통과. Rust 테스트에는 적격 네이티브 모델 사전 선택·미지원 제공자 접수 거부·프런트 작업 출처별 영구 기록 분리·실제 진행 이벤트 투영·미확정 유료 모델의 재개 방지·실제 한도 초과 표시·독립 host operation 저널을 반영한 재개 판정이 포함된다.
+[GitHub Actions #43709108553](https://github.com/hushmind3/dominion/actions/runs/43709108553) 성공: **Rust 239/239**, 실제 Git/Cargo A/B **2/2**, 독립 TypeScript SDK **7/7**, 메인 React 프런트 TypeScript 검사·Vite 프로덕션 빌드 통과. Rust 테스트에는 적격 네이티브 모델 사전 선택·미지원 제공자 접수 거부·프런트 작업 출처별 영구 기록 분리·실제 진행 이벤트 투영·미확정 유료 모델의 재개 방지·실제 한도 초과 표시·독립 host operation 저널을 반영한 재개 판정이 포함된다.
 
 실행 코드 검증 커밋: `3d12527f15d5213588efb57842aadd0763a07714`. 메인 전체 프런트 56개 Git blob SHA 일치. 이전에 출처 마커 없이 생성한 `prompt` 작업은 삭제하지 않았으며, 새 자동 작업 패널 전용 목록에서는 다른 화면의 작업을 표시하지 않는다. 기존 기록은 공용 작업 API/운영 화면에 남는다. CI는 유료 모델 라이브 생성·브라우저 직접 클릭 테스트까지 대체하지 않는다.

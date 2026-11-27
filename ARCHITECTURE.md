@@ -1,6 +1,6 @@
 # DOMINION — canonical Rust agent architecture (sub3, 2026-11-21)
 
-> **Scope:** `dominion-sub3` only. This is the authoritative sub3 ownership and integration contract for the local-first Rust/React/Tauri product, not a claim of parity with a frontier model or a signed release. Design basis: the project's 2026-11-20 architecture review, current sub3 source, and the cited 2026 implementations. Other branches are not modified.
+> **Scope:** `branch3` only. This is the authoritative sub3 ownership and integration contract for the local-first Rust/React/Tauri product, not a claim of parity with a frontier model or a signed release. Design basis: the project's 2026-11-20 architecture review, current sub3 source, and the cited 2026 implementations. Other branches are not modified.
 
 ## 1. Architecture decision
 

@@ -17,9 +17,9 @@ macOS에는 Xcode Command Line Tools(`xcode-select --install`), Windows에는 Vi
 ## 소스 설치와 실행
 
 ```sh
-git clone https://github.com/hushmind3/dominion-rust.git
-cd dominion-rust
-git checkout dominion-sub3
+git clone https://github.com/hushmind3/dominion.git
+cd dominion
+git checkout branch3
 npm ci --prefix web
 npm run build --prefix web
 cargo run --release -- --home .

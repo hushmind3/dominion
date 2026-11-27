@@ -758,7 +758,7 @@ mod tests {
         save_room(&state, None, &config()).unwrap();
         state
             .store
-            .put("provider", &json!({"id":"chosen","enabled":true}));
+            .put("provider", &json!({"id":"chosen","kind":"openai","enabled":true,"local":true,"baseUrl":"http://127.0.0.1:1234/v1","model":"chosen-model"}));
         let file=crate::engine::attachments::upload(&state,&json!({"roomId":"room-one","name":"notes.txt","data":base64::engine::general_purpose::STANDARD.encode("실제 사용자 원문") })).unwrap();
         let body = json!({"input":"첨부 확인","attachmentIds":[file["id"]],"thinking":false,"reasoningEffort":"minimal","providerId":"chosen","model":"chosen-model","clientMessageId":"file-turn"});
         let submitted = submit(&state, "room-one", &body).unwrap();

@@ -9,7 +9,7 @@ Observed redundant context in `src/engine/chat/context.rs::context_block_with_ma
 - used different enablement and scope rules from `skill_search` / `skill_read`, which could make a chat prompt expose a Skill its retrieval tools would not authorize;
 - produced changing dependency metadata for irrelevant Skills and wasted model input on procedures unrelated to the request.
 
-## Changes on `dominion-sub3` only
+## Changes on `branch3` only
 
 1. `src/engine/skill_discovery.rs::select` is now reused as a crate-local, Rust-owned selection contract by chat and native paths. It applies the same scope, enabled/status checks and task relevance; the Skill search/read tools still perform independent permission checks.
 2. `src/engine/chat/context.rs` preloads up to **two relevant** Skill instructions, each clipped at 1,000 Unicode characters, rather than the first five arbitrary stored records. The manifest tracks only Skills actually surfaced. Other eligible Skills remain discoverable through `skill_search` and `skill_read` when tools are enabled. User memory, conversation history, owner directives, persisted Skill records and permissions are unchanged. The prompt labels Skill text lower-trust, not new owner instructions.

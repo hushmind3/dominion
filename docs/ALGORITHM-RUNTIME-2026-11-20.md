@@ -1,5 +1,5 @@
 # Sub3 runtime / intelligence separation
-Date: 2026-11-20. Scope: `dominion-sub3` branch only.
+Date: 2026-11-20. Scope: `branch3` branch only.
 
 ## 2026-11-21 product behavior: failed-effect completion gate
 

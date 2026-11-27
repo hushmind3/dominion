@@ -110,6 +110,7 @@ mod tests {
         let provider=json!({"id":"cache-provider","kind":"anthropic","enabled":true,
             "model":"claude-test","baseUrl":"https://api.anthropic.com/v1"});
         state.store.put("provider",&provider);
+        state.save_secret("provider:cache-provider", "test-only-cache-key");
         let route=crate::engine::gateway::route_from_provider(&state,&provider,None).unwrap();
         (state,route,dir)
     }
@@ -166,6 +167,7 @@ mod tests {
         let mut provider=state.store.get("provider",&route.id).unwrap();
         provider["capabilities"]=json!({"promptCaching":false});
         state.store.put("provider",&provider);
+        state.save_secret("provider:cache-provider", "test-only-cache-key");
         assert!(!hinted(&state,&route,&body()).1);
         crate::test_support::cleanup_dir(dir);
     }

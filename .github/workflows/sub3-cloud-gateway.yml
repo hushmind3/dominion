@@ -2,7 +2,7 @@ name: Sub3 Cloud Gateway checks
 
 on:
   push:
-    branches: [dominion-sub3]
+    branches: [branch3]
     paths:
       - 'cloud/**'
       - 'services/dominion-cloud/**'

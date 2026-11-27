@@ -1,5 +1,5 @@
 # Dominion — typed native model tool calls through independent Rust kernel
-2026-11-15 · branch \`dominion-sub3\`
+2026-11-15 · branch \`branch3\`
 
 ## Why this was necessary
 

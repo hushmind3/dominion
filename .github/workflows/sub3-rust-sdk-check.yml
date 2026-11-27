@@ -2,7 +2,7 @@ name: Sub3 Rust SDK tests
 
 on:
   push:
-    branches: [dominion-sub3]
+    branches: [branch3]
     paths:
       - '.github/workflows/sub3-rust-sdk-check.yml'
       - 'crates/dominion-agent-sdk/**'

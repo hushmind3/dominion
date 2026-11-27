@@ -9,7 +9,7 @@ DOMINION 토큰 문제 — 다음 세션 인계 (2026-11-08)
 - 검증 안 된 지속 연결 등 큰 변경을 무리하게 넣지 말 것.
 
 현재 상태
-- 저장소: /Users/gim-yeonsu/dominion-rust
+- 저장소: /Users/gim-yeonsu/dominion
 - 브랜치: dominion-sub, origin과 동일. 엔진 커밋 39ddc332cde409e05c3b10053db7508390a6e331.
 - origin/main 로컬 참조: 2f64e7f. main에 병합하지 말 것. 새 브랜치 만들지 말 것.
 - 운영: http://127.0.0.1:4317, runtime/dominion.sqlite. 방 room:nazarick-circle.
@@ -27,7 +27,7 @@ DOMINION 토큰 문제 — 다음 세션 인계 (2026-11-08)
 - 그러나 stream_codex_once는 매번 instructions와 전체 선택 input을 HTTP Responses로 전송한다.
 - codex_input은 자기 답변을 텍스트로 다시 구성한다. 원격 응답 ID·native output/encrypted reasoning을 지속 저장·재생하는 구현은 없다.
 - 캐시 키와 입력 접두사 유지가 실제 캐시 적중을 보장하지 않는다.
-- 로컬 430 unit + 89 E2E + 16 benchmark 통과. CI 성공: https://github.com/hushmind3/dominion-rust/actions/runs/42475822457
+- 로컬 430 unit + 89 E2E + 16 benchmark 통과. CI 성공: https://github.com/hushmind3/dominion/actions/runs/42475822457
 - 테스트 성공은 사용자 비용 문제 해결을 의미하지 않는다.
 
 실측

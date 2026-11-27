@@ -9,8 +9,8 @@ type Manifest={name:string;image:string;network:boolean;port:number|null}
 type Detail={repository:string;sourceRef:string;commit:string;manifestDigest:string;installId:string;manifest:Manifest}
 type Configuration={values:{servers:Record<string,unknown>[]}}
 type Grant={enabled:boolean;digest?:string;tools?:unknown[]}
-const connectorRepo='hushmind3/dominion-rust',connectorRef='dominion-sub3'
-const connectorImage='ghcr.io/hushmind3/dominion-rust/mcp-connector@sha256:'
+const connectorRepo='hushmind3/dominion',connectorRef='branch3'
+const connectorImage='ghcr.io/hushmind3/dominion/mcp-connector@sha256:'
 const pause=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms))
 const same=(a:Record<string,unknown>,b:Record<string,unknown>)=>a.transport===b.transport&&(a.transport==='http'?a.url===b.url:a.command===b.command&&JSON.stringify(a.args||[])===JSON.stringify(b.args||[]))
 async function ready(pluginId:string){

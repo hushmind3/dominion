@@ -1,5 +1,5 @@
 # Sub3 — portable core / product host / storage boundary
-Date: 2026-11-20. Branch: `dominion-sub3`.
+Date: 2026-11-20. Branch: `branch3`.
 
 ## Core: model decisions and authorized execution
 

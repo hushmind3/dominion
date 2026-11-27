@@ -1,6 +1,6 @@
 # DOMINION Sub3 — MCP 2026-07-28 transport compatibility
 
-Status: code integrated on `dominion-sub3` on 2026-11-21. Source and test fixtures are committed; a complete Rust build and actual GitHub Actions passing result are **not established**.
+Status: code integrated on `branch3` on 2026-11-21. Source and test fixtures are committed; a complete Rust build and actual GitHub Actions passing result are **not established**.
 
 ## Versions and modes
 

@@ -33,7 +33,7 @@ pub async fn health() -> Json<Value> {
         "runtime": "rust",
         "engine": "rust",
         "executionKernel":"dominion-agent-sdk",
-        "executionKernelOrigin":"dominion-sub3",
+        "executionKernelOrigin":"branch3",
         "independentHarness":"dominion-harness",
         "instanceId":std::env::var("DOMINION_ENGINE_INSTANCE").ok(),
         // "commit" is retained for existing clients. A running binary's
@@ -54,7 +54,7 @@ pub async fn status(State(state): State<AppState>) -> Json<Value> {
         "runtime": "rust",
         "engine": "rust",
         "executionKernel":"dominion-agent-sdk",
-        "executionKernelOrigin":"dominion-sub3",
+        "executionKernelOrigin":"branch3",
         "independentHarness":"dominion-harness",
         "providers": state.store.count("provider"),
         "agents": state.store.count("agent"),

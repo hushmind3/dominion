@@ -2,7 +2,7 @@ name: Sub3 fast architecture and integration checks
 
 on:
   push:
-    branches: [dominion-sub3]
+    branches: [branch3]
   workflow_dispatch:
 
 permissions:

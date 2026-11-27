@@ -1,6 +1,6 @@
 # DOMINION sub3: verified architecture implementation (2026-11-20)
 
-Scope: **dominion-sub3 only**. No UI/navigation change. Never merge automatically.
+Scope: **branch3 only**. No UI/navigation change. Never merge automatically.
 
 ## Source-accurate structure
 

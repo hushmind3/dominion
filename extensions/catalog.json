@@ -18,8 +18,8 @@
     {
       "name": "DOMINION MCP Connector",
       "description": "Independent MCP server transport and tool provider",
-      "repository": "hushmind3/dominion-rust",
-      "sourceRef": "dominion-sub3",
+      "repository": "hushmind3/dominion",
+      "sourceRef": "branch3",
       "keywords": [
         "mcp",
         "connector",

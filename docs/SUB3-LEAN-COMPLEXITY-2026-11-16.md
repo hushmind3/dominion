@@ -1,7 +1,7 @@
 
 # Sub3 — Lean agent execution architecture (2026-11-16)
 
-Branch: `dominion-sub3` only. The current owner direction **supersedes** the former 100-point RSI/video-focused rubric and prior feature-growth guides.
+Branch: `branch3` only. The current owner direction **supersedes** the former 100-point RSI/video-focused rubric and prior feature-growth guides.
 
 ## 2026-11-20 cleanup addendum
 
@@ -91,7 +91,7 @@ Status: code and source-level tests committed; Rust compiler, tests and full CI 
 
 The earlier cutover section above documents the transition **before** the final cleanup; the following supersedes its references to preserving the old standalone runner.
 
-- Removed the entire `crates/harness/` package (independent `AgentSdk::run` loop, blocking OpenAI driver, tool registry, and CLI binary) from `dominion-sub3`. Root `Cargo.toml` and `Cargo.lock` no longer list it.
+- Removed the entire `crates/harness/` package (independent `AgentSdk::run` loop, blocking OpenAI driver, tool registry, and CLI binary) from `branch3`. Root `Cargo.toml` and `Cargo.lock` no longer list it.
 - Replaced `src/api/sdk.rs` (formerly 474 lines) with a 260-line compatibility adapter. **New** `/api/harness/runs` calls route to the existing `dominion-agent-sdk::Kernel` worker. **Old** `sdk_run` and bounded FileJournal snapshots remain read-only; no legacy resume/approval/reconciliation attempts can redispatch potentially uncertain side effects.
 - Corrected the previously failing tool-discovery directive regression (`Inspect code` was not exposing a code-reading tool) and added architecture guards that reject restoration of the retired parallel crate/legacy API executor.
 - Targeted GitHub Actions runs at commits `74a3280` (Sub3 product Rust tests) and `0f643f7` (Sub3 Rust SDK tests) both completed successfully. They do not establish full release CI or verify later documentation-only commits.
@@ -102,7 +102,7 @@ Verification guarantees are limited to the exact workflow/test scopes above. No 
 
 ## 2026-11-18 — Match the current 79/100 judge gap: eliminate redundant inference
 
-The score comparison attached by the owner ranks `dominion-sub3` 79/100 and notes native/chat tool and model-call divergence. This change addresses **observed source-level duplicate work**, without adopting another harness or altering the existing Rust job kernel:
+The score comparison attached by the owner ranks `branch3` 79/100 and notes native/chat tool and model-call divergence. This change addresses **observed source-level duplicate work**, without adopting another harness or altering the existing Rust job kernel:
 
 1. `chat/runtime/planning.rs::needs_plan`: a request with no inferred acceptance criterion is not inherently multi-step. A separate paid preplan is now limited to genuinely long/composite work, three or more distinct acceptance checks, explicit owner policy, or decomposition that returned multiple steps. Single-step tasks still use the main model and tools.
 2. `chat/runtime/turn.rs`: deleted the *second paid semantic reviewer* `review_action()` on a deterministic acceptance failure. The same concrete gaps feed the existing repair turn, with exactly the same retry ceiling, tool admission, evidence checks, journal and owner approval. The old reviewer was not an independent host verifier and its output could not certify completion. Planning-call attempts count even on provider failure.

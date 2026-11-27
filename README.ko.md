@@ -4,16 +4,16 @@
 
 **도미니언(DOMINION)**은 로컬·외부 AI 모델을 연결해 코드 수정, 파일·셸·웹/MCP 작업, 검증, 승인, 중단 및 복구를 수행하는 **사용자 통제형 Rust 실행 플랫폼**입니다. 단순한 채팅 UI가 아니라 실제 작업과 결과 증거를 SQLite에 남기는 실행 제품을 목표로 합니다.
 
-> **이 문서는 `dominion-sub3` 브랜치 기준입니다.** `main`이나 배포판의 성능을 대표하지 않습니다. 구현된 기능과 테스트를 통과한 범위, 실제 모델로 검증한 성능은 구분합니다. 에이전트 실행에는 사용자가 구성한 모델·제공자가 필요합니다.
+> **이 문서는 `branch3` 브랜치 기준입니다.** `main`이나 배포판의 성능을 대표하지 않습니다. 구현된 기능과 테스트를 통과한 범위, 실제 모델로 검증한 성능은 구분합니다. 에이전트 실행에는 사용자가 구성한 모델·제공자가 필요합니다.
 
 ## 🚀 설치·실행
 
 준비물: Rust 안정 버전 툴체인, **Node.js 24.12 이상**, npm. 데스크톱 패키징 대상은 **macOS·Windows**입니다.
 
 ```sh
-git clone https://github.com/hushmind3/dominion-rust.git
-cd dominion-rust
-git switch dominion-sub3
+git clone https://github.com/hushmind3/dominion.git
+cd dominion
+git switch branch3
 npm ci --prefix web
 npm run build --prefix web
 cargo run -- --open
@@ -31,11 +31,11 @@ Rust 서버가 기본적으로 **http://127.0.0.1:4317**에 React 화면을 제�
 
 ### 🔍 서브3 전체 소스·UX 감사 (2026-11-21)
 
-서브3 Git 트리 **520개 항목·439개 파일**을 목록화하고 홈 자동 작업·대화·그룹·작업 팀·원격 워커·클라우드의 실제 입력→영속 결과 경로를 대조했습니다. 이번 감사에서 **로컬 API 읽기 요청의 Host 검증 누락**과 **네이티브 도구 승인 화면의 개별 실행 거부 버튼 누락**을 발견하고 직접 수정했습니다. 실행 코드 커밋 86274c0의 [Rust·프론트·Chromium CI](https://github.com/hushmind3/dominion-rust/actions/runs/44881868925)는 모두 통과했습니다. Chromium은 실제 화면을 조작하지만 API는 모의 응답이므로, 실제 유료 제공자·상용 클라우드·단일 Chat/Agent 실행 루프 완성을 의미하지 않습니다. [상세 전수조사 결과](docs/SUB3-FULL-SOURCE-UX-AUDIT-2026-11-21.md).
+서브3 Git 트리 **520개 항목·439개 파일**을 목록화하고 홈 자동 작업·대화·그룹·작업 팀·원격 워커·클라우드의 실제 입력→영속 결과 경로를 대조했습니다. 이번 감사에서 **로컬 API 읽기 요청의 Host 검증 누락**과 **네이티브 도구 승인 화면의 개별 실행 거부 버튼 누락**을 발견하고 직접 수정했습니다. 실행 코드 커밋 86274c0의 [Rust·프론트·Chromium CI](https://github.com/hushmind3/dominion/actions/runs/44881868925)는 모두 통과했습니다. Chromium은 실제 화면을 조작하지만 API는 모의 응답이므로, 실제 유료 제공자·상용 클라우드·단일 Chat/Agent 실행 루프 완성을 의미하지 않습니다. [상세 전수조사 결과](docs/SUB3-FULL-SOURCE-UX-AUDIT-2026-11-21.md).
 
 **도미니언 회원제 클라우드 서버 이식:** 메인 `cloud/` Worker, D1 회원·사용량·결제 스키마, Google/카카오/네이버 로그인, 무료 모델 중계·스트리밍, 유료 모델 크레딧·TossPayments 결제 경로, `services/dominion-cloud/` 계약 코드를 서브3에 반영했습니다. 메인 운영 인프라와 분리한 `dominion-cloud-sub3` Worker 및 신규 D1 설정을 사용합니다. 실제 신규 D1과 OAuth/API 키를 아직 연결하지 않아 상용 로그인·결제가 완료된 상태는 아닙니다.
 
-[클라우드 구조·스테이징 설정](docs/SUB3-CLOUD-GATEWAY-2026-11-19.md) · [클라우드 CI 8개 테스트 통과](https://github.com/hushmind3/dominion-rust/actions/runs/44503096540). 로컬 모델·사용자 개인 API 키 기능은 클라우드 계정 없이 계속 사용할 수 있습니다.
+[클라우드 구조·스테이징 설정](docs/SUB3-CLOUD-GATEWAY-2026-11-19.md) · [클라우드 CI 8개 테스트 통과](https://github.com/hushmind3/dominion/actions/runs/44503096540). 로컬 모델·사용자 개인 API 키 기능은 클라우드 계정 없이 계속 사용할 수 있습니다.
 
 ## 🧠 현재 구현 범위
 
@@ -157,7 +157,7 @@ npm run build --prefix web
 node scripts/check-lean-product.mjs
 ```
 
-**최신 문서 정리 이전 검증 코드:** `4e9f5bdf`(2026-11-20). [제품 Rust·프론트·TypeScript SDK CI](https://github.com/hushmind3/dominion-rust/actions/runs/44665179631) 및 [Rust SDK CI](https://github.com/hushmind3/dominion-rust/actions/runs/44665179763)가 통과했습니다. 폐기된 내장 영상·RSI, YouTube 업로드 인증, 구형 정책 자동 승격 및 중복 SDK를 제거하되 대화·사용자 파일·검증 기록은 보존합니다. 이후 커밋은 해당 GitHub Actions 결과를 따로 확인해야 합니다. 전체 릴리즈 게이트, 실제 27B 모델과 유료 제공자 과금 검증은 실행하지 않았습니다. [현재 문서 지도](docs/INDEX.md)를 참고하십시오.
+**최신 문서 정리 이전 검증 코드:** `4e9f5bdf`(2026-11-20). [제품 Rust·프론트·TypeScript SDK CI](https://github.com/hushmind3/dominion/actions/runs/44665179631) 및 [Rust SDK CI](https://github.com/hushmind3/dominion/actions/runs/44665179763)가 통과했습니다. 폐기된 내장 영상·RSI, YouTube 업로드 인증, 구형 정책 자동 승격 및 중복 SDK를 제거하되 대화·사용자 파일·검증 기록은 보존합니다. 이후 커밋은 해당 GitHub Actions 결과를 따로 확인해야 합니다. 전체 릴리즈 게이트, 실제 27B 모델과 유료 제공자 과금 검증은 실행하지 않았습니다. [현재 문서 지도](docs/INDEX.md)를 참고하십시오.
 
 **미완성·미측정:** 채팅/자율 실행 루프 완전 통합, 실제 모델의 장기 작업 완수율, 최신 브랜치의 Windows/macOS 릴리즈 검증, 실과금 기준의 캐시 절감률과 상용 운영 검증.
 

@@ -58,7 +58,7 @@ fn package_id(repo:&str,image:&str)->String{
 fn ref_ok(value:&str)->bool{!value.is_empty()&&value.len()<=120&&!value.contains("..")&&value.split('/').all(|p|!p.is_empty()&&!p.starts_with('.')&&p.bytes().all(|b|b.is_ascii_alphanumeric()||matches!(b,b'-'|b'_'|b'.')))}
 // Catalog entries are discovery metadata only. Installation always fetches
 // and validates the immutable package manifest, never trusting this index.
-const INDEX_URL:&str="https://raw.githubusercontent.com/hushmind3/dominion-rust/dominion-sub3/extensions/catalog.json";
+const INDEX_URL:&str="https://raw.githubusercontent.com/hushmind3/dominion/branch3/extensions/catalog.json";
 const INDEX_SEED:&str=include_str!("../../../extensions/catalog.json");
 fn index_cards(index:&Value,q:&str)->Result<Vec<Value>,String>{
     if index["schemaVersion"]!=1{return Err("Unsupported extension index".into())}

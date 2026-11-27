@@ -218,7 +218,9 @@ pub(super) fn select_room_tools(
             &["shell_exec", "terminal_exec"],
         ),
         (
-            &["검색", "웹", "http", "url", "fetch", "search"],
+            &["검색", "웹", "http", "url", "fetch", "search",
+              "날씨", "뉴스", "환율", "가격",
+              "find", "research", "look up", "weather", "news", "price"],
             &["web_search", "http_fetch"],
         ),
         (

@@ -63,7 +63,9 @@
         ];
         let empty = std::collections::HashSet::new();
         assert!(select_room_tools(definitions.clone(), "안녕", &empty, false).is_empty());
-        assert!(select_room_tools(definitions.clone(), "오늘 날씨는 어때 보여?", &empty, false).is_empty());
+        let weather=select_room_tools(definitions.clone(), "오늘 날씨는 어때 보여?", &empty, false);
+        assert!(weather.iter().any(|tool| tool_name(tool)=="web_search"), "current weather needs fresh evidence: {weather:?}");
+        assert!(weather.iter().all(|tool| tool_is_read_only(tool_name(tool))), "weather must not expose mutation tools: {weather:?}");
         assert!(select_room_tools(definitions.clone(), "책 읽는 건 좋아해?", &empty, false).is_empty());
         assert!(select_room_tools(
             definitions.clone(),

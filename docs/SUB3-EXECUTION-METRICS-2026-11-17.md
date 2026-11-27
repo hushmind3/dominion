@@ -3,7 +3,7 @@
 ## Executed, not merely specified
 
 Focused CI on sub3 HEAD 3da2b4b52ee4fbb31dccaf09ab77762ea13cc641:
-https://github.com/hushmind3/dominion-rust/actions/runs/44013575350
+https://github.com/hushmind3/dominion/actions/runs/44013575350
 
 | Fixture | Real execution | Verified | Calls | Scripted tokens | Tool receipts | Failing/passing tests | Replayed effects |
 | --- | --- | --- | ---: | ---: | ---: | --- | ---: |
@@ -34,7 +34,7 @@ The new indexed execution timeline and cancellation race fixes are separate from
 
 ## Additional dependency and forensic integrity hardening (2026-11-17)
 
-Three bounded source fixes on `dominion-sub3` (no change to `main`, UI layout, account credentials or persisted snapshot schema):
+Three bounded source fixes on `branch3` (no change to `main`, UI layout, account credentials or persisted snapshot schema):
 
 1. `crates/dominion-agent-sdk/src/scheduler.rs` now reserves every prior operation ID yet only allows **successful** prior receipts to satisfy new action dependencies. An unsuccessful/skipped prior receipt is rejected before a tool batch can be admitted; the model must propose a new successful prerequisite. The execution fence still independently rechecks results.
 2. `crates/dominion-agent-sdk/src/replay.rs` flags mismatched names/arguments of ordinary planned actions and purported successful actions whose dependencies lack successful receipts. Resolved `dominion_tool_call` bridge operations retain their explicit exception to raw argument equality.
@@ -54,7 +54,7 @@ Also rerun the full SDK/kernel suite and a real persisted native job with a know
 
 ## Kernel verification namespace and replay attribution hardening (2026-11-17, follow-up)
 
-Source-only change on `dominion-sub3`, based on the judged 69/100 baseline. No changes to `main`, UI, credential paths, or serialized Snapshot fields.
+Source-only change on `branch3`, based on the judged 69/100 baseline. No changes to `main`, UI, credential paths, or serialized Snapshot fields.
 
 - `crates/dominion-agent-sdk/src/acceptance.rs` declares the single host-only `kernel-verify-` namespace.
 - `src/lib.rs` creates mandatory test operation IDs from that constant. `scheduler.rs` rejects any model-proposed action using the reserved prefix before tool admission.
@@ -78,7 +78,7 @@ The improvement targets replay evidence integrity, not a new measured benchmark 
 
 `crates/dominion-agent-sdk/src/failure_guidance.rs` now distinguishes **source mutated after a failed check** from **the same check succeeding**. An edit leaves the original receipt visible as `source_changed_recheck_pending` and points the model to the kernel-owned acceptance pass; an exact successful repeat of the same tool and arguments clears the hint, while unrelated tool successes do not. This preserves error evidence without blindly repeating an unchanged failing check.
 
-Commit: `21616fea` on `dominion-sub3` only. Added deterministic test cases, not executed here (Rust unavailable). Scoped verification: `cargo test -p dominion-agent-sdk failure_guidance::tests::`, followed by relevant SDK acceptance tests. The fix is a source-level lifecycle correction, not evidence of improved real-model completion.
+Commit: `21616fea` on `branch3` only. Added deterministic test cases, not executed here (Rust unavailable). Scoped verification: `cargo test -p dominion-agent-sdk failure_guidance::tests::`, followed by relevant SDK acceptance tests. The fix is a source-level lifecycle correction, not evidence of improved real-model completion.
 
 
 ## 2026-11-18: evidence-driven Program IR repair and adaptation (branch-only)
@@ -101,7 +101,7 @@ cargo test --bin dominion-rust engine::adaptation_loop::selection_tests
 cargo test --bin dominion-rust engine::chat::runtime::program::evidence_join_tests
 ```
 
-**Verification provenance:** Source written and read through the connected GitHub repository on `dominion-sub3`. This editor has no `cargo`/`rustc`, so the above Rust tests have **not** been executed here. No real-model improvement, cost reduction, run completion, or pass-rate increase is claimed. The independent grader should check the exact branch HEAD and run the listed filters. The SDK's native job loop and chat's Program IR are still separate orchestration paths; this patch improves the actual chat path without claiming full engine unification.
+**Verification provenance:** Source written and read through the connected GitHub repository on `branch3`. This editor has no `cargo`/`rustc`, so the above Rust tests have **not** been executed here. No real-model improvement, cost reduction, run completion, or pass-rate increase is claimed. The independent grader should check the exact branch HEAD and run the listed filters. The SDK's native job loop and chat's Program IR are still separate orchestration paths; this patch improves the actual chat path without claiming full engine unification.
 
 **2026 implementation references inspected:** Google `google-research/harness2` (`harness2/core/recursion.py`, `selection.py`, and workflow tests), `google-research/veriharness` (isolated evidence-backed verification); Airbnb `agent-harness-optimizer` (`optimizers/prism/loop.py`, `types.py`); DeepSeek `deepseek-harness` (`tool-executor-ptc/src/ptc.ts`, `ptc-calls.ts`). These are architecture comparisons; no claim of their full recursive optimizer, isolated multi-rollout harness or sandbox being replicated.
 

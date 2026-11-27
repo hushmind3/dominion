@@ -1,6 +1,6 @@
 # Sub3 group evidence workboard — 2026-11-20
 
-Scope: `dominion-sub3` only. No UI/route/model provider changes.
+Scope: `branch3` only. No UI/route/model provider changes.
 
 ## Objective
 

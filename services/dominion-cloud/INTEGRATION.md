@@ -1,6 +1,6 @@
 # Dominion native/cloud integration (sub3)
 
-The main Cloudflare Worker implementation has been ported to `dominion-sub3`
+The main Cloudflare Worker implementation has been ported to `branch3`
 with a separate staging Worker/D1 configuration. No production deployment has
 occurred from this branch.
 

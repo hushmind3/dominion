@@ -2,7 +2,7 @@ name: Sub3 product Rust tests
 
 on:
   push:
-    branches: [dominion-sub3]
+    branches: [branch3]
     paths:
       - '.github/workflows/sub3-product-acceptance.yml'
       - 'Cargo.toml'

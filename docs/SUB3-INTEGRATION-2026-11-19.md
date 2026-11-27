@@ -2,11 +2,11 @@
 
 ## Verified Git boundaries
 
-- Repository: `hushmind3/dominion-rust`; all writes scoped to `dominion-sub3`; `main` only inspected.
+- Repository: `hushmind3/dominion`; all writes scoped to `branch3`; `main` only inspected.
 - Latest main comparison: `f86a36e1c8ddac149baea2ac2391d317add36cbe`.
 - **Historical baseline:** `web/` sources originally matched main at SHA `fe65b961b037ad04e8ab4fc7f5c3d6e18abba392`. After this integration, sub3 adds a public-only staging environment example; React source implementations remain unchanged, but the complete subtree hash differs.
 - Native Rust product tested at imported-source commit `33be0625cfd01dd1ba21bc25ce74f9daa68494e3`.
-- Cloud Gateway tested on `5b973c0520e10225d81dc04b95c1b4a8fbc4a12f`; [8 cloud contract tests and D1 schema passed](https://github.com/hushmind3/dominion-rust/actions/runs/44503096540).
+- Cloud Gateway tested on `5b973c0520e10225d81dc04b95c1b4a8fbc4a12f`; [8 cloud contract tests and D1 schema passed](https://github.com/hushmind3/dominion/actions/runs/44503096540).
 
 ## Main-derived API and runtime changes
 
@@ -18,8 +18,8 @@
 
 ## Completed CI and boundaries
 
-- [Sub3 Rust SDK — passed](https://github.com/hushmind3/dominion-rust/actions/runs/44499399570), source `536447c` (later code change affects only a group-room regression assertion).
-- [Sub3 product Rust + frontend + TypeScript SDK — passed](https://github.com/hushmind3/dominion-rust/actions/runs/44499894159), source `affd870`.
+- [Sub3 Rust SDK — passed](https://github.com/hushmind3/dominion/actions/runs/44499399570), source `536447c` (later code change affects only a group-room regression assertion).
+- [Sub3 product Rust + frontend + TypeScript SDK — passed](https://github.com/hushmind3/dominion/actions/runs/44499894159), source `affd870`.
 - Expanded the product Rust suite with `engine::rooms::tests`, `api::providers::tests` and `api::cli_oauth::tests`, plus `dominion-sdk` Rust client tests in the SDK workflow. This caught a stale test assumption: a deliberately tiny conversation target must keep required owner/agent/tool evidence and report `room-required-evidence-over-soft-target`, not the older `native-work-context` value. The test now checks the actual policy, required-over-budget accounting and completed tool receipt.
 - The obsolete source-wide forbidden-identifier scanner and its frontend counterpart were deleted. Scoped workflows exercise Rust execution, API, TypeScript and UI tests directly.
 - These are automated tests, **not** end-user desktop launch on Windows/macOS, production OAuth payment certification, or an actual 9-person live 27B provider throughput test.

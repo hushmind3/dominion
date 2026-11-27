@@ -4,16 +4,16 @@
 
 DOMINION is a local-first AI workspace and **owner-controlled Rust agent execution system**. It connects configured local or remote models to coding tasks, files, shell commands, web/MCP tools, conversation memory, durable job records, approvals, cancellation, and evidence-based verification.
 
-> **Branch:** This document describes `dominion-sub3`, not a released binary or the current `main` branch. Implemented source, focused test evidence, and verified product performance are different things. A real model/provider must be configured to run agent tasks.
+> **Branch:** This document describes `branch3`, not a released binary or the current `main` branch. Implemented source, focused test evidence, and verified product performance are different things. A real model/provider must be configured to run agent tasks.
 
 ## Try it locally
 
 Prerequisites: Rust stable toolchain, Node.js **24.12+** and npm for the web UI. The desktop packaging targets **macOS and Windows**; local development needs a compatible Rust toolchain and OS dependencies.
 
 ```sh
-git clone https://github.com/hushmind3/dominion-rust.git
-cd dominion-rust
-git switch dominion-sub3
+git clone https://github.com/hushmind3/dominion.git
+cd dominion
+git switch branch3
 npm ci --prefix web
 npm run build --prefix web
 cargo run -- --open
@@ -31,7 +31,7 @@ The original React workspace was imported from main in November 2026. Sub3 has s
 
 The full `main/cloud/` Cloudflare Worker implementation, D1 identity/usage/payment schema, operator-owned AI gateway, and typed service contracts have been imported under `cloud/` and `services/dominion-cloud/`. The **staging** Worker is named `dominion-cloud-sub3` and uses a separate, intentionally unprovisioned D1 database. The existing React account card registers it as an ordinary OpenAI-compatible provider once the staging gateway and OAuth origins are configured.
 
-[Cloud staging integration and setup](docs/SUB3-CLOUD-GATEWAY-2026-11-19.md) · [Cloud gateway test results](https://github.com/hushmind3/dominion-rust/actions/runs/44503096540). This import does not deploy a worker or authorize real purchases. Local models and BYOK work without a cloud account.
+[Cloud staging integration and setup](docs/SUB3-CLOUD-GATEWAY-2026-11-19.md) · [Cloud gateway test results](https://github.com/hushmind3/dominion/actions/runs/44503096540). This import does not deploy a worker or authorize real purchases. Local models and BYOK work without a cloud account.
 
 
 ## What is implemented
@@ -47,7 +47,7 @@ The full `main/cloud/` Cloudflare Worker implementation, D1 identity/usage/payme
 
 ### Source + UX full-tree audit (2026-11-21)
 
-A follow-up audit inventoried the full 438-file branch source tree and traced the real owner UI, native SDK, Chat/Room, Task Team, remote worker and Cloud paths. It repaired a browser DNS-rebinding Host check gap on **local owner API reads** and exposed an explicit **Refuse this action** button tied to the exact native tool approval ID; both have Rust and Chromium regressions. The latest executable CI run (commit 86274c0) passed Rust, frontend and actual Chromium browser jobs: [Actions](https://github.com/hushmind3/dominion-rust/actions/runs/44881868925). That Chromium suite uses API fixtures; it does not verify paid provider execution, actual Cloud deployment or a unified Chat/Agent loop. [Full audit and prioritized gaps](docs/SUB3-FULL-SOURCE-UX-AUDIT-2026-11-21.md).
+A follow-up audit inventoried the full 438-file branch source tree and traced the real owner UI, native SDK, Chat/Room, Task Team, remote worker and Cloud paths. It repaired a browser DNS-rebinding Host check gap on **local owner API reads** and exposed an explicit **Refuse this action** button tied to the exact native tool approval ID; both have Rust and Chromium regressions. The latest executable CI run (commit 86274c0) passed Rust, frontend and actual Chromium browser jobs: [Actions](https://github.com/hushmind3/dominion/actions/runs/44881868925). That Chromium suite uses API fixtures; it does not verify paid provider execution, actual Cloud deployment or a unified Chat/Agent loop. [Full audit and prioritized gaps](docs/SUB3-FULL-SOURCE-UX-AUDIT-2026-11-21.md).
 
 ### Crash-consistent paid model turns (2026-11-21)
 
@@ -180,7 +180,7 @@ npm run build --prefix web
 node scripts/check-lean-product.mjs
 ```
 
-**Latest verified code before the documentation cleanup:** `4e9f5bdf` passed [Sub3 product Rust + frontend + TypeScript SDK CI](https://github.com/hushmind3/dominion-rust/actions/runs/44665179631) and [Sub3 Rust SDK CI](https://github.com/hushmind3/dominion-rust/actions/runs/44665179763) on 2026-11-20. The standalone media/RSI paths, upload-only OAuth grant, obsolete policy promotion and duplicate client SDK are retired; prior SQLite jobs/evidence and manually reviewed learning records remain. Check the Actions run attached to later commits separately. `.github/workflows/ci.yml` is manual release-stage verification and was not run. These are mock-provider and compiler checks, not a measured 27B success rate or provider-billed token reduction. See [current runtime documentation](docs/INDEX.md).
+**Latest verified code before the documentation cleanup:** `4e9f5bdf` passed [Sub3 product Rust + frontend + TypeScript SDK CI](https://github.com/hushmind3/dominion/actions/runs/44665179631) and [Sub3 Rust SDK CI](https://github.com/hushmind3/dominion/actions/runs/44665179763) on 2026-11-20. The standalone media/RSI paths, upload-only OAuth grant, obsolete policy promotion and duplicate client SDK are retired; prior SQLite jobs/evidence and manually reviewed learning records remain. Check the Actions run attached to later commits separately. `.github/workflows/ci.yml` is manual release-stage verification and was not run. These are mock-provider and compiler checks, not a measured 27B success rate or provider-billed token reduction. See [current runtime documentation](docs/INDEX.md).
 
 Current limitations: interactive chat and the native work kernel are not yet a single lifecycle; independent commercial-grade long-horizon task success, full release validation, and reproducible provider-billed cache gains are still unmeasured. Avoid treating source existence or scripted-model fixtures as competitive benchmark wins.
 

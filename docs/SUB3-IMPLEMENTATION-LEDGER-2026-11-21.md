@@ -1,10 +1,10 @@
 # DOMINION Sub3 — implementation and verification ledger (2026-11-21)
 
-Scope: `dominion-sub3` only. No changes to `main`, production Worker, D1 or payment credentials.
+Scope: `branch3` only. No changes to `main`, production Worker, D1 or payment credentials.
 
 ## 2026-11-21 Native UX, cancellation and verified artifact reopening
 
-The `dominion-sub3` Native panel now identifies the exact unresolved tool call and safe file target during operator reconciliation, while hiding raw arguments. A pending tool approval can be cancelled as a whole task; the owner-scoped pending approval is closed only after durable job cancellation and unrelated sessions remain untouched. Newly created/selected Native task history cannot be overwritten by a late response, and the selected ID is restored after refresh when still present in the indexed 30-job history.
+The `branch3` Native panel now identifies the exact unresolved tool call and safe file target during operator reconciliation, while hiding raw arguments. A pending tool approval can be cancelled as a whole task; the owner-scoped pending approval is closed only after durable job cancellation and unrelated sessions remain untouched. Newly created/selected Native task history cannot be overwritten by a late response, and the selected ID is restored after refresh when still present in the indexed 30-job history.
 
 Completed Native tasks can reopen a **host-witnessed UTF-8 file** directly from the existing artifact-evidence section. `POST /api/sdk/runs/:id/artifact-preview` accepts only a file path recorded in the exact run's sealed final witness, verifies the pinned canonical workspace and actual SHA-256, and returns at most 128 KiB of UTF-8 content with `private, no-store`. Unknown paths, changed bytes, unsafe links, binary files and oversized previews do not return content. The viewer is read-only: it does not re-run a tool, create a new agent loop or modify user files. Explicit SDK model overrides are also checked against the selected model's own native tool-calling capability before a job is queued, instead of inheriting the provider's default model capability. Existing UI layout, navigation and main branch remain untouched.
 
@@ -53,7 +53,7 @@ The browser smoke is **written but has not been executed** in this authoring env
 
 | Check | Current result |
 | --- | --- |
-| GitHub contents API: files committed on `dominion-sub3` | Confirmed |
+| GitHub contents API: files committed on `branch3` | Confirmed |
 | GitHub source inspection: 12 critical module/contract references | Verified present (not compilation) |
 | Source-level architecture contract: script updated for extracted modules | Written; execution pending |
 | New Rust/API/HTTP regression suites | Written; execution pending |
@@ -74,7 +74,7 @@ The repository in the available authoring environment is accessible through its 
 
 ## Fast branch-only CI and the current gate
 
-`.github/workflows/sub3-fast.yml` is configured for push to `dominion-sub3`.
+`.github/workflows/sub3-fast.yml` is configured for push to `branch3`.
 It contains four independent jobs: source architecture + TypeScript SDK,
 Rust `cargo check --locked --all-targets` and kernel/Chat/MCP regressions,
 frontend TypeScript/Vite build, and non-blocking Rustfmt/Clippy diagnostics. This workflow is distinct from manual full
@@ -169,7 +169,7 @@ convergence measurable rather than infer it from SDK structure.
 ### Validation at this handoff
 
 - Source/GitHub file edits and expected content hashes: committed on
-  `dominion-sub3`.
+  `branch3`.
 - Rust/Cargo, full workspace test compilation, new health HTTP E2E and
   GitHub Actions result: **not executed/confirmed in this authoring session**.
 - Local app port `4322`: **not accessed**. Do not claim the GitHub source SHA

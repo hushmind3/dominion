@@ -1,6 +1,6 @@
 # Sub3 durable event and per-agent room-cursor contract — 2026-11-20
 
-Branch: `dominion-sub3` only. This document implements priorities P0/P1 of the supplied architecture review against the **actual sub3 source tree**. The review's `dominion-core`, `dominion-algorithms`, `TurnStrategyPort`, and `src/addons` describe a different main-line architecture; sub3 already has `dominion-agent-runtime` (contracts and admission), `dominion-agent-algorithms` (policy and orchestration), and the thin Rust SDK facade. No duplicate crate, external gateway, UI navigation, or second model loop was added.
+Branch: `branch3` only. This document implements priorities P0/P1 of the supplied architecture review against the **actual sub3 source tree**. The review's `dominion-core`, `dominion-algorithms`, `TurnStrategyPort`, and `src/addons` describe a different main-line architecture; sub3 already has `dominion-agent-runtime` (contracts and admission), `dominion-agent-algorithms` (policy and orchestration), and the thin Rust SDK facade. No duplicate crate, external gateway, UI navigation, or second model loop was added.
 
 ## P0: Durable event ordering
 

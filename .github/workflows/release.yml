@@ -38,6 +38,7 @@ jobs:
             src-tauri -> target
       - run: npm ci --prefix web
       - run: npm run typecheck --prefix web
+      - run: node --test scripts/package-dmg.test.mjs
       # The full Windows/macOS release gate is a separate manual/PR workflow.
       # This tag release builds native installers; no Linux build/test is run.
       - run: cargo test --locked --release

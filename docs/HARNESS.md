@@ -1,4 +1,4 @@
-# DOMINION active Harness / Core contract — 2026-11-21 (`dominion-sub3`)
+# DOMINION active Harness / Core contract — 2026-11-21 (`branch3`)
 
 > Source of truth: [../ARCHITECTURE.md](../ARCHITECTURE.md). This document describes the current executable source, not the historical removed standalone harness.
 

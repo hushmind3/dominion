@@ -1,6 +1,6 @@
 # DOMINION 서브3 — 실제 에이전트 실행 UX/UI 통합 (2026-11-21)
 
-범위: `dominion-sub3` 브랜치만. `main` 병합·새 상단 메뉴·릴리스 빌드 없음.
+범위: `branch3` 브랜치만. `main` 병합·새 상단 메뉴·릴리스 빌드 없음.
 
 ## 핵심 동선
 
@@ -59,7 +59,7 @@
 - 1440/768/390/320px 4개 화면 너비에서 32회 메뉴 방문, 35개 스크린샷, 런타임 오류 0건.
 - 단일 메뉴 검색 Ctrl+K → Enter → Esc, 설정 고급 펼치기, 키보드 포커스, 화면 가로 넘침, 자동 작업 알고리즘·실행 한도 요청, 팀 목표 폴백, 원격 장치 추론 요청을 테스트 픽스처로 검사.
 - 연결 채널 플랫폼 선택·인증·대상 입력·검토·저장, MCP·스킬·플러그인 등의 전체 연결 탭은 별도 Chromium 시나리오에서 18장 추가 캡처. 총 53개 이미지.
-- [기준 전체 CI 통과](https://github.com/hushmind3/dominion-rust/actions/runs/44880099374): 프론트, Rust, Chromium 통과.
-- 테스트 화면이 로딩 중인데 캡처하던 문제를 이후 수정해 실제 페이지 조작 요소가 보인 뒤 촬영한다. 데스크톱→모바일 채팅 서랍 문제도 실제 화면 증거를 바탕으로 수정했다. [후속 실제 브라우저 검증](https://github.com/hushmind3/dominion-rust/actions/runs/44880383321).
+- [기준 전체 CI 통과](https://github.com/hushmind3/dominion/actions/runs/44880099374): 프론트, Rust, Chromium 통과.
+- 테스트 화면이 로딩 중인데 캡처하던 문제를 이후 수정해 실제 페이지 조작 요소가 보인 뒤 촬영한다. 데스크톱→모바일 채팅 서랍 문제도 실제 화면 증거를 바탕으로 수정했다. [후속 실제 브라우저 검증](https://github.com/hushmind3/dominion/actions/runs/44880383321).
 
 실제 실행 브라우저는 GitHub Actions Linux Chromium이다. 사용자의 PC를 조작한 것은 아니며, 모델 비용 결제나 외부 서비스 인증은 수행하지 않는다. 외부 API는 결정적 테스트 픽스처로 대체했으므로 Safari/Firefox 및 실기기, 실제 원격 모델·유료 API·채널 송수신은 별도 운영환경 시험 대상이다.
