@@ -387,7 +387,7 @@ async fn fallback_candidates(
     let compat_schema_chars = if tools.is_empty() {
         0
     } else {
-        escaped_content_chars(&super::protocol::tool_manual(tools, &request.input).await)
+        escaped_content_chars(&super::protocol::tool_manual(state,tools, &request.input).await)
     };
     // A room may only fall back to its own participants' routes. Otherwise a
     // dead free model silently escalates to whatever paid provider happens to

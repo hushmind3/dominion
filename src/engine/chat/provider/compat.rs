@@ -50,7 +50,7 @@ pub(super) async fn stream_completion_once_body(
         let source=provider.base_url.strip_prefix("cli://").ok_or("CLI 제공자 주소가 올바르지 않습니다.")?;
         let mut projected=messages.to_vec();
         if !tools.is_empty(){
-            let manual=super::super::protocol::tool_manual(tools,&request.input).await;
+            let manual=super::super::protocol::tool_manual(state,tools,&request.input).await;
             projected.insert(0,json!({"role":"system","content":manual}));
         }
         let content=crate::engine::cli_model::generate(source,&provider.model,&projected).await?;
@@ -84,7 +84,7 @@ pub(super) async fn stream_completion_once_body(
     let started = std::time::Instant::now();
     let compatible = provider.tool_mode == "compat";
     let manual = if compatible && !tools.is_empty() {
-        Some(super::super::protocol::tool_manual(tools, &request.input).await)
+        Some(super::super::protocol::tool_manual(state,tools, &request.input).await)
     } else {
         None
     };

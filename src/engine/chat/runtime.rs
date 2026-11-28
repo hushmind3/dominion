@@ -932,9 +932,7 @@ async fn run_turn_body(
             .join("\n");
         messages.insert(1, json!({
             "role":"system",
-            "content":format!(
-                "Engine-owned frozen acceptance obligations. They are NOT completed work. Resolve every applicable check with actual tool receipts. Only explicit dependency links impose order; never claim success from the checklist itself:\n{subtasks}"
-            )
+            "content":format!("{}\n\nEngine-owned frozen acceptance obligations are not completed work. Resolve each applicable check with actual tool receipts. Only explicit dependency links impose order; never claim success from the checklist itself.",crate::engine::chat::harness_prompts::render(state,"agent.decomposition",&[("subtasks",&subtasks)]))
         }));
     }
 
