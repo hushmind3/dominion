@@ -16,7 +16,8 @@ pub(super) fn compile(state: &AppState, request: &TurnRequest, session_id: &str)
     // Tool admission remains disabled independently by the plain-chat runtime.
     let custom = context::private_override(state, request);
     let mut prompt = custom.clone().unwrap_or_else(|| {
-        let mut text=super::harness_prompts::effective(state,"identity.chat");
+        let mut text=super::harness_prompts::effective(state,"chat.lightweight");
+        text.push_str("\n");text.push_str(&super::harness_prompts::effective(state,"identity.chat"));
         text.push_str("\n");text.push_str(&super::harness_prompts::effective(state,"chat.general"));
         text.push_str("\n");text.push_str(&super::harness_prompts::effective(state,"chat.no_tools"));text
     });
