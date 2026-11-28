@@ -1,0 +1,40 @@
+name: OpenClaw plugin host
+on:
+  push:
+    branches: [branch4]
+    paths:
+      - 'src/plugin_host/**'
+      - 'src/api/plugin_host.rs'
+      - 'src/addons/integrations/mcp.rs'
+      - 'tests/fixtures/openclaw-plugin/**'
+      - '.github/workflows/plugin-host.yml'
+  pull_request:
+    branches: [branch4]
+    paths:
+      - 'src/plugin_host/**'
+      - 'src/api/plugin_host.rs'
+      - 'src/addons/integrations/mcp.rs'
+      - 'tests/fixtures/openclaw-plugin/**'
+      - '.github/workflows/plugin-host.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  real-plugin-runtime:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install the pinned official runtime in the runner's temporary directory
+        run: |
+          npm install --prefix "$RUNNER_TEMP/dominion-openclaw" --omit=dev --no-audit --no-fund openclaw@2026.11.10
+          node -e 'console.log("DOMINION_PLUGIN_NODE="+process.execPath)' >> "$GITHUB_ENV"
+      - name: Real SDK install, tool invocation, service, hook, config reload, disable and removal
+        env:
+          DOMINION_OPENCLAW_ROOT: ${{ runner.temp }}/dominion-openclaw/node_modules/openclaw
+        run: cargo test --locked --bin dominion-rust plugin_host::tests -- --ignored --nocapture

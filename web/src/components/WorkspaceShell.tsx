@@ -25,7 +25,7 @@ export function WorkspaceSidebar({page, navOpen, online, connecting, running, pe
   useEffect(() => {if (!primaryPages.includes(page)) setExpanded(true)}, [page])
   const needle = navOpen ? query.trim().toLocaleLowerCase() : ''
   const visible = (id: SettingsPage) => !needle || [t(settingsPages[id].label), t(settingsPages[id].description)].join(' ').toLocaleLowerCase().includes(needle)
-  const secondaryPages = Object.keys(settingsPages).filter(isSettingsPage).filter(id => !primaryPages.includes(id))
+  const secondaryPages = Object.keys(settingsPages).filter(isSettingsPage).filter(id => !primaryPages.includes(id)&&!('hidden' in settingsPages[id]&&settingsPages[id].hidden))
   const renderItem = (id: SettingsPage) => {
     const entry = settingsPages[id]
     const Icon = entry.icon

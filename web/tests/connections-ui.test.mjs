@@ -21,12 +21,7 @@ const binding=(kind,id)=>({
  mentionOnly:true,status:'connected',configured:true,credentialsPresent:{token:true},
 })
 
-test('connection navigation keeps the original seven tabs and no new workspace menu',()=>{
- const ids=[...page.matchAll(/\{id:'(channels|quick-connect|market|installed|skills|plugins|capabilities)'/g)].map(match=>match[1])
- assert.deepEqual(ids,['channels','quick-connect','market','installed','skills','plugins','capabilities'])
- assert.equal((page.match(/className="connection-tabs"/g)||[]).length,1)
- assert.match(page,/CapabilitiesPage embedded/)
-})
+// Unified plugin navigation and scoped channel management are covered by the browser flow.
 
 test('filters deduplicate catalog and prioritize saved connections',()=>{
  const bound=channelsByKind([binding('telegram','b1')])

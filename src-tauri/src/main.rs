@@ -143,7 +143,7 @@ fn main() {
             app.manage(DesktopState{engine:Mutex::new(connection),origin:origin.clone(),context_menu,devtools});
             let allowed_origin=origin.clone();
             let window=WebviewWindowBuilder::new(app,"main",WebviewUrl::External(origin.parse()?))
-                .title("DOMINION").inner_size(1320.,860.).min_inner_size(840.,600.).center().prevent_overflow().devtools(devtools)
+                .title("DOMINION").inner_size(1320.,860.).min_inner_size(840.,600.).maximized(true).center().prevent_overflow().devtools(devtools)
                 .initialization_script(&script)
                 .on_navigation(move|url|url.origin().ascii_serialization()==allowed_origin)
                 .on_new_window(|_,_|tauri::webview::NewWindowResponse::Deny)

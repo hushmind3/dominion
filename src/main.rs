@@ -8,6 +8,7 @@ mod engine;
 mod events;
 mod migrations;
 mod platform;
+mod plugin_host;
 mod state;
 mod vault;
 

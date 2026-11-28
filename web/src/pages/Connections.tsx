@@ -10,15 +10,15 @@ import {Button,TextInput,SelectInput} from '../components/Primitives'
 import {del,post} from '../api'
 import {Action,FormField,Notice,Panel,useRemote} from '../components/UI'
 import {t,useLocale,type LocaleKey} from '../i18n'
-import {ExtensionsPage,type ExtensionTab} from './Extensions'
-import {CapabilitiesPage} from './Capabilities'
+
+
 import {ConnectedAccounts} from '../components/ConnectedAccounts'
 import {
  type ChannelEntry,type ChannelBinding,type ChannelDraft,channelsByKind,
  visibleChannelCatalog,channelDraftMissing,channelStatusTone,
 } from '../utils/connectionState'
 
-type Section='channels'|'quick-connect'|'capabilities'|ExtensionTab
+type Section='channels'|'quick-connect'
 type Editor={entry:ChannelEntry;record:ChannelDraft}
 const groups=[
  {id:'all',name:'conn.group.all'},
@@ -236,7 +236,7 @@ function ChannelEditor({editor,saving,error,rooms,agents,providers,onClose,onSav
  </DialogBackdrop>
 }
 
-export function ConnectionsPage(){
+export function ConnectionsPage({kind,embedded=false}:{kind?:string;embedded?:boolean}={}){
  const locale=useLocale()
  const english=locale==='en'
  const registry=useRemote<ChannelEntry[]>('/api/channels/catalog',[])
@@ -257,20 +257,12 @@ export function ConnectionsPage(){
  const [saving,setSaving]=useState(false)
  const byKind=useMemo(()=>channelsByKind(channels.value),[channels.value])
  const filtered=useMemo(()=>
-  visibleChannelCatalog(registry.value,byKind,query,category,onlyConfigured),
-  [registry.value,byKind,query,category,onlyConfigured])
+  visibleChannelCatalog(registry.value.filter(entry=>!kind||entry.id===kind),byKind,query,category,onlyConfigured),
+  [registry.value,byKind,query,category,onlyConfigured,kind])
  const connected=channels.value.filter(channel=>channel.status==='connected').length
  const outbound=channels.value.filter(channel=>channel.status==='outbound_ready').length
  const ready=registry.value.filter(entry=>entry.available).length
- const tabs=[
-  {id:'channels',label:t('conn.tab.channels'),icon:RadioTower},
-  {id:'quick-connect',label:t('conn.tab.quickConnect'),icon:Link2},
-  {id:'market',label:'MCP 마켓',icon:Blocks},
-  {id:'installed',label:t('ext.tab.installed'),icon:Server},
-  {id:'skills',label:t('ext.tab.skills'),icon:BookOpenText},
-  {id:'plugins',label:t('ext.tab.plugins'),icon:PackagePlus},
-  {id:'capabilities',label:english?'Built-in tools':'기본 도구',icon:Sparkles},
- ] as const
+ const tabs=[{id:'channels',label:t('conn.tab.channels'),icon:RadioTower},{id:'quick-connect',label:t('conn.tab.quickConnect'),icon:Link2}] as const
  const openEditor=(entry:ChannelEntry,existing?:ChannelBinding)=>{
   if(!entry.available)return
   const record:ChannelDraft=existing?{...existing}:{
@@ -324,16 +316,14 @@ export function ConnectionsPage(){
   </Button>}
  </div>
  return <div className="mx-auto w-full max-w-[1320px] px-4 py-3 sm:px-6">
-  {header}
-  <nav className="connection-tabs" aria-label={english?'Connections and extensions':'연결 및 확장 기능'}>
+  {!embedded&&header}
+  {!embedded&&<nav className="connection-tabs" aria-label={english?'Connections and extensions':'연결 및 확장 기능'}>
    {tabs.map(({id,label,icon:Icon})=><Button key={id} variant="bare"
     aria-current={section===id?'page':undefined} onClick={()=>{setSection(id);setInfo('');setError('')}}>
     <Icon size={15}/>{label}
    </Button>)}
-  </nav>
+  </nav>}
   {section==='quick-connect'&&<ConnectedAccounts/>}
-  {section==='capabilities'&&<CapabilitiesPage embedded navigate={page=>setSection(page==='extensions'?'market':'channels')}/>}
-  {section!=='channels'&&section!=='quick-connect'&&section!=='capabilities'&&<ExtensionsPage section={section} embedded/>}
   {section==='channels'&&<>
    <div className="mb-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
     {[

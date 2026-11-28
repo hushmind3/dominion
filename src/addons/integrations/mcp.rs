@@ -214,7 +214,7 @@ async fn list_server(state: &AppState, server: &Value, server_slug:&str) -> Resu
 }
 
 pub async fn definitions(state: &AppState) -> Vec<Value> {
-    tools(state)
+    let mut definitions=tools(state)
         .await
         .into_iter()
         .map(|tool| {
@@ -227,7 +227,9 @@ pub async fn definitions(state: &AppState) -> Vec<Value> {
                 }
             })
         })
-        .collect()
+        .collect::<Vec<_>>();
+    definitions.extend(crate::plugin_host::definitions(state).await);
+    definitions
 }
 
 pub fn requires_approval(state: &AppState, qualified: &str) -> bool {
@@ -262,6 +264,8 @@ pub fn server_requires_approval(state: &AppState, qualified: &str) -> bool {
 
 /// Executes `mcp__{server}__{tool}`.
 pub async fn call(state: &AppState, qualified: &str, args: &Value) -> Result<Value, String> {
+    if qualified==crate::plugin_host::MANAGE_TOOL{return crate::plugin_host::manage(state,args).await;}
+    if qualified==crate::plugin_host::TOOL{return crate::plugin_host::invoke(state,args).await;}
     let rest = qualified
         .strip_prefix("mcp__")
         .ok_or_else(|| format!("MCP 도구 이름이 아닙니다: {qualified}"))?;

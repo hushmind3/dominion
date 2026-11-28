@@ -1,0 +1,1 @@
+{"id": "dominion-host-fixture", "name": "Dominion host fixture", "description": "A test-only plugin with tools, a service, a hook and a bundled skill.", "skills": ["./skills"], "configSchema": {"type": "object", "properties": {"prefix": {"type": "string"}}, "additionalProperties": false}, "activation": {"onStartup": true}, "contracts": {"tools": ["dominion_fixture_echo"]}}

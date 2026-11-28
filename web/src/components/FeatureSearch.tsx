@@ -9,7 +9,7 @@ const hints:Record<string,string>={
  models:'AI LLM API key provider Ollama llama.cpp 모델 키 연결',agents:'agent persona 에이전트 역할',
  connections:'GitHub Google Gmail Discord Telegram Slack MCP 서비스 계정 연결',
  capabilities:'tools shell terminal browser files search 터미널 명령 파일 브라우저 검색 도구',
- extensions:'SDK plugins apps integration 확장 플러그인 앱 자동화',
+ extensions:'SDK plugins apps integration tools shell terminal browser files search GitHub Google Gmail Discord Telegram Slack MCP 서비스 계정 연결 터미널 명령 파일 브라우저 검색 도구 확장 플러그인 앱 자동화',
  memory:'memory knowledge learning 기억 지식 학습',activity:'jobs tasks runs approval 작업 실행 승인 기록',
  settings:'preferences backup security 설정 백업 보안',home:'dashboard usage tokens 대시보드 사용량 토큰',
 }
@@ -31,7 +31,7 @@ export function FeatureSearch({onNavigate}:{onNavigate:(page:PageId)=>void}){
  const entries=useMemo(()=>[
   {id:'chat' as PageId,label:t('nav.chat'),description:en?'Chat with a connected model':'연결한 모델과 대화',icon:MessageSquare,hints:'chat 대화 채팅'},
   {id:'rooms' as PageId,label:t('rooms.listTitle'),description:en?'Work with your agents in a shared room':'여러 에이전트와 같은 작업 진행',icon:UsersRound,hints:'group team multiagent 그룹 팀 협업'},
-  ...Object.keys(settingsPages).filter(isSettingsPage).map(id=>({id,label:t(settingsPages[id].label),description:t(settingsPages[id].description),icon:settingsPages[id].icon,hints:hints[id]||''})),
+  ...Object.keys(settingsPages).filter(isSettingsPage).filter(id=>!('hidden' in settingsPages[id]&&settingsPages[id].hidden)).map(id=>({id,label:t(settingsPages[id].label),description:t(settingsPages[id].description),icon:settingsPages[id].icon,hints:hints[id]||''})),
  ],[en])
  const terms=query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
  const matches=entries.filter(entry=>terms.every(term=>(entry.label+' '+entry.description+' '+entry.hints).toLocaleLowerCase().includes(term)))

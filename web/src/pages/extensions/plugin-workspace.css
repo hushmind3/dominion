@@ -1,0 +1,48 @@
+/* Original OpenClaw plugin CSS uses theme tokens; bind them to Dominion's theme. */
+.dominion-plugin-workspace {
+ --border: #e4dfd5; --border-strong: #d6cfc2; --bg-elevated: #fff;
+ --bg: #f7f5ef; --text: #38352f; --text-strong: #24231f; --muted: #78746a;
+ --accent: #c44a31; --accent-contrast: #fff; --focus: #c44a31; --warn: #a56b18;
+ --radius-lg: 18px; --radius-md: 12px; --space-1: 6px; --space-2: 12px; --space-3: 20px; --space-4: 24px;
+ --shadow-sm: 0 2px 4px #32291e0b; --shadow-lg: 0 20px 60px #32291e24;
+ --duration-fast: 120ms; --control-ui-text-xs: 12px; --control-ui-text-sm: 14px; --control-ui-text-md: 16px;
+}
+.workspace-settings {position:fixed!important;inset:0!important;width:100%!important;height:100dvh!important;max-height:none!important;border:0!important;border-radius:0!important;box-shadow:none!important}
+.workspace-settings-content:is([data-page="extensions"],[data-page="connections"],[data-page="capabilities"]) {display:flex;flex-direction:column;overflow:hidden;padding-top:0}
+.plugin-workspace-content {display:flex;flex:1;flex-direction:column;min-height:0;min-width:0}
+.plugin-directory-scroll {min-height:0;overflow:auto;flex:1;padding:28px 36px 48px}
+.plugin-search {display:flex;align-items:center;gap:12px;flex:1;min-width:0;border:1px solid var(--border);border-radius:16px;background:#fff;padding:10px 20px;color:var(--muted)}
+.plugin-category-filters {display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px}
+.plugin-category-filters>button {display:inline-flex;align-items:center;gap:9px;padding:10px 15px;min-height:44px;border:1px solid var(--border);border-radius:13px;font-size:14px;color:var(--muted);background:transparent;white-space:nowrap}
+.plugin-category-filters>button[aria-pressed="true"] {background:white;color:var(--text-strong);border-color:var(--border-strong);box-shadow:var(--shadow-sm)}
+.plugin-category-filters>button:focus-visible {outline:2px solid var(--focus);outline-offset:2px}
+.dominion-plugin-workspace .plugin-catalog-grid {display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:18px}
+.dominion-plugin-workspace .plugin-catalog-card {min-height:170px;align-content:start}
+.dominion-plugin-workspace .installed-plugins-card__head {display:flex;align-items:center;gap:15px;min-width:0}
+.dominion-plugin-workspace .installed-plugins-card__identity {min-width:0;flex:1}
+.dominion-plugin-workspace .plugin-card-title-row h3 {white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:16px;font-weight:650}
+.dominion-plugin-workspace .installed-plugins-card__summary {display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;font-size:14px;line-height:1.65;color:var(--muted);margin:8px 0 0}
+.dominion-plugin-workspace .plugin-catalog-card__art {display:grid;place-items:center;flex:0 0 auto;width:48px;height:48px;overflow:hidden;border-radius:12px;background:transparent}
+.plugin-artwork-fallback {display:grid;place-items:center;width:100%;height:100%;background:#f2e6dc;color:#9e4c36;font-size:17px;font-weight:650}
+.plugin-catalog-card__primary-link {cursor:pointer}
+.plugin-state-dot {width:10px;height:10px;flex-shrink:0;display:inline-block;border-radius:50%;background:#aaa69f}
+.plugin-state-dot.is-enabled {background:#17804b}
+.plugin-detail-layout {display:grid;grid-template-columns:minmax(0,1fr);flex:1;min-height:0;overflow:hidden}
+.plugin-detail-layout.has-assistant {grid-template-columns:minmax(0,1fr) clamp(360px,31vw,640px)}
+.plugin-detail-scroll {overflow:auto;min-width:0;padding:30px 40px 64px}
+.dominion-plugin-workspace .plugins-settings-breadcrumb {display:flex;align-items:center;gap:12px;margin-bottom:36px;font-size:14px;color:var(--muted)}
+.dominion-plugin-workspace .plugin-catalog-detail {width:100%;max-width:none;margin:0}
+.dominion-plugin-workspace .plugin-catalog-detail__hero {display:flex;align-items:flex-start;gap:30px;margin:0 0 36px}
+.dominion-plugin-workspace .plugin-artwork-large {width:120px;height:120px;border-radius:26px}
+.plugin-detail-title {font-size:clamp(28px,2.7vw,48px);line-height:1.2;font-weight:720;letter-spacing:-.035em}
+.plugin-detail-author {margin-top:15px;color:var(--muted);font-size:17px}
+.dominion-plugin-workspace .plugin-catalog-detail__summary {margin:20px 0 28px;font-size:17px;line-height:1.75;color:var(--muted)}
+.dominion-plugin-workspace .plugin-catalog-detail__actions {display:flex;align-items:center;flex-wrap:wrap;gap:10px}
+.plugin-assistant {display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;border-left:1px solid var(--border);background:#fcfbf8}
+.dominion-plugin-workspace .plugin-catalog-detail__readme-section {margin-top:35px}
+.dominion-plugin-workspace .plugin-install-progress {width:520px;padding:28px}
+.plugin-install-progress__activity {padding:6px 0}
+@media(max-width:1050px){.plugin-detail-layout.has-assistant{grid-template-columns:minmax(0,1fr) 360px}.plugin-detail-scroll{padding:24px}.dominion-plugin-workspace .plugin-artwork-large{width:80px;height:80px}.plugin-directory-scroll{padding:24px}}
+@media(max-width:760px){.plugin-detail-layout.has-assistant{grid-template-columns:minmax(0,1fr)}.plugin-detail-layout.has-assistant>.plugin-detail-scroll{display:none}.plugin-assistant{border-left:0}.dominion-plugin-workspace .plugin-catalog-grid{grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}}
+.plugin-state-dot.needs-setup {background:#b77c14}
+.plugin-state-dot.has-error {background:#be3b30}

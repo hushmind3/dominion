@@ -7,6 +7,17 @@ use axum::{
 
 pub(super) fn router() -> Router<AppState> {
     Router::new()
+        .route("/api/plugins/host", get(super::super::plugin_host::status))
+        .route("/api/plugins/host/start", post(super::super::plugin_host::start))
+        .route("/api/plugins/host/stop", post(super::super::plugin_host::stop))
+        .route("/api/plugins/host/plugins", get(super::super::plugin_host::plugins))
+        .route("/api/plugins/host/action", post(super::super::plugin_host::action))
+        .route("/api/plugins/host/plugin/:id", get(super::super::plugin_host::inspect))
+        .route("/api/plugins/host/plugin/:id/config", get(super::super::plugin_host::read_configuration).post(super::super::plugin_host::configuration))
+        .route("/api/plugins/install", post(super::super::plugin_host::install))
+        .route("/api/plugins/operations", get(super::super::plugin_host::operations))
+        .route("/api/plugins/operations/:id", get(super::super::plugin_host::operation))
+        .route("/api/plugins/artwork", get(super::super::plugin_catalog::artwork))
         .route("/api/plugins/catalog", get(super::super::plugin_catalog::catalog))
         .route("/api/extensions/releases", get(extension_process::releases))
         .route("/api/extensions/apps", get(extension_registry::list).post(extension_registry::register))

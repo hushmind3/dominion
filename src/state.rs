@@ -38,6 +38,8 @@ pub struct AppState {
     pub maintenance: Arc<std::sync::atomic::AtomicBool>,
     /// Serializes backup restore transactions even if multiple HTTP requests race.
     pub restore_guard: Arc<tokio::sync::Mutex<()>>,
+    pub plugin_host: Arc<tokio::sync::Mutex<crate::plugin_host::Host>>,
+    pub plugin_host_operation: Arc<tokio::sync::Mutex<()>>,
     pub managed_apps: Arc<tokio::sync::Mutex<HashMap<String,tokio::process::Child>>>,
 }
 
@@ -65,6 +67,8 @@ impl AppState {
             instance_id,
             maintenance: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             restore_guard: Arc::new(tokio::sync::Mutex::new(())),
+            plugin_host: Arc::new(tokio::sync::Mutex::new(crate::plugin_host::Host::default())),
+            plugin_host_operation: Arc::new(tokio::sync::Mutex::new(())),
             managed_apps: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }

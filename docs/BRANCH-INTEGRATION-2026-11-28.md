@@ -17,13 +17,15 @@ The old MCP-only discovery page is replaced by one plugin directory. There is no
 
 The public ClawHub metadata proxy is read-only, pins the upstream origin/routes, bounds responses, caches successful reads for five minutes and observes rate-limit backoff. It never downloads or executes a package. Details display bundled tools, skills, channels, connections, configuration names and documentation from the selected package release.
 
-References: https://github.com/openclaw/clawhub/blob/main/docs/http-api.md and https://github.com/openclaw/openclaw/blob/main/src/plugins/api-builder.ts . No upstream implementation was copied into the frontend.
+OpenClaw's MIT category SVGs and plugin styles are adapted to React with attribution and a distributed license. Registry artwork uses an authenticated image proxy and CSP-compatible data URLs. Plugin details and settings occupy the desktop workspace, with a selected-plugin agent panel alongside them.
 
 ## Compatibility status
 
-Discovery does **not** imply execution compatibility. Existing MCP connections and Dominion SDK apps continue to use their actual supported installation, configuration, process and approval paths. MCP additions start disabled. ClawHub-native code/bundle plugins do not get a pretend installation button: their details state that an OpenClaw-compatible host connection is required.
+The plugin host now runs the official OpenClaw SDK in a Dominion-owned profile. It reuses the installed runtime when available; otherwise it provisions private Node and SDK dependencies. Installation, enable/disable, removal, inspection and configuration call actual gateway methods. Installation receipts persist progress events and distinguish interrupted work after restart. The existing OpenClaw profile, credentials and active gateway are not reused.
 
-Full OpenClaw compatibility remains unfinished. Its target includes the complete plugin API, not a deliberately restricted subset. The plugin host must provide registration/lifecycle, tools, skills, channels, model/media providers, hooks, memory/context, HTTP/command surfaces, services and runtime integrations, then map those operations into Dominion's real permissions, cancellation and durable outcomes. A same-named no-op SDK export does not establish compatibility. The current Dominion SDK is an external-app contract, not that complete host.
+SDK registration and lifecycle execute in the official runtime, rather than no-op replacements. Plugin tools and plugin management connect to Dominion's existing approval and durable execution paths. The right-hand question panel sends selected package context to the actual Dominion agent. MCP and Dominion SDK apps share the same directory and keep their existing runtime contracts.
+
+Local verification covers installed OpenClaw 2026.10.8 and pinned official 2026.11.10 with a real fixture providing a tool, service, hook, bundled skill and configuration reload, followed by disable and removal. This establishes the tested lifecycle; it does not claim every public package, native provider, external account or plugin-specific UI has been exercised. See [PLUGIN-HOST.md](PLUGIN-HOST.md).
 
 Mobile layout work, new voice features, an alternate agent engine and public releases are outside this integration. Existing responsive behavior remains available for desktop window resizing.
 

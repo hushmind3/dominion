@@ -25,12 +25,12 @@ export function SettingsWorkspace({conversationSettingsRef, page, online, connec
     try {localStorage.setItem('dominion.settings.nav', next ? '1' : '0')} catch {}
     return next
   }), [])
-  return <DialogBackdrop onDismiss={onClose}>
+  return <DialogBackdrop onDismiss={onClose} style={{padding:0,backdropFilter:'none'}}>
     <div role="dialog" aria-modal="true" aria-label={t('nav.settings')} className="workspace-settings">
       <WorkspaceSidebar page={page} online={online} connecting={connecting} running={running} pending={pending} onNavigate={onNavigate} navOpen={navOpen} onToggleNav={toggleNav}/>
       <div className="workspace-settings-main">
         <SettingsHeader page={page} onNavigate={onNavigate} online={online} connecting={connecting} onClose={onClose}/>
-        <div key={page} className="workspace-settings-content"><AsyncPage label={t('shell.loadingPage')}>{settingsPages[page].render(onNavigate)}</AsyncPage>
+        <div key={page} data-page={page} className="workspace-settings-content"><AsyncPage label={t('shell.loadingPage')}>{settingsPages[page].render(onNavigate)}</AsyncPage>
           {page==='settings'&&<details className="workspace-reply-preferences"><summary>{t('chat.settings')}</summary><div className="workspace-conversation-settings" ref={conversationSettingsRef}/></details>}
         </div>
       </div>

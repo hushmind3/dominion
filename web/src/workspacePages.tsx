@@ -16,11 +16,6 @@ import type { LocaleKey } from './i18n'
 const HomePage = lazy(() =>
   import('./pages/Home').then((module) => ({ default: module.HomePage })),
 )
-const CapabilitiesPage = lazy(() =>
-  import('./pages/Capabilities').then((module) => ({
-    default: module.CapabilitiesPage,
-  })),
-)
 const MemoryPage = lazy(() =>
   import('./pages/Memory').then((module) => ({ default: module.MemoryPage })),
 )
@@ -33,11 +28,6 @@ const AgentsPage = lazy(() =>
 const ExtensionsPage = lazy(() =>
   import('./pages/Extensions').then((module) => ({
     default: module.ExtensionsPage,
-  })),
-)
-const ConnectionsPage = lazy(() =>
-  import('./pages/Connections').then((module) => ({
-    default: module.ConnectionsPage,
   })),
 )
 const OperationsPage = lazy(() =>
@@ -54,6 +44,7 @@ type SettingsEntry = {
   description: LocaleKey
   group: LocaleKey
   icon: LucideIcon
+  hidden?: boolean
   render: (navigate: Navigate) => ReactNode
 }
 
@@ -80,18 +71,20 @@ export const settingsPages = {
     render: () => <AgentsPage />,
   },
   connections: {
+    hidden: true,
     label: 'nav.connections',
     description: 'workspace.description.connections',
     group: 'nav.group.extensions',
     icon: RadioTower,
-    render: () => <ConnectionsPage />,
+    render: () => <ExtensionsPage initialCategory="channels" />,
   },
   capabilities: {
+    hidden: true,
     label: 'nav.capabilities',
     description: 'workspace.description.capabilities',
     group: 'nav.group.extensions',
     icon: ShieldCheck,
-    render: (navigate: Navigate) => <CapabilitiesPage navigate={navigate} />,
+    render: () => <ExtensionsPage initialCategory="developer-tools" />,
   },
   extensions: {
     label: 'nav.extensions',
@@ -133,6 +126,7 @@ export const settingsGroups = new Map<
 >()
 for (const id of Object.keys(settingsPages).filter(isSettingsPage)) {
   const entry = settingsPages[id]
+  if ('hidden' in entry && entry.hidden) continue
   const group = settingsGroups.get(entry.group) ?? []
   group.push({ ...entry, id })
   settingsGroups.set(entry.group, group)
