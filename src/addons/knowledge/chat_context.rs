@@ -142,9 +142,7 @@ pub(super) fn system_prompt_with_manifest_at(
     }
     if custom_prompt.is_none() && !social {
         if request.direct_chat {
-            prompt.push_str(
-                "\n사용자가 다른 언어로 쓰지 않는 한 한국어로 답하십시오. 일반 대화에서는 도구와 외부 작업을 실행하지 않습니다. 실제로 수행하지 않은 행동을 완료했다고 말하지 마십시오.",
-            );
+            prompt.push('\n');prompt.push_str(&crate::engine::chat::harness_prompts::effective(state,"chat.no_tools"));
         } else {
             prompt.push_str(
                 "\n당신은 Rust 엔진에서 동작하는 에이전트형 AI 작업 공간 DOMINION입니다. \
@@ -153,7 +151,7 @@ pub(super) fn system_prompt_with_manifest_at(
             if request.tools_enabled && request.tools_execution_enabled {
                 prompt.push_str(" 작업에 필요하면 사용 가능한 도구를 사용하십시오. 도구 결과를 정확히 보고하십시오.");
             } else {
-                prompt.push_str(" 이번 턴에는 도구가 비활성화되어 있습니다. 외부 작업을 수행했다고 말하지 마십시오.");
+                prompt.push('\n');prompt.push_str(&crate::engine::chat::harness_prompts::effective(state,"chat.no_tools"));
             }
             prompt.push_str(&format!("\n작업 공간 루트: {}",state.config.workspace.display()));
         }
