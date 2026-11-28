@@ -38,7 +38,7 @@ fn owner_identity(state:&AppState)->(String,Vec<Value>){
 
 /// The established private chat prefix does not change: persona then owner.
 pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec<Value>){
-    let mut text=if request.direct_chat { let mut value=crate::engine::chat::harness_prompts::effective(state,"identity.chat");value.push('\n');value.push_str(&crate::engine::chat::harness_prompts::effective(state,"chat.general"));value } else { crate::engine::chat::harness_prompts::effective(state,"identity.agent") };
+    let mut text=if request.direct_chat { let mut value=crate::engine::chat::harness_prompts::effective(state,"chat.lightweight");value.push('\n');value.push_str(&crate::engine::chat::harness_prompts::effective(state,"identity.chat"));value.push('\n');value.push_str(&crate::engine::chat::harness_prompts::effective(state,"chat.general"));value } else { crate::engine::chat::harness_prompts::effective(state,"identity.agent") };
     let (persona,mut items)=persona_identity(state,request);
     let (owner,owner_items)=owner_identity(state);
     text.push_str(&persona);
