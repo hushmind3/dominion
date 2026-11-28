@@ -87,8 +87,9 @@ mod tests{
     use super::*;
     #[test]
     fn artwork_uses_registry_sources_and_excludes_private_networks(){
-        let metadata=serde_json::json!({"items":[{"icon":null,"ownerImage":"https://cdn.publisher.example/icon.png","readme":"https://untrusted.example/x"}]});
+        let metadata=serde_json::json!({"items":[{"icon":"/api/v1/skill-icons/example","ownerImage":"https://cdn.publisher.example/icon.png","readme":"https://untrusted.example/x"}]});
         assert!(registry_artwork(&metadata,"https://cdn.publisher.example/icon.png"));
+        assert!(registry_artwork(&metadata,"https://clawhub.ai/api/v1/skill-icons/example"));
         assert!(!registry_artwork(&metadata,"https://untrusted.example/x"));
         for ip in ["127.0.0.1","10.0.0.1","169.254.169.254","100.64.0.1","::1","::ffff:127.0.0.1","fc00::1"]{assert!(!public_artwork_ip(ip.parse().unwrap()),"{ip}");}
         assert!(public_artwork_ip("1.1.1.1".parse().unwrap()));
@@ -109,7 +110,7 @@ mod tests{
 /// of publisher brands. DNS is pinned to public addresses for each redirect.
 fn registry_artwork(value:&Value,source:&str)->bool{
     match value{
-        Value::Object(fields)=>fields.iter().any(|(key,value)|matches!(key.as_str(),"icon"|"ownerImage")&&value.as_str()==Some(source)||registry_artwork(value,source)),
+        Value::Object(fields)=>fields.iter().any(|(key,value)|matches!(key.as_str(),"icon"|"ownerImage")&&value.as_str().is_some_and(|candidate|candidate==source||reqwest::Url::parse("https://clawhub.ai").ok().and_then(|base|base.join(candidate).ok()).is_some_and(|url|url.as_str()==source))||registry_artwork(value,source)),
         Value::Array(items)=>items.iter().any(|item|registry_artwork(item,source)),_=>false,
     }
 }
