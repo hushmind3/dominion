@@ -17,7 +17,7 @@ pub(crate) const SPECS:&[PromptSpec]=&[
     PromptSpec{id:"chat.lightweight_alt",category:"대화",title:"간단 호출의 시작",location:"chat_context.rs",default:"DOMINION. 사용자의 언어로 자연스럽고 간결하게 답하십시오.",required:&[]} ,
     PromptSpec{id:"chat.general",category:"대화",title:"일반 대화 기본",location:"chat_context.rs",default:"당신은 사용자의 일반 대화를 돕는 AI 어시스턴트입니다. 사용자의 언어로 대답하십시오.",required:&[]} ,
     PromptSpec{id:"chat.web_scope",category:"대화",title:"웹 검색 설명",location:"chat_context.rs",default:"이번 턴에는 공개 웹 검색(web_search)과 해당 웹페이지 읽기(http_fetch)만 허용됩니다. 검색 결과의 출처 URL을 명시하십시오. 파일·셸·계정·MCP·자동 실행 권한은 없습니다.",required:&[]} ,
-    PromptSpec{id:"chat.no_tools",category:"대화",title:"도구 비활성 안내",location:"chat_context.rs",default:"이번 턴에는 도구가 비활성화되어 있습니다. 외부 작업을 수행했다고 말하지 마십시오.",required:&[]} ,
+    PromptSpec{id:"chat.no_tools",category:"대화",title:"도구 비활성 안내",location:"chat_context.rs",default:"이번 턴에는 도구가 비활성화되어 있습니다. 일반 대화에서는 도구와 외부 작업을 실행하지 않습니다. 외부 작업을 수행했다고 말하지 마십시오.",required:&[]} ,
     PromptSpec{id:"chat.reasoning_ko",category:"대화",title:"한국어 추론 지침",location:"chat_context.rs",default:"다른 언어 요청이 없으면 답변과 필요한 추론을 한국어로 작성하십시오.",required:&[]} ,
     PromptSpec{id:"chat.lightweight_ko",category:"대화",title:"간단 한국어 추론",location:"chat_context.rs",default:"추론과 최종 답변은 다른 언어 요청이 없으면 한국어로 작성하십시오.",required:&[]} ,
     PromptSpec{id:"agent.general",category:"에이전트",title:"작업 에이전트 역할",location:"chat_context.rs",default:"당신은 Rust 엔진에서 동작하는 에이전트형 AI 작업 공간 DOMINION입니다. 사용자가 다른 언어로 쓰지 않는 한 한국어로 답하십시오.",required:&[]} ,
