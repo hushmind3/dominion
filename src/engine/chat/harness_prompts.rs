@@ -118,17 +118,17 @@ mod tests {
             crate::db::Store::open(&config.db_path()).unwrap(),
             crate::vault::Vault::open(&config.key_path()));
         let request=crate::engine::chat::TurnRequest::from_value(&json!({
-            "input":"야","conversationMode":"chat","toolsEnabled":false,"toolsExecutionEnabled":false
+            "input":"야","directChat":true,"toolsEnabled":false,"toolsExecutionEnabled":false
         })).unwrap();
-        let before=crate::engine::chat::context::lightweight_chat_prompt(&state,&request);
-        assert!(before.prompt.contains("자연스럽고 정확하게 답하십시오."));
+        let before=crate::engine::chat::context::identity_prefix(&state,&request).0;
+        assert!(before.contains("자연스럽고 정확하게 답하십시오."));
         state.store.put("harness_prompt_override",&json!({
             "id":"chat.lightweight","text":"서브2에서 수정한 짧은 대화 지침.",
             "revision":"one"
         })).unwrap();
-        let after=crate::engine::chat::context::lightweight_chat_prompt(&state,&request);
-        assert!(after.prompt.starts_with("서브2에서 수정한 짧은 대화 지침."));
-        assert!(!after.prompt.contains("자연스럽고 정확하게 답하십시오."));
+        let after=crate::engine::chat::context::identity_prefix(&state,&request).0;
+        assert!(after.starts_with("서브2에서 수정한 짧은 대화 지침."));
+        assert!(!after.contains("자연스럽고 정확하게 답하십시오."));
         assert_eq!(revision(&state,"chat.lightweight"),"one");
         state.store.remove("harness_prompt_override","chat.lightweight");
         assert_eq!(effective(&state,"chat.lightweight"),spec("chat.lightweight").unwrap().default);

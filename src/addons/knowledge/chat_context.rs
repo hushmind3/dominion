@@ -17,10 +17,10 @@ fn append_customized(prompt:&mut String,state:&AppState,id:&str){
     }
 }
 
-fn conversation_base(state:&AppState,request:&TurnRequest)->String{
+fn conversation_base(state:&AppState)->String{
     let mut text=crate::engine::chat::harness_prompts::effective(state,"chat.lightweight");
-    append_customized(&mut text,state,"identity.chat");
-    append_customized(&mut text,state,"chat.general");
+    text.push('\n');text.push_str(&crate::engine::chat::harness_prompts::effective(state,"identity.chat"));
+    text.push('\n');text.push_str(&crate::engine::chat::harness_prompts::effective(state,"chat.general"));
     text
 }
 
@@ -59,7 +59,7 @@ fn owner_identity(state:&AppState)->(String,Vec<Value>){
 /// The established private chat prefix does not change: persona then owner.
 pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec<Value>){
     let mut text=if conversational(request){
-        conversation_base(state,request)
+        conversation_base(state)
     }else{
         crate::engine::chat::harness_prompts::effective(state,"identity.agent")
     };
@@ -159,7 +159,7 @@ pub(super) fn system_prompt_with_manifest_at(
     }
     if custom_prompt.is_none() && !social {
         if request.direct_chat {
-            append_customized(&mut prompt,state,"chat.no_tools");
+            prompt.push('\n');prompt.push_str(&crate::engine::chat::harness_prompts::effective(state,"chat.no_tools"));
         } else {
             if !conversational(request){append_customized(&mut prompt,state,"agent.general");}
             if request.tools_enabled && request.tools_execution_enabled {append_customized(&mut prompt,state,"agent.tools");}
