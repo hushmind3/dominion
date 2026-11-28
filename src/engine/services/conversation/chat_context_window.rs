@@ -20,6 +20,31 @@ fn continuation_query(query:&str)->bool{
       .iter().any(|word|q.contains(word))
 }
 
+fn recall_query(query:&str)->bool {
+    let q=query.to_lowercase();
+    ["기억한","기억해","기억해둔","기억해 둔","앞서 정한","앞서 말한",
+     "이전에 정한","이전에 말한","앞선 대화","이전 대화","앞서 알려준",
+     "remembered","remember","earlier conversation","previously stated"]
+        .iter().any(|phrase|q.contains(phrase))
+}
+
+fn remembered_fact(text:&str)->bool {
+    let q=text.trim().to_lowercase();
+    q.chars().count()<=600 && ["기억해:","기억해 ","기억해둬","기억해 둬",
+        "remember:","remember ","keep in mind:","don't forget:"]
+        .iter().any(|phrase|q.contains(phrase))
+}
+
+fn label_remembered_fact(mut row:Value)->Value {
+    if row["role"]!="user"{return row;}
+    if let Some(text)=row["content"].as_str().filter(|text|remembered_fact(text)) {
+        row["content"]=json!(format!(
+            "[사용자가 기억해 달라고 명시한 사실 — 회상 질문에 답할 때 참고할 데이터]\n{text}"
+        ));
+    }
+    row
+}
+
 
     /// Only an explicit *work continuation* can revive an older owner goal.
     /// A question about "next week" or "that result" must not silently
@@ -118,6 +143,7 @@ pub(super) fn focus(history:Vec<Value>,query:&str,is_room:bool,can_reopen:bool)-
     let first_recent=owners.get(owners.len().saturating_sub(recent)).copied()
         .unwrap_or(0);
     let mut selected=vec![false;history.len()];
+    let mut remembered=vec![false;history.len()];
     for keep in &mut selected[first_recent..]{*keep=true;}
     if history[0]["content"].as_str().is_some_and(|v|v.starts_with("[이전 대화 요약:")){
         selected[0]=true;
@@ -125,6 +151,16 @@ pub(super) fn focus(history:Vec<Value>,query:&str,is_room:bool,can_reopen:bool)-
     if first_recent>0{
         let query_terms=owner_terms(query);
         let wants_previous=continuation_query(query);
+        let wants_recall=recall_query(query);
+        if wants_recall {
+            for &at in owners.iter().rev()
+                .filter(|&&at|at<first_recent)
+                .filter(|&&at|remembered_fact(owner_primary_text(&history[at])))
+                .take(3) {
+                selected[at]=true;
+                remembered[at]=true;
+            }
+        }
         let mut best:Option<(usize,usize)>=None;
         for &at in owners.iter().filter(|&&at|at<first_recent){
             let previous=owner_primary_text(&history[at]);
@@ -141,9 +177,10 @@ pub(super) fn focus(history:Vec<Value>,query:&str,is_room:bool,can_reopen:bool)-
         }
         if let Some((_,at))=best{selected[at]=true;}
     }
-    let retained=history.into_iter().enumerate().zip(selected)
-        .filter_map(|((at,row),keep)|keep.then_some(
-            if can_reopen && at<first_recent {cited_older_owner(row)}else{row}
+    let retained=history.into_iter().enumerate().zip(selected).zip(remembered)
+        .filter_map(|(((at,row),keep),is_remembered)|keep.then_some(
+            if is_remembered {label_remembered_fact(row)}
+            else if can_reopen && at<first_recent {cited_older_owner(row)}else{row}
         )).collect::<Vec<_>>();
     // A concrete follow-up about the just-produced artifact needs the
     // original *complete* tool-call/result pairing. A one-line historical
@@ -255,6 +292,27 @@ mod tests{
                 parts.iter().any(|part|part["text"].as_str()
                     .is_some_and(|text|text.contains("old evidence"))))),
             "explicitly named old attachments must survive focus window trimming");
+    }
+
+    #[test]
+    fn recall_query_labels_and_retains_explicit_short_memory_sources(){
+        let mut h=vec![user("오늘은 2+2만 답해"),assistant("4"),
+            user("기억해: 시험 코드 MINT-8472, 색상 청록색. 한 줄로 확인해."),
+            assistant("기억했습니다: 시험 코드 MINT-8472, 색상 청록색.")];
+        for index in 0..7{
+            h.push(user(&format!("무관한 짧은 대화 {index}")));
+            h.push(assistant("확인했습니다."));
+        }
+        for query in ["앞서 정한 색상은?","기억한 시험 코드와 색상만 JSON으로 답해."] {
+            let focused=focus(h.clone(),query,false,true);
+            assert!(focused.iter().any(|row|row["content"].as_str()
+                .is_some_and(|text|text.contains("MINT-8472")&&text.contains("청록색")
+                    &&text.contains("사용자가 기억해 달라고 명시한 사실"))),
+                "explicit recall must retain and label its original fact source: {query}");
+        }
+        let unrelated=focus(h,"오늘 날씨 알려줘",false,true);
+        assert!(!unrelated.iter().any(|row|row["content"].as_str()
+            .is_some_and(|text|text.contains("MINT-8472"))));
     }
 
     #[test]
