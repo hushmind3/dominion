@@ -39,7 +39,7 @@ pub(super) async fn action_plan(state: &AppState, request: &TurnRequest, text: &
         state,
         request.provider_id.as_deref().unwrap_or(""),
         request.model.as_deref().unwrap_or(""),
-        "You are the planner of a computer-use agent. Produce a short ordered plan (max 5 steps) in Korean. Include how to verify the result. Do not claim work was done.",
+        &crate::conversation::chat::harness_prompts::effective(state,"decision.planner"),
         &format!("요청: {text}"),
         request.session_id.as_deref(),
     )
