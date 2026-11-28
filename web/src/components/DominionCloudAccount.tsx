@@ -1,3 +1,4 @@
+import {CloudAppConnections} from './CloudAppConnections'
 import {useCallback,useEffect,useRef,useState} from 'react'
 import {CloudEmailLogin} from './CloudEmailLogin'
 import {decodeNativeGoogleFlight,encodeNativeGoogleFlight} from '../utils/cloudAuthFlight'
@@ -445,6 +446,7 @@ export function DominionCloudAccount({onProviderAdded,initialTab='cloud',initial
    {!billing?.checkout_enabled&&<p className="mt-2 text-[12px]">운영자 결제 키와 요금 설정 후 테스트 결제를 시작할 수 있습니다.</p>}
   </div>}
   {registered?.source==='cloud'&&<button type="button" onClick={goToRegisteredChat} className="mt-2 rounded-lg bg-brand px-3 py-2 text-[12px] font-semibold text-white">등록한 모델로 채팅하기</button>}
+  {token&&<CloudAppConnections cloudUrl={cloudUrl} token={token}/>}
   {token&&<button type="button" className="mt-3 rounded-lg border px-3 py-2 text-[12px]" onClick={logout}>로그아웃</button>}
   </>}
   {managementTab==='providers'&&<div className="mt-4 border-t border-divider pt-4">

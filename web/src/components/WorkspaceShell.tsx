@@ -1,11 +1,12 @@
+import {FeatureSearchButton} from './FeatureSearch'
 import {useEffect, useState} from 'react'
-import {ArrowLeft, ChevronDown, Menu, MessageSquare, Search, UsersRound, X} from 'lucide-react'
+import {ArrowLeft, ChevronDown, Menu, MessageSquare, Plug, Search, UsersRound, X} from 'lucide-react'
 import {OwnerProfileEditor} from './OwnerProfile'
 import {Button, TextInput} from './Primitives'
 import {t, useLocale} from '../i18n'
 import {settingsGroups, settingsPages, isSettingsPage, type SettingsPage} from '../workspacePages'
 
-const primaryPages: SettingsPage[] = ['home', 'models', 'memory', 'settings']
+const primaryPages: SettingsPage[] = ['home', 'models', 'extensions', 'memory', 'settings']
 type SidebarProps = {
   page: SettingsPage
   navOpen: boolean
@@ -36,7 +37,7 @@ export function WorkspaceSidebar({page, navOpen, online, connecting, running, pe
   }
   const matches = [...primaryPages, ...secondaryPages].filter(visible)
   return <aside aria-label={t('shell.mainNav')} className="workspace-sidebar" data-collapsed={!navOpen}>
-    <div className="workspace-sidebar-brand"><span className="workspace-logo">D</span><strong>dominion</strong>
+    <div className="workspace-sidebar-brand"><span className="workspace-logo">D</span><strong>dominion</strong>{navOpen&&<FeatureSearchButton/>}
       <Button variant="ghost" size="icon" aria-label={navOpen ? t('shell.hideMenu') : t('shell.showMenu')} aria-expanded={navOpen} onClick={onToggleNav}><Menu size={17}/></Button>
     </div>
     {navOpen && <label className="workspace-nav-search"><Search size={15}/><TextInput value={query} onChange={event => setQuery(event.target.value)} aria-label={t('workspace.search')} placeholder={t('workspace.search')}/></label>}
@@ -81,8 +82,8 @@ export function SettingsHeader({page, onNavigate, online, connecting, onClose}: 
 /** One mode switch can be placed in each conversation navigation. */
 export function ConversationSwitch({mode, onChange}: {mode: 'chat' | 'rooms'; onChange: (mode: 'chat' | 'rooms') => void}) {
   useLocale()
-  return <nav className="conversation-switch" aria-label={t('shell.conversationSwitch')}>
+  return <><nav className="conversation-switch" aria-label={t('shell.conversationSwitch')}>
     <Button variant="ghost" aria-current={mode === 'chat' ? 'page' : undefined} onClick={() => onChange('chat')}><MessageSquare size={16}/><span>{t('nav.chat')}</span></Button>
     <Button variant="ghost" aria-current={mode === 'rooms' ? 'page' : undefined} onClick={() => onChange('rooms')}><UsersRound size={16}/><span>{t('rooms.listTitle')}</span></Button>
-  </nav>
+  </nav><Button variant="ghost" onClick={()=>{window.location.hash='#/extensions'}}><Plug size={16}/><span>{t('nav.extensions')}</span></Button><FeatureSearchButton/></>
 }

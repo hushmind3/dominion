@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {chromium} from 'playwright'
 import {createServer} from 'node:http'
 import {spawn} from 'node:child_process'
-import {mkdtemp,rm,stat,writeFile} from 'node:fs/promises'
+import {mkdtemp,mkdir,rm,stat,writeFile} from 'node:fs/promises'
 import {createHash} from 'node:crypto'
 import {tmpdir} from 'node:os'
 import {join,resolve} from 'node:path'
@@ -57,7 +57,7 @@ test('desktop app: actual model selection, persistent chat, settings and room na
  const port=await listen(reservation)
  await new Promise(ok=>reservation.close(ok))
  const base='http://127.0.0.1:'+port
- const child=spawn(resolve(root,'target/debug/dominion-rust'),[],{env:{...process.env,DOMINION_PORT:String(port),DOMINION_DATA:join(directory,'data'),DOMINION_WEB:resolve(root,'web/dist'),DOMINION_WORKSPACE:directory},stdio:['ignore','ignore','pipe']})
+ const child=spawn(process.env.DOMINION_TEST_BIN||resolve(root,'target/debug/dominion-rust'),[],{env:{...process.env,DOMINION_PORT:String(port),DOMINION_DATA:join(directory,'data'),DOMINION_WEB:resolve(root,'web/dist'),DOMINION_WORKSPACE:directory},stdio:['ignore','ignore','pipe']})
  let stderr=''
  child.stderr.on('data',b=>stderr+=String(b))
  let browser
@@ -100,6 +100,47 @@ test('desktop app: actual model selection, persistent chat, settings and room na
   })
   assert.ok(messages.some(row=>row.role==='user'&&row.content==='Browser fixture question'))
   assert.ok(calls.some(row=>row.model==='fixture-alt'))
+  // Desktop feature discovery reaches existing tools without executing them.
+  await page.keyboard.press('Control+k')
+  const featureSearch=page.getByRole('dialog',{name:'기능 찾기',exact:true})
+  await featureSearch.getByRole('combobox').fill('terminal')
+  assert.equal(await featureSearch.getByRole('option').count(),1)
+  await featureSearch.getByRole('combobox').press('Enter')
+  await page.waitForURL(/#\/capabilities/)
+  await page.keyboard.press('Control+k')
+  await page.getByRole('dialog',{name:'기능 찾기',exact:true}).waitFor({state:'visible'})
+  await page.keyboard.press('Escape')
+  await page.locator('.workspace-settings').waitFor({state:'visible'})
+  await page.locator('.workspace-back').click()
+  // An attachment stays with its original conversation and is restored on return.
+  const textAttachment={name:'desktop-context.rs',mimeType:'text/plain',buffer:Buffer.from('pub fn integrated_attachment()->u8 { 42 }')}
+  await page.locator('.page-chat input[type=file]').setInputFiles(textAttachment)
+  await page.getByTitle('desktop-context.rs',{exact:true}).waitFor({state:'visible'})
+  const other=await api('/api/sessions',{title:'Another conversation',providerId:p.id,model:'fixture-alt',chatMode:'chat'})
+  await page.evaluate(id=>{location.hash='#/chat?session='+encodeURIComponent(id)},other.id)
+  await page.getByTitle('desktop-context.rs',{exact:true}).waitFor({state:'detached'})
+  await page.evaluate(id=>{location.hash='#/chat?session='+encodeURIComponent(id)},session.id)
+  await page.getByTitle('desktop-context.rs',{exact:true}).waitFor({state:'visible'})
+  // A rejected upload preserves the file and draft, including new-session adoption.
+  await page.goto(base+'/#/chat?provider='+encodeURIComponent(p.id)+'&model=fixture-alt')
+  await page.waitForFunction(()=>document.querySelector('.page-chat .chat-ai-trigger')?.textContent?.includes('fixture-alt'))
+  await page.locator('.page-chat input[type=file]').setInputFiles(textAttachment)
+  const rejectUpload=route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Upload temporarily unavailable'})})
+  await page.route('**/api/attachments',rejectUpload)
+  const composer=page.locator('.page-chat textarea.conversation-composer-input')
+  await composer.fill('Read integrated source attachment')
+  await page.locator('.page-chat button[type=submit]').last().click()
+  await page.getByRole('alert').filter({hasText:'Upload temporarily unavailable'}).waitFor({state:'visible'})
+  await page.getByTitle('desktop-context.rs',{exact:true}).waitFor({state:'visible'})
+  assert.equal(await composer.inputValue(),'Read integrated source attachment')
+  await page.unroute('**/api/attachments',rejectUpload)
+  const sentAttachment=page.waitForRequest(r=>new URL(r.url()).pathname==='/api/chat'&&r.method()==='POST')
+  await page.locator('.page-chat button[type=submit]').last().click()
+  const attachmentWire=(await sentAttachment).postDataJSON()
+  assert.equal(attachmentWire.attachmentIds.length,1)
+  await until(()=>calls.some(row=>JSON.stringify(row.messages||[]).includes('integrated_attachment')))
+  await page.getByTitle('desktop-context.rs',{exact:true}).waitFor({state:'detached'})
+  await page.locator('.page-chat [data-message-role="assistant"]').filter({hasText:'Browser integration reply'}).first().waitFor({state:'visible'})
   await page.reload()
   await page.locator('.page-chat [data-message-role="assistant"]').filter({hasText:'Browser integration reply'}).first().waitFor({state:'visible'})
   await page.locator('.page-chat .chat-history-item').first().waitFor({state:'visible'})
@@ -173,7 +214,48 @@ test('desktop app: actual model selection, persistent chat, settings and room na
   await until(async()=> (await api('/api/sdk/runs')).some(row=>row.model==='fixture-alt'&&row.status==='completed'&&row.verified===true))
   assert.ok(calls.some(row=>row.model==='fixture-alt'&&JSON.stringify(row.messages||[]).includes('browser-sdk.md 파일을 만들어줘')))
   // Existing Extensions screen now owns the external application lifecycle.
+  // Categories, package contents and cursor pages come from the registry contract.
+  // Registration still passes through the real Rust persistence and disabled default.
+  const bundle={name:'@fixture/suite',displayName:'Fixture Suite',summary:'Tools, knowledge and messaging together',ownerHandle:'fixture',categories:['future-category'],latestVersion:'1.2.3',featured:true,featuredRank:0}
+  await page.route('**/api/plugins/catalog?*',route=>{
+   const params=new URL(route.request().url()).searchParams
+   const view=params.get('view')
+   if(view==='overview')return route.fulfill({json:{categories:[{slug:'future-category',label:'Future category',description:'New registry category',icon:'blocks'},{slug:'integrations',label:'Integrations',description:'Connections',icon:'plug'}],items:[bundle]}})
+   if(view==='detail')return route.fulfill({json:{version:{version:'1.2.3',pluginManifestSummary:{contracts:{tools:['inspect_document','search_document']},bundledSkills:[{name:'Research workflow',description:'Work with the document tools'}],channels:['fixture-messages']}},readme:'# Fixture suite\nMultiple features in one package.'}})
+   if(view==='search')return route.fulfill({json:{items:[]}})
+   return route.fulfill({json:params.has('cursor')?{items:[{...bundle,name:'@fixture/last',displayName:'Last cursor package'}]}:{items:[{...bundle,name:'@fixture/page-only',displayName:'Category page package'}],nextCursor:'opaque-cursor'}})
+  })
+  await page.route('**/api/mcp/catalog*',route=>route.fulfill({json:new URL(route.request().url()).searchParams.has('q')?[]:[{name:'test/desktop-catalog',description:'Search and inspect research documents',url:'https://example.invalid/mcp'}]}))
   await page.evaluate(()=>{location.hash='#/extensions'})
+  const catalog=page.getByRole('region',{name:'플러그인 둘러보기',exact:true})
+  await catalog.getByRole('button',{name:'Future category',exact:true}).waitFor({state:'visible'})
+  await catalog.getByRole('button',{name:'상세 보기: Fixture Suite',exact:true}).first().click()
+  const bundleDetail=page.getByRole('dialog',{name:'Fixture Suite',exact:true})
+  await bundleDetail.getByText('이 플러그인에 포함된 기능',{exact:true}).waitFor({state:'visible'})
+  for(const name of ['inspect_document','search_document','Research workflow','fixture-messages'])await bundleDetail.getByText(name,{exact:true}).waitFor({state:'visible'})
+  assert.equal(await bundleDetail.getByRole('button',{name:'추가',exact:true}).count(),0,'unsupported runtime cannot claim a working install')
+  await page.keyboard.press('Escape')
+  await catalog.getByRole('button',{name:'Future category',exact:true}).click()
+  await catalog.getByRole('button',{name:'상세 보기: Category page package',exact:true}).waitFor({state:'visible'})
+  await catalog.getByRole('button',{name:'더 보기',exact:true}).click()
+  await catalog.getByRole('button',{name:'상세 보기: Last cursor package',exact:true}).waitFor({state:'visible'})
+  await catalog.getByRole('button',{name:'전체',exact:true}).click()
+  await catalog.getByRole('button',{name:'상세 보기: test/desktop-catalog',exact:true}).click()
+  const pluginDetails=page.getByRole('dialog',{name:'test/desktop-catalog',exact:true})
+  await pluginDetails.getByRole('button',{name:'추가',exact:true}).click()
+  await pluginDetails.getByText('추가했어요. 연결 설정에서 확인하고 활성화하세요.',{exact:true}).waitFor({state:'visible'})
+  const registered=(await api('/api/mcp')).find(row=>row.name==='test/desktop-catalog')
+  assert.ok(registered)
+  assert.equal(registered.enabled,false,'catalog registration must not execute a third-party process')
+  await pluginDetails.getByRole('button',{name:'상세 닫기',exact:true}).click()
+  await catalog.getByLabel('플러그인 검색',{exact:true}).fill('___no_plugin___')
+  await catalog.getByText('일치하는 플러그인이 없어요. 검색어나 분야를 바꿔 보세요.',{exact:true}).waitFor({state:'visible'})
+  await catalog.getByLabel('플러그인 검색',{exact:true}).fill('')
+  await catalog.getByRole('button',{name:'상세 보기: Fixture Suite',exact:true}).first().waitFor({state:'visible'})
+  if(process.env.DOMINION_UX_SCREENSHOTS){
+   await mkdir(process.env.DOMINION_UX_SCREENSHOTS,{recursive:true})
+   await page.screenshot({path:join(process.env.DOMINION_UX_SCREENSHOTS,'plugin-catalog-fixture.png')})
+  }
   await page.getByRole('button',{name:'외부 앱 관리',exact:true}).click()
   const extensions=page.getByRole('region',{name:'외부 SDK 앱'})
   await extensions.getByRole('button',{name:'앱 등록',exact:true}).click()
@@ -181,6 +263,11 @@ test('desktop app: actual model selection, persistent chat, settings and room na
   await extensions.getByLabel('앱 이름',{exact:true}).fill('Browser external assistant')
   await extensions.getByRole('button',{name:'등록 저장',exact:true}).click()
   await extensions.getByText('Browser external assistant',{exact:true}).waitFor({state:'visible'})
+  await extensions.getByLabel('등록 앱 검색',{exact:true}).fill('no_such_app')
+  await extensions.getByRole('status').filter({hasText:'일치하는 앱이 없습니다'}).waitFor({state:'visible'})
+  await extensions.getByLabel('등록 앱 검색',{exact:true}).fill('browser.assistant')
+  await extensions.getByText('Browser external assistant',{exact:true}).waitFor({state:'visible'})
+
   const executable=join(directory,'managed-fixture')
   const binary=Buffer.from('#!/bin/sh\n[ "$DOMINION_EXTENSION_ID" = "browser.assistant" ] || exit 11\n[ -n "$DOMINION_EXTENSION_TOKEN" ] || exit 12\n[ -z "$DOMINION_ADMIN_TOKEN" ] || exit 13\nexec /bin/sleep 60\n')
   const digest=createHash('sha256').update(binary).digest('hex')

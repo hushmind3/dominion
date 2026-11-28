@@ -361,15 +361,8 @@ test('stream batching never drops final or cancelled conversation output',()=>{
   assert.match(chat,/if\(controller\)flushStreamBuffer\(\);[\s\S]*?controller\?\.abort\(\)/)
 })
 
-test('pending private image previews cannot follow a different session',()=>{
-  const chat=source('src/pages/Chat.tsx')
-  assert.match(chat,/const attachmentScope=useRef\(current\)/)
-  assert.match(chat,/useLayoutEffect\(\(\)=>\{\s*if\(attachmentScope\.current===current\)return/)
-  assert.match(chat,/previous===undefined&&activeTurnSession\.current===current/)
-  assert.match(chat,/discardPendingImages\(\)/)
-  assert.match(chat,/const discardPendingImages=\(\)=>setPendingImages\(previous=>\{/)
-  assert.match(chat,/previous\.forEach\(item=>URL\.revokeObjectURL\(item\.preview\)\)/)
-})
+// Attachment isolation/retry is exercised against the real backend in browser-tests/product.test.mjs.
+
 
 test('transcript reconciliation uses authoritative persisted owner IDs, not repeated message text',()=>{
  const chat=source('src/pages/Chat.tsx')
@@ -413,18 +406,8 @@ test('failed SSE never blindly resends an already persisted owner instruction',(
  assert.match(chat,/실행 종료 여부를 확인하지 못했습니다/)
 })
 
-test('pending image previews survive rejected chat attempts and clear only after durable save',()=>{
- const chat=source('src/pages/Chat.tsx')
- assert.match(chat,/let releasedSentImages=false/)
- assert.match(chat,/const releaseSentImages=\(\)=>\{/)
- assert.match(chat,/if\(releasedSentImages\|\|!pendingImages\.length\)return/)
- assert.match(chat,/const sentKeys=new Set\(pendingImages\.map\(item=>item\.key\)\)/)
- assert.match(chat,/setPendingImages\(previous=>previous\.filter\(item=>!sentKeys\.has\(item\.key\)\)\)/)
- assert.match(chat,/if\(event\.type==='owner_saved'\)\{\s*ownerSaved=true;[\s\S]*?releaseSentImages\(\)/)
- assert.match(chat,/if\(event\.type==='assistant_saved'\)\{[\s\S]*?releaseSentImages\(\)/)
- assert.match(chat,/if\(persisted\)\{[\s\S]*?releaseSentImages\(\)/)
- assert.doesNotMatch(chat,/attachmentIds=uploaded\.map\(item=>item\.id\);\s*pendingImages\.forEach/)
-})
+// Attachment isolation/retry is exercised against the real backend in browser-tests/product.test.mjs.
+
 
 test('streaming and persisted assistant replies share the same width and message selectors',()=>{
  const chat=source('src/pages/Chat.tsx')

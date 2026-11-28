@@ -29,6 +29,10 @@ impl ModelPort for Model<'_> {
                     messages.push(json!({"role":"user","content":format!("Verification rejected: {reason}")}));
                 }
             }
+            if let Some(guidance)=crate::algorithms::failure_guidance::latest(&snapshot.receipts) {
+                messages.push(json!({"role":"user","content":
+                    json!({"runtimeFailureGuidance":guidance.for_catalog(&snapshot.native.advertised_tools)}).to_string()}));
+            }
             let observations=snapshot.receipts.iter().map(|r|serde_json::to_value(r).map_err(|e|e.to_string())).collect::<Result<Vec<_>,_>>()?;
             let reply=self.0.model(messages,snapshot.native.advertised_tools.clone(),observations).await?;
             let charged_tokens=reply.input_tokens.unwrap_or(0).saturating_add(reply.output_tokens.unwrap_or(0));

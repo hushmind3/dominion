@@ -59,13 +59,8 @@ test('health indicators never call disabled or broken channels connected',()=>{
  assert.equal(channelStatusTone({...base,status:'starting'}),'pending')
 })
 
-test('MCP discovery, native tools and plugin catalogs remain separated',()=>{
- assert.doesNotMatch(extensions,/pluginRemote|setPluginRemote/)
- assert.match(extensions,/if \(tab === "installed"\) void discover\(true\)/)
- assert.match(extensions,/if \(tab === "market"\) void loadCatalog\(\)/)
- assert.match(capabilities,/embedded\?\[\]:catalog\.value/)
- assert.match(extensions,/\{!embedded && <Headline/)
-})
+// Plugin discovery, dynamic category filtering and grouped contents are verified
+// against the actual backend in browser-tests/product.test.mjs.
 
 test('opening GitHub device URL does not submit CLI confirmation prematurely',()=>{
  const link=accounts.match(/<a href=\{githubCli.url[\s\S]*?<\/a>/)?.[0]

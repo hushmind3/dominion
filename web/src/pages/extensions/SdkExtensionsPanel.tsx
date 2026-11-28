@@ -13,6 +13,8 @@ export function SdkExtensionsPanel(){
  const apps=useRemote<App[]>(endpoint,[])
  const [draft,setDraft]=useState<Manifest>(empty),[open,setOpen]=useState(false)
  const [busy,setBusy]=useState(false),[error,setError]=useState('')
+ const [filter,setFilter]=useState<'all'|'enabled'|'disabled'>('all'),[query,setQuery]=useState('')
+ const visibleApps=apps.value.filter(app=>(filter==='all'||app.enabled===(filter==='enabled'))&&[app.id,app.manifest.name,app.manifest.description||''].join(' ').toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
  const [selectedRuns,setSelectedRuns]=useState<Record<string,string>>({})
  const inFlight=useRef(false)
  const change=async(fn:()=>Promise<unknown>)=>{
@@ -33,6 +35,11 @@ export function SdkExtensionsPanel(){
   <Subheading title={en?'External SDK apps':'외부 SDK 앱'} extra={<Action onClick={()=>setOpen(v=>!v)} disabled={busy}>{en?'Register app':'앱 등록'}</Action>}/>
   <p className="mb-3 text-xs leading-5 text-muted">{en?'Register trusted external applications that use the Dominion SDK. Registration never downloads, launches or grants access to code. Disabling blocks new managed requests; existing work stays recoverable.':'별도로 설치한 외부 프로그램을 SDK에 연결합니다. 등록만으로 코드를 다운로드하거나 실행하지 않습니다. 비활성화하면 새 SDK 작업 요청을 차단하며 기존 기록은 유지합니다.'}</p>
   {!apps.loading&&!apps.error&&<div className="mb-3 flex flex-wrap gap-2 text-xs"><StateTag online={apps.value.some(app=>app.enabled)}>{en?'Enabled':'활성 앱'} {apps.value.filter(app=>app.enabled).length}</StateTag><StateTag>{en?'Registered':'등록 앱'} {apps.value.length}</StateTag></div>}
+  <div className="mb-3 flex flex-wrap items-center gap-2">
+   <TextInput aria-label={en?'Search registered apps':'등록 앱 검색'} placeholder={en?'Name, ID or capability':'이름, ID, 기능으로 검색'} value={query} onChange={e=>setQuery(e.target.value)} className="min-w-0 flex-1"/>
+   <SelectInput aria-label={en?'App status':'앱 상태'} value={filter} onChange={e=>setFilter(e.target.value as typeof filter)}><option value="all">{en?'All apps':'전체 앱'}</option><option value="enabled">{en?'Enabled':'활성 앱'}</option><option value="disabled">{en?'Disabled':'비활성 앱'}</option></SelectInput>
+  </div>
+  {!apps.loading&&!apps.error&&apps.value.length>0&&!visibleApps.length&&<p role="status" className="mb-3 text-xs text-muted">{en?'No matching apps. Change the search or filter.':'일치하는 앱이 없습니다. 검색어나 상태를 바꿔보세요.'}</p>}
   <Notice message={error||apps.error} onRetry={apps.error?()=>void apps.reload():undefined}/>
   {open&&<Panel className="mb-3 grid gap-3 p-4">
    <FormField label={en?'App ID':'앱 ID'} hint="example.assistant"><TextInput aria-label={en?'App ID':'앱 ID'} value={draft.id} onChange={e=>setDraft({...draft,id:e.target.value})} disabled={busy}/></FormField>
@@ -42,7 +49,7 @@ export function SdkExtensionsPanel(){
    <div className="flex gap-2"><Action disabled={busy||!draft.id||!draft.name||!draft.version} onClick={()=>void save()}>{en?'Save registration':'등록 저장'}</Action><Button variant="ghost" onClick={()=>setOpen(false)} disabled={busy}>{en?'Cancel':'취소'}</Button></div>
   </Panel>}
   {apps.loading?<p role="status" className="text-xs text-muted">{en?'Loading…':'불러오는 중…'}</p>:!apps.error&&!apps.value.length?<p className="text-xs text-muted">{en?'No registered apps.':'등록된 외부 SDK 앱이 없습니다.'}</p>:null}
-  <div className="grid gap-2">{apps.value.map(app=><Panel key={app.id} className="flex flex-wrap items-center gap-3 p-4">
+  <div className="grid gap-2">{visibleApps.map(app=><Panel key={app.id} className="flex flex-wrap items-center gap-3 p-4">
     <div className="min-w-0 flex-1"><strong>{app.manifest.name}</strong><p className="break-all text-xs text-muted">{app.id} · {app.manifest.version}</p><p className="text-xs text-muted">{app.manifest.description}</p><p className="text-xs">{app.enabled?(en?'Enabled for new SDK requests':'SDK 요청 허용'):(en?'Disabled':'비활성')}</p></div>
     <Button disabled={busy||Boolean(apps.error)} onClick={()=>void change(()=>post(endpoint+'/'+encodeURIComponent(app.id)+'/state',{enabled:!app.enabled}))}>{app.enabled?(en?'Disable':'비활성화'):(en?'Enable':'활성화')}</Button>
     <Button variant="ghost" disabled={busy||app.enabled||Boolean(apps.error)} onClick={()=>remove(app)}>{en?'Unregister':'등록 해제'}</Button>

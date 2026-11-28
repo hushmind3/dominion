@@ -213,3 +213,10 @@ workflow dispatch and operator-controlled secrets. Production hardening should
 include Turnstile/WAF abuse controls, sender reputation monitoring and a
 live end-to-end verification test. The 2026 Cloudflare send binding reference:
 https://developers.cloudflare.com/email-service/api/send-emails/workers-api/
+
+## External apps (DOMINION Assist / Pickle)
+Use the same Cloud account with separate, revocable credentials. An app generates a random dapp_ bearer and sends only its SHA-256 base64url hash to POST /v1/apps/start with app_name. Display the returned pairing id. The user signs in to DOMINION Cloud, previews and approves that code in External apps. The app polls GET /v1/apps/status with its own token; approval grants seven days of free model inference, sharing the account quota. No billing, paid inference, owner administration, Google credentials, or local engine data are granted. Revoke from the owner UI or POST /v1/apps/disconnect with the app token. Apply the additive cloud/migrations/0001_app_sessions.sql before deploying. Native Google OAuth and email sending still require operator-provisioned settings. Do not copy the owner's bearer or provider API key into external apps.
+
+The pairing response also contains verification_uri: open this URL in the system browser for direct Google approval without running DOMINION. The Google web OAuth application's Authorized JavaScript origins must include the Worker HTTPS origin. The signed Google ID token nonce must match the pairing code. If Google rejects this origin, use the existing desktop approval fallback until the operator registers it. No owner bearer session is issued by this page.
+
+PC and mobile use the same Google sub account key. App sessions can read shared subscription, credit balance and day/month quota from GET /v1/billing; no checkout or identity mutation is granted. Paid inference is intentionally not enabled for external-app credentials yet. Local chat history, memory and files are not automatically synced by the account gateway.

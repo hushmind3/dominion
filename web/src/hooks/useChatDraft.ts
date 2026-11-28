@@ -1,5 +1,7 @@
 import {useLayoutEffect,useRef,useState,type Dispatch,type SetStateAction} from 'react'
 
+const conversationDrafts = new Map<string,string>()
+
 /**
  * Keep unsent text attached to its conversation, not to the currently visible
  * textarea. An in-memory map avoids copying private drafts to local storage.
@@ -8,11 +10,11 @@ export function useChatDraft(scope:string|undefined):[
  string, Dispatch<SetStateAction<string>>, (sessionId:string,submitted:string)=>void
 ] {
  const key=scope??''
- const drafts=useRef(new Map<string,string>())
+ const drafts=useRef(conversationDrafts)
  const activeScope=useRef(key)
- const latest=useRef('')
+ const latest=useRef(conversationDrafts.get(key)??'')
  const migration=useRef<string|undefined>(undefined)
- const [value,updateValue]=useState('')
+ const [value,updateValue]=useState(()=>conversationDrafts.get(key)??'')
 
  useLayoutEffect(()=>{
   if(activeScope.current===key)return

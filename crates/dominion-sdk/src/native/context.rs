@@ -47,34 +47,7 @@ fn repeat_note(observations:&[Value],tools:&[ToolSpec])->Option<String>{
 /// Whole groups, raw tool results, no orphan IDs. Do not drop owner/system
 /// messages, including verification repair feedback after a tool group.
 fn compact(messages:&mut Vec<Value>,budget:usize){
-    let mut groups=Vec::<(usize,usize)>::new();
-    let mut i=0;
-    while i<messages.len(){
-        let start=i;i+=1;
-        if messages[start]["role"]=="assistant"{
-            while i<messages.len()&&messages[i]["role"]=="tool"{i+=1;}
-        }
-        groups.push((start,i));
-    }
-    let mut keep=vec![false;groups.len()];
-    let mut used=0usize;
-    let mut newest=true;
-    let mut cutoff=false;
-    for (index,(start,end)) in groups.iter().copied().enumerate().rev(){
-        if matches!(messages[start]["role"].as_str(),Some("system"|"user")){
-            keep[index]=true;continue;
-        }
-        let size=messages[start..end].iter().map(|m|m.to_string().len()).fold(0usize,usize::saturating_add);
-        if newest||(!cutoff&&used.saturating_add(size)<=budget){
-            keep[index]=true;newest=false;used=used.saturating_add(size);
-        }else{cutoff=true;}
-    }
-    let mut old=std::mem::take(messages).into_iter().enumerate().peekable();
-    for ((_,end),keep) in groups.into_iter().zip(keep){
-        while old.peek().is_some_and(|(index,_)|*index<end){
-            if let Some((_,message))=old.next(){if keep{messages.push(message);}}
-        }
-    }
+    *messages=dominion_algorithms::tool_history::project(messages,budget).messages;
 }
 /// The structured kernel already sends a bounded receipt projection. Replace
 /// the latest group's previews in that projection, instead of appending a

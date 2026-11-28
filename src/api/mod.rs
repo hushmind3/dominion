@@ -91,3 +91,5 @@ async fn api_not_found(OriginalUri(uri): OriginalUri) -> Response {
     )
         .into_response()
 }
+
+pub mod plugin_catalog;

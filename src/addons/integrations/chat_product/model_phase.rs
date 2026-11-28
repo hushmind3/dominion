@@ -8,7 +8,7 @@ fn tool_budget_exhausted(used: usize, limit: usize) -> bool {
 
 pub(super) fn prepare_model<'a>(
         turn: &'a mut MainTurn<'_>,
-        _ctx: &'a mut Context<'_>,
+        ctx: &'a mut Context<'_>,
     ) -> BoxFuture<'a, Result<Vec<Value>, String>> {
         Box::pin(async move {
             turn.apply_owner_directives().await?;
@@ -117,7 +117,14 @@ pub(super) fn prepare_model<'a>(
                     tool_schema_budget,
                 );
             }
-            turn.model_round.wire_messages = turn.messages.clone();
+            let trace_budget=(turn.provider.context_tokens.unwrap_or(16_384) as usize)
+                .saturating_mul(4).saturating_div(3).clamp(4_000,24_000);
+            let projection=dominion_algorithms::tool_history::project(&turn.messages,trace_budget);
+            turn.model_round.wire_messages=projection.messages;
+            if let Some(guidance)=dominion_algorithms::failure_guidance::latest(&ctx.snapshot.receipts){
+                turn.model_round.wire_messages.push(json!({"role":"user","content":
+                    json!({"runtimeFailureGuidance":guidance.for_catalog(&turn.model_round.round_tools)}).to_string()}));
+            }
             if turn.is_room {
                 if let Some(mut execution) = turn.state.store.get("execution", turn.execution_id) {
                     execution["inputContext"]["preparedInputTokensEstimate"] =

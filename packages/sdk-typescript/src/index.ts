@@ -577,3 +577,6 @@ export class DominionExtensionClient {
     return this.request('/'+encodeURIComponent(run),undefined,signal);
   }
 }
+
+export {DominionCloudClient,DOMINION_CLOUD_URL} from './cloud.js';
+export type {CloudPairing,CloudAppStatus,CloudModel,CloudApprovalOptions} from './cloud.js';

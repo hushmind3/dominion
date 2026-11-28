@@ -1,3 +1,4 @@
+import {FeatureSearch} from './components/FeatureSearch'
 import {lazy,useCallback,useEffect,useState} from 'react'
 import {ContextMenu} from './components/ContextMenu'
 import {OwnerProfileProvider} from './components/OwnerProfile'
@@ -55,6 +56,7 @@ export default function App() {
         </div>}
       </main>
       {isSettingsPage(page) && <SettingsWorkspace conversationSettingsRef={setConversationSettingsTarget} page={page} online={online} connecting={connecting} running={running} pending={pending} onNavigate={navigate} onClose={closeSettings}/>}
+      <FeatureSearch onNavigate={navigate}/>
     </div>
   </OwnerProfileProvider>
 }

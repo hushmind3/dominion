@@ -30,9 +30,9 @@ import {translateError} from '../i18n/errors'
 type LearningResult={memories:number;skill:boolean}
 type LearningJob=JobState & {result?:LearningResult}
 type ModelOverride={scope?:string;providerId:string;model:string}
-type PendingImage={key:string;file:File;preview:string}
+type PendingImage={key:string;file:File;preview?:string}
 type OptimisticOwner={sessionId:string|undefined;content:string;lastSeenMessageId:string|undefined;persistedId?:string}
-const ATTACH_ALLOWED=['image/png','image/jpeg','image/webp','image/gif']
+const ATTACH_ALLOWED=['image/png','image/jpeg','image/webp','image/gif','text/*','.txt','.md','.csv','.json','.xml','.ts','.tsx','.js','.mjs','.py','.rs','.yaml','.yml','.html','.css','.log','.sql']
 const ATTACH_LIMIT=8
 export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,onSession,openModels,openSettings,switchMode,settingsTarget,active=true}:{sessionId?:string;initialAgent?:string;initialProvider?:string;initialModel?:string;onSession:(x:string|undefined)=>void;openModels:()=>void;openSettings:()=>void;switchMode:(mode:'chat'|'rooms')=>void;settingsTarget?:HTMLElement|null;active?:boolean}){
  const loc=useLocale()
@@ -45,6 +45,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const messages=transcript.value
  const approvals=useRemote<Approval[]>('/api/approvals',[],active);
  const [input,setInput,adoptNewSession]=useChatDraft(current);
+
  const [agentChoice,setAgentChoice]=useState<{scope?:string;id:string}>();
  const [chatModeOverride,setChatModeOverride]=useState<{scope?:string;mode:'chat'|'agent'}>();
  const [override,setOverride]=useState<ModelOverride>();
@@ -112,6 +113,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const [learning,setLearning]=useState(false);
  const [slashOpen,setSlashOpen]=useState(false),[slashActive,setSlashActive]=useState(0),[commandInfo,setCommandInfo]=useState('');
  const inputRef=useRef<HTMLTextAreaElement>(null);
+
  // Refit restored and newly typed drafts; a session switch does not emit an
  // input event and can otherwise leave multiline drafts visually clipped.
  useLayoutEffect(()=>{
@@ -121,30 +123,40 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   el.style.height=Math.min(el.scrollHeight,180)+'px';
  },[current,input]);
  const imageInputRef=useRef<HTMLInputElement>(null);
- const [pendingImages,setPendingImages]=useState<PendingImage[]>([]);
+ const attachmentScope=current??'new';
+ const [attachmentDrafts,setAttachmentDrafts]=useState<Record<string,PendingImage[]>>({});
+ const pendingImages=attachmentDrafts[attachmentScope]??[];
+ const setPendingImages=(update:PendingImage[]|((previous:PendingImage[])=>PendingImage[]))=>setAttachmentDrafts(previous=>({
+  ...previous,[attachmentScope]:typeof update==='function'?update(previous[attachmentScope]??[]):update,
+ }));
  const [uploading,setUploading]=useState(false);
- const pendingImagesRef=useRef<PendingImage[]>([]);
- pendingImagesRef.current=pendingImages;
- useEffect(()=>()=>{pendingImagesRef.current.forEach(item=>URL.revokeObjectURL(item.preview))},[]);
- const onPickImages=(event:ChangeEvent<HTMLInputElement>)=>{
-  const files=Array.from(event.target.files??[]);
-  event.target.value='';
-  if(!files.length)return;
-  if(files.some(file=>!ATTACH_ALLOWED.includes(file.type))){setError(t('chat.attachOnlyImages'));return}
-  if(pendingImages.length+files.length>ATTACH_LIMIT){setError(t('chat.attachLimit'));return}
-  setPendingImages(previous=>[...previous,...files.map(file=>({
-   key:`${file.name}:${file.lastModified}:${Math.random().toString(36).slice(2)}`,
-   file,preview:URL.createObjectURL(file),
+ const pendingImagesRef=useRef<Record<string,PendingImage[]>>({});
+ pendingImagesRef.current=attachmentDrafts;
+ useEffect(()=>()=>{Object.values(pendingImagesRef.current).flat().forEach(item=>{if(item.preview)URL.revokeObjectURL(item.preview)})},[]);
+ const addFiles=(files:File[])=>{
+  if(!files.length||busy||uploading||selectedSession?.roomId)return;
+  const supported=(file:File)=>/^image\/(png|jpeg|webp|gif)$|^text\/|^application\/(json|xml)$/.test(file.type)
+   ||/\.(txt|md|csv|json|xml|ts|tsx|js|mjs|py|rs|yaml|yml|html|css|log|sql)$/i.test(file.name);
+  if(files.some(file=>!supported(file))){setError(t('chat.attachOnlyImages'));return}
+  if(files.some(file=>file.size>8*1024*1024)){setError(loc==='ko'?'파일 하나는 최대 8MiB입니다.':'Each file must be at most 8MiB.');return}
+  const next=files.filter(file=>!pendingImages.some(item=>item.file.name===file.name&&item.file.size===file.size&&item.file.lastModified===file.lastModified));
+  if(pendingImages.length+next.length>ATTACH_LIMIT){setError(t('chat.attachLimit'));return}
+  if([...pendingImages.map(item=>item.file),...next].reduce((sum,file)=>sum+file.size,0)>24*1024*1024){setError(loc==='ko'?'첨부 합계는 최대 24MiB입니다.':'Attachments must total at most 24MiB.');return}
+  setPendingImages(previous=>[...previous,...next.map(file=>({
+   key:crypto.randomUUID(),file,preview:file.type.startsWith('image/')?URL.createObjectURL(file):undefined,
   }))]);
  };
+ const onPickImages=(event:ChangeEvent<HTMLInputElement>)=>{
+  addFiles(Array.from(event.target.files??[]));event.target.value='';
+ };
  const discardPendingImages=()=>setPendingImages(previous=>{
-  previous.forEach(item=>URL.revokeObjectURL(item.preview));
+  previous.forEach(item=>{if(item.preview)URL.revokeObjectURL(item.preview)});
   return [];
  });
  const removeImage=(key:string)=>{
   setPendingImages(previous=>{
    const target=previous.find(item=>item.key===key);
-   if(target)URL.revokeObjectURL(target.preview);
+   if(target?.preview)URL.revokeObjectURL(target.preview);
    return previous.filter(item=>item.key!==key);
   });
  };
@@ -176,16 +188,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
  const activeTurnSession=useRef<string|undefined>(undefined);
  const stoppingRef=useRef(false);
  const [stopping,setStopping]=useState(false);
- // Pending attachments must never follow a sidebar/browser-history switch to
- // another conversation. The first send adopting a new session is not a switch.
- const attachmentScope=useRef(current);
- useLayoutEffect(()=>{
-  if(attachmentScope.current===current)return;
-  const previous=attachmentScope.current;
-  attachmentScope.current=current;
-  if(previous===undefined&&activeTurnSession.current===current)return;
-  discardPendingImages();
- },[current]);
+ // Attachment drafts are indexed by conversation; switching restores only that conversation.
  const view=useRef(current);
  view.current=current;
  const viewingTurn=turnSession===current&&(!savedMessageId||!messages.some(message=>message.id===savedMessageId));
@@ -388,6 +391,7 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
   setBusy(true);setDismissedError(undefined);setError('');setCommandInfo('');setLive('');setThought('');setSlashOpen(false);setToolStatus('');
   jumpDown();
   let id=current;
+  let sentAttachmentScope=attachmentScope;
   let streamStarted=false;
   let serverTerminal=false;
   let ownerSaved=false;
@@ -398,8 +402,8 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
    if(releasedSentImages||!pendingImages.length)return;
    releasedSentImages=true;
    const sentKeys=new Set(pendingImages.map(item=>item.key));
-   pendingImages.forEach(item=>URL.revokeObjectURL(item.preview));
-   setPendingImages(previous=>previous.filter(item=>!sentKeys.has(item.key)));
+   pendingImages.forEach(item=>{if(item.preview)URL.revokeObjectURL(item.preview)});
+   setAttachmentDrafts(previous=>({...previous,[sentAttachmentScope]:(previous[sentAttachmentScope]??[]).filter(item=>!sentKeys.has(item.key))}));
   };
   try{
    if(!id){
@@ -407,6 +411,14 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
      providerId,model});
     if(controller.signal.aborted)return;
     id=session.id;
+    if(pendingImages.length){
+     const destination=id;
+     setAttachmentDrafts(previous=>{
+      const next={...previous,[destination]:previous[attachmentScope]??pendingImages};
+      delete next[attachmentScope];return next;
+     });
+     sentAttachmentScope=id;
+    }
     if(clientTurnId&&pendingTurn.current?.id===clientTurnId)pendingTurn.current.scope=id;
     activeTurnSession.current=id;
     if(view.current===current){
@@ -552,13 +564,15 @@ export function ChatPage({sessionId,initialAgent,initialProvider,initialModel,on
     <div className="relative">
     {pendingImages.length>0&&<div className="mb-2 flex flex-wrap items-center gap-2">
      {pendingImages.map(item=><div key={item.key} className="relative h-16 w-16 overflow-hidden rounded-lg border border-divider bg-[#FAF7F1]">
-      <img src={item.preview} alt={item.file.name} className="h-full w-full object-cover"/>
+      {item.preview?<img src={item.preview} alt={item.file.name} className="h-full w-full object-cover"/>:<div title={item.file.name} className="flex h-full flex-col justify-center gap-1 p-1.5 text-center text-[10px]"><Paperclip size={16} className="mx-auto"/><span className="truncate">{item.file.name}</span></div>}
       <button type="button" onClick={()=>removeImage(item.key)} aria-label={t('chat.attachRemove')} title={t('chat.attachRemove')} className="absolute right-0.5 top-0.5 grid size-5 place-items-center rounded-full bg-black/60 text-white hover:bg-black/80"><X size={12}/></button>
      </div>)}
     </div>}
     {slashOpen&&<SlashMenu items={slashItems} active={slashActive} onChoose={chooseSlash}/>}
-    <form onSubmit={send} className="conversation-composer">
-     <TextArea ref={inputRef} rows={1} placeholder={t("chat.inputPlaceholder")} value={input} onChange={e=>{const next=e.target.value;setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n'));setSlashActive(0);const el=e.currentTarget;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,180)+'px'}} onKeyDown={appendKey} aria-controls="dominion-slash-menu" aria-expanded={slashOpen} className="conversation-composer-input"/>
+    <form onSubmit={send} className="conversation-composer"
+     onDragOver={event=>{if(event.dataTransfer.types.includes('Files'))event.preventDefault()}}
+     onDrop={event=>{if(event.dataTransfer.files.length){event.preventDefault();addFiles(Array.from(event.dataTransfer.files))}}}>
+     <TextArea ref={inputRef} rows={1} placeholder={t("chat.inputPlaceholder")} value={input} onPaste={event=>{if(event.clipboardData.files.length){event.preventDefault();addFiles(Array.from(event.clipboardData.files))}}} onChange={e=>{const next=e.target.value;setInput(next);setSlashOpen(next.startsWith('/')&&!next.includes('\n'));setSlashActive(0);const el=e.currentTarget;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,180)+'px'}} onKeyDown={appendKey} aria-controls="dominion-slash-menu" aria-expanded={slashOpen} className="conversation-composer-input"/>
      <div className="chat-composer-controls conversation-composer-controls">
       <div className="chat-composer-options conversation-composer-options">
        <Button variant="ghost" size="icon" className="!h-7 !w-7 md:hidden" onClick={()=>setShowHistory(value=>!value)} aria-label={showHistory?t('chat.listCollapse'):t('chat.listExpand')} title={t('chat.recent')}><Menu size={17}/></Button>
