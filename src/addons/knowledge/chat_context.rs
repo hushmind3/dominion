@@ -6,8 +6,30 @@ use serde_json::{json, Value};
 /// Private chat retains its established identity order for compatibility.
 /// Group rooms use the SAME instruction fragments, but put the shared owner
 /// contract before the persona to maximize cross-participant prefix reuse.
-const DOMINION_IDENTITY: &str =
-    "DOMINION 지속 에이전트. 정체성과 개인 경험은 에이전트 ID에 속하며 대화 장소가 바뀌어도 유지한다. 실제 권한과 도구는 현재 실행 경계에 따른다.";
+fn conversational(request:&TurnRequest)->bool{
+    request.direct_chat || (request.agent_id.is_none()
+        && !request.tools_enabled && !request.tools_execution_enabled)
+}
+
+fn append_customized(prompt:&mut String,state:&AppState,id:&str){
+    if let Some(text)=crate::engine::chat::harness_prompts::customized_text(state,id){
+        if !text.trim().is_empty(){prompt.push('\n');prompt.push_str(&text);}
+    }
+}
+
+fn conversation_base(state:&AppState,request:&TurnRequest)->String{
+    let mut text=crate::engine::chat::harness_prompts::effective(state,"chat.lightweight");
+    append_customized(&mut text,state,"identity.chat");
+    append_customized(&mut text,state,"chat.general");
+    text
+}
+
+fn append_language(prompt:&mut String,state:&AppState,request:&TurnRequest){
+    if request.effective_reasoning_language()!=Some("ko"){return;}
+    let text=crate::engine::chat::harness_prompts::customized_text(state,"chat.lightweight_ko")
+        .unwrap_or_else(||crate::engine::chat::harness_prompts::effective(state,"chat.reasoning_ko"));
+    if !text.trim().is_empty(){prompt.push('\n');prompt.push_str(&text);}
+}
 
 fn persona_identity(state:&AppState,request:&TurnRequest)->(String,Vec<Value>){
     let mut text=String::new();
@@ -36,9 +58,11 @@ fn owner_identity(state:&AppState)->(String,Vec<Value>){
 
 /// The established private chat prefix does not change: persona then owner.
 pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec<Value>){
-    let mut text=String::from(if request.direct_chat {
-        "당신은 DOMINION 대화형 AI입니다. 사용자 질문에 직접 답하고 자연스럽게 대화를 이어가십시오."
-    } else { DOMINION_IDENTITY });
+    let mut text=if conversational(request){
+        conversation_base(state,request)
+    }else{
+        crate::engine::chat::harness_prompts::effective(state,"identity.agent")
+    };
     let (persona,mut items)=persona_identity(state,request);
     let (owner,owner_items)=owner_identity(state);
     text.push_str(&persona);
@@ -50,7 +74,7 @@ pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec
 /// Shared cacheable room contract precedes all nine participant personas.
 pub(super) fn shared_room_identity(state:&AppState)->(String,Vec<Value>){
     let (owner,items)=owner_identity(state);
-    let mut text=String::from(DOMINION_IDENTITY);
+    let mut text=crate::engine::chat::harness_prompts::effective(state,"identity.agent");
     text.push_str(&owner);
     (text,items)
 }
@@ -135,21 +159,14 @@ pub(super) fn system_prompt_with_manifest_at(
     }
     if custom_prompt.is_none() && !social {
         if request.direct_chat {
-            prompt.push_str(
-                "\n사용자가 다른 언어로 쓰지 않는 한 한국어로 답하십시오. 일반 대화에서는 도구와 외부 작업을 실행하지 않습니다. 실제로 수행하지 않은 행동을 완료했다고 말하지 마십시오.",
-            );
+            append_customized(&mut prompt,state,"chat.no_tools");
         } else {
-            prompt.push_str(
-                "\n당신은 Rust 엔진에서 동작하는 에이전트형 AI 작업 공간 DOMINION입니다. \
-                 사용자가 다른 언어로 쓰지 않는 한 한국어로 답하십시오.",
-            );
-            if request.tools_enabled && request.tools_execution_enabled {
-                prompt.push_str(" 작업에 필요하면 사용 가능한 도구를 사용하십시오. 도구 결과를 정확히 보고하십시오.");
-            } else {
-                prompt.push_str(" 이번 턴에는 도구가 비활성화되어 있습니다. 외부 작업을 수행했다고 말하지 마십시오.");
-            }
+            if !conversational(request){append_customized(&mut prompt,state,"agent.general");}
+            if request.tools_enabled && request.tools_execution_enabled {append_customized(&mut prompt,state,"agent.tools");}
+            else {append_customized(&mut prompt,state,"chat.no_tools");}
             prompt.push_str(&format!("\n작업 공간 루트: {}",state.config.workspace.display()));
         }
+        append_language(&mut prompt,state,request);
     }
     // The current date is runtime observation, not part of the immutable
     // developer/persona contract. Keeping a clock value in the system prompt

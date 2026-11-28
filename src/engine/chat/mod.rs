@@ -12,6 +12,7 @@ mod web_research;
 
 pub(crate) fn estimate_text_tokens(text:&str)->u64 {room_context::estimate(text) as u64}
 mod evidence;
+pub(crate) mod harness_prompts;
 pub(crate) use evidence::prepare_owner_action;
 mod protocol;
 mod provider;

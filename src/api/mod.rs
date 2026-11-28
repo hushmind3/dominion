@@ -81,6 +81,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/settings/system-prompt/preview",get(settings::system_prompt_preview))
         .route("/api/settings/system-prompt/override",post(settings::save_system_prompt_override))
+        .route("/api/settings/harness-prompts",get(settings::harness_prompts).post(settings::save_harness_prompt))
         .route(
             "/api/settings/owner-profile",
             get(settings::owner_profile).post(settings::save_owner_profile),
