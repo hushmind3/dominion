@@ -156,6 +156,15 @@ pub(super) fn system_prompt_with_manifest_at(
             prompt.push_str(&format!("\n작업 공간 루트: {}",state.config.workspace.display()));
         }
     }
+    // Social/generic turns can skip the larger context compiler, but tool
+    // availability is still part of the model-facing contract.
+    if custom_prompt.is_none()
+        && (!request.tools_enabled || !request.tools_execution_enabled)
+        && !prompt.contains("도구가 비활성화")
+    {
+        prompt.push('\n');
+        prompt.push_str(&crate::engine::chat::harness_prompts::effective(state,"chat.no_tools"));
+    }
     // The current date is runtime observation, not part of the immutable
     // developer/persona contract. Keeping a clock value in the system prompt
     // invalidated an otherwise identical 4k prefix at every midnight.
