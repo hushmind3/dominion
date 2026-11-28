@@ -6,6 +6,7 @@ mod context;
 mod continuity;
 mod kernel_bridge;
 mod plain_context;
+pub(crate) mod harness_prompts;
 mod room_context;
 
 pub(crate) fn estimate_text_tokens(text: &str) -> u64 {

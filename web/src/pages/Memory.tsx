@@ -9,6 +9,7 @@ import {Action,FormField,Headline,Notice,Panel,Subheading,useRemote} from '../co
 import {LearningRecords} from './memory/LearningRecords'
 import {t,useLocale,type LocaleKey} from '../i18n'
 import {GrowthDashboard} from './memory/Growth'
+import {HarnessPromptsPanel} from './memory/HarnessPromptsPanel'
 
 type Memory={
  id:string;text:string;scope?:string;agentId?:string;sessionId?:string;partitionKey?:string;
@@ -118,10 +119,10 @@ function MemoryRecordsPage(){
  </div>
 }
 
-type MemoryView='memories'|'shared'|'personas'|'groups'
+type MemoryView='memories'|'shared'|'personas'|'groups'|'harness'
 function memoryViewFromHash():MemoryView{
  const view=workspaceView(window.location.hash,'memory')
- return view==='shared'||view==='personas'||view==='groups'?view:'memories'
+ return view==='shared'||view==='personas'||view==='groups'||view==='harness'?view:'memories'
 }
 
 /** Memory is the single home for saved memories and prompt/persona editing. */
@@ -148,11 +149,12 @@ export function MemoryPage(){
     {id:'shared',label:tr('공통·시스템 지침','Shared & system instructions'),icon:FileText},
     {id:'personas',label:tr('AI·페르소나','AIs & personas'),icon:UsersRound},
     {id:'groups',label:tr('그룹 지침','Group instructions'),icon:UsersRound},
+    {id:'harness',label:tr('체계적 프롬프트','Harness prompts'),icon:FileText},
    ]}/>
   </div>
   {visited.has('memories')&&<div hidden={view!=='memories'}><MemoryRecordsPage/></div>}
   {([...visited].some(item=>item!=='memories'))&&<div hidden={view==='memories'} className="mx-auto w-full max-w-[1320px] px-5 pb-8 sm:px-7 lg:px-6">
-   <PromptsPage section={view==='memories'?'shared':view} embedded/>
+   {view==='harness'?<HarnessPromptsPanel/>:<PromptsPage section={view==='memories'?'shared':view} embedded/>}
   </div>}
  </>
 }

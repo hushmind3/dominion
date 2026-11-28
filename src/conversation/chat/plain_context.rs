@@ -16,11 +16,9 @@ pub(super) fn compile(state: &AppState, request: &TurnRequest, session_id: &str)
     // Tool admission remains disabled independently by the plain-chat runtime.
     let custom = context::private_override(state, request);
     let mut prompt = custom.clone().unwrap_or_else(|| {
-        String::from(
-            "당신은 DOMINION의 일반 대화 AI입니다. 사용자 질문에 직접 답하십시오. \
-         도구 실행, 웹 검색, 파일 변경, 에이전트 작업을 수행하거나 수행했다고 주장하지 마십시오. \
-         사용자가 별도의 언어를 지정하지 않는 한 한국어로 답하십시오.",
-        )
+        let mut text=super::harness_prompts::effective(state,"identity.chat");
+        text.push_str("\n");text.push_str(&super::harness_prompts::effective(state,"chat.general"));
+        text.push_str("\n");text.push_str(&super::harness_prompts::effective(state,"chat.no_tools"));text
     });
     if custom.is_none() {
         if let Some(instructions) = state

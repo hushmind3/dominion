@@ -3,12 +3,11 @@ use super::{TurnRequest, HISTORY_LIMIT};
 use crate::state::AppState;
 use serde_json::{json, Value};
 
-const BASE_IDENTITY:&str="DOMINION 지속 에이전트. 정체성과 개인 경험은 에이전트 ID에 속하며 대화 장소가 바뀌어도 유지한다. 실제 권한과 도구는 현재 실행 경계에 따른다.";
 
 // Room speakers reuse this exact block BEFORE their individual persona.
 // Keep owner instructions byte-stable and authoritative for all speakers.
 pub(super) fn room_common_identity(state:&AppState)->(String,Vec<Value>){
-    let mut text=BASE_IDENTITY.to_string();
+    let mut text=super::harness_prompts::effective(state,"identity.agent");
     let mut items=Vec::new();
     if let Some(settings)=state.store.get("assistant_settings","global").filter(|s|s["enabled"]!=false){
         if let Some(instructions)=settings["instructions"].as_str().filter(|s|!s.trim().is_empty()){
@@ -40,8 +39,9 @@ pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec
     let (persona,mut items)=agent_identity_suffix(state,request);
     let (common,owner_items)=room_common_identity(state);
     items.extend(owner_items);
-    let owner_suffix=common.strip_prefix(BASE_IDENTITY).unwrap_or("");
-    (format!("{BASE_IDENTITY}{persona}{owner_suffix}"),items)
+    let base=super::harness_prompts::effective(state,"identity.agent");
+    let owner_suffix=common.strip_prefix(&base).unwrap_or("");
+    (format!("{base}{persona}{owner_suffix}"),items)
 }
 
 #[allow(dead_code)] // compatibility wrapper for tests and old callers
