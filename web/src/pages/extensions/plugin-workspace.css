@@ -7,7 +7,6 @@
  --shadow-sm: 0 2px 4px #32291e0b; --shadow-lg: 0 20px 60px #32291e24;
  --duration-fast: 120ms; --control-ui-text-xs: 12px; --control-ui-text-sm: 14px; --control-ui-text-md: 16px;
 }
-.workspace-settings {position:fixed!important;inset:0!important;width:100%!important;height:100dvh!important;max-height:none!important;border:0!important;border-radius:0!important;box-shadow:none!important}
 .workspace-settings-content:is([data-page="extensions"],[data-page="connections"],[data-page="capabilities"]) {display:flex;flex-direction:column;overflow:hidden;padding-top:0}
 .plugin-workspace-content {display:flex;flex:1;flex-direction:column;min-height:0;min-width:0}
 .plugin-directory-scroll {min-height:0;overflow:auto;flex:1;padding:28px 36px 48px}

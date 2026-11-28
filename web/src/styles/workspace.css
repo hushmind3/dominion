@@ -95,7 +95,7 @@
 .conversation-composer-send { width: 38px; height: 38px; }
 .page-chat .chat-transcript { padding-top: 36px; }
 
-.workspace-settings { position: relative; display: flex; width: min(1440px, 100%); height: min(940px, calc(100dvh - 64px)); overflow: hidden; border: 1px solid #e4ddd1; border-radius: 22px; background: var(--color-surface); box-shadow: var(--workspace-shadow); }
+.workspace-settings { position: fixed; inset: 0; display: flex; width: 100%; height: 100dvh; max-height: none; overflow: hidden; border: 0; border-radius: 0; background: var(--color-surface); }
 .workspace-sidebar { display: flex; width: 240px; flex-shrink: 0; flex-direction: column; border-right: 1px solid var(--color-divider); background: var(--workspace-sidebar); transition: width .16s; }
 .workspace-sidebar-brand { display: flex; min-height: 85px; flex-shrink: 0; align-items: center; gap: 10px; padding: 0 18px; }
 .workspace-sidebar-brand > strong { min-width: 0; flex: 1; font-size: 20px; letter-spacing: -.8px; }
@@ -124,15 +124,7 @@
 .workspace-sidebar[data-collapsed="true"] .workspace-nav-item small { position: absolute; top: 0; right: 0; }
 .workspace-sidebar[data-collapsed="true"] .workspace-sidebar-footer { align-items: center; padding-bottom: 14px; }
 .workspace-settings-main { display: flex; min-width: 0; height: 100%; flex: 1; flex-direction: column; }
-.workspace-settings-header { position: relative; display: flex; min-height: 118px; flex-shrink: 0; align-items: center; gap: 14px; border-bottom: 1px solid #eee7dc; padding: 24px 32px; }
-.workspace-settings-heading { min-width: 0; flex: 1; }
-.workspace-settings-eyebrow { color: #a9957d; font-size: 10px; font-weight: 600; letter-spacing: .08em; }
-.workspace-settings-heading h1 { margin-top: 5px; color: #46382c; font-size: 23px; font-weight: 650; letter-spacing: -.04em; }
-.workspace-settings-heading p { margin-top: 5px; color: #9c8d7a; font-size: 12px; }
-.workspace-back { font-size: 12px; }
-.workspace-mobile-nav { display: none; }
-.workspace-offline { position: absolute; right: 32px; bottom: 8px; color: #bd785d; font-size: 10px; }
-.workspace-close { display: none; }
+.workspace-back { align-self: flex-start; margin: 0 12px 4px; }
 .workspace-settings-content { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; background: #fbf9f4; padding-top: 12px; }
 
 .workspace-loading { display: flex; min-height: 280px; height: 100%; align-items: center; justify-content: center; flex-direction: column; gap: 16px; color: var(--color-muted); font-size: 12px; }
@@ -153,7 +145,6 @@
 @media (max-width: 1100px) {
   .chat-ai-trigger { max-width: 210px; }
   .workspace-sidebar { width: 212px; }
-  .workspace-settings-header { padding: 22px; }
 }
 @media (max-width: 767px) {
   .chat-ai-trigger { max-width: 150px; gap: 4px; padding: 5px; font-size: 11px; }
@@ -173,14 +164,13 @@
   .conversation-composer-wrap { padding: 8px 12px max(12px, env(safe-area-inset-bottom)); }
   .conversation-composer-controls { padding: 5px 8px 8px; }
   .workspace-settings { position: fixed; inset: 0; width: 100%; height: 100dvh; max-height: none; border: 0; border-radius: 0; }
-  .workspace-sidebar { display: none; }
-  .workspace-settings-header { min-height: 130px; align-items: flex-start; flex-wrap: wrap; gap: 10px; padding: 18px 20px 14px; }
-  .workspace-settings-heading h1 { font-size: 20px; }
-  .workspace-settings-heading p { display: none; }
-  .workspace-settings-eyebrow { font-size: 10px; }
-  .workspace-back { margin-left: auto; font-size: 11px; }
-  .workspace-mobile-nav { display: block; width: 100%; border: 1px solid var(--color-divider); border-radius: 9px; background: var(--color-surface); padding: 7px 10px; font-size: 12px; }
-  .workspace-offline { display: none; }
+  .workspace-sidebar, .workspace-sidebar[data-collapsed="true"] { width: 56px; }
+  .workspace-sidebar-brand { min-height: 52px; justify-content: center; padding: 0; }
+  .workspace-sidebar-brand > strong, .workspace-sidebar-brand .workspace-feature-search, .workspace-nav-search, .workspace-nav h2, .workspace-nav-item > span, .workspace-connection, .workspace-sidebar-footer > :last-child { display: none; }
+  .workspace-nav { padding: 4px 6px; }
+  .workspace-nav-more { justify-content: center; margin-top: 12px; font-size: 0; }
+  .workspace-nav-item { justify-content: center; padding: 10px; }
+  .workspace-back { align-self: center; margin: 6px 0 12px; }
   .workspace-settings-content { padding-top: 0; }
   .model-hub-header { padding-top: 18px; }
   .model-hub-header h2 { font-size: 20px; }

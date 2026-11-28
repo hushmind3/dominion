@@ -1,6 +1,6 @@
 import {useCallback,useState} from 'react'
 import {DialogBackdrop} from './Dialog'
-import {WorkspaceSidebar,SettingsHeader} from './WorkspaceShell'
+import {WorkspaceSidebar} from './WorkspaceShell'
 import {AsyncPage} from './AsyncPage'
 import {settingsPages,type PageId,type SettingsPage} from '../workspacePages'
 import {t} from '../i18n'
@@ -26,10 +26,9 @@ export function SettingsWorkspace({conversationSettingsRef, page, online, connec
     return next
   }), [])
   return <DialogBackdrop onDismiss={onClose} style={{padding:0,backdropFilter:'none'}}>
-    <div role="dialog" aria-modal="true" aria-label={t('nav.settings')} className="workspace-settings">
-      <WorkspaceSidebar page={page} online={online} connecting={connecting} running={running} pending={pending} onNavigate={onNavigate} navOpen={navOpen} onToggleNav={toggleNav}/>
+    <div role="dialog" aria-modal="true" aria-label={t(settingsPages[page].label)} className="workspace-settings">
+      <WorkspaceSidebar page={page} online={online} connecting={connecting} running={running} pending={pending} onNavigate={onNavigate} navOpen={navOpen} onToggleNav={toggleNav} onClose={onClose}/>
       <div className="workspace-settings-main">
-        <SettingsHeader page={page} onNavigate={onNavigate} online={online} connecting={connecting} onClose={onClose}/>
         <div key={page} data-page={page} className="workspace-settings-content"><AsyncPage label={t('shell.loadingPage')}>{settingsPages[page].render(onNavigate)}</AsyncPage>
           {page==='settings'&&<details className="workspace-reply-preferences"><summary>{t('chat.settings')}</summary><div className="workspace-conversation-settings" ref={conversationSettingsRef}/></details>}
         </div>
