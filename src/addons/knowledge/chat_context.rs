@@ -3,6 +3,8 @@ use super::{TurnRequest, HISTORY_LIMIT};
 use crate::state::AppState;
 use serde_json::{json, Value};
 
+fn customized(state:&AppState,id:&str)->Option<String>{crate::engine::chat::harness_prompts::customized_text(state,id)}
+
 /// Private chat retains its established identity order for compatibility.
 /// Group rooms use the SAME instruction fragments, but put the shared owner
 /// contract before the persona to maximize cross-participant prefix reuse.
@@ -36,9 +38,7 @@ fn owner_identity(state:&AppState)->(String,Vec<Value>){
 
 /// The established private chat prefix does not change: persona then owner.
 pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec<Value>){
-    let mut text=String::from(if request.direct_chat {
-        "당신은 DOMINION 대화형 AI입니다. 사용자 질문에 직접 답하고 자연스럽게 대화를 이어가십시오."
-    } else { DOMINION_IDENTITY });
+    let mut text=if request.direct_chat { let mut value=crate::engine::chat::harness_prompts::effective(state,"identity.chat");value.push('\n');value.push_str(&crate::engine::chat::harness_prompts::effective(state,"chat.general"));value } else { crate::engine::chat::harness_prompts::effective(state,"identity.agent") };
     let (persona,mut items)=persona_identity(state,request);
     let (owner,owner_items)=owner_identity(state);
     text.push_str(&persona);
@@ -50,7 +50,7 @@ pub(super) fn identity_prefix(state:&AppState,request:&TurnRequest)->(String,Vec
 /// Shared cacheable room contract precedes all nine participant personas.
 pub(super) fn shared_room_identity(state:&AppState)->(String,Vec<Value>){
     let (owner,items)=owner_identity(state);
-    let mut text=String::from(DOMINION_IDENTITY);
+    let mut text=crate::engine::chat::harness_prompts::effective(state,"identity.agent");
     text.push_str(&owner);
     (text,items)
 }

@@ -7,6 +7,7 @@ import {LearningRecords} from './memory/LearningRecords'
 import {t,useLocale,type LocaleKey} from '../i18n'
 import {GrowthDashboard} from './memory/Growth'
 import {SystemPromptPanel} from './memory/SystemPromptPanel'
+import {HarnessPromptsPanel} from './memory/HarnessPromptsPanel'
 
 type Memory={
  id:string;text:string;scope?:string;agentId?:string;sessionId?:string;partitionKey?:string;
@@ -21,7 +22,7 @@ const statusOf=(memory:Memory)=>memory.retrievalEligible?'active':memory.status&
 
 export function MemoryPage(){
  const locale=useLocale()
- const [tab,setTab]=useState<'memories'|'systemPrompt'>('memories')
+ const [tab,setTab]=useState<'memories'|'systemPrompt'|'harness'>('memories')
  const memories=useRemote<Memory[]>('/api/memories',[])
  const agents=useRemote<Agent[]>('/api/agents',[])
  const [query,setQuery]=useState(''),[text,setText]=useState(''),[scope,setScope]=useState('shared')
@@ -87,8 +88,11 @@ export function MemoryPage(){
     className={'rounded-lg px-4 py-2 text-sm font-semibold '+(tab==='systemPrompt'?'bg-[#A4583E] text-white':'bg-[#F7F1E6] text-[#675C51] hover:bg-[#EEE5D9]')}>
     {locale==='en'?'Reply instructions':'답변 방식'}
    </button>
+   <button type="button" role="tab" aria-selected={tab==='harness'} onClick={()=>setTab('harness')} className={'rounded-lg px-4 py-2 text-sm font-semibold '+(tab==='harness'?'bg-[#A4583E] text-white':'bg-[#F7F1E6] text-[#675C51] hover:bg-[#EEE5D9]')}>
+    {locale==='en'?'Harness prompts':'체계적 프롬프트'}
+   </button>
   </div>
-  {tab==='systemPrompt'?<SystemPromptPanel/>:<>
+  {tab==='harness'?<HarnessPromptsPanel/>:tab==='systemPrompt'?<SystemPromptPanel/>:<>
   <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
    <Panel className="min-w-0 p-5">
     <Subheading title={t('memory.new')} extra={<Action disabled={busy||!text.trim()} onClick={save}><Plus size={16}/> {t('memory.save')}</Action>}/>

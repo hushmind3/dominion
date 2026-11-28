@@ -176,3 +176,28 @@ pub async fn save_owner_profile(
             "사용자 프로필을 저장하지 못했습니다."),
     }
 }
+
+pub async fn harness_prompts(State(state): State<AppState>) -> Json<Value> {
+    Json(crate::engine::chat::harness_prompts::catalog(&state))
+}
+
+pub async fn save_harness_prompt(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    let Some(id)=body["id"].as_str() else { return error(StatusCode::BAD_REQUEST,"지침 ID가 필요합니다."); };
+    let Some(spec)=crate::engine::chat::harness_prompts::spec(id) else { return error(StatusCode::NOT_FOUND,"등록되지 않은 지침입니다."); };
+    let Some(expected)=body["expectedRevision"].as_str() else { return error(StatusCode::BAD_REQUEST,"원본 버전이 필요합니다."); };
+    let reset=body["reset"].as_bool()==Some(true);
+    let value=if reset { None } else {
+        let Some(text)=body["text"].as_str() else { return error(StatusCode::BAD_REQUEST,"지침은 문자열이어야 합니다."); };
+        if let Err(message)=crate::engine::chat::harness_prompts::validate(spec,text) { return error(StatusCode::BAD_REQUEST,&message); }
+        Some(text)
+    };
+    let key=format!("harness-prompt:{id}");
+    if !state.begin_session(&key) { return error(StatusCode::CONFLICT,"다른 저장 작업이 진행 중입니다."); }
+    let _lease=state.session_guard(&key);
+    if crate::engine::chat::harness_prompts::revision(&state,id)!=expected { return error(StatusCode::CONFLICT,"다른 곳에서 원본이 바뀌었습니다. 새로고침 후 다시 수정하세요."); }
+    if let Some(text)=value {
+        if state.store.put("harness_prompt_override",&json!({"id":id,"text":text,"revision":uuid::Uuid::new_v4().to_string(),"updatedAt":chrono::Utc::now().to_rfc3339()})).is_none() { return error(StatusCode::INTERNAL_SERVER_ERROR,"저장에 실패했습니다."); }
+    } else { state.store.remove("harness_prompt_override",id); }
+    state.store.audit("harness_prompt.changed",json!({"id":id,"reset":reset}));
+    Json(crate::engine::chat::harness_prompts::catalog(&state)).into_response()
+}

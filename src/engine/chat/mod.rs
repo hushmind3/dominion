@@ -9,6 +9,7 @@ mod continuity;
 #[path = "../../addons/integrations/chat_room_context.rs"]
 mod room_context;
 mod web_research;
+pub(crate) mod harness_prompts;
 
 pub(crate) fn estimate_text_tokens(text:&str)->u64 {room_context::estimate(text) as u64}
 mod evidence;
