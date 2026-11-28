@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url'
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')
 const meta=JSON.parse(execFileSync('cargo',['metadata','--format-version','1','--no-deps','--locked'],{cwd:root,encoding:'utf8'}))
 const members=meta.packages.filter(pkg=>meta.workspace_members.includes(pkg.id))
-const product=members.find(pkg=>pkg.name==='dominion-rust')
+const product=members.find(pkg=>pkg.name==='dominion')
 const core=members.find(pkg=>pkg.name==='dominion-core')
 const algorithms=members.find(pkg=>pkg.name==='dominion-algorithms')
 const sdk=members.find(pkg=>pkg.name==='dominion-agent-sdk')

@@ -3,14 +3,14 @@
 # ever exits. Run once; after that the DOMINION.app icon only opens the UI.
 set -e
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-PLIST="$HOME/Library/LaunchAgents/com.hushmind.dominion.rust.plist"
+PLIST="$HOME/Library/LaunchAgents/com.hushmind.dominion.plist"
 mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
 cat > "$PLIST" <<PL
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>Label</key><string>com.hushmind.dominion.rust</string>
-  <key>ProgramArguments</key><array><string>$REPO/target/release/dominion-rust</string></array>
+  <key>Label</key><string>com.hushmind.dominion</string>
+  <key>ProgramArguments</key><array><string>$REPO/target/release/dominion</string></array>
   <key>WorkingDirectory</key><string>$REPO</string>
   <key>EnvironmentVariables</key><dict>
     <key>DOMINION_HOME</key><string>$REPO</string>
@@ -21,10 +21,10 @@ cat > "$PLIST" <<PL
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>5</integer>
-  <key>StandardOutPath</key><string>$HOME/Library/Logs/dominion-rust.log</string>
-  <key>StandardErrorPath</key><string>$HOME/Library/Logs/dominion-rust.log</string>
+  <key>StandardOutPath</key><string>$HOME/Library/Logs/dominion.log</string>
+  <key>StandardErrorPath</key><string>$HOME/Library/Logs/dominion.log</string>
 </dict></plist>
 PL
-launchctl bootout "gui/$(id -u)/com.hushmind.dominion.rust" 2>/dev/null || true
+launchctl bootout "gui/$(id -u)/com.hushmind.dominion" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 echo "installed $PLIST"

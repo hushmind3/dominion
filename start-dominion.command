@@ -6,7 +6,7 @@ set -e
 cd "$(dirname "$0")"
 
 PORT="${DOMINION_PORT:-4317}"
-BIN="./target/release/dominion-rust"
+BIN="./target/release/dominion"
 source "$HOME/.cargo/env" 2>/dev/null || true
 
 needs_build() {

@@ -2,7 +2,7 @@
 members = [".", "crates/dominion-core", "crates/dominion-algorithms", "crates/dominion-agent-sdk", "crates/dominion-harness"]
 
 [package]
-name = "dominion-rust"
+name = "dominion"
 version = "0.4.5"
 edition = "2021"
 license = "MIT"

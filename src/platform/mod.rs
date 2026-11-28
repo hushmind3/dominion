@@ -76,7 +76,7 @@ fn reexec_repo_binary() {
     let Some(home) = crate::config::bundle_home() else {
         return;
     };
-    let repo = home.join("target/release/dominion-rust");
+    let repo = home.join("target/release/dominion");
     if !repo.is_file() || std::env::current_exe().ok().as_deref() == Some(repo.as_path()) {
         return;
     }
@@ -87,7 +87,7 @@ fn reexec_repo_binary() {
     }
 }
 fn repo_launch_command(home: &Path) -> std::process::Command {
-    let mut command = std::process::Command::new(home.join("target/release/dominion-rust"));
+    let mut command = std::process::Command::new(home.join("target/release/dominion"));
     command
         .arg("--open")
         .env("DOMINION_HOME", home)
@@ -129,7 +129,7 @@ mod tests {
         let command = repo_launch_command(&home);
         assert_eq!(
             command.get_program(),
-            home.join("target/release/dominion-rust")
+            home.join("target/release/dominion")
         );
         assert_eq!(command.get_current_dir(), Some(home.as_path()));
         assert_eq!(

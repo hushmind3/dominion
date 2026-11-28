@@ -21,7 +21,7 @@ const env={...process.env,DOMINION_PORT:'0',DOMINION_HOME:scratch,DOMINION_DATA:
 delete env.DOMINION_ADMIN_TOKEN
 delete env.DOMINION_DESKTOP_PARENT
 let logs='',base='',browser,page,db
-const child=spawn(resolve(root,'target/debug/dominion-rust'),[],{cwd:scratch,env,stdio:['ignore','pipe','pipe']})
+const child=spawn(resolve(root,'target/debug/dominion'),[],{cwd:scratch,env,stdio:['ignore','pipe','pipe']})
 child.stdout.on('data',chunk=>{logs+=chunk;const match=logs.match(/listening on (http:\/\/127\.0\.0\.1:\d+)/);if(match)base=match[1]})
 child.stderr.on('data',chunk=>{logs+=chunk})
 let spawnError

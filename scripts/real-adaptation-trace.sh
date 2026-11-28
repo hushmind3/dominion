@@ -6,7 +6,7 @@
 # Usage: scripts/real-adaptation-trace.sh [output.json]
 set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="${DOMINION_BIN:-$ROOT_DIR/target/release/dominion-rust}"
+BIN="${DOMINION_BIN:-$ROOT_DIR/target/release/dominion}"
 OUT="${1:-$ROOT_DIR/benchmark/ADAPTATION-TRACE-$(date +%F).json}"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/dominion-real-adapt.XXXXXX")
 DATA="$WORK/runtime"

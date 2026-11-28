@@ -9,13 +9,13 @@ Cargo Workspace
 ├── crates/dominion-algorithms/    # agent iteration + algorithm tests
 │   ├── src/engine.rs              # sole Engine::drive loop
 │   └── src/engine_tests.rs        # former core loop regression suite
-└── dominion-rust (root package)   # gateway + application composition
+└── dominion (root package)   # gateway + application composition
     ├── src/api/                   # HTTP / SSE and SDK-facing endpoints
     ├── src/engine/chat/           # model & tool host adapters
     └── src/addons/strategies/     # optional algorithms and policies
 ```
 
-Dependency direction is `dominion-rust -> dominion-algorithms -> dominion-core`.
+Dependency direction is `dominion -> dominion-algorithms -> dominion-core`.
 The gateway additionally imports core contracts directly for its adapters.
 No `dominion-core -> dominion-algorithms` import exists.
 
@@ -52,7 +52,7 @@ the gain today is test scope, ownership and independent runtime evolution.
 
 - `cargo test --locked -p dominion-core --lib`
 - `cargo test --locked -p dominion-algorithms --lib`
-- `cargo test --locked --bin dominion-rust ...` (existing product regressions)
+- `cargo test --locked --bin dominion ...` (existing product regressions)
 - `node scripts/check-runtime-architecture.mjs` (reverse dependency / loop ownership)
 - CI macOS and Windows backend/frontend checks
 

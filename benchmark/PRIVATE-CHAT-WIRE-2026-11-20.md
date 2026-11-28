@@ -24,9 +24,9 @@ continuation.
 Run the targeted suite:
 
 ```bash
-cargo test --locked --bin dominion-rust engine::chat::context_engine::tests
-cargo test --locked --bin dominion-rust private_context_epoch_keeps_stable_snapshot_and_invalidates_corrections
-cargo test --locked --bin dominion-rust engine::chat::context::tests::private_
+cargo test --locked --bin dominion engine::chat::context_engine::tests
+cargo test --locked --bin dominion private_context_epoch_keeps_stable_snapshot_and_invalidates_corrections
+cargo test --locked --bin dominion engine::chat::context::tests::private_
 cargo test --locked --test e2e room_identity::private_chat -- --nocapture
 cargo test --locked --test e2e codex_websocket_chain_reuses_identity_and_sends_only_the_new_suffix
 ```

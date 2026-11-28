@@ -820,7 +820,7 @@ async fn install_from_release(state: &AppState) -> Result<(PathBuf, String), Str
     let client = reqwest::Client::new();
     let release = client
         .get("https://api.github.com/repos/ggml-org/llama.cpp/releases/latest")
-        .header("User-Agent", "dominion-rust")
+        .header("User-Agent", "dominion")
         .timeout(Duration::from_secs(30))
         .send()
         .await
@@ -855,7 +855,7 @@ async fn install_from_release(state: &AppState) -> Result<(PathBuf, String), Str
     let archive = temp.join("llama.zip");
     let mut response = client
         .get(url)
-        .header("User-Agent", "dominion-rust")
+        .header("User-Agent", "dominion")
         .timeout(Duration::from_secs(900))
         .send()
         .await
@@ -1353,7 +1353,7 @@ async fn download_piper_voice(state: &AppState) -> Result<PathBuf, String> {
     let client = reqwest::Client::new();
     let tree: Value = client
         .get("https://huggingface.co/api/models/rhasspy/piper-voices/tree/main?recursive=true")
-        .header("User-Agent", "dominion-rust")
+        .header("User-Agent", "dominion")
         .timeout(Duration::from_secs(60))
         .send()
         .await
@@ -1381,7 +1381,7 @@ async fn download_piper_voice(state: &AppState) -> Result<PathBuf, String> {
         let url = format!("https://huggingface.co/rhasspy/piper-voices/resolve/main/{path}");
         let bytes = client
             .get(&url)
-            .header("User-Agent", "dominion-rust")
+            .header("User-Agent", "dominion")
             .timeout(Duration::from_secs(900))
             .send()
             .await

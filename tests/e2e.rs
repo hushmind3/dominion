@@ -118,7 +118,7 @@ impl TestApp {
         extra: &[(&str, &str)],
     ) -> Self {
         let port = free_port();
-        let mut command = Command::new(env!("CARGO_BIN_EXE_dominion-rust"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_dominion"));
         command
             .env("DOMINION_PORT", port.to_string())
             .env("DOMINION_DATA", root.join("runtime"))

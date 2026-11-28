@@ -11,11 +11,11 @@ const match=(p,kind)=>{
   const pattern=new RegExp('\\[\\[package\\]\\]\\s*name = "'+kind+'"\\s*version = "([^"]+)"');
   return source.match(pattern)?.[1];
 };
-const cargo=read('Cargo.toml').match(/name = "dominion-rust"\s+version = "([^"]+)"/)?.[1];
+const cargo=read('Cargo.toml').match(/name = "dominion"\s+version = "([^"]+)"/)?.[1];
 const version=asJson('src-tauri/tauri.conf.json').version;
 const others={
   'Cargo.toml':cargo,
-  'Cargo.lock':match('Cargo.lock','dominion-rust'),
+  'Cargo.lock':match('Cargo.lock','dominion'),
   'src-tauri/Cargo.toml':read('src-tauri/Cargo.toml').match(/name = "dominion-desktop"\s+version = "([^"]+)"/)?.[1],
   'src-tauri/Cargo.lock':match('src-tauri/Cargo.lock','dominion-desktop'),
   'web/package.json':asJson('web/package.json').version,

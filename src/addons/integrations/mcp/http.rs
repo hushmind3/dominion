@@ -18,7 +18,7 @@ fn modern_params(mut params: Value) -> Value {
     params["_meta"] = json!({
         "io.modelcontextprotocol/protocolVersion": MODERN_VERSION,
         "io.modelcontextprotocol/clientInfo": {
-            "name":"dominion-rust", "version":env!("CARGO_PKG_VERSION")
+            "name":"dominion", "version":env!("CARGO_PKG_VERSION")
         },
         "io.modelcontextprotocol/clientCapabilities": {}
     });
@@ -128,7 +128,7 @@ impl HttpSession {
                 json!({
                     "protocolVersion": "2024-11-05",
                     "capabilities": {},
-                    "clientInfo": { "name": "dominion-rust", "version": env!("CARGO_PKG_VERSION") }
+                    "clientInfo": { "name": "dominion", "version": env!("CARGO_PKG_VERSION") }
                 }),
             )
             .await?;

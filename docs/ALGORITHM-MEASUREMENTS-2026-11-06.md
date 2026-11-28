@@ -7,7 +7,7 @@ suite. They prove that each kernel changes observable behavior; they do not
 claim a real-model quality win. Reproduce with:
 
 ```sh
-cargo test --release --bin dominion-rust measurement_ -- --nocapture
+cargo test --release --bin dominion measurement_ -- --nocapture
 ```
 
 ## Measured results

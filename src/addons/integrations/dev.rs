@@ -89,7 +89,7 @@ fn live_source_root(state: &AppState) -> Result<PathBuf, String> {
         .and_then(|path| path.canonicalize())
         .map_err(|e| e.to_string())?;
     let expected = dir
-        .join("target/release/dominion-rust")
+        .join("target/release/dominion")
         .canonicalize()
         .map_err(|_| "현재 실행 중인 서버가 소스 빌드인지 확인하지 못했습니다.")?;
     if actual != expected {

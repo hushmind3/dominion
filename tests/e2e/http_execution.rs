@@ -7,7 +7,7 @@ fn chat_sse_persistence_and_origin_guard() {
     let provider_port = start_mock_provider();
     let port = free_port();
     let root = temp_root();
-    let binary = env!("CARGO_BIN_EXE_dominion-rust");
+    let binary = env!("CARGO_BIN_EXE_dominion");
 
     let child = Command::new(binary)
         .env("DOMINION_PORT", port.to_string())
@@ -117,7 +117,7 @@ fn concurrent_turns_on_one_session_are_rejected() {
     let provider_port = start_mock_provider();
     let port = free_port();
     let root = temp_root();
-    let binary = env!("CARGO_BIN_EXE_dominion-rust");
+    let binary = env!("CARGO_BIN_EXE_dominion");
 
     let child = Command::new(binary)
         .env("DOMINION_PORT", port.to_string())

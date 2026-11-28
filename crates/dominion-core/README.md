@@ -19,6 +19,6 @@
 
 - **`dominion-core`**: `runtime_port::Host`, `Context`, `Flow`, `model_call`, 스냅샷·예산·취소·권한·저널 계약. 실행 순서 선택 알고리즘 없음.
 - **`dominion-algorithms`**: 기존 단일 `Engine::drive` 실행 루프와 그 회귀 테스트를 독립 크레이트로 이동. `dominion-core`에만 의존.
-- **`dominion-rust`**: CLI/HTTP/SSE/데스크톱 진입점과 SQLite/도구/모델 호스트 어댑터를 조립하는 제품 게이트웨이.
+- **`dominion`**: CLI/HTTP/SSE/데스크톱 진입점과 SQLite/도구/모델 호스트 어댑터를 조립하는 제품 게이트웨이.
 
 코어가 알고리즘을 가져오지 않으므로 단방향 Cargo 의존성이 유지됩니다.

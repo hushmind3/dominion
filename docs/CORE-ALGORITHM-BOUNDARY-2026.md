@@ -72,7 +72,7 @@ Regressions are covered by:
 
 - `cargo test --locked -p dominion-core --lib`
 - `cargo test --locked -p dominion-algorithms --lib`
-- `cargo test --locked --bin dominion-rust addons::turn_policy::tests`
+- `cargo test --locked --bin dominion addons::turn_policy::tests`
 - Existing focused Rust, real HTTP E2E, Windows and frontend CI.
 
 ## What this boundary does *not* claim

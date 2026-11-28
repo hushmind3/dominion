@@ -12,7 +12,7 @@ if(!/^[a-zA-Z0-9_-]+$/.test(target))throw Error('A valid Rust target triple is r
 const windows=target.includes('windows');const suffix=windows?'.exe':'';
 if(!args.includes('--skip-web')){if(process.platform==='win32')run(process.env.ComSpec||'cmd.exe',['/d','/s','/c','npm run build'],path.join(root,'web'));else run('npm',['run','build'],path.join(root,'web'));}
 if(!args.includes('--skip-engine'))run('cargo',['build','--locked','--release','--manifest-path',path.join(root,'Cargo.toml'),'--target',target,'--target-dir',path.join(root,'target','desktop-engine')]);
-const built=path.join(root,'target','desktop-engine',target,'release','dominion-rust'+suffix);
+const built=path.join(root,'target','desktop-engine',target,'release','dominion'+suffix);
 const sidecar=path.join(root,'src-tauri','binaries','dominion-engine-'+target+suffix);
 mkdirSync(path.dirname(sidecar),{recursive:true});
 if(!args.includes('--skip-engine'))copyFileSync(built,sidecar);

@@ -209,9 +209,9 @@ fn engine_binary() -> PathBuf {
         .or_else(|| {
             std::env::current_exe()
                 .ok()
-                .and_then(|path| path.parent().map(|parent| parent.join("dominion-rust")))
+                .and_then(|path| path.parent().map(|parent| parent.join("dominion")))
         })
-        .unwrap_or_else(|| PathBuf::from("target/release/dominion-rust"))
+        .unwrap_or_else(|| PathBuf::from("target/release/dominion"))
 }
 
 fn free_port() -> u16 {
@@ -308,7 +308,7 @@ fn validate_root(root: &Path, port: u16) -> Result<(), String> {
         ));
     }
     if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        if under(&root, &home.join("dominion-rust")) || root == canonical(&home) {
+        if under(&root, &home.join("dominion")) || root == canonical(&home) {
             return Err("refusing the live repository or home as benchmark root".into());
         }
     }

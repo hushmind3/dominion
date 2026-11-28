@@ -135,7 +135,7 @@ fn policy_experiment_activates_a_candidate_through_the_runner() {
         uuid::Uuid::new_v4()
     ));
     let output = Command::new(env!("CARGO_BIN_EXE_dominion-benchmark"))
-        .env("DOMINION_BIN", env!("CARGO_BIN_EXE_dominion-rust"))
+        .env("DOMINION_BIN", env!("CARGO_BIN_EXE_dominion"))
         .env("BENCH_CLAIM_URL", &app.base)
         .env("BENCH_PROVIDER_BASE", format!("http://127.0.0.1:{port}/v1"))
         .env("BENCH_MODEL", "mock")

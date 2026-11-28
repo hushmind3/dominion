@@ -56,22 +56,22 @@ jobs:
         run: cargo test --locked -p dominion-core --lib
       - name: Model endpoint capability and cache negotiation
         run: |
-          cargo test --locked --bin dominion-rust addons::gateway::model_capabilities::tests
-          cargo test --locked --bin dominion-rust engine::chat::continuity::tests::explicit_endpoint_cache_denial
+          cargo test --locked --bin dominion addons::gateway::model_capabilities::tests
+          cargo test --locked --bin dominion engine::chat::continuity::tests::explicit_endpoint_cache_denial
       - name: Durable RoomEvent journal and cursor replay
-        run: cargo test --locked --bin dominion-rust db::room_events::tests
+        run: cargo test --locked --bin dominion db::room_events::tests
       - name: Remote worker binary and lease broker contracts
         run: |
           cargo check --locked --bin dominion-worker
           cargo test --locked --bin dominion-worker artifact_tests
-          cargo test --locked --bin dominion-rust api::remote_artifacts::tests
-          cargo test --locked --bin dominion-rust api::remote_workers::tests
-          cargo test --locked --bin dominion-rust api::remote_registry::tests
-          cargo test --locked --bin dominion-rust api::remote_worker_route_tests
-          cargo test --locked --bin dominion-rust db::tests::remote_queue_uses_indexed_fifo
-          cargo test --locked --bin dominion-rust addons::team_remote::tests
+          cargo test --locked --bin dominion api::remote_artifacts::tests
+          cargo test --locked --bin dominion api::remote_workers::tests
+          cargo test --locked --bin dominion api::remote_registry::tests
+          cargo test --locked --bin dominion api::remote_worker_route_tests
+          cargo test --locked --bin dominion db::tests::remote_queue_uses_indexed_fifo
+          cargo test --locked --bin dominion addons::team_remote::tests
       - name: Versioned Chat/Room/SDK execution correlation (dev profile)
-        run: cargo test --locked --bin dominion-rust events::tests
+        run: cargo test --locked --bin dominion events::tests
       - name: Isolated agent-loop algorithm regressions (dev profile)
         run: |
           cargo test --locked -p dominion-algorithms --lib
@@ -79,160 +79,160 @@ jobs:
       - name: Standalone Rust SDK embedding contracts
         run: cargo test --locked -p dominion-agent-sdk
       - name: Durable participant room cursors and anti-regression (dev profile)
-        run: cargo test --locked --bin dominion-rust db::room_cursor::tests
+        run: cargo test --locked --bin dominion db::room_cursor::tests
       - name: Historical room conversation provenance across 100+ messages (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust historical_owner_and_answer_are_retrieved_as_a_bounded_evidence_pair
-          cargo test --locked --bin dominion-rust questions_about_the_start_keep_the_first_owner_turn_and_reply
+          cargo test --locked --bin dominion historical_owner_and_answer_are_retrieved_as_a_bounded_evidence_pair
+          cargo test --locked --bin dominion questions_about_the_start_keep_the_first_owner_turn_and_reply
       - name: External read-only Codex Claude Qwen Agent Bridge contracts (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust addons::agent_bridge::tests
-          cargo test --locked --bin dominion-rust addons::agent_bridge::agent_protocol::tests
+          cargo test --locked --bin dominion addons::agent_bridge::tests
+          cargo test --locked --bin dominion addons::agent_bridge::agent_protocol::tests
       - name: Isolated verifier patch inheritance and parallelism (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust addons::delegation_worktree::tests::verifier_inherits
-          cargo test --locked --bin dominion-rust addons::delegation_worktree::tests::team_integration_applies
-          cargo test --locked --bin dominion-rust addons::jobs::tests::team_parallelism
-          cargo test --locked --bin dominion-rust addons::team_orchestrator::tests::team_aggregates
+          cargo test --locked --bin dominion addons::delegation_worktree::tests::verifier_inherits
+          cargo test --locked --bin dominion addons::delegation_worktree::tests::team_integration_applies
+          cargo test --locked --bin dominion addons::jobs::tests::team_parallelism
+          cargo test --locked --bin dominion addons::team_orchestrator::tests::team_aggregates
       - name: End-to-end Lead team admission and plan validation (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust engine::execution_budget::team_admission_tests
-          cargo test --locked --bin dominion-rust addons::team_orchestrator::tests
-          cargo test --locked --bin dominion-rust api::rooms::tests::team_launch_
+          cargo test --locked --bin dominion engine::execution_budget::team_admission_tests
+          cargo test --locked --bin dominion addons::team_orchestrator::tests
+          cargo test --locked --bin dominion api::rooms::tests::team_launch_
       - name: Lead/Worker DAG dependency admission, isolation and persistence (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust addons::team_dag::tests
-          cargo test --locked --bin dominion-rust db::team_dag::tests
-          cargo test --locked --bin dominion-rust api::jobs::scoped_listing_tests
-          cargo test --locked --bin dominion-rust addons::jobs::tests::dependency_scheduler
+          cargo test --locked --bin dominion addons::team_dag::tests
+          cargo test --locked --bin dominion db::team_dag::tests
+          cargo test --locked --bin dominion api::jobs::scoped_listing_tests
+          cargo test --locked --bin dominion addons::jobs::tests::dependency_scheduler
       - name: Model capability negotiation and endpoint tool-mode contracts (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust engine::chat::runtime::tool_catalog::private_tool_request_tests
-          cargo test --locked --bin dominion-rust addons::gateway::model_capabilities::tests
-          cargo test --locked --bin dominion-rust engine::chat::provider::final_chat_message_tests
-          cargo test --locked --bin dominion-rust unterminated_stream_preserves_reported_paid_usage_without_success
+          cargo test --locked --bin dominion engine::chat::runtime::tool_catalog::private_tool_request_tests
+          cargo test --locked --bin dominion addons::gateway::model_capabilities::tests
+          cargo test --locked --bin dominion engine::chat::provider::final_chat_message_tests
+          cargo test --locked --bin dominion unterminated_stream_preserves_reported_paid_usage_without_success
           cargo test --locked --test e2e failover_skips_incompatible_local_model_and_selects_declared_text_tools
       - name: Verified multi-agent work board, isolation and indexed reads (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust addons::room_board::tests
-          cargo test --locked --bin dominion-rust db::tests::room_work_board_is_immutable_scoped_indexed_and_bounded
+          cargo test --locked --bin dominion addons::room_board::tests
+          cargo test --locked --bin dominion db::tests::room_work_board_is_immutable_scoped_indexed_and_bounded
       - name: Durable job and cancellation regressions (dev profile)
-        run: cargo test --locked --bin dominion-rust addons::jobs::tests
+        run: cargo test --locked --bin dominion addons::jobs::tests
       - name: Silent SSE chat stop, cancellation epoch and same-session resume (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust stop_before_native_turn_starts_does_not_clear_newer_cancellation
-          cargo test --locked --bin dominion-rust user_stop_preempts_silent_model_stream_and_next_turn_succeeds
+          cargo test --locked --bin dominion stop_before_native_turn_starts_does_not_clear_newer_cancellation
+          cargo test --locked --bin dominion user_stop_preempts_silent_model_stream_and_next_turn_succeeds
       - name: Legacy/2026 MCP interoperability and typed schema admission (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust addons::mcp::tests
-          cargo test --locked --bin dominion-rust addons::mcp::schema::tests
+          cargo test --locked --bin dominion addons::mcp::tests
+          cargo test --locked --bin dominion addons::mcp::schema::tests
       - name: Crash-atomic database and vault restore (dev profile)
-        run: cargo test --locked --bin dominion-rust addons::restore_transaction::tests
+        run: cargo test --locked --bin dominion addons::restore_transaction::tests
       - name: Context relevance and verified failure-guidance quarantine (dev profile)
-        run: cargo test --locked --bin dominion-rust engine::chat::context::tests
+        run: cargo test --locked --bin dominion engine::chat::context::tests
       - name: Execution-scoped auxiliary model receipts and token coverage (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust engine::llm::
-          cargo test --locked --bin dominion-rust db::tests::auxiliary_model_receipts_are_scoped_to_one_execution
+          cargo test --locked --bin dominion engine::llm::
+          cargo test --locked --bin dominion db::tests::auxiliary_model_receipts_are_scoped_to_one_execution
       - name: Indexed improvement finalization and strategy selection (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust addons::improve::tests
-          cargo test --locked --bin dominion-rust db::tests::active_improvement_lookup_uses_partial_index_in_query_plan
+          cargo test --locked --bin dominion addons::improve::tests
+          cargo test --locked --bin dominion db::tests::active_improvement_lookup_uses_partial_index_in_query_plan
       - name: Indexed child evidence and role-scoped delegation (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust db::tests::delegated_results_use_recent_index_without_loading_unrelated_history
-          cargo test --locked --bin dominion-rust engine::tools::delegation::profile_tests
-          cargo test --locked --bin dominion-rust delegation_depth_is_bounded_and_cycle_safe
-          cargo test --locked --bin dominion-rust task_results_are_scoped_to_the_owning_or_parent_session
+          cargo test --locked --bin dominion db::tests::delegated_results_use_recent_index_without_loading_unrelated_history
+          cargo test --locked --bin dominion engine::tools::delegation::profile_tests
+          cargo test --locked --bin dominion delegation_depth_is_bounded_and_cycle_safe
+          cargo test --locked --bin dominion task_results_are_scoped_to_the_owning_or_parent_session
       - name: Progressive capability catalog and session-scope regressions (dev profile)
-        run: cargo test --locked --bin dominion-rust engine::capability::tests
+        run: cargo test --locked --bin dominion engine::capability::tests
       - name: Bounded model-visible tool selection regressions (dev profile)
-        run: cargo test --locked --bin dominion-rust engine::chat::runtime::tests::harness_tool_selection_tests
+        run: cargo test --locked --bin dominion engine::chat::runtime::tests::harness_tool_selection_tests
       - name: Discovered tool uses the existing native gateway (dev profile)
-        run: cargo test --locked --bin dominion-rust discovered_read_uses_the_existing_real_tool_gateway
+        run: cargo test --locked --bin dominion discovered_read_uses_the_existing_real_tool_gateway
       - name: Causal diagnosis regressions (dev profile)
-        run: cargo test --locked --bin dominion-rust addons::adaptation::diagnostics::tests
+        run: cargo test --locked --bin dominion addons::adaptation::diagnostics::tests
       - name: Acceptance progress regressions (dev profile)
-        run: cargo test --locked --bin dominion-rust engine::recovery::tests::acceptance_feedback
+        run: cargo test --locked --bin dominion engine::recovery::tests::acceptance_feedback
       - name: Causal diagnostic native tool receipt (dev profile)
-        run: cargo test --locked --bin dominion-rust causal_diagnostic_uses_real_tool_receipt
+        run: cargo test --locked --bin dominion causal_diagnostic_uses_real_tool_receipt
       - name: Receipt-grounded acceptance repair escalation (dev profile)
-        run: cargo test --locked --bin dominion-rust acceptance_repair_tests
+        run: cargo test --locked --bin dominion acceptance_repair_tests
       - name: 2026 obligation-to-receipt lineage and local repair (dev profile)
-        run: cargo test --locked --bin dominion-rust addons::obligation_repair::tests
+        run: cargo test --locked --bin dominion addons::obligation_repair::tests
       - name: 2026 composite repair acceptance gate (dev profile)
-        run: cargo test --locked --bin dominion-rust addons::adaptation::acceptance_gate::tests
+        run: cargo test --locked --bin dominion addons::adaptation::acceptance_gate::tests
       - name: Pareto repair selection and schema regression (dev profile)
-        run: cargo test --locked --bin dominion-rust addons::adaptation_loop::selection_tests
+        run: cargo test --locked --bin dominion addons::adaptation_loop::selection_tests
       - name: Frozen acceptance obligation graph (dev profile)
         run: cargo test --locked -p dominion-algorithms decompose::tests
       - name: Source-evidence memory reranking (dev profile)
-        run: cargo test --locked --bin dominion-rust lineage_rerank_prefers_real_tool_receipts
+        run: cargo test --locked --bin dominion lineage_rerank_prefers_real_tool_receipts
       - name: Algorithm activation and retired-kernel regressions (dev profile)
-        run: cargo test --locked --bin dominion-rust addons::algorithms::tests
+        run: cargo test --locked --bin dominion addons::algorithms::tests
       - name: Policy experiment acceptance regressions (dev profile)
-        run: cargo test --locked --bin dominion-rust engine::policy::tests
+        run: cargo test --locked --bin dominion engine::policy::tests
       - name: Indexed approval reuse and cancellation (dev profile)
-        run: cargo test --locked --bin dominion-rust engine::chat::approval::tests
+        run: cargo test --locked --bin dominion engine::chat::approval::tests
       - name: Indexed startup recovery migrations (dev profile)
-        run: cargo test --locked --bin dominion-rust migrations::tests
+        run: cargo test --locked --bin dominion migrations::tests
       - name: Shared failure workspace observation (dev profile)
-        run: cargo test --locked --bin dominion-rust shared_failure_observation_avoids_duplicate
+        run: cargo test --locked --bin dominion shared_failure_observation_avoids_duplicate
       - name: Runtime architecture and release contract
         run: |
           node scripts/check-runtime-architecture.mjs
           node scripts/check-release-contract.mjs
       - name: Nine-speaker three-turn work context and complete group delivery (dev profile)
-        run: cargo test --locked --bin dominion-rust nine_participants_three_owner_turns_complete_thirty_messages_with_selective_work_context
+        run: cargo test --locked --bin dominion nine_participants_three_owner_turns_complete_thirty_messages_with_selective_work_context
       - name: Stateful Codex persona inheritance and per-turn wire delta (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust changed_codex_request_contract_rebases_even_with_matching_history
-          cargo test --locked --bin dominion-rust codex_chain_contract_captures_tool_and_reasoning_changes_but_not_stream_flags
-          cargo test --locked --bin dominion-rust codex_ws_registers_full_persona_once_and_reuses_its_response_chain
-          cargo test --locked --bin dominion-rust complete_websocket_exchange_sends_static_persona_only_on_first_response
-          cargo test --locked --bin dominion-rust rejected_developer_role_requires_full_instruction_fallback_not_silent_omission
+          cargo test --locked --bin dominion changed_codex_request_contract_rebases_even_with_matching_history
+          cargo test --locked --bin dominion codex_chain_contract_captures_tool_and_reasoning_changes_but_not_stream_flags
+          cargo test --locked --bin dominion codex_ws_registers_full_persona_once_and_reuses_its_response_chain
+          cargo test --locked --bin dominion complete_websocket_exchange_sends_static_persona_only_on_first_response
+          cargo test --locked --bin dominion rejected_developer_role_requires_full_instruction_fallback_not_silent_omission
       - name: OpenCode Go headers, stable prompt prefix and Hermes rolling cache (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust opencode_go_auxiliary_requests_keep_affinity_across_calls_and_headless_jobs
-          cargo test --locked --bin dominion-rust opencode_go_direct_sends_the_stable_session_header
-          cargo test --locked --bin dominion-rust anthro_cache_reuses_stable_system_tools_and_completed_suffix_with_four_markers
-          cargo test --locked --bin dominion-rust runtime_clock_is_a_volatile_suffix_not_part_of_the_four_kiloton_static_persona
+          cargo test --locked --bin dominion opencode_go_auxiliary_requests_keep_affinity_across_calls_and_headless_jobs
+          cargo test --locked --bin dominion opencode_go_direct_sends_the_stable_session_header
+          cargo test --locked --bin dominion anthro_cache_reuses_stable_system_tools_and_completed_suffix_with_four_markers
+          cargo test --locked --bin dominion runtime_clock_is_a_volatile_suffix_not_part_of_the_four_kiloton_static_persona
       - name: Room shared-prefix caching and Cloudflare affinity (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust shared_room_owner_rules_precede_agent_persona_with_no_identity_loss
-          cargo test --locked --bin dominion-rust identity_has_a_shared_stable_prefix_without_changing_owner_personas
-          cargo test --locked --bin dominion-rust owner_fact_selection_reuses_prefix_and_appends_missing_facts_until_real_revision
-          cargo test --locked --bin dominion-rust room_selector_budget_is_not_the_accumulated_cache_prefix_budget
-          cargo test --locked --bin dominion-rust private_chat_working_view_is_bounded_independently_of_large_model_windows
-          cargo test --locked --bin dominion-rust budget_rotation_carries_only_valid_owner_facts_not_old_transcript
-          cargo test --locked --bin dominion-rust nine_speaker_status_reuses_visible_digest_across_identical_completed_rounds
-          cargo test --locked --bin dominion-rust room_status_reuses_content_key_then_rotates_on_changed_status_without_losing_owner_facts
-          cargo test --locked --bin dominion-rust cloudflare_room_affinity_is_shared_by_nine_speakers_without_reusing_their_cursors
-          cargo test --locked --bin dominion-rust provider_cache_counts_are_optional_and_never_invent_zero_hits
+          cargo test --locked --bin dominion shared_room_owner_rules_precede_agent_persona_with_no_identity_loss
+          cargo test --locked --bin dominion identity_has_a_shared_stable_prefix_without_changing_owner_personas
+          cargo test --locked --bin dominion owner_fact_selection_reuses_prefix_and_appends_missing_facts_until_real_revision
+          cargo test --locked --bin dominion room_selector_budget_is_not_the_accumulated_cache_prefix_budget
+          cargo test --locked --bin dominion private_chat_working_view_is_bounded_independently_of_large_model_windows
+          cargo test --locked --bin dominion budget_rotation_carries_only_valid_owner_facts_not_old_transcript
+          cargo test --locked --bin dominion nine_speaker_status_reuses_visible_digest_across_identical_completed_rounds
+          cargo test --locked --bin dominion room_status_reuses_content_key_then_rotates_on_changed_status_without_losing_owner_facts
+          cargo test --locked --bin dominion cloudflare_room_affinity_is_shared_by_nine_speakers_without_reusing_their_cursors
+          cargo test --locked --bin dominion provider_cache_counts_are_optional_and_never_invent_zero_hits
       - name: Benchmark timeout teardown and per-speaker cost evidence (dev profile)
         run: |
           cargo test --locked --bin dominion-benchmark timed_out_trial_cancels_server_turn_and_waits_for_terminal_state
           cargo test --locked --bin dominion-benchmark truncated_http_stream_is_not_counted_as_a_completed_trial
-          cargo test --locked --bin dominion-rust speaker_accounting_joins_only_the_owning_execution_and_marks_estimates
-          cargo test --locked --bin dominion-rust db::tests::session_running_probe_avoids_global_history_and_uses_session_index
+          cargo test --locked --bin dominion speaker_accounting_joins_only_the_owning_execution_and_marks_estimates
+          cargo test --locked --bin dominion db::tests::session_running_probe_avoids_global_history_and_uses_session_index
       - name: Optional backend extension boundaries (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust addons::extensions::tests
-          cargo test --locked --bin dominion-rust addons::runtime_hooks::tests
-          cargo test --locked --bin dominion-rust addons::turn_policy::tests
+          cargo test --locked --bin dominion addons::extensions::tests
+          cargo test --locked --bin dominion addons::runtime_hooks::tests
+          cargo test --locked --bin dominion addons::turn_policy::tests
           cargo test --locked -p dominion-core strategy::tests
           cargo test --locked --test e2e room_identity::backend_extensions_are_isolated_from_the_core_conversation -- --nocapture
       - name: Explicit public web search requires verified tool evidence (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust engine::chat::web_research::tests
-          cargo test --locked --bin dominion-rust engine::tools::tests::web_search_parsers_produce_real_source_urls_not_empty_success
+          cargo test --locked --bin dominion engine::chat::web_research::tests
+          cargo test --locked --bin dominion engine::tools::tests::web_search_parsers_produce_real_source_urls_not_empty_success
           cargo test --locked --test e2e room_identity::private_web_search -- --nocapture
       - name: Private chat context ownership and 10/100-turn cost regressions (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust engine::chat::context_engine::tests
-          cargo test --locked --bin dominion-rust private_context_epoch_keeps_stable_snapshot_and_invalidates_corrections
-          cargo test --locked --bin dominion-rust engine::chat::context::tests::private_
-          cargo test --locked --bin dominion-rust db::tests::session_cache_ledger_never_turns_unknown_hits_into_zero
+          cargo test --locked --bin dominion engine::chat::context_engine::tests
+          cargo test --locked --bin dominion private_context_epoch_keeps_stable_snapshot_and_invalidates_corrections
+          cargo test --locked --bin dominion engine::chat::context::tests::private_
+          cargo test --locked --bin dominion db::tests::session_cache_ledger_never_turns_unknown_hits_into_zero
           cargo test --locked --test e2e room_identity::private_chat -- --nocapture
       - name: Native Codex tool verification, room snapshot rotation and ordered mutation e2e
         run: |
@@ -242,14 +242,14 @@ jobs:
           cargo test --locked --test e2e nine_room_participants_keep_actual_request_prefix_across_sliding_windows_and_restart
           cargo test --locked --test e2e unsafe_nested_program_mutations_run_sequentially_with_truthful_checkpoint
       - name: Public keyless provider and OpenRouter model catalog regressions (dev profile)
-        run: cargo test --locked --bin dominion-rust api::providers::tests::public_
+        run: cargo test --locked --bin dominion api::providers::tests::public_
       - name: Shared SDK run and retry regressions (dev profile)
         run: |
-          cargo test --locked --bin dominion-rust api::sdk::view_tests
-          cargo test --locked --bin dominion-rust api::sdk_plugins::tests
-          cargo test --locked --bin dominion-rust api::executions::tests::decision_view_is_scoped_to_exact_native_execution
+          cargo test --locked --bin dominion api::sdk::view_tests
+          cargo test --locked --bin dominion api::sdk_plugins::tests
+          cargo test --locked --bin dominion api::executions::tests::decision_view_is_scoped_to_exact_native_execution
       - name: External inspection resume ownership guards (dev profile)
-        run: cargo test --locked --bin dominion-rust api::jobs::external_resume_ui_tests
+        run: cargo test --locked --bin dominion api::jobs::external_resume_ui_tests
 
   windows-backend-and-frontend:
     runs-on: windows-latest
@@ -266,8 +266,8 @@ jobs:
       - name: SQLite, native runtime and Windows toolchain validation
         run: |
           cargo test --locked -p dominion-core --lib
-          cargo test --locked --bin dominion-rust engine::capability::tests
-          cargo test --locked --bin dominion-rust api::sdk::view_tests
+          cargo test --locked --bin dominion engine::capability::tests
+          cargo test --locked --bin dominion api::sdk::view_tests
       - name: Release version parity
         run: |
           node scripts/check-release-contract.mjs
@@ -344,7 +344,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: Build real backend and production frontend
         run: |
-          cargo build --locked --bin dominion-rust
+          cargo build --locked --bin dominion
           npm ci --prefix web --no-audit --no-fund
           npm run build --prefix web
       - name: Install Chromium
@@ -371,4 +371,4 @@ jobs:
         with:
           cache-on-failure: true
       - name: Restore, rollback and durable database/key synchronization
-        run: cargo test --locked --bin dominion-rust addons::restore_transaction::tests
+        run: cargo test --locked --bin dominion addons::restore_transaction::tests

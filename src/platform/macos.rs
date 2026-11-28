@@ -23,7 +23,7 @@ pub(super) fn start_service() -> Result<(), String> {
     if !started {
         let home = std::env::var_os("HOME").ok_or("User home directory is unavailable")?;
         let plist =
-            PathBuf::from(home).join("Library/LaunchAgents/com.hushmind.dominion.rust.plist");
+            PathBuf::from(home).join("Library/LaunchAgents/com.hushmind.dominion.plist");
         let user = user_id()?;
         let status = std::process::Command::new("launchctl")
             .args(["bootstrap", &format!("gui/{user}")])
@@ -52,7 +52,7 @@ fn user_id() -> Result<String, String> {
     Ok(id)
 }
 fn service_label() -> Result<String, String> {
-    Ok(format!("gui/{}/com.hushmind.dominion.rust", user_id()?))
+    Ok(format!("gui/{}/com.hushmind.dominion", user_id()?))
 }
 
 /// Compatibility launcher for existing development installs. Native releases
@@ -82,7 +82,7 @@ pub(super) fn install_app(target: &Path) -> Result<PathBuf, String> {
 <plist version="1.0"><dict>
 <key>CFBundleName</key><string>DOMINION</string>
 <key>CFBundleDisplayName</key><string>DOMINION</string>
-<key>CFBundleIdentifier</key><string>com.hushmind.dominion.rust</string>
+<key>CFBundleIdentifier</key><string>com.hushmind.dominion</string>
 <key>CFBundleExecutable</key><string>DOMINION</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>{}</string>

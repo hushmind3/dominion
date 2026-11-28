@@ -14,8 +14,8 @@ DOMINION 토큰 문제 — 다음 세션 인계 (2026-11-08)
 - origin/main 로컬 참조: 2f64e7f. main에 병합하지 말 것. 새 브랜치 만들지 말 것.
 - 운영: http://127.0.0.1:4317, runtime/dominion.sqlite. 방 room:nazarick-circle.
 - 9명 모두 codex-oauth / gpt-6-luna. OAuth는 인증 방식이지 반복 입력의 원인으로 확정된 것이 아니다.
-- 실행 바이너리 target/release/dominion-rust, 확인 당시 PID 32877.
-- launch agent: com.hushmind.dominion.rust. 재시작 전 jobs/executions의 실행·승인 대기 작업 확인 필수.
+- 실행 바이너리 target/release/dominion, 확인 당시 PID 32877.
+- launch agent: com.hushmind.dominion. 재시작 전 jobs/executions의 실행·승인 대기 작업 확인 필수.
 - tmp/는 기존 사용자 소유 미추적 폴더. 건드리지 말 것.
 
 이미 구현한 것 (해결 증거와 구분)

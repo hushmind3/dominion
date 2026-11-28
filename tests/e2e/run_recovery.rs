@@ -511,7 +511,7 @@ fn the_isolated_runner_claims_and_completes_a_queued_experiment() {
         uuid::Uuid::new_v4()
     ));
     let output = Command::new(env!("CARGO_BIN_EXE_dominion-benchmark"))
-        .env("DOMINION_BIN", env!("CARGO_BIN_EXE_dominion-rust"))
+        .env("DOMINION_BIN", env!("CARGO_BIN_EXE_dominion"))
         .env("BENCH_CLAIM_URL", &app.base)
         .env(
             "BENCH_PROVIDER_BASE",

@@ -61,7 +61,7 @@ impl StdioSession {
                 json!({
                     "protocolVersion": "2024-11-05",
                     "capabilities": {},
-                    "clientInfo": { "name": "dominion-rust", "version": env!("CARGO_PKG_VERSION") }
+                    "clientInfo": { "name": "dominion", "version": env!("CARGO_PKG_VERSION") }
                 }),
             )
             .await?;

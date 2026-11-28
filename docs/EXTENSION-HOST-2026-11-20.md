@@ -79,7 +79,7 @@ change any frontend menu.
 ## Verification and architecture guardrails
 
 ```bash
-cargo test --locked --bin dominion-rust engine::extensions::tests
+cargo test --locked --bin dominion engine::extensions::tests
 cargo test --locked --test e2e room_identity::backend_extensions_are_isolated_from_the_core_conversation
 node scripts/check-runtime-architecture.mjs
 ```

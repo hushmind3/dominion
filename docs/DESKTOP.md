@@ -38,7 +38,7 @@ The installed app is fully usable without a source checkout. To edit and rebuild
 ```json
 {
   "workspace": "/your/writable/tasks",
-  "sourceWorkspace": "/your/optional/dominion-rust"
+  "sourceWorkspace": "/your/optional/dominion"
 }
 ```
 
